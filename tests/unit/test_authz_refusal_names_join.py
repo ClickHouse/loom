@@ -18,7 +18,7 @@ from server.operations.base import Role
 ORG = "clickhouse"
 CODE_NS = "code-clickhouse"
 MEMORY_NS = "team-notes"
-JOIN = "This is a repository namespace: join it from /me → Repositories, or call code.repos"
+JOIN = "This is a repository namespace: join it from the dashboard's Repositories page, or call code.repos"
 
 
 def _scoped(ns: str = "clickgap-public", role: str = "writer") -> AuthInfo:

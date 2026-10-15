@@ -303,7 +303,7 @@ def _setup_parent(request: Request, payload: dict[str, object]) -> AuthInfo:
 async def me_setup_mcp_config(request: Request, payload: dict[str, object]) -> dict[str, object]:
     """Generate an MCP-client config block + fresh token for the caller.
 
-    Powers the `/me` Setup tab: mints a Loom JWT delegated from the caller's
+    Powers the dashboard's Settings page: mints a Loom JWT delegated from the caller's
     (`server.auth.delegation`) and returns the config JSON to paste into the MCP client.
 
     Body:

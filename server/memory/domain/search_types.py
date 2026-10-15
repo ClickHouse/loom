@@ -215,7 +215,7 @@ RowIdentity = tuple[str, str, str]
 class SearchHit:
     """One result row. The handler turns these into the wire Pydantic
     model; the service stays decoupled from wire types so it can be
-    used by the /me Recall Lab path too."""
+    used by the dashboard's Recall Lab path too."""
 
     memory_key: str
     memory_type: str
@@ -305,7 +305,7 @@ def row_identity(row: Mapping[str, Any]) -> RowIdentity | None:
 @dataclass(frozen=True)
 class SearchTraceHit(SearchHit):
     """memory.search_trace result. Adds the entity-boost contribution
-    and the final rank_score so /me Recall Lab can show what blended
+    and the final rank_score so the dashboard's Recall Lab can show what blended
     into the ordering."""
 
     entity_boost: float = 0.0

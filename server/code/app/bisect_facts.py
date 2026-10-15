@@ -38,6 +38,7 @@ class MarkStage:
     candidate."""
 
     status: str = "skipped"  # ok | skipped | ledger_failed
+    reason: str = ""  # why the diff marks did not run: this host has no mirror (yet)
     git_calls: int = 0
     marks: dict[int, Any] = field(default_factory=dict)
 
@@ -45,6 +46,7 @@ class MarkStage:
         ms = list(self.marks.values())
         return {
             "status": self.status,
+            **({"reason": self.reason} if self.reason else {}),
             "git_calls": self.git_calls,
             "demoted": sum(1 for m in ms if m.demoted),
             "promoted": sum(1 for m in ms if m.promoted),

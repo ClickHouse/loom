@@ -51,7 +51,7 @@ def _not_accessible_result(tool_name: Any, auth: Any, ns: str) -> dict[str, Any]
     msg = (
         f"namespace {ns!r} is not in your accessible list and you don't have an active grant "
         f"on it. Omit the namespace argument to use your default namespace (loom_search "
-        f"reads your own namespaces), or request a grant via /me/discover."
+        f"reads your own namespaces), or request a grant from the dashboard's Spaces page."
     )
     body = {"error": msg, "code": "NAMESPACE_NOT_ACCESSIBLE", "namespace": ns}
     return {"content": [{"type": "text", "text": msg}], "isError": True, "structuredContent": body}
@@ -96,9 +96,6 @@ def _verify_bearer(request: Request) -> AuthInfo | None:
     # helper named one; applied to namespace-less code.* calls. Read here, on
     # the same per-request path that reads the bearer.
     set_code_scope(request.headers.get("x-loom-code-scope"))
-    from server.core.read_replica import remember_caller_headers
-
-    remember_caller_headers(request.headers)
     from server.auth.bearer import bearer_token
     from server.auth.jwt import verify_token
 
@@ -218,9 +215,9 @@ def _token_refused(
     """The answer to a bearer that failed verification. A revocation list that has
     not loaded yet is a 503 + Retry-After: the token may be good, and a 401 would
     make the client discard it and re-authenticate."""
-    from server.auth.jwt import RevocationUnavailable
+    from server.auth.jwt import AuthUnavailable
 
-    if isinstance(error, RevocationUnavailable):
+    if isinstance(error, AuthUnavailable):
         response.status_code = 503
         response.headers["Retry-After"] = "5"
         return _err(_echo_request_id(payload), TOOL_EXEC_FAILED, str(error))

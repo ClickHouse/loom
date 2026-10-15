@@ -192,6 +192,7 @@ async def _lessons(
     qn: str = "src.a::Reader::read",
     path: str = "src/a.py",
     parse_s: float = 0.0,
+    has_mirror: bool = True,
 ) -> list:
     from server.code.app import memory_links
     from server.code.domain.anchor import Definition
@@ -212,6 +213,9 @@ async def _lessons(
         here = [Definition(dp, q, q.split("::")[-1], body_hash=h) for dp, q, h in defs if dp == p]
         return memory_links.FileAt([], here)
 
+    async def mirror_here(org, cns, commit):
+        return has_mirror
+
     async def served(org, nss, ids):
         assert nss == ["agent-a", "code-a"]  # the lesson scope bounds the read
         return [e for e in excerpts if e["mid"] in ids]
@@ -222,6 +226,7 @@ async def _lessons(
     monkeypatch.setattr(code_links, "for_paths", for_paths)
     monkeypatch.setattr(memory_links, "indexed_head", head)
     monkeypatch.setattr(memory_links, "parsed", parsed)
+    monkeypatch.setattr(memory_links, "mirror_here", mirror_here)
     monkeypatch.setattr(memory_links, "trunk_namespace", lambda org, n: "code-a")
     monkeypatch.setattr(store, "served_excerpts", served)
     monkeypatch.setattr("server.memory.app.code_link_reads.current_links", current)
@@ -265,6 +270,18 @@ async def test_a_slow_branch_parse_serves_the_lesson_as_trunk_has_it(monkeypatch
     slow = code_plane_reads._PARSE_TIMEOUT_S * 2
     (lesson,) = await _lessons(
         monkeypatch, links, [_excerpt("m1", "k1")], branch, ns="code-a-26-8", parse_s=slow
+    )
+    assert (lesson["code_state"], lesson["suggestion"]) == ("changed", "s")
+
+
+@pytest.mark.asyncio
+async def test_a_host_still_cloning_the_mirror_serves_the_lesson_as_trunk_has_it(
+    monkeypatch,
+) -> None:
+    links = [_link("m1", body="h0", state="changed", since="c2") | {"suggestion": "s"}]
+    branch = [("src/a.py", "src.a::Reader::read", "h0")]
+    (lesson,) = await _lessons(
+        monkeypatch, links, [_excerpt("m1", "k1")], branch, ns="code-a-26-8", has_mirror=False
     )
     assert (lesson["code_state"], lesson["suggestion"]) == ("changed", "s")
 

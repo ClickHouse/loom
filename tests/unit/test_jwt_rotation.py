@@ -1,115 +1,107 @@
-"""JWT kid-based key rotation.
+"""JWT kid-based key rotation through the signing keyring.
 
-In-process unit-style tests against `server.auth.jwt` + `server.settings`.
-No HTTP round-trip needed; the change is in the verify path and is
-exercised by mocking the settings' secret map.
+In-process tests against `server.auth.jwt` + `server.auth.keyring`, loaded
+from a fake `loom.signing_keys`; the RS256 path lives in test_jwt_rs256.py.
 """
 
 from __future__ import annotations
 
+import asyncio
+import time
+from datetime import timedelta
+from typing import Any
+
 import jwt as pyjwt
 import pytest
 
+from server.auth import keyring
 from server.auth.jwt import TokenError, mint_token, verify_token
+from server.core.secrets_at_rest import seal
 from server.settings import settings
+
+_OLD = "old-key-32-bytes-long-padding-xxx"
+_NEW = "new-key-32-bytes-long-padding-yyy"
+
+
+class _CH:
+    def __init__(self, rows: list[dict[str, Any]]) -> None:
+        self.rows = rows
+
+    async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+        return self.rows
+
+
+def _row(kid: str, secret: str, *, minutes_ago: int, retired: bool = False) -> dict[str, Any]:
+    return {
+        "kid": kid,
+        "algorithm": "HS256",
+        "sealed_key": seal("signing_key", secret),
+        "public_pem": "",
+        "activate_at": keyring._now() - timedelta(minutes=minutes_ago),
+        "retired": retired,
+    }
+
+
+def _load(*rows: dict[str, Any]) -> None:
+    asyncio.run(keyring.refresh(ch=_CH(list(rows))))
+
+
+def _claims(sub: str = "rogue") -> dict[str, Any]:
+    return {
+        "sub": sub,
+        "org": "o",
+        "namespaces": ["n"],
+        "roles": [],
+        "iss": settings.jwt_issuer,
+        "aud": settings.jwt_audience,
+        "iat": int(time.time()),
+        "exp": int(time.time()) + 3600,
+    }
+
+
+@pytest.fixture(autouse=True)
+def _clean(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(settings, "jwt_secret", "root-secret-32-bytes-long-padding")
+    keyring._reset_for_tests()
+    yield
+    keyring._reset_for_tests()
 
 
 @pytest.fixture
-def kid_rotation(monkeypatch):
-    """Install a two-key HS256 map: old + new. Active = new.
-
-    Forces HS256 — rotation semantics are tested with shared secrets;
-    the RS256 path lives in test_jwt_rs256.py.
-    """
-    secret_map = {
-        "2026-Q1-old": "old-key-32-bytes-long-padding-xxx",
-        "2026-Q2-new": "new-key-32-bytes-long-padding-yyy",
-    }
-    monkeypatch.setattr(settings, "jwt_algorithm", "HS256")
-    monkeypatch.setattr(
-        settings,
-        "jwt_secrets_json",
-        '{"2026-Q1-old": "old-key-32-bytes-long-padding-xxx", '
-        '"2026-Q2-new": "new-key-32-bytes-long-padding-yyy"}',
-    )
-    monkeypatch.setattr(settings, "jwt_active_kid", "2026-Q2-new")
-    yield secret_map
+def kid_rotation() -> None:
+    """Two HS256 keys: the old one, and the newer one that now signs."""
+    _load(_row("2026-Q1-old", _OLD, minutes_ago=60), _row("2026-Q2-new", _NEW, minutes_ago=5))
 
 
 def test_mint_writes_active_kid_into_header(kid_rotation) -> None:
-    token = mint_token(
-        subject="sa-x",
-        org="o",
-        namespaces=["n"],
-        roles=["VIEWER"],
-    )
-    header = pyjwt.get_unverified_header(token)
-    assert header["kid"] == "2026-Q2-new"
+    token = mint_token(subject="sa-x", org="o", namespaces=["n"], roles=["VIEWER"])
+    assert pyjwt.get_unverified_header(token)["kid"] == "2026-Q2-new"
+    assert verify_token(token).subject == "sa-x"
 
 
 def test_token_from_old_kid_still_verifies_during_rotation(kid_rotation) -> None:
-    """An old-kid token (minted before rotation) must still verify until
-    its TTL expires."""
-    old_token = mint_token(
-        subject="sa-x",
-        org="o",
-        namespaces=["n"],
-        roles=["VIEWER"],
-        kid="2026-Q1-old",
+    """An old-kid token (minted before rotation) still verifies until its kid
+    is retired."""
+    old_token = pyjwt.encode(
+        _claims("sa-x"), _OLD, algorithm="HS256", headers={"kid": "2026-Q1-old"}
     )
-    info = verify_token(old_token)
-    assert info.subject == "sa-x"
-
-
-def test_token_from_new_kid_verifies(kid_rotation) -> None:
-    new_token = mint_token(
-        subject="sa-x",
-        org="o",
-        namespaces=["n"],
-        roles=["VIEWER"],
-        kid="2026-Q2-new",
-    )
-    info = verify_token(new_token)
-    assert info.subject == "sa-x"
+    assert verify_token(old_token).subject == "sa-x"
 
 
 def test_unknown_kid_rejected(kid_rotation) -> None:
-    """A token from a kid not in the map is rejected — used for the
-    post-rotation phase after dropping old kids."""
     foreign = pyjwt.encode(
-        {
-            "sub": "rogue",
-            "org": "o",
-            "namespaces": ["n"],
-            "roles": [],
-            "iss": settings.jwt_issuer,
-            "aud": settings.jwt_audience,
-            "iat": 1_000_000_000,
-            "exp": 9_000_000_000,
-        },
-        "some-foreign-secret",
-        algorithm="HS256",
-        headers={"kid": "rogue-kid-2099"},
+        _claims(), "some-foreign-secret", algorithm="HS256", headers={"kid": "rogue-kid-2099"}
     )
     with pytest.raises(TokenError, match="kid"):
         verify_token(foreign)
 
 
 def test_kid_in_map_but_wrong_secret_still_fails(kid_rotation) -> None:
-    """A token signed with a different secret than the one mapped to its
-    claimed kid must fail signature verification."""
+    """A token signed with another secret than its claimed kid's fails the
+    signature check."""
     forged = pyjwt.encode(
-        {
-            "sub": "rogue",
-            "org": "o",
-            "namespaces": ["n"],
-            "roles": [],
-            "iss": settings.jwt_issuer,
-            "aud": settings.jwt_audience,
-            "iat": 1_000_000_000,
-            "exp": 9_000_000_000,
-        },
-        "wrong-secret",
+        _claims(),
+        "wrong-secret-32-bytes-long-padding",
         algorithm="HS256",
         headers={"kid": "2026-Q2-new"},
     )
@@ -117,70 +109,32 @@ def test_kid_in_map_but_wrong_secret_still_fails(kid_rotation) -> None:
         verify_token(forged)
 
 
-def test_legacy_single_secret_mode_still_works(monkeypatch) -> None:
-    """When jwt_secrets_json is empty, jwt_secret + jwt_active_kid are used
-    as a one-entry map — back-compat for the pre-rotation single-secret path."""
-    monkeypatch.setattr(settings, "jwt_algorithm", "HS256")
-    monkeypatch.setattr(settings, "jwt_secrets_json", "")
-    monkeypatch.setattr(settings, "jwt_secret", "legacy-secret-32-bytes-long-padding")
-    monkeypatch.setattr(settings, "jwt_active_kid", "default")
-
-    token = mint_token(
-        subject="legacy-sa",
-        org="o",
-        namespaces=["n"],
-        roles=["VIEWER"],
-    )
-    info = verify_token(token)
-    assert info.subject == "legacy-sa"
-    # Header should still carry the kid for verification
-    header = pyjwt.get_unverified_header(token)
-    assert header["kid"] == "default"
+def test_legacy_single_secret_mode_still_works() -> None:
+    """An empty keyring signs with the root secret as kid `default`."""
+    token = mint_token(subject="legacy-sa", org="o", namespaces=["n"], roles=["VIEWER"])
+    assert verify_token(token).subject == "legacy-sa"
+    assert pyjwt.get_unverified_header(token)["kid"] == "default"
 
 
-def test_legacy_token_without_kid_header_falls_back(monkeypatch) -> None:
-    """A token without a `kid` header verifies if its signature matches
-    the active kid's secret."""
-    monkeypatch.setattr(settings, "jwt_algorithm", "HS256")
-    monkeypatch.setattr(settings, "jwt_secrets_json", "")
-    monkeypatch.setattr(settings, "jwt_secret", "legacy-secret-32-bytes-long-padding")
-    monkeypatch.setattr(settings, "jwt_active_kid", "default")
-
-    # Encode in the back-compat way: no `kid` header
-    import time as t
-
-    payload = {
-        "sub": "old",
-        "org": "o",
-        "namespaces": ["n"],
-        "roles": ["VIEWER"],
-        "iss": settings.jwt_issuer,
-        "aud": settings.jwt_audience,
-        "iat": int(t.time()),
-        "exp": int(t.time()) + 3600,
-        "sa": True,
-    }
+def test_legacy_token_without_kid_header_falls_back(kid_rotation) -> None:
+    """A token without a `kid` header is checked against the root secret."""
     legacy_token = pyjwt.encode(
-        payload,
-        "legacy-secret-32-bytes-long-padding",
-        algorithm="HS256",
-        # no headers={"kid": ...}
+        _claims("old"), "root-secret-32-bytes-long-padding", algorithm="HS256"
     )
-    info = verify_token(legacy_token)
-    assert info.subject == "old"
+    assert verify_token(legacy_token).subject == "old"
+    with pytest.raises(TokenError):
+        verify_token(pyjwt.encode(_claims("old"), _NEW, algorithm="HS256"))
 
 
-def test_retiring_a_kid_kills_its_tokens_and_the_new_kid_works(monkeypatch) -> None:
-    """The remediation rotation: mint under A, make B active and drop A from
-    LOOM_JWT_SECRETS_JSON. The A token is refused; a B token verifies."""
-    monkeypatch.setattr(settings, "jwt_algorithm", "HS256")
-    monkeypatch.setattr(settings, "jwt_secrets_json", '{"A": "' + "a" * 32 + '"}')
-    monkeypatch.setattr(settings, "jwt_active_kid", "A")
+def test_retiring_a_kid_kills_its_tokens_and_the_new_kid_works() -> None:
+    """The remediation rotation: mint under A, activate B and retire A. The A
+    token is refused; a B token verifies."""
+    _load(_row("A", "a" * 32, minutes_ago=60))
     before = mint_token(subject="alice", org="o", namespaces=["n"], roles=["writer"])
+    assert pyjwt.get_unverified_header(before)["kid"] == "A"
     assert verify_token(before).subject == "alice"
 
-    monkeypatch.setattr(settings, "jwt_secrets_json", '{"B": "' + "b" * 32 + '"}')
-    monkeypatch.setattr(settings, "jwt_active_kid", "B")
+    _load(_row("A", "a" * 32, minutes_ago=60, retired=True), _row("B", "b" * 32, minutes_ago=1))
     with pytest.raises(TokenError, match="kid"):
         verify_token(before)
     after = mint_token(subject="alice", org="o", namespaces=["n"], roles=["writer"])

@@ -3226,7 +3226,9 @@ async def test_a_method_of_a_class_renamed_alone_is_moved(env) -> None:
     assert (link["symbol"].rsplit("::", 2)[-2:], link["state"]) == (["RowReader", "size"], "moved")
 
 
-async def test_a_read_replica_serves_lessons_as_trunk_last_checked_them(env, monkeypatch) -> None:
+async def test_a_host_without_history_serves_lessons_as_trunk_last_checked_them(
+    env, monkeypatch
+) -> None:
     from server.code.app import memory_links as code
     from server.settings import settings
 
@@ -3237,9 +3239,9 @@ async def test_a_read_replica_serves_lessons_as_trunk_last_checked_them(env, mon
     await _relink_once(env, "src/r.py", "def fetch_rows():\n    return 2\n")
 
     async def no_git(*args: Any, **kwargs: Any) -> Any:
-        raise AssertionError("a read replica has no git mirror")
+        raise AssertionError("LOOM_GIT_HISTORY=none reads no git")
 
-    monkeypatch.setattr(settings, "read_replica", True)
+    monkeypatch.setattr(settings, "git_history", "none")
     monkeypatch.setattr(code, "parsed", no_git)
     lessons = await _lessons(TRUNK, "fetch_rows")
     assert [(x["memory_key"], x["code_state"]) for x in lessons] == [("rows", "changed")]

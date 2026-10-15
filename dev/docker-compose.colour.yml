@@ -12,18 +12,17 @@
 #
 # `redeploy.sh` does this. Two projects (`loom-blue`, `loom-green`) share
 # `.env`, the blob volume, the code mirrors, and one `loom-shared` volume that
-# carries the rate-limit table (keyed by path so both colours
-# draw from one cap during the overlap) and the supervisor lock (one host runs
-# the workers; the new colour takes the lease when the old one exits, on its
-# next retry). Volumes are named explicitly so
+# carries the rate-limit table (keyed by path so both colours draw from one
+# cap during the overlap). The supervisor lease lives in ClickHouse: the new
+# colour takes it when the old one exits. Volumes are named explicitly so
 # both projects resolve the same ones instead of a project-prefixed copy.
 #
 # Each colour is TWO containers from one image — `loom-<colour>`
 # (the web tier, LOOM_BACKGROUND_WORKERS=off) and `loom-<colour>-workers` (one
 # process, LOOM_BACKGROUND_WORKERS=auto, no published port). The workers
-# container is the only one that contends for the shared supervisor lock, so
-# the old colour's workers keep the lease through the overlap and the new
-# colour's take it within one retry interval of `docker stop loom-<old>-workers`.
+# container is the only one that contends for the supervisor lease, so the
+# old colour's workers keep it through the overlap and the new colour's take
+# it within seconds of `docker stop loom-<old>-workers`.
 # No web process ever runs a 400 s code_ingest pass
 # on the event loop that serves a keep-alive client.
 
@@ -39,7 +38,7 @@ x-colour-common: &colour-common
   # A tiny init as PID 1 forwards SIGTERM to the process tree and reaps it;
   # belt-and-braces beside the Dockerfile's `exec`.
   init: true
-  stop_grace_period: 45s
+  stop_grace_period: 75s
   ulimits:
     nofile:
       soft: 65536
@@ -74,12 +73,13 @@ x-colour-common: &colour-common
         "CMD",
         "python",
         "-c",
-        "import os, urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:'+os.environ['PORT']+'/v1/health', timeout=3).status==200 else 1)",
+        "import os, urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:'+os.environ['PORT']+'/v1/health/ready', timeout=3).status==200 else 1)",
       ]
     interval: 10s
     timeout: 5s
     retries: 6
-    start_period: 45s
+    # Readiness, not liveness; a boot can wait up to 900 s on the migration lease.
+    start_period: 900s
 
 services:
   workers:
@@ -96,8 +96,8 @@ services:
         "-c",
         "exec uvicorn server.main:app --host 127.0.0.1 --port $$PORT --loop $${LOOM_UVICORN_LOOP:-asyncio} --timeout-graceful-shutdown $${LOOM_GRACEFUL_SHUTDOWN_S:-10}",
       ]
-    # One process; no `ports:` — /v1/health answers inside the container for
-    # the healthcheck and `docker exec loom-<colour>-workers ... ?include=workers`.
+    # One process; no `ports:` — /v1/health/ready answers inside the container for
+    # the healthcheck, /v1/health for `docker exec loom-<colour>-workers ... ?include=workers`.
     environment:
       PORT: "${LOOM_COLOUR_PORT:?set LOOM_COLOUR_PORT=7781|7782}"
       LOOM_BLOB_DIR: /app/var/blobs
@@ -105,16 +105,16 @@ services:
       # than run them unsandboxed if the sandbox cannot run.
       LOOM_CODE_SANDBOX_REQUIRED: "true"
       LOOM_BACKGROUND_WORKERS: "auto"
+      # One web worker and no client traffic: the per-process rate-limiter
+      # fallback is right for it (the shared table stays the web tier's).
       LOOM_WEB_WORKERS: "1"
-      LOOM_SUPERVISOR_LOCK_PATH: /app/var/shared/supervisor.lock
-      LOOM_BOOT_MIGRATE_LOCK_PATH: /app/var/shared/migrate.lock
-      # The entity_extractor worker writes graph edges too: it marks them where
-      # the web tier's graph walks look.
-      LOOM_GRAPH_WRITE_MARKS_DIR: /app/var/shared/graph-marks
-      # Serves no client traffic: the per-process rate-limiter fallback is
-      # right for it (the shared table stays the web tier's).
+      # The workers run in this process itself, not a child: it serves no
+      # traffic for them to slow down.
+      LOOM_WORKERS_PROCESS: "inline"
       LOOM_DEPLOYMENT: "1"
       LOOM_INSTANCE_LABEL: "deploy:workers:${LOOM_COLOUR}"
+      # No load balancer routes here: its row is not a rate-limit replica.
+      LOOM_SERVES_TRAFFIC: "false"
       # No published port.
       LOOM_BIND_HOST: "127.0.0.1"
 
@@ -124,7 +124,7 @@ services:
       - /run/loom:uid=999,gid=999,mode=0700
     <<: *colour-common
     container_name: "loom-${LOOM_COLOUR}"
-    # stop_grace_period 45s (uvicorn drains ≤ 10 s, then the lifespan drains)
+    # stop_grace_period 75s (15 s not-ready delay, uvicorn ≤ 10 s, lifespan drains ≤ 40 s)
     # and fd headroom are both in the common block.
     environment:
       PORT: "${LOOM_COLOUR_PORT:?set LOOM_COLOUR_PORT=7781|7782}"
@@ -133,12 +133,6 @@ services:
       # than run them unsandboxed if the sandbox cannot run.
       LOOM_CODE_SANDBOX_REQUIRED: "true"
       LOOM_RATELIMIT_SHARED_PATH: /app/var/shared/ratelimit.buckets
-      LOOM_SUPERVISOR_LOCK_PATH: /app/var/shared/supervisor.lock
-      LOOM_BOOT_MIGRATE_LOCK_PATH: /app/var/shared/migrate.lock
-      # Each namespace's last graph write and in-flight projections, shared by the
-      # web workers and the workers container, so a walk never serves a memo older
-      # than a write another process made.
-      LOOM_GRAPH_WRITE_MARKS_DIR: /app/var/shared/graph-marks
       # The web tier serves requests and nothing else; the
       # workers container beside it holds the lease.
       LOOM_BACKGROUND_WORKERS: "off"

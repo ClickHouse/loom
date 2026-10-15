@@ -71,17 +71,14 @@ class CursorError(ValueError):
 
 
 def _secret() -> bytes:
-    """The HMAC key for cursors: the active signing key (the key map's entry
-    for `jwt_active_kid`), else `jwt_secret`. A key rotation invalidates the
-    cursors already handed out; they live minutes, and a stale one is a
-    CursorError the caller answers by searching again."""
+    """The HMAC key for cursors: the root secret, which every process of the
+    deployment holds. Without one a cursor is neither issued nor accepted: a
+    fixed fallback key would let anyone forge one."""
     from server.settings import settings
 
-    try:
-        active = settings.jwt_secret_map().get(settings.jwt_active_kid)
-    except ValueError:  # an unreadable key map: the flat secret, as jwt_secret_is_dev_default
-        active = None
-    return str(active or settings.jwt_secret or "loom").encode()
+    if not settings.jwt_secret:
+        raise CursorError("cursors need LOOM_JWT_SECRET; this server has none")
+    return str(settings.jwt_secret).encode()
 
 
 def _sign(fields: dict[str, Any]) -> str:
@@ -163,7 +160,7 @@ def expired(fields: dict[str, Any], *, now: float | None = None) -> bool:
 def enabled() -> bool:
     from server.settings import settings
 
-    return bool(settings.code_search_cursor_enabled)
+    return bool(settings.code_search_cursor_enabled) and bool(settings.jwt_secret)
 
 
 def pool_cap() -> int:

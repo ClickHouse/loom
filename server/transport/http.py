@@ -28,7 +28,7 @@ from server.auth.jwt import AuthInfo
 from server.code.app.common import (
     schedule_code_trace_validation_failure,
 )
-from server.core import idempotency, read_replica
+from server.core import idempotency
 from server.core.errors import AuthInsufficientError, IdentityIncompleteError, LoomServerError
 from server.observability.consumer import (
     bind_current_consumer,
@@ -121,7 +121,6 @@ def _extract_auth(request: Request) -> AuthInfo | None:
     tokens when auth_required=True.
     """
     auth = verify_bearer_header(request.headers.get("Authorization"))
-    read_replica.remember_caller_headers(request.headers)
     if auth is None:
         if settings.auth_actually_required():
             raise HTTPException(
@@ -253,21 +252,24 @@ async def _idempotency_gate(
     payload: Any,
 ) -> gates.Replay:
     """The replay decision (`gates.idempotency_check`) for the call's
-    Idempotency-Key, rendered: a key reused with another body is a 409; a
-    stored answer replays with its headers."""
+    Idempotency-Key, rendered: a key reused with another body is a 409, one
+    whose first request still runs a retryable 503; a stored answer replays
+    with its headers."""
     request_id, raw_body = call.request_id, call.raw_body
     replay = await gates.idempotency_check(
         op, call.auth, target, request.headers.get("Idempotency-Key") or "", payload
     )
     if replay.conflict:
-        _emit_event(
-            op,
-            request_id,
-            raw_body,
-            0,
-            success=False,
-            error_code="IDEMPOTENT_CONFLICT",
-        )
+        code = "IDEMPOTENT_IN_PROGRESS" if replay.in_progress else "IDEMPOTENT_CONFLICT"
+        _emit_event(op, request_id, raw_body, 0, success=False, error_code=code)
+        if replay.in_progress:
+            # A 503, so every client that retries 5xx after Retry-After
+            # (the SDKs of earlier builds too) gets the stored answer.
+            raise HTTPException(
+                status_code=503,
+                detail={"code": code, "message": gates.IN_PROGRESS_MESSAGE, "in_progress": True},
+                headers={"Retry-After": "1"},
+            )
         raise HTTPException(
             status_code=409,
             detail={
@@ -355,12 +357,7 @@ async def _authorize(
     except PermissionError as e:
         # A code/tracker index says why, as MCP's refusal does.
         ns = target.namespace
-        if isinstance(e, read_replica.ReplicaRefusal):
-            why: dict[str, object] = {"reason": read_replica.REASON, "retry": False}
-        elif ns and ar.is_plane_op(op.name):
-            why = ar.reason_fields(ns)
-        else:
-            why = {}
+        why: dict[str, object] = ar.reason_fields(ns) if ns and ar.is_plane_op(op.name) else {}
         raise _refuse(op, call, 403, gates.ROLE_REFUSAL_CODE, e, detail=why) from e
     await gates.traffic_class(op, auth, target, call.raw_body)
     response.headers["X-Loom-Traffic-Class"] = header_value()
@@ -800,6 +797,13 @@ def attach(app: FastAPI) -> None:
     components: dict[str, Any] = {}
     app.include_router(build_router(components))
     app.middleware("http")(me_route_measured)
+    # Outermost: what a request deferred is committed before its answer starts.
+    from server.core.request_tail import RequestTailMiddleware
+    from server.identity.app.policy_witness import hold_event
+    from server.observability.ledger import set_event_hold
+
+    app.add_middleware(RequestTailMiddleware)
+    set_event_hold(hold_event)
     base_openapi = app.openapi
 
     def openapi() -> dict[str, Any]:
@@ -861,6 +865,6 @@ async def me_route_measured(request: Request, call_next: Any) -> Response:
             error_code="" if response.status_code < 400 else f"HTTP_{response.status_code}",
             subject=subject or None,
         )
-    except Exception as e:  # noqa: BLE001 — telemetry never fails a /me answer
+    except Exception as e:  # noqa: BLE001 — telemetry never fails a caller-API answer
         log.debug("me route %s: ledger row not written: %s", op_name, e)
     return response

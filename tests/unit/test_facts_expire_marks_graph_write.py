@@ -24,12 +24,11 @@ class _CH:
 
 @pytest.fixture
 def local_marks() -> Iterator[Any]:
-    from server.memory.app import graph_write_marks as gwm
+    from server.memory.app import graph_write_marks
 
-    inst = gwm.GraphWriteMarks(None)
-    gwm._reset_for_tests(inst)
-    yield inst
-    gwm._reset_for_tests(None)
+    graph_write_marks._reset_for_tests()
+    yield graph_write_marks
+    graph_write_marks._reset_for_tests()
 
 
 async def _expire(monkeypatch: pytest.MonkeyPatch, ch: _CH) -> None:
@@ -47,7 +46,7 @@ async def test_expiring_triples_marks_the_graph_written(monkeypatch, local_marks
     ch = _CH(3, 2)
     await _expire(monkeypatch, ch)
     assert len(ch.executed) == 2
-    assert local_marks.written_at_ns("acme", "ns") is not None
+    assert ("acme", "ns") in local_marks._unrecorded
 
 
 @pytest.mark.asyncio
@@ -55,4 +54,4 @@ async def test_nothing_to_expire_leaves_the_graph_unmarked(monkeypatch, local_ma
     ch = _CH(0, 0)
     await _expire(monkeypatch, ch)
     assert ch.executed == []
-    assert local_marks.written_at_ns("acme", "ns") is None
+    assert local_marks._unrecorded == set()

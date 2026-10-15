@@ -21,7 +21,7 @@ def test_a_self_signup_token_is_told_to_claim_or_mint() -> None:
 
 def test_a_person_is_told_to_request_the_grant() -> None:
     body = ar.refusal("avery@example.com", "clickhouse", "code-loom")
-    assert "/me → Discover" in body["error"] and "claim" not in body["error"]
+    assert "dashboard's Spaces page" in body["error"] and "claim" not in body["error"]
 
 
 def test_role_check_refusal_on_a_code_op_is_actionable() -> None:

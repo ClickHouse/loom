@@ -156,8 +156,8 @@ COPY bench/fixtures ./bench/fixtures
 # and restore. Migrations run in the server's startup lifespan; these ship for
 # `docker exec` operational tasks (token mint, knowledge ingest, audit verification).
 COPY dev ./dev
-# Built React/Vite dashboard. Served at /me (index.html) and /me/assets/*.
-# If this layer is missing, the /me route returns 503 — admin endpoints
+# Built React/Vite dashboard. Served at / (index.html) and /assets/*.
+# If this layer is missing, dashboard pages return 503 — admin endpoints
 # at /v1/admin/* stay reachable via curl regardless.
 COPY --from=frontend-builder /frontend/dist ./frontend/dist
 
@@ -184,8 +184,15 @@ ENV PYTHONUNBUFFERED=1 \
     LOOM_LISTEN_HOST=0.0.0.0
 
 EXPOSE 7777
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD python -c "import urllib.request, sys; r=urllib.request.urlopen('http://127.0.0.1:'+__import__('os').environ.get('PORT','7777')+'/v1/health', timeout=3); sys.exit(0 if r.status==200 else 1)" || exit 1
+# Readiness, not liveness: healthy once the replica can serve (migrations, keys
+# and warm-up loaded), unhealthy while it drains. The start period covers a
+# boot that waits on another replica's migration lease.
+HEALTHCHECK --interval=10s --timeout=5s --start-period=900s --retries=3 \
+    CMD python -c "import urllib.request, sys; r=urllib.request.urlopen('http://127.0.0.1:'+__import__('os').environ.get('PORT','7777')+'/v1/health/ready', timeout=3); sys.exit(0 if r.status==200 else 1)" || exit 1
 
-# The web tier: scripts/serve.sh says how it starts and stops.
+# The web tier: scripts/serve.sh says how it starts and stops. On SIGTERM Loom
+# answers not-ready for LOOM_SHUTDOWN_READY_DELAY_S (15 s) while it serves, uvicorn
+# then waits at most LOOM_GRACEFUL_SHUTDOWN_S (10 s) for in-flight requests, the
+# lifespan drains take at most 40 s (server/boot.py SHUTDOWN_DRAIN_BUDGET_S), and
+# participant retirement runs last: compose's stop_grace_period is 75 s.
 CMD ["/app/scripts/serve.sh"]

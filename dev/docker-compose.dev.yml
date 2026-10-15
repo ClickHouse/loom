@@ -61,7 +61,7 @@ services:
       LOOM_MEMORY_EMBED_ANSWER_TOPIC: "${LOOM_MEMORY_EMBED_ANSWER_TOPIC:-true}"
       LOOM_MEMORY_CAPTURE_STRUCTURED_ANSWERS: "${LOOM_MEMORY_CAPTURE_STRUCTURED_ANSWERS:-true}"
       LOOM_ENTITY_EXTRACT_ENABLED: "${LOOM_ENTITY_EXTRACT_ENABLED:-true}"
-      # Browser self-signup so the /me Welcome screen can mint tokens. A
+      # Browser self-signup so the dashboard's Welcome screen can mint tokens. A
       # trusted-network assumption: never on an externally reachable stack.
       LOOM_SELF_SIGNUP: "open"
       # Marks this stack's rows and lets it run with the development defaults.

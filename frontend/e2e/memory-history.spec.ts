@@ -28,7 +28,7 @@ test("a history change summary wraps to show every change", async ({ page }) => 
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ rows }) }),
   );
 
-  await page.goto("/me/memories", { waitUntil: "domcontentloaded" });
+  await page.goto("/memories", { waitUntil: "domcontentloaded" });
   await page.locator("[data-memory-key]").first().click();
   const drawer = page.getByRole("dialog");
   await drawer.getByRole("button", { name: /History/ }).click();

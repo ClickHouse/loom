@@ -1,4 +1,4 @@
-"""The /me Setup tab mints through the one delegation policy: the default `*` token
+"""The dashboard's Settings page mints through the one delegation policy: the default `*` token
 follows the caller's live grants, a scoped caller's `*` becomes its own namespace list,
 the token never carries an org-wide role, and it expires (90 days by default)."""
 

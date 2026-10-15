@@ -666,8 +666,8 @@ async def build_for_merge(
     payload = await build_brief(inp, call=call, repo=repo)
     if provenance:
         payload["provenance"] = dict(provenance)
-    # A PR that changed files but whose diff could not be read (no mirror here,
-    # as on a read-replica, or a failed git call) gets a brief without its
+    # A PR that changed files but whose diff could not be read (no mirror here
+    # yet, or a failed git call) gets a brief without its
     # blame and diff sections: serve it, but leave the store to a process that
     # reads the diff, or every later read would serve the degraded copy.
     if store and changed_paths and not diff:

@@ -214,6 +214,10 @@ def test_cli_mint_reports_the_jti_but_never_beside_a_saved_token(
     from server.settings import settings
 
     monkeypatch.setattr(settings, "jwt_secret", _SECRET, raising=False)
+    from server.cli import access
+
+    # An empty keyring: the mint signs with the root secret, reading no ClickHouse.
+    monkeypatch.setattr(access, "run_connected", lambda run: None)
     rc = cli.main(
         ["mint-token", "--subject", "sa:x", "--org", "acme", "--namespaces", "shop", "--json"]
     )

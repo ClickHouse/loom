@@ -35,7 +35,7 @@ test("local Settings navigation reaches the provider form and submits an explici
       json: { ready: true, checks: [] },
     }),
   );
-  await page.goto("/me/settings");
+  await page.goto("/settings");
   await page.getByRole("tab", { name: "Models & keys", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Models & keys", exact: true })).toBeVisible();
   await page.getByRole("combobox", { name: "LLM provider", exact: true }).selectOption("openai");
@@ -93,7 +93,7 @@ test("environment reset requires confirmation and submits the current configurat
   await page.route("**/v1/admin/models/reset", (route) =>
     route.fulfill({ json: { config_id: "fixture-reset", state: "queued" } }),
   );
-  await page.goto("/me/settings?tab=models");
+  await page.goto("/settings?tab=models");
   await page.getByRole("button", { name: "Use environment configuration", exact: true }).click();
   await expect(page.getByText(/This does not reload a changed .env file/)).toBeVisible();
   const [reset] = await Promise.all([

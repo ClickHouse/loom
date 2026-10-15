@@ -428,7 +428,7 @@ async def vector_search_trace(
     ch: _CHClient | None = None,
 ) -> list[SearchTraceHit]:
     """Like `vector_search`, but surfaces entity_boost + rank_score as
-    separate columns so /me can show each factor's contribution. Shares the
+    separate columns so the dashboard can show each factor's contribution. Shares the
     SQL shape with `vector_search` — keep both in lockstep when ranking changes.
     """
     ch = ch or _default_client()

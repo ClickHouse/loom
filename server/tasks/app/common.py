@@ -301,13 +301,13 @@ def _policy_payload(row: PolicyRow) -> PolicyPayload:
 # ============================================================
 
 
-def _new_version(task: TaskRow, **changes: Any) -> TaskRow:
+def _new_version(task: TaskRow, version: int, **changes: Any) -> TaskRow:
     """The next version row: every column of the current row, the changes
     applied, ``version``/``updated_at`` advanced. Datetimes are written naive
     UTC (the driver reads a naive value as UTC on insert here)."""
     row: dict[str, Any] = {c: task.get(c) for c in repo.TASK_FIELDS}
     row.update(changes)
-    row["version"] = repo.next_version()
+    row["version"] = version
     row["updated_at"] = _naive(_now())
     for col in ("not_before", "resume_at", "deadline", "lease_until", "created_at"):
         row[col] = _naive(row.get(col))
@@ -333,7 +333,9 @@ async def _record(
     the new row and the event's ``seq``. Wakes the inbox's pulls and the
     poster's updates cursor."""
     from_status = str(task.get("status") or "")
-    row = _new_version(task, **changes, last_actor=actor)
+    # The server's clock, so every replica stamps one event order (the cursor).
+    seq = await repo.server_version(int(task.get("version") or 0))
+    row = _new_version(task, seq, **changes, last_actor=actor)
     to_status = str(row["status"])
     if "reason" in changes:
         row["reason"] = changes["reason"]
@@ -342,7 +344,6 @@ async def _record(
         # move back to the happy path: resume, unblock, accept), so the board
         # can filter by it; a note or heartbeat leaves the row's reason alone.
         row["reason"] = reason
-    seq = row["version"]
     await repo.insert_task_version(row, dedup_token=dedup_token)
     await repo.insert_event(
         {
@@ -362,7 +363,7 @@ async def _record(
             "reason": reason or (changes.get("reason") or ""),
             "patch": json.dumps(patch or {}, sort_keys=True, default=str),
             "note": note,
-            "ts": _naive(_now()),
+            "ts": datetime.fromtimestamp(seq / 1_000_000, UTC).replace(tzinfo=None),
         }
     )
     task_wakeups.notify(

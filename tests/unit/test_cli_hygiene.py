@@ -13,13 +13,18 @@ the dev secret.
 from __future__ import annotations
 
 import argparse
-import json
+import asyncio
 import re
+from datetime import datetime
+from typing import Any
 
+import jwt as pyjwt
 import pytest
 
 import server.cli as cli
-from server.cli import doctor, serve
+from server.auth import keyring
+from server.cli import access, doctor, serve
+from server.core.secrets_at_rest import seal
 from server.settings import DEV_JWT_SECRET, settings
 from tests.unit.test_cli_doctor import _passing_httpx_client
 
@@ -94,10 +99,24 @@ def test_migrate_forwarded_argv_parses_in_the_runner(tmp_path) -> None:
 _MINT = ["mint-token", "--subject", "a@x", "--org", "o", "--namespaces", "n"]
 
 
+class _Keyring:
+    def __init__(self, rows: list[dict[str, Any]]) -> None:
+        self.rows = rows
+
+    async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+        assert "loom.signing_keys" in sql
+        return self.rows
+
+
+def _keyring_rows(monkeypatch: pytest.MonkeyPatch, rows: list[dict[str, Any]]) -> None:
+    """`loom mint-token` reads this keyring instead of ClickHouse."""
+    monkeypatch.setattr(access, "run_connected", lambda run: asyncio.run(run(_Keyring(rows))))
+    monkeypatch.setattr(keyring, "_view", keyring._View())
+
+
 def _auth_on_with(monkeypatch: pytest.MonkeyPatch, secret: str) -> None:
     monkeypatch.setattr(settings, "jwt_secret", secret)
-    monkeypatch.setattr(settings, "jwt_secrets_json", "")
-    monkeypatch.setattr(settings, "jwt_active_kid", "default")
+    _keyring_rows(monkeypatch, [])
     monkeypatch.setattr(settings, "auth_required", True)
     monkeypatch.setattr(settings, "identity_provider", "gateway")
 
@@ -131,15 +150,38 @@ def test_mint_token_silent_in_single_user_mode(
     assert capsys.readouterr().err == ""
 
 
-def test_dev_default_detection_follows_the_active_kid(monkeypatch: pytest.MonkeyPatch) -> None:
-    _auth_on_with(monkeypatch, DEV_JWT_SECRET)
-    assert settings.jwt_secret_is_dev_default()
-    monkeypatch.setattr(
-        settings, "jwt_secrets_json", json.dumps({"default": DEV_JWT_SECRET, "k2": "rotated"})
-    )
-    assert settings.jwt_secret_is_dev_default()
-    monkeypatch.setattr(settings, "jwt_active_kid", "k2")
-    assert not settings.jwt_secret_is_dev_default()
+def test_mint_token_signs_with_the_keyring_it_reads(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _auth_on_with(monkeypatch, "a-real-secret-that-is-not-the-default")
+    row = {
+        "kid": "k1",
+        "algorithm": "HS256",
+        "sealed_key": seal("signing_key", "k" * 40),
+        "public_pem": "",
+        "activate_at": datetime(2026, 1, 1),
+        "retired": False,
+    }
+    _keyring_rows(monkeypatch, [row])
+    assert cli.main(_MINT) == 0
+    token = capsys.readouterr().out.strip()
+    assert pyjwt.get_unverified_header(token)["kid"] == "k1"
+    pyjwt.decode(token, "k" * 40, algorithms=["HS256"], audience=settings.jwt_audience)
+
+
+def test_an_offline_mint_signs_with_the_root_secret(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _auth_on_with(monkeypatch, "a-real-secret-that-is-not-the-default")
+
+    def _unreachable(run: Any) -> None:
+        raise ConnectionError("no clickhouse")
+
+    monkeypatch.setattr(access, "run_connected", _unreachable)
+    assert cli.main(_MINT) == 0
+    out, err = capsys.readouterr()
+    assert "signing keyring not read; signing as kid" in err
+    assert pyjwt.get_unverified_header(out.strip())["kid"] == "default"
 
 
 def _doctor(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> tuple[int, str]:

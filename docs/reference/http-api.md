@@ -30,10 +30,10 @@ auth on, call the API with `curl`, an SDK or MCP.
 
 ### Health and keys
 
-| Method and path                 | Auth | What it is                                                                                                                                                                                                       |
-| ------------------------------- | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /v1/health`                | none | Liveness: 200 when ClickHouse answers, 503 when it does not; the body carries subsystem state and the problem list. `?include=workers,langfuse,events,embedding_cache,llm_cache,otel` adds per-subsystem checks. |
-| `GET /v1/.well-known/jwks.json` | none | Public signing keys when `LOOM_JWT_ALGORITHM=RS256`; `{"keys": []}` under HS256.                                                                                                                                 |
+| Method and path                 | Auth | What it is                                                                                                                                                                                                               |
+| ------------------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET /v1/health`                | none | Liveness: 200 when ClickHouse answers, 503 when it does not; the body carries subsystem state and the problem list. `?include=workers,langfuse,events,embedding_cache,llm_cache,otel,mirrors` adds per-subsystem checks. |
+| `GET /v1/.well-known/jwks.json` | none | The public keys of the keyring's RS256 signing keys; `{"keys": []}` while every key is HS256.                                                                                                                            |
 
 The health body, its problem codes and how to use it as a readiness check are
 in [Monitoring](../operations/monitoring.md).
@@ -63,16 +63,17 @@ See [Task inbox](../features/tasks-and-decisions.md) for the watch stream.
 
 ### Dashboard routes
 
-These routes serve the dashboard; they are not an integration surface. They are not registry
-ops and can change in any release.
+These routes serve the dashboard: the page itself and the caller API (`/v1/me/*`, about the
+authenticated caller). They are not an integration surface. They are not registry ops and can
+change in any release.
 
-| Method and path                                                                 | Auth   | What it is                                                                                       |
-| ------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------ |
-| `GET /me`, `/me/{path}`, `/me/assets/*`, `/me/favicon.svg`                      | none   | The dashboard single-page app and its assets, served from `frontend/dist/` (503 when not built). |
-| `GET /v1/me/service_accounts`, `POST /v1/me/service_accounts.create`, `.revoke` | bearer | The caller's service accounts and their tokens.                                                  |
-| `POST /v1/me/setup/mcp_config`                                                  | bearer | A per-client MCP configuration block with a fresh token, for **Settings → Tokens**.              |
-| `POST /v1/me/set-default-namespace`                                             | bearer | Set the caller's default workspace.                                                              |
-| `GET /v1/me/sharing-summary`                                                    | bearer | Memory sharing across the namespaces the caller can read, as one dashboard payload.              |
+| Method and path                                                                 | Auth   | What it is                                                                                                                                                                                            |
+| ------------------------------------------------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /`, `/{page}`, `/assets/*`, `/favicon.svg`                                 | none   | The dashboard single-page app and its assets, served from `frontend/dist/` (503 when not built). A path under `/v1`, `/mcp`, `/oauth`, `/.well-known` or any other route never answers with the page. |
+| `GET /v1/me/service_accounts`, `POST /v1/me/service_accounts.create`, `.revoke` | bearer | The caller's service accounts and their tokens.                                                                                                                                                       |
+| `POST /v1/me/setup/mcp_config`                                                  | bearer | A per-client MCP configuration block with a fresh token, for **Settings → Tokens**.                                                                                                                   |
+| `POST /v1/me/set-default-namespace`                                             | bearer | Set the caller's default workspace.                                                                                                                                                                   |
+| `GET /v1/me/sharing-summary`                                                    | bearer | Memory sharing across the namespaces the caller can read, as one dashboard payload.                                                                                                                   |
 
 ### Operator routes
 
@@ -92,7 +93,7 @@ another org, for example) needs `platform_admin`.
 | `POST /v1/admin/events.tail`       | Recent `loom.agent_events` rows, for live debugging.                                                              |
 | `POST /v1/admin/budget.violations` | Recent latency-budget violations, aggregated.                                                                     |
 | `POST /v1/admin/budget.set`        | Install or clear a per-operation (or per-consumer) latency-budget override.                                       |
-| `POST /v1/admin/ratelimit.set`     | Install or clear a per-namespace or per-org rate-limit override (in memory; see [Rate limits](#rate-limits)).     |
+| `POST /v1/admin/ratelimit.set`     | Install or clear a per-namespace or per-org rate-limit override (see [Rate limits](#rate-limits)).                |
 | `POST /v1/admin/consumers`         | Per-consumer calls, error rate, p50 latency, spend and outcome feedback over a window.                            |
 | `POST /v1/admin/fleet.cost`        | The top tenants by attributed cost over a window.                                                                 |
 | `POST /v1/admin/prompts.evaluate`  | A should-promote verdict for one prompt version.                                                                  |
@@ -317,15 +318,17 @@ and **op class**: `memory`, `memory.read` (exact-key reads such as
 | org       | (verified token org, op class) | 3 × the namespace limit, so a tenant with many namespaces cannot sustain many times one namespace's budget                      |
 | actor     | (namespace, token subject)     | `LOOM_RATELIMIT_ACTOR_FRACTION` × the namespace limit; the default 1.0 creates no actor bucket                                  |
 
-- The limits are deployment-wide targets: each process holds
-  `limit / LOOM_REPLICA_COUNT`, further divided by `LOOM_WEB_WORKERS` unless the
-  web workers share one bucket file (`LOOM_RATELIMIT_SHARED`).
+- The limits are deployment-wide targets: each process holds the limit divided by
+  the live serving replicas in `loom.instances` (at least `LOOM_REPLICA_COUNT`, which
+  is also the count while those rows cannot be read), further divided by
+  `LOOM_WEB_WORKERS` unless the web workers share one bucket file (`LOOM_RATELIMIT_SHARED`).
 - Traffic class `bench` draws from its own bucket sized by
   `LOOM_RATELIMIT_CLASS_FRACTIONS` (default `{"bench": 0.5}`), so a benchmark
   never spends production's budget.
 - `POST /v1/admin/ratelimit.set` installs a per-namespace or per-org override
-  for one op class on the process that serves it. It lives in memory only and
-  is lost on restart; `clear: true` removes it.
+  for one op class. It is stored in `loom.runtime_overrides` and every process
+  adopts it within `LOOM_RUNTIME_OVERRIDES_REFRESH_SECONDS` (default 10), so it
+  survives a restart; `clear: true` removes it. Bucket fill stays per host.
 - An empty bucket answers `429 RATE_LIMITED` with `Retry-After`, the
   `X-RateLimit-*` headers and `detail.retry_after_s`. Both SDKs pace on these
   headers and wait out a 429 for up to 15 s per call by default.

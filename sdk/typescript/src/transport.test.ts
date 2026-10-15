@@ -45,15 +45,26 @@ function transport(script: Scripted[], extra: Partial<ConstructorParameters<type
 }
 
 describe("Transport", () => {
-  it("posts JSON to /v1/<op> with auth, request id and an idempotency key for idempotent ops", async () => {
+  it("posts JSON to /v1/<op> with auth, request id and an idempotency key for idempotent writes", async () => {
     const { t, calls } = transport([{ status: 200, body: { ok: true } }]);
-    const out = await t.post("memory.get", { org: "o", namespace: "n", memory_key: "k" });
+    const out = await t.post("memory.set", { org: "o", namespace: "n", memory_key: "k", value: "v" });
     expect(out).toEqual({ ok: true });
-    expect(calls[0].url).toBe("http://loom.test/v1/memory.get");
+    expect(calls[0].url).toBe("http://loom.test/v1/memory.set");
     expect(calls[0].headers.Authorization).toBe("Bearer k");
     expect(calls[0].headers["X-Request-Id"]).toMatch(/.+/);
     expect(calls[0].headers["Idempotency-Key"]).toMatch(/.+/);
-    expect(JSON.parse(calls[0].init.body as string)).toEqual({ org: "o", namespace: "n", memory_key: "k" });
+    expect(JSON.parse(calls[0].init.body as string)).toEqual({ org: "o", namespace: "n", memory_key: "k", value: "v" });
+  });
+
+  it("sends no idempotency key for a read-only op unless the caller gives one", async () => {
+    const { t, calls } = transport([
+      { status: 200, body: {} },
+      { status: 200, body: {} },
+    ]);
+    await t.post("memory.get", { org: "o", namespace: "n", memory_key: "k" });
+    expect(calls[0].headers["Idempotency-Key"]).toBeUndefined();
+    await t.post("memory.get", { org: "o" }, { idempotencyKey: "abc" });
+    expect(calls[1].headers["Idempotency-Key"]).toBe("abc");
   });
 
   it("sends no idempotency key for a non-idempotent op unless the caller gives one", async () => {
@@ -65,6 +76,18 @@ describe("Transport", () => {
     expect(calls[0].headers["Idempotency-Key"]).toBeUndefined();
     await t.post("memory.set_from_messages", { org: "o" }, { idempotencyKey: "abc" });
     expect(calls[1].headers["Idempotency-Key"]).toBe("abc");
+  });
+
+  it("retries a write whose first request still runs, with the same key, after Retry-After", async () => {
+    sleeps.length = 0;
+    const inProgress = { code: "IDEMPOTENT_IN_PROGRESS", message: "m", in_progress: true };
+    const { t, calls } = transport([
+      { status: 503, body: { detail: inProgress }, headers: { "Retry-After": "1" } },
+      { status: 200, body: { ok: true } },
+    ]);
+    expect(await t.post("memory.set", { org: "o", namespace: "n", memory_key: "k", value: "v" })).toEqual({ ok: true });
+    expect(calls[1].headers["Idempotency-Key"]).toBe(calls[0].headers["Idempotency-Key"]);
+    expect(sleeps).toEqual([1000]);
   });
 
   it("adds the consumer label to the body unless the caller set one", async () => {
@@ -114,7 +137,7 @@ describe("Transport", () => {
   });
 
   it("never retries a 5xx that names a configuration fault", async () => {
-    for (const code of ["CODED_WIDTH_MISMATCH", "OVERRIDE_NOT_SHARED"]) {
+    for (const code of ["CODED_WIDTH_MISMATCH"]) {
       sleeps.length = 0;
       const { t, calls } = transport([
         { status: 503, body: { detail: { code, message: "fix the deployment" } } },

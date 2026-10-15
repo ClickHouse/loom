@@ -116,7 +116,7 @@ export function SourcePicker({
       {sources !== null && !absent && !error && readable.length === 0 && (
         <p role="status" className="text-sm text-text-muted mt-4">
           You read no tracker namespace yet. Join one from{" "}
-          <a className="underline" href="/me/repositories">
+          <a className="underline" href="/repositories">
             Repositories
           </a>{" "}
           (the tracker sources section); its card's Open lands here.

@@ -98,3 +98,11 @@ def test_a_pending_join_request_is_not_an_owned_namespace(ch: _CH) -> None:
     ch.query_one = query_one  # type: ignore[method-assign]
     _ensure("carol@x.io")
     assert ch.inserts == ["personal-carol"]
+
+
+@pytest.fixture(autouse=True)
+def _claims_in_memory(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The deployment-wide claims, without a lock table in the fake."""
+    from tests.unit.claims_fake import memory_claims
+
+    memory_claims(monkeypatch)

@@ -8,10 +8,11 @@
  *   registry marks idempotent (its `Idempotency-Key` is deduplicated); any
  *   other op only on a 408 or a refusal made before dispatch (503
  *   AUTH_UNAVAILABLE), since a 5xx after the handler started may have written;
- * - a per-call timeout only when the op is idempotent by the registry
- *   (`retryTimeouts: "idempotent"`), because the request carried an
- *   `Idempotency-Key` the server dedups on; a non-idempotent op that timed
- *   out may still be executing and is never retried by default.
+ * - a per-call timeout only when the op is idempotent by the registry and
+ *   not read-only (`retryTimeouts: "idempotent"`), because the request
+ *   carried an `Idempotency-Key` the server dedups on; any other op that
+ *   timed out may still be executing (a read-only `memory.ask` would run its
+ *   synthesis twice) and is never retried by default.
  * A 429 is not a retry: it is pacing, bounded by
  * `ratelimitMaxWaitS`.
  */

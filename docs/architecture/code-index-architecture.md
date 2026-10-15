@@ -22,9 +22,26 @@ is in [code index operations](../operations/code-index-operations.md).
 A code namespace is one repository branch at one commit. It has `kind='code'` in
 `loom.namespaces` (`code/app/index/registry.py`, `ensure_registered`), holds no
 memories, and keys every `code_*` row by `(org, namespace)`. Loom keeps one bare git
-mirror per repository, created by `loom code init` and fetched by `code_ingest` on every
-pass. `server/code/app/index/gitrepo.py` shells out to `git`; it has no working tree
-and writes nothing except `fetch`. Branches of one repository share the mirror.
+mirror per repository, a cache of the remote recorded in ClickHouse: `code_ingest` clones
+a missing one (or `loom code init` does, ahead of time) and fetches it on every pass.
+`server/code/app/index/gitrepo.py` shells out to `git`; it has no working tree and writes
+nothing except `fetch`. Branches of one repository share the mirror.
+
+A history read (`blame_range`, bisect, `first_build`, a lesson's code check) on a host
+without the mirror clones it once in the background
+(`server/code/app/index/mirrors.py`, `history_dir`). A read that names its op waits up
+to 10 s for the clone it started, or what is left of the op's latency budget, whichever
+is less; the others answer `no_git_mirror` until it lands. After the clone, the ledger's merge
+commits the clone lacks are fetched by sha and pinned: a merge made on a staging branch
+upstream has since deleted is in the worker's mirror (never pruned) but not in a fresh
+clone. A present mirror answers as it is; one that lacks the indexed head fetches the
+branch in the background. A head that is not the branch's (a PR head) is not fetched.
+
+This puts a full copy of every mirror on every serving host asked about it, which is
+the point (any host answers history reads after a move or a scale-out) and the cost
+(disk per host: a repository's size each). `LOOM_CODE_HISTORY_CLONE_ON_READ=false`
+turns it off: only the worker's host clones, and a history read anywhere else answers
+`no_git_mirror`.
 
 Repository entries come from two sources, merged:
 
@@ -36,7 +53,65 @@ Repository entries come from two sources, merged:
 `configured_repos()` is on the authorization hot path, so it reads an in-process
 snapshot refreshed at boot, on every ingest pass and after an add. Retiring an entry
 (`code/app/index/retire.py`) deactivates its rows, runs an erasure saga over every
-`code_*` table for the namespace, and removes the mirror when no other entry uses it.
+`code_*` table for the namespace, and removes the mirror when no other entry uses it on
+the host that served the call; every other host's sweep removes its own copy.
+
+## Git mirrors on every replica
+
+Every serving process can answer a history read (blame, bisect, citations, PR
+overlays, commit coverage), so every host keeps its own bare mirrors
+(`code/app/index/mirrors.py`). A mirror is a cache of its remote: ClickHouse names the
+remote, and any host can rebuild the mirror from it.
+
+- **Warm-up.** At boot each process clones the mirrors of the indexed entries it lacks,
+  `LOOM_CODE_MIRROR_WARMUP_CONCURRENCY` at a time, each after a random wait of up to
+  30 s, so N replicas starting together do not all clone from GitHub at once. Clones
+  run in the background: readiness does not wait for them.
+- **The cost of a new disk.** A host with an empty `LOOM_CODE_REPOS_ROOT` makes a full
+  bare clone of every indexed repository (several GB for a large one) before its
+  history reads answer. Warm-up stays on by default because a new replica must build
+  its caches without an operator; put `LOOM_CODE_REPOS_ROOT` on a volume that outlives
+  a rollout to pay it once per volume, not once per pod. The clones are full, not
+  `--filter=blob:none`: a partial clone fetches each missing blob from the remote while
+  `git blame` runs, which makes a history read a network read and would reach the
+  remote outside the repository-job sandbox.
+- **The gate.** Every history read goes through `mirrors.history_dir`, which returns
+  the mirror or why there is none. Until the mirror
+  is there the read answers `no_git_mirror: cloning <entry>` (or why it will not be
+  cloned here) instead of a git error, and starts the clone if none is running.
+  `LOOM_GIT_HISTORY=none` turns history off on a host: those reads answer
+  `no_git_history`.
+- **The host loop.** Only the leader asks the remote what changed (`ls-remote` of the
+  extra branches and the PR heads). What its pass fetched is in ClickHouse: each
+  entry's branch tip (`clone_head`), the open PRs' heads (`code_gh_items.head_sha`) and
+  the ledger's merges. Every `LOOM_CODE_MIRROR_FETCH_INTERVAL_S` each host reads those
+  and fetches, by name, only the branches and PR heads its mirror holds at another sha,
+  plus a page of ledger merges it lacks; a host that is current makes no network call.
+  Extra branches are not followed on other hosts: a fresh clone carries every branch
+  the remote had, and the merges on them come through the ledger. One process per host
+  does each mirror's round, and every fetch into a mirror (the pass's, the host loop's,
+  a read's) holds the mirror's `.fetch-lock`; the pass's fetch also counts as the host's
+  round for the interval. The same loop runs `git gc --no-prune` when due and sweeps
+  `LOOM_CODE_REPOS_ROOT`: mirrors, `checkout-*` trees and mirror lock files no active
+  entry names (restricted entries included) and half-done clones. It sweeps nothing
+  when the registry cannot be read.
+- **Sandbox.** A host without the repository-job sandbox never clones or fetches a
+  viewer-added entry with a network remote, on the read path as in the worker
+  (`compiler_tier.unsandboxed_skip`).
+- **Merges the remote lost.** A ledger merge the remote no longer serves ("not our
+  ref" in two calls, so one transient refusal does not count) is recorded in the
+  mirror (`loom-unpinned-merges`), never asked for again, and
+  counted in `/v1/health?include=mirrors` (`mirrors.unpinned_merges`) and `loom doctor`.
+- **The leader** clones a missing mirror in the background too, so one long clone
+  does not hold up the other entries of its pass; an indexed entry keeps its
+  Repositories-card stage while its mirror is cloned again on a new host.
+- **Erasure.** Mirrors and checkouts hold repository content, not memory content: the
+  erasure census does not count them. A removed repository's copies go with the sweep
+  on each host.
+
+`/v1/health?include=mirrors` carries `mirrors`: this host's entries by label as `ready`, `cloning`,
+`failed` (with the reason) and `absent` (with why). Disk use is the size of every
+mirror on every host: N replicas hold N copies.
 
 ## Components
 
@@ -192,12 +267,12 @@ applies it. Per touched file the apply upserts what the delta emits and tombston
 file's `scip` rows it no longer emits; a deleted file is tombstoned whole. Re-applying a
 delta gives the same live set.
 
-| Producer          | Language                | Watermark        | Workers                                 | How it runs                                                                                          |
-| ----------------- | ----------------------- | ---------------- | --------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `scip-clang`      | C++                     | `scip_commit`    | `code_scip_delta`, `code_scip_apply`    | Changed TUs (and TUs including changed headers, capped) via `run_delta.sh`; host cron for full runs. |
-| `scip-typescript` | TypeScript / JavaScript | `scip_commit_ts` | `code_scip_ts_delta`                    | Whole-workspace index per pass, bounded to the window's files by the converter.                      |
-| `scip-go`         | Go                      | `scip_commit_go` | `code_scip_go_delta`                    | One build per module (`run_go_monorepo_delta.sh`).                                                   |
-| `scip-python`     | Python                  | `scip_commit_py` | `code_scip_py_delta`, `code_scip_apply` | Per-merge delta (`run_python_delta.sh`); the host cron covers the rest.                              |
+| Producer          | Language                | Watermark        | Workers                                 | How it runs                                                                                                                                                   |
+| ----------------- | ----------------------- | ---------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scip-clang`      | C++                     | `scip_commit`    | `code_scip_delta`, `code_scip_apply`    | Changed TUs (and TUs including changed headers, capped) via `run_delta.sh`; host cron for full runs, on a dedicated host (the toolchain is not in the image). |
+| `scip-typescript` | TypeScript / JavaScript | `scip_commit_ts` | `code_scip_ts_delta`                    | Whole-workspace index per pass, bounded to the window's files by the converter.                                                                               |
+| `scip-go`         | Go                      | `scip_commit_go` | `code_scip_go_delta`                    | One build per module (`run_go_monorepo_delta.sh`).                                                                                                            |
+| `scip-python`     | Python                  | `scip_commit_py` | `code_scip_py_delta`, `code_scip_apply` | Per-merge delta (`run_python_delta.sh`); the host cron covers the rest.                                                                                       |
 
 `code/domain/index/compiler_tiers.py` (`TIERS`) is the one table of watermark, label
 and workers per producer; status handlers and the dashboard read it. A delta worker

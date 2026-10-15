@@ -50,7 +50,7 @@ async def test_attestation_follows_the_content(control_plane_url, mint_test_toke
 
     ns = f"vf-{uuid.uuid4().hex[:6]}"
     # A PERSON's token (the fixture mints service accounts, which attest as
-    # `process:`); the human path is the one the /me button takes.
+    # `process:`); the human path is the one the dashboard button takes.
     tok = _human_token(org=ORG, namespaces=[ns], subject="alice")
     async with Agent(
         org=ORG, namespace=ns, agent="t", base_url=control_plane_url, api_key=tok

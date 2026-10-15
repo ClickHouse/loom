@@ -200,8 +200,8 @@ each field means is in [monitoring](./monitoring.md#health-checks).
   files whose text no longer matches the recorded SHA-256).
 - **Fix:**
   - Pending files: `loom migrate`, or restart with `LOOM_BOOT_MIGRATE=true`.
-  - Checksum drift or a ledger-only row means a migration file was changed or renamed
-    after some server applied it, usually a server run from an unmerged branch. Compare
+  - Checksum drift or a ledger-only row means a migration file was changed (or renamed
+    and changed) after some server applied it, usually a server run from an unmerged branch. Compare
     the applied DDL with the repository file. If the effect is identical, record the
     current file (the newest row wins):
 
@@ -242,12 +242,13 @@ each field means is in [monitoring](./monitoring.md#health-checks).
 
 ### No worker runs at all
 
-- **Check:** `/v1/health?include=workers` → `workers_leader` on each container. A web
-  container reports `workers_lease_absent` (expected); the workers container must hold
-  the lease.
-- **Fix:** exactly one process per deployment should run the workers
-  (`LOOM_BACKGROUND_WORKERS=on` or `auto` on one container, `off` elsewhere). During a
-  colour swap, the new workers container takes the lease only after the old one stops.
+- **Check:** `/v1/health?include=workers` → `workers_leader` on each process. All but
+  one report `workers_lease_absent` (expected); one must hold the lease. A
+  `workers_lease_unreachable` problem names why a process could not ask ClickHouse;
+  `workers_lease_given_up` that its workers child kept failing to start.
+- **Fix:** run every replica with `LOOM_BACKGROUND_WORKERS=auto` and `LOOM_DEPLOYMENT=1`; a
+  process with `off` never runs them, and one outside the deployment runs its own. During
+  an upgrade an older build leaves the lease to a live newer one.
 
 ## Host
 
@@ -267,7 +268,7 @@ each field means is in [monitoring](./monitoring.md#health-checks).
 
 ## Local stack
 
-- **The dashboard at `/me` returns 503.** The server runs from source (`make server`)
+- **The dashboard returns 503.** The server runs from source (`make server`)
   without a built frontend. Run `make frontend-build`; `/v1/admin/*` answers either way.
 - **The stack ignores your `.env`.** A `docker compose` command without
   `--env-file .env` boots the compose file's fallbacks (auth on, an OpenAI provider with

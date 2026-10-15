@@ -12,6 +12,8 @@ from typing import Any
 import pytest
 
 from server.core import namespace_write_marks as m
+from server.core import request_tail
+from tests.unit.cross_replica_fake import in_request
 
 
 class _CH:
@@ -166,7 +168,9 @@ def test_client_insert_feeds_the_buffer(monkeypatch) -> None:
     """The hook sits in CHClient.insert, after a successful write, followed by
     the registered observers; an observer that raises never fails the write."""
     from server.core import ch as chmod
+    from server.core import rmt_carry
 
+    monkeypatch.setattr(rmt_carry, "carries", lambda _table: False)  # its own tests
     seen: list[tuple[str, int]] = []
     monkeypatch.setattr(m, "observe_insert", lambda table, rows: seen.append((table, len(rows))))
 
@@ -253,3 +257,161 @@ def test_the_wiring_registers_the_memory_planes_insert_observer() -> None:
     before = list(chmod._INSERT_OBSERVERS)
     chmod.add_insert_observer(recent_writes.observe_insert)  # idempotent
     assert chmod._INSERT_OBSERVERS == before
+
+
+def test_a_process_start_moves_the_all_orgs_mark_committed() -> None:
+    """A crashed process took its unflushed marks with it; its replacement's
+    start mark blocks every fast precedent proven unmoved before then."""
+    ch = _CH()
+    asyncio.run(m.mark_process_start(ch=ch))
+    ((table, rows, settings),) = ch.inserts
+    assert table == m.TABLE and settings == {"async_insert": 0, "wait_for_async_insert": 1}
+    assert [(r["org"], r["namespace"], r["plane"]) for r in rows] == [("*", "*", "restart")]
+
+
+def test_last_writes_folds_in_the_all_orgs_mark() -> None:
+    from server.memory.domain.precedents import marks_block
+
+    seen: list[str] = []
+    started = datetime(2026, 10, 14, 12, 0, 0)
+
+    class _Read(_CH):
+        async def query_all(self, sql, params=None):
+            seen.append(sql)
+            return [{"namespace": "*", "last_write": started}]
+
+    out = asyncio.run(m.last_writes("o", ["n"], ch=_Read()))
+    assert "(org = '*' AND namespace = '*')" in seen[0]
+    assert out["*"] == started.replace(tzinfo=UTC)
+
+    class _Prec:
+        retrieved_at = started.replace(tzinfo=UTC) - timedelta(minutes=1)
+
+    assert marks_block(_Prec(), out, namespaces=["n"]) == "moved:*"
+
+
+def test_one_timed_flush_at_a_time(settings_override, monkeypatch) -> None:
+    """A timer that fires while a flush is still in flight starts no second one;
+    the marks touched meanwhile go with the next."""
+    settings_override(namespace_write_marks_flush_interval_s=0.05)
+    live = {"now": 0, "peak": 0}
+    ch = _CH()
+
+    async def slow_insert(table, rows, settings=None, **kw):
+        live["now"] += 1
+        live["peak"] = max(live["peak"], live["now"])
+        await asyncio.sleep(0.15)
+        ch.inserts.append((table, rows, settings))
+        live["now"] -= 1
+
+    ch.insert = slow_insert  # type: ignore[method-assign]
+    monkeypatch.setattr(m, "_default_client", lambda: ch)
+
+    async def run():
+        m.touch("o", "a", "memory")
+        await asyncio.sleep(0.07)  # its flush is in flight
+        m.touch("o", "b", "memory")
+        await asyncio.sleep(0.6)
+
+    asyncio.run(run())
+    assert live["peak"] == 1
+    assert [[r["namespace"] for r in rows] for _, rows, _ in ch.inserts] == [["a"], ["b"]]
+
+
+class _KeyCH:
+    """The Keeper-key statements: the key insert and the key read."""
+
+    def __init__(self, *, n: int = 0) -> None:
+        self.n = n
+        self.statements: list[tuple[str, Any, str]] = []
+        self.inserts: list[str] = []
+
+    async def query_one(self, sql, params=None):
+        from server.core.ch import current_query_tag
+
+        self.statements.append((sql, params, current_query_tag()))
+        return {"n": self.n}
+
+    async def execute(self, sql, params=None, **kw):
+        from server.core.ch import current_query_tag
+
+        self.statements.append((sql, params, current_query_tag()))
+
+    async def insert(self, table, rows, settings=None, **kw):
+        self.inserts.append(table)
+
+
+def _in_a_request_tail(ch: _KeyCH, monkeypatch, body) -> None:
+    from server.core import request_tail
+
+    monkeypatch.setattr(m, "_default_client", lambda: ch)
+
+    async def run():
+        tail = request_tail._Tail()
+        token = request_tail._tail.set(tail)
+        try:
+            body()
+            await request_tail.settle(tail)
+        finally:
+            request_tail._tail.reset(token)
+
+    asyncio.run(run())
+
+
+def test_a_writes_request_tail_is_one_keeper_key_write(monkeypatch) -> None:
+    """A memory.set's answer waits for one Keeper write per namespace it wrote: no
+    async insert (whose busy timeout the answer would wait out), no part, tagged."""
+    ch = _KeyCH()
+
+    def body():
+        rows = [{"org": "o", "namespace": "a"}]
+        m.observe_insert("loom.memory", rows)
+        m.observe_insert("loom.memory_chunks", rows)
+
+    _in_a_request_tail(ch, monkeypatch, body)
+    assert ch.inserts == []
+    [(sql, params, tag)] = ch.statements
+    assert sql.startswith(f"INSERT INTO {m.KEYS_TABLE} (key) SETTINGS async_insert = 0 ")
+    assert params == {"key": "o\x1fa"} and tag == m.KEY_QUERY_TAG
+    assert set(m.pending()) == {("o", "a", "memory"), ("o", "a", "chunk")}  # the timer's
+
+
+def test_a_stalled_key_holds_the_answer_back_at_most_a_second(monkeypatch) -> None:
+    class _Stalled(_KeyCH):
+        async def execute(self, sql, params=None, **kw):
+            await asyncio.sleep(30)
+
+    ch = _Stalled()
+    monkeypatch.setattr(m, "KEY_WAIT_S", 0.1)
+
+    async def run() -> float:
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        with in_request() as tail:
+            monkeypatch.setattr(m, "_default_client", lambda: ch)
+            m.observe_insert("loom.memory", [{"org": "o", "namespace": "a"}])
+            await request_tail.settle(tail)
+        waited = loop.time() - started
+        assert [t for t in m._inflight if not t.done()], "the key lands detached"
+        for t in m._inflight:
+            t.cancel()
+        return waited
+
+    assert asyncio.run(run()) < 1.0
+
+
+def test_written_within_reads_the_keys_by_the_servers_clock() -> None:
+    ch = _KeyCH(n=1)
+    assert asyncio.run(m.written_within("o", "a", 20.0, ch=ch)) is True
+    sql, params, _ = ch.statements[-1]
+    assert "FROM loom.namespace_write_keys" in sql
+    assert "now64(3) - toIntervalMillisecond({ms:UInt32})" in sql
+    assert params == {"keys": ["o\x1fa", "o\x1f*"], "ms": 20000}
+    assert asyncio.run(m.written_within("o", "a", 20.0, ch=_KeyCH(n=0))) is False
+
+
+def test_a_bump_sets_the_namespaces_key() -> None:
+    ch = _KeyCH()
+    asyncio.run(m.bump("o", "a", "memory", ch=ch))
+    assert ch.inserts == [m.TABLE]
+    assert ch.statements[-1][1] == {"key": "o\x1fa"}

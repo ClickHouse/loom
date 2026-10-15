@@ -244,6 +244,8 @@ class _Cfg:
     def __init__(self, namespace: str, branch: str) -> None:
         self.org, self.namespace, self.git_branch = ORG, namespace, branch
         self.git_dir, self.repo = GIT, "ClickHouse/ClickHouse"
+        self.git_remote = "https://github.com/ClickHouse/ClickHouse.git"
+        self.label, self.source = f"{ORG}/{namespace}", "config"
 
 
 class _Repo:
@@ -316,9 +318,23 @@ class _Git:
         raise AssertionError(f"unexpected git {args}")
 
 
+def mirror_on_disk(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    """The fake cfgs' mirror is present on this host, so no clone is started."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / GIT).mkdir(parents=True)
+
+    from server.code.app.index import mirrors
+
+    async def _holds(cfg: Any, want: str, **_kw: Any) -> bool:
+        return True
+
+    monkeypatch.setattr(mirrors, "holds", _holds)
+
+
 @pytest.fixture
-def wired(monkeypatch):
+def wired(monkeypatch, tmp_path):
     h.reset_cache_for_tests()
+    mirror_on_disk(monkeypatch, tmp_path)
     repo, git = _Repo(), _Git()
     monkeypatch.setattr(h, "CodeRepo", lambda: repo)
     monkeypatch.setattr(h, "require_code_intel", lambda: None)
@@ -623,3 +639,38 @@ async def test_wide_ranges_are_cut_at_400_lines(wired) -> None:
     )
     assert out.range == {"start": 1, "end": 400, "requested_end": 5000, "truncated": True}
     assert ("blame", "-w", "-M", "--porcelain", "-L", "1,400", TO, "--", PATH) in git.calls
+
+
+@pytest.mark.asyncio
+async def test_a_host_without_the_mirror_names_the_clone_and_runs_no_git(
+    wired, monkeypatch, tmp_path
+) -> None:
+    """A configured repo whose mirror is not on this host yet answers no_git_mirror."""
+    _, git, _ = wired
+    asked: list[Any] = []
+
+    async def _cloning(cfg: Any, **_kw: Any) -> bool:
+        asked.append(cfg)
+        return False
+
+    from server.code.app.index import mirrors
+
+    monkeypatch.setattr(mirrors, "mirror_ready", _cloning)
+    (tmp_path / GIT).rmdir()
+    out = await h.handle_code_blame_range(
+        CodeBlameRangeInput(
+            stage="last_touched",
+            org=ORG,
+            namespace=NS,
+            path=PATH,
+            start_line=10,
+            end_line=12,
+            to_version="26.3",
+        )
+    )
+    assert {c.namespace for c in asked} == {NS}
+    # Named by its label: a remote URL can carry credentials.
+    assert out.window["error"] == f"no_git_mirror: cloning {asked[0].label}"
+    assert "https://" not in out.window["error"]
+    assert out.verdict == "unknown" and out.causes == ["window_unresolved"]
+    assert out.candidates == [] and git.calls == []

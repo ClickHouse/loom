@@ -158,6 +158,28 @@ async def test_an_overloaded_503_waits_the_servers_hint(
     await t.close()
 
 
+async def test_a_key_still_running_is_retried_with_the_same_key(sleeps: list[float]) -> None:
+    """A write that timed out client-side and is retried while the first
+    request runs waits for its answer; a read sends no key at all."""
+    keys: list[str | None] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        keys.append(req.headers.get("Idempotency-Key"))
+        if req.url.path == "/v1/memory.set" and len(keys) == 1:
+            detail = {"code": "IDEMPOTENT_IN_PROGRESS", "message": "m", "in_progress": True}
+            return httpx.Response(503, json={"detail": detail}, headers={"Retry-After": "1"})
+        return httpx.Response(200, json={"ok": True})
+
+    t = Transport("http://x", retry=RetryPolicy(backoff_s=0.1, backoff_jitter=0))
+    _mock(t, handler)
+    assert await t.post("/v1/memory.set", {}) == {"ok": True}
+    assert sleeps == [pytest.approx(1.0)]
+    assert keys[0] is not None and keys[0] == keys[1]
+    assert await t.post("/v1/memory.get", {}) == {"ok": True}
+    assert keys[2] is None
+    await t.close()
+
+
 async def test_per_call_override_disables_retries_and_the_transport_policy_stays(
     sleeps: list[float],
 ) -> None:
@@ -210,7 +232,7 @@ async def test_a_5xx_is_retried_for_a_non_idempotent_op_only_when_it_never_ran(
     await t.close()
 
 
-@pytest.mark.parametrize("code", ["CODED_WIDTH_MISMATCH", "OVERRIDE_NOT_SHARED"])
+@pytest.mark.parametrize("code", ["CODED_WIDTH_MISMATCH"])
 async def test_a_configuration_error_is_not_retried(sleeps: list[float], code: str) -> None:
     """A 503 an operator must fix: a retry gets the same answer."""
     calls = 0
@@ -228,7 +250,9 @@ async def test_a_configuration_error_is_not_retried(sleeps: list[float], code: s
     await t.close()
 
 
-async def test_timeouts_retry_only_for_idempotent_ops_unless_told(sleeps: list[float]) -> None:
+async def test_timeouts_retry_only_for_ops_the_server_dedups_unless_told(
+    sleeps: list[float],
+) -> None:
     calls: list[str] = []
 
     def handler(req: httpx.Request) -> httpx.Response:
@@ -239,8 +263,12 @@ async def test_timeouts_retry_only_for_idempotent_ops_unless_told(sleeps: list[f
 
     t = Transport("http://x")
     _mock(t, handler)
-    assert await t.post("/v1/memory.get", {}) == {"ok": True}  # idempotent: retried
-    assert calls.count("/v1/memory.get") == 2
+    assert await t.post("/v1/memory.set", {}) == {"ok": True}  # its key is deduplicated
+    assert calls.count("/v1/memory.set") == 2
+    # Read-only: no replay, so a retry would run a second `memory.ask` beside the first.
+    with pytest.raises(BackendUnavailable, match="ReadTimeout"):
+        await t.post("/v1/memory.ask", {})
+    assert calls.count("/v1/memory.ask") == 1
     # Not idempotent: surfaces at once — as the typed error naming the server,
     # the httpx exception as its cause.
     with pytest.raises(BackendUnavailable, match="cannot reach http://x: ReadTimeout") as exc:

@@ -1,34 +1,16 @@
-"""The conflict judge off the write's critical path.
+"""The conflict judge off the write's critical path: `memory.set` inserts the row
+`active` with `conflict_verdict: pending`, and a task settles the verdict later.
+The walkthrough is in docs/architecture/memory-architecture.md ("How a deferred
+verdict settles"). Invariants:
 
-`memory.set` runs a cosine conflict check on every searchable write; when a
-peer sits in the judge's band the check makes one cheap LLM call before
-the row is written: about a third of sets, at +1.0 s each (judged sets
-2.1–2.3 s end to end). The deterministic tiers — canonical merge, the pinned 409,
-templated substitution, the duplicate tier — stay inline; only the LLM call
-moves.
-
-Shape (two-phase, on the write): the row is inserted `active`
-at once and the response says `conflict_verdict: pending`, `verdict_at:
-deferred`; a task then runs the very same judge-and-fold the inline path
-runs (`conflicts.settle_deferred_judgement`) and lands the verdict on the
-row: `conflict` → the conflict marks, `refines` → the peers superseded and
-linked, `merge` / `duplicate` → this row becomes `status=duplicate,
-duplicate_of=<peer>` (a merge cannot un-insert; under a run this is what
-the inline path writes too), `clear` → nothing. `memory.get`
-shows the settled `status` / `duplicate_of` and a derived
-`conflict_verdict` (`pending` while this process still holds the judge).
-`await_verdict: true` on the call keeps the inline behaviour; `dry_run`
-always judges inline (the verdict is the answer).
-
-The task is per request (`asyncio.create_task`, request context kept, the
-same shape as memory.ask's cited-used credit): the judge's statements and
-the generation span carry the request id that wrote the row. Every settle
-is one `memory_drops` row (`stage=conflict.deferred`, `reason=<verdict>`,
-`item=<memory_key>`) so the settled distribution is one GROUP BY away, and
-the process drains in-flight judges on shutdown. A judge lost to a crash
-leaves the row `active`, which is the cosine verdict on a band-only check
-and the fail-open the inline judge already had; the conflict sweep worker
-re-checks rows without a watermark.
+- The deterministic tiers (canonical merge, pinned 409, templated substitution,
+  duplicates) stay inline; only the LLM judge is deferred.
+- The settle runs the same judge-and-fold as the inline path
+  (`conflicts.settle_deferred_judgement`), in the writing request's context.
+- A row is `pending` exactly while its embedding carries the pending mark
+  (`store.conflict_marks`); the settle stamps it, and the leader's conflict sweep
+  re-judges a mark a lost task left.
+- `await_verdict: true` and `dry_run` judge inline.
 """
 
 from __future__ import annotations
@@ -36,9 +18,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from datetime import datetime
 from typing import Any
 
 from server.core.background import register_deferred_task
+from server.core.datetimes import naive_utc_now, to_naive_utc
+from server.memory.store import conflict_marks
+from server.settings import settings
 
 log = logging.getLogger(__name__)
 
@@ -48,6 +34,8 @@ INLINE = "inline"
 # The ledger row the settle writes says `verdict_at=settled`.
 SETTLED = "settled"
 SETTLE_OPERATION = "memory.set.settle"
+# A settle whose write a newer one replaced before the verdict could land.
+MOVED = "moved"
 DROP_STAGE = "conflict.deferred"
 
 _TASKS: set[asyncio.Task[Any]] = set()
@@ -89,11 +77,93 @@ def pending_count() -> int:
     return len(_PENDING)
 
 
-def verdict_from_row(memory_id: str, status: Any, duplicate_of: Any = "") -> str:
-    """The verdict a row shows on read: `pending` while this process still
-    holds its judge, else derived from the lifecycle status (`active` →
+def checked_at_for(conflict_result: Any) -> Any:
+    """The `conflict_checked_at` a write's embedding row carries: the pending
+    mark for a deferred judge, now for a verdict reached inline, NULL when no
+    check ran."""
+    verdict = str(getattr(conflict_result, "verdict", "") or "")
+    if not verdict:
+        return None
+    return conflict_marks.PENDING_MARK if verdict == PENDING else naive_utc_now()
+
+
+async def row_pending(row: Any) -> bool:
+    """Whether this row's judge is still owed: this process's own judge, else the
+    mark on its embedding row, read only for an `active` row written inside
+    `PENDING_READ_SECONDS` while the judge is on (a settled verdict moves every
+    other status; an older mark is read as settled)."""
+    if str(getattr(row, "status", "") or "") != "active" or not settings.memory_conflict_judge:
+        return False
+    if is_pending(getattr(row, "memory_id", "")):
+        return True
+    written = getattr(row, "updated_at", None) or getattr(row, "created_at", None)
+    if not isinstance(written, datetime):
+        return False
+    age = (naive_utc_now() - to_naive_utc(written)).total_seconds()
+    if age > conflict_marks.PENDING_READ_SECONDS:
+        return False
+    try:
+        return await conflict_marks.key_has_pending_mark(
+            str(row.org),
+            str(row.namespace),
+            str(row.agent),
+            str(row.user_id),
+            str(row.session_id),
+            str(row.memory_key),
+        )
+    except Exception as e:  # noqa: BLE001 — a verdict label never fails the read
+        log.warning("pending verdict read failed for key=%r: %s", row.memory_key, e)
+        return False
+
+
+async def stamp_checked(
+    ident: Any, *, version: int, created_at: datetime, content_sha256: str = ""
+) -> int:
+    """The verdict landed: stamp the embedding rows the judged write (`version`,
+    `created_at`, `content_sha256`) put on the key."""
+    return await conflict_marks.stamp_checked(
+        str(ident.org),
+        str(ident.namespace),
+        str(getattr(ident, "agent", "") or ""),
+        str(getattr(ident, "user_id", "-") or "-"),
+        str(getattr(ident, "session_id", "-") or "-"),
+        str(ident.memory_key),
+        version=int(version),
+        created_at=created_at,
+        content_sha256=content_sha256,
+    )
+
+
+async def still_current(ident: Any, content_sha256: str) -> bool:
+    """Whether the key's live memory row is still the judged write: a verdict for
+    an older revision must not land on the newer one, which owes its own judge.
+    True when the write's hash is unknown (a row from before 038). The identity is
+    the content: a later revision that wrote the same bytes back shares the
+    verdict, which differs from its own only by what its peers did meanwhile."""
+    import server.memory.store as memory_repo
+
+    if not content_sha256:
+        return True
+    key = (
+        str(ident.org),
+        str(ident.namespace),
+        str(getattr(ident, "agent", "") or ""),
+        str(getattr(ident, "user_id", "-") or "-"),
+        str(getattr(ident, "session_id", "-") or "-"),
+        str(ident.memory_key),
+    )
+    rows = await memory_repo.memory_rows_by_identity_keys([key], sequential=True)
+    mem = rows.get(key)
+    return mem is not None and str(mem.content_sha256 or "") == content_sha256
+
+
+def verdict_from_row(
+    memory_id: str, status: Any, duplicate_of: Any = "", *, pending: bool = False
+) -> str:
+    """The verdict a row shows on read: `pending` while the row's judge is
+    owed (`row_pending`), else derived from the lifecycle status (`active` →
     `clear`, `conflicted` → `conflict`, `duplicate` → `duplicate`, …)."""
-    if is_pending(memory_id):
+    if pending:
         return PENDING
     s = str(status or "")
     if s == "active" and str(duplicate_of or ""):
@@ -102,10 +172,18 @@ def verdict_from_row(memory_id: str, status: Any, duplicate_of: Any = "") -> str
 
 
 def schedule_settle(
-    ident: Any, conflict_result: Any, *, memory_id: str, cfg: Any = None
+    ident: Any,
+    conflict_result: Any,
+    *,
+    memory_id: str,
+    version: int,
+    created_at: datetime,
+    content_sha256: str = "",
+    cfg: Any = None,
 ) -> asyncio.Task[str] | None:
-    """After the row is in: run the deferred judge for a `pending` result.
-    None when there is nothing pending or no running loop."""
+    """After the row is in (at `version`, its embedding at `created_at`): run the
+    deferred judge for a `pending` result. None when there is nothing pending or no
+    running loop."""
     pj = getattr(conflict_result, "pending_judge", None)
     if pj is None or getattr(conflict_result, "verdict", "") != PENDING:
         return None
@@ -118,7 +196,16 @@ def schedule_settle(
         return None  # no running loop (sync harness): the row stays active
     task = register_deferred_task(
         loop.create_task(
-            settle(ident, pj, memory_id=memory_id, cfg=cfg, request_id=request_id),
+            settle(
+                ident,
+                pj,
+                memory_id=memory_id,
+                version=version,
+                created_at=created_at,
+                content_sha256=content_sha256,
+                cfg=cfg,
+                request_id=request_id,
+            ),
             name="loom-conflict-judge",
         )
     )
@@ -129,12 +216,22 @@ def schedule_settle(
 
 
 async def settle(
-    ident: Any, pj: Any, *, memory_id: str, cfg: Any = None, request_id: str = ""
+    ident: Any,
+    pj: Any,
+    *,
+    memory_id: str,
+    version: int,
+    created_at: datetime,
+    content_sha256: str = "",
+    cfg: Any = None,
+    request_id: str = "",
 ) -> str:
-    """Judge, fold and land the verdict on the row; returns the settled
-    verdict (`error` when the settle itself failed — the row stays as
-    inserted). Never raises. Writes one `memory_drops` row and one ledger
-    row (`memory.set.settle`, the write's `request_id`)."""
+    """Judge, fold and land the verdict on the row, then stamp the write's
+    (`version`) `conflict_checked_at`; returns the settled verdict (`error` when the
+    settle itself failed — the row stays as inserted, its mark left for the
+    conflict sweep; `moved` when a newer write took the key while the judge ran,
+    which lands nothing). Never raises. Writes one `memory_drops` row and one
+    ledger row (`memory.set.settle`, the write's `request_id`)."""
     from server.memory.app import conflicts as cf
     from server.memory.app.drops import record_drop
     from server.observability import cost_accumulator
@@ -148,7 +245,12 @@ async def settle(
     result: Any = None
     try:
         result = await cf.settle_deferred_judgement(pj)
-        verdict = await apply(ident, result, memory_id=memory_id, cfg=cfg)
+        if await still_current(ident, content_sha256):
+            verdict = await apply(
+                ident, result, memory_id=memory_id, cfg=cfg, content_sha256=content_sha256
+            )
+        else:
+            verdict = MOVED
     except Exception as e:  # noqa: BLE001 — the row is in; the verdict is best effort
         log.warning(
             "deferred conflict judge failed for %s/%s key=%r: %s",
@@ -159,6 +261,13 @@ async def settle(
         )
     finally:
         _PENDING.pop(str(memory_id), None)
+    if verdict not in ("error", MOVED):
+        try:
+            await stamp_checked(
+                ident, version=version, created_at=created_at, content_sha256=content_sha256
+            )
+        except Exception as e:  # noqa: BLE001 — the verdict stands; the sweep re-judges at worst
+            log.warning("conflict_checked_at stamp failed for key=%r: %s", ident.memory_key, e)
     record_drop(ident.org, ident.namespace, DROP_STAGE, verdict, item=str(ident.memory_key))
     latency_ms = int((time.monotonic() - started) * 1000)
     emit_settle_row(
@@ -245,25 +354,39 @@ def emit_settle_row(
         log.debug("settle ledger row emit failed", exc_info=True)
 
 
-async def apply(ident: Any, result: Any, *, memory_id: str, cfg: Any = None) -> str:
+async def apply(
+    ident: Any, result: Any, *, memory_id: str, cfg: Any = None, content_sha256: str = ""
+) -> str:
     """Land a settled `ConflictResult` on a row that was inserted `active`:
     the same post-insert steps the inline path takes for `conflict` and
     `refines`; `merge` / `duplicate` flip this row to `status=duplicate`
     pointing at the peer (and a `merge` still reinforces the peer). Returns
-    the judge's verdict."""
-    from server.core.ch import get_client
+    the judge's verdict, or `moved` when the row is no longer the write of
+    `content_sha256`: the writes that flip it carry that precondition
+    (`conflicts.judged_write`), so a revision committed meanwhile is never
+    given this verdict."""
+    from server.core.ch import get_client, sequential_reads
     from server.memory.app import conflicts as cf
 
     verdict = str(getattr(result, "verdict", "") or "")
     if verdict == "conflict" and result.peers:
-        await cf.mark_peers_conflicted(
-            org=ident.org, new_memory_id=memory_id, peer_ids=[p.memory_id for p in result.peers]
-        )
+        with sequential_reads():
+            landed = await cf.mark_peers_conflicted(
+                org=ident.org,
+                new_memory_id=memory_id,
+                peer_ids=[p.memory_id for p in result.peers],
+                expected_sha256=content_sha256,
+            )
+        if not landed:
+            return MOVED
     elif (
         verdict == "refines"
         and result.refined_peers
         and not getattr(ident, "proposed", False)  # a trial fact supersedes nothing
     ):
+        # Peers only: `apply_refines` re-checks the row right before it retires any.
+        if not await still_current(ident, content_sha256):
+            return MOVED
         await cf.apply_refines(
             org=ident.org,
             namespace=ident.namespace,
@@ -273,27 +396,42 @@ async def apply(ident: Any, result: Any, *, memory_id: str, cfg: Any = None) -> 
             ch=get_client(),
             relation=result.refine_relation,
             run_id=str(getattr(ident, "run_id", "-") or "-"),
+            expected_sha256=content_sha256,
         )
     elif verdict in ("merge", "duplicate"):
         peer_id = str(
             (result.existing_memory_id if verdict == "merge" else result.duplicate_of_id) or ""
         )
-        await mark_duplicate(ident.org, memory_id, peer_id)
+        with sequential_reads():
+            flipped = await mark_duplicate(
+                ident.org, memory_id, peer_id, expected_sha256=content_sha256
+            )
+        if peer_id and peer_id != memory_id and not flipped:
+            return MOVED
         if verdict == "merge":
             await cf.auto_reinforce_peer(ident, peer_id, ch=get_client(), cfg=cfg)
     return verdict
 
 
-async def mark_duplicate(org: str, memory_id: str, peer_id: str) -> int:
+async def mark_duplicate(
+    org: str, memory_id: str, peer_id: str, *, expected_sha256: str = ""
+) -> int:
     """This row becomes the peer's duplicate: a new RMT version with
     `status=duplicate`, `duplicate_of=<peer>` on loom.memory, mirrored onto
-    the embeddings row by the version writer."""
+    the embeddings row by the version writer; only the write of
+    `expected_sha256` when given (`conflicts.judged_write`)."""
     import server.memory.store as memory_repo
+    from server.memory.app.conflicts import judged_write
 
     if not peer_id or peer_id == memory_id:
         return 0
+    skip, version = judged_write(expected_sha256)
     return await memory_repo.write_versions_by_ids(
-        org, [memory_id], lambda _row: {"status": "duplicate", "duplicate_of": peer_id}
+        org,
+        [memory_id],
+        lambda row: {"status": "duplicate", "duplicate_of": peer_id} | version(row),
+        skip=skip,
+        judged=skip is not None,
     )
 
 
@@ -314,18 +452,23 @@ __all__ = [
     "DEFERRED",
     "DROP_STAGE",
     "INLINE",
+    "MOVED",
     "PENDING",
     "SETTLED",
     "SETTLE_OPERATION",
     "apply",
+    "checked_at_for",
     "drain",
     "emit_settle_row",
     "is_pending",
     "mark_duplicate",
     "pending_count",
+    "row_pending",
     "schedule_settle",
     "settle",
     "settled_duplicate_of",
+    "still_current",
+    "stamp_checked",
     "verdict_at",
     "verdict_from_row",
     "wanted",

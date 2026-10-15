@@ -1,7 +1,7 @@
 // Single source of truth for the MCP-client list — the picker labels and the
 // config-block formatter. The first-run wizard and the setup view both import
 // from here, so adding a client is one edit. The server mirrors the list in
-// server/identity/app/me_routes.py (MCP_SETUP_CLIENT_LABELS).
+// server/identity/app/me_setup.py (MCP_SETUP_CLIENT_LABELS).
 
 export type ClientId = "claude-desktop" | "claude-code" | "codex" | "cursor" | "vscode" | "cline" | "windsurf" | "zed";
 

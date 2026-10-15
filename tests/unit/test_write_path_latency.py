@@ -74,6 +74,19 @@ def post_insert(monkeypatch: pytest.MonkeyPatch):
     async def _emit(**kw: Any) -> None:
         seen["order"].append("audit")
         seen["audit"] = kw
+        await asyncio.sleep(0.01)
+
+    async def _begin(org: str, namespace: str, **_: Any) -> str:
+        # Inside the tail: the audit row is being written beside it.
+        seen["order"].append("begin")
+        seen["begin_beside_audit"] = "audit" in seen["order"]
+        return "tok"
+
+    async def _end(*_: Any, **__: Any) -> None:
+        seen["order"].append("end")
+
+    async def _note_writes(*_: Any, **__: Any) -> None:
+        seen["order"].append("write")
 
     real_schedule = after_write.schedule
 
@@ -86,20 +99,24 @@ def post_insert(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(ks, "supersede_same_key_rows", _supersede)
     monkeypatch.setattr(audit, "emit", _emit)
     monkeypatch.setattr(after_write, "schedule", _schedule)
+    from server.memory.store import graph_projections
+
+    monkeypatch.setattr(graph_projections, "begin", _begin)
+    monkeypatch.setattr(graph_projections, "end", _end)
+    monkeypatch.setattr(graph_projections, "note_writes", _note_writes)
+    monkeypatch.setattr(graph_projections, "_default_client", lambda: None)
     return seen, gate
 
 
-def _set_input() -> Any:
+def _set_input(value: str = "Alice deploys Project Phoenix on Tuesday") -> Any:
     from server.memory.api.models_crud import MemorySetInput
 
-    return MemorySetInput(
-        org="o", namespace="n", agent="a", memory_key="deploy_day", value="Tuesday"
-    )
+    return MemorySetInput(org="o", namespace="n", agent="a", memory_key="deploy_day", value=value)
 
 
-async def _post_insert() -> None:
+async def _post_insert(value: str = "Alice deploys Project Phoenix on Tuesday") -> None:
     await set_commit._set_post_insert(
-        _set_input(),
+        _set_input(value),
         ch=object(),
         cfg=type("Cfg", (), {"policy": "newest_wins"})(),
         memory_id="m1",
@@ -116,16 +133,30 @@ async def test_set_returns_before_its_entity_projection_lands(post_insert) -> No
     await asyncio.wait_for(_post_insert(), timeout=1.0)  # the projection is still blocked
     assert seen["scheduled"] == ["loom-set-entities"]
     # Scoped to its namespace, so a walk there waits for it; its edges wait for their flush.
-    assert seen["scope"] == ("o", "n") and seen["project_kw"] == {"wait_visible": True}
+    # The entities decided once, handed to the projection rather than mined again.
+    from server.memory.app.entity_projections import set_entities_for_projection
+
+    ents = set_entities_for_projection(_set_input(), _set_input().value)
+    assert seen["scope"] == ("o", "n")
+    assert seen["project_kw"] == {"wait_visible": True, "ents": ents}
     assert "entities" not in seen["order"]
     assert {"supersede", "audit"} <= set(seen["order"])
     # The audit row is the write's receipt: hashes, never the value.
     subject = seen["audit"]["subject"]
     assert subject["memory_id"] == "m1" and subject["content_sha256"] == "sha"
     assert "value" not in subject
+    # Its in-flight row is written in the same gather as the audit row.
+    assert seen["begin_beside_audit"] and "end" not in seen["order"]
     gate.set()
     await after_write.drain(timeout_s=1.0)
-    assert seen["order"][-1] == "entities"
+    assert "entities" in seen["order"]
+
+
+@pytest.mark.asyncio
+async def test_a_set_with_no_entity_pair_projects_nothing_and_marks_nothing(post_insert) -> None:
+    seen, _gate = post_insert
+    await asyncio.wait_for(_post_insert("Tuesday"), timeout=1.0)
+    assert seen["scheduled"] == [] and "begin" not in seen["order"]
 
 
 # ---- memory.update ----------------------------------------------------------------
@@ -177,11 +208,13 @@ async def test_update_defers_the_judge_and_clears_the_stale_mark(wired, monkeypa
         verdict=cd.PENDING, peers=[], pending_judge=PendingJudge.__new__(PendingJudge)
     )
     ch, calls = wired(pending)
-    scheduled: list[tuple[Any, str]] = []
+    scheduled: list[tuple[Any, str, int]] = []
     monkeypatch.setattr(
         cd,
         "schedule_settle",
-        lambda ident, result, *, memory_id, cfg=None: scheduled.append((ident, memory_id)),
+        lambda ident, result, *, memory_id, version, created_at, cfg=None, **_: scheduled.append(
+            (ident, memory_id, version)
+        ),
     )
     out = await update_mod.handle_memory_update(_input(run_id="run-7"))
     assert calls.check[0]["defer_judge"] is True
@@ -190,8 +223,9 @@ async def test_update_defers_the_judge_and_clears_the_stale_mark(wired, monkeypa
     # the settle re-marks the row if the new value still conflicts.
     ((_, rows),) = ch.inserts
     assert rows[0]["status"] == "active" and rows[0]["conflict_with"] == []
-    ((ident, memory_id),) = scheduled
+    ((ident, memory_id, version),) = scheduled
     assert memory_id == _ID_A and ident.memory_key == "deploy_day"
+    assert version == rows[0]["version"], "the settle stamps the revision it judged"
     assert ident.memory_type == "semantic" and ident.run_id == "run-7" and ident.org == "test"
 
 
@@ -297,3 +331,23 @@ async def test_update_reads_its_write_config_in_one_prefetch(wired, monkeypatch)
     assert kw["resolved_threshold"] == 0.9 and kw["resolved_duplicate_threshold"] == 0.97
     assert kw["resolved_policy"] == "newest_wins" and kw["allowlisted_keys"] == {"allowed"}
     assert policies == ["newest_wins"], "supersession takes the prefetched policy, no re-read"
+
+
+@pytest.mark.asyncio
+async def test_the_projection_does_not_mine_entities_it_was_handed(monkeypatch) -> None:
+    from server.memory.app import entity_projections
+
+    def _mined(*_: Any) -> list[str]:
+        raise AssertionError("mined twice")
+
+    written: list[Any] = []
+
+    async def _edges(bulk: Any, results: Any, **_: Any) -> None:
+        written.append(bulk.entries[0].entities)
+
+    monkeypatch.setattr(entity_projections, "set_entities_for_projection", _mined)
+    monkeypatch.setattr(entity_projections, "write_entity_edges", _edges)
+    n = await entity_projections.project_memory_set_entities(
+        _set_input(), memory_key="k", value="v", ch=object(), ents=["alice", "bob"]
+    )
+    assert n == 2 and written == [["alice", "bob"]]

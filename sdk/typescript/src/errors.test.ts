@@ -5,6 +5,7 @@ import {
   BackendUnavailable,
   errorFromResponse,
   IdempotentConflict,
+  IdempotentInProgress,
   LoomError,
   NotFound,
   PreconditionFailed,
@@ -19,6 +20,8 @@ describe("errorFromResponse", () => {
     [409, "PINNED_CONFLICT", PreconditionFailed],
     [409, "KEY_HOLDS_FACT", PreconditionFailed],
     [409, "IDEMPOTENT_CONFLICT", IdempotentConflict],
+    [409, "OVERRIDE_NOT_STORED", LoomError],
+    [503, "IDEMPOTENT_IN_PROGRESS", IdempotentInProgress],
     [422, "BAD_NAMESPACE", ValidationError],
     [503, "OVERLOADED", BackendUnavailable],
   ] as const)("%i %s", (status, code, cls) => {

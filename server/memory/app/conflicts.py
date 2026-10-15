@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime
 from typing import Any
 
@@ -828,6 +828,7 @@ async def apply_refines(
     run_id: str = "-",
     relation: str = "refines",
     new_value: str = "",
+    expected_sha256: str = "",
 ) -> int:
     """The `refines` verdict, after the new row is in: every
     non-pinned refined peer is superseded (status, superseded_by = the new
@@ -839,7 +840,10 @@ async def apply_refines(
     price, a date, a month) keeps its row — the new statement elaborates a facet but
     truncates the record, and the question that needs the measure ("how long did it
     take") would read "not recorded". The edge is still written. `new_value` is the new
-    row's text; when the caller has none it is read from the store."""
+    row's text; when the caller has none it is read from the store. With
+    `expected_sha256` (a deferred verdict) nothing is retired or linked once the
+    new row is another revision's, read sequentially right before the supersede."""
+    from server.core.ch import sequential_reads
     from server.memory.store import get_by_id, supersede_duplicates
 
     # A proposal (a fact on trial) retires nothing — whichever
@@ -864,6 +868,16 @@ async def apply_refines(
         for p in refined_peers
         if not p.pinned and p.memory_id and p.memory_id != new_memory_id and p.memory_id not in keep
     ]
+    if expected_sha256:
+        # The verdict takes effect at this read: a revision committed after it is
+        # the serial order "A refined its peers, then B replaced A", which leaves
+        # the same rows. Fencing B itself would put a lock on every memory.set.
+        # One difference: B's own inline judge saw a peer active that this then
+        # retires, so B's conflict_with can name a superseded row (review queue only).
+        with sequential_reads():
+            current = await get_by_id(new_memory_id, org=org, ch=ch, scope=WHOLE_NAMESPACE)
+        if current is None or str(current.content_sha256 or "") != expected_sha256:
+            return 0
     n = 0
     if victims:
         try:
@@ -977,11 +991,14 @@ async def mark_peers_conflicted(
     org: str,
     new_memory_id: str,
     peer_ids: list[str],
-) -> None:
+    expected_sha256: str = "",
+) -> bool:
     """After a conflicting insert, populate conflict_with on the new
     row AND on each existing peer, and flip all of them to
     status='conflicted'. Writes new RMT version rows so every persisted
-    column is preserved by memory_repo's mirror helper.
+    column is preserved by memory_repo's mirror helper. With
+    `expected_sha256` (a deferred verdict), only the judged write is flagged
+    (`judged_write`); False, and no peer touched, when a newer one replaced it.
     """
     import server.memory.store as memory_repo
 
@@ -1009,9 +1026,16 @@ async def mark_peers_conflicted(
             "conflict_with": _merged(row.conflict_with, peer_ids),
         }
 
-    await memory_repo.write_versions_by_ids(org, [new_memory_id], _new)
-    if new_is_proposal:
-        return
+    skip, version = judged_write(expected_sha256)
+    landed = await memory_repo.write_versions_by_ids(
+        org,
+        [new_memory_id],
+        lambda row: _new(row) | version(row),
+        skip=skip,
+        judged=skip is not None,
+    )
+    if new_is_proposal or not landed:
+        return bool(landed)
     await memory_repo.write_versions_by_ids(
         org,
         peer_ids,
@@ -1021,4 +1045,20 @@ async def mark_peers_conflicted(
             else "conflicted",
             "conflict_with": _merged(row.conflict_with, [new_memory_id]),
         },
+    )
+    return True
+
+
+def judged_write(
+    sha: str,
+) -> tuple[Callable[[Any], bool] | None, Callable[[Any], dict[str, Any]]]:
+    """(skip, version) for `write_versions_by_ids` landing a deferred verdict on the
+    write it judged: a row of other content is left alone, and the new version is
+    the read's + 1, so a revision committed after the read stays the newest row.
+    No-ops without `sha` (an inline verdict, or a row from before 038)."""
+    if not sha:
+        return None, lambda _row: {}
+    return (
+        lambda row: str(getattr(row, "content_sha256", "") or "") != sha,
+        lambda row: {"version": int(row.version) + 1},
     )

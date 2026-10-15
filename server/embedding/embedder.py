@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 from typing import Protocol
 
+from server.core.embedding_space import inferred_provider
 from server.core.provider_keys import provider_key
 from server.embedding.alias import PREFIX as ALIAS_PREFIX
 from server.settings import settings
@@ -70,18 +71,7 @@ def _label_provider(name: str) -> str | None:
 def _inferred_provider(name: str) -> str:
     """The provider a model name implies, ignoring `LOOM_EMBEDDING_PROVIDER`:
     fake, local, openai or gemini (or a label's prefix / alias)."""
-    label = _label_provider(name)
-    if label:
-        return label
-    if name.startswith("fake-ngram"):
-        return "fake"
-    if name == "local" or name.startswith("local:"):
-        return "local"
-    if name.startswith("text-embedding-"):
-        return "openai"
-    if name.startswith("gemini"):
-        return "gemini"
-    raise ValueError(f"unknown embedding model: {name!r}")
+    return _label_provider(name) or inferred_provider(name)
 
 
 # The API-key environment variables each keyed provider reads, any one of
@@ -91,15 +81,6 @@ KEY_ENVS: dict[str, tuple[str, ...]] = {
     "gemini": ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
     "compatible": ("LOOM_EMBEDDING_API_KEY",),
 }
-
-
-def embeds_via_main(name: str | None = None) -> bool:
-    """Whether this process embeds through the main Loom: a read-replica that
-    knows the main Loom's URL and has no key for the provider the model needs."""
-    if not settings.read_replica or not str(settings.read_replica_main_url).strip():
-        return False
-    provider = provider_for(name or settings.embedding_model)
-    return bool(KEY_ENVS.get(provider)) and not provider_key(provider)
 
 
 def get_embedder() -> Embedder:
@@ -120,10 +101,6 @@ def _served(name: str) -> Embedder:
     if provider in ("prefix", "alias"):
         # Labels over the served model, never the served model itself.
         raise ValueError(f"unknown embedding model: {name!r}")
-    if embeds_via_main(name):
-        from server.embedding.main_loom import MainLoomEmbedder
-
-        return MainLoomEmbedder(model=name, dim=settings.embedding_dim)
     keys = KEY_ENVS.get(provider, ())
     if keys and not provider_key(provider):
         logging.getLogger(__name__).error(

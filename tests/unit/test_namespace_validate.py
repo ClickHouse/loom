@@ -161,7 +161,15 @@ def test_registered_on_the_core_mcp_surface_with_a_description() -> None:
 
 
 def test_every_check_names_its_remedy() -> None:
-    remedies = ("memory.", "conflicts.", "/me", "Re-anchor", "expire", "retention", "tombstone")
+    remedies = (
+        "memory.",
+        "conflicts.",
+        "dashboard",
+        "Re-anchor",
+        "expire",
+        "retention",
+        "tombstone",
+    )
     for name, (severity, detail, sql) in nv._CHECKS.items():
         assert severity in {"error", "warning", "info"}, name
         assert any(r in detail for r in remedies), name

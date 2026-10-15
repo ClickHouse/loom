@@ -26,10 +26,10 @@ function collectErrors(page: Page): string[] {
   return errors;
 }
 
-test("opening /me/graph reads nothing until a gesture", async ({ page }) => {
+test("opening /graph reads nothing until a gesture", async ({ page }) => {
   const calls = await installApi(page);
   const errors = collectErrors(page);
-  await page.goto("/me/graph");
+  await page.goto("/graph");
   await expect(page.getByRole("heading", { name: "Pick an entity to walk from" })).toBeVisible();
   // The starter chips in the canvas card come from the taxonomy; once they
   // are drawn the mount effects have run. (The rail lists the same entities,
@@ -49,7 +49,7 @@ test("opening /me/graph reads nothing until a gesture", async ({ page }) => {
 test("a ?seed= deep link walks exactly once, from its own seed", async ({ page }) => {
   const calls = await installApi(page);
   const errors = collectErrors(page);
-  await page.goto("/me/graph?seed=alpha");
+  await page.goto("/graph?seed=alpha");
   await expect(page.locator(NODE)).toHaveCount(WALK_NODES);
   await page.waitForTimeout(500);
   expect(calls.traverse).toHaveLength(1);
@@ -68,7 +68,7 @@ test.describe("hovering every node", () => {
   test("causes no layout shift and leaves the canvas where it was", async ({ page }) => {
     const calls = await installApi(page);
     const errors = collectErrors(page);
-    await page.goto("/me/graph?seed=alpha");
+    await page.goto("/graph?seed=alpha");
     await expect(page.locator(NODE)).toHaveCount(WALK_NODES);
     await page.waitForTimeout(500);
 
@@ -182,7 +182,7 @@ test.describe("hovering every node", () => {
 test("the Walk button walks, and Back restores the previous seed", async ({ page }) => {
   const calls = await installApi(page);
   const errors = collectErrors(page);
-  await page.goto("/me/graph?seed=alpha");
+  await page.goto("/graph?seed=alpha");
   await expect(page.locator(NODE)).toHaveCount(WALK_NODES);
   await expect.poll(() => calls.traverse.length).toBe(1);
 
@@ -192,13 +192,13 @@ test("the Walk button walks, and Back restores the previous seed", async ({ page
   await page.getByRole("button", { name: "Walk" }).click();
   await expect.poll(() => calls.traverse.length).toBe(2);
   expect(calls.traverse[1]).toMatchObject({ seed_entity: "beta" });
-  await expect(page).toHaveURL(/\/me\/graph\?seed=beta$/);
+  await expect(page).toHaveURL(/\/graph\?seed=beta$/);
   await expect(page.locator(`${NODE}[data-id="s"]`)).toHaveText("beta");
   await expect(page.locator(NODE)).toHaveCount(WALK_NODES);
   await shot(page, "05-walked-to-beta");
 
   await page.goBack();
-  await expect(page).toHaveURL(/\/me\/graph\?seed=alpha$/);
+  await expect(page).toHaveURL(/\/graph\?seed=alpha$/);
   await expect.poll(() => calls.traverse.length).toBe(3);
   expect(calls.traverse[2]).toMatchObject({ seed_entity: "alpha" });
   await expect(seedInput).toHaveValue("alpha");
@@ -214,7 +214,7 @@ test("the Walk button walks, and Back restores the previous seed", async ({ page
 test("the entity box is the first input in the tab order and no facet heading truncates", async ({ page }) => {
   await installApi(page);
   const errors = collectErrors(page);
-  await page.goto("/me/graph?seed=alpha");
+  await page.goto("/graph?seed=alpha");
   await expect(page.locator(NODE)).toHaveCount(WALK_NODES);
 
   let firstInput: { tag: string; label: string | null } | null = null;

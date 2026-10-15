@@ -93,7 +93,7 @@ def test_next_steps_are_pasteable_and_never_print_the_token() -> None:
     assert '-H "Authorization: Bearer $LOOM_API_KEY" -s user' in text
     assert "from loom import Agent" in text
     assert "namespace='eng-tooling'" in text and "api_key" not in text
-    assert "http://loom.example:7777/me" in text
+    assert "http://loom.example:7777/" in text
     assert "http://loom.example:7777//" not in text
 
 

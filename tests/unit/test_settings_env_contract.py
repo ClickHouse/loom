@@ -32,17 +32,11 @@ from server.settings._env import JsonArray, JsonObject, RoutePrior
 _FIELDS = Settings.model_fields
 
 # Fields a model validator reads together with other fields; each has its
-# own tests (test_jwt_verify_adversarial, test_llm_provider_inference,
+# own tests (test_identity_mode, test_llm_provider_inference,
 # test_default_namespace*).
 _CROSS_CHECKED = {
     "default_namespace",
-    # A read-replica pins and refuses settings of other areas (test_read_replica.py).
-    "read_replica",
-    "jwt_active_kid",
-    "jwt_algorithm",
     "jwt_public_keys_json",
-    "jwt_secret",
-    "jwt_secrets_json",
     "llm_model",
     "llm_provider",
     # Names and URLs checked by a model validator (test_rerank_names.py).

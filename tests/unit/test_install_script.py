@@ -366,7 +366,7 @@ def test_the_health_check_polls_where_loom_is_published(
     result = run(LOOM_SKIP_START="0", LOOM_PORT="28977", LOOM_BIND_HOST=bind_host)
     assert result.returncode == 0, result.stderr
     assert f"http://{polled}:28977/v1/health" in seen.read_text()
-    assert f"Dashboard: http://{polled}:28977/me" in result.stdout
+    assert f"Dashboard: http://{polled}:28977/\n" in result.stdout
     assert "--profile bundled down" in result.stdout
 
 
@@ -402,3 +402,67 @@ def test_a_quoted_or_commented_profile_in_env_still_reads_as_bundled(install) ->
         env.write_text(text[:start] + written + text[text.index("\n", start) :])
         # A prepared rerun names ch-setup only for an outside ClickHouse.
         assert "ch-setup" not in run().stdout, written
+
+
+@pytest.mark.parametrize(("status", "says"), [(3, "has no Keeper"), (1, "is not ready for Loom")])
+def test_an_outside_clickhouse_ch_setup_refuses_stops_the_install(
+    install, installer_env: dict[str, str], status: int, says: str
+) -> None:
+    """`loom ch-setup` exits 3 when that server has no Keeper: the installer names
+    the two ways on (give it one, or --bundled) and starts nothing."""
+    run, _ = install
+    calls = _recording_docker(installer_env, ch_setup_status=status)
+    result = run("--clickhouse", "https://loom:pw@ch.example:8443", LOOM_SKIP_START="0")
+    assert result.returncode == 1 and says in result.stderr
+    assert not any(" up " in c for c in calls.read_text().splitlines())
+    if status == 3:
+        assert "with --bundled" in result.stderr
+
+
+def test_bundled_recovers_an_install_whose_clickhouse_has_no_keeper(
+    install, installer_env: dict[str, str]
+) -> None:
+    """The recovery the refusal names: the second run uses the bundled ClickHouse,
+    with the outside server's settings gone, and runs no ch-setup."""
+    run, target = install
+    calls = _recording_docker(installer_env, ch_setup_status=3)
+    first = run("--clickhouse", "https://loom:pw@ch.example:8443", LOOM_SKIP_START="0")
+    assert first.returncode == 1 and "with --bundled" in first.stderr
+    assert _env(target)["LOOM_CH_HOST"] == "ch.example"
+    calls.write_text("")
+    second = run("--bundled")
+    assert second.returncode == 0, second.stderr
+    env = _env(target)
+    assert env["COMPOSE_PROFILES"] == "bundled"
+    assert not any(k.startswith("LOOM_CH_") for k in env), env
+    assert "ch-setup" not in calls.read_text() and "ch-setup" not in second.stdout
+    assert run("--bundled", "--clickhouse", "https://x:y@h:1").returncode == 1
+
+
+def test_bundled_recovers_an_install_named_by_loom_ch_url(
+    install, installer_env: dict[str, str]
+) -> None:
+    """The same recovery when the outside server came from LOOM_CH_URL, still set in
+    the shell: --bundled wins over it."""
+    run, target = install
+    _recording_docker(installer_env, ch_setup_status=3)
+    url = {"LOOM_CH_URL": "https://loom:pw@ch.example:8443"}
+    assert run(LOOM_SKIP_START="0", **url).returncode == 1
+    second = run("--bundled", **url)
+    assert second.returncode == 0, second.stderr
+    env = _env(target)
+    assert env["COMPOSE_PROFILES"] == "bundled" and "LOOM_CH_HOST" not in env
+
+
+def _recording_docker(installer_env: dict[str, str], *, ch_setup_status: int) -> Path:
+    """A docker stub that logs every call and fails ch-setup with `ch_setup_status`."""
+    bin_dir = Path(installer_env["PATH"].split(":")[0])
+    calls = bin_dir / "docker-calls.log"
+    calls.write_text("")
+    (bin_dir / "docker").write_text(
+        "#!/bin/sh\n"
+        f'echo "$*" >> {calls}\n'
+        '[ "$1 $2 $3" = "compose version --short" ] && echo 2.29.1 && exit 0\n'
+        f'case "$*" in *ch-setup*) exit {ch_setup_status} ;; esac\nexit 0\n'
+    )
+    return calls

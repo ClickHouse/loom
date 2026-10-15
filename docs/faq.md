@@ -71,7 +71,7 @@ Yes, for repositories the server indexes: `code.search`, `code.symbol`, `code.ca
 
 The plugin attaches the index only when the session starts inside a git checkout whose
 remote is an indexed repository you can read. Start the session from the repository's
-checkout, check the repository is listed under **Repositories** in `<server>/me`, and see
+checkout, check the repository is listed under **Repositories** in the dashboard (`<server>/repositories`), and see
 [when the code index is used](getting-started/connect-a-coding-agent.md#when-the-code-index-is-used).
 
 ## Running it

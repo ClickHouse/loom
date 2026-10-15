@@ -7,6 +7,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -24,6 +25,8 @@ from server.core.errors import AuthInsufficientError, NotFoundError, ValidationE
 from server.operations.registry import OPERATIONS_BY_NAME
 
 ORG, NS, INBOX = "acme", "code-app", "reviewer-bot"
+# The server clock task events are stamped from, far from any host clock.
+SERVER_NOW_US = 1_800_000_000_000_000
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -118,6 +121,11 @@ def fake(history: tuple[str, list[str]], monkeypatch: pytest.MonkeyPatch) -> Fak
         monkeypatch.setattr(wrepo, name, getattr(f, name))
     monkeypatch.setattr(tasks_repo, "fetch_inbox", f.fetch_inbox)
 
+    async def server_version(floor: int = 0) -> int:
+        return SERVER_NOW_US
+
+    monkeypatch.setattr(tasks_repo, "server_version", server_version)
+
     class _State:
         async def all_state(self, org, ns):
             return f.state
@@ -164,6 +172,9 @@ async def test_watch_then_the_pass_once_covered_emits_one_event(
     [event] = fake.events
     assert event["event"] == "code.coverage.ready" and event["inbox"] == INBOX
     assert event["task_id"] == out.event_id
+    # seq / ts from the server clock, so the task cursors order it across replicas
+    assert event["seq"] == event["version"] == SERVER_NOW_US
+    assert event["ts"] == datetime.fromtimestamp(SERVER_NOW_US / 1e6, UTC).replace(tzinfo=None)
     payload = json.loads(event["patch"])
     assert payload["namespace"] == NS and payload["commit"] == b
     assert payload["tiers"] == [{"producer": "clang", "label": "C++", "watermark": b}]

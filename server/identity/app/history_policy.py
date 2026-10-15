@@ -213,7 +213,10 @@ async def rules_for(org: str, namespace: str, ch: Any | None = None) -> list[Pol
     hit = _cache.get((org, namespace))
     if hit and (now - hit[0]) < float(settings.policy_cache_ttl_seconds):
         return hit[1]
-    rows = await policy_repo.list_rules(org, namespace, ch=ch)
+    from server.core.ch import sequential_reads
+
+    with sequential_reads():  # a rule another replica just stored
+        rows = await policy_repo.list_rules(org, namespace, ch=ch)
     rules: list[PolicyRule] = []
     for r in rows:
         try:

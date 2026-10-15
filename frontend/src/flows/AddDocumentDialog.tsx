@@ -25,7 +25,7 @@ interface Props {
 }
 
 /**
- * Human document upload for /me. Calls knowledge.upsert (upsert is the
+ * Human document upload from the dashboard. Calls knowledge.upsert (upsert is the
  * usual want — re-pasting the same source replaces chunks).
  *
  * Two file paths converge into the same uploaded payload:

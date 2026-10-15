@@ -121,19 +121,21 @@ That is `server/tracker/workers/embed.py`'s declaration. The check is one statem
 
 ## 5. Understand where it runs
 
-**One supervisor per host.** `server/workers/leader.py` elects one process per host with an advisory `flock` on `LOOM_SUPERVISOR_LOCK_PATH`. Other uvicorn processes skip the supervisor. When the leader dies, the kernel drops the lock and a respawned process takes it.
+**One supervisor per deployment.** `server/workers/leader.py` elects one process across every container and host through ClickHouse: the `workers_supervisor` key in the Keeper lock table `loom._migration_lock`. The holder renews every `LOOM_SUPERVISOR_LEASE_TTL_S / 6`; a holder that loses the lease stops its workers; when the holder dies, another process takes over after `LOOM_SUPERVISOR_LEASE_TTL_S` (default 30 s).
 
-| `LOOM_BACKGROUND_WORKERS` | Effect                                           |
-| ------------------------- | ------------------------------------------------ |
-| `auto` (default)          | Take the lock, run the supervisor if it is free. |
-| `on`                      | Always run the supervisor.                       |
-| `off`                     | Web only.                                        |
+| `LOOM_BACKGROUND_WORKERS` | Effect                                                                                                      |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `auto` (default)          | Contend for the lease; run the supervisor while held. Outside the deployment (no `LOOM_DEPLOYMENT`), `off`. |
+| `on`                      | Always run the supervisor.                                                                                  |
+| `off`                     | Web only.                                                                                                   |
 
-`dev/docker-compose.cloud.yml` runs workers in their own container with `on` and the web container with `off`. The colour compose file runs each colour's workers container with `auto`, so both colours share the lock through the `loom-shared` volume.
+Run every replica in `auto`: any of them may become the leader. A `make server` or iso server runs no workers unless it sets `on`.
 
-**Across hosts, nothing elects.** The lock is host-local, so a deployment runs exactly one workers process ([deployment](../operations/deployment.md)). Make a briefly running second copy harmless (during a blue/green swap): idempotent writes, leased claims, cursors in the store. A worker that spends on an LLM doubles its spend while two copies run.
+**Two copies can briefly overlap.** A holder stops its workers at T/2 without a renewal, before another process can take over at T, but a statement it already sent still lands, and an `on` process takes no lease. Make a second copy harmless: idempotent writes, leased claims, cursors in the store. A worker that spends on an LLM doubles its spend while two copies run.
 
-**Blue/green.** The new colour's workers container retries the lease every `LOOM_SUPERVISOR_LEASE_RETRY_S` and takes over once the old colour stops.
+**Stop between batches.** A long loop calls `pass_context.check_stop()` before each batch it writes. It raises `PassStopped` once the pass was stopped or the lease went stale, which also reaches work running in `asyncio.to_thread`. `PassBudget.exhausted()` calls it for you.
+
+**Rolling upgrades.** An older build leaves the lease to a live newer build (see [Failure and recovery](../architecture/failure-and-recovery.md#background-workers)). The old leader releases the lease when it stops, and a newer process takes it on its next round, within seconds.
 
 ## 6. Pin it in tests
 

@@ -160,7 +160,6 @@ def _complete_r1(h) -> Any:
 
 def test_complete_drops_the_runs_claim_after_closing_it(env, monkeypatch) -> None:
     fake, _, h = env
-    monkeypatch.setattr(runs_store, "_claims_atomic", True)
     fake.one.append(_run_row())
     _complete_r1(h)
     drops = [c for c in fake.calls if c[0] == "execute" and "agent_run_claims DELETE" in c[1]]
@@ -170,7 +169,6 @@ def test_complete_drops_the_runs_claim_after_closing_it(env, monkeypatch) -> Non
 
 def test_a_failed_claim_drop_does_not_fail_the_close(env, monkeypatch) -> None:
     fake, _, h = env
-    monkeypatch.setattr(runs_store, "_claims_atomic", True)
     fake.execute_error = RuntimeError("Keeper unavailable")
     fake.one.append(_run_row())
     assert _complete_r1(h).status == "completed"

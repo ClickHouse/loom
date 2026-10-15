@@ -1,7 +1,7 @@
 """What a server reachable from a browser or a network refuses: startup on a
 non-loopback bind without its safeguards, CORS `*` with credentials, a foreign
 Host while auth is off, URLs built from spoofed forwarded headers, and the
-/me page's inline script without its nonce."""
+dashboard page's inline script without its nonce."""
 
 from __future__ import annotations
 
@@ -193,7 +193,7 @@ def auth_on(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.usefixtures("auth_on")
 def test_auth_on_checks_no_host_and_lets_cross_site_navigation_through() -> None:
-    # A link to /me or an OAuth redirect from another site is a cross-site GET.
+    # A link to the dashboard or an OAuth redirect from another site is a cross-site GET.
     assert _get("http://anything.example") == 200
     assert _get("http://localhost:7777", origin="https://evil.example") == 200
     assert _get("http://localhost:7777", **{"sec-fetch-site": "cross-site"}) == 200
@@ -314,21 +314,21 @@ def test_the_mcp_config_url_ignores_forwarded_host(monkeypatch: pytest.MonkeyPat
     assert "https://loom.example/mcp" in r.text and "evil.example" not in r.text
 
 
-# ---- /me: the boot snippet is the only inline script, and it carries the nonce ----
+# ---- the dashboard: the boot snippet is the only inline script, and it carries the nonce ----
 
 
 def _dashboard(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[str, str]:
-    from server.identity.app import me_routes
+    from server.identity.app import dashboard_routes
 
     (tmp_path / "index.html").write_text(
-        '<html><head><script type="module" src="/me/assets/i.js"></script></head></html>'
+        '<html><head><script type="module" src="/assets/i.js"></script></head></html>'
     )
-    monkeypatch.setattr(me_routes, "_FRONTEND_DIST", tmp_path)
+    monkeypatch.setattr(dashboard_routes, "_FRONTEND_DIST", tmp_path)
     monkeypatch.setattr(settings, "auth_required", True)
     monkeypatch.setattr(settings, "identity_provider", "gateway")
     monkeypatch.setattr(settings, "dashboard_redirect_url", "")
-    request = Request({"type": "http", "method": "GET", "path": "/me", "headers": []})
-    response = asyncio.run(me_routes.memory_dashboard(request))
+    request = Request({"type": "http", "method": "GET", "path": "/", "headers": []})
+    response = asyncio.run(dashboard_routes.dashboard_page(request))
     return response.body.decode(), response.headers["content-security-policy"]
 
 
@@ -351,7 +351,7 @@ def test_the_dashboard_csp_admits_only_the_nonced_boot_script(
 def test_the_e2e_spec_serves_the_dashboard_csp_the_server_sends() -> None:
     """frontend/e2e/preview-isolation.spec.ts hand-copies the policy (vite preview sends
     no headers), so a change to dashboard_csp must change the spec too."""
-    from server.identity.app.me_routes import dashboard_csp
+    from server.identity.app.dashboard_routes import dashboard_csp
 
     spec = (
         Path(__file__).resolve().parents[2] / "frontend/e2e/preview-isolation.spec.ts"

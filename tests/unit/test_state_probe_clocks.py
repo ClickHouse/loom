@@ -142,8 +142,7 @@ def test_census_clocks_default_to_an_hour() -> None:
 def _lease(held: bool) -> Any:
     from server.workers import leader
 
-    lease = leader.SupervisorLease(path="/nonexistent/lock")
-    lease.held = held
+    lease = leader.SupervisorLease("on" if held else "off")
     return lease
 
 

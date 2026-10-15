@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
+from server.core.rmt_carry import register
 
 # Every persisted column of loom.shared, in DDL order. `ch.insert` takes its
 # column list from the row, and FINAL serves the DDL default of a column the
@@ -38,6 +39,7 @@ SHARED_PERSISTED_COLS: tuple[str, ...] = (
     "tombstoned_at",
     "version",
 )
+register("loom.shared", key=("org", "namespace", "memory_key"), columns=SHARED_PERSISTED_COLS)
 
 
 async def insert_shared_row(

@@ -36,6 +36,8 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from server.auth.jwt import mint_token
+from server.core import leases
+from server.core.ch import own_write_reads
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -46,6 +48,14 @@ _ACCESS_TTL = 3600  # 1h access token
 _CODE_TTL = 60  # auth code: short-lived, single-use
 _REFRESH_TTL = 30 * 86400  # 30d refresh token
 _PENDING_TTL = 600  # OIDC pending-login record: time to complete IdP sign-in
+_CLAIM_TTL = 30  # a pending login's claim: the read and the consume insert, with room to spare
+# An exchange's claim outlives a live exchange: each phase below is a wall-clock bound
+# (80 s at most, retries and pool waits included); the rest is margin for the clocks.
+_EXCHANGE_TTL_S = 120
+_FIND_TIMEOUT_S = 10  # the read before any claim
+_CLAIM_TIMEOUT_S = 10
+_EXCHANGE_TIMEOUT_S = 60
+_CONSUME_TIMEOUT_S = 10
 
 
 # --------------------------------------------------------------------------
@@ -56,7 +66,7 @@ _PENDING_TTL = 600  # OIDC pending-login record: time to complete IdP sign-in
 #   save_code(code, grant)   / find_code(code), consume_code(code, grant)
 #   save_refresh(token, gr)  / find_refresh(token, client_id),
 #     consume_refresh(token, grant) — single-use: consumed once the exchange
-#     is decided with a Keeper, before the decision without one (`_exchange`);
+#     is decided, under the credential's claim (`_exchange`);
 #     a refresh is bound to the issuee: another client_id finds
 #     nothing, so a wrong presenter can't burn it.
 # Codes and refresh tokens are bearer secrets, so the store keys them by
@@ -72,15 +82,21 @@ def _token_id(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+def _after(row: dict[str, Any]) -> int:
+    """A consume row's version: above the row it spends, whose writer's clock may
+    run ahead of this host's (the consume must win under FINAL)."""
+    return max(time.time_ns(), int(row.get("version") or 0) + 1)
+
+
 class _CHStore:
     """Durable OAuth state in loom.oauth_state — survives restart + replicas.
 
     Single-use is a consumed=1 ReplacingMergeTree version; reads take FINAL +
-    consumed=0 + unexpired, with sequential consistency, so a replica that has
-    not seen a consume cannot replay the credential. Finding and consuming are
+    consumed=0 + unexpired, with sequential consistency (a registration, code or
+    consume another replica just wrote is in the read). Finding and consuming are
     two steps (the exchange is decided in between), so /oauth/token keeps two
-    concurrent exchanges of one credential apart with a Keeper claim
-    (`oauth_claims`); without a Keeper both can succeed.
+    concurrent exchanges of one credential apart with a deployment-wide claim
+    (`server.core.leases`); an OIDC pending login is taken under one too.
     """
 
     _T = "loom.oauth_state"
@@ -105,11 +121,12 @@ class _CHStore:
         )
 
     async def get_client(self, client_id: str) -> dict[str, Any] | None:
-        row = await self._ch().query_one(
-            f"SELECT redirect_uris, client_name FROM {self._T} FINAL "
-            "WHERE record_type = 'client' AND id = {id:String} AND consumed = 0 LIMIT 1",
-            params={"id": client_id},
-        )
+        with own_write_reads():  # /register may have landed on another replica
+            row = await self._ch().query_one(
+                f"SELECT redirect_uris, client_name FROM {self._T} FINAL "
+                "WHERE record_type = 'client' AND id = {id:String} AND consumed = 0 LIMIT 1",
+                params={"id": client_id},
+            )
         if not row:
             return None
         return {"redirect_uris": list(row["redirect_uris"]), "client_name": row["client_name"]}
@@ -167,12 +184,10 @@ class _CHStore:
     async def _find(
         self, rtype: str, rid: str, client_id: str | None = None
     ) -> dict[str, Any] | None:
-        from server.core.ch import own_write_reads
-
         with own_write_reads():
             row = await self._ch().query_one(
                 f"""SELECT client_id, redirect_uri, code_challenge, subject, org,
-                           namespaces, roles, expires_at
+                           namespaces, roles, expires_at, version
                     FROM {self._T} FINAL
                     WHERE record_type = {{t:String}} AND id = {{id:String}} AND consumed = 0
                     LIMIT 1""",
@@ -194,6 +209,7 @@ class _CHStore:
             "namespaces": list(row["namespaces"]),
             "roles": list(row["roles"]),
             "exp": exp or (int(time.time()) + _REFRESH_TTL),
+            "version": int(row.get("version") or 0),
         }
 
     async def _consume(self, rtype: str, rid: str, grant: dict[str, Any]) -> None:
@@ -213,7 +229,7 @@ class _CHStore:
                     "roles": list(grant["roles"]),
                     "expires_at": int(grant["exp"]),
                     "consumed": 1,
-                    "version": time.time_ns(),
+                    "version": _after(grant),
                 }
             ],
         )
@@ -236,9 +252,17 @@ class _CHStore:
         )
 
     async def take_pending(self, state: str) -> dict[str, Any] | None:
+        name = f"oauth:oidc_pending:{_token_id(state)}"
+        async with leases.holding(name, ttl_s=_CLAIM_TTL, ch=self._ch()) as held:
+            if not held:
+                return None
+            with own_write_reads():
+                return await self._take_pending_claimed(state)
+
+    async def _take_pending_claimed(self, state: str) -> dict[str, Any] | None:
         ch = self._ch()
         row = await ch.query_one(
-            f"SELECT client_name, expires_at FROM {self._T} FINAL WHERE "
+            f"SELECT client_name, expires_at, version FROM {self._T} FINAL WHERE "
             "record_type = 'oidc_pending' AND id = {id:String} AND consumed = 0 LIMIT 1",
             params={"id": state},
         )
@@ -256,7 +280,7 @@ class _CHStore:
                     "client_name": row["client_name"],
                     "expires_at": exp,
                     "consumed": 1,
-                    "version": time.time_ns(),
+                    "version": _after(row),
                 }
             ],
         )
@@ -740,32 +764,28 @@ _Decider = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 async def _exchange(
     kind: _Kind, credential: str, *, client_id: str, decide: _Decider
 ) -> dict[str, Any]:
-    """Exchange a code or refresh token for tokens, once: under a Keeper claim
-    where there is one (`oauth_claims`), else as before the claim existed."""
-    from server.auth import oauth_claims
-    from server.core.ch import get_client
-
-    # A made-up credential costs a read, not a Keeper write.
+    """Exchange a code or refresh token for tokens, once: under the credential's
+    deployment-wide claim."""
+    # A made-up credential costs a read, not a claim.
     try:
-        async with asyncio.timeout(oauth_claims.FIND_TIMEOUT_S):
+        async with asyncio.timeout(_FIND_TIMEOUT_S):
             found = await _find(kind, credential, client_id)
     except Exception as e:  # an unreadable store answers retryably, as below
         raise _logged_unavailable("credential read", e) from e
     if found is None:
         raise _invalid_grant()
-    ch = get_client()
-    key = f"{kind}:{_token_id(credential)}"
     try:
-        claim, holder = await oauth_claims.CLAIMS.claim(ch, key)
-    except Exception as e:  # an exchange Keeper could not keep apart does not run
+        async with asyncio.timeout(_CLAIM_TIMEOUT_S):
+            lease = await leases.take(
+                f"oauth:{kind}:{_token_id(credential)}", ttl_s=_EXCHANGE_TTL_S, expect_free=True
+            )
+    except Exception as e:  # an exchange no claim keeps apart does not run
         raise _logged_unavailable("exchange claim", e) from e
-    if claim is oauth_claims.Claim.TAKEN:
+    if lease is None:
         log.info("oauth: %s is being exchanged by another request; told to retry", kind)
         raise _unavailable()
     issued_at = int(time.time())  # before the decision reads the revocations
-    if claim is oauth_claims.Claim.UNCLAIMED:
-        return await _exchange_unclaimed(kind, credential, found, decide, issued_at)
-    release = functools.partial(oauth_claims.CLAIMS.release_shielded, ch, key, holder)
+    release = functools.partial(leases.release_shielded, lease)
     return await _exchange_claimed(kind, credential, client_id, decide, issued_at, release)
 
 
@@ -780,15 +800,13 @@ async def _exchange_claimed(
     """Under the claim: read the credential again, decide, then use it up, so
     a failure before the consume leaves it for the client's retry. The claim
     is released unless the consume did not finish: that may still land, and
-    the kept claim holds a retry off until it goes stale."""
-    from server.auth import oauth_claims
-
+    the kept claim holds a retry off until it expires."""
     keep_claim = False
     grant: dict[str, Any] | None = None
     refusal: HTTPException | None = None
     try:
         try:
-            async with asyncio.timeout(oauth_claims.EXCHANGE_TIMEOUT_S):
+            async with asyncio.timeout(_EXCHANGE_TIMEOUT_S):
                 grant = await _find(kind, credential, client_id)
                 if grant is None:
                     raise _invalid_grant()
@@ -808,31 +826,11 @@ async def _exchange_claimed(
     if refusal is not None:
         raise refusal
     if keep_claim and kind == "refresh":
-        # A code expires before the claim goes stale, so its tokens are
+        # A code expires before the claim does, so its tokens are
         # answered; the new refresh token is saved but never delivered.
         log.warning("oauth: consume of a refresh token did not finish")
-        raise _unavailable(oauth_claims.STALE_S)
+        raise _unavailable(_EXCHANGE_TTL_S)
     return tokens
-
-
-async def _exchange_unclaimed(
-    kind: _Kind, credential: str, grant: dict[str, Any], decide: _Decider, issued_at: int
-) -> dict[str, Any]:
-    """Without a Keeper: use the credential up first, so two presenters race
-    only in the window between the read and the consume. Once it is used up a
-    retry cannot succeed, so any failure answers `invalid_grant`."""
-    from server.auth import oauth_claims
-
-    if not await _consume(kind, credential, grant):
-        raise _unavailable()
-    try:
-        async with asyncio.timeout(oauth_claims.EXCHANGE_TIMEOUT_S):
-            return await _decide_and_issue(grant, decide, issued_at)
-    except Exception as e:  # a refusal goes out as it is; any other failure burnt the credential
-        if isinstance(e, HTTPException) and e.status_code != 503:
-            raise
-        log.warning("oauth: exchange failed after its credential was used up: %s", e)
-        raise _invalid_grant() from e
 
 
 async def _decide_and_issue(
@@ -855,11 +853,9 @@ def _invalid_grant() -> HTTPException:
 
 async def _consume(kind: _Kind, credential: str, grant: dict[str, Any]) -> bool:
     """Mark the credential consumed; False when that did not finish within
-    `CONSUME_TIMEOUT_S` (it may still land)."""
-    from server.auth import oauth_claims
-
+    `_CONSUME_TIMEOUT_S` (it may still land)."""
     try:
-        async with asyncio.timeout(oauth_claims.CONSUME_TIMEOUT_S):
+        async with asyncio.timeout(_CONSUME_TIMEOUT_S):
             if kind == "code":
                 await _store.consume_code(credential, grant)
             else:

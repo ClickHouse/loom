@@ -45,6 +45,9 @@ class OpFacts:
     maturity: str
     budget_p99_ms: int
     audit: bool
+    # Changes nothing a reader could observe (`Operation.read_only`): the SDKs
+    # send it no Idempotency-Key, and the server keeps no replay for it.
+    read_only: bool
 
     @classmethod
     def of(cls, op: Operation) -> OpFacts:
@@ -55,6 +58,7 @@ class OpFacts:
             maturity=op.maturity,
             budget_p99_ms=int(op.budget_p99_ms),
             audit=bool(op.audit),
+            read_only=op.read_only,
         )
 
 

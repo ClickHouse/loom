@@ -4,14 +4,27 @@ extra release branches, merges the ledger names and open PR heads."""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
+import os
 import time
 from typing import Any
 
+from server.code.app.index.mirror_locks import fetch_lock
 from server.code.app.index.pass_budget import CodeIngestResult
 from server.settings import settings
 
 logger = logging.getLogger("loom.workers.code_ingest")
+
+
+# Touched in a mirror after each fetch round, the pass's or the host loop's: another
+# process of the host skips its own round within the interval.
+FETCHED_MARK = "loom-host-fetch-at"
+
+
+def mark_fetched(git_dir: str) -> None:
+    with contextlib.suppress(OSError), open(os.path.join(git_dir, FETCHED_MARK), "w"):
+        pass
 
 
 # When each shared mirror last fetched its extra branches
@@ -92,10 +105,13 @@ async def fetch_missing_merges(cfg: Any, git_dir: str, repo: Any, result: CodeIn
             if below:
                 await repo.set_state(org, ns, "merge_sweep_below", "0", detail="wrapped")
             return 0
-        missing = await gitrepo.missing_commits(git_dir, [sha for _, sha in rows])
-        fetched = await gitrepo.fetch_shas(
-            git_dir, cfg.git_remote, missing[:batch], token=cfg.github_token
-        )
+        gone = unpinned(git_dir)
+        missing = [
+            s
+            for s in await gitrepo.missing_commits(git_dir, [sha for _, sha in rows])
+            if s not in gone
+        ]
+        fetched = await pin_merges(cfg, git_dir, missing[:batch])
         # a page with more than `batch` missing is re-read next pass (cursor held)
         nxt = rows[-1][0] if len(missing) <= batch else below
         await repo.set_state(
@@ -122,6 +138,63 @@ async def fetch_missing_merges(cfg: Any, git_dir: str, repo: Any, result: CodeIn
             below or 0,
         )
     return fetched
+
+
+# git_dir → the ledger merges its remote no longer serves (a fetch by sha answered
+# "not our ref" twice, in two calls): never asked for again, counted in /v1/health and
+# `loom doctor`. Kept in the mirror (`UNPINNED_FILE`) so a restart and the doctor see them.
+_UNPINNED: dict[str, set[str]] = {}
+# (git_dir, sha) refused once: skipped for the call, asked for again by the next one.
+_REFUSED_ONCE: set[tuple[str, str]] = set()
+UNPINNED_FILE = "loom-unpinned-merges"
+_GONE = ("not our ref {}", "couldn't find remote ref {}")
+
+
+def unpinned(git_dir: str) -> set[str]:
+    """The merges `git_dir`'s remote refused, read from the mirror once per process."""
+    if git_dir not in _UNPINNED:
+        try:
+            with open(os.path.join(git_dir, UNPINNED_FILE)) as f:
+                _UNPINNED[git_dir] = {ln.strip() for ln in f if ln.strip()}
+        except OSError:
+            _UNPINNED[git_dir] = set()
+    return _UNPINNED[git_dir]
+
+
+def _record_unpinned(git_dir: str, shas: set[str]) -> None:
+    gone = unpinned(git_dir)
+    gone.update(shas)
+    logger.warning("mirror %s: remote no longer serves ledger merges %s", git_dir, sorted(shas))
+    try:
+        with open(os.path.join(git_dir, UNPINNED_FILE), "w") as f:
+            f.write("".join(f"{s}\n" for s in sorted(gone)))
+    except OSError as e:
+        logger.debug("mirror %s: unpinned list not written: %s", git_dir, e)
+
+
+async def pin_merges(cfg: Any, git_dir: str, shas: list[str]) -> int:
+    """Fetch merge commits by sha and pin them; the number requested. A sha the remote
+    refuses ("not our ref": a branch it was on was deleted and gc'd upstream) is left
+    out and the rest fetched again; refused in a second call too, it is recorded as
+    unpinned. Any other failure raises."""
+    from server.code.app.index import gitrepo
+
+    gone = unpinned(git_dir)
+    want = [s for s in dict.fromkeys(shas) if s not in gone]
+    while want:
+        try:
+            return await gitrepo.fetch_shas(git_dir, cfg.git_remote, want, token=cfg.github_token)
+        except gitrepo.GitError as e:
+            named = {s for s in want if any(g.format(s) in str(e) for g in _GONE)}
+            if not named:
+                raise
+            if again := {s for s in named if (git_dir, s) in _REFUSED_ONCE}:
+                _record_unpinned(git_dir, again)
+            if len(_REFUSED_ONCE) > 4096:
+                _REFUSED_ONCE.clear()
+            _REFUSED_ONCE.update((git_dir, s) for s in named - again)
+            want = [s for s in want if s not in named]
+    return 0
 
 
 # When each shared mirror last fetched PR heads (monotonic s).
@@ -191,6 +264,26 @@ async def fetch_pr_heads(cfg: Any, git_dir: str, repo: Any, result: CodeIngestRe
     return sent
 
 
+async def fetch_entry(cfg: Any, git_dir: str, repo: Any, result: CodeIngestResult) -> bool:
+    """Everything the pass fetches for one entry, under the mirror's fetch lock: the
+    branch (unless `prefetch_mirrors` fetched it), extra branches, ledger merges and
+    open PR heads. False when the branch fetch failed."""
+    from server.code.app.index import gitrepo
+
+    async with fetch_lock(git_dir):
+        try:
+            if (git_dir, cfg.git_branch) not in _FETCHED_THIS_PASS:
+                await gitrepo.fetch(git_dir, cfg.git_remote, cfg.git_branch, token=cfg.github_token)
+        except gitrepo.GitError as e:
+            result.errors.append(f"fetch: {e}")
+            return False
+        await fetch_extra_branches(cfg, git_dir, result)
+        await fetch_missing_merges(cfg, git_dir, repo, result)
+        await fetch_pr_heads(cfg, git_dir, repo, result)
+        await asyncio.to_thread(mark_fetched, git_dir)
+    return True
+
+
 # The (git_dir, branch) pairs this pass fetched in one batched
 # negotiation per mirror; `_run_repo` skips its own fetch for them.
 _FETCHED_THIS_PASS: set[tuple[str, str]] = set()
@@ -202,8 +295,6 @@ async def prefetch_mirrors(repos: list[Any], result: CodeIngestResult) -> int:
     turn, an entry the budget never reached would never be fetched at all. A
     mirror with one entry fetches in that entry's turn. A failed batch
     leaves its entries to their own fetch. Returns the mirrors fetched."""
-    import os
-
     from server.code.app.index import gitrepo
 
     _FETCHED_THIS_PASS.clear()
@@ -219,7 +310,8 @@ async def prefetch_mirrors(repos: list[Any], result: CodeIngestResult) -> int:
         started = time.monotonic()
         branches = [c.git_branch for c in cfgs]
         try:
-            await gitrepo.fetch_many(git_dir, remote, branches, token=token)
+            async with fetch_lock(git_dir):
+                await gitrepo.fetch_many(git_dir, remote, branches, token=token)
         except gitrepo.GitError as e:
             result.errors.append(f"mirror fetch {git_dir}: {e}")
             continue

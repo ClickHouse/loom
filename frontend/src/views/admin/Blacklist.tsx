@@ -24,7 +24,7 @@ export const PRIVACY_FILTERS_READ_ONLY =
 const SCOPES: readonly BlacklistScope[] = ["namespace", "org", "global"];
 
 /**
- * Page wrapper for /me/admin/guardrails. Renders
+ * Page wrapper for /admin/guardrails. Renders
  * the inline form below with full page chrome.
  */
 export function Blacklist() {

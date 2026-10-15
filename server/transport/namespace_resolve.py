@@ -2,7 +2,7 @@
 
 A model may pass a repository-ish name (`namespace: "clickhouse"`) to a code
 or tracker tool. Answering that with the access refusal ("No access: … claim
-the namespace at /me") reads as a grant problem and sends the model looking
+the namespace in the dashboard") reads as a grant problem and sends the model looking
 elsewhere, so:
 
 - A name that is a repository ("ClickHouse/ClickHouse"), its name

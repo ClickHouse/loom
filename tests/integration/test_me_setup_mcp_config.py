@@ -1,6 +1,6 @@
 """POST /v1/me/setup/mcp_config — Setup-tab MCP config generator.
 
-Powers the /me Setup tab. The caller's existing JWT determines their
+Powers the dashboard's Settings page. The caller's existing JWT determines their
 identity; the endpoint mints a fresh JWT scoped to that identity and
 returns a per-client MCP config block.
 """

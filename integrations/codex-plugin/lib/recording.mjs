@@ -1,6 +1,6 @@
 // Whether conversation recording is on for a namespace.
 //
-// The owner's Recording switch in /me (`conversation_logging_enabled`) is
+// The owner's Recording switch in the dashboard (`conversation_logging_enabled`) is
 // the only thing that decides whether turns are kept. The server accepts an
 // append into a namespace with the switch off and stores nothing
 // (`stored: false, reason: "logging_disabled"`), so a client that ignored
@@ -65,7 +65,7 @@ export function recordingPrimerLine(on, namespace) {
   const dont = "Do NOT call loom_conversation_create / loom_conversation_append yourself";
   if (on === false) {
     return (
-      `# Loom: conversation recording is off for ${namespace} (the owner's Recording switch in /me); ` +
+      `# Loom: conversation recording is off for ${namespace} (the owner's Recording switch in the dashboard); ` +
       `turns are not kept. ${dont}: they would not be stored either.`
     );
   }
@@ -77,6 +77,6 @@ export function recordingPrimerLine(on, namespace) {
   }
   return (
     `# Loom: the Stop hook records this conversation when recording is on for ${namespace} ` +
-    `(the owner's switch in /me). ${dont}.`
+    `(the owner's switch in the dashboard). ${dont}.`
   );
 }

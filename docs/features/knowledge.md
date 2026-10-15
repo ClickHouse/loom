@@ -12,7 +12,8 @@ belongs here ([writing memories](./memory/writing.md)).
    `content` as a string plus a `source_uri`, which is the document's stable identity
    and the thing an agent cites. `original_bytes_b64` (with `original_filename` and
    `blob_content_type`) keeps the uploaded file beside the extracted text, in the
-   directory `LOOM_BLOB_DIR` names, so a person can download exactly what they uploaded.
+   ClickHouse table `loom.document_blobs` addressed by its SHA-256, so a person can
+   download exactly what they uploaded.
 2. **Chunks it on its structure.** The text is split on its headings and windowed
    inside each section (`LOOM_KNOWLEDGE_CHUNK_SIZE` characters, stepping by
    `LOOM_KNOWLEDGE_CHUNK_STRIDE`, so consecutive windows overlap). A document with no
@@ -138,7 +139,13 @@ cannot supersede the wrong document.
 A delete is a soft delete: the rows stay, marked superseded, and `include_superseded`
 reads them. No table TTL removes them unless an operator configured one
 (`LOOM_RETENTION_CHUNKS_DAYS`, `LOOM_RETENTION_DOCUMENTS_DAYS`, both 0 by default). The
-stored original file is removed on delete unless another document shares it.
+stored original stays until the `document_blob_gc` worker finds no live document naming
+it: every `LOOM_DOCUMENT_BLOB_GC_INTERVAL_SECONDS` it removes, one namespace at a time,
+the originals of deleted and re-uploaded documents and of documents a retention TTL
+removed, so originals age out with their documents. It spares an original written in
+the last `LOOM_DOCUMENT_BLOB_MIN_AGE_SECONDS` (3600): a concurrent upload of the same
+bytes may be about to name it. No write deletes an original itself, so a re-upload that
+fails after storing its bytes keeps the document's current download.
 
 ## Getting files in: the ingest CLI
 
@@ -199,7 +206,6 @@ curl -s localhost:7777/v1/knowledge.search -H "Authorization: Bearer $LOOM_API_K
 | Setting                                                                        | Effect                                                                                                                                                                              |
 | ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `LOOM_KNOWLEDGE_CHUNK_SIZE`, `…_CHUNK_STRIDE`                                  | How documents are split ([Knowledge → Chunking](../reference/configuration.md#chunking)). `loom rechunk --org O --namespace N --apply` re-chunks existing documents after a change. |
-| `LOOM_BLOB_DIR`                                                                | Where uploaded originals live, content-addressed by hash.                                                                                                                           |
 | `LOOM_MEMORY_SEARCH_FANOUT_KINDS`                                              | Which namespace kinds an `all_mine` search spans ([MemorySearch](../reference/configuration.md#memorysearch)).                                                                      |
 | `LOOM_MEMORY_SEARCH_FANOUT_MAX_NAMESPACES`                                     | How many of the caller's namespaces an `all_mine` search reads besides the addressed one ([MemorySearch](../reference/configuration.md#memorysearch)).                              |
 | `LOOM_MCP_LOOM_SEARCH_KNOWLEDGE_MIN_SIMILARITY`                                | The floor for knowledge hits in `loom_search` ([Mcp](../reference/configuration.md#mcp)).                                                                                           |

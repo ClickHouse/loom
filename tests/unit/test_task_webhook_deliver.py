@@ -56,7 +56,7 @@ class FakeRepo:
         self.writes.append(dict(row))
         self.cursors[(row["org"], row["inbox"])] = dict(row)
 
-    async def events_since(self, org, *, since_seq, watermark, inbox=None, limit=200, **_):
+    async def events_since(self, org, *, since_seq, lag_s, inbox=None, limit=200, **_):
         self.reads.append(since_seq)
         return [
             dict(e)

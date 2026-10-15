@@ -1,4 +1,5 @@
-"""`GET /v1/health`: the multi-tier health answer.
+"""`GET /v1/health`: the multi-tier health answer; `/v1/health/live` and
+`/v1/health/ready`: the probes a load balancer or orchestrator reads.
 
 A composition module beside `server.main`: the answer reads ClickHouse, the
 providers, the boot snapshot, calibration, the rate limiter and, on request,
@@ -7,6 +8,7 @@ the worker supervisor and the observability subsystems.
 
 from __future__ import annotations
 
+import asyncio
 import os
 from typing import Any
 
@@ -44,11 +46,11 @@ def _health_provider_fields(
     provider's key is missing); `providers_degraded` also folds in the
     observed outcome of real calls (the `provider_health` breaker), because a
     total embedding outage leaves both fakes false. `problems` is the same
-    list `loom doctor` prints and the /me banner renders, each entry with a
+    list `loom doctor` prints and the dashboard banner renders, each entry with a
     fix; `status` is `degraded` when ClickHouse is down or any entry is an
     error — a configured fake is a warn unless LOOM_REQUIRE_REAL_PROVIDERS.
     """
-    from server.auth import grant_claims, oauth_claims, revocation
+    from server.auth import keyring, revocation
     from server.code.app.index.sandbox import layout_refusal, sandbox_state
     from server.core.ch import reader_user_error, reader_user_state
     from server.core.vectors import codes_state
@@ -57,7 +59,6 @@ def _health_provider_fields(
     from server.observability import instance as _instance
     from server.observability import provider_health
     from server.observability.problems import HealthState, collect_problems, derive_status
-    from server.tasks.store.runs import claims_atomic
     from server.workers import leader as _leader
 
     embedding_model = settings.embedding_model
@@ -68,8 +69,9 @@ def _health_provider_fields(
     probed_dim = effective_embedding_dim()
     width_mismatches = codes_state.width_mismatches(probed_dim)
     lease = _leader.current()
-    main = _main_state()
-    reachable = main.get("reachable")
+    from server.core import deployment_config, rmt_carry
+    from server.insights.app import provider_barrier
+
     problems = collect_problems(
         settings,
         HealthState(
@@ -78,18 +80,19 @@ def _health_provider_fields(
             provider_status=provider_status,
             pending_migrations=boot.SKIPPED_PENDING_MIGRATIONS,
             worker_lease_held=bool(lease.held) if lease else None,
+            worker_lease_error=lease.error if lease else "",
+            worker_lease_given_up=lease.given_up if lease else "",
             instance_label=_instance.instance_label(),
             otel_metrics_unindexed=otel_metrics_unindexed,
             revocation_age_s=revocation.snapshot_age_seconds(),
-            main_reachable=reachable if isinstance(reachable, bool) else None,
-            main_error=str(main.get("error") or ""),
+            keyring=keyring.status(),
+            config_drift=tuple(deployment_config.drift()),
             repo_sandbox=sandbox_state(),
             repo_sandbox_refusal=layout_refusal(),
             ch_reader_ok=reader_user_state(),
             ch_reader_error=reader_user_error(),
-            run_claims_atomic=claims_atomic(),
-            oauth_claims_atomic=oauth_claims.claims_atomic(),
-            grant_claims_atomic=grant_claims.claims_atomic(),
+            stale_participants=provider_barrier.stale_participants(),
+            carry_pinned=tuple(rmt_carry.pinned_overdue()),
         ),
     )
     return {
@@ -121,7 +124,7 @@ async def _ping_clickhouse() -> tuple[bool, str | None]:
 
 def _mode() -> str:
     """This deployment's tier: CH always; other integrations only when
-    configured. Rendered by operators and /me."""
+    configured. Rendered by operators and the dashboard."""
     parts = ["ch"]
     if settings.langfuse_url and settings.langfuse_admin_token:
         parts.append("langfuse")
@@ -134,11 +137,18 @@ def _calibration_block(fake_embedding: bool) -> dict[str, object]:
     """The boot calibration's percentiles and derived thresholds, or why the
     gates fell back to the scalar settings. Calibration probes the embedder,
     so only the embedder can be the cause."""
-    from server.memory.app.embedder_calibration import get_calibration
+    from server.memory.app.embedder_calibration import (
+        calibration_ready,
+        calibration_source,
+        current_calibration_hash,
+        get_calibration,
+    )
 
     calibration = get_calibration()
     if calibration is None:
         return {
+            "calibration_hash": None,
+            "ready": calibration_ready(),
             "status": "calibration unavailable; using scalar settings",
             "likely_cause": (
                 "fake embedder" if fake_embedding else "probe error — check boot logs"
@@ -146,6 +156,11 @@ def _calibration_block(fake_embedding: bool) -> dict[str, object]:
         }
     return {
         "enabled": True,
+        # Equal on every replica serving the same gates; "source" is "shared"
+        # (loom.embedder_calibration) or "probe" (this replica's own).
+        "calibration_hash": current_calibration_hash(),
+        "source": calibration_source(),
+        "ready": True,
         "embedder_model": calibration.embedder_model,
         "similar_p25": round(calibration.similar_p25, 4),
         "similar_p50": round(calibration.similar_p50, 4),
@@ -175,11 +190,12 @@ def _ratelimit_block() -> dict[str, Any]:
 
 def _workers_blocks() -> dict[str, object]:
     from server.workers import leader as _leader
-    from server.workers.supervisor import get_supervisor
 
     out: dict[str, object] = {}
     try:
-        out["workers"] = get_supervisor().status()
+        from server.workers import child as _workers_child
+
+        out["workers"] = _workers_child.current_runner().status()
     except Exception as e:  # noqa: BLE001 — health must not fail on workers
         out["workers"] = {"error": f"{type(e).__name__}: {e}"}
     lease = _leader.current()
@@ -253,6 +269,36 @@ def _included_blocks(requested: set[str]) -> dict[str, object]:
     return out
 
 
+async def _mirrors_block() -> dict[str, object]:
+    """This host's git mirrors (ClickHouse's bootstrap_stage is deployment-wide).
+    Walks every mirror's directory, so it is opt-in."""
+    from server.code.app.index.mirrors import mirror_status
+
+    return await asyncio.to_thread(mirror_status)
+
+
+@health_router.get("/v1/health/live")
+async def health_live() -> dict[str, object]:
+    """Liveness: the process is up and its event loop answers. No ClickHouse
+    call, so a ClickHouse outage never gets a healthy replica restarted."""
+    return {"status": "ok"}
+
+
+@health_router.get("/v1/health/ready")
+async def health_ready(response: Response) -> dict[str, object]:
+    """Readiness: 200 only when every required check passes (ClickHouse,
+    migrations, token state, warm-up loads, calibration, config drift, the
+    sandbox, not draining); 503 with the failing checks otherwise. Each check
+    reads in-memory state or a cached answer, so a probe a second is cheap."""
+    from server.core import readiness
+
+    state = await readiness.evaluate()
+    if not state.ready:
+        response.status_code = 503
+    response.headers["Cache-Control"] = "no-store"
+    return state.as_dict()
+
+
 @health_router.get("/v1/health")
 async def health(response: Response, include: str = "") -> dict[str, object]:
     """Multi-tier health.
@@ -264,10 +310,11 @@ async def health(response: Response, include: str = "") -> dict[str, object]:
     does not**, so a probe that reads only the code (Docker's healthcheck,
     a load balancer, an uptime monitor) sees the outage.
 
-    `?include=workers,langfuse,events,embedding_cache,llm_cache,otel` opts
+    `?include=workers,langfuse,events,embedding_cache,llm_cache,otel,mirrors` opts
     in to per-subsystem checks, each reported independently: only
     `clickhouse` makes the whole response degraded.
     """
+    from server.core.provider_process import process_identity
     from server.observability import instance as _instance
 
     requested = {s.strip() for s in include.split(",") if s.strip()}
@@ -282,15 +329,16 @@ async def health(response: Response, include: str = "") -> dict[str, object]:
         # stamps every ledger row and OTel resource from it carry.
         "instance": _instance.instance_id(),
         "instance_label": _instance.instance_label(),
+        # What `loom participant retire --participant` takes if this process
+        # dies without shutting down.
+        "participant_id": str(process_identity()),
         "boot_migrate": bool(settings.boot_migrate),
         "pending_migrations": list(boot.SKIPPED_PENDING_MIGRATIONS),
         "ch_ok": ch_ok,
         "mode": _mode(),
-        "read_replica": bool(settings.read_replica),
         **prov,
     }
-    if settings.read_replica:
-        out["replica"] = _replica_block()
+    out["deployment_config"] = _deployment_config_block()
     if ch_error:
         out["ch_error"] = ch_error
     if ch_ok:
@@ -299,49 +347,32 @@ async def health(response: Response, include: str = "") -> dict[str, object]:
         from server.core.schema.status import schema_status
 
         out["schema"] = await schema_status()
+    from server.core import readiness
+
+    # The same answer /v1/health/ready gives, with the reason for each check.
+    out["readiness"] = (await readiness.evaluate()).as_dict()
     out["adaptive_thresholds"] = _calibration_block(bool(prov["fake_embedding"]))
     out["ratelimit"] = _ratelimit_block()
+    if "mirrors" in requested and settings.code_intel_enabled:
+        out["mirrors"] = await _mirrors_block()
     out.update(_included_blocks(requested))
     return out
 
 
-def _main_state() -> dict[str, object]:
-    """A read-replica's last word from its main Loom; empty elsewhere."""
-    if not settings.read_replica:
-        return {}
-    from server.clients.main_loom import MAIN_STATE
-
-    return dict(MAIN_STATE)
-
-
-def _replica_block() -> dict[str, object]:
-    """Which of the main Loom's published settings this read-replica applied."""
-    from server.core import deployment_config
-    from server.core.provider_process import process_identity
-    from server.embedding.embedder import embeds_via_main
-    from server.llm.client import llm_via_main
+def _deployment_config_block() -> dict[str, object]:
+    """This process against the deployment's published configuration, and the
+    live instances the rate limits divide by."""
+    from server.core import deployment_config, instances
 
     state = deployment_config.STATE
     return {
-        # What `loom read-replica retire --participant` takes if this process dies
-        # without shutting down.
-        "participant_id": str(process_identity()),
-        # Where the ops that read git history go: the main Loom, or nowhere
-        # (they answer that this Loom has no git history).
-        "git_history": "forwarded"
-        if str(settings.read_replica_main_url).strip()
-        else "unavailable",
-        # Whose embedder serves this replica: the main Loom's (no provider key
-        # here) or this process's own.
-        "embeddings": "main" if embeds_via_main() else "own",
-        "llm": "main" if llm_via_main(settings.llm_provider) else "own",
-        # Whether the main Loom answered the last call or probe, when, and why not.
-        "main": _main_state(),
-        "config_published_by": state["published_by"],
-        "config_published_at": state["published_at"],
-        "config_applied": len(state["applied"]),
-        "token_keys_match_main": bool(state["keys_checked"]) and not state["error"],
-        "config_error": state["error"],
+        "instance_id": instances.instance_id(),
+        "live_hosts": instances.live_hosts(),
+        "checked": bool(state["checked"]),
+        "drift": deployment_config.drift(),
+        "published_by": state["published_by"],
+        "published_at": state["published_at"],
+        "error": state["error"],
     }
 
 

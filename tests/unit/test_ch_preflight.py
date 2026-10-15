@@ -67,13 +67,22 @@ class FakeCH:
 
 
 def test_a_ready_server_passes_and_reports_what_it_has() -> None:
-    server = preflight.check(FakeCH(), need="replica")
+    server = preflight.check(FakeCH(), need="server")
     assert server == preflight.Server("26.5.1.882", keeper=True, lightweight_updates=True)
 
 
-def test_replica_discovery_cannot_be_left_to_the_user_s_profile() -> None:
+def test_replica_discovery_cannot_be_left_to_the_user_s_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # A profile with skip_unavailable_shards = 1 would silently drop a replica.
-    assert preflight.REPLICA_VERSIONS_SQL.endswith("SETTINGS skip_unavailable_shards = 0")
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "ch_cluster", "prod")
+    sql = preflight.replica_versions_sql()
+    assert "clusterAllReplicas('prod', system.one)" in sql
+    assert sql.endswith("SETTINGS skip_unavailable_shards = 0")
+    monkeypatch.setattr(settings, "ch_cluster", "")
+    assert preflight.replica_versions_sql() == "SELECT version()"
 
 
 def test_the_oldest_replica_decides_the_version() -> None:
@@ -96,9 +105,30 @@ def test_replicas_that_cannot_be_asked_are_not_taken_for_one_server(
     assert e.value.needs_admin is needs_admin
 
 
-def test_a_read_replica_falls_back_when_the_replicas_cannot_be_asked() -> None:
+class _NoKeeper(FakeCH):
+    def command(self, sql: str, **kwargs: Any) -> Any:
+        if "zookeeper_connection" in sql:
+            self.ran.append(sql)
+            return 0
+        return super().command(sql, **kwargs)
+
+
+def test_a_server_without_a_keeper_is_refused_for_every_process_that_serves() -> None:
+    with pytest.raises(preflight.PreflightError, match="Loom needs a ClickHouse Keeper") as e:
+        preflight.check(_NoKeeper(), need="server")
+    assert e.value.no_keeper and not e.value.needs_admin
+    assert preflight.check(_NoKeeper(), need="read").keeper is False
+
+
+def test_ch_setup_says_how_to_add_a_keeper_and_exits_3(capsys: pytest.CaptureFixture[str]) -> None:
+    assert ch_setup._set_up(_NoKeeper(), "loom", "loom_reader") == ch_setup.NO_KEEPER_EXIT == 3
+    err = capsys.readouterr().err
+    assert "keeper.xml" in err and "<zookeeper>" in err and "keeper_map_path_prefix" in err
+
+
+def test_a_reader_falls_back_when_the_replicas_cannot_be_asked() -> None:
     ch = FakeCH(replica_error="Code: 279. DB::Exception: All connection tries failed")
-    assert preflight.check(ch, need="replica").version == "26.5.1.882"
+    assert preflight.check(ch, need="read").version == "26.5.1.882"
     runner = {f"SELECT * FROM system.{t} LIMIT 0" for t in preflight.RUNNER_SYSTEM_TABLES}
     assert not runner & set(ch.ran)
 
@@ -146,7 +176,7 @@ def test_what_the_next_migration_needs_is_reported_while_nothing_is_pending(
     ch = FakeCH(denied=("SELECT * FROM system.mutations",))
     (gap,) = preflight.check(ch, need="server").next_migration
     assert "system.mutations" in gap.reason and gap.needs_admin
-    assert preflight.check(ch, need="replica").next_migration == ()
+    assert preflight.check(ch, need="read").next_migration == ()
 
 
 def test_the_doctor_warns_of_what_the_next_migration_will_refuse(
@@ -161,7 +191,6 @@ def test_the_doctor_warns_of_what_the_next_migration_will_refuse(
     server = preflight.Server(
         "26.5.1.882", keeper=True, lightweight_updates=True, unreadable=("query_log",)
     )
-    monkeypatch.setattr(preflight, "needed_at_boot", lambda: "server")
     monkeypatch.setattr(
         preflight, "require_ready", lambda **_: dataclasses.replace(server, next_migration=gaps)
     )
@@ -205,7 +234,7 @@ def test_a_missing_database_is_created_only_when_asked() -> None:
     preflight.check(ch, need="server")
     assert "CREATE DATABASE IF NOT EXISTS loom" in ch.ran
     with pytest.raises(preflight.PreflightError, match=r"missing, or no grant on it"):
-        preflight.check(FakeCH(database=False), need="replica")
+        preflight.check(FakeCH(database=False), need="read")
 
 
 def test_the_admin_pointer_is_in_the_message_but_not_the_reason() -> None:
@@ -235,13 +264,6 @@ def test_missing_grants_name_the_grant_to_run() -> None:
     with pytest.raises(preflight.PreflightError) as e:
         preflight.check(FakeCH(grants=0), need="server")
     assert e.value.needs_admin and "GRANT CURRENT GRANTS ON loom.* TO `loom`" in str(e.value)
-
-
-def test_a_read_replica_needs_only_the_replica_grants() -> None:
-    ch = FakeCH()
-    preflight.check(ch, need="replica")
-    assert f"CHECK GRANT {preflight.GRANTS['replica']} ON loom.*" in ch.ran
-    assert not any(preflight.GRANTS["server"] in sql for sql in ch.ran)
 
 
 def test_the_server_grants_never_name_the_global_alter_group() -> None:
@@ -611,7 +633,6 @@ async def test_boot_logs_what_a_passing_preflight_warns_of_once(
     )
     monkeypatch.setattr(preflight, "require_ready", _real_require_ready)
     monkeypatch.setattr(preflight, "connect", lambda: ch)
-    monkeypatch.setattr(preflight, "needed_at_boot", lambda: "server")
     monkeypatch.setattr(preflight, "_migrations_pending", lambda ch, journal: False)
     with caplog.at_level("DEBUG"):
         await boot.require_clickhouse_ready()
@@ -760,7 +781,7 @@ def test_a_missing_ddl_grant_stops_even_with_nothing_pending(
     assert "SELECT" not in str(e.value).split(" on loom.*")[0]
 
 
-def test_every_process_but_a_read_replica_needs_what_the_workers_run() -> None:
+def test_every_process_needs_what_the_workers_run() -> None:
     class NoWorkerGrants(FakeCH):
         def command(self, sql: str, **kwargs: Any) -> Any:
             if sql.startswith("CHECK GRANT ") and any(
@@ -773,17 +794,6 @@ def test_every_process_but_a_read_replica_needs_what_the_workers_run() -> None:
     with pytest.raises(preflight.PreflightError) as e:
         preflight.check(NoWorkerGrants(), need="server", migrates=False)
     assert "is missing OPTIMIZE, TRUNCATE on loom.*" in str(e.value)
-    assert preflight.check(NoWorkerGrants(), need="replica").version
-
-
-@pytest.mark.parametrize(("replica", "need"), [(False, "server"), (True, "replica")])
-def test_only_a_read_replica_is_checked_for_less(
-    monkeypatch: pytest.MonkeyPatch, replica: bool, need: str
-) -> None:
-    from server.settings import settings
-
-    monkeypatch.setattr(settings, "read_replica", replica)
-    assert preflight.needed_at_boot() == need
 
 
 def test_a_process_that_does_not_migrate_never_creates_the_database() -> None:
@@ -824,7 +834,7 @@ def test_a_server_without_refresh_view_boots_with_a_warning() -> None:
     server = preflight.check(NoRefresh(), need="server")
     assert server.no_refresh
     assert "may not SYSTEM REFRESH VIEW on loom.*" in preflight.warnings(server)
-    assert not preflight.check(NoRefresh(), need="replica").no_refresh
+    assert not preflight.check(NoRefresh(), need="read").no_refresh
 
 
 def test_ch_setup_says_a_missing_refresh_grant_and_how_to_give_it(

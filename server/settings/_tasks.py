@@ -16,10 +16,6 @@ class TaskSettings(BaseModel):
     task_lease_sweep_interval_seconds: int = 60
     # Seconds between passes that found nothing.
     task_lease_sweep_idle_interval_seconds: int = 300
-    # Claim arbitration: "auto" = KeeperMap when loom.task_leases
-    # exists, else the append-only claim log; "keeper" / "log" pin
-    # one.
-    task_lease_backend: Literal["auto", "keeper", "log"] = "auto"
     # Post one Standard Webhooks-signed notice per new event batch to each
     # inbox's webhook_url; the secret comes from the env var
     # task_inboxes.webhook_secret_ref names (`LOOM_WEBHOOK_SECRET_<ORG>__<NAME>`,

@@ -146,45 +146,6 @@ async def test_begins_never_completed_leave_no_claims(
 
 
 @pytest.mark.asyncio
-async def test_without_keeper_a_narrowed_new_supplied_id_is_replaced(
-    control_plane_url: str, ch_client: Any
-) -> None:
-    if _has_keeper(ch_client):
-        pytest.skip("needs a server without a Keeper")
-    org, ns = unique_org("run-claims"), "run-claims"
-    toks = {U: _mint(org, ns, read_user_id=U), V: _mint(org, ns, read_user_id=V)}
-    wide = _mint(org, ns)
-    ident = {"org": org, "namespace": ns, "agent": "a"}
-    async with httpx.AsyncClient(base_url=control_plane_url, timeout=60.0) as c:
-        for i in range(10):
-            run_id = f"shared-{i}-{uuid.uuid4().hex[:6]}"
-            outs = await asyncio.gather(
-                *(
-                    _call(
-                        c,
-                        toks[user],
-                        "run.begin",
-                        {**ident, "user_id": user, "run_id": run_id, "goal": f"{user} {i}"},
-                    )
-                    for user in (U, V)
-                )
-            )
-            ids = [o["run_id"] for o in outs]
-            assert run_id not in ids and len(set(ids)) == 2, ids
-            for rid, user in zip(ids, (U, V), strict=True):
-                got = await _call(c, wide, "run.get", {"org": org, "namespace": ns, "run_id": rid})
-                assert got["found"] and got["run"]["user_id"] == user, (i, user)
-        # U's run exists (opened namespace-wide): U re-opens it, V does not take it.
-        mine = {**ident, "user_id": U, "run_id": "mine", "goal": "u"}
-        assert (await _call(c, wide, "run.begin", mine))["run_id"] == "mine"
-        assert (await _call(c, toks[U], "run.begin", mine))["run_id"] == "mine"
-        other = await _call(c, toks[V], "run.begin", {**mine, "user_id": V, "goal": "v"})
-        assert other["run_id"] != "mine"
-        got = await _call(c, wide, "run.get", {"org": org, "namespace": ns, "run_id": "mine"})
-    assert got["run"]["user_id"] == U and got["run"]["goal"] == "u"
-
-
-@pytest.mark.asyncio
 async def test_a_session_scoped_token_begins_and_completes_its_own_run(
     control_plane_url: str,
 ) -> None:

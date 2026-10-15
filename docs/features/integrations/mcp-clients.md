@@ -40,7 +40,7 @@ loom install --client cursor --server-url https://loom.example.com --token "$LOO
 Restart the client afterwards. Exit codes: `2` no token, `5` no client detected, `1` any
 client failed (the others still run). See the [CLI reference](../../reference/cli.md).
 
-Get a token from the dashboard's **Settings → Tokens** tab (`/me/settings`), which also prints the per-client
+Get a token from the dashboard's **Settings → Tokens** tab (`<server>/settings`), which also prints the per-client
 blocks below, or with `loom mint-token --subject you --org <org> --namespaces <ns> --roles writer`.
 A client that only reads can use a `viewer` token; see
 [tokens and grants](../../guides/tokens-and-grants.md).

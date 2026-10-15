@@ -1,16 +1,16 @@
-"""Every process that verifies tokens loads and refreshes
-its own revocation snapshot — the web tier under LOOM_BACKGROUND_WORKERS=off
-included, or a revoked token keeps authenticating until a restart."""
+"""Every process that verifies tokens loads and refreshes its own revocation
+snapshot and signing keyring, whether or not it holds the supervisor lease, or
+a revoked token keeps authenticating until a restart."""
 
 from __future__ import annotations
 
 import asyncio
-import re
 from pathlib import Path
 
 import pytest
 
 from server.auth import revocation
+from server.core.ch import current_query_tag
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -80,20 +80,66 @@ async def test_load_at_boot_fills_the_snapshot(monkeypatch: pytest.MonkeyPatch) 
     assert revocation.is_revoked("dead-beef")
 
 
-def test_lifespan_loads_at_boot_and_runs_the_loop_when_the_lease_is_not_held() -> None:
-    src = (ROOT / "server" / "main.py").read_text()
-    boot_src = (ROOT / "server" / "boot.py").read_text()
-    boot = boot_src[
-        boot_src.index("async def start_revocation(") : boot_src.index("def start_lease_retry(")
-    ]
-    assert "await revocation.load_at_boot()" in boot
-    assert re.search(
-        r"if lease_held:\n\s+return None\n\s+return revocation\.start_refresh_loop\(", boot
+@pytest.mark.asyncio
+async def test_token_state_loads_both_at_boot_and_runs_both_loops(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server import boot
+    from server.auth import keyring
+
+    loaded: list[tuple[str, str]] = []
+
+    async def _load(name: str) -> None:
+        loaded.append((name, current_query_tag()))
+
+    async def _forever() -> None:
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(revocation, "load_at_boot", lambda: _load("revocation"))
+    monkeypatch.setattr(keyring, "refresh", lambda: _load("keyring"))
+    monkeypatch.setattr(
+        revocation, "start_refresh_loop", lambda _ttl: asyncio.create_task(_forever(), name="r")
     )
+    monkeypatch.setattr(
+        keyring, "start_refresh_loop", lambda: asyncio.create_task(_forever(), name="k")
+    )
+    loops = await boot.start_token_state()
+    # Each boot load is tagged as its refresh loop is, and only for its call.
+    assert loaded == [("revocation", "revocation.refresh"), ("keyring", "auth.keyring_refresh")]
+    assert current_query_tag() == ""
+    assert [t.get_name() for t in loops] == ["r", "k"]
+    for t in loops:
+        t.cancel()
+
+
+def test_lifespan_starts_the_token_state_and_cancels_it_at_shutdown() -> None:
+    src = (ROOT / "server" / "main.py").read_text()
     lifespan = src[src.index("async def lifespan(") :]
-    assert "revocation_loop = await boot.start_revocation(lease.held)" in lifespan
-    # cancelled when the lease is acquired (the worker takes over) and at shutdown
-    assert boot_src.count("revocation_loop.cancel()") == 1
-    assert src.count("revocation_loop.cancel()") == 1
+    assert "auth_loops = await boot.start_token_state()" in lifespan
+    assert "for loop in (*auth_loops, overrides_loop):\n            loop.cancel()" in lifespan
     # the decorator still sits on lifespan, not on the helper above it
     assert "@asynccontextmanager\nasync def lifespan(" in src
+
+
+@pytest.mark.asyncio
+async def test_refresh_loop_tags_its_queries_as_itself_not_a_worker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.core.ch import current_query_tag
+
+    tags: list[str] = []
+
+    async def _fake_refresh() -> None:
+        tags.append(current_query_tag())
+
+    monkeypatch.setattr(revocation, "refresh", _fake_refresh)
+    real_sleep = asyncio.sleep
+    monkeypatch.setattr(revocation.asyncio, "sleep", lambda s: real_sleep(0.001))
+    task = revocation.start_refresh_loop(1)
+    for _ in range(500):
+        if tags:
+            break
+        await real_sleep(0.01)
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    assert tags and tags[0] == "revocation.refresh"

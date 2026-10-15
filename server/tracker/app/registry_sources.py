@@ -23,6 +23,7 @@ import time
 from datetime import datetime
 from typing import Any
 
+from server.core import readiness
 from server.core.datetimes import naive_utc_now_seconds as _now
 from server.core.secrets_at_rest import seal, unseal
 from server.settings import settings
@@ -130,6 +131,16 @@ async def refresh_db_sources(*, force: bool = False, ch: Any | None = None) -> l
             e,
         )
     return sources.registered()
+
+
+def loaded() -> bool:
+    """One read of `loom.qa_sources` has landed in this process (or self-service
+    is off, so there is nothing to load). Readiness waits for it."""
+    return bool(_LOADED_AT) or not bool(settings.tracker_self_service_enabled)
+
+
+def readiness_check() -> readiness.CheckResult:
+    return readiness.result(loaded(), "tracker registry not loaded")
 
 
 def find(org: str, name: str) -> DbSource | None:

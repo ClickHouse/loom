@@ -63,6 +63,18 @@ export class RateLimited extends LoomError {
 /** 5xx after the transport's retries, or a connection that never got a response. */
 export class BackendUnavailable extends LoomError {}
 /**
+ * 503 with code IDEMPOTENT_IN_PROGRESS: the first request with this
+ * Idempotency-Key still runs. Retried after `retryAfterS` (the transport does,
+ * for an idempotent op); the retry gets the first request's answer.
+ */
+export class IdempotentInProgress extends BackendUnavailable {
+  readonly retryAfterS: number;
+  constructor(message: string, retryAfterS: number, opts: LoomErrorOptions = {}) {
+    super(message, opts);
+    this.retryAfterS = retryAfterS;
+  }
+}
+/**
  * `code` of a `BackendUnavailable` whose request never got a response — the
  * connection failed (wrong host or port, DNS, refused). Its message names the
  * base URL: `<op>: cannot reach <baseUrl>: <reason>`. Stable,
@@ -95,7 +107,10 @@ export function errorFromResponse(
   if (status === 401 || status === 403) return new AuthError(message, opts);
   if (status === 404) return new NotFound(message, opts);
   if (status === 409 && code === "IDEMPOTENT_CONFLICT") return new IdempotentConflict(message, opts);
+  // ClickHouse refused to store an override: no precondition, and not retried.
+  if (status === 409 && code === "OVERRIDE_NOT_STORED") return new LoomError(message, opts);
   if (status === 409 || status === 412) return new PreconditionFailed(message, opts);
+  if (status === 503 && code === "IDEMPOTENT_IN_PROGRESS") return new IdempotentInProgress(message, retryAfterS, opts);
   if (status >= 500) return new BackendUnavailable(message, opts);
   return new LoomError(message, opts);
 }

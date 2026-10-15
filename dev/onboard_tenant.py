@@ -141,7 +141,7 @@ def _resolve_admin_token(explicit: str | None, env_path: Path) -> str:
 
 def _next_steps(*, base_url: str, org: str, namespace: str, agent: str, env_path: Path) -> str:
     """The block printed after a successful onboard: where the token lives
-    and three ready-to-paste ways to use it (MCP, SDK, the /me page). The
+    and three ready-to-paste ways to use it (MCP, SDK, the dashboard). The
     token itself stays in the file; the commands read it from there."""
     base = base_url.rstrip("/")
     return dedent(f"""
@@ -160,7 +160,7 @@ def _next_steps(*, base_url: str, org: str, namespace: str, agent: str, env_path
               await a.memory.set("hello", {{"from": {agent!r}}})
 
           # Browse the namespace (paste the token when asked)
-          {base}/me
+          {base}/
         """)
 
 

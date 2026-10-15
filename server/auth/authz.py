@@ -490,7 +490,7 @@ async def grant_role_for(org: str, namespace: str, subject: str) -> Role | None:
 
 
 _JOIN_HINT = (
-    " This is a repository namespace: join it from /me → Repositories, "
+    " This is a repository namespace: join it from the dashboard's Repositories page, "
     "or call code.repos to see what you can join."
 )
 

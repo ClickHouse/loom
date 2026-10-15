@@ -15,7 +15,6 @@ from server.erasure.store.mutations import (
     delete_scoped,
     namespaces_of,
     purge_mode,
-    run_mutation,
     tombstone_scoped,
 )
 from server.erasure.store.predicates import NS_EQ, ORG_NS, UID, USER_CHUNKS
@@ -704,6 +703,11 @@ async def delete_memory_reinforcement_by_user(
     )
 
 
+# A document whose original is a file of a pre-033 blob directory, not deleted
+# and stamped by `loom blobs import` yet.
+_LEGACY_UNERASED = "position(blob_path, '/') > 0 AND blob_erased_at IS NULL"
+
+
 async def tombstone_documents_by_namespace(
     org: str,
     namespace: str | Sequence[str],
@@ -711,61 +715,73 @@ async def tombstone_documents_by_namespace(
     ch: _CHClient | None = None,
 ) -> int:
     """Supersede the namespace's whole-document rows through the read-filtered
-    `superseded_at` column; a purge deletes every row instead. The `IS NULL`
+    `superseded_at` column; a purge deletes them instead, except a row whose
+    pre-033 file is still on disk: it is only superseded, so the census keeps
+    counting it until `loom blobs import` has deleted the file. The `IS NULL`
     guard makes a re-run a no-op."""
-    if purge_mode():
-        return await count_then_mutate(
-            "loom.documents",
-            count_where=ORG_NS,
-            mutation="DELETE",
-            mutation_where=ORG_NS,
-            params={"org": org, "ns": namespace},
-            ch=ch,
-        )
     live = ORG_NS + " AND superseded_at IS NULL"
+    if not purge_mode():
+        return await _supersede_documents(live, org, namespace, ch)
+    deletable = f"{ORG_NS} AND NOT ({_LEGACY_UNERASED})"
+    deleted = await count_then_mutate(
+        "loom.documents",
+        count_where=deletable,
+        mutation="DELETE",
+        mutation_where=deletable,
+        params={"org": org, "ns": namespace},
+        ch=ch,
+    )
+    kept = f"{live} AND {_LEGACY_UNERASED}"
+    return deleted + await _supersede_documents(kept, org, namespace, ch)
+
+
+async def _supersede_documents(
+    where: str, org: str, namespace: str | Sequence[str], ch: _CHClient | None
+) -> int:
     return await count_then_mutate(
         "loom.documents",
-        count_where=live,
+        count_where=where,
         mutation="UPDATE superseded_at = {now:DateTime}",
-        mutation_where=live,
+        mutation_where=where,
         params={"org": org, "ns": namespace},
         ch=ch,
     )
 
 
-# The documents of the scope that still hold an original on disk. One
-# predicate for the SELECT and the stamp; a list scope binds as an Array, as
+# The documents of the scope whose original has not been erased yet. One
+# predicate for the stamp; a list scope binds as an Array, as
 # `count_then_mutate` rewrites it — a list bound to `{ns:String}` is the
-# literal "['a', 'b']" and matches nothing.
+# literal "['a', 'b']" and matches nothing. A `blob_path` with a `/` names a
+# file on a pre-033 blob directory, which this step cannot delete: it stays
+# unstamped, so the census counts it and the saga fails closed until
+# `loom blobs import` has deleted the file and stamped the row.
 _UNERASED_BLOBS = (
     "org = {org:String} AND namespace IN {ns:Array(String)}"
-    " AND blob_path != '' AND blob_erased_at IS NULL"
+    " AND blob_path != '' AND blob_erased_at IS NULL AND position(blob_path, '/') = 0"
 )
 
 
-async def unerased_blob_paths(
+async def delete_document_blobs_by_namespace(
     org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
-) -> list[str]:
-    """The blob path of every document of the scope whose original is still on disk."""
-    ch = ch or _default_client()
-    rows = await ch.query_all(
-        f"SELECT source_uri, blob_path FROM loom.documents FINAL "
-        f"WHERE {_UNERASED_BLOBS} ORDER BY source_uri",
-        params={"org": org, "ns": namespaces_of(namespace)},
+) -> int:
+    """Every uploaded original stored for the scope (loom.document_blobs)."""
+    return await delete_scoped(
+        "loom.document_blobs", org=org, scope_where=NS_EQ, params={"ns": namespace}, ch=ch
     )
-    return [str(r.get("blob_path") or "") for r in rows]
 
 
 async def stamp_blobs_erased(
     org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
-) -> None:
+) -> int:
     """Stamp `blob_erased_at` on the scope's documents whose originals were
-    unlinked: a mutation tagged and awaited like every other saga statement,
-    so a resumed step waits for its own pending stamp."""
-    await run_mutation(
+    deleted, when any is unstamped: counted, then a mutation tagged and awaited
+    like every other saga statement, so a resumed step waits for its own
+    pending stamp."""
+    return await count_then_mutate(
         "loom.documents",
+        count_where=_UNERASED_BLOBS,
         mutation="UPDATE blob_erased_at = {now:DateTime}",
-        where=_UNERASED_BLOBS,
-        params={"org": org, "ns": namespaces_of(namespace), "now": naive_utc_now()},
+        mutation_where=_UNERASED_BLOBS,
+        params={"org": org, "ns": namespaces_of(namespace)},
         ch=ch,
     )

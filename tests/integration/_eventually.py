@@ -18,9 +18,17 @@ see each other's embeddings without bridging, same fix applies.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
+
+
+async def overrides_adopted() -> None:
+    """An admin override binds the worker that took it at once and every other
+    process within one refresh of loom.runtime_overrides; wait out that bound."""
+    refresh = float(os.environ.get("LOOM_RUNTIME_OVERRIDES_REFRESH_SECONDS", "10"))
+    await asyncio.sleep(max(1.0, refresh) + 1.0)
 
 
 # `max_wait` rather than `timeout` so ruff's ASYNC109 doesn't fire —

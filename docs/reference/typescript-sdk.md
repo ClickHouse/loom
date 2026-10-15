@@ -179,17 +179,18 @@ Every failure is a `LoomError` with `status`, `code` (the server's
 `detail.code`), `message`, `requestId`, `detail` and `op`. The subclass follows
 the HTTP status (`errorFromResponse`):
 
-| Class                | When                                                                                                                                                                             |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ValidationError`    | 400, 422                                                                                                                                                                         |
-| `AuthError`          | 401, 403                                                                                                                                                                         |
-| `NotFound`           | 404                                                                                                                                                                              |
-| `IdempotentConflict` | 409 with code `IDEMPOTENT_CONFLICT`; a subclass of `PreconditionFailed`                                                                                                          |
-| `PreconditionFailed` | any other 409 (including `PINNED_CONFLICT`: check `code`), 412                                                                                                                   |
-| `RateLimited`        | 429 past the pacing budget; `retryAfterS` is the server's hint                                                                                                                   |
-| `BackendUnavailable` | 5xx after the retries, or no complete response: the message reads `<op>: cannot reach <baseUrl>: …` (or `response from <baseUrl> cut off: …`) and `code` is `NETWORK_ERROR_CODE` |
-| `TimeoutError`       | the per-call timeout elapsed                                                                                                                                                     |
-| `LoomError`          | any other status; a 2xx body that is not JSON has code `INVALID_RESPONSE_CODE`; a call whose `signal` aborted is a plain `LoomError`                                             |
+| Class                  | When                                                                                                                                                                               |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ValidationError`      | 400, 422                                                                                                                                                                           |
+| `AuthError`            | 401, 403                                                                                                                                                                           |
+| `NotFound`             | 404                                                                                                                                                                                |
+| `IdempotentConflict`   | 409 with code `IDEMPOTENT_CONFLICT`; a subclass of `PreconditionFailed`                                                                                                            |
+| `PreconditionFailed`   | any other 409 (including `PINNED_CONFLICT`: check `code`) but `OVERRIDE_NOT_STORED` (a `LoomError`), 412                                                                           |
+| `RateLimited`          | 429 past the pacing budget; `retryAfterS` is the server's hint                                                                                                                     |
+| `IdempotentInProgress` | 503 with code `IDEMPOTENT_IN_PROGRESS` once the retries are spent: the first request with this `Idempotency-Key` still runs; a subclass of `BackendUnavailable` with `retryAfterS` |
+| `BackendUnavailable`   | 5xx after the retries, or no complete response: the message reads `<op>: cannot reach <baseUrl>: …` (or `response from <baseUrl> cut off: …`) and `code` is `NETWORK_ERROR_CODE`   |
+| `TimeoutError`         | the per-call timeout elapsed                                                                                                                                                       |
+| `LoomError`            | any other status; a 2xx body that is not JSON has code `INVALID_RESPONSE_CODE`; a call whose `signal` aborted is a plain `LoomError`                                               |
 
 Because the class follows the status, match on `e.code` to tell codes that
 share one (`PRECONDITION_FAILED` from `PINNED_CONFLICT`, `OVERLOADED` from
@@ -214,8 +215,9 @@ on a 408 or a 503 `AUTH_UNAVAILABLE`, which the server answers before running
 it. A 429 is retried after `Retry-After` (seconds or an HTTP date, honoured up
 to 60 s) for up to `ratelimitMaxWaitS` per call, and the `X-RateLimit-*`
 headers are read so a client at the floor waits for the refill instead of
-taking a 429. A per-call timeout is retried only for idempotent ops
-(`retryTimeouts: "idempotent"`), since the server may still be processing it.
+taking a 429. A per-call timeout is retried only for idempotent ops that are not
+read-only (`retryTimeouts: "idempotent"`), since the server may still be
+processing it and deduplicates only their `Idempotency-Key`.
 
 | `retry` field                                | Default        | Meaning                                                                   |
 | -------------------------------------------- | -------------- | ------------------------------------------------------------------------- |
@@ -223,7 +225,7 @@ taking a 429. A per-call timeout is retried only for idempotent ops
 | `backoffMs`, `backoffMaxMs`, `backoffJitter` | 250, 5000, 0.5 | exponential backoff between attempts                                      |
 | `statuses`                                   | 408 + 5xx      | statuses retried (a 429 is paced, not retried)                            |
 | `retryConnectionErrors`                      | true           | the server never saw the request                                          |
-| `retryTimeouts`                              | `"idempotent"` | retry a timeout never, only for registry-idempotent ops, or always        |
+| `retryTimeouts`                              | `"idempotent"` | retry a timeout never, only for idempotent non-read-only ops, or always   |
 | `respectRetryAfter`, `maxRetryAfterS`        | true, 60       | honour a `Retry-After` on a retried status (a 503 `OVERLOADED` sends one) |
 | `totalBackoffBudgetMs`                       | ∞              | total time one call may sleep between attempts                            |
 

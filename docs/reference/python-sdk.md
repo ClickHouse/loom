@@ -190,21 +190,22 @@ whole `detail` object: a 422's `errors`, a `SCHEMA_PENDING`'s `table` and
 body has no code (`loom.errors.from_response`); a 429 is always `RateLimited`
 and a 5xx always a `BackendUnavailable`.
 
-| Class                | Code(s)                                                     | Notes                                                                  |
-| -------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `ValidationError`    | `VALIDATION_FAILED`; status 400, 422                        |                                                                        |
-| `AuthInvalid`        | `AUTH_INVALID`; status 401                                  |                                                                        |
-| `AuthInsufficient`   | `AUTH_INSUFFICIENT`; status 403                             |                                                                        |
-| `NotFound`           | `RESOURCE_NOT_FOUND`; status 404                            |                                                                        |
-| `PreconditionFailed` | `PRECONDITION_FAILED`; status 409, 412 without a known code | `.current_sha256`: retry without re-reading                            |
-| `IdempotentConflict` | `IDEMPOTENT_CONFLICT`                                       |                                                                        |
-| `BackendUnavailable` | `BACKEND_UNAVAILABLE`, any 5xx, and `NETWORK` (no response) | `cannot reach <base_url>: …`, or `response from <base_url> cut off: …` |
-| `RateLimited`        | `RATE_LIMITED`; status 429                                  | subclass of `BackendUnavailable`; `.retry_after_s`                     |
-| `Overloaded`         | `OVERLOADED`                                                | subclass of `BackendUnavailable`; `.retry_after_s`                     |
-| `BackendTimeout`     | `BACKEND_TIMEOUT`                                           | subclass of `BackendUnavailable`                                       |
-| `SchemaPending`      | `SCHEMA_PENDING`                                            | subclass of `BackendUnavailable`                                       |
-| `LoomError`          | any other code on any other status (423 `LOCKED`, …)        | match on `.code`; a 409 `PINNED_CONFLICT` is a `PreconditionFailed`    |
-| `LoomError`          | `INVALID_RESPONSE`                                          | a 2xx body that is not a JSON object                                   |
+| Class                  | Code(s)                                                                         | Notes                                                                        |
+| ---------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `ValidationError`      | `VALIDATION_FAILED`; status 400, 422                                            |                                                                              |
+| `AuthInvalid`          | `AUTH_INVALID`; status 401                                                      |                                                                              |
+| `AuthInsufficient`     | `AUTH_INSUFFICIENT`; status 403                                                 |                                                                              |
+| `NotFound`             | `RESOURCE_NOT_FOUND`; status 404                                                |                                                                              |
+| `PreconditionFailed`   | `PRECONDITION_FAILED`; status 409, 412 without a known code                     | `.current_sha256`: retry without re-reading                                  |
+| `IdempotentConflict`   | `IDEMPOTENT_CONFLICT`                                                           |                                                                              |
+| `BackendUnavailable`   | `BACKEND_UNAVAILABLE`, any 5xx, and `NETWORK` (no response)                     | `cannot reach <base_url>: …`, or `response from <base_url> cut off: …`       |
+| `RateLimited`          | `RATE_LIMITED`; status 429                                                      | subclass of `BackendUnavailable`; `.retry_after_s`                           |
+| `Overloaded`           | `OVERLOADED`                                                                    | subclass of `BackendUnavailable`; `.retry_after_s`                           |
+| `BackendTimeout`       | `BACKEND_TIMEOUT`                                                               | subclass of `BackendUnavailable`                                             |
+| `SchemaPending`        | `SCHEMA_PENDING`                                                                | subclass of `BackendUnavailable`                                             |
+| `IdempotentInProgress` | `IDEMPOTENT_IN_PROGRESS`                                                        | subclass of `BackendUnavailable`; `.retry_after_s`; retried by the transport |
+| `LoomError`            | any other code on any other status (423 `LOCKED`, …), and `OVERRIDE_NOT_STORED` | match on `.code`; a 409 `PINNED_CONFLICT` is a `PreconditionFailed`          |
+| `LoomError`            | `INVALID_RESPONSE`                                                              | a 2xx body that is not a JSON object                                         |
 
 Only `PRECONDITION_FAILED` carries `.current_sha256`. The other 409s that land in
 `PreconditionFailed` (`PINNED_CONFLICT`, `GRANT_WOULD_DOWNGRADE`)
@@ -214,7 +215,7 @@ are not fixed by resending; match on `.code`.
 `AuthInsufficient`, `NotFound`, `PreconditionFailed`, `IdempotentConflict`,
 `BackendUnavailable` and `RateLimited`, with the two codes
 `NETWORK_ERROR_CODE` and `INVALID_RESPONSE_CODE`; `Overloaded`,
-`BackendTimeout` and `SchemaPending` import from `loom.errors`. What each server
+`BackendTimeout`, `SchemaPending` and `IdempotentInProgress` import from `loom.errors`. What each server
 code means and what to do about it is in the [errors reference](./errors.md).
 
 ```python
@@ -236,8 +237,9 @@ is validated and named when wrong. Defaults: 3 attempts; 0.1 s backoff
 doubling to 5 s with jitter; 408 and 5xx retried for registry-idempotent ops
 (any other op only on a 408 or a 503 `AUTH_UNAVAILABLE`, which the server
 answers before running it); connection errors retried; a read timeout retried
-only for idempotent ops (`retry_timeouts="idempotent"`), since the server
-deduplicates their `Idempotency-Key`; a `Retry-After` on a retried status
+only for idempotent ops that are not read-only (`retry_timeouts="idempotent"`),
+since the server deduplicates their `Idempotency-Key` (a timed-out `memory.ask`
+is not run twice); a `Retry-After` on a retried status
 honoured up to 60 s. A 429 is paced, not retried.
 
 ```python

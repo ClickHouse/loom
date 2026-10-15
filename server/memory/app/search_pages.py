@@ -140,7 +140,10 @@ async def store_page(
     `wait_for_async_insert=0`). The key is computed here, not by the write,
     so the handle is valid the moment this returns; the row lands within
     the async-insert flush window. A committed park would hold the search
-    response for 2.1–6.6 s on ClickHouse Cloud."""
+    response for 2.1–6.6 s on ClickHouse Cloud. The async-insert buffer is
+    ClickHouse's, not this replica's, so a Loom restart loses no page; a page
+    lost with a ClickHouse node answers `page_expired` and the caller re-runs
+    the search."""
     key = page_blob_key(content)
     now = naive_utc_now()
     await ch.insert(

@@ -212,14 +212,6 @@ def test_every_llm_client_implementation_emits_a_generation() -> None:
                 "cache.py must NOT emit generations — a served hit is not spend"
             )
             continue
-        # `main_loom.py` is exempt: a read-replica's call answered by the main
-        # Loom, whose provider client opens the generation; one here too would
-        # count the same tokens and cost twice.
-        if path.name == "main_loom.py":
-            assert "generation_span" not in src, (
-                "main_loom.py must NOT emit generations — the main Loom already did"
-            )
-            continue
         if "generation_span" not in src:
             offenders.append(path.name)
     assert not offenders, (

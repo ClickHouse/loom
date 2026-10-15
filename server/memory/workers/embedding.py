@@ -161,6 +161,8 @@ def _carry_signals(r: dict[str, Any]) -> dict[str, Any]:
         "source_class": r.get("source_class") or "",
         "verified": int(r.get("verified") or 0),
         "conflict_checked_at": r.get("conflict_checked_at"),
+        # The write the row mirrors: the conflict pass tells revisions apart by it.
+        "content_sha256": r.get("content_sha256") or "",
         "status": r.get("status") or "active",
         "confidence": float(r.get("confidence") or 1.0),
         "memory_key_embedding": list(r.get("memory_key_embedding") or []),

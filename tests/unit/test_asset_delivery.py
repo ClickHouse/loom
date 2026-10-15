@@ -35,15 +35,15 @@ def test_small_answers_are_left_alone() -> None:
     assert r.headers.get("content-encoding") is None
 
 
-def test_server_origin_redirects_to_dashboard() -> None:
+def test_server_origin_is_the_dashboard() -> None:
     c = _client()
     r = c.get("/", follow_redirects=False)
-    assert r.status_code == 302
-    assert r.headers["location"] == "/me"
+    assert r.status_code in (200, 503)  # 503: frontend/dist not built
+    assert "location" not in r.headers
 
 
 def test_hashed_assets_are_immutable_for_a_year(tmp_path, monkeypatch) -> None:
-    """The header rides any 200 under /me/assets/ — exercised through the
+    """The header rides any 200 under /assets/ — exercised through the
     middleware with a route mounted for the test, since CI has no built
     frontend/dist."""
     from starlette.responses import PlainTextResponse
@@ -52,9 +52,9 @@ def test_hashed_assets_are_immutable_for_a_year(tmp_path, monkeypatch) -> None:
 
     from server.main import app
 
-    marker = "/me/assets/test-only-deadbeef.js"
+    marker = "/assets/test-only-deadbeef.js"
     if not any(getattr(r, "path", "") == marker for r in app.routes):
-        # ahead of the /me/{spa_path} catch-all and the real assets mount
+        # ahead of the page catch-all and the real assets mount
         app.router.routes.insert(
             0,
             Route(marker, lambda request: PlainTextResponse("// js", media_type="text/javascript")),

@@ -567,9 +567,15 @@ async def _history_stage(
     `-S` reads for the pre-image the tip lacks, at most _HISTORY_GIT_PROCS
     git processes at once, all under one wall. A branch still running at the
     wall is `deadline` — never a verdict."""
+    from server.code.app.index.mirrors import history_dir
+    from server.code.domain.index.repos import repo_for_namespace
+
     git_dir, refs = branch_refs(org, code_ns)
     if not namespaces or not groups:
         return {}
+    cfg = repo_for_namespace(org, code_ns)
+    if cfg is not None and (gap := (await history_dir(cfg))[1]):
+        return {ns: ph.HistoryPresence(reason=gap) for ns in namespaces}
     gate = asyncio.Semaphore(_HISTORY_GIT_PROCS)
     tasks = {
         ns: asyncio.ensure_future(

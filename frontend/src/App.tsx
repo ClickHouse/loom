@@ -284,7 +284,7 @@ export default function App() {
         // A deep link whose namespace the token's own claims already settle paints its
         // shell and starts its reads now, before the membership list answers; the answer
         // below replaces the namespace only when it differs (a joined namespace the
-        // claims do not carry). Bare /me waits: its landing view depends on the kinds
+        // claims do not carry). The bare root waits: its landing view depends on the kinds
         // only list_mine knows.
         const provisional = initial ? provisionalNamespace(initial, saved, claims) : null;
         if (initial && provisional) {
@@ -302,10 +302,10 @@ export default function App() {
         } catch {
           /* fail-quiet: fall back to the JWT claim alone */
         }
-        // URL routing: an explicit path (e.g. /me/memories) always wins — the landing rule decides a
-        // view only for bare /me. A deep link keeps its view; its namespace is the
+        // URL routing: an explicit path (e.g. /memories) always wins — the landing rule decides a
+        // view only for the bare root. A deep link keeps its view; its namespace is the
         // default-namespace chain's answer, else the first reachable namespace of the
-        // kind the view needs (a code or QA one for Repositories, Graph, Setup, Discover
+        // kind the view needs (a code or QA one for Repositories, Graph, Settings, Spaces
         // and the admin views; nothing for a memory view, which renders its own empty
         // state — see `ViewSwitch`). No deep link is redirected to Setup.
         if (initial) {
@@ -318,7 +318,7 @@ export default function App() {
           if (!sameIdentity(useStore.getState().identity, next)) setIdentity(next);
           bootView(initial);
         } else {
-          // Bare /me: the default-namespace chain (saved pick → own memory namespace →
+          // The bare root: the default-namespace chain (saved pick → own memory namespace →
           // first memory claim) keeps its default view, Setup — that's where first-run
           // onboarding and the actions live. A saved pick of a code or tracker namespace,
           // or a token that reaches only code/tracker namespaces, lands on Repositories

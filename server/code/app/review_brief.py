@@ -25,12 +25,12 @@ from server.code.app.common import (
 from server.code.app.index import pr_overlay as po
 from server.code.app.index import review_brief as rb
 from server.code.app.index import review_brief_build, review_brief_sources
+from server.code.app.index.mirrors import history_dir
 from server.code.app.spans import code_span, set_code_span_attributes, span_attrs
 from server.code.domain.index.blame_range import sha_text
 from server.code.store.index import CodeRepo
 from server.core.errors import ValidationError
 from server.memory.app.recall_credit import is_measurement_label
-from server.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -277,10 +277,11 @@ async def _open_head(org: str, ns: str, pr_number: int) -> tuple[str, str]:
     cfg = repo_for_namespace(org, ns)
     if cfg is None:
         return "", po.NO_REPO
-    if settings.read_replica:
-        return "", po.NO_GIT_MIRROR
+    git_dir, gap = await history_dir(cfg)
+    if gap:
+        return "", gap
     try:
-        head = await gitrepo.pull_head_sha(cfg.git_dir, pr_number)
+        head = await gitrepo.pull_head_sha(git_dir, pr_number)
     except Exception as e:  # noqa: BLE001 — a mirror that cannot answer is a missing head
         logger.info("code.review_brief: head of open PR %s unknown: %s", pr_number, e)
         head = ""
@@ -308,7 +309,9 @@ async def _build_open(
     if img is not None:
         base, files, diff = img.base_sha, po.diff_paths(img.diff) or list(img.files), img.diff
     else:
-        base = await gitrepo.merge_base(cfg.git_dir, head_sha, f"refs/heads/{cfg.git_branch}")
+        git_dir, _gap = await history_dir(cfg)
+        branch = f"refs/heads/{cfg.git_branch}"
+        base = await gitrepo.merge_base(git_dir, head_sha, branch) if git_dir else ""
         if not base:
             return None
         files, diff = [], None
@@ -397,13 +400,15 @@ async def _build_on_miss(
 
 async def _mirror_facts(cfg: Any, *, pr_number: int, merge_sha: str) -> dict[str, Any] | None:
     """The merge commit the mirror names for the PR (or the PR the merge
-    commit names); None on a miss or a git failure (a miss, logged)."""
+    commit names); None on a miss, a git failure (a miss, logged) or no mirror here."""
+    git_dir, gap = await history_dir(cfg)
+    if gap:
+        logger.info("code.review_brief: mirror lookup for PR %s skipped: %s", pr_number, gap)
+        return None
     try:
         if pr_number:
-            return await review_brief_sources.mirror_merge_facts(
-                cfg.git_dir, cfg.git_branch, pr_number
-            )
-        return await review_brief_sources.mirror_commit_facts(cfg.git_dir, merge_sha)
+            return await review_brief_sources.mirror_merge_facts(git_dir, cfg.git_branch, pr_number)
+        return await review_brief_sources.mirror_commit_facts(git_dir, merge_sha)
     except Exception as e:  # noqa: BLE001 — the mirror not answering is a miss
         logger.info(
             "code.review_brief: mirror lookup for PR %s / %s failed: %s",

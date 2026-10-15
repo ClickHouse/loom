@@ -380,7 +380,10 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "memory.unlock": ("sdk_method",),
     "memory.unpin": ("plugin_hook",),
     "memory.update": ("sdk_method",),
-    "memory.update_by_id": ("sdk_method",),
+    "memory.update_by_id": (
+        "sdk_method",
+        "sdk_example",
+    ),
     "memory.verify": (
         "sdk_method",
         "plugin_hook",
@@ -468,14 +471,17 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     ),
     "run.begin": (
         "sdk_method",
+        "sdk_example",
         "plugin_hook",
     ),
     "run.complete": (
         "sdk_method",
+        "sdk_example",
         "plugin_hook",
     ),
     "run.get": (
         "sdk_method",
+        "sdk_example",
         "plugin_hook",
     ),
     "run.grade": ("sdk_method",),

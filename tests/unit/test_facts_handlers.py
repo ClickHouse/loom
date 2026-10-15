@@ -7,12 +7,18 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _fresh_walk_memo() -> None:
+def _fresh_walk_memo(monkeypatch: pytest.MonkeyPatch) -> None:
     """A walk is remembered for a minute; each test
-    walks afresh."""
+    walks afresh. The graph-write marks read as no write and nothing in flight."""
     from server.memory.app import facts as _facts
+    from server.memory.app import graph_write_marks
 
     _facts.reset_traverse_cache()
+
+    async def _never_written(org: str, ns: str, *, wait_s: float) -> tuple[None, datetime]:
+        return None, datetime.now(UTC)
+
+    monkeypatch.setattr(graph_write_marks, "last_write", _never_written)
 
 
 class StubCH:

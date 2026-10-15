@@ -192,6 +192,7 @@ async def _sync_repo(cfg: Any, repo: Any, result: CodePrHistoryResult) -> None:
         return
 
     rows = await pr_rows(repo, org, ns, prs)
+    pass_context.check_stop()  # after the GitHub reads: a lost lease writes nothing
     await repo.insert_rows("code_pr_history", rows)
     result.prs_upserted = len(rows)
     if token and settings.code_pr_reviews_enabled:
@@ -228,6 +229,7 @@ async def _sync_reviews(cfg: Any, repo: Any, org: str, ns: str, pr_numbers: list
     # One insert for the batch's PRs (the table is ReplacingMergeTree, so a
     # retried pass rewrites the same rows).
     if rows:
+        pass_context.check_stop()
         await repo.insert_rows("code_pr_reviews", rows)
     return written
 
@@ -284,6 +286,7 @@ async def _sync_items(cfg: Any, repo: Any, result: CodePrHistoryResult) -> None:
         )
         for it in items
     ]
+    pass_context.check_stop()
     await repo.insert_rows("code_gh_items", rows)
     nxt = items_cursor(items)
     if nxt is not None:
@@ -440,6 +443,7 @@ async def _fill_pr_heads(cfg: Any, repo: Any, result: CodePrHistoryResult) -> No
             await _fill_from_github(cfg, missing, limit=settings.code_gh_items_head_github_batch)
         )
     if filled:
+        pass_context.check_stop()
         await repo.insert_rows("code_gh_items", filled)
         result.heads_filled += len(filled)
         logger.info(

@@ -90,6 +90,12 @@ def test_the_journal_files() -> None:
         "030_namespace_released_aliases.sql",
         "031_agent_run_budgets.sql",
         "032_table_settings.sql",
+        "033_clickhouse_only_state.sql",
+        "034_graph_projections.sql",
+        "035_instances.sql",
+        "036_shared_replica_state.sql",
+        "037_carry_acks.sql",
+        "038_embedding_write_sha.sql",
     ]
 
 

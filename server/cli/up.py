@@ -453,7 +453,7 @@ def print_connect(
     """The "how to connect" block: dashboard, first write (curl + SDK), and
     the Claude Code MCP line. Single-user prints tokenless snippets; auth-on
     prints the minted token first and threads it through every snippet."""
-    dashboard = f"{base_url}/me"
+    dashboard = f"{base_url}/"
     print(f"\n✓ Loom is up at {base_url} (build {build_commit}, {mode} mode)")
     if mode == "single-user":
         print(f"  No login and no token: every call lands in {org}/{namespace}.")
@@ -660,7 +660,7 @@ def _cmd_up(args: argparse.Namespace) -> int:
     if args.open:
         import webbrowser
 
-        webbrowser.open(f"{base_url}/me")
+        webbrowser.open(f"{base_url}/")
     return 0 if (mode == "single-user" or token) else 1
 
 

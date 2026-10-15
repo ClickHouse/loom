@@ -36,7 +36,7 @@ class BudgetViolationsInput(BaseModel):
 
 class BudgetSetInput(BaseModel):
     op: str
-    budget_ms: int | None = None
+    budget_ms: int | None = Field(None, ge=0)
     clear: bool = False
     # With `consumer`, the override applies to that consumer
     # only (op "*" = every op for it); `budget_ms` may then be a "<n>x"
@@ -71,9 +71,8 @@ class RatelimitSetInput(BaseModel):
     namespace: str | None = None
     org: str | None = None
     op_class: str
-    # Finite and non-negative: every web process reads the override back, and
-    # takes a document holding anything else for corrupt.
-    capacity: float | None = Field(None, ge=0, allow_inf_nan=False)
+    # Finite: stored and adopted by every process.
+    capacity: float | None = Field(None, gt=0, allow_inf_nan=False)
     rate: float | None = Field(None, ge=0, allow_inf_nan=False)
     clear: bool = False
 

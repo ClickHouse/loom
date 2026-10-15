@@ -116,13 +116,13 @@ async def _definitions_at(
     org: str, code_namespace: str, head: str, paths: Sequence[str], qualified_name: str
 ) -> dict[tuple[str, str], Definition] | None:
     """The definitions `qualified_name` names in `paths` at `head`, by identity; None
-    where the files cannot be read here: no git mirror (a read replica), one that
-    fails, or a read and parse slower than `_PARSE_TIMEOUT_S`."""
+    where the files cannot be read here: no git mirror holding `head` (LOOM_GIT_HISTORY=none,
+    a host still cloning or fetching it, a PR head it lacks), one that fails, or a read and
+    parse slower than `_PARSE_TIMEOUT_S`."""
     from server.code.app import memory_links as code
     from server.code.app.index import gitrepo
-    from server.settings import settings
 
-    if settings.read_replica:
+    if not await code.mirror_here(org, code_namespace, head):
         return None
     named = bare_name(qualified_name)
     parse = asyncio.gather(

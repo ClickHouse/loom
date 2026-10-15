@@ -10,7 +10,8 @@ import asyncio
 import logging
 from dataclasses import dataclass
 
-from server.code.app.index import gitrepo
+from server.code.app.index import gitrepo, mirrors
+from server.code.app.index.bootstrap import holds
 from server.code.domain.anchor import Definition
 from server.code.domain.declaration import edit_pattern
 from server.code.domain.definitions import definitions
@@ -191,6 +192,22 @@ class FileAt:
 
     lines: list[str]
     defs: list[Definition]
+
+
+async def mirror_here(org: str, namespace: str, head: str) -> bool:
+    """Whether this host's mirror holds `head` now; never waits. A host without the
+    mirror starts its clone in the background and answers False; one without `head`
+    answers False and fetches the branch only when `head` is the namespace's indexed
+    head (a PR head is not on the branch, so a fetch would not bring it)."""
+    cfg = repo_for_namespace(org, namespace)
+    git_dir, _gap = await mirrors.history_dir(cfg)
+    if not git_dir:
+        return False
+
+    async def _indexed() -> bool:
+        return await indexed_head(org, namespace) == head
+
+    return await holds(cfg, head, fetchable=_indexed)
 
 
 async def has_commit(org: str, namespace: str, sha: str) -> bool:

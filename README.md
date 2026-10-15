@@ -72,7 +72,7 @@ curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.s
 ```
 
 The installer starts Loom and ClickHouse, applies migrations and prints the dashboard URL:
-**http://localhost:7777/me**. The image includes the server, workers, dashboard and
+**http://localhost:7777/**. The image includes the server, workers, dashboard and
 Python, TypeScript and Go compiler indexers; TypeScript dependencies are prepared
 automatically. [Quickstart and pinned releases](./docs/getting-started/quickstart.md)
 

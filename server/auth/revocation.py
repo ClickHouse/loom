@@ -1,7 +1,7 @@
 """Token revocation, backed by `loom.revoked_tokens`.
 
-Rotating LOOM_JWT_ACTIVE_KID kills every token of that kid; this is the
-per-credential path. A row keyed by a `jti` revokes one token, keyed by a
+Retiring a signing key (`loom signing-key retire`) kills every token of that
+kid; this is the per-credential path. A row keyed by a `jti` revokes one token, keyed by a
 `sub` every token of that principal — or, with an `issued_before` cutoff,
 only those whose `iat` precedes it, so a re-mint after the cutoff survives.
 The table is ReplacingMergeTree ORDER BY jti: the newest row per key governs.
@@ -10,8 +10,8 @@ The table is ReplacingMergeTree ORDER BY jti: the newest row per key governs.
   and takes effect in this process at once, even when the re-read after
   the insert fails; `list_active` is its read.
 - Every process that verifies tokens holds its own snapshot: `load_at_boot`
-  fills it, and the supervisor worker (lease holder) or `start_refresh_loop`
-  (every other process) re-reads it each `jwt_revocation_cache_ttl_seconds`.
+  fills it, and `start_refresh_loop` re-reads it each
+  `jwt_revocation_cache_ttl_seconds`.
 - `is_revoked` is a frozenset/dict lookup — no I/O, safe from sync verify.
 
 Failure semantics: until the first successful read `loaded()` is False and
@@ -30,6 +30,8 @@ import math
 import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
+
+from server.core import readiness
 
 log = logging.getLogger(__name__)
 
@@ -77,6 +79,25 @@ def snapshot_age_seconds() -> float:
     the first successful read. /v1/health reports a stale snapshot, because a
     token revoked since then still authenticates here."""
     return time.monotonic() - _loaded_at if _loaded else math.inf
+
+
+def token_state_ready(loaded: bool, age_s: float, what: str) -> readiness.CheckResult:
+    """Readiness of state every token check reads: loaded, and no older than
+    `jwt_revocation_max_stale_seconds`. Always ready with auth off."""
+    from server.settings import settings
+
+    if not settings.auth_actually_required():
+        return readiness.CheckResult(True, "auth off")
+    if not loaded:
+        return readiness.CheckResult(False, f"{what} not loaded")
+    max_stale = float(settings.jwt_revocation_max_stale_seconds)
+    if age_s > max_stale:
+        return readiness.CheckResult(False, f"{what} {age_s:.0f} s old (> {max_stale:.0f} s)")
+    return readiness.CheckResult(True)
+
+
+def readiness_check() -> readiness.CheckResult:
+    return token_state_ready(loaded(), snapshot_age_seconds(), "revocation snapshot")
 
 
 def is_revoked(jti: str, *, issued_at: int | None = None) -> bool:
@@ -256,17 +277,14 @@ def start_refresh_loop(
     interval_s: float, *, name: str = "loom-revocation-refresh"
 ) -> asyncio.Task[None]:
     """Refresh this process's snapshot every `interval_s` seconds until the
-    task is cancelled. For processes that do not hold the supervisor lease
-    (every web process under `LOOM_BACKGROUND_WORKERS=off`, and the
-    non-leader processes under `uvicorn --workers N`); the leader's
-    supervisor worker does the same job there. `refresh` swallows CH
-    errors, so the loop only ends on cancellation."""
+    task is cancelled. `refresh` swallows CH errors, so the loop only ends on
+    cancellation."""
     period = max(1.0, float(interval_s))
 
     async def _run() -> None:
         from server.core.ch import set_query_tag
 
-        set_query_tag("worker:jwt_revocation_refresh")
+        set_query_tag("revocation.refresh")  # every process runs it, not a worker
         while True:
             await asyncio.sleep(period)
             try:

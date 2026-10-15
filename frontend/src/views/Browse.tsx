@@ -136,8 +136,8 @@ export function Browse() {
         setMine((prev) => new Set(prev).add(ns));
         setPending((prev) => new Set(prev).add(ns));
         // Persist to the approval-notification cache so even if the
-        // user never visits /me/memories before the admin approves,
-        // the next /me bootstrap diff still fires the "approved by …"
+        // user never visits /memories before the admin approves,
+        // the next dashboard bootstrap diff still fires the "approved by …"
         // toast. Same key the App.tsx bootstrap reads/writes.
         try {
           const whoami = useStore.getState().whoami;

@@ -270,6 +270,7 @@ async def release_of_merges(
     import asyncio
 
     from server.code.app.index import gitrepo
+    from server.code.app.index.mirrors import history_dir
     from server.code.app.reads import code_index
     from server.code.domain.index.repos import configured_repos
 
@@ -280,7 +281,8 @@ async def release_of_merges(
     if not wanted or not code_ns:
         return
     cfg = next((c for c in configured_repos() if c.org == org and c.namespace == code_ns), None)
-    git_dir = str(getattr(cfg, "git_dir", "") or "")
+    # no mirror on this host (yet): the tracker's estimates stand
+    git_dir = (await history_dir(cfg))[0] if cfg is not None else ""
     if not git_dir:
         return
     shas = await code_index().merge_commits_of(org, code_ns, list(wanted))

@@ -141,13 +141,18 @@ describe("Transport with a policy", () => {
     expect(calls.length).toBe(2);
   });
 
-  it("retries a timeout for an idempotent op, never for a non-idempotent one, always when told", async () => {
+  it("retries a timeout for an op the server dedups, never for another one, always when told", async () => {
     const a = harness([
       { status: 0, throw: ABORT },
       { status: 200, body: { ok: 1 } },
     ]);
-    expect(await a.t.post("memory.get", {}, { timeoutMs: 5 })).toEqual({ ok: 1 });
+    expect(await a.t.post("memory.set", {}, { timeoutMs: 5 })).toEqual({ ok: 1 });
     expect(a.calls.length).toBe(2);
+
+    // Read-only: no replay, so a retry would run a second synthesis beside the first.
+    const ro = harness([{ status: 0, throw: ABORT }]);
+    await expect(ro.t.post("memory.ask", {}, { timeoutMs: 5 })).rejects.toBeInstanceOf(TimeoutError);
+    expect(ro.calls.length).toBe(1);
     expect(a.calls[1].headers["X-Loom-Retry-Count"]).toBe("1");
 
     const b = harness([{ status: 0, throw: ABORT }]);

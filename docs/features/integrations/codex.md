@@ -40,7 +40,7 @@ EOF
 chmod 600 ~/.loom/config.json
 ```
 
-Get the token from the dashboard's **Settings → Tokens** tab (`/me/settings`) or with
+Get the token from the dashboard's **Settings → Tokens** tab (`<server>/settings`) or with
 `loom mint-token --subject you --org <org> --namespaces <ns> --roles writer`. The hooks
 need `writer`; the tools can read with `viewer`. See
 [tokens and grants](../../guides/tokens-and-grants.md).

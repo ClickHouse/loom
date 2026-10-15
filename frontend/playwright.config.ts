@@ -32,7 +32,7 @@ export default defineConfig({
   // the probe below waits on IPv4 until the timeout.
   webServer: {
     command: "npm run e2e:serve",
-    url: `${BASE}/me/`,
+    url: `${BASE}/`,
     reuseExistingServer: false,
     timeout: 180_000,
     stdout: "pipe",

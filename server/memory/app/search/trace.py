@@ -23,7 +23,7 @@ from server.memory.app.search.vector_legs import _plane_fields
 
 async def handle_memory_search_trace(input: MemorySearchTraceInput) -> Any:
     """Same shape as memory.search; returns the per-candidate scoring
-    breakdown (entity_boost + rank_score as separate columns) for the /me
+    breakdown (entity_boost + rank_score as separate columns) for the dashboard's
     Recall Lab and debugging.
     """
     from server.auth.context import current_auth

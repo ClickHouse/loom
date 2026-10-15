@@ -144,7 +144,7 @@ _INSTEAD: dict[str, str] = {
     # op sends a model probing env vars and token files for a way around it.
     "memory.unlock": (
         "only the user can unlock a memory: ask them to use the memory's Lock "
-        "control at /me, leave the key as it is and say it is locked. Don't look "
+        "control in the dashboard, leave the key as it is and say it is locked. Don't look "
         "for another route, token or credential to unlock it yourself"
     ),
     "memory.search": "call loom_search (memory, profile, knowledge and conversations in one call)",
@@ -156,7 +156,7 @@ _INSTEAD: dict[str, str] = {
 
 
 _NEEDS_THE_USER = (
-    "this needs the user: ask them to do it at /me. Don't look for another "
+    "this needs the user: ask them to do it in the dashboard. Don't look for another "
     "route, token or credential to do it yourself"
 )
 

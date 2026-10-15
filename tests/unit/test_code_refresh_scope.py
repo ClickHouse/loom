@@ -8,6 +8,8 @@ repo entry alone — never the whole fleet.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from server.code.api.models_ingest import CodeRefreshInput
@@ -17,6 +19,9 @@ from server.code.app.index.pass_budget import CodeIngestResult
 from server.code.app.ingest import handle_code_refresh
 from server.core.errors import NotFoundError
 from server.settings import settings
+from tests.unit.claims_fake import FakeLockTable
+
+real_take_lease = handler_mod._take_lease
 
 
 @pytest.fixture(autouse=True)
@@ -38,6 +43,11 @@ def _scalars(monkeypatch: pytest.MonkeyPatch):
     # per-test lock table: a leaked lock from one test must not coalesce
     # another test's trigger into already_running
     monkeypatch.setattr(handler_mod, "_REFRESH_LOCKS", {})
+    monkeypatch.setattr(handler_mod, "_take_lease", _no_lease)
+
+
+async def _no_lease(org: str, ns: str) -> None:
+    return None
 
 
 class _FakeCodeRepo:
@@ -135,3 +145,93 @@ async def test_refresh_breadcrumb_leaves_out_fields_the_caller_left_empty(
     )
     details = [d for (_, _, key, _, d) in _FakeCodeRepo.written if key == "last_refresh_at"]
     assert details == ["agent=ci"]
+
+
+async def test_a_refresh_another_replica_runs_is_already_running(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The namespace's lease is held elsewhere: this replica runs no pass of its own."""
+    monkeypatch.setattr(handler_mod, "CodeRepo", _FakeCodeRepo)
+    held_elsewhere = FakeLockTable()
+    held_elsewhere.seed("code_refresh:clickhouse/code-clickhouse", "other-replica")
+    monkeypatch.setattr("server.core.ch.get_client", lambda: held_elsewhere)
+    monkeypatch.setattr(handler_mod, "_take_lease", real_take_lease)
+    calls: list[str] = []
+
+    async def _fake_run_pass(org: str = "", namespace: str = "") -> CodeIngestResult:
+        calls.append(namespace)
+        return CodeIngestResult()
+
+    import server.code.app.index.ingest_pass as worker_mod
+
+    monkeypatch.setattr(worker_mod, "run_pass", _fake_run_pass)
+    out = await handle_code_refresh(CodeRefreshInput(namespace="code-clickhouse", wait=True))
+    assert out.already_running is True and out.triggered is False and calls == []
+
+
+async def test_the_refresh_lease_is_released_after_the_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ch = FakeLockTable()
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    monkeypatch.setattr(handler_mod, "_take_lease", real_take_lease)
+    monkeypatch.setattr(handler_mod, "CodeRepo", _FakeCodeRepo)
+
+    async def _fake_run_pass(org: str = "", namespace: str = "") -> CodeIngestResult:
+        assert list(ch.keys) == ["code_refresh:clickhouse/code-clickhouse"]
+        return CodeIngestResult()
+
+    import server.code.app.index.ingest_pass as worker_mod
+
+    monkeypatch.setattr(worker_mod, "run_pass", _fake_run_pass)
+    out = await handle_code_refresh(CodeRefreshInput(namespace="code-clickhouse", wait=True))
+    assert out.triggered is True and ch.keys == {}
+
+
+async def test_a_refresh_whose_lease_is_lost_stops_its_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ch = FakeLockTable()
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    monkeypatch.setattr(handler_mod, "_take_lease", real_take_lease)
+    monkeypatch.setattr(handler_mod, "_LEASE_TTL_S", 0.6)
+    monkeypatch.setattr(handler_mod, "CodeRepo", _FakeCodeRepo)
+    finished: list[str] = []
+
+    async def _fake_run_pass(org: str = "", namespace: str = "") -> CodeIngestResult:
+        ch.keys["code_refresh:clickhouse/code-clickhouse"]["holder"] = "other-replica"
+        await asyncio.sleep(3)
+        finished.append(namespace)
+        return CodeIngestResult()
+
+    import server.code.app.index.ingest_pass as worker_mod
+
+    monkeypatch.setattr(worker_mod, "run_pass", _fake_run_pass)
+    await handle_code_refresh(CodeRefreshInput(namespace="code-clickhouse", wait=True))
+    assert finished == []
+    assert ch.holder("code_refresh:clickhouse/code-clickhouse") == "other-replica"
+
+
+async def test_a_refresh_releases_its_lease_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.core import leases
+
+    ch = FakeLockTable()
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    monkeypatch.setattr(handler_mod, "_take_lease", real_take_lease)
+    monkeypatch.setattr(handler_mod, "CodeRepo", _FakeCodeRepo)
+    releases: list[str] = []
+    release = leases.Lease.release
+
+    async def _counted(self: leases.Lease) -> None:
+        releases.append(self.name)
+        await release(self)
+
+    async def _fake_run_pass(org: str = "", namespace: str = "") -> CodeIngestResult:
+        return CodeIngestResult()
+
+    import server.code.app.index.ingest_pass as worker_mod
+
+    monkeypatch.setattr(leases.Lease, "release", _counted)
+    monkeypatch.setattr(worker_mod, "run_pass", _fake_run_pass)
+    await handle_code_refresh(CodeRefreshInput(namespace="code-clickhouse", wait=True))
+    assert releases == ["code_refresh:clickhouse/code-clickhouse"]
