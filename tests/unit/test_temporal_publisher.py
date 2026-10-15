@@ -1184,3 +1184,26 @@ def test_late_evidence_keeps_its_own_expiry(journal: Journal) -> None:
         assert run(pub.publish_rows([late])) == []
     added = json.loads(journal.commits[-1]["assertions"])
     assert [a["expires_at"] for a in added if a["value"] == '"then"'] == [None]
+
+
+def test_an_update_never_lands_on_a_recreated_memory(journal: Journal) -> None:
+    from server.memory.domain.temporal_capture import WriteIntent, write_intent
+
+    base = mrow('"A"', **_LOCKLESS)
+    run(pub.publish_rows([base]))
+    run(pub.publish_rows([_copy(base, tombstoned_at=datetime.now(UTC))]))
+    run(
+        pub.publish_rows(
+            [
+                _copy(
+                    base,
+                    value='"B"',
+                    content_sha256=sha256_value_json('"B"'),
+                    memory_id="00000000-0000-0000-0000-0000000000bb",
+                )
+            ]
+        )
+    )
+    update = _copy(base, value='"C"', content_sha256=sha256_value_json('"C"'))  # read A
+    with write_intent(WriteIntent(memory_key="k", existing=True, stated=frozenset())):
+        assert run(pub.publish_rows([update])) == []

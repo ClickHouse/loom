@@ -679,6 +679,8 @@ def _plan_row(
     if fields is not None and "value" not in fields:
         fields = fields - {"content_sha256"}  # a hash follows its value: the journal's
     left_out = _left_out_before(row, intent, active, head, floor, ident)
+    if not left_out and intent.existing and not _same_memory(row, current, now):
+        left_out = "superseded"  # the key was deleted and written anew since the read
     if not left_out:
         if fields is not None:
             memory_ids = {aid: x.memory_id for aid, x in current.items()}
@@ -847,6 +849,16 @@ def _as_metadata(
         if c in r and c not in fields and c not in _NOT_REBASED:
             r[c] = v
     return ""
+
+
+def _same_memory(row: Mapping[str, Any], current: Mapping[str, Served], now: datetime) -> bool:
+    """Does what holds now belong to the memory the writer read (its memory id)? A
+    key deleted and written anew is another memory: a write meant for the old one
+    never lands on it."""
+    mid = str(row.get("memory_id") or "")
+    held = {a.assertion_id for a in tm.current_claims([x.a for x in current.values()], now)}
+    ids = {x.memory_id for aid, x in current.items() if aid in held and x.memory_id}
+    return not mid or not ids or mid in ids
 
 
 def _claim_shown(claims: Sequence[tm.Assertion], head: Mapping[str, Any] | None) -> tm.Assertion:
