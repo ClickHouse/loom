@@ -3,7 +3,8 @@ of the served one, a retraction, or the transition / correction its writer decla
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 
 from server.memory.domain import temporal_model as tm
 from server.memory.domain.temporal_capture import (
@@ -56,9 +57,9 @@ def test_an_undated_write_discloses_unknown_validity_not_the_ingest_clock() -> N
     assert anchored.valid_from == d(3) and anchored.validity_basis == "extracted"
 
 
-def test_a_metadata_write_assesses_its_contents_segments_and_keeps_the_others() -> None:
-    # After a correction the key serves three segments; a verify carries the head
-    # row's value forward: it assesses both "A" segments, "B" keeps its own.
+def test_a_restatement_assesses_the_current_segment_and_keeps_the_others() -> None:
+    # After a correction the key serves three segments; a restatement of the head
+    # row's value revises the segment that holds now; the others keep their own.
     a = tm.first('"A"', valid_from=d(1))
     served = list(
         tm.apply({a.assertion_id: a}, tm.correct([a], d(5), d(15), tm.first('"B"'))).values()
@@ -67,7 +68,8 @@ def test_a_metadata_write_assesses_its_contents_segments_and_keeps_the_others() 
     verify = row('"A"', valid_at=datetime(2026, 1, 15), verified_by="human:x")
     out = amendment_for_row(verify, served, WriteIntent(), head)
     assert out.change_kind == "assess"
-    assert sorted((x.value, x.verified_by) for x in out.added) == [('"A"', "human:x")] * 2
+    (b,) = out.added
+    assert (b.value, b.valid_from, b.verified_by) == ('"A"', d(15), "human:x")
     after = tm.apply({a.assertion_id: a for a in served}, out).values()
     assert sorted(x.value for x in after) == ['"A"', '"A"', '"B"']
 
@@ -231,3 +233,29 @@ def test_a_metadata_write_leaves_another_qualifiers_claim_alone() -> None:
         row('"qv"', valid_at=datetime(2026, 1, 1)),
     )
     assert out.retired == (plain.assertion_id,)
+
+
+def test_a_restatement_leaves_the_same_texts_past_and_plans_alone() -> None:
+    now = datetime.now(UTC)
+    past = tm.first(
+        '"t"',
+        valid_from=now - timedelta(days=300),
+        valid_to=now - timedelta(days=200),
+        sensitivity="high",
+    )
+    cur = tm.first('"t"', valid_from=now - timedelta(days=10))
+    plan = tm.first('"t"', valid_from=now + timedelta(days=30), pinned=True)
+    cur = replace(cur, valid_to=plan.valid_from)
+    head = row(
+        '"t"',
+        valid_at=cur.valid_from.replace(tzinfo=None),
+        valid_to=cur.valid_to.replace(tzinfo=None),
+    )
+    again = row(
+        '"t"',
+        valid_at=cur.valid_from.replace(tzinfo=None),
+        valid_to=cur.valid_to.replace(tzinfo=None),
+        tags=["new"],
+    )
+    out = amendment_for_row(again, [past, cur, plan], WriteIntent(), head, now=now)
+    assert out.retired == (cur.assertion_id,)

@@ -88,6 +88,10 @@ class WriteIntent:
     pin_guard: bool = False
     # A lock that may only tighten the lock in force (memory.lock).
     tighten_lock: bool = False
+    # Of a value write's metadata, the columns its caller stated (pinned, expires_at,
+    # sensitivity). The rest is the journal's when the write is planned, not a copy
+    # of what the writer read. None: a writer that states none of them.
+    stated: frozenset[str] | None = None
 
 
 _intent: ContextVar[WriteIntent | None] = ContextVar("loom_temporal_intent", default=None)
@@ -299,9 +303,8 @@ def _shown(
     head: Mapping[str, Any] | None,
     now: datetime | None,
 ) -> list[tm.Assertion]:
-    """What a metadata write assesses: the served claims of the row's content under
-    the write's own qualifiers (a sensitivity follows the text into that lineage's
-    history). A write naming none, on a key holding that content under several
+    """What a restatement assesses: the current claims of the row's content under the
+    write's own qualifiers. A write naming none, on a key holding that content under several
     qualifier sets, assesses the lineage of the claim the current row shows (by
     its validity). Other values and qualifiers keep their own metadata."""
     same = [a for a in served if a.content_sha256 in (new.content_sha256, sha)]
@@ -316,7 +319,10 @@ def _shown(
         lineages = {tuple(sorted(a.qualifiers.items())) for a in current}
         if len(lineages) == 1:
             mine = [a for a in same if tuple(sorted(a.qualifiers.items())) in lineages]
-    return mine or same or list(served)
+    picked = mine or same or list(served)
+    # Of those, what holds now: a restatement revises the current claim, never the
+    # same text's past segments or plans (their sensitivity, pin and tags stay).
+    return tm.current_claims(picked, now or datetime.now(UTC)) or picked
 
 
 def _reshapes(intent: WriteIntent, served: Sequence[tm.Assertion]) -> bool:

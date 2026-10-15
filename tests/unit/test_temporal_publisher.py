@@ -1069,3 +1069,53 @@ def test_a_touch_changes_only_the_expiry_on_every_claim(journal: Journal) -> Non
     added = json.loads(journal.commits[-1]["assertions"])
     assert sorted(a["confidence"] for a in added) == [0.2, 0.9]
     assert all(a["expires_at"].startswith(exp.isoformat()) for a in added)
+
+
+def test_a_metadata_write_never_revives_a_deleted_key(journal: Journal) -> None:
+    base = mrow('"A"', **_LOCKLESS)
+    run(pub.publish_rows([base]))
+    run(pub.publish_rows([_copy(base, tombstoned_at=datetime.now(UTC))]))
+    tag = _copy(base, tags=["t"])  # built from a read before the delete
+    with _meta(tag, "tags"):
+        assert run(pub.publish_rows([tag])) == []
+
+
+def test_a_stale_attestation_is_left_out(journal: Journal) -> None:
+    base = mrow('"monday"', **_LOCKLESS, verified_by="", verified_sha256="")
+    run(pub.publish_rows([base]))
+    run(
+        pub.publish_rows(
+            [_copy(base, value='"friday"', content_sha256=sha256_value_json('"friday"'))]
+        )
+    )
+    stale = _copy(base, verified_by="human:rev", verified_sha256=sha256_value_json('"monday"'))
+    with _meta(stale, "verified_by", "verified_sha256"):
+        assert run(pub.publish_rows([stale])) == []
+
+
+def test_a_value_write_keeps_a_pin_committed_since_its_read(journal: Journal) -> None:
+    from server.memory.domain.temporal_capture import WriteIntent, write_intent
+
+    base = mrow('"A"', **_LOCKLESS, pinned=0)
+    run(pub.publish_rows([base]))
+    pin = _copy(base, pinned=1)
+    with _meta(pin, "pinned"):
+        run(pub.publish_rows([pin]))
+    again = _copy(base, tags=["x"])  # a restatement built from the unpinned read
+    with write_intent(WriteIntent(memory_key="k", pin_guard=True, stated=frozenset())):
+        (row,) = run(pub.publish_rows([again]))
+    assert row["pinned"] == 1
+
+
+def test_a_value_write_never_lowers_the_texts_sensitivity(journal: Journal) -> None:
+    from server.memory.domain.temporal_capture import WriteIntent, write_intent
+
+    base = mrow('"A"', **_LOCKLESS, sensitivity="")
+    run(pub.publish_rows([base]))
+    high = _copy(base, sensitivity="high")
+    with _meta(high, "sensitivity"):
+        run(pub.publish_rows([high]))
+    again = _copy(base, tags=["x"])
+    with write_intent(WriteIntent(memory_key="k", stated=frozenset())):
+        (row,) = run(pub.publish_rows([again]))
+    assert row["sensitivity"] == "high"

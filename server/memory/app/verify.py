@@ -174,8 +174,8 @@ async def handle_memory_verify(input: MemoryVerifyInput) -> MemoryVerifyOutput:
             "verified_by": actor,
             "verified_at": verified_at,
             "verified_sha256": verified_sha,
-            # Populate the stored hash on the way past so the row's own column
-            # agrees with the attestation (a row holding the DEFAULT reads '0').
+            # Populate the stored hash on the way past (a row holding the DEFAULT reads
+            # '0'); journaled, the row's hash is the journal's content's.
             "content_sha256": sha,
         }
 

@@ -637,15 +637,26 @@ async def _plan(
         memory_id = str(change.row.get("memory_id") or uuid.uuid4())
         for a in amendment.added:
             current[a.assertion_id] = Served(a, memory_id, 0, _EPOCH)
-        past = change.build is None and not _current_after(
-            amendment, change.row, active, planned_at
-        )
+        past = change.build is None and _past_only(amendment, change.row, active, planned_at)
         if past and _reshapes_current(active, amendment, planned_at):
             b.refresh.append(ident)
         b.planned.append(
             _Planned(ident, memory_id, amendment, payload_sha, change.row, retired, past)
         )
     return b
+
+
+def _past_only(
+    amendment: tm.Amendment, row: Mapping[str, Any], active: Sequence[tm.Assertion], now: datetime
+) -> bool:
+    """Is the change journaled without its row (late evidence, a plan; or a removal
+    that left other claims holding, whose row is the key's remaining claim)?"""
+    if not _current_after(amendment, row, active, now):
+        return True
+    if not removes(row):
+        return False
+    after = tm.apply({a.assertion_id: a for a in active}, amendment).values()
+    return bool(tm.current_claims(after, now))
 
 
 def _plan_row(
@@ -664,6 +675,8 @@ def _plan_row(
         )
     active = [x.a for x in current.values()]
     fields = declared_fields(row)
+    if fields is not None and "value" not in fields:
+        fields = fields - {"content_sha256"}  # a hash follows its value: the journal's
     left_out = _left_out_before(row, intent, active, head, floor, ident)
     if not left_out:
         if fields is not None:
@@ -675,6 +688,14 @@ def _plan_row(
     if fields is not None and not removes(row):
         # Only what it sets, on what holds now: the row was built from the journal.
         return _assess_fields(row, fields, active, now) or tm.Amendment("restate")
+    if fields is not None and intent.conditional:
+        # An expiry removes only the claims of the text it found expired (what the
+        # current row shows); the key's other claims stay.
+        claims = tm.current_claims(active, now)
+        sha = _claim_shown(claims, head).content_sha256 if claims else ""
+        gone = [a.assertion_id for a in claims if a.content_sha256 == sha]
+        kind = "redact" if row.get("redacted_at") is not None else "retract"
+        return tm.Amendment(kind, tuple(gone), ())
     try:
         amendment = amendment_for_row(row, active, intent, head, now=now)
     except tm.EmptyInterval as e:
@@ -796,16 +817,23 @@ def _as_metadata(
     journal does not keep, when that row is as new as the claim), with only the
     declared columns its own. '' or why it is left out."""
     claims = tm.current_claims(served, now)
-    if intent.conditional and any(a.expires_at is None or a.expires_at > now for a in claims):
-        return "superseded"  # no longer expired: touched since the sweep read it
+    if intent.conditional and claims:
+        sha = _claim_shown(claims, head).content_sha256
+        mine = [a for a in claims if a.content_sha256 == sha]
+        if any(a.expires_at is None or a.expires_at > now for a in mine):
+            return "superseded"  # no longer expired: touched since the sweep read it
     if intent.tighten_lock and _loosens(row, claims, now):
         return "locked"
     if "expires_at" in fields and _locked_against(served, "expire", now):
         return "locked"
     if not claims:
-        return ""
-    shown = str((head or {}).get("content_sha256") or "")
-    claim = next((a for a in claims if a.content_sha256 == shown), claims[0])
+        # Nothing holds now: a removal of nothing restates; any other metadata write
+        # (built from a read of what has since gone) changes nothing, never revives.
+        return "" if removes(row) else "superseded"
+    attests = str(row.get("verified_sha256") or "") if "verified_sha256" in fields else ""
+    if attests and all(a.content_sha256 != attests for a in claims):
+        return "superseded"  # attests text that no longer holds: never another's
+    claim = _claim_shown(claims, head)
     theirs = columns_of(claim)
     if head is not None and int(head.get("version") or 0) >= claim.source_version:
         theirs = dict(head) | theirs
@@ -814,6 +842,25 @@ def _as_metadata(
         if c in r and c not in fields and c not in _NOT_REBASED:
             r[c] = v
     return ""
+
+
+def _claim_shown(claims: Sequence[tm.Assertion], head: Mapping[str, Any] | None) -> tm.Assertion:
+    """The current claim the current row shows: the one it was written from, else the
+    one with its content and validity, else (a row behind the journal) the newest."""
+    if head is not None:
+        version = int(head.get("version") or 0)
+        for a in claims:
+            if a.source_version == version:
+                return a
+        shows = (
+            str(head.get("content_sha256") or ""),
+            tm.utc(head.get("valid_at")),
+            tm.utc(head.get("valid_to")),
+        )
+        for a in claims:
+            if (a.content_sha256, tm.row_start(a), a.valid_to) == shows:
+                return a
+    return max(claims, key=lambda a: a.source_version)
 
 
 def _as_value_write(
@@ -830,6 +877,7 @@ def _as_value_write(
         r.update(_lock_in_force(claims, now))
     if removes(row):
         return ""
+    _carry(r, claims, intent)
     sha = str(row.get("content_sha256") or "")
     new_value = bool(claims) and all(a.content_sha256 != sha for a in claims)
     if new_value and _locked_against(served, "value", now):
@@ -837,6 +885,37 @@ def _as_value_write(
     if intent.pin_guard and new_value and not row.get("pinned") and any(a.pinned for a in claims):
         return "pinned"
     return ""
+
+
+_SENSITIVITY = {"": 0, "low": 1, "medium": 2, "high": 3}
+
+
+def _carry(r: dict[str, Any], claims: Sequence[tm.Assertion], intent: WriteIntent) -> None:
+    """A value write's metadata its caller did not state, from the journal as it holds
+    now rather than from the head its writer read: the pin and expiry of the claim
+    it replaces, the attestation of the same text, and a sensitivity never lower
+    than the journal's for that text."""
+    if not claims:
+        return
+    sha = str(r.get("content_sha256") or "")
+    under = [a for a in claims if a.qualifiers == dict(intent.qualifiers)] or claims
+    same = next((a for a in under if a.content_sha256 == sha), None)
+    replaced = same or max(under, key=lambda a: a.source_version)
+    stated = intent.stated
+    if stated is not None:
+        if "pinned" not in stated and "pinned" in r:
+            r["pinned"] = int(replaced.pinned)
+        if "expires_at" not in stated and "expires_at" in r:
+            r["expires_at"] = tm.utc(replaced.expires_at)
+    if same is not None:
+        for c in ("verified_by", "verified_at", "verified_sha256"):
+            if c in r:
+                r[c] = columns_of(same)[c]
+        held = same.sensitivity
+        if (stated is None or "sensitivity" not in stated) and _SENSITIVITY.get(
+            held, 0
+        ) > _SENSITIVITY.get(str(r.get("sensitivity") or ""), 0):
+            r["sensitivity"] = held
 
 
 def _lock_in_force(claims: Sequence[tm.Assertion], now: datetime) -> dict[str, Any]:
@@ -875,11 +954,12 @@ def _loosens(row: Mapping[str, Any], claims: Sequence[tm.Assertion], now: dateti
 def _assess_fields(
     row: Mapping[str, Any], fields: frozenset[str], served: Sequence[tm.Assertion], now: datetime
 ) -> tm.Amendment | None:
-    """The assessment a metadata write makes: its journaled columns, set on what
-    holds now and on the history of that same content (an attestation or a
-    sensitivity binds the text). None when it changes none of them."""
-    current = {a.content_sha256 for a in tm.current_claims(served, now)}
-    claims = [a for a in served if a.content_sha256 in current]
+    """The assessment a metadata write makes: its journaled columns, set on the
+    claims of the content its row shows (the current claim and that text's history:
+    an attestation or a sensitivity binds the text). Another text's claims keep
+    their own. None when it changes none of them."""
+    sha = str(row.get("content_sha256") or "")
+    claims = [a for a in served if a.content_sha256 == sha]
     if not claims:
         return None
     new = assertion_from_row(row, WriteIntent())
@@ -1076,7 +1156,7 @@ async def namespace_lock(org: str, ns: str) -> AsyncIterator[Callable[[], Awaita
         except BackendUnavailableError as e:
             raise TemporalUnavailableError(f"namespace {ns!r} publisher lock unavailable") from e
 
-        if not keeper and await store.foreign_publisher(org, ns, PUBLISHER_ID, _STARTED):
+        if not keeper and await store.foreign_publisher(org, ns, PUBLISHER_ID, await _started()):
             # Process mode means one writer in all; another one has committed here.
             raise TemporalUnavailableError(
                 f"namespace {ns!r}: another process publishes memory without a Keeper; "
@@ -1090,9 +1170,17 @@ async def namespace_lock(org: str, ns: str) -> AsyncIterator[Callable[[], Awaita
 
 
 _serving = False
-# When this process started publishing: a commit by another publisher since then
-# means a second writer in process mode.
-_STARTED = datetime.now(UTC)
+# When this process started publishing, on ClickHouse's clock (the one commits are
+# stamped with): a commit by another publisher since then means a second writer in
+# process mode.
+_STARTED: datetime | None = None
+
+
+async def _started() -> datetime:
+    global _STARTED
+    if _STARTED is None:
+        _STARTED = await store.server_now()
+    return _STARTED
 
 
 def serve() -> None:

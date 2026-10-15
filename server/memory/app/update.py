@@ -32,7 +32,7 @@ from server.memory.domain import lock as _lock
 from server.memory.domain.embed_text import _build_embed_text, key_axis_text
 from server.memory.domain.excerpt import build_excerpt
 from server.memory.domain.memory_types import is_embedded
-from server.memory.domain.temporal_capture import WriteIntent, write_intent
+from server.memory.domain.temporal_capture import WriteIntent, declare_fields, row_key, write_intent
 from server.memory.store import key_write_lock
 from server.memory.store.inserts import insert_memory_versions
 from server.memory.store.rows import next_version
@@ -689,10 +689,28 @@ async def _write_revision(
         else []
     )
     written = -1  # unknown until the insert returns
+    from server.memory.app import verify as _verify
+
+    built_value = memory_row["value"]
+    # A revision that keeps the value is a metadata write: only what it sets is its
+    # own, the rest (a pin, an expiry, a value committed since its read) the journal's.
+    declared = (
+        {row_key(memory_row): frozenset({"tags", "concepts", "confidence", "char_limit"})}
+        if new_sha == _verify.current_content_sha256(existing) and not input.revive
+        else {}
+    )
+
+    def _same_text(kept: Any) -> Any:
+        # A vector only for a row that still carries the text it was embedded from.
+        return [r for r in kept if r["value"] == built_value]
+
     try:
         # The vector writes go with the version row, once the journal accepted it; a
         # revision of a memory removed since it was read is refused, not re-asserted.
-        with write_intent(WriteIntent(memory_key=existing.memory_key, existing=True)):
+        with (
+            write_intent(WriteIntent(memory_key=existing.memory_key, existing=True)),
+            declare_fields(declared),
+        ):
             written = await insert_memory_versions(
                 [memory_row],
                 ch=ch,
@@ -700,7 +718,7 @@ async def _write_revision(
                     *(
                         [
                             lambda kept: memory_repo.insert_embedding_rows(
-                                memory_repo.kept_embedding_rows(kept, emb_rows), ch=ch
+                                memory_repo.kept_embedding_rows(_same_text(kept), emb_rows), ch=ch
                             )
                         ]
                         if emb_rows

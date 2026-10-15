@@ -59,10 +59,9 @@ async def _restore_superseded(
         superseded_by="",
         invalid_at=None,
     )
-    # Only what the restore sets: a write committed since keeps the rest.
-    if not await memory_repo.insert_over_heads(
-        [(restore_row, frozenset({"status", "superseded_by", "invalid_at"}))], ch=ch
-    ):
+    # A restore re-asserts the value it brings back (a value write: the later draw
+    # wins).
+    if not await memory_repo.insert_memory_versions([restore_row], ch=ch):
         return MemoryRestoreOutput(
             restored=False,
             memory_id=str(row.get("memory_id") or ""),
@@ -310,10 +309,9 @@ async def handle_memory_restore(input: MemoryRestoreInput) -> MemoryRestoreOutpu
         tombstoned_at=None,
         expires_at=None,
     )
-    # Only what the restore sets: a write committed since keeps the rest.
-    if not await memory_repo.insert_over_heads(
-        [(restore_row, frozenset({"tombstoned_at", "expires_at"}))], ch=ch
-    ):
+    # A restore re-asserts the value it brings back (a value write: the later draw
+    # wins).
+    if not await memory_repo.insert_memory_versions([restore_row], ch=ch):
         return MemoryRestoreOutput(
             restored=False,
             memory_id=str(row.get("memory_id") or ""),

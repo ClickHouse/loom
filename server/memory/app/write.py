@@ -174,6 +174,19 @@ def _check_applies_now(input: MemorySetInput) -> None:
             )
 
 
+def _stated(input: MemorySetInput) -> frozenset[str]:
+    """The metadata columns a set's caller stated."""
+    given = input.model_fields_set
+    out = set()
+    if "pinned" in given:
+        out.add("pinned")
+    if given & {"ttl_seconds", "on_expire", "expire_reason"}:
+        out.add("expires_at")
+    if "sensitivity" in given:
+        out.add("sensitivity")
+    return frozenset(out)
+
+
 async def handle_memory_set(input: MemorySetInput) -> MemorySetOutput:
     """Count the write outcome for every terminal shape, then delegate.
 
@@ -189,8 +202,12 @@ async def handle_memory_set(input: MemorySetInput) -> MemorySetOutput:
         input = input.model_copy(update={"valid_at": input.effective_at})
     # A set never replaces a pinned value it does not pin, as the journal holds it
     # when the write is planned (a pin may land after the guard below read the key).
+    # Its pin, expiry and sensitivity are its own only where the caller stated them;
+    # the rest is the journal's when it is planned, not a copy of what it read.
     intent = replace(
-        input.write_intent() or WriteIntent(memory_key=input.memory_key), pin_guard=True
+        input.write_intent() or WriteIntent(memory_key=input.memory_key),
+        pin_guard=True,
+        stated=_stated(input),
     )
     try:
         with write_intent(intent):
