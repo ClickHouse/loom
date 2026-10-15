@@ -504,13 +504,15 @@ async def _elsewhere(org: str, cns: str, lost: dict[str, str]) -> dict[str, list
     out: dict[str, list[Definition]] = defaultdict(list)
     if not lost:
         return out
-    local = {qn: local_name(qn, path) for qn, path in lost.items()}
+    by_local: dict[str, list[str]] = defaultdict(list)
+    for qn, path in lost.items():
+        by_local[local_name(qn, path)].append(qn)
     found = await code.candidates(org, cns, qualified_names=list(lost))
     found += await code.candidates(org, cns, names=sorted({bare_name(qn) for qn in lost}))
     for c in {(c.path, c.qualified_name): c for c in found}.values():
-        for qn in lost:
-            if c.qualified_name == qn or local_name(c.qualified_name, c.path) == local[qn]:
-                out[qn].append(c)
+        same = [c.qualified_name] if c.qualified_name in lost else []
+        for qn in dict.fromkeys(same + by_local.get(local_name(c.qualified_name, c.path), [])):
+            out[qn].append(c)
     return out
 
 
