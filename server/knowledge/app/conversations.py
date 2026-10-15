@@ -936,23 +936,33 @@ async def _search_substring_fallback(
 async def handle_conversation_search_saved_messages(
     input: ConversationSearchSavedMessagesInput,
 ) -> ConversationSearchSavedMessagesOutput:
-    """Search only messages this user explicitly saved through save_message."""
-    result = await _search_conversations(
-        ConversationSearchInput(
-            org=input.org,
-            namespace=input.namespace,
-            agent=input.agent,
-            query=input.query,
-            thread_id=input.conversation_id,
-            role=input.role,
-            user_id=input.user_id,
-            top_k=input.top_k,
-            namespace_scope="this",
-        ),
-        saved_only=True,
-    )
-    return ConversationSearchSavedMessagesOutput(
-        hits=[
+    """Search only messages this user explicitly saved through save_message.
+
+    The vector leg embeds each message's opening characters; the BM25 leg reads
+    its whole text, so an exact term (an id, a table name) or a phrase deep in a
+    long saved answer still ranks. `hybrid` fuses the two by reciprocal rank."""
+    from server.knowledge.app import bm25 as knowledge_bm25
+    from server.knowledge.store import conversations as conversation_repo
+
+    scope = _conversation_read_scope()
+    semantic: list[_SavedMessageHit] = []
+    lexical: list[_SavedMessageHit] = []
+    if input.search_mode != "lexical":
+        result = await _search_conversations(
+            ConversationSearchInput(
+                org=input.org,
+                namespace=input.namespace,
+                agent=input.agent,
+                query=input.query,
+                thread_id=input.conversation_id,
+                role=input.role,
+                user_id=input.user_id,
+                top_k=input.top_k,
+                namespace_scope="this",
+            ),
+            saved_only=True,
+        )
+        semantic = [
             _SavedMessageHit(
                 conversation_id=hit.thread_id,
                 message_id=hit.msg_id,
@@ -963,7 +973,80 @@ async def handle_conversation_search_saved_messages(
             for hit in result.hits
             if hit.role in ("user", "assistant")
         ]
+    if input.search_mode != "semantic":
+        tokens = knowledge_bm25.tokenize(input.query)
+        with traced("ch.query.conversation_saved_lexical", tokens=len(tokens)):
+            rows = await conversation_repo.lexical_saved_messages(
+                input.org,
+                input.namespace,
+                input.agent,
+                tokens,
+                scope=scope,
+                user_id=input.user_id,
+                conversation_id=input.conversation_id,
+                role=input.role,
+                limit=input.top_k,
+            )
+        lexical = [
+            _SavedMessageHit(
+                conversation_id=r["thread_id"],
+                message_id=r["msg_id"],
+                role=r["role"],
+                content_excerpt=_snippet(r["content"], tokens),
+                ts=r["saved_at"],
+            )
+            for r in rows
+            if r["role"] in ("user", "assistant")
+        ]
+    if input.search_mode == "semantic":
+        return ConversationSearchSavedMessagesOutput(hits=semantic)
+    if input.search_mode == "lexical":
+        return ConversationSearchSavedMessagesOutput(hits=lexical)
+    return ConversationSearchSavedMessagesOutput(
+        hits=_fuse_saved(semantic, lexical, top_k=input.top_k, w_lex=input.lexical_weight)
     )
+
+
+# Reciprocal-rank constant, as knowledge.search fuses its legs.
+_RRF_K = 60.0
+
+
+def _fuse_saved(
+    semantic: list[_SavedMessageHit],
+    lexical: list[_SavedMessageHit],
+    *,
+    top_k: int,
+    w_lex: float,
+) -> list[_SavedMessageHit]:
+    """score = 1/(k + rank_sem) + w_lex/(k + rank_lex) over the union, keyed by
+    (conversation, message). A lexical hit's excerpt is kept: it is centred on
+    the matched terms. Ties keep the semantic leg's order."""
+
+    def key(h: _SavedMessageHit) -> tuple[str, str]:
+        return (h.conversation_id, h.message_id)
+
+    hits: dict[tuple[str, str], _SavedMessageHit] = {key(h): h for h in semantic}
+    hits.update({key(h): h for h in lexical})
+    score: dict[tuple[str, str], float] = dict.fromkeys(hits, 0.0)
+    for rank, h in enumerate(semantic, start=1):
+        score[key(h)] += 1.0 / (_RRF_K + rank)
+    for rank, h in enumerate(lexical, start=1):
+        score[key(h)] += w_lex / (_RRF_K + rank)
+    order = {k: i for i, k in enumerate([*map(key, semantic), *map(key, lexical)])}
+    ranked = sorted(hits, key=lambda k: (-score[k], order[k]))
+    return [hits[k] for k in ranked[:top_k]]
+
+
+def _snippet(content: str, tokens: list[str]) -> str:
+    """An excerpt around the first query term the content contains, so a match
+    deep in a long message shows the matching words; the opening otherwise."""
+    lowered = content.lower()
+    hits = [p for p in (lowered.find(t) for t in tokens) if p >= 0]
+    if not hits or min(hits) < HIT_EXCERPT_CHARS // 2:
+        return _excerpt(content)
+    start = max(min(hits) - HIT_EXCERPT_CHARS // 3, 0)
+    window = content[start : start + HIT_EXCERPT_CHARS]
+    return "…" + window + ("…" if start + HIT_EXCERPT_CHARS < len(content) else "")
 
 
 async def handle_conversation_list_saved_messages(

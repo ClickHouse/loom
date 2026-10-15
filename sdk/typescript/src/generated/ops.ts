@@ -2346,6 +2346,8 @@ export interface ConversationSearchSavedMessagesInput {
   conversation_id?: string | null;
   role?: "user" | "assistant" | null;
   top_k?: number;
+  search_mode?: "hybrid" | "semantic" | "lexical";
+  lexical_weight?: number;
 }
 
 export interface ConversationSearchSavedMessagesOutput {

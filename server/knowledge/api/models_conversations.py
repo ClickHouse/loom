@@ -370,7 +370,7 @@ class ConversationSearchOutput(BaseModel):
 
 
 class ConversationSearchSavedMessagesInput(BaseModel):
-    """Semantic search over only the messages one user saved with
+    """Hybrid search over only the messages one user saved with
     conversation.save_message, not the whole transcript.
 
     `conversation.search` ranks every recorded turn of a namespace (or of all
@@ -386,6 +386,11 @@ class ConversationSearchSavedMessagesInput(BaseModel):
     conversation_id: str | None = Field(default=None, max_length=256)
     role: Literal["user", "assistant"] | None = None
     top_k: int = Field(default=20, ge=1, le=200)
+    # hybrid: the vector leg and a BM25 leg over each message's whole text,
+    # fused by reciprocal rank; semantic: vector only; lexical: BM25 only.
+    search_mode: Literal["hybrid", "semantic", "lexical"] = "hybrid"
+    # Weight of the BM25 leg in the fusion (hybrid mode); 1.0 = equal weight.
+    lexical_weight: float = Field(default=1.0, ge=0.0, le=1.0)
 
 
 class _SavedMessageHit(ProjectedRow):

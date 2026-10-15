@@ -395,7 +395,14 @@ async def test_saved_message_search_has_a_user_and_selection_boundary(
         captured["saved_only"] = saved_only
         return ConversationSearchOutput(hits=[])
 
+    async def fake_lexical(*args: Any, **kw: Any) -> list[dict[str, Any]]:
+        captured["lexical"] = (args, kw)
+        return []
+
+    from server.knowledge.store import conversations as conversation_repo
+
     monkeypatch.setattr(conversations, "_search_conversations", fake_search)
+    monkeypatch.setattr(conversation_repo, "lexical_saved_messages", fake_lexical)
     out = await conversations.handle_conversation_search_saved_messages(
         ConversationSearchSavedMessagesInput(
             org="o", namespace="n", agent="client", user_id="u-1", query="saved answer"
@@ -407,7 +414,53 @@ async def test_saved_message_search_has_a_user_and_selection_boundary(
     assert request.user_id == "u-1"
     assert request.run_id is None
     assert request.namespace_scope == "this"
+    args, kw = captured["lexical"]
+    assert args[:4] == ("o", "n", "client", ["saved", "answer"])
+    assert kw["user_id"] == "u-1"
+    assert kw["scope"].narrowed is False
     assert out.hits == []
+
+
+def _hit(mid: str, excerpt: str = "x") -> Any:
+    from server.knowledge.api.models_conversations import _SavedMessageHit
+
+    return _SavedMessageHit(
+        conversation_id="c",
+        message_id=mid,
+        role="user",
+        content_excerpt=excerpt,
+        ts=datetime(2026, 1, 1),
+    )
+
+
+def test_fusion_rewards_a_message_both_legs_found_and_keeps_the_lexical_excerpt() -> None:
+    from server.knowledge.app.conversations import _fuse_saved
+
+    fused = _fuse_saved(
+        [_hit("a"), _hit("b", "opening"), _hit("c")],
+        [_hit("b", "…the matched words…"), _hit("d")],
+        top_k=3,
+        w_lex=1.0,
+    )
+    assert [h.message_id for h in fused] == ["b", "a", "d"]
+    assert fused[0].content_excerpt == "…the matched words…"
+
+
+def test_fusion_with_no_lexical_weight_keeps_the_semantic_order() -> None:
+    from server.knowledge.app.conversations import _fuse_saved
+
+    fused = _fuse_saved([_hit("a"), _hit("b")], [_hit("b"), _hit("z")], top_k=3, w_lex=0.0)
+    assert [h.message_id for h in fused][:2] == ["a", "b"]
+
+
+def test_snippet_centres_a_deep_match_and_keeps_an_early_one_at_the_start() -> None:
+    from server.knowledge.app.conversations import _snippet
+
+    deep = "filler " * 400 + "ticket INC-48213 closed"
+    out = _snippet(deep, ["inc"])
+    assert out.startswith("…") and "INC-48213" in out
+    early = "INC-48213 opens the message " + "filler " * 100
+    assert _snippet(early, ["inc"]).startswith("INC-48213")
 
 
 def test_saved_message_ops_are_registered_with_their_roles() -> None:

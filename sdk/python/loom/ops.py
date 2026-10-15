@@ -8053,7 +8053,7 @@ class ConversationHit(TypedDict, total=False):
 
 
 class ConversationSearchSavedMessagesInput(TypedDict, total=False):
-    "Semantic search over only the messages one user saved with"
+    "Hybrid search over only the messages one user saved with"
 
     org: Required[str]
     namespace: Required[str]
@@ -8063,10 +8063,12 @@ class ConversationSearchSavedMessagesInput(TypedDict, total=False):
     conversation_id: NotRequired[Optional[str]]
     role: NotRequired[Optional[Literal["user", "assistant"]]]
     top_k: NotRequired[int]
+    search_mode: NotRequired[Literal["hybrid", "semantic", "lexical"]]
+    lexical_weight: NotRequired[float]
 
 
 class ConversationSearchSavedMessagesBody(TypedDict, total=False):
-    "Semantic search over only the messages one user saved with"
+    "Hybrid search over only the messages one user saved with"
 
     org: NotRequired[str]
     namespace: NotRequired[str]
@@ -8076,6 +8078,8 @@ class ConversationSearchSavedMessagesBody(TypedDict, total=False):
     conversation_id: NotRequired[Optional[str]]
     role: NotRequired[Optional[Literal["user", "assistant"]]]
     top_k: NotRequired[int]
+    search_mode: NotRequired[Literal["hybrid", "semantic", "lexical"]]
+    lexical_weight: NotRequired[float]
 
 
 class ConversationSearchSavedMessagesOutput(TypedDict, total=False):
