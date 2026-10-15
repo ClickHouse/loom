@@ -31,7 +31,7 @@ class ClickHouseSettings(BaseModel):
     ch_pool_maxsize: int = 64
     # Seconds an idle pooled connection is kept. Must stay BELOW the Cloud load
     # balancer's idle cutoff (8 s) so loom closes first: a peer-closed pooled
-    # TLS connection is never reaped under uvloop (opt-in).
+    # TLS connection is never reaped under uvloop (`LOOM_UVICORN_LOOP=uvloop`).
     ch_keepalive_timeout: float = 5.0
     # A point lookup that MISSES right after a write (get after set, verify,
     # update_by_id, delete) re-reads once with select_sequential_consistency=1.

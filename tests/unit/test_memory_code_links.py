@@ -649,6 +649,14 @@ def test_a_memory_naming_more_than_the_cap_is_marked_incomplete() -> None:
     assert len(links) == 3 and complete
 
 
+def test_a_qualified_mention_finds_its_candidates_under_the_bare_name() -> None:
+    from server.code.domain.anchor import Definition, Mention
+
+    fn = Definition("a.py", "a::fn", "fn")
+    links, waiting, _ = code_links._plan([Mention("a::fn", in_prose=False)], {"fn": [fn]}, [], {})
+    assert links == [fn] and waiting == []
+
+
 def test_exactly_the_cap_of_mentions_is_not_cut() -> None:
     from server.code.domain.anchor import Mention
 
