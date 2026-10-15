@@ -56,8 +56,8 @@ class RunBeginInput(BaseModel):
     # Free-form key/values stored on the run; `role`, when set, is added to it.
     metadata: dict[str, Any] = Field(default_factory=dict)
     # Model spend in USD the run may reach; needs a session_id (0 = none, kept on a re-sent begin).
-    # Re-sent with its session; run.get reports going past it in `over_budget`. Not
-    # offered over MCP, which hides session_id: a model cannot name its own session.
+    # The session's turns are the run's spend, so a re-sent begin that restates the
+    # budget restates the session too. Hidden over MCP, which hides session_id.
     budget_usd: float = Field(default=0.0, ge=0.0, le=100_000.0, json_schema_extra=MCP_HIDDEN)
     # Seconds the run may take (0 = none, kept on a re-sent begin).
     budget_seconds: int = Field(default=0, ge=0, le=30 * 86400)

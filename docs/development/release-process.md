@@ -32,8 +32,7 @@ re-run or the later registry dispatch keeps them as they are. What commits canno
 notes" section of the release pull request's description, so it is reviewed before the tag: operator
 steps (new settings, backfills, table rebuilds) and client-visible wire changes, including every removed
 request field and retired flag. No registry of removed fields exists, so the release notes are where a
-client learns of one. Once the workflow creates the release, paste that section above the generated
-notes. Generate the wire diff instead of writing it:
+client learns of one. Generate the wire diff instead of writing it:
 
 ```bash
 python scripts/codegen/wire_changelog.py v<previous> HEAD

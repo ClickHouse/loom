@@ -627,8 +627,8 @@ async def _complete(
     # The client said how the run ended: that label belongs to the session too, where the
     # contrast pass pairs on it and where it outranks anything a judge would later read
     # into the summary. Best effort; `none` says nothing and writes nothing.
-    session_id = str(existing.get("session_id") or "-")
-    if outcome in ("positive", "negative") and session_id != "-":
+    session_id = str(existing.get("session_id") or SENTINEL)
+    if outcome in ("positive", "negative") and names_session(session_id):
         await _label_session(ch, existing, input, outcome, session_id)
 
     if scope is None:

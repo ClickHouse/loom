@@ -43,7 +43,9 @@ async def main() -> None:
     org = os.environ["LOOM_ORG"]
     namespace = os.environ["LOOM_NAMESPACE"]
     # AX kills the task 10 s after SIGTERM: one 5 s attempt per Loom call keeps
-    # the run's close inside that.
+    # the run's close inside that. It applies to every call, so a transient Loom
+    # error during the work fails the task; an agent that needs retries there
+    # can close the run from a second Agent with these settings instead.
     retry = {"max_attempts": 1}
     async with Agent(org, namespace, "ax-fix-flaky-test", timeout_s=5.0, retry=retry) as agent:
         # The scope closes the run: as `run.status` on a clean exit, `failed` on
