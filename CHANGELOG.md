@@ -71,6 +71,10 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   granted to the subject (named by an operator at mint) keeps its claim. A refresh token
   saved before this release can carry a cutoff that landed while it was minted until it
   expires.
+- **Security:** migration `028_namespace_grant_log.sql` adds `loom.namespace_grant_log`,
+  every grant row as written (one row per grant write, kept like the grants), and
+  backfills it from `loom.namespace_grants`. A grant change reads it after its write: a
+  concurrent raise its read missed, and a retried lowering, are cut too.
 - **Security:** with a Keeper, `/oauth/token` runs one exchange per code or refresh token
   (a KeeperMap claim, `loom.oauth_claims`, migration `027_oauth_claims.sql`); a concurrent
   presenter is told to retry, and a failed read answers a retryable 503

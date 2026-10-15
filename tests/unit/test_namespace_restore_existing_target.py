@@ -5,6 +5,7 @@ row's `created_at` and `duplicate_threshold`."""
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from typing import Any
 
@@ -310,3 +311,28 @@ async def test_a_restore_compares_the_last_row_of_each_subject(
     ]
     await namespace_snapshot._end_lowered_claims("o", "ns", restored, "boss", ch=None)
     assert recorded_cutoff_writes == []
+
+
+def test_a_restore_rechecks_only_the_subjects_it_leaves_as_they_are(
+    monkeypatch: pytest.MonkeyPatch,
+    recorded_cutoff_writes: list[tuple[str, list[str], list[str]]],
+) -> None:
+    # A raised or new subject is never cut; a kept one may be a retry's.
+    from types import SimpleNamespace
+
+    from server.identity.app import namespace_snapshot
+    from server.identity.store import grants as grants_repo
+
+    async def _live(*_a: Any, **_k: Any) -> dict[str, str]:
+        return {"low": "admin", "same": "writer", "up": "viewer"}
+
+    monkeypatch.setattr(grants_repo, "active_roles", _live)
+    grants = [
+        SimpleNamespace(subject=s, role=r)
+        for s, r in [("low", "viewer"), ("same", "writer"), ("up", "admin"), ("new", "viewer")]
+    ]
+    lowered, kept = asyncio.run(
+        namespace_snapshot._end_lowered_claims("acme", "team", grants, "op", ch=None)
+    )
+    assert (lowered, kept) == (["low"], ["same"])
+    assert recorded_cutoff_writes == [("acme", ["team"], ["low"])]

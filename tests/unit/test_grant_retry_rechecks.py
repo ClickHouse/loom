@@ -228,3 +228,16 @@ def test_a_retried_token_grant_revoke_rechecks_the_subjects_logged_pairs(
         ORG, "sa:bot-1", namespace="team", retry=True, ch=_NoLiveGrants()
     )
     assert asyncio.run(again) == 0 and rechecked == [("team", "sa:bot-1")]
+
+
+def test_a_retried_approve_by_email_rechecks_both_spellings(rechecked: list[Any]) -> None:
+    # Grant rows are stored under the login handle.
+    approve = GrantsApproveInput(org=ORG, namespace="team", subject="alice@x.io")
+    asyncio.run(grants_app.handle_grants_approve(approve))
+    assert rechecked == [(ORG, [("team", "alice"), ("team", "alice@x.io")])]
+
+
+@pytest.mark.grant_log_check
+def test_the_grant_log_is_never_read_for_a_whole_org() -> None:
+    with pytest.raises(ValueError, match="namespace or a subject"):
+        asyncio.run(grants_repo.logged_pairs(ORG))

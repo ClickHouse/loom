@@ -94,10 +94,11 @@ async def handle_namespace_join(
     if existing is not None:
         current_role = existing.role
         existing_pending = existing.pending_role
-        # Active equal-or-higher → no-op; perhaps a retry whose first attempt
-        # landed without its cut.
+        # Active equal-or-higher → no-op. The same role may be a retry whose
+        # first attempt landed without its cut.
         if grant_rank(current_role) >= grant_rank(input.role):
-            await grant_writes.recheck(input.org, [(input.namespace, caller)])
+            if grant_rank(current_role) == grant_rank(input.role):
+                await grant_writes.recheck(input.org, [(input.namespace, caller)])
             return NamespaceJoinOutput(
                 joined=False,
                 namespace=input.namespace,

@@ -246,7 +246,7 @@ def test_revoking_ends_claims_only_when_the_grant_was_active(
     assert recorded_cutoff_writes == ([(ORG, ["team"], ["alice"])] if cut else [])
 
 
-def _logged_at(role: str, at: datetime, namespace: str = "team") -> dict[str, Any]:
+def _log_row(role: str, at: datetime, namespace: str = "team") -> dict[str, Any]:
     return {
         "namespace": namespace,
         "subject": "alice",
@@ -273,7 +273,7 @@ def test_a_recheck_cuts_a_pair_whose_grant_ranks_below_one_it_held(
     from server.identity.app import grant_writes
 
     then = datetime(2026, 5, 1, 12, 0, 0)
-    ch.log = [_logged_at(role, then + timedelta(seconds=i)) for i, role in enumerate(roles)]
+    ch.log = [_log_row(role, then + timedelta(seconds=i)) for i, role in enumerate(roles)]
     pair = ("team", "alice")
     assert asyncio.run(grant_writes.recheck(ORG, [pair])) == ([pair] if fell else [])
     assert (rev.grant_claim_key(ORG, *pair) in ch.revoked) is fell
@@ -282,7 +282,7 @@ def test_a_recheck_cuts_a_pair_whose_grant_ranks_below_one_it_held(
 def _cut_raised_under(ch: _CH, roles: list[str], written: int) -> bool:
     """Whether writing log row `written` of `roles` (one per second) cuts the pair."""
     then = datetime(2026, 5, 1, 12, 0, 0)
-    ch.log = [_logged_at(role, then + timedelta(seconds=i)) for i, role in enumerate(roles)]
+    ch.log = [_log_row(role, then + timedelta(seconds=i)) for i, role in enumerate(roles)]
     from server.identity.app import grant_writes
 
     row = {

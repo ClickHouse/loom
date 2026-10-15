@@ -291,6 +291,8 @@ async def logged_pairs(
     ch: _CHClient | None = None,
 ) -> list[tuple[str, str]]:
     """The (namespace, subject) pairs the grant log holds on `namespace` or of `subject`."""
+    if not namespace and not subject:
+        raise ValueError("logged_pairs needs a namespace or a subject, not the whole org")
     ch = ch or _default_client()
     with own_write_reads():
         rows = await ch.query_all(

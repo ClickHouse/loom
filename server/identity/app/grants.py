@@ -359,7 +359,10 @@ async def handle_grants_approve(input: GrantsApproveInput) -> GrantsApproveOutpu
     # last-admin guards grants.create / grants.revoke apply.
     if row is None or (row.status != "pending" and not row.pending_role):
         # Raced with a concurrent revoke/approve, or nothing pending — no-op, no role.
-        await grant_writes.recheck(input.org, [(input.namespace, input.subject)])
+        from server.auth.aliases import canonical_subject
+
+        spellings = sorted({await canonical_subject(input.org, input.subject), input.subject})
+        await grant_writes.recheck(input.org, [(input.namespace, s) for s in spellings])
         return GrantsApproveOutput(
             subject=input.subject,
             namespace=input.namespace,
