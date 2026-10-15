@@ -67,7 +67,7 @@ async def test_contradictory_triple_repair_returns_interval_for_edge_close() -> 
                 "object": "acme",
                 "valid_from": datetime(2023, 1, 1),
                 "valid_to": None,
-                "last_seen": _SEEN_BEFORE,
+                "seen_at": _SEEN_BEFORE,
             }
         ]
     )
@@ -136,7 +136,7 @@ async def test_contradictory_edge_repair_closes_old_pair_only() -> None:
     vf = calendar.timegm(datetime(2023, 1, 1).timetuple())
     assert (
         "IN {keys:Array(String)}" in sql
-        and "valid_from < arrayElement({valid_tos:Array(DateTime)}" in sql
+        and "greatest(arrayElement({valid_tos:Array(DateTime)}" in sql
     )
     assert params["keys"] == [f"acme\x1fuser\x1f{vf}"]
     assert params["valid_tos"] == [datetime(2025, 1, 1)]
@@ -240,7 +240,7 @@ async def test_repair_stamps_invalid_at_and_closes_equal_date_tie(_declared) -> 
                 "object": "acme",
                 "valid_from": datetime(2025, 1, 1),
                 "valid_to": None,
-                "last_seen": _SEEN_BEFORE,
+                "seen_at": _SEEN_BEFORE,
             },
         ]
     )
@@ -277,7 +277,7 @@ async def test_undated_single_valued_fact_orders_by_arrival(_declared) -> None:
                 "object": "in progress",
                 "valid_from": datetime(2026, 9, 3),
                 "valid_to": None,
-                "last_seen": _SEEN_BEFORE,
+                "seen_at": _SEEN_BEFORE,
             },
         ]
     )
@@ -304,7 +304,7 @@ async def test_declared_cardinality_wins_over_seed_list(_declared) -> None:
             "object": "alice",
             "valid_from": datetime(2024, 1, 1),
             "valid_to": None,
-            "last_seen": _SEEN_BEFORE,
+            "seen_at": _SEEN_BEFORE,
         },
     ]
     # Undeclared "mentors" is multi-valued: nothing closes.
@@ -333,7 +333,7 @@ async def test_declared_cardinality_wins_over_seed_list(_declared) -> None:
                 "object": "acme",
                 "valid_from": datetime(2023, 1, 1),
                 "valid_to": None,
-                "last_seen": _SEEN_BEFORE,
+                "seen_at": _SEEN_BEFORE,
             }
         ]
     )
@@ -368,7 +368,7 @@ async def test_last_value_in_a_batch_survives(_declared) -> None:
                 "object": "acme",
                 "valid_from": datetime(2020, 1, 1),
                 "valid_to": None,
-                "last_seen": _SEEN_BEFORE,
+                "seen_at": _SEEN_BEFORE,
             },
             {
                 "subject": "user",
@@ -376,7 +376,7 @@ async def test_last_value_in_a_batch_survives(_declared) -> None:
                 "object": "globex",
                 "valid_from": datetime(2022, 6, 1),
                 "valid_to": None,
-                "last_seen": _SEEN_BEFORE,
+                "seen_at": _SEEN_BEFORE,
             },
             {
                 "subject": "user",
@@ -384,7 +384,7 @@ async def test_last_value_in_a_batch_survives(_declared) -> None:
                 "object": "clickhouse",
                 "valid_from": datetime(2024, 3, 1),
                 "valid_to": None,
-                "last_seen": _SEEN_BEFORE,
+                "seen_at": _SEEN_BEFORE,
             },
         ]
     )
@@ -513,10 +513,10 @@ class _Triples(StubCH):
                                            "raced": []})  # fmt: skip
                 stamped = r.get("invalid_at") == params["at"]
                 st["landed"] |= stamped
-                st["seen_since"] |= r["valid_to"] is None and r["last_seen"] > params["at"]
+                st["seen_since"] |= r["valid_to"] is None and r["seen_at"] > params["seen"]
                 st["open"] |= r["valid_to"] is None
-                if stamped and r["last_seen"] > params["at"]:
-                    st["raced"].append((r["valid_from"], r["last_seen"]))
+                if stamped and r["seen_at"] > params["seen"]:
+                    st["raced"].append((r["valid_from"], r["seen_at"]))
             return list(states.values())
         if "count()" in sql:
             n: dict[tuple[str, str, str], int] = {}
@@ -542,7 +542,7 @@ def _row(obj: str, valid_from: datetime | None, **closed: Any) -> dict[str, Any]
         "valid_from": valid_from,
         "valid_to": closed.get("valid_to"),
         "invalid_at": closed.get("invalid_at"),
-        "last_seen": closed.get("last_seen", _SEEN_BEFORE),
+        "seen_at": closed.get("seen_at", _SEEN_BEFORE),
     }
 
 
@@ -592,10 +592,10 @@ async def test_only_a_restatement_not_older_than_the_new_value_undoes_its_close(
 @pytest.mark.asyncio
 async def test_a_same_date_value_that_arrived_later_closes_the_new_row(_declared) -> None:
     # Two writers racing on one date: this one's London arrived before the other's Paris.
-    paris = {**_row("paris", datetime(2026, 1, 1)), "last_seen": datetime(2026, 9, 12, 9, 0, 2)}
+    paris = {**_row("paris", datetime(2026, 1, 1)), "seen_at": datetime(2026, 9, 12, 9, 0, 2)}
     ch = _Triples([paris])
     new = [{"subject": "user", "relation": "works_at", "object": "london",
-            "valid_from": datetime(2026, 1, 1), "last_seen": datetime(2026, 9, 12, 9, 0, 1)}]  # fmt: skip
+            "valid_from": datetime(2026, 1, 1), "seen_at": datetime(2026, 9, 12, 9, 0, 1)}]  # fmt: skip
     repairs = await _repair_contradictory_triples(_bulk_input(), new, ch=ch, at=_T)
     assert [(r.old_object, r.new_object) for r in repairs] == [("london", "paris")]
 
@@ -610,11 +610,11 @@ async def test_the_later_of_two_same_date_values_in_one_write_stays_current(_dec
             "relation": "works_at",
             "object": obj,
             "valid_from": day,
-            "last_seen": _T,
+            "seen_at": _T,
         }  # fmt: skip
         for obj in ("zurich", "amsterdam")
     ]
-    ch = _Triples([{**_row(t["object"], day), "last_seen": _T} for t in batch])
+    ch = _Triples([{**_row(t["object"], day), "seen_at": _T} for t in batch])
     repairs = await _repair_contradictory_triples(_bulk_input(), batch, ch=ch, at=_T)
     assert [(r.old_object, r.new_object) for r in repairs] == [("zurich", "amsterdam")]
 
@@ -622,7 +622,7 @@ async def test_the_later_of_two_same_date_values_in_one_write_stays_current(_dec
 _CLOSED_AT_T = {
     "valid_to": datetime(2026, 1, 1),
     "invalid_at": _T,
-    "last_seen": _SEEN_BEFORE,
+    "seen_at": _SEEN_BEFORE,
 }
 
 
@@ -635,6 +635,8 @@ _CLOSED_AT_T = {
         ([_T], True, True),
         # Stated again after the write: that write's repair decides.
         ([datetime(2026, 9, 12, 10, 0, 5)], False, False),
+        # Stated again in the write's own second, after it: told apart by `seen_at`.
+        ([_T.replace(microsecond=5)], False, False),
         # The close landed and London was stated again in the same second.
         ([_T, _CLOSED_AT_T], False, False),
         # The close landed and nothing is open: only the edges and rows are left.
@@ -657,7 +659,7 @@ async def test_a_replay_closes_a_recorded_value_again_only_when_its_close_never_
     monkeypatch.setattr(proj, "_retire_memories_behind_repairs", finish)
     made = IntervalRepair("user", "works_at", "london", "paris", datetime(2026, 1, 1), None, _T)
     rows = [
-        {**_row("london", None), **(r if isinstance(r, dict) else {"last_seen": r})} for r in london
+        {**_row("london", None), **(r if isinstance(r, dict) else {"seen_at": r})} for r in london
     ]
     ch = _Triples(rows)
     await proj._repair_triples(_bulk_input(), [], [], at=_T, replay=True, repaired=[made], ch=ch)
@@ -689,11 +691,11 @@ async def test_a_replay_opens_a_value_its_close_took_from_a_write_since(
     monkeypatch.setattr(proj, "_retire_memories_behind_repairs", finish)
     made = IntervalRepair("user", "works_at", "london", "rome", _T, None, _T)
     back_seen = datetime(2026, 9, 12, 10, 0, 1)
-    back = {**_row("london", back_from), **_CLOSED_AT_T, "last_seen": back_seen}
+    back = {**_row("london", back_from), **_CLOSED_AT_T, "seen_at": back_seen}
     rows = [{**_row("london", None), **_CLOSED_AT_T}, back]
     paris_seen = datetime(2026, 9, 12, 10, 0, 2)
     if paris_since:
-        rows.append({**_row("paris", None), "last_seen": paris_seen})
+        rows.append({**_row("paris", None), "seen_at": paris_seen})
     ch = _Triples(rows)
     await proj._repair_triples(_bulk_input(), [], [], at=_T, replay=True, repaired=[made], ch=ch)
     calls = [(sql, p) for sql, p in ch.execute_calls if "entity_triples" in sql]
@@ -733,13 +735,13 @@ async def test_a_replay_leaves_closed_a_value_stated_again_with_an_older_date(
     monkeypatch.setattr(proj, "_retire_memories_behind_repairs", finish)
     rome_from = datetime(2026, 1, 1)
     made = IntervalRepair("user", "works_at", "london", "rome", rome_from, None, _T, rome_from)
-    back = {**_CLOSED_AT_T, "last_seen": datetime(2026, 9, 12, 10, 0, 1)}
+    back = {**_CLOSED_AT_T, "seen_at": datetime(2026, 9, 12, 10, 0, 1)}
     rows = [
         {**_row("london", None), **_CLOSED_AT_T},
         {**_row("london", datetime(2019, 1, 1)), **back},
     ]
     if back_since:
-        rows.append(_row("london", None, last_seen=datetime(2026, 9, 12, 10, 0, 3)))
+        rows.append(_row("london", None, seen_at=datetime(2026, 9, 12, 10, 0, 3)))
     ch = _Triples(rows)
     await proj._repair_triples(_bulk_input(), [], [], at=_T, replay=True, repaired=[made], ch=ch)
     assert not [p for sql, p in ch.execute_calls if "UPDATE valid_to" in sql]
@@ -782,8 +784,8 @@ async def test_a_replay_judges_every_row_stated_again_while_the_close_ran(
     seen_1, seen_2 = datetime(2026, 9, 12, 10, 0, 1), datetime(2026, 9, 12, 10, 0, 2)
     rows = [
         {**_row("london", None), **_CLOSED_AT_T},
-        {**_row("london", datetime(2026, 8, 1)), **_CLOSED_AT_T, "last_seen": seen_1},
-        {**_row("london", second_from), **_CLOSED_AT_T, "last_seen": seen_2},
+        {**_row("london", datetime(2026, 8, 1)), **_CLOSED_AT_T, "seen_at": seen_1},
+        {**_row("london", second_from), **_CLOSED_AT_T, "seen_at": seen_2},
     ]
     ch = _Triples(rows)
     await proj._repair_triples(_bulk_input(), [], [], at=_T, replay=True, repaired=[made], ch=ch)

@@ -525,6 +525,7 @@ def _recorded_repairs(payload: dict[str, Any]) -> list[IntervalRepair]:
             valid_from=parse_iso_dt(r["valid_from"]),
             invalid_at=parse_iso_dt(r["invalid_at"]),
             new_valid_from=parse_iso_dt(r["new_valid_from"]),
+            new_seen_at=parse_iso_dt(r.get("new_seen_at")),
         )
         for r in payload.get(TRIPLES_REPAIRS) or []
     ]

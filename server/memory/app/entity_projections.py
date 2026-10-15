@@ -5,10 +5,8 @@ in server.memory.app.projections.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
-import time
 import unicodedata
 import uuid
 from collections.abc import Mapping
@@ -526,71 +524,41 @@ async def close_dropped_facts(input: Any, ids: list[str], *, ch: Any) -> None:
         await _write_follow_plan(input, tfr.FollowPlan(closes=dropped, inserts=[]), ch=ch)
 
 
-# How long an Undo waits for the namespace's pending closes before it fails for a replay.
-_GRAPH_CLOSES_WAIT_S = 5.0
-
-
-async def _await_graph_closes(org: str, namespace: str, *, ch: Any) -> None:
-    """Wait for the triple and edge closes pending in this namespace to land. A close is
-    an ALTER UPDATE, which only changes the rows that existed when it was issued: a row
-    read open before it lands is weighed as open, and the close still takes it. Only the
-    mutations pending at the first read are waited for. Past the bound it raises, so
-    the reconcile records a failure that a replay finishes."""
-    deadline = time.monotonic() + _GRAPH_CLOSES_WAIT_S
-    waiting: set[tuple[str, str]] | None = None
-    while True:
-        # The command carries its parameters inlined, so it names the org and namespace
-        # (a namespace whose name is part of another's only waits longer).
-        rows = await ch.query_all(
-            """
-            SELECT table, mutation_id FROM system.mutations
-            WHERE database = 'loom' AND table IN ('entity_triples', 'entity_edges')
-              AND NOT is_done
-              AND position(command, {org:String}) > 0 AND position(command, {ns:String}) > 0
-            """,
-            params={"org": org, "ns": namespace},
-        )
-        pending = {(str(r["table"]), str(r["mutation_id"])) for r in rows}
-        waiting = pending if waiting is None else waiting & pending
-        if not waiting:
-            return
-        if time.monotonic() > deadline:
-            raise TimeoutError(f"graph closes still pending: {sorted(waiting)}")
-        await asyncio.sleep(0.1)
-
-
 async def reopen_held_facts(
     input: Any, ids: list[str], *, ch: Any, restored_at: datetime | None = None
 ) -> None:
     """Open again the facts the rows `ids` hold now (by the rule a revision keeps
     them by): an Undo brings a retired row's facts back with it.
-    An Undo is the newest assertion: each fact the rows hold, open or not, gets a new
-    observation of its latest row starting at the restore (`restored_at`, now by
-    default), and its edge one from the restore too, so later writes read the Undo's
-    date back from storage. It weighs 1 only when the fact (or edge) has no weighted
-    row the readers count as current after the Undo, read once the namespace's pending
-    closes have landed: the usual Undo of a closed value, so readers still count it;
-    otherwise 0, so Undoing back and forth adds no weight. Every one then
-    goes through the interval repair dated at it as the newest value: another value
-    of a single-valued relation closes, even one seen in the same second, unless it
-    starts later. No row retires. A replay passes the restore's time: it finds the
-    observations written and repairs again as of the Undo, so a value stated since
-    stays the newer one."""
+    An Undo is an assertion made at the restore (`restored_at`, now by default, to the
+    microsecond): each fact the rows hold, open or not, gets a new observation of its
+    latest row starting at the restore, ending where that row's stated end is still to
+    come, and its edge one from the restore too, so later writes read the Undo's date
+    back from storage. It weighs 1 only when the fact (or edge) has no weighted row the
+    readers count as current after the Undo, the usual Undo of a closed value, so
+    readers still count it; otherwise 0, so Undoing back and forth adds no weight.
+    Every one then goes through the interval repair as a value seen at the restore,
+    by the usual rule: it beats the retirement it undoes, which arrived earlier, and
+    loses to a value asserted after it or starting on a later day. No row retires.
+    A replay passes the restore's time: it finds the observations written, by that
+    instant, and repairs again as of the Undo."""
     # Only what the restored rows' values hold now: another row's claim keeps a fact
     # from closing, but never reopens one.
     linked = await _linked_triples(input, ids, ch=ch)
     held = await _stated_by_live_rows(input.org, input.namespace, linked, ch=ch, rows=ids)
     if not held:
         return
-    now = (restored_at or naive_utc_now()).replace(microsecond=0)
-    # What is open is weighed below: a retirement's closes land first.
-    await _await_graph_closes(input.org, input.namespace, ch=ch)
+    restored = restored_at or naive_utc_now()
+    now = restored.replace(microsecond=0)  # as the DateTime columns store it
+    # On the fly: a retirement's closes are mutations, and a row they will close is
+    # weighed as closed already (the close expressions are deterministic).
     latest = await ch.query_all(
         """
-        SELECT subject, relation, object, argMax(confidence, last_seen) AS confidence,
-               argMax(provenance, last_seen) AS provenance,
-               countIf(adapter_name = 'row-restore' AND valid_from = {at:DateTime}
-                       AND valid_to IS NULL) AS restored,
+        SELECT subject, relation, object, argMax(confidence, seen_at) AS confidence,
+               argMax(provenance, seen_at) AS provenance,
+               -- A tuple keeps a NULL (open) end, which argMax would skip.
+               argMax(tuple(valid_to), seen_at).1 AS ends,
+               countIf(adapter_name = 'row-restore' AND seen_at = {seen:DateTime64(6)})
+                   AS restored,
                -- What the readers count as current after the Undo's second.
                countIf(co_occur > 0 AND (valid_to IS NULL OR valid_to > {at:DateTime}))
                    AS weighted
@@ -598,10 +566,62 @@ async def reopen_held_facts(
         WHERE org = {org:String} AND namespace = {ns:String}
           AND (subject, relation, object) IN {triples:Array(Tuple(String, String, String))}
         GROUP BY subject, relation, object
-        SETTINGS select_sequential_consistency = 1
+        SETTINGS select_sequential_consistency = 1, apply_mutations_on_fly = 1
         """,
-        params={"org": input.org, "ns": input.namespace, "triples": sorted(held), "at": now},
+        params={
+            "org": input.org,
+            "ns": input.namespace,
+            "triples": sorted(held),
+            "at": now,
+            "seen": restored,
+        },
     )
+    # This Undo's marker is its 'row-restore' row seen at its instant: a replay finds it
+    # and adds none, while another Undo in the same second is told apart.
+    fresh = [r for r in latest if not r["restored"]]
+    settings = {"async_insert": 1, "wait_for_async_insert": 1}
+    # The edge plane agrees: each new marker's edge gets an observation from the Undo
+    # too, inserted before the markers. Only a pair the graph has an edge for: the Undo
+    # invents none, and weighs it as above. Edges carry no microseconds, so an edge row
+    # seen and starting in the Undo's second, and not closed by a repair since, stands
+    # for it: a replay after the markers failed to land does not add a second one.
+    pairs = sorted({canonical_edge_pair(r["subject"], r["object"]) for r in fresh})
+    edges = (
+        await ch.query_all(
+            """
+            SELECT entity_a, entity_b,
+                   argMax(tuple(valid_to), last_seen).1 AS ends,
+                   countIf(valid_from = {at:DateTime} AND last_seen = {at:DateTime}
+                           AND invalid_at IS NULL) AS restored,
+                   countIf(co_occur > 0 AND (valid_to IS NULL OR valid_to > {at:DateTime})
+                           AND invalid_at IS NULL) AS weighted
+            FROM loom.entity_edges
+            WHERE org = {org:String} AND namespace = {ns:String}
+              AND (entity_a, entity_b) IN {pairs:Array(Tuple(String, String))}
+            GROUP BY entity_a, entity_b
+            SETTINGS select_sequential_consistency = 1, apply_mutations_on_fly = 1
+            """,
+            params={"org": input.org, "ns": input.namespace, "pairs": pairs, "at": now},
+        )
+        if pairs
+        else []
+    )
+    edge_rows = [
+        entity_edge_row(
+            input.org,
+            input.namespace,
+            e["entity_a"],
+            e["entity_b"],
+            last_seen=now,
+            valid_from=now,
+            valid_to=_still_ahead(e["ends"], now),
+            co_occur=0 if e["weighted"] else 1,
+        )
+        for e in edges
+        if not e["restored"]
+    ]
+    if edge_rows:
+        await ch.insert("loom.entity_edges", edge_rows, settings=settings)
     rows = [
         entity_triple_row(
             input.org,
@@ -613,61 +633,27 @@ async def reopen_held_facts(
             confidence=float(r["confidence"]),
             adapter_name="row-restore",
             last_seen=now,
-            # Dated at the Undo, so every later repair reads it as the newest
-            # assertion; a closed interval before it stays as history.
+            seen_at=restored,
+            # Dated at the Undo; a closed interval before it stays as history.
             valid_from=now,
+            valid_to=_still_ahead(r["ends"], now),
             # The Undo states nothing new: it only gives a closed fact its weight back.
             co_occur=0 if r["weighted"] else 1,
         )
-        for r in latest
-        # A replay finds this Undo's observation open and adds none. One closed since
-        # was closed by a later write, which meets the new one again and closes it, or
-        # by another Undo in this second, whose value this Undo now restores.
-        if not r["restored"]
+        for r in fresh
     ]
-    settings = {"async_insert": 1, "wait_for_async_insert": 1}
     if rows:
         await ch.insert("loom.entity_triples", rows, settings=settings)
-    # The edge plane agrees: each restored fact's edge gets an observation from the
-    # Undo too, which the repair below leaves open. Only a pair the graph has an edge
-    # for: the Undo invents none, and weighs it as above. An open row seen and starting
-    # at the Undo's second marks it for a replay.
-    pairs = sorted({canonical_edge_pair(s, o) for s, _, o in held})
-    edges = await ch.query_all(
-        """
-        SELECT entity_a, entity_b,
-               countIf(valid_from = {at:DateTime} AND last_seen = {at:DateTime}
-                       AND valid_to IS NULL) AS restored,
-               countIf(co_occur > 0 AND (valid_to IS NULL OR valid_to > {at:DateTime})
-                       AND invalid_at IS NULL) AS weighted
-        FROM loom.entity_edges
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND (entity_a, entity_b) IN {pairs:Array(Tuple(String, String))}
-        GROUP BY entity_a, entity_b
-        SETTINGS select_sequential_consistency = 1
-        """,
-        params={"org": input.org, "ns": input.namespace, "pairs": pairs, "at": now},
-    )
-    edge_rows = [
-        entity_edge_row(
-            input.org,
-            input.namespace,
-            e["entity_a"],
-            e["entity_b"],
-            last_seen=now,
-            valid_from=now,
-            co_occur=0 if e["weighted"] else 1,
-        )
-        for e in edges
-        if not e["restored"]
-    ]
-    if edge_rows:
-        await ch.insert("loom.entity_edges", edge_rows, settings=settings)
-    restored = [
-        {"subject": s, "relation": r, "object": o, "valid_from": now, "last_seen": now}
+    restated = [
+        {"subject": s, "relation": r, "object": o, "valid_from": now, "seen_at": restored}
         for s, r, o in sorted(held)
     ]
-    await repair_intervals(input, restored, ch=ch, at=now, newest=True)
+    await repair_intervals(input, restated, ch=ch, at=restored)
+
+
+def _still_ahead(end: datetime | None, now: datetime) -> datetime | None:
+    """A latest row's stated end the restore keeps: one still to come."""
+    return end if end is not None and end > now else None
 
 
 def _as_bulk_write(
@@ -1221,13 +1207,14 @@ async def _write_follow_plan(input: Any, plan: tfr.FollowPlan, *, ch: Any) -> tu
     a failed insert would leave a replay nothing open to follow. Returns (closed,
     inserted), not counting a triple opened again after its close."""
     # Whole seconds, as `invalid_at` stores it: a reopen finds this close by it.
-    now = naive_utc_now().replace(microsecond=0)
+    arrived = naive_utc_now()
+    now = arrived.replace(microsecond=0)
     # The plan read open triples by their raw text and so can miss a successor a
     # failed close left open ("Berlin, Germany" is `berlin germany`): look it up.
     already = await open_triples_among(
         ch, org=input.org, namespace=input.namespace, triples=[s.triple for s in plan.inserts]
     )
-    inserted = await _insert_successors(input, plan.inserts, already, now=now, ch=ch)
+    inserted = await _insert_successors(input, plan.inserts, already, at=arrived, ch=ch)
     if not plan.closes:
         return 0, inserted
 
@@ -1305,14 +1292,15 @@ async def _insert_successors(
     successors: list[tfr.Successor],
     already: set[tfr.Triple],
     *,
-    now: datetime,
+    at: datetime,
     ch: Any,
 ) -> int:
     """Insert the successor triples not `already` open, after every successor's key
     and row links: a triple that landed without them would never get them, as a
     replay sees it open and skips it. Each triple is written once, though several
-    winners may be linked to it; a repeated link is the same row. Returns how many
-    triples were written."""
+    winners may be linked to it; a repeated link is the same row. `at` is the follow's
+    arrival, in microseconds. Returns how many triples were written."""
+    now = at.replace(microsecond=0)
     new: dict[tfr.Triple, tfr.Successor] = {}
     for ins in successors:
         if ins.triple not in already:
@@ -1330,6 +1318,7 @@ async def _insert_successors(
             confidence=ins.confidence,
             adapter_name=adapter,
             last_seen=now,
+            seen_at=at,
             valid_from=ins.valid_from if isinstance(ins.valid_from, datetime) else None,
         )
         for ins in new.values()

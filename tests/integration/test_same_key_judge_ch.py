@@ -352,6 +352,7 @@ async def test_a_close_never_ends_a_triple_before_it_starts(ch, org) -> None:
             confidence=1.0,
             adapter_name="itest",
             last_seen=datetime(2026, 10, 1),
+            seen_at=datetime(2026, 10, 1),
             valid_from=valid_from,
         )
 
@@ -400,6 +401,7 @@ async def test_open_triples_are_looked_up_by_their_exact_key(ch, org) -> None:
             confidence=1.0,
             adapter_name="itest",
             last_seen=datetime(2026, 10, 1),
+            seen_at=datetime(2026, 10, 1),
             **kw,
         )
 
@@ -496,8 +498,7 @@ async def _follow_retirement(
     await follow_row_supersessions(
         scope, [(str(loser["memory_id"]), retired["superseded_by"])], ch=ch
     )
-    # Its closes land before the next write: an open loser of the same second would
-    # be a racing value, ordered by its text.
+    # Its closes land before the next write: an open loser would be a racing value.
     await _mutations_done(ch, org)
 
 
@@ -968,7 +969,6 @@ async def test_a_value_stated_again_while_a_repair_closes_it_stays_current(
         # After the Rome repair read London open, before its close: London again.
         if not raced:
             raced.append(True)
-            await asyncio.sleep(1.1)  # a later second than Rome's write
             back_from = _today() if dated else None
             await _stated(ch, org, "s3", "I am back in London", lives, valid_at=back_from)
         return await close(*args, **kw)
@@ -1060,8 +1060,6 @@ async def test_a_revision_keeps_a_successor_only_while_its_relations_agree(
         await _stated(ch, org, "s2", revised, stated[0], also=stated[1:], memory_id=mid)
     else:
         await _stated(ch, org, "s2", revised, extracted=False, memory_id=mid)
-    # A later second: two values starting in one second order by their text.
-    await asyncio.sleep(1.1)
     other = await _stated(
         ch, org, "s3", "I currently live in London", ("user", "live_in", "london")
     )
@@ -1284,7 +1282,7 @@ async def test_undo_makes_the_restored_value_current_and_retires_nothing(
     await _edges_like_triples(ch, org)
     await _follow_retirement(ch, org, london, paris)
     assert await _open_cities(ch, org, {"paris"}) == {"paris"}
-    # Undone in the second Paris was written: the Undo still wins the tie.
+    # Undone in the second Paris was written, after it: the Undo is the newer.
     restored_at = await _undo_in_the_second_of(ch, org, "paris", monkeypatch)
     out = await handle_memory_restore(
         MemoryRestoreInput(
@@ -1357,22 +1355,24 @@ async def _walked(org: str, want: list[str], *, labeled: bool) -> list[str]:
 
 
 async def _undo_in_the_second_of(ch: Any, org: str, city: str, monkeypatch: Any) -> datetime:
-    """Date the next Undo in the second `city`'s fact was last seen, and return it."""
+    """Date the next Undo a microsecond after `city`'s fact was last seen (in its second,
+    but for the last microsecond of one), and return it."""
     from server.memory.app import entity_projections
 
     (row,) = await ch.query_all(
-        "SELECT max(last_seen) AS seen FROM loom.entity_triples WHERE org = {org:String}"
+        "SELECT max(seen_at) AS seen FROM loom.entity_triples WHERE org = {org:String}"
         " AND object = {city:String} SETTINGS select_sequential_consistency = 1",
         params={"org": org, "city": city},
     )
-    monkeypatch.setattr(entity_projections, "naive_utc_now", lambda: row["seen"])
-    return row["seen"]
+    at = row["seen"] + timedelta(microseconds=1)
+    monkeypatch.setattr(entity_projections, "naive_utc_now", lambda: at)
+    return at
 
 
 async def test_an_undo_weighs_its_fact_after_the_retirements_closes_land(ch, org) -> None:
     # The retirement's closes are mutations. Held back (merges stopped), London's old
-    # row still reads open when the Undo runs; the Undo waits for them, so its own
-    # row carries London's weight once they land.
+    # row is still stored open when the Undo runs; the Undo reads with the pending
+    # closes applied, so its own row carries London's weight once they land.
     from types import SimpleNamespace
 
     from server.memory import store as M
@@ -1383,36 +1383,41 @@ async def test_an_undo_weighs_its_fact_after_the_retirements_closes_land(ch, org
     london = await _stated(ch, org, "s1", "My favourite city is London")
     paris = await _stated(ch, org, "s2", "My favourite city is Paris")
     await _edges_like_triples(ch, org)
+    retired = {**london, "version": M.next_version(), "status": "superseded"}
+    retired["superseded_by"] = str(paris["memory_id"])
+    await M.insert_memory_versions([retired], ch=ch)
+    # Merges stop on shared tables: only from the retirement's closes to the Undo.
     tables = ("loom.entity_triples", "loom.entity_edges")
     for table in tables:
         await ch.execute(f"SYSTEM STOP MERGES {table}")
     try:
-        retired = {**london, "version": M.next_version(), "status": "superseded"}
-        retired["superseded_by"] = str(paris["memory_id"])
-        await M.insert_memory_versions([retired], ch=ch)
         await follow_row_supersessions(
             SimpleNamespace(org=org, namespace=NS),
             [(str(london["memory_id"]), retired["superseded_by"])],
             ch=ch,
         )
-        undo = asyncio.create_task(
-            handle_memory_restore(
-                MemoryRestoreInput(
-                    org=org,
-                    namespace=NS,
-                    agent="bot",
-                    user_id=USER,
-                    session_id="s1",
-                    memory_key=KEY,
-                    if_superseded_by=str(paris["memory_id"]),
-                )
+        (pending,) = await ch.query_all(
+            "SELECT count() AS n FROM system.mutations WHERE database = 'loom'"
+            " AND table = 'entity_triples' AND NOT is_done"
+            " AND position(command, {org:String}) > 0",
+            params={"org": org},
+        )
+        assert pending["n"] > 0, "the close landed before the Undo: nothing is tested"
+        out = await handle_memory_restore(
+            MemoryRestoreInput(
+                org=org,
+                namespace=NS,
+                agent="bot",
+                user_id=USER,
+                session_id="s1",
+                memory_key=KEY,
+                if_superseded_by=str(paris["memory_id"]),
             )
         )
-        await asyncio.sleep(0.5)
     finally:
         for table in tables:
             await ch.execute(f"SYSTEM START MERGES {table}")
-    assert (await undo).restored
+    assert out.restored
     await _mutations_done(ch, org)
     assert await _open_weights(ch, org, "london") == {"triples": 1, "edges": 1}
 
@@ -1433,6 +1438,19 @@ async def test_an_undo_of_a_fact_open_until_later_adds_no_weight(ch, org) -> Non
     await entity_projections.reopen_held_facts(scope, [str(london["memory_id"])], ch=ch)
     await _mutations_done(ch, org)
     assert await _open_weights(ch, org, "london") == {"triples": 1, "edges": 1}
+    # The Undo's own rows end where London does, so London is not current past then.
+    ends = await ch.query_all(
+        "SELECT 'triples' AS plane, valid_to FROM loom.entity_triples WHERE org = {org:String}"
+        " AND adapter_name = 'row-restore'"
+        " UNION ALL SELECT 'edges', valid_to FROM loom.entity_edges WHERE org = {org:String}"
+        " AND entity_a = 'london' AND co_occur = 0"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert sorted((str(e["plane"]), e["valid_to"]) for e in ends) == [
+        ("edges", until),
+        ("triples", until),
+    ]
 
 
 async def test_undo_of_an_open_fact_keeps_its_date_for_later_writes(ch, org, monkeypatch) -> None:
@@ -1616,8 +1634,7 @@ async def test_a_replayed_repair_never_closes_a_newer_value(
         ch, org, monkeypatch, "_repair_contradictory_triples", "I moved to Rome",
         (*live, "rome"), "k2",
     )  # fmt: skip
-    # A later second: two values starting in one second order by their text.
-    await asyncio.sleep(1.1)
+    # Paris arrives after Rome's write, in its second or a later one.
     paris = await _stated(ch, org, "s3", "I moved to Paris", (*live, "paris"), memory_key="k3")
     await _mutations_done(ch, org)
     assert (await retry_projection_failure(failure, ch=ch)).resolved
@@ -1716,8 +1733,7 @@ async def test_a_replay_leaves_a_value_stated_again_since(
         (*live, "rome"), "k2",
     )  # fmt: skip
     await _mutations_done(ch, org)
-    # A later second: two values starting in one second order by their text.
-    await asyncio.sleep(1.1)
+    # Back to London arrives after Rome, in its second or a later one.
     back = await _stated(
         ch, org, "s3", "I moved back to London", (*live, "london"), memory_key="k3"
     )
@@ -1744,7 +1760,6 @@ async def _rome_raced_by_back_to_london(
     async def _restated_first(*a: Any, **k: Any) -> Any:
         if not back:
             back["started"] = True  # its own repair's close runs as usual
-            await asyncio.sleep(1.1)
             back["row"] = await _stated(
                 ch, org, "s3", "I moved back to London", (*live, "london"),
                 memory_key="k3", valid_at=back_from,
@@ -1792,7 +1807,6 @@ async def test_a_reopened_value_meets_the_value_stated_after_it(
     from server.memory.app.projection_failures import retry_projection_failure
 
     london, back, failure = await _rome_raced_by_back_to_london(ch, org, monkeypatch)
-    await asyncio.sleep(1.1)
     live = ("user", "live_in")
     paris = await _stated(ch, org, "s4", "I moved to Paris", (*live, "paris"), memory_key="k4")
     await _mutations_done(ch, org)
@@ -1838,8 +1852,7 @@ async def test_a_replayed_undo_is_dated_at_the_undo(ch, org, monkeypatch) -> Non
     )
     assert (await handle_memory_restore(undo)).restored
     monkeypatch.setattr(entity_projections, "reopen_held_facts", reopen)
-    # Rome's own repair runs in a later second than the Undo.
-    await asyncio.sleep(1.1)
+    # Rome arrives after the Undo, in its second or a later one.
     await _stated(ch, org, "s3", "I moved to Rome", (*live, "rome"), memory_key="k3")
     await _mutations_done(ch, org)
     for _ in range(100):
@@ -2137,7 +2150,7 @@ async def test_two_undated_writers_racing_in_one_second_leave_one_current_value(
         _stated(ch, org, "s2", "I live in Paris", (*live, "paris"), memory_key="k2"),
     )
     await _mutations_done(ch, org)
-    # Paris by its text in one second; the later write's value if they straddled two.
+    # The later arrival, to the microsecond, is the one current value.
     assert len(await _open_cities(ch, org, {"paris"})) == 1
 
 
@@ -2199,6 +2212,7 @@ async def test_every_start_of_a_closed_value_closes_its_edge(ch, org) -> None:
             confidence=1.0,
             adapter_name="t",
             last_seen=datetime(2026, 9, 1),
+            seen_at=datetime(2026, 9, 1),
             valid_from=start,
         )  # fmt: skip
         for start in (datetime(2026, 1, 1), datetime(2026, 3, 1))
@@ -2206,7 +2220,7 @@ async def test_every_start_of_a_closed_value_closes_its_edge(ch, org) -> None:
     await ch.insert("loom.entity_triples", rows, settings={"wait_for_async_insert": 1})
     await _edges_like_triples(ch, org)
     paris = {"subject": "user", "relation": "live_in", "object": "paris",
-             "valid_from": datetime(2026, 6, 1), "last_seen": datetime(2026, 9, 2)}  # fmt: skip
+             "valid_from": datetime(2026, 6, 1), "seen_at": datetime(2026, 9, 2)}  # fmt: skip
     scope = SimpleNamespace(org=org, namespace=NS)
     repairs = await repair_intervals(scope, [paris], ch=ch, at=datetime(2026, 9, 2))
     assert sorted(r.valid_from for r in repairs) == [datetime(2026, 1, 1), datetime(2026, 3, 1)]
@@ -2239,44 +2253,6 @@ async def _recorded_reconcile(ch: Any, org: str) -> Any:
         await asyncio.sleep(0.1)
     (failure,) = failures
     return failure
-
-
-async def test_a_replayed_undo_leaves_a_value_asserted_after_it_current(
-    ch, org, monkeypatch
-) -> None:
-    # The Undo of London at T lands, then fails, leaving its failure. Rome, dated T,
-    # arrives later and is current. The replay keeps the Undo over what it undid
-    # (Paris), never over Rome.
-    from server.memory.app import entity_projections
-    from server.memory.app.projection_failures import retry_projection_failure
-    from server.memory.app.restore import handle_memory_restore
-
-    live = ("user", "live_in")
-    london = await _stated(ch, org, "s1", "I currently live in London", (*live, "london"))
-    paris = await _stated(ch, org, "s2", "I currently live in Paris", (*live, "paris"))
-    await _follow_retirement(ch, org, london, paris)
-    restored_at = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
-    monkeypatch.setattr(entity_projections, "naive_utc_now", lambda: restored_at)
-    repair = entity_projections.repair_intervals
-
-    async def _lands_then_fails(*a: Any, **k: Any) -> Any:
-        await repair(*a, **k)
-        raise RuntimeError("reconcile down after it landed")
-
-    monkeypatch.setattr(entity_projections, "repair_intervals", _lands_then_fails)
-    assert (await handle_memory_restore(_undo_of(paris))).restored
-    monkeypatch.setattr(entity_projections, "repair_intervals", repair)
-    await _mutations_done(ch, org)
-    assert await _open_cities(ch, org, {"london"}) == {"london"}
-    await asyncio.sleep(1.1)
-    await _stated(
-        ch, org, "s3", "I live in Rome", (*live, "rome"), memory_key="k3", valid_at=restored_at
-    )
-    await _mutations_done(ch, org)
-    assert await _open_cities(ch, org, {"rome"}) == {"rome"}
-    assert (await retry_projection_failure(await _recorded_reconcile(ch, org), ch=ch)).resolved
-    await _mutations_done(ch, org)
-    assert await _open_cities(ch, org, {"rome"}) == {"rome"}
 
 
 async def test_a_replayed_undo_leaves_a_revision_since_to_its_own_reconcile(
@@ -2316,7 +2292,7 @@ async def test_a_second_undo_in_the_second_of_the_first_makes_its_value_current(
     ch, org, monkeypatch
 ) -> None:
     # Undo London, Rome supersedes it, Undo London again: all in one stored second.
-    # The second Undo is its own assertion, not a replay of the first.
+    # The second Undo has its own instant: its own assertion, not a replay of the first.
     from server.memory.app import entity_projections, projections
     from server.memory.app.restore import handle_memory_restore
 
@@ -2325,13 +2301,15 @@ async def test_a_second_undo_in_the_second_of_the_first_makes_its_value_current(
     paris = await _stated(ch, org, "s2", "I currently live in Paris", (*live, "paris"))
     await _follow_retirement(ch, org, london, paris)
     second = datetime.now(UTC).replace(tzinfo=None, microsecond=0) + timedelta(seconds=1)
-    monkeypatch.setattr(entity_projections, "naive_utc_now", lambda: second)
-    monkeypatch.setattr(projections, "naive_utc_now", lambda: second)
+    first_undo, rome_at, second_undo = (second.replace(microsecond=us) for us in (1, 2, 3))
+    monkeypatch.setattr(entity_projections, "naive_utc_now", lambda: first_undo)
+    monkeypatch.setattr(projections, "naive_utc_now", lambda: rome_at)
     assert (await handle_memory_restore(_undo_of(paris))).restored
     await _mutations_done(ch, org)
     rome = await _stated(ch, org, "s3", "I moved to Rome", (*live, "rome"), memory_key="k3")
     await _follow_retirement(ch, org, london, rome)
     assert await _open_cities(ch, org, {"rome"}) == {"rome"}
+    monkeypatch.setattr(entity_projections, "naive_utc_now", lambda: second_undo)
     assert (await handle_memory_restore(_undo_of(rome))).restored
     await _mutations_done(ch, org)
     assert await _open_cities(ch, org, {"london"}) == {"london"}
@@ -2340,7 +2318,8 @@ async def test_a_second_undo_in_the_second_of_the_first_makes_its_value_current(
 async def test_a_dated_and_an_undated_writer_racing_leave_one_current_value(
     ch, org, monkeypatch
 ) -> None:
-    # Undated London and Rome dated yesterday: both insert before either repairs.
+    # Undated London and Rome dated yesterday: both insert before either repairs, and
+    # both agree on London, the later day, whichever arrived first.
     from server.memory.app import projections
 
     repair = projections._repair_contradictory_triples
@@ -2364,4 +2343,86 @@ async def test_a_dated_and_an_undated_writer_racing_leave_one_current_value(
         ),
     )
     await _mutations_done(ch, org)
-    assert len(await _open_cities(ch, org, {"rome"})) == 1
+    assert await _open_cities(ch, org, {"london"}) == {"london"}
+
+
+async def test_three_values_each_repaired_against_all_three_leave_one_current(
+    ch, org, monkeypatch
+) -> None:
+    # The reviewer's cycle: A dated Oct 13 noon, B undated, C dated Oct 14, arriving
+    # in the order C, B, A. Each repair reads all three open before any close lands;
+    # by (start day, seen_at) all three agree that B is current.
+    from types import SimpleNamespace
+
+    from server.memory.app import projections
+
+    def row(obj: str, valid_from: datetime | None, second: int) -> dict[str, Any]:
+        seen = datetime(2026, 10, 15, 0, 0, second)
+        return {"org": org, "namespace": NS, "subject": "user", "relation": "live_in",
+                "object": obj, "provenance": "extracted", "co_occur": 1, "last_seen": seen,
+                "seen_at": seen, "confidence": 1.0, "adapter_name": "itest",
+                "valid_from": valid_from, "valid_to": None, "invalid_at": None}  # fmt: skip
+
+    rows = [
+        row("a", datetime(2026, 10, 13, 12), 3),
+        row("b", None, 2),
+        row("c", datetime(2026, 10, 14), 1),
+    ]
+    await ch.insert("loom.entity_triples", rows, settings={"wait_for_async_insert": 1})
+    close = projections.close_triples
+    read: list[int] = []
+    all_read = asyncio.Event()
+
+    async def _after_every_read(*a: Any, **k: Any) -> Any:
+        read.append(1)
+        if len(read) == len(rows):
+            all_read.set()
+        await asyncio.wait_for(all_read.wait(), 10)
+        return await close(*a, **k)
+
+    monkeypatch.setattr(projections, "close_triples", _after_every_read)
+    scope = SimpleNamespace(org=org, namespace=NS)
+    await asyncio.gather(
+        *(projections.repair_intervals(scope, [r], ch=ch, at=r["seen_at"]) for r in rows)
+    )
+    await _mutations_done(ch, org)
+    assert await _open_cities(ch, org, {"b"}) == {"b"}
+
+
+async def test_a_replayed_undo_leaves_a_value_asserted_later_in_its_second_current(
+    ch, org, monkeypatch
+) -> None:
+    # The Undo of London at T lands, then fails. Rome, dated T, is asserted later in
+    # the same second and is current. Replayed with its own instant, the Undo keeps
+    # its place: before Rome, so Rome stays current.
+    from server.memory.app import entity_projections, projections
+    from server.memory.app.projection_failures import retry_projection_failure
+    from server.memory.app.restore import handle_memory_restore
+
+    live = ("user", "live_in")
+    london = await _stated(ch, org, "s1", "I currently live in London", (*live, "london"))
+    paris = await _stated(ch, org, "s2", "I currently live in Paris", (*live, "paris"))
+    await _follow_retirement(ch, org, london, paris)
+    second = datetime.now(UTC).replace(tzinfo=None, microsecond=0) + timedelta(seconds=1)
+    undo_at, rome_at = second.replace(microsecond=100), second.replace(microsecond=200)
+    monkeypatch.setattr(entity_projections, "naive_utc_now", lambda: undo_at)
+    repair = entity_projections.repair_intervals
+
+    async def _lands_then_fails(*a: Any, **k: Any) -> Any:
+        await repair(*a, **k)
+        raise RuntimeError("reconcile down after it landed")
+
+    monkeypatch.setattr(entity_projections, "repair_intervals", _lands_then_fails)
+    assert (await handle_memory_restore(_undo_of(paris))).restored
+    monkeypatch.setattr(entity_projections, "repair_intervals", repair)
+    await _mutations_done(ch, org)
+    assert await _open_cities(ch, org, {"london"}) == {"london"}
+    monkeypatch.setattr(projections, "naive_utc_now", lambda: rome_at)
+    await _stated(
+        ch, org, "s3", "I live in Rome", (*live, "rome"), memory_key="k3", valid_at=second
+    )
+    await _mutations_done(ch, org)
+    assert await _open_cities(ch, org, {"rome"}) == {"rome"}
+    assert (await retry_projection_failure(await _recorded_reconcile(ch, org), ch=ch)).resolved
+    await _mutations_done(ch, org)
+    assert await _open_cities(ch, org, {"rome"}) == {"rome"}

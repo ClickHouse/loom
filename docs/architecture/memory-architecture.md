@@ -334,28 +334,32 @@ the value it was written or stated for (`carried`):
   A `memory.bulk_set` entry whose row is `high` projects nothing into the graph and
   records nothing for a replay.
   Undo makes the restored value current in the graph: every fact the restored row holds,
-  open or closed, gets a new observation starting at the restore (a closed interval
-  before it stays as history, and every later repair reads the fact as stated then), as
-  does its edge when the graph has one, so both planes show the restored value current.
-  These observations state nothing new: one carries `co_occur` 1 only when its fact (or
-  edge) has no weighted row the readers count as current after the restore (open, or
-  ending later), the usual Undo of a closed value, so the graph's readers still count
-  it, and 0 otherwise, so Undoing back and forth adds no weight. A close is an
-  `ALTER UPDATE` that takes only the rows stored when it was issued, so the Undo first
-  waits, up to five seconds, for the namespace's pending triple and edge closes to land;
-  past that it is recorded as a `triples_reconcile` failure, which a replay finishes. And
-  its facts go through the interval repair dated at the restore as the newest value: the
-  other row stays live, and its single-valued fact closes, even one seen in the same
-  second; only a value starting after the restore stays current. That priority covers
-  only the values stored when the Undo ran: a value with a row seen after the restore is
-  a later assertion, ordered by the usual rule. An Undo never retires a row. A replayed
-  Undo is dated at the restore the failure recorded, not at the replay, and adds no
-  observation where an open one at that restore exists. One closed since was closed by
-  a later write, which meets the replay's new observation by the same rule and closes it
-  again, or by another Undo in the same second, which then restores its own value: two
-  Undos in one second are two assertions, not a write and its replay. The failure
-  records each restored row's `content_sha256`; a replay skips a row revised since,
-  whose revision reconciles its facts, so the revised value is never dated at the Undo.
+  open or closed, gets a new observation (a `row-restore` marker) starting at the
+  restore and seen at its instant, to the microsecond (a closed interval before it
+  stays as history, and every later repair reads the fact as stated then), as does its
+  edge when the graph has one, so both planes show the restored value current. A marker
+  keeps the end its fact's latest row stated when that end is still to come ("London
+  until December" is undone until December, not for ever). These observations state
+  nothing new: one carries `co_occur` 1 only when its fact (or edge) has no weighted row
+  the readers count as current after the restore (open, or ending later), the usual Undo
+  of a closed value, so the graph's readers still count it, and 0 otherwise, so Undoing
+  back and forth adds no weight. A close is an `ALTER UPDATE`, so the retirement's
+  closes may still be pending when the Undo weighs its facts: it reads with
+  `apply_mutations_on_fly`, which applies them (their expressions are deterministic),
+  rather than waiting on `system.mutations`. Its facts then go through the interval
+  repair by the usual rule, as values seen at the restore: the retirement it undoes
+  arrived earlier, so its value closes and its row stays live; a value asserted after
+  the Undo, or starting on a later day, stays current. An Undo never retires a row. A
+  replayed Undo reuses the restore's instant from the failure, not the replay's clock,
+  so it keeps its place in the order: a value asserted after the Undo, even in its
+  second, stays current. A marker is this Undo's when it is a `row-restore` row seen at
+  that instant, open or closed since, so a replay adds none, and another Undo in the
+  same second, with its own instant, is told apart. Edges carry no microseconds: an
+  edge marker is written only beside a missing triple marker, before it, and an edge
+  row starting and seen in the Undo's second that no repair closed stands for it, so a
+  replay after a failed triple insert does not repeat it. The failure records each
+  restored row's `content_sha256`; a replay skips a row revised since, whose revision
+  reconciles its facts, so the revised value is never dated at the Undo.
   A failed interval repair records the triple write for replay too; when the triples
   landed before the repair failed, the replay does not insert them again and never
   repairs as of the replay's own clock. When the repair had issued closes before it
@@ -371,34 +375,46 @@ the value it was written or stated for (`carried`):
   rows behind it, as that value's own write would have. A restatement counts, here and
   in the write's own re-check, only when the interval repair, judging it as a new value
   against the value that closed it, finds it the newer: "back to London" dated by its
-  session day still beats an undated Rome written earlier that day. A restatement in the
-  write's own second is not told apart from the write's rows. When it had closed none,
+  session day still beats an undated Rome written earlier that day. "After the write"
+  is by `seen_at`, so a restatement in the write's own second counts. When it had closed none,
   the replay repairs only the write's triples that are still open (one a newer write
   closed was handled by that write's repair), dated at the write. A replay that fails in
   turn records the closes it made on the same failure, for the next one to finish.
 - **Which value is newer:** of two values of a single-valued relation, the newer stays
-  current and the older closes when the newer starts. Values with different dates order
-  by date; an undated new value is dated at its write. Values of the same date order by
-  arrival (`last_seen`, then the object's text), and within one write the later-stated
-  value is the newer. An undated stored row starts when it was seen, by its own
-  `last_seen`, not that of another row of its value: it is newer when seen after both
-  the write and the new value's start (a replay meeting the writes since), so a replay
-  never closes a future-dated value before it begins. It is newer
-  too when seen more than two days after the new value's date and not earlier in the
-  same write: Rome from July, imported after London was stated undated in October,
-  closes when London was seen. Within those two days after a dated value's start, a
-  dated and an undated value are one session's statements (dated by its day, or across
-  midnight) and order by arrival, whichever of them is the new one: the later-arriving
-  closes the other, so a dated and an undated writer racing each other agree on one
-  current value. Seen in the new value's
-  starting second it orders as a value of the same date. Two writers racing
-  in one second so agree on one current value; two separate writes of different values
-  in one second order by text, not by which came last. A value can have several open
-  rows, one per observation, so each value gets one verdict from all its rows: it is the
-  newer when any of them is, and otherwise every start of it closes, each with its own
-  edge. One value stays current, never neither. Only an open-ended value is closed: one
-  stated with its own end ("London until December") is left as it is, so it stays
-  current beside the newer value until that end.
+  current and the older closes when the newer starts. Every triple row is placed by one
+  key, `(start day, seen_at, object)`: its start is its `valid_from`, or, undated, its
+  `seen_at`, the arrival of the write that stored it to the microsecond (migration 030;
+  `last_seen`, `valid_from` and `valid_to` stay whole seconds). Values on different days
+  order by day: Rome from July, imported after London was stated undated in October,
+  closes when London was seen, and London undated on Oct 5 closes when Berlin from
+  Dec 1 begins, never Berlin before it begins. On one day the later arrival is newer,
+  whether either is dated: a fact dated by its session's day beats an undated value seen
+  earlier that day, and an undated update later that day beats a dated value. Within one
+  write the rows share one `seen_at`, so the later-stated value is the newer, whatever
+  its day. Two writers racing, even in one second, so agree on one current value: the
+  later arrival. A value can have several open rows, one per observation, so each value
+  gets one verdict: it is the newer when any of its rows is, and the new row then closes
+  when the earliest such row starts; otherwise every start of it closes, each with its
+  own edge (an edge, as a triple, never closes before it starts). One value stays
+  current, never neither. Only an open-ended value is closed: one stated with its own
+  end ("London until December") is left as it is, so it stays current beside the newer
+  value until that end. Two values with one start day, one `seen_at` and two writers
+  are left to their object text: only two writes in the same microsecond tie.
+
+  _Why one key._ The rule it replaces compared pairs: by date, by arrival when two
+  values shared a start, and by arrival again when a dated and an undated value sat
+  within two days of each other. Pairwise rules that switch between dates and arrivals
+  are not transitive: A dated Oct 13 noon, B undated and C dated Oct 14, arriving C, B,
+  A, gave A over B, B over C and C over A, and three writers that each read all three
+  closed all three. A key read back from stored columns is a total order, the same for
+  a write, an Undo and a replay of either, so every repair closes the same values, and
+  a replay that reuses its write's instant sits where the write did. An Undo needs no
+  rule of its own: it is a value seen at the restore. The price is the time of day of a
+  dated value: two values dated on one day order by arrival, not by the hour they
+  state. And a session crossing midnight UTC: London undated, seen at 00:05 on Oct 15,
+  is newer than Paris dated to the session's Oct 14 and arriving at 00:10, where the
+  old two-day window ordered them by arrival. The day decides, which keeps the order
+  total.
 
 A facet edge (the agent's file, concept or topic) is no row's: it is never linked, and
 no retirement closes it. A triple another live row's links still state stays open; a

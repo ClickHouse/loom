@@ -190,55 +190,58 @@ async def test_a_bulk_write_reconciles_only_the_rows_it_revised(monkeypatch) -> 
     assert reconciled == [["id-old"]]
 
 
-async def test_an_undo_weighs_its_facts_only_after_pending_closes_land(monkeypatch) -> None:
-    # A retirement's closes are mutations: the Undo reads what is open only once
-    # the namespace's pending triple and edge mutations are done.
+async def test_an_undo_weighs_what_is_open_with_pending_closes_applied(monkeypatch) -> None:
+    # A retirement's closes are mutations: the Undo's two weight reads apply them on
+    # the fly instead of waiting for them, and its markers keep a stated end still
+    # to come.
     from types import SimpleNamespace
 
     from server.memory.app import entity_projections as ep
 
-    class _MutatingCH(_CH):
+    restored = datetime(2026, 10, 15, 9, 0, 0, 123456)
+    until = datetime(2026, 12, 1)
+
+    class _WeighingCH(_CH):
         def __init__(self) -> None:
             super().__init__()
             self.reads: list[str] = []
-            self.polls = [[{"table": "entity_triples", "mutation_id": "m1"}], []]
 
         async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
-            if "system.mutations" in sql:
-                self.reads.append("mutations")
-                return self.polls.pop(0)
-            self.reads.append("weights")
-            return []
+            self.reads.append(sql)
+            if "FROM loom.entity_triples" in sql:
+                return [{"subject": "user", "relation": "live_in", "object": "london",
+                         "confidence": 1.0, "provenance": "extracted", "ends": until,
+                         "restored": 0, "weighted": 1}]  # fmt: skip
+            return [{"entity_a": "london", "entity_b": "user", "ends": until,
+                     "restored": 0, "weighted": 1}]  # fmt: skip
 
     async def held(*a: Any, **k: Any) -> list:
-        return [("user", "likes", "tea")]
+        return [("user", "live_in", "london")]
 
-    async def nothing(*a: Any, **k: Any) -> list:
+    repaired: list = []
+
+    async def repair(input: Any, triples: list, *, ch: Any, at: datetime) -> list:
+        repaired.append((triples, at))
         return []
 
     monkeypatch.setattr(ep, "_linked_triples", held)
     monkeypatch.setattr(ep, "_stated_by_live_rows", held)
-    monkeypatch.setattr(ep, "repair_intervals", nothing)
-    ch = _MutatingCH()
-    await ep.reopen_held_facts(SimpleNamespace(org="o", namespace="ns"), ["m1"], ch=ch)
-    assert ch.reads[:3] == ["mutations", "mutations", "weights"]
-
-
-async def test_an_undo_behind_closes_that_never_land_fails_for_a_replay(monkeypatch) -> None:
-    from types import SimpleNamespace
-
-    from server.memory.app import entity_projections as ep
-
-    class _StuckCH(_CH):
-        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
-            assert "system.mutations" in sql, "nothing is weighed behind a pending close"
-            return [{"table": "entity_edges", "mutation_id": "m1"}]
-
-    async def held(*a: Any, **k: Any) -> list:
-        return [("user", "likes", "tea")]
-
-    monkeypatch.setattr(ep, "_linked_triples", held)
-    monkeypatch.setattr(ep, "_stated_by_live_rows", held)
-    monkeypatch.setattr(ep, "_GRAPH_CLOSES_WAIT_S", 0.2)
-    with pytest.raises(TimeoutError):
-        await ep.reopen_held_facts(SimpleNamespace(org="o", namespace="ns"), ["m1"], ch=_StuckCH())
+    monkeypatch.setattr(ep, "repair_intervals", repair)
+    ch = _WeighingCH()
+    scope = SimpleNamespace(org="o", namespace="ns")
+    await ep.reopen_held_facts(scope, ["m1"], ch=ch, restored_at=restored)
+    assert len(ch.reads) == 2
+    assert all("apply_mutations_on_fly = 1" in sql for sql in ch.reads)
+    assert not any("system.mutations" in sql for sql in ch.reads)
+    (marker,) = ch.inserts["loom.entity_triples"]
+    assert (marker["seen_at"], marker["valid_from"], marker["valid_to"]) == (
+        restored,
+        restored.replace(microsecond=0),
+        until,
+    )
+    assert marker["adapter_name"] == "row-restore" and marker["co_occur"] == 0
+    (edge,) = ch.inserts["loom.entity_edges"]
+    assert edge["valid_to"] == until
+    # The repair runs the normal rule, as a value seen at the restore.
+    ((restated, at),) = repaired
+    assert at == restored and restated[0]["seen_at"] == restored

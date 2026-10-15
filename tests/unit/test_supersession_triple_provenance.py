@@ -89,6 +89,8 @@ async def test_the_successor_triple_carries_the_predecessor_provenance(
         confidence=0.9,
         adapter_name="row-supersession",
         last_seen=row["last_seen"],
+        seen_at=row["seen_at"],
     )
     assert isinstance(row["last_seen"], datetime)
+    assert row["seen_at"].replace(microsecond=0) == row["last_seen"]
     assert row == canonical

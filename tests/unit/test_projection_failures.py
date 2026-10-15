@@ -231,6 +231,10 @@ async def test_a_failed_interval_repair_replays_only_the_repair(monkeypatch) -> 
         raise RuntimeError("repair read timed out")
 
     monkeypatch.setattr(projections, "_repair_contradictory_triples", failing_repair)
+    from datetime import datetime
+
+    arrived = datetime(2026, 10, 15, 9, 37, 51, 910300)
+    monkeypatch.setattr(projections, "naive_utc_now", lambda: arrived)
     failure = _graph_failure("entity_triples")
     write = projections.MemoryBulkSetInput(
         org="o", namespace="n", agent="a", entries=failure.payload["entries"]
@@ -239,15 +243,17 @@ async def test_a_failed_interval_repair_replays_only_the_repair(monkeypatch) -> 
     with pytest.raises(TriplesRepairFailed) as raised:
         await projections.write_entity_triples(write, results, ch=_GraphCH(), entity_map={})
     inserted_at = raised.value.inserted_at
-    # In whole seconds, as the rows' `last_seen` and the close's `invalid_at` are.
-    assert inserted_at.microsecond == 0
+    # To the microsecond, as the rows' `seen_at` is: the replay reuses that instant.
+    assert inserted_at == arrived
     payload = bulk_projection_payload(write, results, error=raised.value)
     assert payload["triples_inserted_at"] == inserted_at.isoformat()
 
     repaired: list = []
 
     async def repair(input, triples, *, ch, at):
-        repaired.extend((t["subject"], t["object"], t["last_seen"], at) for t in triples)
+        repaired.extend(
+            (t["subject"], t["object"], t["last_seen"], t["seen_at"], at) for t in triples
+        )
         return []
 
     monkeypatch.setattr(projections, "_repair_contradictory_triples", repair)
@@ -256,7 +262,7 @@ async def test_a_failed_interval_repair_replays_only_the_repair(monkeypatch) -> 
     assert (await retry_projection_failure(failure, ch=ch)).resolved
     assert not [t for t, _ in ch.inserts if t.startswith("loom.entity_triple")]
     # Dated at the write, not at the replay.
-    assert repaired == [("alice", "bob", inserted_at, inserted_at)]
+    assert repaired == [("alice", "bob", arrived.replace(microsecond=0), arrived, arrived)]
 
 
 class _OpenCH(_GraphCH):
