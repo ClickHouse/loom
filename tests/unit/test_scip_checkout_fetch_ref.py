@@ -87,7 +87,7 @@ def _foreign_owner_env(remote: Path) -> dict[str, str]:
 
 def _require_owner_check(checkout: Path, bare: Path, target: str) -> None:
     """Only some git releases refuse a foreign-owned source in upload-pack; skip where
-    this one does not."""
+    this one does not, except where LOOM_TEST_REQUIRE_OWNER_CHECK=1 (the image's git)."""
     plain = subprocess.run(
         ["git", "-C", str(checkout), "fetch", str(bare), f"+{target}:refs/plain"],
         capture_output=True,
@@ -95,7 +95,10 @@ def _require_owner_check(checkout: Path, bare: Path, target: str) -> None:
         env=_foreign_owner_env(bare),
     )
     if plain.returncode == 0:
-        pytest.skip("this git's upload-pack does not refuse a foreign-owned source")
+        reason = "this git's upload-pack does not refuse a foreign-owned source"
+        if os.environ.get("LOOM_TEST_REQUIRE_OWNER_CHECK") == "1":
+            pytest.fail(reason)
+        pytest.skip(reason)
     assert "dubious ownership" in plain.stderr
 
 

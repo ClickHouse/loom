@@ -167,3 +167,11 @@ jobs:
             -e PYTHONPATH=/pylib -e PYTHONDONTWRITEBYTECODE=1 -e LOOM_ENV_FILE= -e LOOM_TEST_REQUIRE_SANDBOX=1 \
             --entrypoint python loom:sandbox-ci \
             -m pytest -q -p no:cacheprovider tests/unit/test_repo_job_sandbox.py tests/unit/test_repo_job_sandbox_hostile.py
+      # The runners' git takes the environment's safe.directory in upload-pack, so these
+      # skip in ci.yml; the image's git refuses a foreign-owned source there.
+      - name: Foreign-owned repositories with the image's git
+        run: |
+          docker run --rm --network none --user loom -w /src -v "$PWD:/src:ro" \
+            -v "$RUNNER_TEMP/pylib:/pylib:ro" -e PYTHONPATH=/pylib -e PYTHONDONTWRITEBYTECODE=1 \
+            -e LOOM_ENV_FILE= -e LOOM_TEST_REQUIRE_OWNER_CHECK=1 --entrypoint python loom:sandbox-ci \
+            -m pytest -q -p no:cacheprovider tests/unit/test_scip_checkout_fetch_ref.py
