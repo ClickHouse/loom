@@ -17,7 +17,8 @@ A live holder must be done before its claim can go stale. Every statement it
 issues is bounded at `_STATEMENT_S`, and its write must start by `_HOLD_S`
 (`before_write`); a write is never cancelled once sent, since ClickHouse may
 still apply it. A spend and its put-back each go through the client's retry
-ladder (at most six sends), so `_STALE_S` leaves room for both.
+ladder (at most six sends), so `_STALE_S` leaves room for both, given a
+ClickHouse that answers reconnects.
 
 A ClickHouse without a Keeper has no claims table: transitions then run
 unclaimed, as they did before, and /v1/health says so

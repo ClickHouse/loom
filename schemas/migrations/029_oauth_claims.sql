@@ -6,7 +6,7 @@
 -- under keeper_map_strict_mode = 1: Keeper refuses a second INSERT of the same
 -- key, so of two concurrent transitions on one grant exactly one goes ahead.
 -- The key is dropped once the state row is written, by its holder only (each
--- claim names a random holder); a key older than half a minute is a holder that
+-- claim names a random holder); a key older than two minutes is a holder that
 -- died and is taken over.
 --
 -- Tolerated on a server without a Keeper (or without keeper_map_path_prefix):

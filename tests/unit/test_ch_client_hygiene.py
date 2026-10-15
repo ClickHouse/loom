@@ -174,6 +174,13 @@ async def test_the_driver_read_timeout_is_the_largest_class(
     monkeypatch.setattr(settings, "ch_timeout_ddl_s", 120.0)
     await ch_mod.CHClient().connect()
     assert captured["send_receive_timeout"] == 120
+    # A client rebuilt inside a short scope still serves every later caller.
+    with ch_mod.statement_timeout(5):
+        await ch_mod.CHClient().connect()
+    assert captured["send_receive_timeout"] == 120
+    with ch_mod.statement_timeout(600):
+        await ch_mod.CHClient().connect()
+    assert captured["send_receive_timeout"] == 600
 
 
 # ------------------------------------------------------------- retries
