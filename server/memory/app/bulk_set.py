@@ -770,12 +770,17 @@ def _projected(
     reject), whose key the same-key judge landed superseded, or whose row is 'high'
     projects nothing, and so records nothing for a replay; a re-ingest of a fact
     already stored no longer re-counts its edges."""
-    high = {str(r["memory_id"]) for r in state.memory_rows if r.get("sensitivity") == "high"}
+    # A row is its id and version: two entries of one stored key share the id.
+    high = {
+        (str(r["memory_id"]), int(r["version"]))
+        for r in state.memory_rows
+        if r.get("sensitivity") == "high"
+    }
     kept = [
         (entry, res)
         for entry, res in zip(input.entries, state.results, strict=True)
         if res.version
-        and res.memory_id not in high
+        and (res.memory_id, res.version) not in high
         and res.memory_key not in state.judged_retired_keys
     ]
     return (

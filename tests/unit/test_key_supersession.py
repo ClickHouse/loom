@@ -975,10 +975,20 @@ def test_only_entries_that_wrote_a_live_row_project_graph_facts() -> None:
     # Nor does a 'high' row: its content stays out of the shared graph and its replay.
     state.judged_retired_keys = set()
     state.memory_rows = [
-        {"memory_id": "id-user_city", "sensitivity": "high"},
-        {"memory_id": "id-user_job"},
+        {"memory_id": "id-user_city", "version": 1, "sensitivity": "high"},
+        {"memory_id": "id-user_job", "version": 2},
     ]
     assert projected() == (["user_job"], ["user_job"])
+    # Two entries of one stored key share its id: only the 'high' version is fenced.
+    state.results = [
+        _BulkSetResult(memory_key="user_city", version=v, memory_id="id-user_city") for v in (1, 2)
+    ]
+    inp.entries[:] = [SimpleNamespace(memory_key="user_city") for _ in range(2)]
+    state.memory_rows = [
+        {"memory_id": "id-user_city", "version": 1, "sensitivity": "high"},
+        {"memory_id": "id-user_city", "version": 2},
+    ]
+    assert projected() == (["user_city"], ["user_city"])
 
 
 async def test_follow_pairs_past_the_cap_or_in_a_failed_follow_go_to_the_repair(
