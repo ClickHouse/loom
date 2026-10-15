@@ -504,13 +504,15 @@ async def _elsewhere(org: str, cns: str, lost: dict[str, str]) -> dict[str, list
     out: dict[str, list[Definition]] = defaultdict(list)
     if not lost:
         return out
-    local = {qn: local_name(qn, path) for qn, path in lost.items()}
+    by_local: dict[str, list[str]] = defaultdict(list)
+    for qn, path in lost.items():
+        by_local[local_name(qn, path)].append(qn)
     found = await code.candidates(org, cns, qualified_names=list(lost))
     found += await code.candidates(org, cns, names=sorted({bare_name(qn) for qn in lost}))
     for c in {(c.path, c.qualified_name): c for c in found}.values():
-        for qn in lost:
-            if c.qualified_name == qn or local_name(c.qualified_name, c.path) == local[qn]:
-                out[qn].append(c)
+        same = [c.qualified_name] if c.qualified_name in lost else []
+        for qn in dict.fromkeys(same + by_local.get(local_name(c.qualified_name, c.path), [])):
+            out[qn].append(c)
     return out
 
 
@@ -534,13 +536,16 @@ async def _resolve_pending(
         return []
     wanted = sorted({bare_name(r["qualified_name"]) for r in names})
     defs = await code.candidates(org, cns, names=wanted)
+    by_name: dict[str, list[Definition]] = defaultdict(list)
+    for x in defs:
+        by_name[x.name].append(x)
     # the files each memory names pick between namesakes, as when it was first linked
     heads = await store.memory_heads(org, sorted({r["memory_id"] for r in names}))
     named = {h["mid"]: [str(f) for f in h.get("files") or []] for h in heads}
     moves = []
     for r in names:
         m = r["qualified_name"]
-        d = resolve(m, [x for x in defs if x.name == bare_name(m)], named.get(r["memory_id"], []))
+        d = resolve(m, by_name.get(bare_name(m), []), named.get(r["memory_id"], []))
         try:
             here = await links.at_head(files, head, d) if d is not None else None
         except code.ParseFailed:
