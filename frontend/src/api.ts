@@ -72,6 +72,23 @@ export function clearToken(): void {
   localStorage.removeItem(KEY_TOKEN);
 }
 
+/** Sign out: end the stored token on the server (a sign-in session ends whole), then
+ *  forget it here. Forgetting it never waits on the server's answer. */
+export async function signOut(): Promise<void> {
+  const t = token();
+  clearToken();
+  if (!t) return;
+  try {
+    await fetch("/oauth/revoke", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ token: t, client_id: "loom-dashboard" }),
+    });
+  } catch {
+    // Offline or the route is absent: the token is gone from this browser anyway.
+  }
+}
+
 // Presence check that seeds auth state at boot: if a token is already stored, the SPA can
 // skip painting the login gate before whoami resolves (otherwise a refresh flashes
 // TokenGate, then snaps back to the app).

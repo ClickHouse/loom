@@ -306,6 +306,14 @@ async def require_admin_of_existing(
         )
 
 
+def refuse_sso_name(namespace: str) -> None:
+    """A new namespace may not take a name single sign-on creates from an email."""
+    if namespace.startswith(SSO_NAMESPACE_PREFIX):
+        raise ValidationError(
+            f"'{SSO_NAMESPACE_PREFIX}' names are reserved for the accounts single sign-on creates"
+        )
+
+
 async def handle_namespace_register(
     input: NamespaceRegisterInput,
 ) -> NamespaceRegisterOutput:
@@ -321,10 +329,8 @@ async def handle_namespace_register(
         await require_admin_of_existing(
             existing, input.org, input.namespace, caller, visibility=input.visibility
         )
-    elif input.namespace.startswith(SSO_NAMESPACE_PREFIX):
-        raise ValidationError(
-            f"'{SSO_NAMESPACE_PREFIX}' names are reserved for the accounts single sign-on creates"
-        )
+    else:
+        refuse_sso_name(input.namespace)
 
     now = naive_utc_now_seconds()
     row = registry_row(input, existing, now)

@@ -280,8 +280,8 @@ def test_a_replayed_device_code_ends_the_session(_world) -> None:
     tokens = _poll(c, grant["device_code"]).json()
     assert _error(_poll(c, grant["device_code"])) == "invalid_grant"
     sid = pyjwt.decode(tokens["access_token"], options={"verify_signature": False})["sid"]
-    # The session, and every token of the person issued until now with it.
-    assert _world["revoked"] == ["alice@example.com", sid]
+    # The session, and the machine tokens minted from it; nothing else of the person's.
+    assert _world["revoked"] == [sid, f"{sid}/minted"]
     assert _error(_refresh(c, tokens["refresh_token"])) == "invalid_grant"
 
 
@@ -308,7 +308,7 @@ def test_a_replayed_refresh_token_revokes_the_whole_family(_world) -> None:
     # The old token comes back (someone kept a copy): refused, and the session ends.
     assert _error(_refresh(c, first["refresh_token"])) == "invalid_grant"
     sid = pyjwt.decode(second["access_token"], options={"verify_signature": False})["sid"]
-    assert _world["revoked"] == ["alice@example.com", sid]
+    assert _world["revoked"] == [sid, f"{sid}/minted"]
     # So the legitimate holder's newer token is dead too, and so is its access token.
     assert _error(_refresh(c, second["refresh_token"])) == "invalid_grant"
     assert revocation.is_revoked(sid)
@@ -498,7 +498,9 @@ def test_a_user_the_identity_provider_refuses_is_cut_off_at_refresh(sso, _world)
     tokens = _sso_tokens(c)
     sso["upstream"] = "refused"
     assert _error(_refresh(c, tokens["refresh_token"])) == "invalid_grant"
-    assert _world["revoked"][0] == "alice@example.com"  # the machine tokens they made too
+    # The session only: the IdP says this for an expired refresh token too.
+    sid = pyjwt.decode(tokens["access_token"], options={"verify_signature": False})["sid"]
+    assert _world["revoked"] == [sid]
     reasons = [kw["subject"]["reason"] for n, kw in _world["events"] if n == "auth.session_revoked"]
     assert reasons == ["identity provider refused the user"]
 
@@ -825,3 +827,77 @@ def test_a_refused_sso_sign_in_revokes_the_idp_token_it_got(sso, monkeypatch) ->
     c = _client()
     _sso_round_trip(c, _start(c)["user_code"])
     assert revoked == ["idp-r1"]
+
+
+# ── round 5: theft ends the stolen session, never the person ──────────────
+
+
+def test_a_revoked_subject_cannot_sign_in_again(_world) -> None:
+    revocation._apply_locally("alice@example.com", None)
+    c = _client()
+    grant = _start(c)
+    _approve(c, grant["user_code"], _sign_in(c, grant["user_code"]).text)
+    assert _error(_poll(c, grant["device_code"])) == "invalid_grant"
+    # And replaying that grant writes nothing that could soften the ban.
+    _poll(c, grant["device_code"])
+    assert "alice@example.com" not in _world["revoked"]
+
+
+def test_replaying_a_denied_grant_revokes_nothing(_world) -> None:
+    c = _client()
+    grant = _start(c)
+    _approve(c, grant["user_code"], _sign_in(c, grant["user_code"]).text, decision="deny")
+    assert _error(_poll(c, grant["device_code"])) == "access_denied"
+    assert _error(_poll(c, grant["device_code"])) == "invalid_grant"
+    assert _world["revoked"] == []
+
+
+def test_a_failed_issue_leaves_the_code_unspent(_world, monkeypatch) -> None:
+    c = _client()
+    grant = _start(c)
+    _approve(c, grant["user_code"], _sign_in(c, grant["user_code"]).text)
+    real = _world["store"].save_refresh
+
+    async def flaky(token: str, g: dict[str, Any]) -> None:
+        monkeypatch.setattr(_world["store"], "save_refresh", real)
+        raise RuntimeError("insert failed")
+
+    monkeypatch.setattr(_world["store"], "save_refresh", flaky)
+    with pytest.raises(RuntimeError):
+        _poll(c, grant["device_code"])
+    assert "access_token" in _poll(c, grant["device_code"]).json()  # the retry is no replay
+    assert _world["revoked"] == []
+
+
+def test_session_children_carry_the_sessions_minted_key() -> None:
+    from server.auth import delegation
+    from server.auth.jwt import verify_token
+
+    parent = verify_token(
+        mint_token(
+            subject="ann",
+            org="acme",
+            namespaces=["ann"],
+            roles=["writer"],
+            ttl_seconds=3600,
+            session_id="s9",
+        )
+    )
+    assert delegation.minted_by("s9") == "s9/minted"
+    # delegate() puts it in `parents`, so revoking it ends exactly these children.
+    child = mint_token(
+        subject="sa:ci",
+        org="acme",
+        namespaces=["ann"],
+        roles=["viewer"],
+        parents=[delegation.minted_by(parent.session_id)],
+        parent_subjects=["ann"],
+        parent_iats=[parent.issued_at or 0],
+        creator="ann",
+    )
+    verify_token(child)
+    revocation._apply_locally("s9/minted", None)
+    from server.auth.jwt import TokenError
+
+    with pytest.raises(TokenError, match="parent"):
+        verify_token(child)

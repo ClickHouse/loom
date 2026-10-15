@@ -77,6 +77,7 @@ class MemoryOAuthStore:
 
     async def save_device(self, d: dict[str, Any]) -> None:
         self.devices[d["id"]] = dict(d)
+        self.spent.discard(d["id"])  # a new unconsumed version, as the real store writes
 
     async def device_by_user_code(self, user_code_id: str) -> dict[str, Any] | None:
         for d in self.devices.values():

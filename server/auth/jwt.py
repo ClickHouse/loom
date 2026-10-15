@@ -427,9 +427,9 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
 
 def _check_not_revoked(decoded: dict[str, Any]) -> None:
     """Refuse a token revoked by `jti` (one token), by `sid` (its sign-in
-    session), by `sub` (every token of
-    a principal) or by `sub` with an issued-before cutoff (tokens minted
-    before it die, a re-mint after it stays valid). A delegated token also
+    session), by `sub` (every token of a principal) or by `sub` with an
+    issued-before cutoff (tokens minted before it die, a re-mint after it
+    stays valid). A delegated token also
     dies with any ancestor token (`parents`), any ancestor's `sub`
     (`parent_subjects`, each judged by its own `parent_iats` entry: a child
     minted after the cutoff from an older parent must die with it) and its

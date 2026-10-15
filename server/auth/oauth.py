@@ -106,11 +106,11 @@ class _CHStore:
     Known limit: take_* is read-then-mark, not atomic: two presenters of the same
     code or refresh token racing within one round trip can both succeed. A code
     is useless without its PKCE verifier and lives 60 s; a refresh token is
-    bound to its client_id. device.signed_in's "the first person to sign in owns
-    the code" is the same read-then-write. An insert_deduplication_token would drop the second
-    consume row but tell neither caller, so it is no guard; the upgrade is a
-    KeeperMap claim key under keeper_map_strict_mode (the migration lock's
-    mechanism), whose second INSERT fails.
+    bound to its client_id. device.signed_in's "the first person to sign in
+    owns the code" is the same read-then-write. An insert_deduplication_token
+    would drop the second consume row but tell neither caller, so it is no
+    guard; the upgrade is a KeeperMap claim key under keeper_map_strict_mode
+    (the migration lock's mechanism), whose second INSERT fails.
     """
 
     _T = "loom.oauth_state"
@@ -947,7 +947,12 @@ async def issue_tokens(grant: dict[str, Any], client_id: str) -> dict[str, Any]:
     """An access token for the grant's session, and the next refresh token.
     Under OIDC a session with no IdP refresh token gets no Loom refresh token:
     nothing could tell Loom the user was deactivated, so the session ends with
-    its access token."""
+    its access token. A subject revoked outright gets nothing, however it
+    signed in."""
+    from server.auth.revocation import is_revoked
+
+    if is_revoked(grant["subject"], issued_at=int(time.time())):
+        raise _invalid_grant("this account's tokens are revoked")
     access = mint_token(
         subject=grant["subject"],
         org=grant["org"],
@@ -983,25 +988,21 @@ async def issue_tokens(grant: dict[str, Any], client_id: str) -> dict[str, Any]:
     return body
 
 
-async def end_session(grant: dict[str, Any], reason: str, *, everything: bool = False) -> None:
+async def end_session(grant: dict[str, Any], reason: str, *, stolen: bool = False) -> None:
     """Revoke the grant's session family: its refresh tokens stop refreshing and
-    its access tokens stop verifying. With `everything` (a stolen copy came
-    back, or the IdP no longer knows the user) every token of the person
-    issued until now goes too, so the machine tokens this session made die
-    with it; a plain logout leaves those. Raises when a revocation did not land."""
+    its access tokens stop verifying. `stolen` (a spent credential came back,
+    so someone else holds a copy) also revokes the machine tokens minted from
+    this session (delegation.minted_by); a logout leaves
+    those to their owner. Raises when a revocation did not land."""
+    from server.auth.delegation import minted_by
     from server.auth.revocation import revoke
 
-    now = datetime.now(UTC)
-    if everything:
-        await revoke(grant["subject"], issued_before=now, reason=reason, revoked_by="oauth")
     if not grant["family"]:
-        return  # a session from before families existed has nothing more to revoke
-    await revoke(
-        grant["family"],
-        expires_at=now + timedelta(seconds=_REFRESH_TTL),
-        reason=reason,
-        revoked_by="oauth",
-    )
+        return  # nothing was issued under it (a denied grant), or it predates families
+    until = datetime.now(UTC) + timedelta(seconds=_REFRESH_TTL)
+    await revoke(grant["family"], expires_at=until, reason=reason, revoked_by="oauth")
+    if stolen:
+        await revoke(minted_by(grant["family"]), expires_at=None, reason=reason, revoked_by="oauth")
     await audit.emit(
         "auth.session_revoked",
         org=grant["org"],
@@ -1011,7 +1012,7 @@ async def end_session(grant: dict[str, Any], reason: str, *, everything: bool = 
             "family": grant["family"],
             "client_id": grant["client_id"],
             "reason": reason,
-            "every_token": everything,
+            "machine_tokens": stolen,
         },
     )
 
@@ -1019,7 +1020,7 @@ async def end_session(grant: dict[str, Any], reason: str, *, everything: bool = 
 async def end_replayed_session(e: CodeReplayed, what: str) -> HTTPException:
     """A spent credential came back: whoever holds a copy must lose the session."""
     try:
-        await end_session(e.grant, f"{what} replayed", everything=True)
+        await end_session(e.grant, f"{what} replayed", stolen=True)
     except Exception:  # the replay is refused whether or not the revoke landed
         log.exception("oauth: revoking a replayed %s's session failed", what)
     return _invalid_grant()
@@ -1051,7 +1052,9 @@ async def _ask_identity_provider(grant: dict[str, Any], refresh_token: str) -> s
     try:
         return await oidc.refresh(grant["upstream_refresh"])
     except oidc.UpstreamRefused:
-        await end_session(grant, "identity provider refused the user", everything=True)
+        # Family only: the IdP also says this when its refresh token merely
+        # expired, which is no reason to end the person's machine tokens.
+        await end_session(grant, "identity provider refused the user")
         raise _invalid_grant("the identity provider ended this session") from None
     except oidc.UpstreamUnavailable as e:
         # Not the user's fault: put the spent token back so the retry works.
@@ -1107,7 +1110,11 @@ async def _refresh_token_grant(f: dict[str, str]) -> dict[str, Any]:
     roles = await refreshed_roles(grant["subject"], grant["org"], list(grant["roles"]))
     if roles is None:
         raise _invalid_grant()
-    return await issue_tokens({**grant, "roles": roles}, grant["client_id"])
+    try:
+        return await issue_tokens({**grant, "roles": roles}, grant["client_id"])
+    except Exception:  # put the spent token back so the client's retry is no replay; re-raised
+        await store.save_refresh(refresh_token, grant)
+        raise
 
 
 @router.post("/oauth/token")

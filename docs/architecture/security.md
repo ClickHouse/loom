@@ -211,13 +211,20 @@ clients); the provider only authenticates the person. The OAuth server:
 
 **Sessions.** Each sign-in starts a session family. Its access tokens (one hour) carry the
 family as their `sid` claim, and its refresh tokens rotate within it. Revoking the family in
-`loom.revoked_tokens` ends every token of the session. That happens on logout
-(`/oauth/revoke`), when a spent refresh token, code or device code is presented again
-(someone else holds a copy), and when the provider refuses the user. A token delegated
-from a session (a service account, an MCP client's token) is bounded like the signed-in
-person, by their subject and live grants, not by the session's hour. Under OIDC each
-refresh first spends the provider's refresh token. A user deactivated there is cut off
-within an hour, and a provider that issues no refresh token gets no Loom refresh token.
+`loom.revoked_tokens` ends every token of the session: on logout (`/oauth/revoke`), when the
+provider refuses the user at a refresh, and when a spent refresh token, code or device code
+is presented again. A replay means someone else holds a copy, so it also revokes the
+session's `<sid>/minted` key, which every token delegated from the session carries in
+`parents`: the service accounts and MCP tokens a thief could have minted end with it. No
+path revokes more than the one session; a person's other sessions and tokens are never
+collateral, and nothing automatic writes a subject-wide revocation (which could replace an
+operator's outright ban). A subject revoked outright is issued nothing.
+
+Tokens delegated from a session are bounded like the person, by their subject and live
+grants, not by the session's hour, and they outlive logout. Under OIDC each refresh first
+spends the provider's refresh token, so a user deactivated there loses their sessions within
+the hour. Their machine tokens are not re-checked at the provider: offboarding revokes the
+subject. A provider that issues no refresh token gets no Loom refresh token.
 
 **Device grant** (RFC 8628, `server/auth/device.py`). `loom login` gets a device code and
 an eight-letter user code (20 letters, about 2^34.6) that both live ten minutes. Approval

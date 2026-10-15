@@ -36,8 +36,9 @@ $ loom call /v1/me/service_accounts.create --data '{"name": "ci", "namespaces": 
   `key:=json` for any other value (`top_k:=5`, `pinned:=true`,
   `tags:='["a","b"]'`). `--data` takes a whole JSON object, `@file` or `-`
   for stdin.
-- **Output:** the answer prints as JSON. An error prints one line with its
-  code on stderr and exits 1.
+- **Output:** the answer prints as JSON. An error from the server prints one
+  line with its code on stderr and exits 1; a mistake in the command itself
+  (an unknown operation, a malformed field) exits 2.
 
 The fields of each operation are listed in the
 [operations reference](../reference/operations.md).

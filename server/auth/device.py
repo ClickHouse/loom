@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import html
+import ipaddress
 import secrets
 import time
 from typing import Any
@@ -54,6 +55,18 @@ _wrong_codes_by_address = Attempts(10, 900)
 # One poll per interval (with a second of slack for timer jitter); a faster
 # poll gets `slow_down`.
 _polls = Attempts(1, _INTERVAL - 1)
+
+
+def _guesser(address: str) -> str:
+    """Who a wrong-code limit counts: the address, or its /64 for IPv6, where
+    one host holds a whole /64 to spread guesses over."""
+    try:
+        ip = ipaddress.ip_address(address)
+    except ValueError:
+        return address
+    if ip.version == 6:
+        return str(ipaddress.ip_network(f"{ip}/64", strict=False))
+    return address
 
 
 def _new_user_code() -> str:
@@ -158,12 +171,12 @@ async def device_sign_in(request: Request) -> Response:
     f = await oauth.form_body(request)
     typed = f.get("user_code", "")
     address = client_address(request)
-    if _wrong_codes_by_address.blocked(address):
+    if _wrong_codes_by_address.blocked(_guesser(address)):
         return _code_form(typed, "Too many wrong codes. Try again later.", 429)
     user_code = normalize_user_code(typed)
     device = await oauth.store.device_by_user_code(_user_code_id(user_code))
     if device is None:
-        _wrong_codes_by_address.record(address)
+        _wrong_codes_by_address.record(_guesser(address))
         return _code_form(typed, "That code is wrong or has expired.", 400)
     if settings.oauth_login_provider == "oidc":
         # Sealed: the pending row must not hold a usable user code.
@@ -316,4 +329,8 @@ async def device_code_grant(f: dict[str, str]) -> dict[str, Any]:
         raise _token_error("authorization_pending")
     if device["status"] != "approved":
         raise _token_error("access_denied")
-    return await oauth.issue_tokens(device, DEVICE_CLIENT_ID)
+    try:
+        return await oauth.issue_tokens(device, DEVICE_CLIENT_ID)
+    except Exception:  # unspend the code so the next poll is no replay; re-raised
+        await oauth.store.save_device(device)
+        raise

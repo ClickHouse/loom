@@ -155,6 +155,8 @@ async def handle_namespace_restore(
     # target is read or answered. Fresh target ⇒ caller becomes admin via the auto-grant
     # below.
     target_existing = await namespaces_repo.fetch_row(input.org, input.target_namespace, ch=ch)
+    if target_existing is None:
+        _registry.refuse_sso_name(input.target_namespace)
     if target_existing is not None:
         await _registry.require_admin_of_existing(
             target_existing, input.org, input.target_namespace, caller, visibility=None

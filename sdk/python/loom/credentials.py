@@ -99,13 +99,24 @@ def _locked() -> Iterator[None]:
 
 @contextlib.contextmanager
 def _server(url: str) -> Iterator[httpx.Client]:
-    """A client for `url` whose failures to reach it, or to read its answer,
-    come out as BackendUnavailable: callers catch LoomError, never httpx."""
+    """A client for `url` whose failures to reach it come out as
+    BackendUnavailable: callers catch LoomError, never httpx."""
     try:
         with httpx.Client(base_url=url, timeout=30.0) as client:
             yield client
-    except (httpx.TransportError, ValueError) as e:
+    except httpx.TransportError as e:
         raise BackendUnavailable(f"cannot reach {url}: {type(e).__name__}") from e
+
+
+def _json(r: httpx.Response) -> dict[str, Any]:
+    """A 200's JSON object; anything else is the server's fault, said as one."""
+    try:
+        body = r.json()
+    except ValueError as e:
+        raise BackendUnavailable(f"{r.request.url} answered something that is not JSON") from e
+    if not isinstance(body, dict):
+        raise BackendUnavailable(f"{r.request.url} answered something that is not a JSON object")
+    return body
 
 
 def _endpoints(client: httpx.Client) -> dict[str, str]:
@@ -119,7 +130,7 @@ def _endpoints(client: httpx.Client) -> dict[str, str]:
         )
     if r.status_code != 200:
         raise _failed(r, "reading the server's sign-in endpoints")
-    meta = r.json()
+    meta = _json(r)
     server = urlsplit(str(client.base_url))
     endpoints = {}
     for name in ("device_authorization_endpoint", "token_endpoint", "revocation_endpoint"):
@@ -185,7 +196,10 @@ def login(
         r = client.post(meta["device_authorization_endpoint"], data={"client_id": CLIENT_ID})
         if r.status_code != 200:
             raise _failed(r, "starting the sign-in")
-        grant = r.json()
+        grant = _json(r)
+        missing = {"device_code", "user_code", "verification_uri", "verification_uri_complete"}
+        if missing - grant.keys():
+            raise LoomError(f"{server} answered a sign-in without {sorted(missing - grant.keys())}")
         echo(
             f"To sign in, open {grant['verification_uri']} and enter the code "
             f"{grant['user_code']}\n(or open {grant['verification_uri_complete']})"
@@ -218,7 +232,7 @@ def _poll(client: httpx.Client, token_endpoint: str, grant: dict[str, Any]) -> d
         if r.status_code >= 500:
             continue
         if r.status_code == 200:
-            tokens: dict[str, Any] = r.json()
+            tokens = _json(r)
             return tokens
         error = _oauth_error(r)
         if error == "authorization_pending":
@@ -269,7 +283,7 @@ def _refresh(profile: str, refused: str) -> dict[str, Any]:
     if r.status_code != 200:
         # A 503 spent nothing (the identity provider could not be asked): retry later.
         raise _failed(r, f"refreshing the session at {entry['server']}")
-    _save(profile, entry["server"], r.json())
+    _save(profile, entry["server"], _json(r))
     return dict(_read()["profiles"][profile])
 
 
@@ -324,7 +338,7 @@ def whoami(profile: str | None = None) -> dict[str, Any]:
         r = client.get("/v1/whoami", headers={"Authorization": f"Bearer {token}"})
     if r.status_code != 200:
         raise _failed(r, "asking the server who you are")
-    info: dict[str, Any] = r.json()
+    info = _json(r)
     return {"profile": profile, "server": server, **info}
 
 

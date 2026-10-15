@@ -478,17 +478,32 @@ def test_service_accounts_and_account_views_need_no_dashboard(
     assert _whoami(base, kept["token"])["authenticated"] is True
 
 
-def test_a_replayed_session_takes_its_machine_tokens_with_it(
+def test_a_stolen_session_takes_only_its_own_machine_tokens(
     password_server, tmp_path, monkeypatch
 ) -> None:
     base, _org, ns, email, password = password_server
-    home = tmp_path / "owner"
-    _session_for(base, home, email, password, monkeypatch)
+    laptop, desktop = tmp_path / "laptop", tmp_path / "desktop"
+    _session_for(base, desktop, email, password, monkeypatch)
+    other = _loom(
+        desktop,
+        "call",
+        "/v1/me/service_accounts.create",
+        "name=desk",
+        f"namespaces:={json.dumps([ns])}",
+    )
+    _session_for(base, laptop, email, password, monkeypatch)
     made = _loom(
-        home, "call", "/v1/me/service_accounts.create", "name=ci", f"namespaces:={json.dumps([ns])}"
+        laptop,
+        "call",
+        "/v1/me/service_accounts.create",
+        "name=ci",
+        f"namespaces:={json.dumps([ns])}",
     )
     first = _stored()
     credentials.access_token(refused=first["access_token"])  # rotate once
-    time.sleep(1)  # the revocation cutoff counts whole seconds
+    # A copy of the spent token comes back: this session and what it minted end.
     assert _refresh(base, first["refresh_token"]).json()["detail"]["error"] == "invalid_grant"
     assert _whoami(base, made["token"])["authenticated"] is False
+    # The same person's other session, and what it minted, are not the thief's.
+    assert _whoami(base, other["token"])["authenticated"] is True
+    assert _loom(desktop, "call", "/v1/me/sharing-summary")["subject"] == email

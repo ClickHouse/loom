@@ -2,7 +2,7 @@ import { Suspense, lazy, useEffect, useRef, useState, type KeyboardEvent, type R
 import * as Popover from "@radix-ui/react-popover";
 import { LogOut, Plus, FileText, Sparkles, HelpCircle, Search, Settings as SettingsIcon } from "lucide-react";
 import { useStore } from "../lib/state";
-import { clearToken, isProxyMode } from "../api";
+import { isProxyMode, signOut } from "../api";
 import { toast } from "../components/Toast";
 import { NamespacePicker as RichNamespacePicker } from "../components/NamespacePicker";
 // The shell evaluates what it shows. The two dialogs open on a click and the search box's
@@ -45,8 +45,8 @@ export function Header() {
   const role = useNamespaceRole(identity?.namespace);
   const readOnly = !canWrite(role);
 
-  const onLogout = () => {
-    clearToken();
+  const onLogout = async () => {
+    await signOut();
     toast("Signed out", "info");
     setTimeout(() => location.reload(), 300);
   };
