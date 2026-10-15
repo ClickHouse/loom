@@ -30,6 +30,8 @@ Open a RUN — one execution of a task — BEFORE you start working on it.
 | `consumer` | `str` | `''` | The calling integration's tag, recorded on the ledger row. |
 | `role` | `str` | `''` | The agent's role in a multi-agent run — planner, executor, critic, or the team's own word. |
 | `metadata` | `dict[str, Any]` | *(computed)* | Free-form key/values stored on the run; `role`, when set, is added to it. |
+| `budget_usd` | `float` | `0.0` | An optional budget: the model spend in USD and the seconds the run may take. run.get names the ones the run has gone past in `over_budget`. |
+| `budget_seconds` | `int` | `0` |  |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -103,6 +105,8 @@ Replay one run: goal, status, final response, the memories it relied on, the mem
 | `observations` | `int` | Episodic observations (`observe.record`) tagged with this run's id. |
 | `turns` | `int` | From loom.agent_turn_usage by session_id (the plugin's Stop hook writes it); 0 when the run has no session or the hook is not installed. |
 | `cost_usd` | `float` | Summed model cost in USD of the run's session turns; 0 as for `turns`. |
+| `elapsed_seconds` | `int` | Seconds the run has taken: until now while active, its duration once closed. |
+| `over_budget` | `list[Literal['cost', 'time']]` | The budgets the run has gone past: `cost` (cost_usd > budget_usd) and `time` (elapsed_seconds > budget_seconds). |
 
 ## `run.grade`
 

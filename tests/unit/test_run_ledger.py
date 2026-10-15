@@ -348,6 +348,60 @@ def test_get_derives_written_observed_recalled_and_session_cost(env) -> None:
     assert cost_call[2]["sid"] == "s1"
 
 
+def test_begin_stores_the_budget_and_complete_carries_it(env) -> None:
+    fake, _, h = env
+    fake.one.append(None)
+    asyncio.run(
+        h.handle_run_begin(
+            RunBeginInput(
+                org="o", namespace="n", agent="claude", goal="g", budget_usd=1.5, budget_seconds=600
+            )
+        )
+    )
+    row = fake.inserted[0][1][0]
+    assert row["budget_usd"] == 1.5 and row["budget_seconds"] == 600
+
+    fake.inserted.clear()
+    fake.one[:] = [_run_row(budget_usd=1.5, budget_seconds=600)]
+    asyncio.run(
+        h.handle_run_complete(
+            RunCompleteInput(org="o", namespace="n", run_id="r1", status="completed")
+        )
+    )
+    closed = next(rows[0] for table, rows in fake.inserted if table == "loom.agent_runs")
+    assert closed["status"] == "completed"
+    assert closed["budget_usd"] == 1.5 and closed["budget_seconds"] == 600
+
+
+def _get_with(env, row: dict[str, Any], cost: float) -> Any:
+    fake, _, h = env
+    fake.one.append(row)
+    fake.all.append([])
+    fake.one.append({"n": 0})
+    fake.one.append({"turns": 3, "cost": cost})
+    return asyncio.run(h.handle_run_get(RunGetInput(org="o", namespace="n", run_id="r1")))
+
+
+def test_get_names_the_budgets_an_active_run_went_past(env) -> None:
+    # _now is 42.5 s after T0.
+    out = _get_with(env, _run_row(budget_usd=1.0, budget_seconds=30), cost=1.25)
+    assert out.elapsed_seconds == 42
+    assert out.over_budget == ["cost", "time"]
+
+
+def test_get_within_budget_or_without_one_names_nothing(env) -> None:
+    within = _get_with(env, _run_row(budget_usd=2.0, budget_seconds=60), cost=1.25)
+    assert within.over_budget == []
+    no_budget = _get_with(env, _run_row(), cost=99.0)
+    assert no_budget.over_budget == [] and no_budget.run.budget_usd == 0.0
+
+
+def test_a_closed_run_is_timed_by_its_duration(env) -> None:
+    row = _run_row(status="completed", completed_at=T0, duration_ms=90_000, budget_seconds=60)
+    out = _get_with(env, row, cost=0.0)
+    assert out.elapsed_seconds == 90 and out.over_budget == ["time"]
+
+
 def test_get_missing_run(env) -> None:
     fake, _, h = env
     fake.one.append(None)

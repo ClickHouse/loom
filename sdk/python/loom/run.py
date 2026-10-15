@@ -223,12 +223,15 @@ class RunClient:
         consumer: str = "",
         role: str = "",
         metadata: dict[str, Any] | None = None,
+        budget_usd: float = 0.0,
+        budget_seconds: int = 0,
     ) -> dict[str, Any]:
         """Open a run. Returns {run_id, status, started_at, next}. Pass the
         run_id on memory.set / memory.ask / memory.search / observe.record.
         `role` (planner / executor / critic / your own word) tags the run's
         reflection `role:<role>` so a same-role memory.search(role=...)
-        prefers it."""
+        prefers it. `budget_usd` / `budget_seconds` (0 = none) set a budget
+        that `get` reports as `over_budget` once the run goes past it."""
         payload: dict[str, Any] = {
             "org": self._agent.org,
             "namespace": self._agent.namespace,
@@ -242,6 +245,10 @@ class RunClient:
             "role": role,
             "metadata": metadata or {},
         }
+        if budget_usd:
+            payload["budget_usd"] = budget_usd
+        if budget_seconds:
+            payload["budget_seconds"] = budget_seconds
         if run_id:
             payload["run_id"] = run_id
         if session_id is not None:
@@ -305,7 +312,8 @@ class RunClient:
 
     async def get(self, run_id: str) -> dict[str, Any]:
         """Replay one run: the row plus live derivations (recalled keys,
-        memories written, observations, turns, cost_usd)."""
+        memories written, observations, turns, cost_usd, elapsed_seconds and
+        the `over_budget` list)."""
         return await self._agent.transport.post(
             "/v1/run.get",
             {"org": self._agent.org, "namespace": self._agent.namespace, "run_id": run_id},

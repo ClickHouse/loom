@@ -902,6 +902,20 @@ def _rule_set_large_value(
     )
 
 
+def _rule_run_over_budget(
+    op: str, args: dict[str, Any], res: dict[str, Any], facts: dict[str, Any], st: dict[str, Any]
+) -> _Call:
+    over = res.get("over_budget") or []
+    if op != "run.get" or not over:
+        return None
+    return (
+        "run_over_budget",
+        f"this run is past its {' and '.join(over)} budget (${res.get('cost_usd', 0):.2f} spent, "
+        f"{res.get('elapsed_seconds', 0)} s elapsed): wrap up and run.complete, or ask the user "
+        "before going on.",
+    )
+
+
 # Per-call rules in precedence order: one fires per call.
 CALL_RULES: tuple[Callable[..., _Call], ...] = (
     _rule_set_churn,
@@ -912,6 +926,7 @@ CALL_RULES: tuple[Callable[..., _Call], ...] = (
     _rule_search_abstain,
     _rule_set_duplicate,
     _rule_set_large_value,
+    _rule_run_over_budget,
 )
 # Per-call hint codes and the ops that count as following them (the profile
 # codes carry their own `ops`); read by mentor.brief's adoption.
@@ -928,6 +943,7 @@ CALL_HINT_OPS: dict[str, tuple[str, ...]] = {
     "search_abstain_knowledge": ("loom_search", "knowledge.search", "knowledge.get"),
     "set_duplicate": ("memory.update", "memory.link", "memory.get", "memory.related"),
     "set_large_value": ("knowledge.upsert", "knowledge.add"),
+    "run_over_budget": ("run.complete",),
     "set_churn": ("working_memory.set", "working_memory.append", "working_memory.replace"),
     "set_stack_trace": (
         "code.trace",

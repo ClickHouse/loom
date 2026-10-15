@@ -7171,6 +7171,8 @@ export interface RunBeginInput {
   consumer?: string;
   role?: string;
   metadata?: Record<string, unknown>;
+  budget_usd?: number;
+  budget_seconds?: number;
 }
 
 export interface RunBeginOutput {
@@ -7259,6 +7261,8 @@ export interface RunRow {
   memories_used?: string[];
   memories_written?: string[];
   metadata?: Record<string, unknown>;
+  budget_usd?: number;
+  budget_seconds?: number;
 }
 
 export interface RunGetOutput {
@@ -7270,6 +7274,8 @@ export interface RunGetOutput {
   observations?: number;
   turns?: number;
   cost_usd?: number;
+  elapsed_seconds?: number;
+  over_budget?: Array<"cost" | "time">;
 }
 
 export interface RunGradeInput {

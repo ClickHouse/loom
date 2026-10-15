@@ -52,6 +52,11 @@ class RunBeginInput(BaseModel):
     role: str = Field(default="", max_length=64)
     # Free-form key/values stored on the run; `role`, when set, is added to it.
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # An optional budget: the model spend in USD and the seconds the run may
+    # take. run.get names the ones the run has gone past in `over_budget`.
+    # Loom does not run the agent, so this is a signal, never a stop. 0 = none.
+    budget_usd: float = Field(default=0.0, ge=0.0, le=100_000.0)
+    budget_seconds: int = Field(default=0, ge=0, le=30 * 86400)
 
 
 class RunBeginOutput(BaseModel):
@@ -224,6 +229,9 @@ class RunRow(ProjectedRow):
     memories_used: list[str] = Field(default_factory=list)
     memories_written: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # The budget run.begin set; 0 = none.
+    budget_usd: float = 0.0
+    budget_seconds: int = 0
 
 
 class RunGradeInput(BaseModel):
@@ -306,6 +314,12 @@ class RunGetOutput(BaseModel):
     turns: int = 0
     # Summed model cost in USD of the run's session turns; 0 as for `turns`.
     cost_usd: float = 0.0
+    # Seconds the run has taken: until now while active, its duration once closed.
+    elapsed_seconds: int = 0
+    # The budgets the run has gone past: `cost` (cost_usd > budget_usd) and
+    # `time` (elapsed_seconds > budget_seconds). Empty when within budget or
+    # when run.begin set none.
+    over_budget: list[Literal["cost", "time"]] = Field(default_factory=list)
 
 
 class RunListInput(BaseModel):

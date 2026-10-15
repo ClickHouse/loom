@@ -56,22 +56,28 @@ RUN_COLUMNS = (
     "grade_reason",
     "grade_ref",
     "graded_at",
+    # The run's optional budget (0 = none), set by run.begin and carried by every
+    # later write of the row like the grade columns.
+    "budget_usd",
+    "budget_seconds",
 )
 _RUN_SELECT = ", ".join(RUN_COLUMNS)
-# A row read without a column (a replica behind the grade migration, a fake) still writes
-# it: the grade columns' own defaults, never a KeyError on close.
+# A row read without a column (a replica behind the grade or budget migration, a fake)
+# still writes it: the columns' own defaults, never a KeyError on close.
 _COLUMN_DEFAULTS: dict[str, Any] = {
     "grade": "",
     "grade_source": "",
     "grade_reason": "",
     "grade_ref": "",
     "graded_at": None,
+    "budget_usd": 0.0,
+    "budget_seconds": 0,
 }
 _SYNC_INSERT = {"async_insert": 0, "wait_for_async_insert": 1}
 
 
 def run_row(row: RunLedgerRow) -> dict[str, Any]:
-    """Every agent_runs column of `row`, the grade columns defaulted."""
+    """Every agent_runs column of `row`, the grade and budget columns defaulted."""
     cols: dict[str, Any] = dict(row)
     out = {c: cols[c] if c in cols else _COLUMN_DEFAULTS[c] for c in RUN_COLUMNS}
     if "version" in cols:

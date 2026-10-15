@@ -633,6 +633,15 @@ def test_set_rules_duplicate_large_value_and_churn() -> None:
     assert churn is not None and churn[0] == "set_churn" and "working_memory" in churn[1]
 
 
+def test_run_over_budget_fires_only_when_run_get_names_a_budget() -> None:
+    within = {"found": True, "over_budget": [], "cost_usd": 0.4, "elapsed_seconds": 30}
+    assert _call("run.get", {"run_id": "r1"}, within) is None
+    over = {"found": True, "over_budget": ["cost"], "cost_usd": 2.5, "elapsed_seconds": 30}
+    hint = _call("run.get", {"run_id": "r1"}, over, session="s2")
+    assert hint is not None and hint[0] == "run_over_budget"
+    assert "cost budget" in hint[1] and "$2.50" in hint[1] and "run.complete" in hint[1]
+
+
 def test_search_abstain_points_at_the_plane_the_namespace_has() -> None:
     # No cached profile: nothing to say, and a background read is scheduled (not run here).
     assert _call("memory.search", {"query": "q"}, {"abstain": True, "hits": []}) is None
@@ -1109,6 +1118,7 @@ def test_call_hint_ops_cover_every_per_call_code() -> None:
         "set_churn",
         "set_stack_trace",
         "set_issue_reference",
+        "run_over_budget",
     }
     assert set(mentor_rules.CALL_HINT_OPS) == codes
     assert handler.CALL_HINT_OPS is mentor_rules.CALL_HINT_OPS

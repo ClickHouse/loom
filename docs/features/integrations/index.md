@@ -12,23 +12,24 @@ opt-in; one you leave unconfigured does nothing. They fall into three groups:
 
 ## Map
 
-| Integration                                           | Kind                                                   | Where                                                                                      |
-| ----------------------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
-| Claude Code                                           | plugin: MCP tools, hooks, code shunt, skills           | `integrations/claude-code-plugin/`: [claude-code.md](claude-code.md)                       |
-| Codex                                                 | plugin: MCP tools, hooks, code shunt, skills           | `integrations/codex-plugin/`: [codex.md](codex.md)                                         |
-| Claude Desktop, Cursor, VS Code, Cline, Windsurf, Zed | MCP client config                                      | `loom install --client …`: [mcp-clients.md](mcp-clients.md)                                |
-| Cursor                                                | MCP tools + `sessionEnd` transcript hook               | `integrations/cursor/`: [cursor.md](cursor.md)                                             |
-| Any Agent-Skills client                               | the `loom-code` skill, no hooks                        | `skills/loom-code/`: [below](#coding-agents)                                               |
-| Aider, Continue, OpenCode, JetBrains AI               | transcript capture template                            | `integrations/generic/`: [below](#transcript-capture-hooks)                                |
-| Agents that only use shell grep                       | the grep shim                                          | `integrations/grep-shim/`: [grep-shim.md](grep-shim.md)                                    |
-| LangGraph, Strands Agents                             | Python SDK memory adapters; needs the framework        | `loom.integrations.langgraph`, `loom.integrations.strands`: [frameworks.md](frameworks.md) |
-| Agent orchestrators                                   | shared MCP mount                                       | [frameworks.md](frameworks.md)                                                             |
-| Langfuse                                              | traces, retrieval scores, erasure; needs Langfuse      | [langfuse.md](langfuse.md)                                                                 |
-| ClickStack / HyperDX                                  | OpenTelemetry spans, logs, metrics; erasure            | [clickstack.md](clickstack.md)                                                             |
-| Git repositories (OKF bundles)                        | export, import, CI lint gate                           | `integrations/okf-ci/`: [okf.md](okf.md)                                                   |
-| Shell pipelines                                       | `loom memory-search --json-agent`                      | [below](#command-line-search-for-pipelines)                                                |
-| Provider prompt caches                                | byte-stable `context.pack` prefix                      | [below](#prompt-caching)                                                                   |
-| GitHub                                                | code index, PR history; needs the code workers enabled | [code index overview](../code-index/overview.md)                                           |
+| Integration                                           | Kind                                                    | Where                                                                                      |
+| ----------------------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Claude Code                                           | plugin: MCP tools, hooks, code shunt, skills            | `integrations/claude-code-plugin/`: [claude-code.md](claude-code.md)                       |
+| Codex                                                 | plugin: MCP tools, hooks, code shunt, skills            | `integrations/codex-plugin/`: [codex.md](codex.md)                                         |
+| Claude Desktop, Cursor, VS Code, Cline, Windsurf, Zed | MCP client config                                       | `loom install --client …`: [mcp-clients.md](mcp-clients.md)                                |
+| Cursor                                                | MCP tools + `sessionEnd` transcript hook                | `integrations/cursor/`: [cursor.md](cursor.md)                                             |
+| Any Agent-Skills client                               | the `loom-code` skill, no hooks                         | `skills/loom-code/`: [below](#coding-agents)                                               |
+| Aider, Continue, OpenCode, JetBrains AI               | transcript capture template                             | `integrations/generic/`: [below](#transcript-capture-hooks)                                |
+| Agents that only use shell grep                       | the grep shim                                           | `integrations/grep-shim/`: [grep-shim.md](grep-shim.md)                                    |
+| LangGraph, Strands Agents                             | Python SDK memory adapters; needs the framework         | `loom.integrations.langgraph`, `loom.integrations.strands`: [frameworks.md](frameworks.md) |
+| Agent orchestrators                                   | shared MCP mount                                        | [frameworks.md](frameworks.md)                                                             |
+| AX (sandboxed agent tasks)                            | Workspace manifest: MCP config, `AGENTS.md`, run budget | `integrations/ax/`: [README](../../../integrations/ax/README.md)                           |
+| Langfuse                                              | traces, retrieval scores, erasure; needs Langfuse       | [langfuse.md](langfuse.md)                                                                 |
+| ClickStack / HyperDX                                  | OpenTelemetry spans, logs, metrics; erasure             | [clickstack.md](clickstack.md)                                                             |
+| Git repositories (OKF bundles)                        | export, import, CI lint gate                            | `integrations/okf-ci/`: [okf.md](okf.md)                                                   |
+| Shell pipelines                                       | `loom memory-search --json-agent`                       | [below](#command-line-search-for-pipelines)                                                |
+| Provider prompt caches                                | byte-stable `context.pack` prefix                       | [below](#prompt-caching)                                                                   |
+| GitHub                                                | code index, PR history; needs the code workers enabled  | [code index overview](../code-index/overview.md)                                           |
 
 ## Coding agents
 

@@ -1,0 +1,58 @@
+# A Loom-backed agent on AX (https://github.com/google/ax).
+#
+# The Workspace comes first: `ax apply` creates documents in order, and a Task
+# applied before its Workspace starts with an empty one.
+#
+# Replace the three <...> values, then:
+#   ax apply -f task.yaml && ax resume task fix-flaky-test
+apiVersion: ax.io/v1alpha1
+kind: Workspace
+metadata:
+  name: loom-memory
+spec:
+  git:
+    - repo: "https://github.com/<org>/<repo>.git"
+      branch: "main"
+  files:
+    # Claude Code reads this MCP config and expands ${LOOM_API_KEY} from the
+    # environment, so the token never lands in a file.
+    - path: ".mcp.json"
+      content: |
+        {
+          "mcpServers": {
+            "loom": {
+              "type": "http",
+              "url": "${LOOM_BASE_URL}/mcp",
+              "headers": { "Authorization": "Bearer ${LOOM_API_KEY}" }
+            }
+          }
+        }
+    - path: "AGENTS.md"
+      content: |
+        # Memory
+        - Before you start, call `loom_search` for what earlier runs learned about this repository.
+        - Record a durable finding with `loom_memory_set`: one plain-text claim per key.
+        - This sandbox is thrown away when the task ends; anything not written to Loom is lost.
+---
+apiVersion: ax.io/v1alpha1
+kind: Task
+metadata:
+  name: fix-flaky-test
+spec:
+  # Your agent's entry point, run in the first workspace. agent.py here shows
+  # the Loom calls; the image needs `pip install clickhouse-loom` (README.md).
+  image: "<your image, built FROM the AX task-runner image>"
+  command: ["python", "agent.py"]
+  env:
+    - name: LOOM_BASE_URL
+      value: "https://<loom>"
+    # A short-lived writer token for one namespace (see README.md): AX has no
+    # API authentication yet, and anyone who can read this Task can read it.
+    - name: LOOM_API_KEY
+      value: "<token from loom mint-token>"
+    - name: LOOM_ORG
+      value: "acme"
+    - name: LOOM_NAMESPACE
+      value: "ax-fix-flaky-test"
+  workspaces:
+    - name: loom-memory

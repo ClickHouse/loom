@@ -21,7 +21,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 
 from server.core.ch import get_client, sequential_reads
 from server.core.datetimes import naive_utc_now as _now
@@ -139,6 +139,8 @@ def _row_to_model(r: RunLedgerRow) -> RunRow:
         memories_used=[str(k) for k in (r.get("memories_used") or [])],
         memories_written=[str(k) for k in (r.get("memories_written") or [])],
         metadata=_parse_metadata(r.get("metadata")),
+        budget_usd=float(r.get("budget_usd") or 0.0),
+        budget_seconds=int(r.get("budget_seconds") or 0),
     )
 
 
@@ -433,6 +435,8 @@ async def _open_run(
             if input.role.strip()
             else input.metadata
         ),
+        "budget_usd": input.budget_usd,
+        "budget_seconds": input.budget_seconds,
     }
     if version is not None:
         row["version"] = version
@@ -946,6 +950,7 @@ async def handle_run_get(input: RunGetInput) -> RunGetOutput:
         if run.session_id != "-"
         else (0, 0.0)
     )
+    elapsed = _elapsed_seconds(existing)
     return RunGetOutput(
         found=True,
         run=run,
@@ -955,7 +960,31 @@ async def handle_run_get(input: RunGetInput) -> RunGetOutput:
         observations=observations,
         turns=turns,
         cost_usd=cost,
+        elapsed_seconds=elapsed,
+        over_budget=_budgets_exceeded(run, cost, elapsed),
     )
+
+
+def _elapsed_seconds(row: RunLedgerRow) -> int:
+    """How long the run has taken: its recorded duration once closed, else since it started."""
+    if row.get("status") != "active":
+        return int(row.get("duration_ms") or 0) // 1000
+    started = row.get("started_at")
+    if not isinstance(started, datetime):
+        return 0
+    return max(0, int((_now() - started.replace(tzinfo=None)).total_seconds()))
+
+
+def _budgets_exceeded(
+    run: RunRow, cost_usd: float, elapsed_seconds: int
+) -> list[Literal["cost", "time"]]:
+    """The budgets the run has gone past; a budget of 0 is no budget."""
+    over: list[Literal["cost", "time"]] = []
+    if run.budget_usd > 0 and cost_usd > run.budget_usd:
+        over.append("cost")
+    if run.budget_seconds > 0 and elapsed_seconds > run.budget_seconds:
+        over.append("time")
+    return over
 
 
 async def handle_run_list(input: RunListInput) -> RunListOutput:

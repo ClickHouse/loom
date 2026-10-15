@@ -19,8 +19,21 @@ A run row lives in `loom.agent_runs`. Most of what `run.get` shows is derived at
 | `recalled`, `recalled_keys`        | derived           | the search trace log under the `run_id`, unioned with `run.complete(recalled_keys)` |
 | `observations`                     | derived           | episodic rows from `observe.record` tagged with the `run_id`                        |
 | `turns`, `cost_usd`                | derived           | `loom.agent_turn_usage` by `session_id` (written by the coding-agent plugins)       |
+| `budget_usd`, `budget_seconds`     | stored            | `run.begin` (0 = no budget)                                                         |
+| `elapsed_seconds`, `over_budget`   | derived           | the run's age (or its duration once closed) and `cost_usd`, against the budget      |
 
 `recalled` is `-1` when `LOOM_SEARCH_TRACE_LOG_ENABLED` is off and no `recalled_keys` were sent.
+
+## Budgets
+
+`run.begin` takes an optional `budget_usd` (model spend) and `budget_seconds` (how long the run may take). `run.get`
+compares them with `cost_usd` and `elapsed_seconds` and lists the ones the run has gone past in `over_budget`
+(`cost`, `time`, or both). The first `run.get` in a session that finds the run over budget also carries the mentor
+hint `run_over_budget`, which the plugins hand to the model as advice.
+
+Loom does not run the agent, so a budget is a signal for whoever does, never a stop. The cost side is only as fresh
+as the turns the plugin's Stop hook has recorded, and a call's cost is known only after it returns, so a run can go
+past `budget_usd` by the last turn's cost before anything sees it.
 
 ## Recalled is not relied on
 
