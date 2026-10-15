@@ -563,7 +563,8 @@ async def _retry_triples_reconcile(failure: ProjectionFailureRow, *, ch: Any) ->
                 return ""
         # As of the Undo: a value stated since stays the newer one.
         restored_at = parse_iso_dt(failure.payload.get("restored_at") or "")
-        await reopen_held_facts(scope, ids, ch=ch, restored_at=restored_at)
+        restore_id = str(failure.payload.get("restore_id") or "")
+        await reopen_held_facts(scope, ids, ch=ch, restored_at=restored_at, restore_id=restore_id)
     else:
         await close_dropped_facts(scope, ids, ch=ch)
     return ""

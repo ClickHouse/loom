@@ -216,10 +216,10 @@ async def test_an_undo_weighs_what_is_open_with_pending_closes_applied(monkeypat
                 return [{"subject": "user", "relation": "live_in", "object": city,
                          "confidence": 1.0, "provenance": "extracted", "ends": until,
                          "seen": stored + timedelta(microseconds=i), "start": None, "open": 0,
-                         "newest_open": _NO_OPEN_ROW, "restored": 0, "weighted": 1}
+                         "newest_open": _NO_OPEN_ROW, "restored": 0, "support": [(None, None)]}
                         for city, i in (("berlin", 1), ("rome", 0))]  # fmt: skip
             return [{"entity_a": "berlin", "entity_b": "user", "ends": until,
-                     "restored": 0, "weighted": 1}]  # fmt: skip
+                     "restored": 0, "support": [(None, None)]}]  # fmt: skip
 
     async def held(*a: Any, **k: Any) -> list:
         return [("user", "live_in", "berlin"), ("user", "live_in", "rome")]
@@ -277,9 +277,9 @@ async def test_an_undo_refused_on_the_fly_writes_nothing_and_is_recorded(monkeyp
                 return [{"subject": "user", "relation": "live_in", "object": "london",
                          "confidence": 1.0, "provenance": "extracted", "ends": None,
                          "seen": restored, "start": None, "open": 1, "restored": 0,
-                         "weighted": 1}]  # fmt: skip
+                         "support": [(None, None)]}]  # fmt: skip
             return [{"entity_a": "london", "entity_b": "user", "ends": None,
-                     "restored": 0, "weighted": 1}]  # fmt: skip
+                     "restored": 0, "support": [(None, None)]}]  # fmt: skip
 
     async def held(*a: Any, **k: Any) -> list:
         return [("user", "live_in", "london")]
@@ -306,12 +306,15 @@ async def test_an_undo_refused_on_the_fly_writes_nothing_and_is_recorded(monkeyp
     assert ch.inserts == {}
     ((failure,),) = [recorded]
     assert failure["projection"] == "triples_reconcile"
+    restore_id = failure["payload"].pop("restore_id")
     assert failure["payload"] == {
         "memory_ids": ["m1"],
         "reopen": True,
         "restored_at": restored.isoformat(),
         "content_sha256": {"m1": "h"},
     }
+    # The id its replay finds the Undo's markers by.
+    assert len(restore_id) == 32
 
 
 async def _undo_of_rome_and(
@@ -335,11 +338,11 @@ async def _undo_of_rome_and(
             if "FROM loom.entity_triples" in sql:
                 base = {"subject": "user", "relation": "live_in", "confidence": 1.0,
                         "provenance": "extracted", "ends": None, "start": None, "open": 0,
-                        "restored": 0, "weighted": 0}  # fmt: skip
+                        "restored": 0, "support": []}  # fmt: skip
                 rows = [{**base, "object": "rome", "seen": stored, **(rome or {})},
                         {**base, "object": "berlin", "seen": stored, **berlin}]  # fmt: skip
                 return [_as_read(r, params) for r in rows if r["object"] in cities]
-            return [{"entity_a": a, "entity_b": b, "ends": None, "restored": 0, "weighted": 0}
+            return [{"entity_a": a, "entity_b": b, "ends": None, "restored": 0, "support": []}
                     for a, b in params["pairs"]]  # fmt: skip
 
     cities = held or ["berlin", "rome"]
@@ -366,16 +369,20 @@ async def _undo_of_rome_and(
     ch = _ClosedCH()
     restored = datetime(2026, 10, 15, 9, 0, 0, 5)
     await ep.reopen_held_facts(SimpleNamespace(org="o", namespace="ns"), ["m1"], ch=ch,
-                               restored_at=restored)  # fmt: skip
+                               restored_at=restored, restore_id=_UNDO_ID)  # fmt: skip
     return ch, repaired
 
 
+_UNDO_ID = "undo-1"
+
+
 def _as_read(row: dict[str, Any], params: Any) -> dict[str, Any]:
-    """`row` as the Undo's read returns it: a stored marker is its own only when seen in
-    the Undo's range, and a fact's newest open row is its latest one unless given."""
+    """`row` as the Undo's read returns it: a stored marker is its own only when it
+    carries the Undo's id (this Undo's unless given), and a fact's newest open row is
+    its latest one unless given."""
     row = {"newest_open": (row["start"], row["seen"]) if row["open"] else _NO_OPEN_ROW, **row}
     if "marker_seen" in row:
-        row["restored"] = int(params["seen"] <= row["marker_seen"] < params["until"])
+        row["restored"] = int(row.pop("restore_id", _UNDO_ID) == params["rid"])
     return row
 
 
@@ -517,3 +524,15 @@ async def test_a_replay_with_more_facts_held_gives_a_new_marker_its_own_verdict(
     assert berlin["object"] == "berlin" and berlin["seen_at"] > restored
     assert berlin["co_occur"] == 1
     assert len({t["seen_at"] for t in repaired}) == 2
+
+
+async def test_another_undos_marker_is_not_taken_for_this_ones(monkeypatch) -> None:
+    # Berlin's latest row is a marker another Undo wrote, a microsecond after this
+    # Undo's instant: this Undo writes its own Berlin marker, carrying its id.
+    restored = datetime(2026, 10, 15, 9, 0, 0, 5)
+    later = restored + timedelta(microseconds=1)
+    theirs = {**_marker(restored.replace(microsecond=0), later), "restore_id": "undo-2"}
+    ch, _ = await _undo_of_rome_and(monkeypatch, theirs)
+    written = {m["object"]: m["restore_id"] for m in ch.inserts["loom.entity_triples"]}
+    assert written == {"rome": _UNDO_ID, "berlin": _UNDO_ID}
+    assert {e["restore_id"] for e in ch.inserts["loom.entity_edges"]} == {_UNDO_ID}
