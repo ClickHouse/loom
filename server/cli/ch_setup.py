@@ -71,10 +71,13 @@ def admin_sql(user: str, reader: str) -> list[str]:
     return [
         f"CREATE DATABASE IF NOT EXISTS {preflight.DATABASE}",
         f"GRANT CURRENT GRANTS ON {preflight.DATABASE}.* TO `{user}`",
+        # system.query_log among them shows every user's queries on this server;
+        # docs/operations/deployment.md says how to narrow it.
         f"GRANT {', '.join(f'SELECT ON system.{t}' for t in preflight.SYSTEM_TABLES)} TO `{user}`",
         # clusterAllReplicas, which asks every replica for its version. READ only:
         # on Cloud plain REMOTE also grants writes to any host through remote().
         f"GRANT READ ON REMOTE TO `{user}`",
+        f"-- replaces any existing user and settings profile named {reader}",
         *reader_sql(reader, _PASSWORD_PLACEHOLDER),
     ]
 
@@ -136,8 +139,9 @@ def reader_owner(ch: Any, reader: str) -> str:
 def _print_admin_sql(user: str, reader: str) -> None:
     print(f"\nHave an admin run this, with the password of {user} in place of the placeholder:\n")
     for stmt in admin_sql(user, reader):
-        print(f"  {stmt};")
-    print("\nThen run `loom ch-setup` (or the installer) again.")
+        print(f"  {stmt}" if stmt.startswith("--") else f"  {stmt};")
+    print("\nThen run the installer again, or `docker compose run --rm loom loom ch-setup` in the")
+    print("install directory (`loom ch-setup` from a checkout).")
 
 
 def _set_up(ch: Any, user: str, reader: str) -> int:
@@ -211,7 +215,7 @@ def _cmd_ch_setup(args: argparse.Namespace) -> int:
         return 2
     if args.print_sql:
         for stmt in admin_sql(user, reader):
-            print(f"{stmt};")
+            print(stmt if stmt.startswith("--") else f"{stmt};")
         return 0
     try:
         ch = preflight.connect()

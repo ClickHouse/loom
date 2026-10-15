@@ -257,6 +257,19 @@ def test_a_user_who_may_not_create_the_reader_gets_the_admin_sql(
     assert "s3cret-value" not in captured.out + captured.err
 
 
+def test_the_doctor_fails_where_boot_could_not_create_the_database() -> None:
+    class NoCreate(FakeCH):
+        def command(self, sql: str) -> Any:
+            if sql.startswith("CHECK GRANT CREATE DATABASE"):
+                self.ran.append(sql)
+                return 0
+            return super().command(sql)
+
+    with pytest.raises(preflight.PreflightError) as e:
+        preflight.check(NoCreate(database=False), need="migrate", create_database=False)
+    assert e.value.needs_admin and "may not create it" in str(e.value)
+
+
 def test_a_check_that_may_not_create_the_database_only_reports_it_missing() -> None:
     ch = FakeCH(database=False)
     server = preflight.check(ch, need="migrate", create_database=False)

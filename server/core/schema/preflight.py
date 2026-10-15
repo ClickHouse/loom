@@ -140,6 +140,14 @@ def oldest_version(ch: Client) -> str:
     return min(versions or [str(ch.command("SELECT version()"))], key=version_key)
 
 
+def _cannot_create(user: str) -> PreflightError:
+    return PreflightError(
+        f"{user!r} cannot see a database {DATABASE} and may not create it: "
+        "an admin has to run the SQL `loom ch-setup --print-sql` prints",
+        needs_admin=True,
+    )
+
+
 def needed_at_boot() -> Need:
     """What the server process needs: it migrates unless boot migrations are
     off or it is a read replica."""
@@ -164,23 +172,23 @@ def check(ch: Client, *, need: Need, create_database: bool = True) -> Server:
     database = bool(ch.command(f"SELECT count() FROM system.databases WHERE name = '{DATABASE}'"))
     if not database and need != "migrate":
         raise PreflightError(f"database {DATABASE} does not exist: run `loom ch-setup`")
+    if not database and not create_database:
+        # The doctor creates nothing; it says so only where boot could.
+        if str(ch.command(f"CHECK GRANT CREATE DATABASE ON {DATABASE}.*")) != "1":
+            raise _cannot_create(user)
     if not database and create_database:
         try:
             ch.command(f"CREATE DATABASE IF NOT EXISTS {DATABASE}")
         except Exception as e:
             if error_code(e) != ACCESS_DENIED:
                 raise
-            raise PreflightError(
-                f"{user!r} cannot see a database {DATABASE} and may not create it: "
-                f"run `loom ch-setup --print-sql` and have an admin apply it",
-                needs_admin=True,
-            ) from None
+            raise _cannot_create(user) from None
 
     grants = GRANTS[need]
     if str(ch.command(f"CHECK GRANT {grants} ON {DATABASE}.*")) != "1":
         raise PreflightError(
             f"{user!r} lacks {grants} on {DATABASE}.*: "
-            f"have an admin run GRANT CURRENT GRANTS ON {DATABASE}.* TO `{user}`",
+            f"an admin has to run GRANT CURRENT GRANTS ON {DATABASE}.* TO `{user}`",
             needs_admin=True,
         )
 
@@ -191,7 +199,7 @@ def check(ch: Client, *, need: Need, create_database: bool = True) -> Server:
             raise
         raise PreflightError(
             f"{user!r} may not read the system tables Loom waits on: "
-            "run `loom ch-setup --print-sql` and have an admin apply its system grants",
+            "an admin has to run the system grants `loom ch-setup --print-sql` prints",
             needs_admin=True,
         ) from None
 

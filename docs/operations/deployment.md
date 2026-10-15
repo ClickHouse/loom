@@ -57,7 +57,15 @@ Sizing (web replicas, uvicorn processes, the workers container) is in
   it without connecting. The SQL grants the Loom user everything the admin holds on
   `loom.*` through `GRANT CURRENT GRANTS` (ClickHouse Cloud does not accept `GRANT ALL`),
   `SELECT` on the system tables Loom reads, and `READ ON REMOTE`, which
-  `clusterAllReplicas` needs to ask every replica for its version.
+  `clusterAllReplicas` needs to ask every replica for its version (a self-managed server
+  stores it as full `REMOTE`). It creates the reader with `OR REPLACE`, so check that no
+  other account has that name: `ch-setup` running the SQL itself refuses one it did not
+  make.
+- **The query log.** Loom reads `system.query_log` for each request's cost, so the Loom
+  user sees every user's queries on that server. On a server Loom shares, a self-managed
+  admin can keep it to Loom's own with
+  `CREATE ROW POLICY loom_own ON system.query_log USING user IN ('loom', 'loom_reader') TO loom`;
+  ClickHouse Cloud does not allow row policies on system tables.
 - **Switching.** Re-run the installer with `--clickhouse` to move an install to your own
   server; Loom starts on an empty `loom` database there. The bundled container keeps
   running on its old volume until you stop it (the installer prints the command); copy
