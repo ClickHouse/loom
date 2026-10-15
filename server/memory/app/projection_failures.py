@@ -20,6 +20,7 @@ from server.identity.domain.read_scope import (
 )
 from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry, _BulkSetResult
 from server.memory.app.projection_errors import (
+    TRIPLES_ENTITY_MAP,
     TRIPLES_INSERTED_AT,
     TRIPLES_REPAIRS,
     TriplesRepairFailed,
@@ -528,6 +529,15 @@ def _recorded_repairs(payload: dict[str, Any]) -> list[IntervalRepair]:
     ]
 
 
+def _recorded_entity_map(payload: dict[str, Any]) -> dict[str, str] | None:
+    """What the failed write resolved its names to. None for a failure recorded
+    before the payload carried it: the replay resolves the names again."""
+    names = payload.get(TRIPLES_ENTITY_MAP)
+    if not isinstance(names, dict):
+        return None
+    return {str(k): str(v) for k, v in names.items()}
+
+
 async def _retry_triples_reconcile(failure: ProjectionFailureRow, *, ch: Any) -> str:
     """Reconcile the facts of the rows a revision or an Undo changed, as it would have."""
     from types import SimpleNamespace
@@ -818,6 +828,7 @@ async def _retry_graph_projection(
                     dedup_token=dedup_token,
                     inserted_at=parse_iso_dt(failure.payload.get(TRIPLES_INSERTED_AT) or ""),
                     repaired=_recorded_repairs(failure.payload),
+                    entity_map=_recorded_entity_map(failure.payload),
                 )
             except TriplesRepairFailed as e:
                 # What this replay wrote rides the failure, for the next to finish: the

@@ -7,7 +7,11 @@ from collections.abc import Mapping
 from datetime import date, datetime, timedelta
 from typing import Any, NamedTuple
 
-from server.memory.app.entity_projections import _linked_triples, _stated_by_live_rows
+from server.memory.app.entity_projections import (
+    held_by_unlinked_rows,
+    linked_triples,
+    stated_by_live_rows,
+)
 from server.memory.app.projections import entity_edge_row, entity_triple_row, repair_intervals
 from server.memory.domain.graph_quality import (
     canonical_edge_pair,
@@ -50,8 +54,11 @@ async def reopen_held_facts(
 
     # Only what the restored rows' values hold now: another row's claim keeps a fact
     # from closing, but never reopens one.
-    linked = await _linked_triples(input, ids, ch=ch)
-    held = await _stated_by_live_rows(input.org, input.namespace, linked, ch=ch, rows=ids)
+    linked = await linked_triples(input, ids, ch=ch)
+    held = await stated_by_live_rows(input.org, input.namespace, linked, ch=ch, rows=ids)
+    # A row written before rows were linked has no links: what its value names of
+    # its key's facts, which the follow closed by the same rule.
+    held |= await held_by_unlinked_rows(input.org, input.namespace, None, ch=ch, rows=ids)
     if not held:
         return
     now = restored_at.replace(microsecond=0)  # as the DateTime columns store it

@@ -521,11 +521,12 @@ async def _set_merge(
     if merged_into_id:  # never a row outside the read scope
         await _cf.auto_reinforce_peer(input, merged_into_id, ch=ch, cfg=_cfg)
     if input.relations and own_row is not None:
+        # The row keeps its value, so it dropped no fact: nothing to reconcile.
         await project_stated_relations(
             own_row.model_dump(),
             own_row.value,
             input.relations,
-            revised=True,
+            revised=False,
             op="memory.set",
             ch=ch,
         )

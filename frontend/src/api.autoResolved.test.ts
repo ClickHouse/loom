@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   UNSUPERSEDED_MAX_PAGES,
   autoResolveReasonText,
+  hasAutoResolved,
   listAutoResolved,
   listUnsuperseded,
   restoreMemory,
@@ -97,6 +98,28 @@ describe("listAutoResolved", () => {
     const out = await listAutoResolved({ org: "o", namespace: "n" }, { cursor: "c2" });
     expect(bodies[0]?.cursor).toBe("c2");
     expect(out).toEqual({ rows: [], next_cursor: null });
+  });
+});
+
+describe("hasAutoResolved", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("asks for one record's time in the last 30 days", async () => {
+    const bodies = stubAudit([{ rows: [{ ts: "2026-10-02T00:00:00Z", subject: "" }] }, { rows: [] }]);
+    expect(await hasAutoResolved({ org: "o", namespace: "n" })).toBe(true);
+    expect(await hasAutoResolved({ org: "o", namespace: "n" })).toBe(false);
+    expect(bodies[0]).toMatchObject({
+      org: "o",
+      namespace: "n",
+      event_type: "memory.auto_supersede",
+      limit: 1,
+      fields: ["ts"],
+    });
+    const since = Date.parse(String(bodies[0]?.["since"]));
+    expect(Date.now() - since).toBeGreaterThan(29 * 24 * 3600 * 1000);
+    expect(Date.now() - since).toBeLessThan(31 * 24 * 3600 * 1000);
   });
 });
 

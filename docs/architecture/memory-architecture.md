@@ -384,7 +384,9 @@ the value it was written or stated for (`carried`):
   row revised since, whose revision reconciles its facts, so the revised value is never
   dated at the Undo. A failed interval repair records the triple write for replay too;
   when the triples landed before the repair failed, the replay does not insert them
-  again and never repairs as of the replay's own clock. When the repair had issued
+  again, never repairs as of the replay's own clock, and names their entities as the
+  write resolved them (the failure records those resolutions), not as they resolve by
+  the replay. When the repair had issued
   closes before it failed, the failure records them and the replay finishes them: it
   issues again a close that never landed, closes their edges and, under `newest_wins`,
   retires the rows behind them. Each recorded close names the newest value that closed
@@ -454,7 +456,8 @@ no retirement closes it. A triple another live row's links still state stays ope
 whose value was first written before rows were linked to triples (by the row-links
 migration's applied time, read from `loom.memory_versions`, so a pin, a lock or an Undo
 of the same value keeps it one) has no links, and keeps open a triple its key is linked
-to (`entity_triple_memories`) while its value still names it. A value written since that
+to (`entity_triple_memories`) while its value still names it; an Undo of such a row
+opens again the triples it holds by that rule. A value written since that
 stated no fact has no link and holds none; during a rolling deploy, a replica still on
 the previous build writes key links only, so its rows hold nothing until the fact is
 stated again. A cycle or a longer chain leaves the loser's triples open and logs a

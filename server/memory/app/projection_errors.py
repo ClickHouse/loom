@@ -23,15 +23,18 @@ from server.memory.domain.graph_quality import IntervalRepair
 log = logging.getLogger(__name__)
 
 # The payload keys saying a write's triples landed before their interval repair failed,
-# and which closes that repair had made.
+# which closes that repair had made, and what the write resolved its names to.
 TRIPLES_INSERTED_AT = "triples_inserted_at"
 TRIPLES_REPAIRS = "triples_repairs"
+TRIPLES_ENTITY_MAP = "triples_entity_map"
 
 
 class TriplesRepairFailed(Exception):
     """A write's triples were inserted at `inserted_at` but their interval repair
     failed. `repairs` are the closes it had made. The replay finishes those, or
-    repairs the triples as of `inserted_at`, without inserting them again."""
+    repairs the triples as of `inserted_at`, without inserting them again.
+    `entity_map` is what the write resolved its relation names to: the replay
+    names the triples as they were inserted, not as names resolve by then."""
 
     def __init__(
         self,
@@ -42,6 +45,7 @@ class TriplesRepairFailed(Exception):
         super().__init__(f"interval repair failed: {type(cause).__name__}: {cause}")
         self.inserted_at = inserted_at
         self.repairs = repairs or []
+        self.entity_map: dict[str, str] = {}
 
 
 def messages_source_resource_id(input: Any) -> str:
@@ -130,6 +134,7 @@ def repair_failure_payload(error: TriplesRepairFailed) -> dict[str, Any]:
             {k: v.isoformat() if isinstance(v, datetime) else v for k, v in asdict(r).items()}
             for r in error.repairs
         ],
+        TRIPLES_ENTITY_MAP: dict(error.entity_map),
     }
 
 

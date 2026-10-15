@@ -167,6 +167,58 @@ async def test_a_point_write_reconciles_only_a_row_it_revised(monkeypatch) -> No
     assert reconciled == [["m1"]]
 
 
+async def test_a_merge_states_its_relations_without_reconciling_the_row(monkeypatch) -> None:
+    # A merge leaves the row's value as it was: it dropped no fact, so the reads a
+    # reconcile costs are skipped.
+    from types import SimpleNamespace
+
+    import server.memory.store as memory_repo
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import conflicts as cf
+    from server.memory.app import set_commit
+
+    mine = SimpleNamespace(
+        memory_id="m1",
+        memory_key="home",
+        value="I live in Rome",
+        agent="a",
+        user_id="u1",
+        session_id="-",
+        valid_at=None,
+        model_dump=lambda: {"memory_id": "m1"},
+    )
+    projected: list = []
+
+    async def get_by_id(*a: Any, **k: Any) -> Any:
+        return mine
+
+    async def project(row: Any, value: Any, relations: list, *, revised: bool, **k: Any) -> None:
+        projected.append(revised)
+
+    async def reinforce(*a: Any, **k: Any) -> None:
+        pass
+
+    monkeypatch.setattr(memory_repo, "get_by_id", get_by_id)
+    monkeypatch.setattr(cf, "auto_reinforce_peer", reinforce)
+    monkeypatch.setattr(set_commit, "record_drop", lambda *a, **k: None)
+    monkeypatch.setattr(set_commit, "_peer_in_read_scope", lambda peer: True)
+    monkeypatch.setattr(set_commit, "project_stated_relations", project)
+    write = MemorySetInput(
+        org="o",
+        namespace="n",
+        agent="a",
+        user_id="u1",
+        memory_key="city",
+        value="I live in Rome",
+        relations=[("user", "live_in", "rome")],
+    )
+    w = SimpleNamespace(input=write, retyped_from="", version=1, new_sha="h", memory_id="new")
+    result = SimpleNamespace(existing_memory_id="m1", merge_scope="", peers=[], refines=[])
+    out = await set_commit._set_merge(w, None, None, result, [])
+    assert out.conflict_verdict == "merge"
+    assert projected == [False]
+
+
 async def test_a_bulk_write_reconciles_only_the_rows_it_revised(monkeypatch) -> None:
     from server.memory.app import bulk_set
     from server.memory.app.bulk_rows import _BulkWriteState
@@ -260,8 +312,9 @@ async def test_an_undo_weighs_what_is_open_with_pending_closes_applied(monkeypat
         repaired.append((triples, at))
         return []
 
-    monkeypatch.setattr(graph_undo, "_linked_triples", held)
-    monkeypatch.setattr(graph_undo, "_stated_by_live_rows", held)
+    monkeypatch.setattr(graph_undo, "linked_triples", held)
+    monkeypatch.setattr(graph_undo, "stated_by_live_rows", _as_set(held))
+    monkeypatch.setattr(graph_undo, "held_by_unlinked_rows", _none_held)
     monkeypatch.setattr(graph_undo, "repair_intervals", repair)
     ch = _WeighingCH()
     scope = SimpleNamespace(org="o", namespace="ns")
@@ -342,8 +395,9 @@ async def test_an_undo_refused_on_the_fly_writes_nothing_and_is_recorded(monkeyp
         recorded.append(kw)
 
     restored = datetime(2026, 10, 15, 9, 0, 0, 5)
-    monkeypatch.setattr(graph_undo, "_linked_triples", held)
-    monkeypatch.setattr(graph_undo, "_stated_by_live_rows", held)
+    monkeypatch.setattr(graph_undo, "linked_triples", held)
+    monkeypatch.setattr(graph_undo, "stated_by_live_rows", _as_set(held))
+    monkeypatch.setattr(graph_undo, "held_by_unlinked_rows", _none_held)
     monkeypatch.setattr(ep, "record_input_projection_failure", record)
     monkeypatch.setattr(graph_undo, "repair_intervals", repair)
     monkeypatch.setattr(ep, "naive_utc_now", lambda: restored)
@@ -423,8 +477,9 @@ async def _undo_of_rome_and(
         repaired.extend(triples)
         return []
 
-    monkeypatch.setattr(graph_undo, "_linked_triples", linked)
-    monkeypatch.setattr(graph_undo, "_stated_by_live_rows", stated)
+    monkeypatch.setattr(graph_undo, "linked_triples", linked)
+    monkeypatch.setattr(graph_undo, "stated_by_live_rows", _as_set(stated))
+    monkeypatch.setattr(graph_undo, "held_by_unlinked_rows", _none_held)
     monkeypatch.setattr(graph_undo, "repair_intervals", repair)
     monkeypatch.setattr(onto, "load_relation_cardinality", declared)
     ch = _ClosedCH()
@@ -615,3 +670,17 @@ def test_the_row_links_migration_the_legacy_check_names_exists() -> None:
     from server.memory.app.entity_projections import _ROW_LINKS_MIGRATION
 
     assert (MIGRATIONS_DIR / _ROW_LINKS_MIGRATION).exists()
+
+
+def _as_set(stub: Any) -> Any:
+    """A stub of `stated_by_live_rows`, which answers a frozenset."""
+
+    async def answer(*a: Any, **k: Any) -> frozenset:
+        return frozenset(await stub(*a, **k))
+
+    return answer
+
+
+async def _none_held(*a: Any, **k: Any) -> frozenset:
+    """No row written before row links holds anything."""
+    return frozenset()

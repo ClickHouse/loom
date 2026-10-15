@@ -352,14 +352,19 @@ async def write_entity_triples(
 
     Mirrors write_entity_edges: shared canonicalizer, async insert. A failure
     raises: every caller records it for the projection repair. One after the
-    insert raises `TriplesRepairFailed`, and its replay passes `inserted_at` and the
-    closes the write had `repaired`: the triples that landed then are not inserted
-    twice, and their repair is finished as of that write (`_repair_triples`). Empty
+    insert raises `TriplesRepairFailed`, and its replay passes `inserted_at`, the
+    closes the write had `repaired` and the `entity_map` it resolved names with: the
+    triples that landed then are not inserted twice, and their repair is finished as
+    of that write (`_repair_triples`), on the triples as they were named. Empty
     `relations` produce zero rows. Subject + object canonicalize; relation is
     lowercased + space→underscore.
     """
     from server.memory.app.entity_resolution import apply_entity_resolution
-    from server.memory.domain.graph_quality import canonical_relation, facet_triples
+    from server.memory.domain.graph_quality import (
+        canonical_entity_text,
+        canonical_relation,
+        facet_triples,
+    )
     from server.memory.domain.search_text import canonicalize_verb
     from server.settings import settings as _settings
 
@@ -378,6 +383,8 @@ async def write_entity_triples(
     triples: list[dict[str, Any]] = []
     triple_memories: list[dict[str, Any]] = []
     triple_rows: list[dict[str, Any]] = []
+    # The names this write resolved to something else, for a replay to reuse.
+    resolved_names: dict[str, str] = {}
     if entity_map is None:
         relation_entities: list[str] = []
         for entry in input.entries:
@@ -486,6 +493,9 @@ async def write_entity_triples(
             s = apply_entity_resolution(str(rel[0]), entity_map)
             relation = canonical_relation(canonicalize_verb(str(rel[1])))
             o = apply_entity_resolution(str(rel[2]), entity_map)
+            for raw, name in ((rel[0], s), (rel[2], o)):
+                if canonical_entity_text(str(raw)) != name:
+                    resolved_names[canonical_entity_text(str(raw))] = name
             _append_triple(s, relation.verb, o, min(_conf, relation.confidence))
 
         fact_verbs = [str(r[1]) for r in rels if isinstance(r, (list, tuple)) and len(r) == 3]
@@ -496,47 +506,64 @@ async def write_entity_triples(
     if not triples:
         return
 
-    # Insert FIRST, then repair. The repair SELECT scans open
-    # (valid_to IS NULL) rows, so this batch's triples must be visible to
-    # it: that lets a batch close intervals it contradicts within itself,
-    # and closes the cross-request race where the previous write's
-    # fire-and-forget insert was still invisible to this write's repair.
-    # wait_for_async_insert=1 keeps server-side batching but acks only
-    # once rows are queryable (the read-your-writes the repair contract
-    # needs). Ordering safety: same-object rows — including the row just
-    # inserted for this very triple — are skipped, and the batch's other
-    # values are ordered by their place in it, so repairing against a set
-    # that contains this batch is sound.
-    # The row links land before the triples: a follow that closes a triple
-    # this write states looks for its link once the close is queued, and
-    # opens the triple again when it finds one (`reopen_held`).
     if inserted_at is None:
-        if triple_rows:
-            # Synchronous; a replay's repeat collapses in the ReplacingMergeTree.
-            await ch.insert("loom.entity_triple_rows", triple_rows)
-        await asyncio.gather(
-            *(
-                ch.insert(
-                    f"loom.{t}",
-                    r,
-                    settings=graph_insert_settings(t, wait=True, dedup_token=dedup_token),
-                )
-                for t, r in (
-                    ("entity_triples", triples),
-                    ("entity_triple_memories", triple_memories),
-                )
-                if r
-            ),
-        )
+        await _insert_triples(triples, triple_memories, triple_rows, dedup_token=dedup_token, ch=ch)
 
-    await _repair_triples(
-        input,
-        triples,
-        triple_memories,
-        at=arrived,
-        replay=inserted_at is not None,
-        repaired=repaired or [],
-        ch=ch,
+    try:
+        await _repair_triples(
+            input,
+            triples,
+            triple_memories,
+            at=arrived,
+            replay=inserted_at is not None,
+            repaired=repaired or [],
+            ch=ch,
+        )
+    except TriplesRepairFailed as e:
+        e.entity_map = resolved_names
+        raise
+
+
+async def _insert_triples(
+    triples: list[dict[str, Any]],
+    triple_memories: list[dict[str, Any]],
+    triple_rows: list[dict[str, Any]],
+    *,
+    dedup_token: str,
+    ch: Any,
+) -> None:
+    """Insert a write's triples, their key links and their row links, before the repair.
+
+    The repair SELECT scans open
+    (valid_to IS NULL) rows, so this batch's triples must be visible to
+    it: that lets a batch close intervals it contradicts within itself,
+    and closes the cross-request race where the previous write's
+    fire-and-forget insert was still invisible to this write's repair.
+    wait_for_async_insert=1 keeps server-side batching but acks only
+    once rows are queryable (the read-your-writes the repair contract
+    needs). Ordering safety: same-object rows — including the row just
+    inserted for this very triple — are skipped, and the batch's other
+    values are ordered by their place in it, so repairing against a set
+    that contains this batch is sound.
+    The row links land before the triples: a follow that closes a triple
+    this write states looks for its link once the close is queued, and
+    opens the triple again when it finds one (`reopen_held`)."""
+    if triple_rows:
+        # Synchronous; a replay's repeat collapses in the ReplacingMergeTree.
+        await ch.insert("loom.entity_triple_rows", triple_rows)
+    await asyncio.gather(
+        *(
+            ch.insert(
+                f"loom.{t}",
+                r,
+                settings=graph_insert_settings(t, wait=True, dedup_token=dedup_token),
+            )
+            for t, r in (
+                ("entity_triples", triples),
+                ("entity_triple_memories", triple_memories),
+            )
+            if r
+        ),
     )
 
 

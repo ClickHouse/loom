@@ -515,7 +515,7 @@ async def reconcile_row_facts(
         )
 
 
-async def _linked_triples(input: Any, ids: list[str], *, ch: Any) -> list[tfr.Triple]:
+async def linked_triples(input: Any, ids: list[str], *, ch: Any) -> list[tfr.Triple]:
     rows = await ch.query_all(
         """
         SELECT DISTINCT subject, relation, object
@@ -532,11 +532,11 @@ async def close_dropped_facts(input: Any, ids: list[str], *, ch: Any) -> None:
     """Close the open facts linked to the rows `ids` that no row holds any longer: a
     revision that no longer states them (`tfr.carried`), or that made its row one
     that holds none."""
-    linked = await _linked_triples(input, ids, ch=ch)
+    linked = await linked_triples(input, ids, ch=ch)
     opened = await open_triples_among(ch, org=input.org, namespace=input.namespace, triples=linked)
     if not opened:
         return
-    held = await _stated_by_live_rows(input.org, input.namespace, sorted(opened), ch=ch)
+    held = await stated_by_live_rows(input.org, input.namespace, sorted(opened), ch=ch)
     dropped = sorted(opened - held)
     if dropped:
         await _write_follow_plan(input, tfr.FollowPlan(closes=dropped, inserts=[]), ch=ch)
@@ -670,13 +670,15 @@ def _next_link(row: dict[str, Any]) -> str:
     return _canonical_id(str(row.get("superseded_by") or "")) or ""
 
 
-_UUID_RE = re.compile(r"[0-9a-fA-F]{32}|[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")
-
-
 def _canonical_id(value: str) -> str | None:
     """`value` as `toString(memory_id)` spells it, or None when it is not a UUID in
     the dashed or bare hex form ClickHouse parses."""
-    return str(uuid.UUID(value)) if _UUID_RE.fullmatch(value) else None
+    try:
+        parsed = uuid.UUID(value)
+    except ValueError:
+        return None
+    # Python also reads braces, a urn prefix and moved dashes, which ClickHouse does not.
+    return str(parsed) if value.lower() in (str(parsed), parsed.hex) else None
 
 
 # Supersession pairs one read of the rows and their open triples covers.
@@ -765,7 +767,7 @@ async def follow_row_supersessions(
         unfollowed += unread
     closing = sorted({t for plan in plans for t in plan.closes})
     plan = tfr.merge_plans(
-        plans, kept=await _stated_by_live_rows(input.org, input.namespace, closing, ch=ch)
+        plans, kept=await stated_by_live_rows(input.org, input.namespace, closing, ch=ch)
     )
     closed, inserted = await _write_follow_plan(input, plan, ch=ch)
     if closed or inserted:
@@ -1000,7 +1002,7 @@ async def rows_holding(
     return {str(r["id"]) for r in found}
 
 
-async def _stated_by_live_rows(
+async def stated_by_live_rows(
     org: str,
     namespace: str,
     triples: list[tfr.Triple],
@@ -1014,7 +1016,7 @@ async def _stated_by_live_rows(
     session's or user's row of the same fact keeps it open; `rows` (ids) limits the
     rows asked to those. A retired loser is not live, so it never keeps its own
     triples. Asked of every row, a row written before rows were linked holds what its
-    key is linked to and its value names (`_held_by_unlinked_rows`)."""
+    key is linked to and its value names (`held_by_unlinked_rows`)."""
     if not triples:
         return frozenset()
     only_rows = "AND memory_id IN {rows:Array(UUID)}" if rows is not None else ""
@@ -1057,7 +1059,7 @@ async def _stated_by_live_rows(
             hashes.setdefault(mid, {}).setdefault(triple, set()).add(str(f["sha"]))
     held_triples = frozenset(held)
     if rows is None:
-        held_triples |= await _held_by_unlinked_rows(org, namespace, triples, ch=ch)
+        held_triples |= await held_by_unlinked_rows(org, namespace, triples, ch=ch)
     if not heads:
         return held_triples
     stated_now = await _stated_links(org, namespace, list(heads.values()), ch=ch)
@@ -1070,21 +1072,36 @@ async def _stated_by_live_rows(
 _ROW_LINKS_MIGRATION = "031_entity_triple_rows.sql"
 
 
-async def _held_by_unlinked_rows(
-    org: str, namespace: str, triples: list[tfr.Triple], *, ch: Any
+async def held_by_unlinked_rows(
+    org: str,
+    namespace: str,
+    triples: list[tfr.Triple] | None,
+    *,
+    ch: Any,
+    rows: list[str] | None = None,
 ) -> frozenset[tfr.Triple]:
     """Of `triples`, those a row written before rows were linked to triples holds: a
     live row whose value was first written before the row-links migration, of a key the
     triple is linked to (`entity_triple_memories`), that still names it
     (`tfr.still_states`). A value written since with no link stated no fact, and holds
-    none."""
+    none. With `rows` (ids) and no `triples`: what those rows hold of every triple
+    their keys are linked to."""
+    if triples is None:
+        # The triples of the rows' keys, as the follow matched them by text.
+        wanted = """memory_key IN (
+                  SELECT memory_key FROM loom.memory
+                  WHERE org = {org:String} AND namespace = {ns:String}
+                    AND memory_id IN {rows:Array(UUID)})"""
+    else:
+        wanted = "(subject, relation, object) IN {triples:Array(Tuple(String, String, String))}"
+    only_rows = "AND memory_id IN {rows:Array(UUID)}" if rows is not None else ""
     found = await ch.query_all(
         f"""
         WITH keyed AS (
             SELECT memory_key, subject, relation, object
             FROM loom.entity_triple_memories
             WHERE org = {{org:String}} AND namespace = {{ns:String}}
-              AND (subject, relation, object) IN {{triples:Array(Tuple(String, String, String))}}
+              AND {wanted}
         ),
         live AS (
             SELECT memory_id, memory_key, value
@@ -1092,6 +1109,7 @@ async def _held_by_unlinked_rows(
             WHERE org = {{org:String}} AND namespace = {{ns:String}}
               AND memory_key IN (SELECT memory_key FROM keyed)
               AND {GRAPH_HOLDER_SQL}
+              {only_rows}
               -- Its current value was first written before rows were linked: a pin, a
               -- lock or an Undo writes the same value again and keeps it a legacy row.
               AND (memory_id, content_sha256) NOT IN (
@@ -1123,7 +1141,8 @@ async def _held_by_unlinked_rows(
         params={
             "org": org,
             "ns": namespace,
-            "triples": triples,
+            "triples": triples or [],
+            "rows": rows or [],
             "row_links": _ROW_LINKS_MIGRATION,
         },
     )
@@ -1235,7 +1254,7 @@ async def reopen_held(
     state a triple it closed ("back to London"): the close also ends the open row that
     write inserted. Every writer lands a triple's row links first, so once the close is
     queued they are found here."""
-    held = await _stated_by_live_rows(org, namespace, [c[:3] for c in closes], ch=ch)
+    held = await stated_by_live_rows(org, namespace, [c[:3] for c in closes], ch=ch)
     await reopen_triples(
         ch,
         org=org,

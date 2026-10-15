@@ -171,7 +171,9 @@ async def test_a_triples_replay_retires_only_within_the_writers_scope(monkeypatc
 
     seen: list = []
 
-    async def write_entity_triples(input, results, *, ch, dedup_token, inserted_at, repaired):
+    async def write_entity_triples(
+        input, results, *, ch, dedup_token, inserted_at, repaired, entity_map
+    ):
         seen.append(request_scope())
 
     monkeypatch.setattr(projections, "write_entity_triples", write_entity_triples)
@@ -212,7 +214,9 @@ async def test_a_retry_an_admin_runs_replays_under_the_writers_scope(monkeypatch
 
     seen: list = []
 
-    async def write_entity_triples(input, results, *, ch, dedup_token, inserted_at, repaired):
+    async def write_entity_triples(
+        input, results, *, ch, dedup_token, inserted_at, repaired, entity_map
+    ):
         seen.append(request_scope())
 
     monkeypatch.setattr(projections, "write_entity_triples", write_entity_triples)
@@ -324,6 +328,47 @@ class _OpenCH(_GraphCH):
     async def query_all(self, sql, params=None):
         triples = (params or {}).get("triples") or []
         return [{"subject": s, "relation": r, "object": o} for s, r, o in triples]
+
+
+async def test_a_repair_replay_resolves_names_as_the_write_did(monkeypatch) -> None:
+    # The write resolved `bob` to itself (resolution failed open) and inserted
+    # (alice, works_with, bob). If the replay resolved again and got `robert`, it
+    # would look for a triple that was never written and repair nothing.
+    import json
+
+    from server.memory.app import projections
+    from server.memory.app.projection_errors import TriplesRepairFailed, bulk_projection_payload
+
+    answers = [{}, {"bob": "robert"}]
+
+    async def resolver(input, texts, *, ch):
+        return answers.pop(0) if answers else {"bob": "robert"}
+
+    async def failing_repair(input, triples, *, ch, at):
+        raise RuntimeError("repair read timed out")
+
+    monkeypatch.setattr(projections, "resolve_projection_entity_map", resolver)
+    monkeypatch.setattr(projections, "_repair_contradictory_triples", failing_repair)
+    failure = _graph_failure("entity_triples")
+    write = projections.MemoryBulkSetInput(
+        org="o", namespace="n", agent="a", entries=failure.payload["entries"]
+    )
+    results = [projections._BulkSetResult(**r) for r in failure.payload["results"]]
+    with pytest.raises(TriplesRepairFailed) as raised:
+        await projections.write_entity_triples(write, results, ch=_GraphCH())
+    failure.payload.update(
+        json.loads(json.dumps(bulk_projection_payload(write, results, error=raised.value)))
+    )
+
+    repaired: list = []
+
+    async def repair(input, triples, *, ch, at):
+        repaired.extend((t["subject"], t["object"]) for t in triples)
+        return []
+
+    monkeypatch.setattr(projections, "_repair_contradictory_triples", repair)
+    assert (await retry_projection_failure(failure, ch=_OpenCH())).resolved
+    assert repaired == [("alice", "bob")]
 
 
 async def test_a_replay_finishes_the_closes_the_failed_repair_made(monkeypatch) -> None:

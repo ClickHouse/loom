@@ -25,7 +25,7 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { Tip } from "../components/ui/Tooltip";
 import { useStore, viewHref, type View } from "../lib/state";
-import { countConflicts, countNewAgents } from "../api";
+import { countConflicts, countNewAgents, hasAutoResolved } from "../api";
 import { readSession, useAfterPaint, writeSession } from "../lib/afterPaint";
 import { sharedBudgetStatus } from "../lib/sharedReads";
 
@@ -209,6 +209,8 @@ export function Sidebar() {
   const toggleSidebar = useStore((s) => s.toggleSidebar);
   const [adminOpen, setAdminOpen] = useState(isDrawerView(view));
   const [conflictCount, setConflictCount] = useState<number | null>(null);
+  // A recent automatic retirement: the queue's Auto-resolved tab has something to show.
+  const [autoResolved, setAutoResolved] = useState(false);
   // Lean notification surface: badge admin items that have actionable
   // state right now. Over-cap on Usage = burning $; new-since-24h on
   // Agents = unexpected client connected.
@@ -254,17 +256,20 @@ export function Sidebar() {
     }
     return item;
   });
+  const openConflicts = conflictCount != null && conflictCount > 0;
+  // The count is of open conflicts; recent auto-resolutions alone show the entry, no number.
+  const reviewBadge = openConflicts ? conflictCount : undefined;
   const visibleAdmin: NavItem[] = !canAdmin
     ? []
-    : conflictCount != null && conflictCount > 0
+    : openConflicts || autoResolved
       ? [
-          { id: "admin:review_queue", label: "Review queue", icon: AlertTriangle, badge: conflictCount },
+          { id: "admin:review_queue", label: "Review queue", icon: AlertTriangle, badge: reviewBadge },
           ...adminWithBadges,
         ]
       : adminWithBadges;
 
-  // Fetch conflict count + budget + agents activity on identity change
-  // and refresh every 30s. All three are fail-quiet — a missing
+  // Fetch conflict count + recent auto-resolutions + budget + agents activity on identity
+  // change and refresh every 60s. All four are fail-quiet — a missing
   // backend op just leaves its badge hidden. Only for a known admin of this
   // namespace: otherwise a viewer-only token draws AUTH_INSUFFICIENT 403s on every page
   // load, and a token-only principal through the fail-open gate. Each call also passes
@@ -279,11 +284,12 @@ export function Sidebar() {
   useEffect(() => {
     if (!badgeKey) return;
     agentsTick.current = 0;
-    const last = readSession<{ conflicts: number | null; overCap: boolean; newAgents: number }>(
+    const last = readSession<{ conflicts: number | null; autoResolved?: boolean; overCap: boolean; newAgents: number }>(
       badgeKey,
       BADGE_SESSION_TTL_MS,
     );
     setConflictCount(last ? last.conflicts : null);
+    setAutoResolved(last ? !!last.autoResolved : false);
     setOverCap(last ? last.overCap : false);
     setNewAgent24hCount(last ? last.newAgents : 0);
   }, [badgeKey]);
@@ -292,7 +298,7 @@ export function Sidebar() {
     let cancelled = false;
     const fetch_ = async () => {
       const tasks: Promise<void>[] = [];
-      const next = { conflicts: null as number | null, overCap: false, newAgents: 0 };
+      const next = { conflicts: null as number | null, autoResolved: false, overCap: false, newAgents: 0 };
       if (canCall("conflicts.list", roleHere, whoami)) {
         tasks.push(
           // The badge asks for the number, not 100 rows with their values (33 MB per tick
@@ -302,6 +308,21 @@ export function Sidebar() {
               if (!cancelled) {
                 next.conflicts = n;
                 setConflictCount(n);
+              }
+            })
+            .catch(() => {
+              /* hide */
+            }),
+        );
+      }
+      if (canCall("audit.list", roleHere, whoami)) {
+        tasks.push(
+          // One record's time: enough to know the Auto-resolved tab is not empty.
+          hasAutoResolved({ org: identity.org, namespace: identity.namespace })
+            .then((found) => {
+              if (!cancelled) {
+                next.autoResolved = found;
+                setAutoResolved(found);
               }
             })
             .catch(() => {

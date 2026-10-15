@@ -452,7 +452,10 @@ async def test_intra_batch_newest_wins_records_the_earlier_row(emitted) -> None:
     from server.memory.app.bulk_rows import _BulkWriteState
 
     state = _BulkWriteState()
-    state.memory_rows = [_live("old", "capital_a"), _live("new", "capital_b")]
+    state.memory_rows = [
+        {**_live("old", "capital_a"), "status": "superseded"},
+        {**_live("new", "capital_b"), "status": "active"},
+    ]
 
     await bulk_set._record_intra_batch_retirements(_Input(), state, [("old", "new")])
     (ev,) = emitted
@@ -469,17 +472,34 @@ async def test_intra_batch_records_only_the_kept_version_of_a_key_sent_twice(emi
     # capital_a twice: two ids, one identity, and FINAL keeps the higher version (a2).
     state = _BulkWriteState()
     state.memory_rows = [
-        {**_live("a1", "capital_a"), "version": 1},
-        {**_live("b", "capital_b"), "version": 2},
-        {**_live("a2", "capital_a"), "version": 3},
+        {**_live("a1", "capital_a"), "version": 1, "status": "superseded"},
+        {**_live("b", "capital_b"), "version": 2, "status": "active"},
+        {**_live("a2", "capital_a"), "version": 3, "status": "active"},
     ]
     # a1 lost to b, but a2 (the version FINAL keeps) is live: nothing retired.
     await bulk_set._record_intra_batch_retirements(_Input(), state, [("a1", "b")])
     assert emitted == []
     # a2 lost to b, once though the pair is listed twice.
+    state.memory_rows[2]["status"] = "superseded"
     await bulk_set._record_intra_batch_retirements(_Input(), state, [("a2", "b"), ("a2", "b")])
     (ev,) = emitted
     assert _ids(ev) == ["a2"]
+
+
+async def test_intra_batch_records_nothing_when_an_existing_key_is_revised_twice(emitted) -> None:
+    from server.memory.app import bulk_set
+    from server.memory.app.bulk_rows import _BulkWriteState
+
+    # An existing key revised twice reuses its stored id: both versions share "a".
+    # Only v1 lost to b; FINAL keeps v3, which is active, so nothing was retired.
+    state = _BulkWriteState()
+    state.memory_rows = [
+        {**_live("a", "capital_a"), "version": 1, "status": "superseded"},
+        {**_live("b", "capital_b"), "version": 2, "status": "active"},
+        {**_live("a", "capital_a"), "version": 3, "status": "active"},
+    ]
+    await bulk_set._record_intra_batch_retirements(_Input(), state, [("a", "b")])
+    assert emitted == []
 
 
 async def test_a_bulk_writes_one_record_for_all_its_refines_verdicts(monkeypatch, emitted) -> None:

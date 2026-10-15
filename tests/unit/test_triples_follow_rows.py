@@ -758,3 +758,15 @@ def test_a_revision_that_does_not_restate_it_closes_its_successor(old, new, trip
 )
 def test_a_question_closed_by_a_quote_or_bracket_states_nothing(text) -> None:
     assert tfr._statements(tfr._sentences(text, set()), _LIVES) == {}
+
+
+def test_a_follow_reads_dashed_and_bare_ids_and_skips_the_rest() -> None:
+    from server.memory.app.entity_projections import _canonical_id
+
+    dashed = "22222222-AAAA-2222-2222-222222222222"
+    assert _canonical_id(dashed) == dashed.lower()
+    assert _canonical_id(dashed.replace("-", "")) == dashed.lower()
+    # Spellings Python reads but ClickHouse does not end the chain too.
+    odd = ("{" + dashed + "}", "urn:uuid:" + dashed, "2222-2222" + dashed[9:])
+    for value in ("", "-", "not-a-uuid", dashed[:-1], *odd):
+        assert _canonical_id(value) is None

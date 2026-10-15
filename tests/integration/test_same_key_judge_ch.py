@@ -980,9 +980,9 @@ async def test_a_proposal_naming_a_single_valued_fact_changes_no_established_one
     assert await _status(ch, org, london) == "active"
 
 
-async def _legacy_stated(ch: Any, org: str, value: str, triple: tuple, key: str) -> None:
+async def _legacy_stated(ch: Any, org: str, value: str, triple: tuple, key: str) -> dict[str, Any]:
     """A row written before rows were linked to triples: its triple is linked to its
-    key only."""
+    key only. Returns the row."""
     from server.memory import store as M
     from server.memory.app.projections import entity_triple_row
 
@@ -1010,6 +1010,7 @@ async def _legacy_stated(ch: Any, org: str, value: str, triple: tuple, key: str)
     )
     link = {"org": org, "namespace": NS, "subject": s, "relation": r, "object": o}
     await ch.insert("loom.entity_triple_memories", [{**link, "memory_key": key}])
+    return row
 
 
 @pytest.mark.parametrize(
@@ -1090,6 +1091,34 @@ async def test_a_fact_a_row_predating_row_links_states_survives_a_follow(ch, org
     loser = await _stated(ch, org, "s1", "I like jazz", jazz, memory_key="r1")
     winner = await _stated(ch, org, "s2", "I like rock", rock, memory_key="r1")
     await _follow_retirement(ch, org, loser, winner)
+    want = {("like", "jazz"), ("like", "rock")}
+    assert await _open_facts(ch, org, want) == want
+
+
+async def test_undo_brings_back_the_facts_a_row_predating_row_links_holds(ch, org) -> None:
+    # The follow closes a legacy row's facts by what its value names; the Undo has no
+    # row link to find them by, and reopens them by the same rule.
+    from server.memory.api.models_crud import MemoryRestoreInput
+    from server.memory.app.restore import handle_memory_restore
+
+    jazz, rock = ("alice", "like", "jazz"), ("alice", "like", "rock")
+    legacy = await _legacy_stated(ch, org, "Alice likes jazz", jazz, KEY)
+    winner = await _stated(ch, org, "s2", "Alice likes rock", rock)
+    await _follow_retirement(ch, org, legacy, winner)
+    assert await _open_facts(ch, org, {("like", "rock")}) == {("like", "rock")}
+    out = await handle_memory_restore(
+        MemoryRestoreInput(
+            org=org,
+            namespace=NS,
+            agent="bot",
+            user_id=USER,
+            session_id="s0",
+            memory_key=KEY,
+            if_superseded_by=str(winner["memory_id"]),
+        )
+    )
+    assert out.restored
+    await _mutations_done(ch, org)
     want = {("like", "jazz"), ("like", "rock")}
     assert await _open_facts(ch, org, want) == want
 

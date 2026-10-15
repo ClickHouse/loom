@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from server.core.ch import get_client
+from server.core.datetimes import naive_utc_now
 from server.core.hashing import hash_text
 from server.core.hashing import sha256_value as _content_sha256
 from server.core.vectors import codes_state
@@ -265,9 +266,6 @@ async def _bulk_intra_batch_pairs(
             from server.memory.app.conflicts import namespace_conflict_policy
 
             if await namespace_conflict_policy(input.org, input.namespace, ch=ch) == "newest_wins":
-                from datetime import UTC as _UTC
-                from datetime import datetime as _dt
-
                 from server.memory.domain.conflicts import (
                     intra_batch_supersessions,
                     stamp_intra_batch_supersessions,
@@ -278,7 +276,7 @@ async def _bulk_intra_batch_pairs(
                     [str(r.get("memory_type") or "") for r in state.memory_rows],
                 )
                 _intra_pairs = stamp_intra_batch_supersessions(
-                    state.memory_rows, state.embedding_rows, _ib, _dt.now(_UTC).replace(tzinfo=None)
+                    state.memory_rows, state.embedding_rows, _ib, naive_utc_now()
                 )
                 if _intra_pairs:
                     log.info(
@@ -306,7 +304,7 @@ async def _bulk_judge_same_key(
         memory_rows=state.memory_rows,
         embedding_rows=state.embedding_rows,
         ch=ch,
-        now=datetime.now(UTC).replace(tzinfo=None),
+        now=naive_utc_now(),
     )
     # By key: a key written twice in the batch is two versions of one row, and the one
     # FINAL keeps (the one judged) is now superseded, so neither version may mark,
@@ -610,22 +608,24 @@ async def _record_intra_batch_retirements(
         record_auto_supersessions,
     )
 
-    by_id = {str(r.get("memory_id") or ""): r for r in state.memory_rows}
-    # A key sent twice is two versions of one row, and FINAL keeps the higher: an
-    # earlier row that is not its key's kept version retired nothing.
+    key_of = {str(r.get("memory_id") or ""): r.get("memory_key") for r in state.memory_rows}
+    # A key sent twice is two versions of one row (one id, when the key already
+    # existed), and FINAL keeps the higher: only a kept version that landed
+    # superseded retired its row.
     kept: dict[str, dict[str, Any]] = {}
     for r in state.memory_rows:
         key = str(r.get("memory_key") or "")
         if key not in kept or int(r.get("version") or 0) >= int(kept[key].get("version") or 0):
             kept[key] = r
+    newer_of = dict(pairs)
     retired = [
         {
-            **by_id[older],
-            "superseded_by": newer,
-            "superseded_by_key": by_id.get(newer, {}).get("memory_key"),
+            **r,
+            "superseded_by": newer_of[mid],
+            "superseded_by_key": key_of.get(newer_of[mid]),
         }
-        for older, newer in dict(pairs).items()
-        if older in by_id and kept.get(str(by_id[older].get("memory_key") or "")) is by_id[older]
+        for r in kept.values()
+        if (mid := str(r.get("memory_id") or "")) in newer_of and r.get("status") == "superseded"
     ]
     await record_auto_supersessions(
         org=input.org,

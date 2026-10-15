@@ -821,6 +821,23 @@ export async function listAutoResolved(
   return { rows: out, next_cursor: page.next_cursor ?? null };
 }
 
+/** Whether Loom retired any memory on its own in the namespace within the Auto-resolved
+ *  tab's window: one record's time asked for. The sidebar shows the Review queue for it
+ *  when there is no open conflict. */
+export async function hasAutoResolved(
+  id: Pick<Identity, "org" | "namespace">,
+  opts: RequestOpts = {},
+): Promise<boolean> {
+  const page = await listAuditLog(id, {
+    event_type: "memory.auto_supersede",
+    limit: 1,
+    since: new Date(Date.now() - AUTO_RESOLVED_WINDOW_MS).toISOString(),
+    fields: ["ts"],
+    signal: opts.signal,
+  });
+  return (page.rows || []).length > 0;
+}
+
 /** Pages of `memory.unsupersede` records `listUnsuperseded` reads at most. A restore is
  *  one record, made by a person clicking Undo or Restore, so 5 pages of 500 cover far more
  *  restores than a 30-day window holds; past that, an older retirement shows Undo, and
