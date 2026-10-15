@@ -3,6 +3,8 @@ knows the codec; the migration files stay byte-identical."""
 
 from __future__ import annotations
 
+import pytest
+
 from server.core.schema import vector_codec_ddl as vcd
 
 BASELINE = """CREATE TABLE IF NOT EXISTS loom.memory_embeddings
@@ -105,3 +107,156 @@ def test_every_coded_table_except_entity_vectors_has_a_placeholder_rule() -> Non
 
     for table, (cols, _chain) in vcd.CODED_TABLES.items():
         assert PLACEHOLDER_COLUMNS[f"loom.{table}"] == cols, table
+
+
+def test_codable_widths_are_whole_bytes_of_rabitq_bits() -> None:
+    assert vcd.codable(8) and vcd.codable(384) and vcd.codable(3072)
+    assert not vcd.codable(12) and not vcd.codable(0)
+
+
+@pytest.mark.parametrize(("dim", "coded"), [(3072, True), (1020, False)])
+def test_a_fresh_install_codes_its_vectors_only_at_a_codable_width(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, dim: int, coded: bool
+) -> None:
+    from server.core.schema import migrate as mig
+    from server.core.schema.journal import sorted_migrations
+
+    (tmp_path / "1999_a.sql").write_text(
+        "CREATE TABLE IF NOT EXISTS loom.x (a UInt8) ENGINE = Memory;\n"
+    )
+    seen: list[bool] = []
+    monkeypatch.setattr(mig, "_nlp_available", lambda ch: True)
+    monkeypatch.setattr(mig, "_codec_supported", lambda ch: True)
+    monkeypatch.setattr(mig, "_install_vector_width", lambda ch: dim)
+    monkeypatch.setattr(mig, "_dimensions_setting_known", lambda ch: False)
+    monkeypatch.setattr(mig, "_sync_settings_accepted", lambda ch: frozenset())
+    monkeypatch.setattr(mig, "_run_file", lambda ch, f, **kw: seen.append(kw["coded"]))
+    monkeypatch.setattr(mig, "_record", lambda ch, name, cs: None)
+    files = sorted_migrations(tmp_path.glob("*.sql"))
+    assert mig._apply_pending(object(), files, dry=False, lease=None) == 0  # type: ignore[arg-type]
+    assert seen == [coded]
+
+
+@pytest.mark.parametrize(
+    ("sql", "noted"),
+    [
+        (
+            "CREATE TABLE IF NOT EXISTS loom.chunks (embedding Array(Float32)) ENGINE = Memory;",
+            True,
+        ),
+        ("CREATE TABLE IF NOT EXISTS loom.x (a UInt8) ENGINE = Memory;", False),
+    ],
+)
+def test_the_plain_layout_is_noted_only_when_a_vector_table_is_created(
+    monkeypatch: pytest.MonkeyPatch, capsys, tmp_path, sql: str, noted: bool
+) -> None:
+    from server.core.schema import migrate as mig
+
+    (tmp_path / "1999_a.sql").write_text(sql + "\n")
+    monkeypatch.setattr(mig, "_nlp_available", lambda ch: True)
+    monkeypatch.setattr(mig, "_codec_supported", lambda ch: True)
+    monkeypatch.setattr(mig, "_install_vector_width", lambda ch: None)
+    monkeypatch.setattr(mig, "_dimensions_setting_known", lambda ch: False)
+    monkeypatch.setattr(mig, "_apply_file", lambda ch, f, **kw: None)
+    files = [tmp_path / "1999_a.sql"]
+    assert mig._apply_pending(object(), files, dry=True, lease=None) == 0  # type: ignore[arg-type]
+    assert ("created plain" in capsys.readouterr().out) is noted
+
+
+def test_a_server_without_the_codec_says_so(
+    monkeypatch: pytest.MonkeyPatch, capsys, tmp_path
+) -> None:
+    from server.core.schema import migrate as mig
+
+    (tmp_path / "1999_a.sql").write_text(
+        "CREATE TABLE IF NOT EXISTS loom.chunks (embedding Array(Float32)) ENGINE = Memory;\n"
+    )
+    monkeypatch.setattr(mig, "_nlp_available", lambda ch: True)
+    monkeypatch.setattr(mig, "_codec_supported", lambda ch: False)
+    monkeypatch.setattr(mig, "_dimensions_setting_known", lambda ch: False)
+    monkeypatch.setattr(mig, "_apply_file", lambda ch, f, **kw: None)
+    files = [tmp_path / "1999_a.sql"]
+    assert mig._apply_pending(object(), files, dry=True, lease=None) == 0  # type: ignore[arg-type]
+    assert "no Quantized codec here" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("columns", "model", "width"),
+    [
+        (
+            [
+                ("memory_embeddings", "embedding", "CODEC(Quantized('rabitq', 16, 0))"),
+                ("entity_vectors", "entity_embedding", "CODEC(Quantized('rabitq', 16, 0), LZ4)"),
+                ("memory_embeddings", "memory_key_embedding", "CODEC(NONE)"),  # mid-rebuild
+            ],
+            "fake-ngram-3072",
+            16,
+        ),
+        ([("memory_embeddings", "embedding", "CODEC(NONE)")], "fake-ngram-3072", None),
+        ([("memory_embeddings", "org", "")], "fake-ngram-3072", 3072),  # no vector column yet
+        ([], "fake-ngram-3072", 3072),
+    ],
+    ids=["stored-width", "plain-install", "not-a-vector", "fresh-install"],
+)
+def test_new_coded_tables_take_the_width_the_install_stores(
+    settings_override, columns: list[tuple[str, str, str]], model: str, width: int | None
+) -> None:
+    """A model chosen in the dashboard leaves LOOM_EMBEDDING_DIM at its old value."""
+    from types import SimpleNamespace
+
+    from server.core.schema import migrate as mig
+
+    settings_override(embedding_dim=3072, embedding_model=model)
+
+    class _CH:
+        def query(self, sql: str, parameters: dict | None = None) -> SimpleNamespace:
+            assert "memory_embeddings" in parameters["tables"]
+            return SimpleNamespace(result_rows=columns)
+
+    assert mig._install_vector_width(_CH()) == width  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(("width", "coded"), [(None, False), (384, True)])
+def test_an_install_with_plain_vector_tables_creates_new_ones_plain(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, width: int | None, coded: bool
+) -> None:
+    from server.core.schema import migrate as mig
+    from server.core.schema.journal import sorted_migrations
+
+    (tmp_path / "1999_a.sql").write_text(
+        "CREATE TABLE IF NOT EXISTS loom.x (a UInt8) ENGINE = Memory;\n"
+    )
+    seen: list[tuple[bool, int]] = []
+    monkeypatch.setattr(mig, "_nlp_available", lambda ch: True)
+    monkeypatch.setattr(mig, "_codec_supported", lambda ch: True)
+    monkeypatch.setattr(mig, "_install_vector_width", lambda ch: width)
+    monkeypatch.setattr(mig, "_dimensions_setting_known", lambda ch: False)
+    monkeypatch.setattr(mig, "_sync_settings_accepted", lambda ch: frozenset())
+    monkeypatch.setattr(
+        mig, "_run_file", lambda ch, f, **kw: seen.append((kw["coded"], kw["codec_dim"]))
+    )
+    monkeypatch.setattr(mig, "_record", lambda ch, name, cs: None)
+    files = sorted_migrations(tmp_path.glob("*.sql"))
+    assert mig._apply_pending(object(), files, dry=False, lease=None) == 0  # type: ignore[arg-type]
+    assert seen == [(coded, width or 0)]
+
+
+def test_codec_width_reads_the_quantized_argument() -> None:
+    assert vcd.codec_width("CODEC(Quantized(\\'rabitq\\', 1024, 0), LZ4)") == 1024
+    assert vcd.codec_width("CODEC(ZSTD(1))") is None
+
+
+def test_coded_tables_of_several_widths_are_named(settings_override, capsys) -> None:
+    from types import SimpleNamespace
+
+    from server.core.schema import migrate as mig
+
+    settings_override(embedding_dim=3072, embedding_model="fake-ngram-3072")
+    rows = [
+        ("memory_embeddings", "embedding", "CODEC(Quantized('rabitq', 16, 0))"),
+        ("chunks", "embedding", "CODEC(Quantized('rabitq', 16, 0))"),
+        ("categories", "embedding", "CODEC(Quantized('rabitq', 8, 0))"),
+    ]
+    ch = SimpleNamespace(query=lambda sql, parameters=None: SimpleNamespace(result_rows=rows))
+    assert mig._install_vector_width(ch) == 16  # type: ignore[arg-type]
+    assert "several widths [8, 16]" in capsys.readouterr().out

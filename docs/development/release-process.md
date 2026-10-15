@@ -82,19 +82,54 @@ A tag containing `-` (`vX.Y.Z-rc.1`) makes a GitHub pre-release and does not mov
 1. `version` takes the version from the tag (`vX.Y.Z` → `X.Y.Z`) and refuses a ref that
    is not a `v*` tag or not SemVer; it fails unless each of the three changelogs has
    `## [X.Y.Z] - YYYY-MM-DD` and `server/__init__.py` reads `__version__ = "X.Y.Z"`;
-2. `build` writes the version into the Python and TypeScript SDK sources and builds the
+2. `clickhouse` names the ClickHouse release the Compose bundle runs: the release
+   `clickhouse/clickhouse-server:latest` names now (`dev/clickhouse_release.sh`), or, on a
+   re-run, the one this version's published bundle already names, so rerunning the
+   installer for a version never moves ClickHouse (`scripts/release/published_bundle.sh`;
+   a release without a bundle resolves anew, as `github-release` never replaces one, so
+   nobody can have installed it). It migrates a fresh server of that
+   release and runs `make schema-check` before `build` may pin it. Each tag resolves
+   its own, so a final release can name a newer ClickHouse than its release candidates.
+   When `latest` names a bad release, dispatch the tag with an exact one instead
+   (`gh workflow run release.yml --ref vX.Y.Z -f clickhouse_image=clickhouse/clickhouse-server:A.B.C.D`);
+   a bundle already published keeps its own, and the run warns that it ignored the input.
+   The dispatch passes only if that release dumps the tag's `schemas/schema.sql`;
+   otherwise regenerate it on that release (the
+   [schema dump](./migrations.md#schema-dump-and-check) commands with
+   `LOOM_CLICKHOUSE_IMAGE=clickhouse/clickhouse-server:A.B.C.D`), commit it, and re-tag.
+   A ClickHouse downgrade (see step 7) is refused here first, so such a run stops before
+   it builds and pushes images;
+3. `build` writes the version into the Python and TypeScript SDK sources and builds the
    Python SDK wheel and sdist, the npm tarball (after the TypeScript SDK's `check:dist`),
    and zips of the two plugins (`loom-claude-code-plugin-vX.Y.Z.zip`,
    `loom-codex-plugin-vX.Y.Z.zip`); it also builds the source-free Compose bundle and its
-   SHA-256 file;
-3. `verify` checks those exact files: their names and embedded versions, the plugin
+   SHA-256 file, naming that ClickHouse release;
+4. `verify` checks those exact files: their names and embedded versions, the plugin
    manifests, no tests in the Claude Code zip, the executable bits git records, and
+   that the bundle names the ClickHouse release the `clickhouse` job checked, and
    smoke-tests the wheel in a clean venv with `scripts/gates/sdk_wheel_smoke.py`;
-4. `docker` publishes `ghcr.io/clickhouse/loom` for linux/amd64 and linux/arm64, with
+5. `docker` publishes `ghcr.io/clickhouse/loom` for linux/amd64 and linux/arm64, with
    provenance and an SBOM;
-5. `github-release` creates the GitHub Release only after that image exists, or updates it
+6. `docker-smoke` installs the bundle with that image, on the ClickHouse release it
+   names, on amd64 and arm64;
+7. `github-release` creates the GitHub Release only after that image exists, or updates it
    on a re-run, with notes generated from the commits since the previous tag, and attaches
-   the verified files.
+   the verified files. A bundle the release already carries is kept, and so is its checksum
+   (one the release lost is written again from it): replacing an asset deletes it first,
+   and a failed upload would leave an installed version without its bundle. A new bundle
+   never names an older ClickHouse release than the bundles of the 30 newest releases
+   (prereleases included) do, since an install upgrading to it would start an older
+   server on data a newer one wrote; the job fails instead, unless the dispatch adds
+   `-f allow_clickhouse_downgrade=true`. This job runs for one tag at a time, so two
+   tags released together cannot both pass the check against the same older bundle.
+   Only one more such job waits: a third tag's publish cancels the waiting one, which must
+   then be re-run by hand (Re-run failed jobs). A refusal here comes after `docker` pushed
+   the tag's image tags (and `:latest` for a final release). A re-run keeps the run's
+   inputs and fails again, so dispatch the tag instead, which also publishes the SDKs:
+   `gh workflow run release.yml --ref vX.Y.Z -f clickhouse_image=<the newer release the error names>`
+   (if that release dumps the tag's `schemas/schema.sql`), or
+   `gh workflow run release.yml --ref vX.Y.Z -f allow_clickhouse_downgrade=true`.
+   Otherwise move `:latest` back to the previous release by hand.
 
 The server image is published before the GitHub Release, so an installer shown on the
 release page never points at a missing image.

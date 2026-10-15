@@ -243,25 +243,33 @@ def _cmd_reembed(args: argparse.Namespace) -> int:
     """Re-embed off-model vectors to the configured embedder (run after a
     LOOM_EMBEDDING_MODEL change — Loom does not auto-re-embed)."""
 
+    from server.core.errors import CodedWidthMismatchError
     from server.embedding import get_embedder
     from server.memory.app.reembed import reembed_all
 
     async def _go(ch: Any) -> int:
         embedder = get_embedder()
-        probe = await embedder.embed("dimension probe")
-        print(f"target embedder: {embedder.model_name} ({len(probe)}-dim)")
-        written = await reembed_all(
-            ch,
-            embedder,
-            org=args.org or None,
-            namespace=args.namespace or None,
-            batch=args.batch_size,
-            dry_run=args.dry_run,
-            delete_old=args.delete_old,
-            in_database=(getattr(args, "in_database", "") or None),
-            key_only=bool(getattr(args, "key_only", False)),
-            resume=(args.resume or None),
-        )
+        print(f"target embedder: {embedder.model_name} ({embedder.dim}-dim)")
+        try:
+            written = await reembed_all(
+                ch,
+                embedder,
+                org=args.org or None,
+                namespace=args.namespace or None,
+                batch=args.batch_size,
+                dry_run=args.dry_run,
+                delete_old=args.delete_old,
+                in_database=(getattr(args, "in_database", "") or None),
+                key_only=bool(getattr(args, "key_only", False)),
+                resume=(args.resume or None),
+            )
+        except CodedWidthMismatchError as e:
+            print(
+                f"loom reembed: {e}. A coded table takes one width: change the model in "
+                "Settings → Models & keys, which rebuilds the tables at the new width.",
+                file=sys.stderr,
+            )
+            return 2
         print(f"re-embedded: {written}")
         return 0
 
@@ -274,7 +282,9 @@ def _add_reembed_parser(sub: Any) -> None:
         "reembed",
         help="Re-embed vectors whose embedding_model != the configured "
         "embedder (run after changing LOOM_EMBEDDING_MODEL — Loom does not "
-        "auto-re-embed). Covers memory, entity, and conversation vectors.",
+        "auto-re-embed). Covers memory, entity, and conversation vectors. Coded "
+        "vector tables keep their width: change a model of another width in "
+        "Settings → Models & keys, which rebuilds them.",
     )
     p_reembed.add_argument("--org", default="", help="Limit to one org")
     p_reembed.add_argument("--namespace", default="", help="Limit to one namespace")

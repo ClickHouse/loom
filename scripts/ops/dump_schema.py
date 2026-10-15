@@ -4,10 +4,12 @@
     make schema-dump      # python -m scripts.ops.dump_schema
     make schema-check     # python -m scripts.ops.dump_schema --check (CI)
 
-Run it against a fresh ClickHouse of the version CI pins (see
-`dev/ci_start_clickhouse.sh`) after `loom migrate`: the dump is what that
-server prints, so another version, a server with the `Quantized` codec, or a
-database that holds rebuild twins dumps differently.
+Run it against a fresh ClickHouse of the release CI runs, the latest (see
+`dev/ci_start_clickhouse.sh`), after `loom migrate`: the dump is what that
+server prints, so another release, a server without the `Quantized` codec, or
+a database that holds rebuild twins dumps differently. `--check` names the
+release it dumped from, so a new release that prints DDL differently is told
+from a schema change.
 
 It connects with the `LOOM_CH_*` settings `loom migrate` uses. The dump is
 built in full before anything is written: a failed dump leaves the file as it
@@ -148,10 +150,15 @@ def diff_head(target: GeneratedFile, fresh: str, limit: int = DIFF_LINES) -> str
     return "".join(itertools.islice(lines, limit))
 
 
-def build() -> str:
+def build() -> tuple[str, str]:
+    """The dump, and the ClickHouse release that printed it."""
     from server.core.schema.migrate import client
 
-    return dump(client())
+    c = client()
+    try:
+        return dump(c), str(c.query("SELECT version()").result_rows[0][0])
+    finally:
+        c.close()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -163,7 +170,7 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     target = dataclasses.replace(TARGET, path=args.out)
     try:
-        text = build()
+        text, version = build()
     except Exception as e:  # noqa: BLE001 - any failure is a failed dump, reported as one
         print(f"schema dump failed: {e}", file=sys.stderr)
         return 1
@@ -172,7 +179,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     rc = target.sync(text, check=args.check)
     if rc:
-        sys.stderr.write(diff_head(target, text))
+        sys.stderr.write(f"dumped from ClickHouse {version}\n" + diff_head(target, text))
     return rc
 
 

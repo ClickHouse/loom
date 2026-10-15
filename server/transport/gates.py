@@ -299,6 +299,25 @@ def rate_limit(
         return None
 
 
+def session_end_rate_limit(auth: AuthInfo | None, org: str) -> CheckResult | None:
+    """The limiter's answer for a `DELETE /mcp`, which names no namespace: it
+    draws run.complete's buckets from a slot of its own per subject, so one
+    token's DELETEs cannot use up another's slot; every DELETE still counts
+    against the org's shared bucket. FAILS OPEN, as `rate_limit` does."""
+    from server.core.ratelimit import get_limiter
+
+    subject = auth.subject if auth is not None and auth.subject else ""
+    try:
+        return get_limiter().check(
+            f"mcp-session-end:{subject}",
+            "run.complete",
+            org=org or None,
+        )
+    except Exception as e:  # noqa: BLE001 — FAILS OPEN: a limiter error admits the DELETE
+        _fail_open("rate_limit", "run.complete", e)
+        return None
+
+
 # Requests each org has running in this process (org -> count).
 _IN_FLIGHT: dict[str, int] = {}
 

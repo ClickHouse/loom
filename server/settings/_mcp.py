@@ -61,9 +61,13 @@ class McpSettings(BaseModel):
     # on its first turn instead of spending a turn loading them. Comma-separated op names;
     # empty = none.
     mcp_always_load_tools: str = "code.search,code.symbol"
-    # Seconds without a tool call after which an MCP session's implicit run (one
-    # per `Mcp-Session-Id`, begun on the first run-scoped tool call) is closed.
-    mcp_session_run_idle_seconds: int = Field(default=1800, ge=1)
+    # Seconds without a tool call after which the mcp_session_run_sweep worker
+    # closes an MCP session's implicit run (one per token and `Mcp-Session-Id`,
+    # begun on the first run-scoped tool call); with no background workers
+    # anywhere, idle runs stay open. At least 60: each web process re-checks its
+    # cached run once a minute (mcp_runs.CHECK_INTERVAL_S), so a shorter window
+    # would close runs a process still treats as open.
+    mcp_session_run_idle_seconds: int = Field(default=1800, ge=60)
     # A rate-limited tool call waits out its Retry-After once and re-checks
     # before returning RATE_LIMITED (MCP clients don't retry). This is the
     # longest Retry-After, seconds, that one retry waits out; a longer hint is

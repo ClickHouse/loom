@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from server.core.cursors import decode_cursor as _decode_cursor
 from server.core.cursors import encode_cursor as _encode_cursor
+from server.core.datetimes import naive_utc_now
 from server.embedding import get_embedder
 from server.identity.app.conversation_logging import set_conversation_logging
 from server.knowledge.api.models_conversations import (
@@ -69,7 +70,7 @@ async def handle_conversation_create(
     (ReplacingMergeTree(updated_at))."""
     from server.knowledge.store import conversations as conversation_repo
 
-    now = datetime.now().replace(tzinfo=None)
+    now = naive_utc_now()
     await conversation_repo.insert_thread(
         {
             "org": input.org,
@@ -98,7 +99,7 @@ async def handle_conversation_append(
     """
     from server.knowledge.store import conversations as conversation_repo
 
-    now = datetime.now().replace(tzinfo=None)
+    now = naive_utc_now()
 
     # msg_id is optional: a chat client self-logging via the MCP primer passes
     # only role + content, so derive a deterministic content hash when it's
@@ -259,7 +260,7 @@ async def handle_conversation_update(
     if existing is None:
         return ConversationUpdateOutput(updated=False, thread_id=input.thread_id)
 
-    now = datetime.now().replace(tzinfo=None)
+    now = naive_utc_now()
     merged_title = input.title if input.title is not None else existing.get("title", "")
     merged_metadata = (
         json.dumps(input.metadata) if input.metadata is not None else existing.get("metadata", "{}")

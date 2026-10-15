@@ -70,6 +70,23 @@ the newer build added.
 There are no down-migrations. To return to an earlier schema, restore a backup taken
 before the upgrade ([backup and recovery](./backup-and-recovery.md)).
 
+Each installer bundle names the ClickHouse release it was built with, so installing an
+earlier Loom version also runs an earlier ClickHouse on a volume the newer one wrote,
+which it may not read. To roll back Loom alone, keep the newer ClickHouse: before running
+the earlier installer (it starts the stack at once), pin the image ClickHouse runs now
+in the install directory's `.env`. This prints the line to put there, replacing any
+earlier `LOOM_CLICKHOUSE_IMAGE` line:
+
+```bash
+dir=${LOOM_INSTALL_DIR:-$HOME/.loom}
+echo "LOOM_CLICKHOUSE_IMAGE=$(docker inspect -f '{{.Config.Image}}' \
+  "$(docker compose --project-directory "$dir" ps -q clickhouse)")"
+```
+
+The installer keeps `.env`, so the pin holds ClickHouse through later upgrades too:
+delete the `LOOM_CLICKHOUSE_IMAGE` line before installing a newer Loom version. To go
+back on both, restore a backup taken before the upgrade.
+
 ## What stays the same across an upgrade
 
 | Across an upgrade                           | What holds                                                                        | Enforced by                               |

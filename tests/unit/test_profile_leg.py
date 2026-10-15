@@ -234,7 +234,7 @@ def test_the_stub_embeds_label_and_value_where_the_old_vector_lives() -> None:
     assert n == 1
     stub = written[0]
     assert stub["content_excerpt"] == 'drinks\n"tea"' == ps.profile_embed_text("drinks", '"tea"')
-    assert stub["embedding_dim"] == 0 and stub["embedding"] == [0.0, 0.0, 0.0]
+    assert stub["embedding_dim"] == 0 and stub["embedding"] == []  # the insert pads it
     assert stub["scope"] == "shared" and stub["embedding_model"] == "m"
     assert stub["created_at"] == "2026-09-01 00:00:00" and stub["memory_type"] == "profile"
 

@@ -26,6 +26,16 @@ from server.insights.store.provider_verify import (
     verify_reembedded_target,
 )
 
+_OPT_IN = "Set LOOM_PROVIDER_STAGING_LIVE_TEST=1 for a disposable, freshly migrated database"
+
+
+async def _require_empty(client, table: str) -> None:
+    """A rebuild stages its whole table, so rows other tests left would fail it;
+    the opt-in promises a fresh database, so say so rather than skip."""
+    row = await client.query_one(f"SELECT count() AS n FROM loom.{table}")
+    if row is not None and int(row["n"]):
+        pytest.fail(f"loom.{table} holds rows; this test needs a freshly migrated database")
+
 
 class _TestEmbedder:
     """Deterministic local test double, not a real-provider quality test."""
@@ -41,9 +51,10 @@ class _TestEmbedder:
 @pytest.mark.parametrize("table", REBUILD_TABLES)
 async def test_snapshot_sql_and_cursor_on_live_clickhouse(table):
     if os.environ.get("LOOM_PROVIDER_STAGING_LIVE_TEST") != "1":
-        pytest.skip("Set LOOM_PROVIDER_STAGING_LIVE_TEST=1 for a disposable migrated database")
+        pytest.skip(_OPT_IN)
     client = _default_client()
     await client.connect()
+    await _require_empty(client, table)
     names = StagingNames(uuid4(), table)
     identity = None
     target_uuid = None
@@ -247,10 +258,101 @@ async def test_snapshot_sql_and_cursor_on_live_clickhouse(table):
         await client.disconnect()
 
 
+class _EightDimEmbedder:
+    model_name = "rebuild-eight-dim"
+    dim = 8
+
+    async def embed_many(self, texts):
+        return [[1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0] for _ in texts]
+
+
+@pytest.mark.asyncio
+async def test_a_populated_coded_source_rebuilds_at_another_width():
+    """Staging must take the new model's width from a coded source table, whose
+    copies ClickHouse would otherwise hold to the source codec's width."""
+    if os.environ.get("LOOM_PROVIDER_STAGING_LIVE_TEST") != "1":
+        pytest.skip(_OPT_IN)
+    from server.settings import settings
+
+    client = _default_client()
+    await client.connect()
+    await _require_empty(client, "memory_embeddings")
+    codec = await client.query_one(
+        "SELECT compression_codec FROM system.columns WHERE database='loom' "
+        "AND table='memory_embeddings' AND name='embedding'"
+    )
+    if codec is None or "Quantized" not in str(codec["compression_codec"]):
+        pytest.skip("memory_embeddings is not coded on this server")
+    width = settings.embedding_dim
+    vector = [1.0] + [0.0] * (width - 1)
+    names = StagingNames(uuid4(), "memory_embeddings")
+    owned: dict[str, object] = {}
+    try:
+        await client.insert(
+            "loom.memory_embeddings",
+            [
+                {
+                    "org": "coded-rebuild",
+                    "namespace": names.job_id.hex,
+                    "agent": "a",
+                    "memory_key": "k",
+                    "memory_type": "semantic",
+                    "content_excerpt": "a fact at the old width",
+                    "embedding_model": settings.embedding_model,
+                    "embedding_dim": width,
+                    "embedding": vector,
+                    "memory_key_embedding": vector,
+                }
+            ],
+        )
+        schema = await source_schema(names, ch=client)
+        owned[names.snapshot] = identity = await ensure_snapshot(names, schema, ch=client)
+        owned[names.target] = target = await ensure_target(
+            names, schema, identity, "b" * 64, ch=client
+        )
+        embedder = _EightDimEmbedder()
+        checkpoint = await rebuild_snapshot_page(
+            names, schema, identity, target, "b" * 64, embedder, after=0, ch=client
+        )
+        assert checkpoint.rows_written >= 1
+        await verify_reembedded_target(
+            names, schema, identity, target, "b" * 64, model=embedder.model_name, dimensions=8,
+            ch=client,
+        )  # fmt: skip
+        owned[names.prepared] = await prepare_live_table(
+            names, schema, identity, target, "b" * 64,
+            expected_rows=checkpoint.rows_written, dimensions=8, ch=client,
+        )  # fmt: skip
+        prepared_codec = await client.query_one(
+            "SELECT compression_codec FROM system.columns WHERE database='loom' "
+            "AND table={t:String} AND name='embedding'",
+            {"t": names.prepared},
+        )
+        assert prepared_codec is not None and "8, 0" in str(prepared_codec["compression_codec"])
+        row = await client.query_one(
+            f"SELECT length(embedding) AS width FROM loom.{names.prepared} FINAL "
+            "WHERE org='coded-rebuild' AND namespace={ns:String}",
+            {"ns": names.job_id.hex},
+        )
+        assert row is not None and row["width"] == 8
+    finally:
+        for table, uuid in owned.items():
+            current = await client.query_one(
+                "SELECT uuid FROM system.tables WHERE database='loom' AND name={name:String}",
+                {"name": table},
+            )
+            if current is not None and str(current["uuid"]) == str(uuid):
+                await client.execute(f"DROP TABLE loom.{table} SYNC")
+        await client.execute(
+            "DELETE FROM loom.memory_embeddings WHERE org='coded-rebuild'",
+        )
+        await client.disconnect()
+
+
 @pytest.mark.asyncio
 async def test_cleanup_refuses_a_live_create_query():
     if os.environ.get("LOOM_PROVIDER_STAGING_LIVE_TEST") != "1":
-        pytest.skip("Set LOOM_PROVIDER_STAGING_LIVE_TEST=1 for a disposable migrated database")
+        pytest.skip(_OPT_IN)
     client = _default_client()
     await client.connect()
     names = StagingNames(uuid4(), "memory_embeddings")
@@ -293,15 +395,17 @@ async def _drop_owned(client, name, uuid):
 @pytest.mark.asyncio
 async def test_a_text_less_summary_card_rebuilds_verifies_and_publishes_as_a_placeholder():
     """Right after a backfill a file's summary card is the graph pass's structural row:
-    no summary, and the zero vector the insert path pads the coded column with."""
+    no summary, and the zero vector the insert path pads the vector column with."""
     if os.environ.get("LOOM_PROVIDER_STAGING_LIVE_TEST") != "1":
-        pytest.skip("Set LOOM_PROVIDER_STAGING_LIVE_TEST=1 for a disposable migrated database")
+        pytest.skip(_OPT_IN)
     from server.code.store.index import CodeRepo, build_row
 
     client = _default_client()
     await client.connect()
+    await _require_empty(client, "code_summaries")
     org, namespace = "rebuild-placeholder", f"code-{uuid4().hex[:8]}"
     names = StagingNames(uuid4(), "code_summaries")
+    embedder = _EightDimEmbedder()
     identity = target_uuid = prepared_uuid = None
     try:
         card = build_row(
@@ -316,48 +420,33 @@ async def test_a_text_less_summary_card_rebuilds_verifies_and_publishes_as_a_pla
         schema = await source_schema(names, ch=client)
         identity = await ensure_snapshot(names, schema, ch=client)
         target_uuid = await ensure_target(names, schema, identity, "a" * 64, ch=client)
-        cursor, done = 0, False
-        while not done:
-            checkpoint = await rebuild_snapshot_page(
-                names,
-                schema,
-                identity,
-                target_uuid,
-                "a" * 64,
-                _TestEmbedder(),
-                after=cursor,
-                ch=client,
-            )
-            cursor, done = checkpoint.cursor, checkpoint.done
-        rows = await verify_reembedded_target(
-            names,
-            schema,
-            identity,
-            target_uuid,
-            "a" * 64,
-            model="rebuild-page-test",
-            dimensions=3,
-            ch=client,
+        checkpoint = await rebuild_snapshot_page(
+            names, schema, identity, target_uuid, "a" * 64, embedder, after=0, ch=client
         )
+        assert checkpoint.done and checkpoint.rows_written == 1
+        rows = await verify_reembedded_target(
+            names, schema, identity, target_uuid, "a" * 64, model=embedder.model_name,
+            dimensions=8, ch=client,
+        )  # fmt: skip
         prepared_uuid = await prepare_live_table(
-            names,
-            schema,
-            identity,
-            target_uuid,
-            "a" * 64,
-            expected_rows=rows,
-            dimensions=3,
-            ch=client,
+            names, schema, identity, target_uuid, "a" * 64,
+            expected_rows=rows, dimensions=8, ch=client,
+        )  # fmt: skip
+        codec = await client.query_one(
+            "SELECT compression_codec FROM system.columns WHERE database='loom' "
+            "AND table={t:String} AND name='embedding'",
+            {"t": names.prepared},
         )
         published = await client.query_one(
             f"SELECT embedding_model, embedding, embedding_dim, pagerank FROM loom.{names.prepared} "
             "WHERE org = {org:String} AND namespace = {ns:String}",
             {"org": org, "ns": namespace},
         )
-        assert published["embedding_model"] == "rebuild-page-test"
+        assert published["embedding_model"] == embedder.model_name
         assert (published["embedding_dim"], published["pagerank"]) == (0, 0.5)
-        # Codec-free on the CI floor; a coded column re-pads to the new width.
-        assert published["embedding"] == []
+        # A coded column takes its placeholder at the new width; a plain one stays empty.
+        coded = codec is not None and "Quantized" in str(codec["compression_codec"])
+        assert published["embedding"] == ([0.0] * 8 if coded else [])
     finally:
         for name, uuid in (
             (names.prepared, prepared_uuid),

@@ -56,6 +56,8 @@ LOOM_INSTALL_BUNDLE="$PWD/loom-stack.tar.gz" \
   LOOM_INSTALL_CHECKSUM="$PWD/loom-stack.tar.gz.sha256" sh install.sh
 ```
 
+Each release runs the ClickHouse release that was latest when it was built, so rerunning
+the same Loom version keeps its ClickHouse; installing a newer Loom version moves it.
 Rerunning the installer updates the managed Compose/configuration files and reconciles
 the containers. It preserves `~/.loom/.env` and the named Docker volumes. To stop without
 deleting data:
@@ -106,6 +108,9 @@ For an already running single-user stack, follow the [switching instructions](#2
 instead; container recreation preserves the existing data volumes.
 
 ### Contributor path: build a checkout
+
+Prerequisite: Docker Compose 2.34 or later, which the checkout's compose file needs to
+pull ClickHouse daily.
 
 ```bash
 git clone https://github.com/ClickHouse/loom && cd loom

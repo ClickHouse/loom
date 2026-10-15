@@ -245,7 +245,7 @@ async def handle_cost_record_turns(input: CostRecordTurnsInput) -> CostRecordTur
                 t.output_tokens,
                 round(cost if priced else 0.0, 6),
                 priced,
-                turn_at.replace(tzinfo=None),
+                turn_at.astimezone(UTC),  # aware: the driver reads a naive one as local
             ]
         )
     try:

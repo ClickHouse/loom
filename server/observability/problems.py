@@ -53,6 +53,8 @@ class HealthState:
     server (post-boot) share one collector."""
 
     probed_dim: int | None = None
+    # Coded columns whose width their writes do not carry (`codes_state.width_mismatches`).
+    width_mismatches: Mapping[str, tuple[int, int]] = field(default_factory=dict)
     provider_status: Mapping[str, Any] | None = None  # provider_health.status()
     pending_migrations: tuple[str, ...] | None = None
     worker_lease_held: bool | None = None
@@ -134,9 +136,10 @@ def _embedder_problems(settings: Any, state: HealthState) -> list[Problem]:
     model = str(settings.embedding_model)
     provider = _embedder_provider(model)
     fix_real = (
-        "Choose an embedding model in Settings → Models & keys, or set "
-        "LOOM_EMBEDDING_MODEL=text-embedding-3-small with OPENAI_API_KEY (or "
-        "local:bge-small for a keyless CPU embedder) and run `loom reembed`."
+        "Choose an embedding model in Settings → Models & keys, which re-embeds what is "
+        "stored at the model's width. Or set LOOM_EMBEDDING_MODEL=<a model of the width "
+        "the vector tables store> with its key and run `loom reembed`, which keeps that "
+        "width."
     )
     if provider == "fake":
         out.append(
@@ -172,6 +175,28 @@ def _embedder_problems(settings: Any, state: HealthState) -> list[Problem]:
                 "width fail or mis-rank.",
                 f"Set LOOM_EMBEDDING_DIM={state.probed_dim} and run `loom reembed` if rows "
                 "were written at the old width.",
+                source="runtime",
+            )
+        )
+    if state.width_mismatches:
+        groups: dict[tuple[int, int], list[str]] = {}
+        for column, widths in sorted(state.width_mismatches.items()):
+            groups.setdefault(widths, []).append(column)
+        columns = "; ".join(
+            f"{stored}-dim columns written at {written}: {', '.join(cols[:3])}"
+            + (f" and {len(cols) - 3} more" if len(cols) > 3 else "")
+            for (stored, written), cols in groups.items()
+        )
+        out.append(
+            Problem(
+                "coded_width_mismatch",
+                "error",
+                f"A Quantized codec fixes its column's width when the table is created, so "
+                f"these writes fail: {columns}.",
+                "Change the model in Settings → Models & keys, which rebuilds the vector tables "
+                "at the new width. Setting LOOM_EMBEDDING_DIM (or the label's dim in "
+                "LOOM_CODE_VECTOR_TABLES) back to the stored width helps only a model that "
+                "can emit it.",
                 source="runtime",
             )
         )

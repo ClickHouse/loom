@@ -9,7 +9,7 @@ sibling's insert between one contender's insert and its read-back."""
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -84,6 +84,8 @@ class FakeCH:
             d = dict(zip(column_names, r, strict=True))
             assert d["name"] == LEASE_NAME
             d.setdefault("acquired_at", self.clock.now)
+            # ClickHouse stores the instant and reads it back naive UTC.
+            d["acquired_at"] = d["acquired_at"].replace(tzinfo=None)
             d["renewed_at"] = self.clock.now
             prev = self.rows.get(d["holder"])
             if prev is None or d["version"] >= prev["version"]:
@@ -146,7 +148,8 @@ def test_lone_contender_holds_after_the_settle_and_releases() -> None:
     assert not lease.held
     cols, row = ch.inserts[-1]
     assert "acquired_at" in cols and row[cols.index("released")] is True
-    assert row[cols.index("acquired_at")] == T0  # the queue position is kept
+    # the queue position is kept, sent as the UTC instant it was read as
+    assert row[cols.index("acquired_at")] == T0.replace(tzinfo=UTC)
     assert ch.rows["web:1:aa"]["released"] is True
     assert winner([]) is None
 
@@ -241,7 +244,7 @@ def test_renewal_is_due_after_a_third_of_the_ttl_and_keeps_the_position() -> Non
     me.renew_if_due()
     assert len(ch.inserts) == n + 1
     cols, row = ch.inserts[-1]
-    assert row[cols.index("acquired_at")] == T0
+    assert row[cols.index("acquired_at")] == T0.replace(tzinfo=UTC)
     assert row[cols.index("released")] is False
     assert ch.rows["web:1:aa"]["renewed_at"] == clock.now
     # A waiting contender renews too, so it does not expire in the queue.

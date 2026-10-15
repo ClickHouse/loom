@@ -3,18 +3,25 @@
 # deploy/clickhouse-config/*.xml + the lemmagen3 'en' dictionary. Without these,
 # the content_excerpt_{stem,lemma} MATERIALIZED columns can't evaluate
 # lemmatize()/stem() (experimental, gated) and lightweight UPDATEs fail on
-# CH 26.5 — so every insert into memory_embeddings dies and search returns
+# ClickHouse — so every insert into memory_embeddings dies and search returns
 # nothing. GitHub Actions `services:` start BEFORE checkout and can't mount
 # repo files, so CI runs the container as a post-checkout step via this script.
 #
-# Pinned to the same image as dev/docker-compose.dev.yml so CI is reproducible
-# and matches what we validate against locally.
+# The same image as dev/docker-compose.dev.yml, the latest release, so CI
+# validates what runs locally.
 set -euo pipefail
 
 ROOT="${GITHUB_WORKSPACE:-$(pwd)}"
 CFG="$ROOT/deploy/clickhouse-config"
+# A CI run passes the one release it resolved (dev/clickhouse_release.sh).
+IMAGE="${LOOM_CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server:latest}"
+# A moving tag is pulled every time, so a cached image cannot hold an older build.
+case "$IMAGE" in
+  *:latest | *:head) PULL=always ;;
+  *) PULL=missing ;;
+esac
 
-docker run -d --name loom-ch \
+docker run -d --pull "$PULL" --name loom-ch \
   -p 8123:8123 -p 9000:9000 \
   -e CLICKHOUSE_DB=loom \
   -e CLICKHOUSE_USER=loom \
@@ -26,7 +33,7 @@ docker run -d --name loom-ch \
   -v "$CFG/nlp_user_settings.xml:/etc/clickhouse-server/users.d/nlp_user_settings.xml:ro" \
   -v "$CFG/merge_tree_settings.xml:/etc/clickhouse-server/config.d/merge_tree_settings.xml:ro" \
   -v "$CFG/keeper.xml:/etc/clickhouse-server/config.d/keeper.xml:ro" \
-  clickhouse/clickhouse-server:26.5.1.882
+  "$IMAGE"
 # named_collections.xml is intentionally omitted: it's gitignored (built from a
 # template against an operator secret) and only powers CH SQL ai* functions,
 # which the test suite doesn't exercise.

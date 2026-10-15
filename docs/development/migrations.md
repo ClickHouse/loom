@@ -132,10 +132,10 @@ operator step ([release process](./release-process.md#changelogs)).
 
 `schemas/schema.sql` is the dumped result of applying every migration: read it to
 understand the current shape, never hand-edit it. After a migration change, regenerate it
-against a fresh ClickHouse of the version CI pins:
+against a fresh ClickHouse of the release CI tests (`clickhouse/clickhouse-server:latest`):
 
 ```bash
-bash dev/ci_start_clickhouse.sh     # the pinned image with Loom's server config
+bash dev/ci_start_clickhouse.sh     # that image with Loom's server config
 make migrate
 make schema-dump                    # rewrites schemas/schema.sql only when the dump differs
 make schema-check                   # exit 1 with the head of the diff; writes nothing
@@ -146,6 +146,14 @@ A dump that fails leaves the file as it was. Another ClickHouse version, a serve
 pinned container matters. Internal tables (`_migrations`, names with a leading `_` or `.`)
 are left out. CI's `schema-check` job replays every migration on a fresh server, runs the
 strict dry run, then `make schema-check`.
+
+CI follows `latest`, so a new ClickHouse release that prints DDL differently turns
+`schema-check` red with no Loom change. Read the diff the job prints: when it is only
+formatting, run the four commands above (they pull the new release) and commit
+`schemas/schema.sql` on its own. A change in meaning (a type, a default, an engine
+setting) is a ClickHouse behaviour change to look into before dumping over it;
+`LOOM_CLICKHOUSE_IMAGE=clickhouse/clickhouse-server:A.B.C.D` runs the commands above on
+the last release that dumped cleanly, to compare.
 
 ## Checklist
 

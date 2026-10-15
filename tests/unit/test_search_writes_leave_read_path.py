@@ -1,7 +1,7 @@
-"""A search's writes leave the read path. The MCP session run
-is registered at once under `mcp-<session_id>` while `run.begin` lands in the
-background; closing waits for the begin so complete never precedes it; the
-page park is a fire-and-forget insert whose key is known before the row."""
+"""A search's writes leave the read path. The MCP session run is registered at
+once under its id while `run.begin` lands in the background; closing waits for
+the begin so complete never precedes it; the page park is a fire-and-forget
+insert whose key is known before the row."""
 
 from __future__ import annotations
 
@@ -12,16 +12,25 @@ from typing import Any
 import pytest
 
 from server.memory.app import search_pages as sp
+from server.tasks.domain.session_runs import session_run_id
 from server.transport import mcp_runs
 
 DEFAULTS = {"org": "clickhouse", "namespace": "ns-a", "agent": "cursor"}
+
+
+CALLER = mcp_runs.Caller()
+
+
+def rid(session_id: str) -> str:
+    """The implicit run id of `session_id` under DEFAULTS' org, for an unpinned caller."""
+    return session_run_id("clickhouse", CALLER.subject, session_id)
 
 
 @pytest.fixture(autouse=True)
 def _flag(monkeypatch: pytest.MonkeyPatch):
     from server.settings import settings
 
-    monkeypatch.setattr(settings, "mcp_session_run_idle_seconds", 1800, raising=False)
+    monkeypatch.setattr(settings, "mcp_session_run_idle_seconds", 1800)
     mcp_runs._RUNS.clear()
     mcp_runs._BEGIN_FAILED_AT.clear()
     yield
@@ -35,39 +44,43 @@ def test_ensure_returns_before_run_begin_lands_and_close_waits_for_it(monkeypatc
     gate = asyncio.Event()
     order: list[str] = []
 
-    async def slow_begin(inp: Any) -> Any:
+    async def slow_begin(inp: Any, *, started_at: Any) -> None:
         await gate.wait()
         order.append(f"begin:{inp.run_id}")
-        from server.tasks.api.models_run import RunBeginOutput
 
-        return RunBeginOutput(run_id=inp.run_id, started_at="t0")
-
-    async def complete(inp: Any) -> Any:
+    async def complete(ch: Any, inp: Any, existing: Any, **_: Any) -> None:
         order.append(f"complete:{inp.run_id}")
-        from server.tasks.api.models_run import RunCompleteOutput
 
-        return RunCompleteOutput(run_id=inp.run_id, status=inp.status, duration_ms=inp.duration_ms)
+    async def fetch(ch: Any, org: str, ns: str, run_id: str) -> dict[str, str]:
+        return {"status": "active", "metadata": "{}"}
 
-    monkeypatch.setattr(h, "handle_run_begin", slow_begin)
-    monkeypatch.setattr(h, "handle_run_complete", complete)
+    monkeypatch.setattr(h, "begin_session_run", slow_begin)
+    monkeypatch.setattr(h, "_complete", complete)
+    monkeypatch.setattr(h.runs_store, "fetch_run", fetch)
+
+    async def active(org: str, run_id: str) -> list[dict[str, str]]:
+        begun = f"begin:{run_id}" in order
+        return [{"org": org, "namespace": "ns-a", "run_id": run_id}] if begun else []
+
+    monkeypatch.setattr(h, "active_session_runs", active)
 
     async def _run() -> None:
-        run = await asyncio.wait_for(mcp_runs.ensure("sess-9", DEFAULTS, goal="g", now=1.0), 0.5)
-        assert run is not None and run.run_id == "mcp-sess-9", "the call has its id at once"
+        run = await asyncio.wait_for(mcp_runs.ensure("sess-9", DEFAULTS, CALLER, now=1.0), 0.5)
+        assert run is not None and run.run_id == rid("sess-9"), "the call has its id at once"
         assert order == [], "run.begin has not landed and the call did not wait for it"
-        closer = asyncio.create_task(mcp_runs.close_session("sess-9", now=2.0))
+        closer = asyncio.create_task(mcp_runs.close_session("sess-9", "clickhouse", "-"))
         await asyncio.sleep(0)
         assert order == [], "close waits for the begin"
         gate.set()
         assert await closer is True
-        assert order == ["begin:mcp-sess-9", "complete:mcp-sess-9"]
+        assert order == [f"begin:{rid('sess-9')}", f"complete:{rid('sess-9')}"]
 
     asyncio.run(_run())
 
 
 def test_ensure_never_awaits_run_begin_inline() -> None:
     src = inspect.getsource(mcp_runs.ensure)
-    assert "await handle_run_begin" not in src and "_PENDING_BEGINS.spawn(" in src
+    assert "await handle_run_begin" not in src and "_PENDING.spawn(" in src
 
 
 def test_page_park_is_fire_and_forget_and_names_the_flush_window() -> None:

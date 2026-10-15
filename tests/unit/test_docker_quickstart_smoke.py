@@ -40,7 +40,7 @@ def test_failed_compose_boot_cleans_only_the_generated_project(
     monkeypatch.setattr(docker_quickstart_smoke, "run", invoke)
     monkeypatch.setattr(docker_quickstart_smoke.subprocess, "run", cleanup)
     with pytest.raises(subprocess.CalledProcessError):
-        docker_quickstart_smoke.smoke("loom:unit-smoke")
+        docker_quickstart_smoke.smoke("loom:unit-smoke", "clickhouse/clickhouse-server:26.9.18.11")
     cleanup_command = commands[-1]
     assert cleanup_command[-3:] == ("down", "--volumes", "--remove-orphans")
     project = Path(cleanup_command[3])

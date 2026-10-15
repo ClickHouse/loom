@@ -147,6 +147,7 @@ COPY schemas ./schemas
 # relative to server/ — without this COPY every in-container pass reports the
 # harness missing, whatever toolchain the image carries.
 COPY scripts/scip_harness ./scripts/scip_harness
+COPY scripts/serve.sh ./scripts/serve.sh
 # code.calibrate reads its probe corpus from bench/fixtures at a path
 # hard-coded relative to the handler — without this COPY the op 422s
 # in-container ("probe corpus missing").
@@ -160,41 +161,28 @@ COPY dev ./dev
 # at /v1/admin/* stay reachable via curl regardless.
 COPY --from=frontend-builder /frontend/dist ./frontend/dist
 
-# Non-root runtime
-RUN groupadd -r loom && useradd -r -g loom -d /app loom \
+# Non-root runtime. uid/gid 999: the compose files mount /run/loom (the
+# per-server runtime files) as a tmpfs owned by it.
+RUN groupadd -r -g 999 loom && useradd -r -u 999 -g loom -d /app loom \
     && mkdir -p /app/var/code_repos /app/var/blobs /app/var/gomodcache /app/var/gocache /app/var/cron/locks \
-    && chown -R loom:loom /app
+    && chown -R loom:loom /app \
+    && install -d -o loom -g loom -m 0700 /run/loom
 USER loom
 
 # LOOM_BIND_HOST is the address the port is published on, which the startup
-# checks read: the container itself always listens on all its interfaces.
-# 0.0.0.0 = reachable by others, so it needs LOOM_PUBLIC_BASE_URL, auth and a
-# real signing secret. A compose stack that publishes on loopback passes its
-# LOOM_BIND_HOST through.
+# checks read; LOOM_LISTEN_HOST is the one the container listens on, all its
+# interfaces. 0.0.0.0 = reachable by others, so it needs LOOM_PUBLIC_BASE_URL,
+# auth and a real signing secret. A compose stack that publishes on loopback
+# passes its LOOM_BIND_HOST through.
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PORT=7777 \
-    LOOM_BIND_HOST=0.0.0.0
+    LOOM_BIND_HOST=0.0.0.0 \
+    LOOM_LISTEN_HOST=0.0.0.0
 
 EXPOSE 7777
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD python -c "import urllib.request, sys; r=urllib.request.urlopen('http://127.0.0.1:'+__import__('os').environ.get('PORT','7777')+'/v1/health', timeout=3); sys.exit(0 if r.status==200 else 1)" || exit 1
 
-# LOOM_WEB_WORKERS processes share the port; one of them
-# takes the supervisor lock and runs the background workers.
-# LOOM_UVICORN_LOOP: uvicorn's --loop (auto|asyncio|uvloop). `auto` picks uvloop
-# when installed; `asyncio` is the switch back to CPython's event loop and SSL
-# transport without rebuilding the image.
-# LOOM_GRACEFUL_SHUTDOWN_S: uvicorn's --timeout-graceful-shutdown. On SIGTERM
-# uvicorn stops listening at once and waits for in-flight requests; without a
-# bound one slow request (a long memory.ask) holds the old
-# container until docker's stop grace expires and SIGKILLs it, skipping the
-# lifespan drains (events emitter, drop ledger, events stream). 10 s bounds
-# the wait; compose's stop_grace_period leaves room for the drains after it.
-# LOOM_TRUSTED_PROXIES: the peers whose X-Forwarded-For/Proto uvicorn applies.
-# `exec`: the shell that expands these variables must hand PID 1 to uvicorn.
-# Without it `sh` is PID 1 and a POSIX shell does not forward SIGTERM to its
-# foreground child, so uvicorn never sees the stop, the graceful timeout
-# never starts, and docker SIGKILLs the tree at stop_grace_period (exit 137,
-# with tens of seconds of refused connections during a colour swap).
-CMD ["sh", "-c", "exec uvicorn server.main:app --host 0.0.0.0 --port ${PORT} --workers ${LOOM_WEB_WORKERS:-1} --loop ${LOOM_UVICORN_LOOP:-auto} --timeout-graceful-shutdown ${LOOM_GRACEFUL_SHUTDOWN_S:-10} --proxy-headers --forwarded-allow-ips=\"${LOOM_TRUSTED_PROXIES:-127.0.0.1}\""]
+# The web tier: scripts/serve.sh says how it starts and stops.
+CMD ["/app/scripts/serve.sh"]

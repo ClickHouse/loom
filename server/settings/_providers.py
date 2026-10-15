@@ -9,7 +9,11 @@ from urllib.parse import urlsplit
 from pydantic import Field, PrivateAttr, model_validator
 
 from server.settings._env import CaseFolded, JsonObject, json_map_items
-from server.settings._models import ModelSettings
+from server.settings._models import (
+    DEFAULT_LOCAL_EMBEDDING_MODEL,
+    LOCAL_EMBEDDING_MODELS,
+    ModelSettings,
+)
 
 # A configured rerank endpoint's name: what a request or a namespace sends instead of a URL.
 RERANK_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
@@ -20,6 +24,7 @@ class ProviderSettings(ModelSettings):
     # reads and fills.
     # Vector width the embedder is asked for and the schema is sized from; the width probed from
     # the embedder at boot wins when they differ. Change it together with `embedding_model`.
+    # Unset with a `local:*` model, it is that model's own width.
     embedding_dim: int = Field(3072, ge=1)
 
     # "" = infer from `embedding_model` (fake-ngram-* → fake, text-embedding-*
@@ -69,10 +74,28 @@ class ProviderSettings(ModelSettings):
     # explicit, else the evidence ("LOOM_LLM_MODEL=…", "OPENAI_API_KEY is set",
     # "nothing set"). Read through `llm_provider_source()`; not an env var.
     _llm_provider_source: str = PrivateAttr(default="LOOM_LLM_PROVIDER")
-    # `llm_provider` and `llm_model` when the env set neither and load filled
-    # both in. Assigning them marks them set, but they are not the env's
-    # choice: a read-replica takes the main Loom's pair over them.
-    _llm_inferred_fields: frozenset[str] = PrivateAttr(default=frozenset())
+    # Fields the env left unset and load filled in (the LLM pair, a local
+    # model's width). Assigning them marks them set, but they are not the env's
+    # choice: a read-replica takes the main Loom's values over them.
+    _inferred_fields: frozenset[str] = PrivateAttr(default=frozenset())
+
+    @model_validator(mode="after")
+    def _resolve_local_embedding_dim(self) -> ProviderSettings:
+        """A local model emits its own width, whatever LOOM_EMBEDDING_DIM says, and
+        the schema is sized from `embedding_dim`: unset, it takes the model's."""
+        if "embedding_dim" in self.model_fields_set:
+            return self
+        name = self.embedding_model
+        if name == "local" or name.startswith("local:"):
+            alias = name.partition(":")[2].strip() or DEFAULT_LOCAL_EMBEDDING_MODEL
+        elif self.embedding_provider == "local":
+            alias = DEFAULT_LOCAL_EMBEDDING_MODEL
+        else:
+            return self
+        if alias in LOCAL_EMBEDDING_MODELS:  # an unknown alias fails when the embedder is built
+            self.embedding_dim = LOCAL_EMBEDDING_MODELS[alias][1]
+            self._inferred_fields |= {"embedding_dim"}
+        return self
 
     @model_validator(mode="after")
     def _resolve_llm_provider(self) -> ProviderSettings:
@@ -98,14 +121,14 @@ class ProviderSettings(ModelSettings):
         self.llm_provider = resolved.provider
         self.llm_model = resolved.model
         self._llm_provider_source = resolved.source
-        self._llm_inferred_fields = inferred
+        self._inferred_fields |= inferred
         return self
 
     def env_fields_set(self) -> frozenset[str]:
-        """The fields this process's env (or constructor) set, without the
-        LLM pair load inferred — what a read-replica keeps over the main
-        Loom's published settings."""
-        return frozenset(self.model_fields_set) - self._llm_inferred_fields
+        """The fields this process's env (or constructor) set, without those
+        load inferred — what a read-replica keeps over the main Loom's
+        published settings."""
+        return frozenset(self.model_fields_set) - self._inferred_fields
 
     def adopt_published_llm(self) -> None:
         """Say the LLM pair came from the main Loom, for the boot log and doctor."""

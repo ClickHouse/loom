@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from server.core.paths import MIGRATIONS_DIR
+from server.core.shared_document import waiting_out_siblings
 from server.insights.app.admin_models import (
     AuditSummaryInput,
     AuditSummaryOutput,
@@ -428,6 +429,10 @@ async def admin_budget_set(input: BudgetSetInput) -> BudgetSetOutput:
     With `consumer`: {consumer, op | "*", budget_ms | budget: "3x"}
     installs for that consumer only; {consumer, op, clear: true} removes it.
     """
+    return await waiting_out_siblings(_set_budget, input)
+
+
+def _set_budget(input: BudgetSetInput) -> BudgetSetOutput:
     from server.observability.budgets import get_overrides
 
     overrides = get_overrides()
@@ -468,7 +473,12 @@ async def admin_budget_set(input: BudgetSetInput) -> BudgetSetOutput:
                 "message": "budget_ms required when clear=false",
             },
         )
-    overrides.set(input.op, input.budget_ms)
+    try:
+        overrides.set(input.op, input.budget_ms)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=422, detail={"code": "VALIDATION_FAILED", "message": str(e)}
+        ) from e
     return BudgetSetOutput.model_validate(
         {"ok": True, "op": input.op, "budget_ms": input.budget_ms}
     )
@@ -484,6 +494,10 @@ async def admin_ratelimit_set(input: RatelimitSetInput) -> RatelimitSetOutput:
       {org,       op_class, capacity, rate}     — install (org-tier)
       {org,       op_class, clear: true}        — remove (org-tier)
     """
+    return await waiting_out_siblings(_set_ratelimit, input)
+
+
+def _set_ratelimit(input: RatelimitSetInput) -> RatelimitSetOutput:
     from server.core.ratelimit import Limit, get_limiter
 
     ns = input.namespace or ""

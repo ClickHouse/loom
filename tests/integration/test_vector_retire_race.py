@@ -19,6 +19,9 @@ from typing import Any
 
 import pytest
 
+from server.settings import settings
+from tests.integration._eventually import eventually
+
 pytestmark = pytest.mark.skipif(
     not os.environ.get("LOOM_CH_HOST"),
     reason="LOOM_CH_HOST not set — integration tests require a live CH",
@@ -64,6 +67,14 @@ def _memory_row(ns: str, version: int, value: str, sensitivity: str) -> dict[str
     )
 
 
+# The configured width: a coded vector column takes vectors of exactly it.
+_DIM = settings.embedding_dim
+
+
+def _wide(head: list[float]) -> list[float]:
+    return head + [0.0] * (_DIM - len(head))
+
+
 async def _embedded_write(ch: Any, ns: str, value: str, entity: str) -> None:
     """One embedded generation: its memory row, then its vector and entity vector,
     stamped the way memory.set / bulk_set stamp them."""
@@ -81,8 +92,8 @@ async def _embedded_write(ch: Any, ns: str, value: str, entity: str) -> None:
         scope="private",
         content_excerpt=value,
         embedding_model="fake",
-        embedding_dim=3,
-        embedding=[0.1, 0.2, 0.3],
+        embedding_dim=_DIM,
+        embedding=_wide([0.1, 0.2, 0.3]),
         created_at=datetime.now(UTC).replace(tzinfo=None),
     )
     await M.insert_embedding_rows([emb], ch=ch)
@@ -95,9 +106,9 @@ async def _embedded_write(ch: Any, ns: str, value: str, entity: str) -> None:
                 "agent": AGENT,
                 "user_id": USER,
                 "entity_text": entity,
-                "entity_embedding": [0.1, 0.2, 0.3],
+                "entity_embedding": _wide([0.1, 0.2, 0.3]),
                 "embedding_model": "fake",
-                "embedding_dim": 3,
+                "embedding_dim": _DIM,
                 "memory_key": KEY,
                 "tombstoned_at": None,
                 "created_at": datetime.now(UTC).replace(tzinfo=None),
@@ -1723,14 +1734,20 @@ async def test_a_slow_writes_embedding_is_still_counted_in_the_bm25_stats(ch: An
             version=time.time_ns() - ago_s * 1_000_000_000,  # drawn ago_s seconds ago
         )
 
-    try:
-        # A row drawn 15 s ago, so the next pass moves the watermarks past it (and past
-        # the late rows below, drawn 30 s ago). An earlier test's pass may already be
-        # past it, so it indexes itself too; a repeat is harmless.
-        marker = late_row("marker", ago_s=15)
-        await M.insert_embedding_rows([marker], ch=ch)
-        assert await M.index_late_rows([marker], ch=ch) == 1
+    async def marker_indexed() -> bool:
         await refresh()
+        row = await ch.query_one(
+            "SELECT count() AS n FROM loom.memory_doc_stats FINAL WHERE org = {o:String}"
+            " AND namespace = {n:String} AND memory_key = 'marker'",
+            params={"o": ORG, "n": ns},
+        )
+        return bool(row and int(row["n"]))
+
+    try:
+        # A row drawn now: once a pass has indexed it, the watermarks are past it and so
+        # past the late rows below, drawn 30 s ago, whatever other namespaces wrote.
+        await M.insert_embedding_rows([late_row("marker", ago_s=0)], ch=ch)
+        await eventually(marker_indexed, max_wait=60.0, interval=1.0, description="the marker")
         indexed, control = late_row("slow_write"), late_row("slow_write_unindexed")
         await M.insert_embedding_rows([indexed, control], ch=ch)
         assert await M.index_late_rows([indexed], ch=ch) == 1

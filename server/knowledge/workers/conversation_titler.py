@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, TypedDict, cast
 
+from server.core.datetimes import naive_utc_now_seconds
 from server.knowledge.store import conversations as conversation_repo
 from server.knowledge.store.conversations import ThreadInsertRow
 from server.observability import cost_accumulator
@@ -106,9 +107,7 @@ async def _make_title(
     if not title:
         return False
 
-    # Naive-local to match conversation.create's writes (clickhouse_connect
-    # treats naive datetimes as local on insert).
-    now = datetime.now().replace(tzinfo=None, microsecond=0)
+    now = naive_utc_now_seconds()
     if existing is not None:
         # A stored row (conversation.create with no title): carry every
         # column forward — its partition (created_at), agent, metadata,

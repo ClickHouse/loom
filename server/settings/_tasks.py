@@ -35,7 +35,8 @@ class TaskSettings(BaseModel):
     # say: keep = nothing; demote = scale confidence by the expiry demote
     # factor now; expire = expires_at now + memory_run_complete_expire_days
     # with on_expire=demote. Pinned, verified, promoted, locked, episodic and
-    # reflection rows are always kept.
+    # reflection rows are always kept, and so is everything an MCP session's
+    # implicit run wrote when the transport closes it.
     memory_run_complete_retain: Literal["keep", "demote", "expire"] = "keep"
     # Days until expiry for `memory_run_complete_retain = expire`.
     memory_run_complete_expire_days: int = 7

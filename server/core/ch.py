@@ -19,6 +19,7 @@ import uuid
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
+from datetime import UTC, datetime
 from types import FrameType
 from typing import Any
 
@@ -30,6 +31,7 @@ from server.core.ch_class_settings import is_read_statement, traffic_class_setti
 from server.core.ch_errors import (
     QUANTIZED_SETTING,
     REPLICA_BOUND_RETRIES,
+    WIDTH_MISMATCH_CODE,
     error_code,
     is_replica_bound_error,
     is_transient_network_error,
@@ -83,9 +85,10 @@ def current_query_tag() -> str:
 
 
 # The ClickHouse `quota_key` of the verified caller, `<org>:<subject>`, so a
-# server quota keyed by it gives each tenant its own bucket. Set only by
-# `server.auth.context.set_current_auth` from the verified token, never from a
-# request body; every query of the request carries it.
+# server quota keyed by it gives each tenant its own bucket. Set only from the
+# verified token (`server.auth.context.quota_key_for`), never from a request
+# body; every query of the request carries it, and so does the ledger work the
+# MCP transport detaches for it (`mcp_runs`).
 quota_key_var: ContextVar[str] = ContextVar("ch_quota_key", default="")
 
 
@@ -465,6 +468,40 @@ async def _probe_vector_state(client: CHClient) -> None:
     await ensure_probed(client)
 
 
+def _insert_data(
+    rows: list[dict[str, Any]], columns: list[str], type_names: list[str] | None
+) -> list[list[Any]]:
+    """The rows as value lists, with naive datetimes (UTC by Loom's convention)
+    marked UTC: the driver inserts a naive one as the host's local time. Only
+    columns whose type names a DateTime (also inside an Array, Tuple or Map) are
+    walked, or every cell when the types are unknown."""
+    data = [[r[c] for c in columns] for r in rows]
+    if type_names is None:
+        timed = list(range(len(columns)))
+    else:
+        timed = [i for i, t in enumerate(type_names) if "DateTime" in t]
+    for i in timed:
+        for values in data:
+            values[i] = _as_utc_instant(values[i])
+    return data
+
+
+# What a list or tuple must hold before it is rebuilt: a datetime, or a container
+# that may hold one. A vector (a long list of floats) is passed through as it is.
+_NESTED = (datetime, list, tuple, dict)
+
+
+def _as_utc_instant(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
+    if isinstance(value, list | tuple) and any(isinstance(v, _NESTED) for v in value):
+        marked = [_as_utc_instant(v) for v in value]
+        return marked if isinstance(value, list) else tuple(marked)
+    if isinstance(value, dict):
+        return {_as_utc_instant(k): _as_utc_instant(v) for k, v in value.items()}
+    return value
+
+
 class CHClient:
     """Singleton-ish wrapper. Use `get_client()` to fetch."""
 
@@ -507,6 +544,7 @@ class CHClient:
             # bound is disabled); each statement's own deadline is applied
             # per call in `_with_retry`.
             send_receive_timeout=_driver_read_timeout_s(),
+            tz_source="server",
             connector_limit=settings.ch_pool_maxsize,
             connector_limit_per_host=settings.ch_pool_maxsize,
             # Close idle pooled connections before the Cloud load balancer
@@ -526,8 +564,17 @@ class CHClient:
                 # cache off. Session-level, so every query benefits; a no-op
                 # on a server without a cache.
                 "enable_filesystem_cache": 1,
+                # Loom's DateTime columns carry no zone of their own, so a
+                # server whose <timezone> is not UTC would shift naive params
+                # and reads by its offset; every session reads and writes UTC.
+                "session_timezone": "UTC",
             },
         )
+        # The driver learns the zone it binds aware params in from the server
+        # default before the session setting applies; bind them in UTC too.
+        # tz_source="server" reads a bare DateTime in that zone, so reads come
+        # back naive UTC, never in the host's zone.
+        self._client.server_tz = UTC
         await _probe_vector_state(self)
 
     async def disconnect(self) -> None:
@@ -864,9 +911,37 @@ class CHClient:
         # to raise code 60 against a table the service does not have yet.
         await guard_pending_schema("insert", "", "write", insert_table=table)
         # A coded vector column needs every row at full length.
-        from server.core.vectors.placeholders import pad_rows as _pad_rows
+        from server.core.vectors import codes_state, placeholders
 
-        _pad_rows(table, rows)
+        await codes_state.refuse_other_widths(table, rows)  # skips the empty vectors
+        padded = placeholders.pad_rows(table, rows)
+        try:
+            await self._insert_rows(table, rows, settings, project_onto_table)
+            return
+        except Exception as e:
+            if error_code(e) != WIDTH_MISMATCH_CODE:
+                raise
+            refused = e
+        # A table rebuilt at another width since the last reading: refuse a
+        # vector the caller wrote, else size the placeholders again (one retry).
+        refused_at = time.monotonic()
+        sized = {c: len(rows[i][c]) for i, c in padded}
+        placeholders.unpad(rows, padded)
+        await codes_state.refuse_on_fresh_widths(table, rows, since=refused_at)
+        placeholders.pad_rows(table, rows)
+        # Compare with the lengths the refused attempt sent, not the reading
+        # before it: a background probe may have published the new width mid-insert.
+        if all(codes_state.stored_width(table, c) == n for c, n in sized.items()):
+            raise refused  # the fresh reading does not explain it
+        await self._insert_rows(table, rows, settings, project_onto_table)
+
+    async def _insert_rows(
+        self,
+        table: str,
+        rows: list[dict[str, Any]],
+        settings: dict[str, Any] | None,
+        project_onto_table: bool | None,
+    ) -> None:
         columns = list(rows[0].keys())
         if project_onto_table is None:
             project_onto_table = table in PROJECTED_TABLES
@@ -886,8 +961,6 @@ class CHClient:
                     f"insert {table}: row {i} keys differ from row 0 — "
                     f"missing {missing}, extra {extra}"
                 )
-        data = [[r[c] for c in columns] for r in rows]
-
         # The driver asks the server for the column types of
         # every insert it is not told them for — one `DESCRIBE TABLE` round
         # trip per insert (thousands an hour for the ledgers, each a pooled
@@ -896,6 +969,7 @@ class CHClient:
         # a schema that has changed under the cache fails the insert once,
         # the entry is dropped, and the insert runs again the old way.
         type_names = await self._column_type_names(table, columns)
+        data = _insert_data(rows, columns, type_names)
 
         settings = normalize_insert_settings(settings)
         # One token per batch, drawn once here, so every
@@ -928,7 +1002,7 @@ class CHClient:
 
             # The re-describe ladder below re-runs the INSERT; never for a
             # refused slot or a cut deadline.
-            if isinstance(e, LoomServerError):
+            if isinstance(e, LoomServerError) or error_code(e) == WIDTH_MISMATCH_CODE:
                 raise
             had_cache = type_names is not None or table in _COLUMN_TYPES
             _COLUMN_TYPES.pop(table, None)
@@ -939,8 +1013,8 @@ class CHClient:
                 reprojected = await self._project_columns(table, list(rows[0].keys()))
                 if reprojected != columns:
                     columns = reprojected
-                    data = [[r[c] for c in columns] for r in rows]
                     type_names = await self._column_type_names(table, columns)
+                    data = _insert_data(rows, columns, type_names)
                     await _run()
                     return
             if not had_cache:

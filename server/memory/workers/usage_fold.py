@@ -176,9 +176,7 @@ def current_watermark() -> datetime:
 
 
 def _utc(dt: datetime | None) -> datetime:
-    """Normalize a CH-returned datetime to tz-aware UTC. Naive datetimes
-    from the driver are UTC wall-clock; passing them back naive would be
-    re-interpreted as client-local time, so everything stays aware."""
+    """Normalize a CH-returned datetime to tz-aware UTC."""
     if dt is None:
         return _EPOCH
     if dt.tzinfo is None:

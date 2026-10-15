@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS loom.agent_cost_rollup_daily
 ENGINE = AggregatingMergeTree
 PARTITION BY toYYYYMM(day)
 ORDER BY (org, namespace, agent, day, operation)
-SETTINGS index_granularity = 8192;
+SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 8192;
 
 -- loom.agent_events
 CREATE TABLE IF NOT EXISTS loom.agent_events
@@ -79,7 +79,8 @@ CREATE TABLE IF NOT EXISTS loom.agent_events
     `consumer` LowCardinality(String) DEFAULT '',
     `response_tokens` UInt32 DEFAULT 0,
     `traffic_class` LowCardinality(String) DEFAULT '',
-    `subject` LowCardinality(String) DEFAULT ''
+    `subject` LowCardinality(String) DEFAULT '',
+    INDEX run_id_bloom_idx run_id TYPE bloom_filter(0.01) GRANULARITY 1
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(ts)
@@ -129,7 +130,8 @@ CREATE TABLE IF NOT EXISTS loom.agent_runs
     `grade_reason` String DEFAULT '',
     `grade_ref` String DEFAULT '',
     `graded_at` Nullable(DateTime64(3)) DEFAULT NULL,
-    `version` UInt64 DEFAULT toUInt64(toUnixTimestamp64Nano(now64(9)))
+    `version` UInt64 DEFAULT toUInt64(toUnixTimestamp64Nano(now64(9))),
+    INDEX run_id_bloom_idx run_id TYPE bloom_filter(0.01) GRANULARITY 1
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, run_id)
@@ -241,7 +243,7 @@ CREATE TABLE IF NOT EXISTS loom.categories
     `name` LowCardinality(String),
     `description` String,
     `summary` String,
-    `embedding` Array(BFloat16) CODEC(NONE),
+    `embedding` Array(BFloat16) CODEC(Quantized('rabitq', 3072, 0)),
     `embedding_model` LowCardinality(String) DEFAULT '',
     `embedding_dim` UInt16 DEFAULT 0,
     `version` UInt64 DEFAULT toUInt64(toUnixTimestamp64Nano(now64(9))),
@@ -281,7 +283,7 @@ CREATE TABLE IF NOT EXISTS loom.chunk_term_freq
 ENGINE = AggregatingMergeTree
 PARTITION BY toYYYYMM(df_added_at)
 ORDER BY (org, namespace, term)
-SETTINGS index_granularity = 8192;
+SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 8192;
 
 -- loom.chunks
 CREATE TABLE IF NOT EXISTS loom.chunks
@@ -299,7 +301,7 @@ CREATE TABLE IF NOT EXISTS loom.chunks
     `doc_superseded_at` Nullable(DateTime),
     `embedding_model` LowCardinality(String),
     `embedding_dim` UInt16 DEFAULT 0,
-    `embedding` Array(BFloat16) CODEC(NONE),
+    `embedding` Array(BFloat16) CODEC(Quantized('rabitq', 3072, 0)),
     `created_at` DateTime DEFAULT now(),
     `embed_attempts` UInt16 DEFAULT 0,
     `embed_last_error` String DEFAULT '',
@@ -321,7 +323,7 @@ CREATE TABLE IF NOT EXISTS loom.code_answers
     `namespace` LowCardinality(String),
     `question_id` UUID,
     `question` String,
-    `question_embedding` Array(BFloat16) DEFAULT [] CODEC(NONE),
+    `question_embedding` Array(BFloat16) DEFAULT [] CODEC(Quantized('rabitq', 3072, 0)),
     `embedding_model` LowCardinality(String),
     `answer` String DEFAULT '',
     `citations` String DEFAULT '',
@@ -451,7 +453,7 @@ CREATE TABLE IF NOT EXISTS loom.code_chunks
     `context_source` Enum8('structural' = 1, 'llm' = 2) DEFAULT 'structural',
     `lexemes` String DEFAULT '',
     `symbol_ids` Array(String) DEFAULT [],
-    `embedding` Array(BFloat16) DEFAULT [] CODEC(NONE),
+    `embedding` Array(BFloat16) DEFAULT [] CODEC(Quantized('rabitq', 3072, 0)),
     `embedding_dim` UInt16 DEFAULT 0,
     `embed_attempts` UInt16 DEFAULT 0,
     `embed_last_error` String DEFAULT '',
@@ -907,7 +909,7 @@ CREATE TABLE IF NOT EXISTS loom.code_summaries
     `in_degree` UInt32 DEFAULT 0,
     `out_degree` UInt32 DEFAULT 0,
     `key_symbols` Array(String) DEFAULT [],
-    `embedding` Array(BFloat16) DEFAULT [] CODEC(NONE),
+    `embedding` Array(BFloat16) DEFAULT [] CODEC(Quantized('rabitq', 3072, 0)),
     `embedding_dim` UInt16 DEFAULT 0,
     `embed_attempts` UInt16 DEFAULT 0,
     `embed_last_error` String DEFAULT '',
@@ -1027,7 +1029,7 @@ CREATE TABLE IF NOT EXISTS loom.code_term_freq
 )
 ENGINE = AggregatingMergeTree
 ORDER BY (org, namespace, term)
-SETTINGS index_granularity = 256;
+SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 256;
 
 -- loom.code_test_facets
 CREATE TABLE IF NOT EXISTS loom.code_test_facets
@@ -1100,7 +1102,7 @@ CREATE TABLE IF NOT EXISTS loom.code_unit_signal
 )
 ENGINE = SummingMergeTree((positive, negative))
 ORDER BY (org, namespace, unit_id)
-SETTINGS index_granularity = 8192;
+SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 8192;
 
 -- loom.conflict_allowlist
 CREATE TABLE IF NOT EXISTS loom.conflict_allowlist
@@ -1186,7 +1188,7 @@ CREATE TABLE IF NOT EXISTS loom.conversation_embeddings
     `content_excerpt` String,
     `embedding_model` LowCardinality(String),
     `embedding_dim` UInt16 DEFAULT 0,
-    `embedding` Array(BFloat16) CODEC(NONE),
+    `embedding` Array(BFloat16) CODEC(Quantized('rabitq', 3072, 0)),
     `user_id` String DEFAULT '-',
     `embed_attempts` UInt16 DEFAULT 0,
     `embed_last_error` String DEFAULT '',
@@ -1373,7 +1375,7 @@ CREATE TABLE IF NOT EXISTS loom.entity_degree
 )
 ENGINE = SummingMergeTree
 ORDER BY (org, namespace, entity)
-SETTINGS index_granularity = 8192;
+SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 8192;
 
 -- loom.entity_edge_memories
 CREATE TABLE IF NOT EXISTS loom.entity_edge_memories
@@ -1420,7 +1422,7 @@ CREATE TABLE IF NOT EXISTS loom.entity_summaries
     `user_id` String DEFAULT '-',
     `entity` String,
     `summary_text` String,
-    `summary_embedding` Array(BFloat16) CODEC(NONE),
+    `summary_embedding` Array(BFloat16) CODEC(Quantized('rabitq', 3072, 0)),
     `embedding_model` LowCardinality(String),
     `embedding_dim` UInt16 DEFAULT 0,
     `key_facts` Array(String) DEFAULT [],
@@ -1487,7 +1489,7 @@ CREATE TABLE IF NOT EXISTS loom.entity_vectors
     `agent` LowCardinality(String),
     `user_id` String,
     `entity_text` LowCardinality(String),
-    `entity_embedding` Array(BFloat16) CODEC(LZ4),
+    `entity_embedding` Array(BFloat16) CODEC(Quantized('rabitq', 3072, 0), LZ4),
     `embedding_model` LowCardinality(String),
     `embedding_dim` UInt16 DEFAULT 0,
     `memory_key` String,
@@ -1811,7 +1813,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_chunks
     `chunk_index` UInt32,
     `content_sha256` FixedString(64),
     `content` String CODEC(ZSTD(3)),
-    `embedding` Array(BFloat16) CODEC(NONE),
+    `embedding` Array(BFloat16) CODEC(Quantized('rabitq', 3072, 0)),
     `embedding_model` LowCardinality(String),
     `embedding_dim` UInt16 DEFAULT 0,
     `parent_memory_key` String DEFAULT '',
@@ -1951,7 +1953,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_embeddings
     `content_excerpt` String CODEC(ZSTD(3)),
     `embedding_model` LowCardinality(String),
     `embedding_dim` UInt16 DEFAULT 0,
-    `embedding` Array(BFloat16) CODEC(NONE),
+    `embedding` Array(BFloat16) CODEC(Quantized('rabitq', 3072, 0)),
     `tombstoned_at` Nullable(DateTime),
     `created_at` DateTime DEFAULT now(),
     `version` UInt64 DEFAULT toUInt64(toUnixTimestamp64Nano(now64(9))),
@@ -1972,7 +1974,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_embeddings
     `valid_to` Nullable(DateTime) DEFAULT NULL,
     `invalid_at` Nullable(DateTime) DEFAULT NULL,
     `content_excerpt_lc` String MATERIALIZED lower(content_excerpt) CODEC(ZSTD(3)),
-    `memory_key_embedding` Array(BFloat16) DEFAULT [] CODEC(NONE),
+    `memory_key_embedding` Array(BFloat16) DEFAULT [] CODEC(Quantized('rabitq', 3072, 0)),
     `memory_key_embedding_dim` UInt16 DEFAULT 0,
     `reinforcement_count` UInt32 DEFAULT 1,
     `last_reinforced_at` DateTime DEFAULT now(),
@@ -2043,7 +2045,7 @@ ENGINE = AggregatingMergeTree
 PARTITION BY toYYYYMM(hour)
 ORDER BY (org, namespace, actor, agent, hour)
 TTL hour + toIntervalDay(180)
-SETTINGS index_granularity = 8192;
+SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 8192;
 
 -- loom.memory_exposures
 CREATE TABLE IF NOT EXISTS loom.memory_exposures
@@ -2296,7 +2298,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_term_freq
 ENGINE = AggregatingMergeTree
 PARTITION BY toYYYYMM(df_added_at)
 ORDER BY (org, namespace, term)
-SETTINGS index_granularity = 256;
+SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 256;
 
 -- loom.memory_usage_events
 CREATE TABLE IF NOT EXISTS loom.memory_usage_events
@@ -2330,7 +2332,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_usage_totals
 )
 ENGINE = SummingMergeTree
 ORDER BY (org, namespace, memory_id)
-SETTINGS index_granularity = 8192;
+SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 8192;
 
 -- loom.memory_versions
 CREATE TABLE IF NOT EXISTS loom.memory_versions
@@ -2556,7 +2558,7 @@ CREATE TABLE IF NOT EXISTS loom.namespace_write_marks
 )
 ENGINE = AggregatingMergeTree
 ORDER BY (org, namespace, plane)
-SETTINGS index_granularity = 8192;
+SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 8192;
 
 -- loom.namespaces
 CREATE TABLE IF NOT EXISTS loom.namespaces
@@ -2745,7 +2747,7 @@ CREATE TABLE IF NOT EXISTS loom.qa_item_embeddings
     `is_open` UInt8 DEFAULT 0,
     `created_at` DateTime DEFAULT toDateTime(0),
     `updated_at` DateTime DEFAULT toDateTime(0),
-    `embedding` Array(BFloat16) DEFAULT [] CODEC(NONE),
+    `embedding` Array(BFloat16) DEFAULT [] CODEC(Quantized('rabitq', 3072, 0)),
     `embedding_dim` UInt16 DEFAULT 0,
     `embedding_model` LowCardinality(String) DEFAULT '',
     `text_sha256` FixedString(64) DEFAULT toFixedString(repeat('0', 64), 64),
@@ -2889,7 +2891,7 @@ CREATE TABLE IF NOT EXISTS loom.query_nodes
 )
 ENGINE = AggregatingMergeTree
 ORDER BY (org, namespace, query_hash)
-SETTINGS index_granularity = 8192;
+SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 8192;
 
 -- loom.revoked_tokens
 CREATE TABLE IF NOT EXISTS loom.revoked_tokens
@@ -3058,7 +3060,7 @@ CREATE TABLE IF NOT EXISTS loom.session_summaries
     `session_id` String,
     `run_id` String DEFAULT '-',
     `summary_text` String,
-    `summary_embedding` Array(BFloat16) CODEC(NONE),
+    `summary_embedding` Array(BFloat16) CODEC(Quantized('rabitq', 3072, 0)),
     `embedding_model` LowCardinality(String),
     `embedding_dim` UInt16 DEFAULT 0,
     `key_facts` Array(String) DEFAULT [],
@@ -3108,7 +3110,7 @@ CREATE TABLE IF NOT EXISTS loom.subject_last_seen
 )
 ENGINE = AggregatingMergeTree
 ORDER BY (org, subject)
-SETTINGS index_granularity = 8192;
+SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 8192;
 
 -- loom.task_claims
 CREATE TABLE IF NOT EXISTS loom.task_claims

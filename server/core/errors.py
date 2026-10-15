@@ -6,6 +6,7 @@ server `code` is a class the SDK deserializes via `errors.from_response`.
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -95,15 +96,20 @@ class GrantWouldDowngradeError(LoomServerError):
 
 
 class OverloadedError(LoomServerError):
-    """503 — every pooled ClickHouse connection of this process was busy for
-    longer than `ch_pool_wait_ms`. The request is refused
-    before it queues; `retry_after_s` is the hint the SDK's retry layer honours."""
+    """503 — too busy, retry: every pooled ClickHouse connection was busy past
+    `ch_pool_wait_ms`, or a sibling held an override's lock past its wait.
+    Nothing changed; `retry_after_s` is the hint the SDK's retry layer honours."""
 
     code = "OVERLOADED"
     status_code = 503
 
     def __init__(self, message: str = "", *, retry_after_s: int = 1) -> None:
         super().__init__(message, retry_after_s=retry_after_s)
+
+
+class OverrideBusyError(OverloadedError):
+    """OVERLOADED because another web process was updating the same runtime
+    override; the admin route waits it out, and nothing changed."""
 
 
 class RateLimitedError(LoomServerError):
@@ -161,6 +167,33 @@ class EmbedTimeoutError(LoomServerError):
     status_code = 503
 
 
+class OverrideNotSharedError(LoomServerError):
+    """503 — a runtime override (budget or rate limit) could not be shared with
+    the server's other web processes, so none of them took it. No
+    `Retry-After`: the fix is the runtime directory's (permissions, space, or
+    none private enough), and the next update tries again; the server log
+    says what failed."""
+
+    code = "OVERRIDE_NOT_SHARED"
+    status_code = 503
+
+
+class CodedWidthMismatchError(LoomServerError):
+    """503 — a vector in the write is not the width its `Quantized` column was
+    created at, so ClickHouse would refuse the insert. `memory.set`, `bulk_set`,
+    `update` / `update_by_id` and the `knowledge.*` writes are refused before any
+    of their rows lands, every other write at the insert that carries the vector;
+    `/v1/health` reports `coded_width_mismatch`."""
+
+    code = "CODED_WIDTH_MISMATCH"
+    status_code = 503
+
+    def __init__(
+        self, message: str = "", *, column: str = "", stored: int = 0, written: int = 0
+    ) -> None:
+        super().__init__(message, column=column, stored=stored, written=written)
+
+
 class SchemaPendingError(LoomServerError):
     """503 — the statement names a table that a migration this build carries
     but the service has not applied would create. Refused
@@ -192,11 +225,20 @@ def _with_help_link(headers: dict[str, str] | None, detail: object) -> dict[str,
     return {**(headers or {}), "Link": error_help_link(code)}
 
 
+def loads_keeping_non_finite(text: str) -> Any:
+    """JSON text parsed with any non-finite number (`Infinity`, `NaN`) kept as a
+    string, so the result serialises again: a 422 echoes what a client sent."""
+    return json.loads(text, parse_constant=str)
+
+
 def register_exception_handler(app: FastAPI) -> None:
-    """Turn any LoomServerError into `{"detail": {"code", "message", ...}}`, and give every
-    coded HTTP error a `Link: <catalogue#code>; rel="help"` header."""
+    """Turn any LoomServerError into `{"detail": {"code", "message", ...}}`, give every
+    coded HTTP error a `Link: <catalogue#code>; rel="help"` header, and keep a
+    request body's 422 JSON-safe."""
     from fastapi import Request
+    from fastapi.encoders import jsonable_encoder
     from fastapi.exception_handlers import http_exception_handler
+    from fastapi.exceptions import RequestValidationError
     from fastapi.responses import JSONResponse, Response
     from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -215,3 +257,10 @@ def register_exception_handler(app: FastAPI) -> None:
         if headers is not getattr(exc, "headers", None):
             exc.headers = headers
         return await http_exception_handler(request, exc)
+
+    @app.exception_handler(RequestValidationError)
+    async def _handle_request_validation(_: Request, exc: RequestValidationError) -> JSONResponse:
+        # FastAPI's own 422, except that a non-finite input (`1e400`) is echoed as a
+        # string: JSON has no inf, and the response would fail as a 500.
+        errors = loads_keeping_non_finite(json.dumps(jsonable_encoder(exc.errors())))
+        return JSONResponse(status_code=422, content={"detail": errors})

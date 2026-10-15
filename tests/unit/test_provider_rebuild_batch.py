@@ -193,7 +193,7 @@ async def test_a_structural_summary_card_without_text_rebuilds_as_a_placeholder(
 
     row = build_row("code_summaries", org="o", namespace="n", embedding_model="old-model")
     row.update(scope_path="tests/__init__.py", pagerank=0.1)
-    assert pad_rows("code_summaries", [row]) == 1
+    assert pad_rows("code_summaries", [row]) == [(0, "embedding")]
     assert row["embedding"] and not any(row["embedding"])
     result = (await rebuild_batch("code_summaries", [row], target))[0]
     assert result["embedding_model"] == "target-model"

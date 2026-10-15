@@ -22,6 +22,9 @@ _RECONNECTABLE_EXCEPTIONS = (
     OSError,
 )
 _NETWORK_ERROR_MARK = "Network Error"
+# A coded vector column refuses a vector of another width with this code
+# (SIZES_OF_ARRAYS_DONT_MATCH); running the same INSERT again cannot pass.
+WIDTH_MISMATCH_CODE = 190
 
 
 def is_transient_network_error(e: BaseException) -> bool:

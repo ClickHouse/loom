@@ -17,10 +17,29 @@ DEV = yaml.safe_load((ROOT / "dev" / "docker-compose.dev.yml").read_text(encodin
 CH = DEV["services"]["clickhouse"]
 
 
-def test_same_pinned_image() -> None:
-    image = re.search(r"^\s*(clickhouse/clickhouse-server:\S+)\s*$", SCRIPT, re.M)
-    assert image and image.group(1) == CH["image"]
-    assert re.fullmatch(r"clickhouse/clickhouse-server:\d+\.\d+\.\d+\.\d+", CH["image"])
+def _default_image(value: str) -> str:
+    """The image a compose `image:` runs with LOOM_CLICKHOUSE_IMAGE unset."""
+    m = re.fullmatch(r"\$\{LOOM_CLICKHOUSE_IMAGE:-([^}]+)\}", value)
+    assert m, f"{value!r}: the ClickHouse image must default through LOOM_CLICKHOUSE_IMAGE"
+    return m.group(1)
+
+
+def test_same_image_the_latest_release() -> None:
+    image = re.search(r'^IMAGE="([^"]+)"$', SCRIPT, re.M)
+    assert image and _default_image(image.group(1)) == _default_image(CH["image"])
+    assert _default_image(CH["image"]) == "clickhouse/clickhouse-server:latest"
+    # A cached `latest` would hold an older release.
+    assert "*:latest | *:head) PULL=always" in SCRIPT and '--pull "$PULL"' in SCRIPT
+    assert CH["pull_policy"] == "daily"
+
+
+def test_the_standalone_stack_runs_the_same_image() -> None:
+    standalone = yaml.safe_load(
+        (ROOT / "deploy" / "standalone" / "compose.yaml").read_text(encoding="utf-8")
+    )
+    assert _default_image(standalone["services"]["clickhouse"]["image"]) == _default_image(
+        CH["image"]
+    )
 
 
 def test_same_credentials_and_database() -> None:

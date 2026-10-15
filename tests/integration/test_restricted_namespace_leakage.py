@@ -199,6 +199,7 @@ def seed(control_plane_url: str, ch_client, mint_test_token) -> _Seed:
         from server.code.store.index import CodeRepo
         from server.core.ch import get_client
         from server.embedding.fake import FakeNGramEmbedder
+        from server.settings import settings
 
         try:
             await get_client().connect()
@@ -212,7 +213,7 @@ def seed(control_plane_url: str, ch_client, mint_test_token) -> _Seed:
             source=source,
             commit_sha="a" * 40,
             embedding_model="fake-ngram-1024",
-            embedder=FakeNGramEmbedder(dim=1024),
+            embedder=FakeNGramEmbedder(dim=settings.embedding_dim),
         )
         assert stats.chunks_new > 0, stats
 

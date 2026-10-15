@@ -83,6 +83,9 @@ x-colour-common: &colour-common
 
 services:
   workers:
+    # The per-server runtime files (server/core/runtime_files.py), empty on every start.
+    tmpfs:
+      - /run/loom:uid=999,gid=999,mode=0700
     <<: *colour-common
     container_name: "loom-${LOOM_COLOUR}-workers"
     # Listens on loopback only: nothing outside this container calls it.
@@ -115,6 +118,9 @@ services:
       LOOM_BIND_HOST: "127.0.0.1"
 
   loom:
+    # The per-server runtime files (server/core/runtime_files.py), empty on every start.
+    tmpfs:
+      - /run/loom:uid=999,gid=999,mode=0700
     <<: *colour-common
     container_name: "loom-${LOOM_COLOUR}"
     # stop_grace_period 45s (uvicorn drains ≤ 10 s, then the lifespan drains)
@@ -135,6 +141,9 @@ services:
       # The web tier serves requests and nothing else; the
       # workers container beside it holds the lease.
       LOOM_BACKGROUND_WORKERS: "off"
+      # One process unless .env names a count: the image's own default (one per
+      # CPU) would change an existing deployment's size on upgrade.
+      LOOM_WEB_WORKERS: "${LOOM_WEB_WORKERS:-1}"
       LOOM_DEPLOYMENT: "1"
       LOOM_INSTANCE_LABEL: "deploy:web:${LOOM_COLOUR}"
       # The host proxy publishes :7777 on every interface, so this colour is

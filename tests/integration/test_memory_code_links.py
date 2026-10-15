@@ -88,6 +88,7 @@ async def _index(ns: str, repo: _Repo, sha: str, paths: list[str]) -> None:
     from server.code.app.index.ingest import ingest_file, tombstone_file
     from server.code.store.index import CodeRepo
     from server.embedding.fake import FakeNGramEmbedder
+    from server.settings import settings
 
     code = CodeRepo()
     for path in paths:
@@ -101,7 +102,7 @@ async def _index(ns: str, repo: _Repo, sha: str, paths: list[str]) -> None:
                 source=p.read_bytes(),
                 commit_sha=sha,
                 embedding_model="fake-ngram-1024",
-                embedder=FakeNGramEmbedder(dim=1024),
+                embedder=FakeNGramEmbedder(dim=settings.embedding_dim),
             )
         else:
             await tombstone_file(code, ORG, ns, path=path, embedding_model="fake-ngram-1024")
@@ -829,6 +830,7 @@ async def test_the_fingerprint_is_the_heads_not_an_unpublished_commits(env) -> N
     from server.code.app.index.ingest import ingest_file
     from server.code.store.index import CodeRepo
     from server.embedding.fake import FakeNGramEmbedder
+    from server.settings import settings
 
     repo = env
     src = "def tally(xs):\n    return sum(xs)\n"
@@ -845,7 +847,7 @@ async def test_the_fingerprint_is_the_heads_not_an_unpublished_commits(env) -> N
         source=edited.encode(),
         commit_sha=c2,
         embedding_model="fake-ngram-1024",
-        embedder=FakeNGramEmbedder(dim=1024),
+        embedder=FakeNGramEmbedder(dim=settings.embedding_dim),
     )
     mid = await _remember(MEM, "tally", "`tally` sums its input")
     await _pass()

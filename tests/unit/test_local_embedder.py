@@ -20,8 +20,10 @@ selection + normalization logic is testable offline.
 
 from __future__ import annotations
 
+import functools
 import math
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -212,9 +214,9 @@ class _StubTextEmbedding:
     instantiated_with: list[str] = []
     calls: list[list[str]] = []
 
-    def __init__(self, model_name: str) -> None:
+    def __init__(self, model_name: str, threads: int | None = None) -> None:
         type(self).instantiated_with.append(model_name)
-        self.model_name = model_name
+        self.model_name, self.threads = model_name, threads
 
     def embed(self, texts):
         import array
@@ -342,3 +344,69 @@ def test_secondary_embedder_is_allow_listed(monkeypatch: pytest.MonkeyPatch) -> 
     assert emb.get_secondary_embedder("fake-ngram-64") is a  # cached per spec
     assert emb.allowed_vector_models() == ["fake-ngram-64", "fake-ngram-32"]
     emb.reset()
+
+
+def test_the_served_fake_model_has_one_width_on_every_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A coded vector column takes one length: the served model named as a
+    secondary spec is built at LOOM_EMBEDDING_DIM, like get_embedder()."""
+    emb.reset()
+    monkeypatch.setattr(emb.settings, "embedding_model", "fake-ngram-1024")
+    monkeypatch.setattr(emb.settings, "embedding_dim", 3072)
+    monkeypatch.setattr(emb.settings, "code_search_vector_models", "fake-ngram-1024, fake-ngram-64")
+    assert emb.get_secondary_embedder("fake-ngram-1024").dim == 3072
+    assert emb.get_secondary_embedder("fake-ngram-64").dim == 64
+    emb.reset()
+
+
+def test_each_web_worker_gets_its_share_of_the_cpus_for_onnx(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.core import web_workers
+    from server.embedding import local
+
+    monkeypatch.setattr(web_workers, "cpu_limit", lambda: 8)
+    monkeypatch.setattr(emb.settings, "web_workers", 4)
+    assert local.onnx_threads() == 2
+    monkeypatch.setattr(emb.settings, "web_workers", 16)
+    assert local.onnx_threads() == 1
+
+
+def test_onnx_threads_stay_within_the_cpu_quota(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from server.core import web_workers
+    from server.embedding import local
+
+    (tmp_path / "cpu.max").write_text("200000 100000\n")
+    limit = functools.partial(web_workers.cpu_limit, cpus=32, proc_cgroup="0::/\n", root=tmp_path)
+    monkeypatch.setattr(web_workers, "cpu_limit", limit)
+    monkeypatch.setattr(emb.settings, "web_workers", 1)
+    assert local.onnx_threads() == 2
+
+
+@pytest.mark.parametrize(
+    ("env", "dim"),
+    [
+        ({"LOOM_EMBEDDING_MODEL": "local:bge-base"}, 768),
+        ({"LOOM_EMBEDDING_MODEL": "local"}, 384),
+        ({"LOOM_EMBEDDING_MODEL": "x", "LOOM_EMBEDDING_PROVIDER": "local"}, 384),
+        ({"LOOM_EMBEDDING_MODEL": "local:bge-base", "LOOM_EMBEDDING_DIM": "512"}, 512),
+        ({"LOOM_EMBEDDING_MODEL": "fake-ngram-3072"}, 3072),
+        ({"LOOM_EMBEDDING_MODEL": "local:nope"}, 3072),  # refused when built
+    ],
+)
+def test_an_unset_width_is_the_local_models_own(
+    monkeypatch: pytest.MonkeyPatch, env: dict[str, str], dim: int
+) -> None:
+    """The schema is sized from `embedding_dim`, so a coded table created at the
+    default 3072 would refuse every vector a 384-dim local model writes. An
+    inferred width is not the env's choice: a read-replica takes the main Loom's."""
+    from server.settings import Settings
+
+    for var in ("LOOM_EMBEDDING_MODEL", "LOOM_EMBEDDING_DIM", "LOOM_EMBEDDING_PROVIDER"):
+        monkeypatch.delenv(var, raising=False)
+    for var, value in env.items():
+        monkeypatch.setenv(var, value)
+    s = Settings(_env_file=None)
+    assert s.embedding_dim == dim
+    assert ("embedding_dim" in s.env_fields_set()) is ("LOOM_EMBEDDING_DIM" in env)

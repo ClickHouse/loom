@@ -3,7 +3,9 @@
 Loom does NOT auto-re-embed when LOOM_EMBEDDING_MODEL changes — search filters
 by embedding_model, so rows on the old model become invisible to recall (not
 mixed into the new vector space) until re-embedded. This module is the
-documented re-index path: `loom reembed` after a model change.
+documented re-index path: `loom reembed` after a model change of the same
+width. On coded vector tables a change of width goes through Settings → Models
+& keys, which rebuilds the tables at the new width.
 
 It rewrites every row whose embedding_model differs from the live embedder,
 across the three vector tables, preserving all columns. New-model rows coexist
@@ -380,7 +382,13 @@ async def reembed_all(
     embedding provider's endpoint and key; when given, every table is
     re-embedded by `aiEmbed` inside ClickHouse instead of a Python loop.
     `resume`: a token a previous run printed; tables before its table are
-    skipped and its table continues after the row it names."""
+    skipped and its table continues after the row it names.
+    Raises CodedWidthMismatchError, before reading any row, when the embedder's
+    width is not the one a coded vector table was created at."""
+    from server.core.vectors import codes_state
+
+    for table in _TABLES:
+        await codes_state.refuse_width(table, embedder.dim)
     written: dict[str, int] = {}
     resume_table, resume_key = decode_resume(resume) if resume else ("", None)
     tables = list(_TABLES)

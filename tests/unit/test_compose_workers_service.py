@@ -50,9 +50,14 @@ def test_web_tier_runs_no_workers_and_the_worker_service_runs_only_them() -> Non
     assert web["LOOM_BACKGROUND_WORKERS"] == "off"
     assert workers["LOOM_BACKGROUND_WORKERS"] == "on"
     assert workers["LOOM_WEB_WORKERS"] == "1"
-    # The web tier inherits LOOM_WEB_WORKERS from .env; it must
-    # not pin it here or the operator's value is silently shadowed.
-    assert "LOOM_WEB_WORKERS" not in web
+    # The operator's count from .env, else one process.
+    assert web["LOOM_WEB_WORKERS"] == "${LOOM_WEB_WORKERS:-1}"
+
+
+def test_the_read_replica_keeps_one_process_unless_env_names_a_count() -> None:
+    d = _load(ROOT / "dev" / "docker-compose.read-replica.yml")
+    (replica,) = d["services"].values()
+    assert _env(replica)["LOOM_WEB_WORKERS"] == "${LOOM_WEB_WORKERS:-1}"
 
 
 def test_worker_service_publishes_no_port_and_healthchecks_its_own() -> None:
@@ -123,6 +128,7 @@ def test_each_colour_is_a_web_tier_and_a_workers_container() -> None:
     assert env["LOOM_BACKGROUND_WORKERS"] == "off"
     assert wenv["LOOM_BACKGROUND_WORKERS"] == "auto"
     assert wenv["LOOM_WEB_WORKERS"] == "1"
+    assert env["LOOM_WEB_WORKERS"] == "${LOOM_WEB_WORKERS:-1}"
     assert "ports" not in workers and web["ports"]
     assert (
         wenv["LOOM_SUPERVISOR_LOCK_PATH"]
@@ -149,11 +155,20 @@ def test_labels_separate_the_two_deployment_processes() -> None:
 
 
 def test_launch_paths_outside_compose_carry_a_label() -> None:
-    """CI boots uvicorn from the job env; `make server` and `loom serve` name
-    themselves. Without these the launcher-identity rule would refuse each of them."""
-    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    boots = ci.count("uvicorn server.main:app")
-    assert boots >= 1 and ci.count("LOOM_INSTANCE_LABEL:") == boots  # one label per server boot
+    """CI boots the server (uvicorn or the image's launcher) from the job env;
+    `make server` and `loom serve` name themselves. Without these the
+    launcher-identity rule would refuse each of them."""
+    ci = _load(ROOT / ".github" / "workflows" / "ci.yml")
+    booting = 0
+    for name, job in ci["jobs"].items():
+        for step in job.get("steps") or []:
+            run = str(step.get("run") or "")
+            if "uvicorn server.main:app" not in run and "scripts/serve.sh" not in run:
+                continue
+            booting += 1
+            env = {**(job.get("env") or {}), **(step.get("env") or {})}
+            assert env.get("LOOM_INSTANCE_LABEL"), f"{name}: a server boot without a label"
+    assert booting >= 1
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
     assert "dev:make-server" in makefile
     cli = "\n".join(

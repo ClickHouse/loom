@@ -34,6 +34,7 @@ from typing import Any
 
 from fastapi import APIRouter, FastAPI, Request, Response
 
+from server.transport import gates
 from server.transport import mcp_runs as _mcp_runs
 from server.transport.mcp_auth import (
     _echo_request_id,
@@ -68,6 +69,7 @@ from server.transport.mcp_identity import (
     _client_name_to_agent,
     _remember_client_for_session,
     _resolve_client_name,
+    caller_org,
     new_session_id,
 )
 from server.transport.mcp_op import route as route_loom_op
@@ -289,20 +291,6 @@ def attach(app: FastAPI) -> None:
             response.status_code = 400
             return unsupported_version_error(_echo_request_id(payload), header_version)
 
-        # Close session runs that went idle. Request-driven
-        # (no worker needed) and detached, so no request pays for it.
-        if _mcp_runs.sweep_due():
-            try:
-                from server.core.background import detached_task, register_deferred_task
-                from server.core.model_work_gate import get_model_work_gate
-
-                if not get_model_work_gate().closed:
-                    register_deferred_task(
-                        detached_task(_mcp_runs.sweep_idle(), name="loom-mcp-run-sweep")
-                    )
-            except Exception as _sweep_err:  # noqa: BLE001 — housekeeping never fails a request
-                log.debug("mcp run sweep not scheduled: %s", _sweep_err)
-
         # `Mcp-Session-Id` correlates the `initialize` handshake (carrying
         # `clientInfo.name`) with later `tools/call` POSTs. Server-assigned at
         # initialize (in _dispatch) and echoed on every response so clients
@@ -406,7 +394,11 @@ def attach(app: FastAPI) -> None:
     async def mcp_session_end(request: Request, response: Response) -> Any:
         """The Streamable HTTP transport lets a client end its session with
         `DELETE` + `Mcp-Session-Id`. The session's implicit run closes here
-        (status completed, outcome none); an idle sweep closes the rest."""
+        (status completed, outcome none); the `mcp_session_run_sweep` worker
+        closes the ones that go idle. A DELETE costs one indexed read of the run
+        by (org, id), plus a close when it finds one, under the caller's
+        ClickHouse quota key; it draws the rate limiter like a run.complete call,
+        so a loop of them is answered 429 instead of reaching ClickHouse."""
         from server.auth.jwt import TokenError
 
         mode = _effective_auth_mode()
@@ -418,8 +410,19 @@ def attach(app: FastAPI) -> None:
             auth = None
         if mode != "open" and auth is None:
             return _reject_unauthenticated(request, response, None, message="missing bearer token")
+        from server.auth.context import set_current_auth
+
+        set_current_auth(auth)  # the run's close counts against the caller's quota
+        org = caller_org(auth) or ""
+        rl = gates.session_end_rate_limit(auth, org)
+        if rl is not None and not rl.allowed:
+            wait = gates.retry_after_s(rl)
+            response.status_code = 429
+            response.headers["Retry-After"] = str(wait)
+            msg = f"MCP session end rate limit exceeded (retry in {wait}s)"
+            return {"error": msg, "code": "RATE_LIMITED", "retry_after_s": wait}
         session_id = request.headers.get("mcp-session-id") or request.headers.get("Mcp-Session-Id")
-        closed = await _mcp_runs.close_session(session_id)
+        closed = await _mcp_runs.close_session(session_id, org, _mcp_runs.subject_of(auth))
         if session_id:
             _MCP_AGENT_BY_SESSION.pop(session_id, None)
         return {"session_id": session_id or "", "run_closed": closed}

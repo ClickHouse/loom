@@ -71,8 +71,10 @@ class RatelimitSetInput(BaseModel):
     namespace: str | None = None
     org: str | None = None
     op_class: str
-    capacity: float | None = None
-    rate: float | None = None
+    # Finite and non-negative: every web process reads the override back, and
+    # takes a document holding anything else for corrupt.
+    capacity: float | None = Field(None, ge=0, allow_inf_nan=False)
+    rate: float | None = Field(None, ge=0, allow_inf_nan=False)
     clear: bool = False
 
 

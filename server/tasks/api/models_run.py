@@ -30,7 +30,9 @@ class RunBeginInput(BaseModel):
     # session — cost per run comes from here without another write.
     session_id: str = Field(default=SENTINEL)
     # Caller-supplied for end-to-end tracing (re-sending the same id is a
-    # replace, not a duplicate). Empty = the server mints one.
+    # replace, not a duplicate). Empty = the server mints one. The shape of an
+    # MCP session's implicit run (`mcp-` and 40 hex digits) is the transport's:
+    # a begin naming one is answered with an id of its own.
     run_id: str = Field(default="", max_length=128)
     # What the run sets out to do, in the agent's words; stored on the run row.
     goal: str = Field(min_length=1, max_length=2000)
@@ -132,7 +134,7 @@ class RunCompleteInput(BaseModel):
     # `memories_used` above stays the agent's own reliance label;
     # this list only feeds run.get's live `recalled`, whose trace-log
     # derivation cannot see MCP reads ledgered under the connection's own
-    # run (`mcp-<session>`).
+    # implicit run.
     recalled_keys: list[str] = Field(default_factory=list, max_length=500)
     # Outcome applied to memories_used. "" derives from status: completed →
     # positive, failed → negative, cancelled → none. Negative charges `harm`

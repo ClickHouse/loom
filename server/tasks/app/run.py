@@ -13,19 +13,21 @@ planes it summarises. The statements live in `server.tasks.store.runs`.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
+import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from server.core.ch import get_client, sequential_reads
 from server.core.datetimes import naive_utc_now as _now
 from server.core.errors import AuthInsufficientError, IdentityIncompleteError, NotFoundError
 from server.identity.app.request_scope import request_narrowed, request_scope
-from server.identity.domain.read_scope import WHOLE_NAMESPACE, row_in_read_scope
+from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters, row_in_read_scope
 from server.memory.app import run_feedback, run_retention
 from server.operations.read_projection import project_rows
 from server.tasks.api.models_run import (
@@ -42,12 +44,24 @@ from server.tasks.api.models_run import (
     RunListOutput,
     RunRow,
 )
+from server.tasks.domain.session_runs import is_session_run_id
 from server.tasks.store import runs as runs_store
 from server.tasks.store.rows import RunLedgerRow
 
 log = logging.getLogger(__name__)
 
 _METADATA_LIMIT = 8_000
+
+# One idle-sweep pass: how many session runs it closes at most, how many at once,
+# and how long it starts new closes for (the worker's deadline is twice this).
+IDLE_CLOSE_BATCH = 500
+IDLE_CLOSES_AT_ONCE = 8
+IDLE_CLOSE_BUDGET_S = 120.0
+# A session run's first begin writes this minus its start (in ns) as its version, so
+# of two web processes that both found no row the earlier start and its owner win
+# under FINAL. Every later write takes the server's ns clock, which is above it
+# while start + now exceeds the base (any start after mid-2025).
+_FIRST_BEGIN_VERSION_BASE = 3_500_000_000_000_000_000
 
 
 def _iso(value: Any) -> str:
@@ -59,10 +73,24 @@ def _iso(value: Any) -> str:
 
 
 def _metadata_json(meta: dict[str, Any]) -> str:
-    text = json.dumps(meta or {}, default=str, separators=(",", ":"))
+    meta = meta or {}
+    text = _dumps(meta)
+    keys = meta.get("recalled_keys")
+    if len(text) > _METADATA_LIMIT and isinstance(keys, list):
+        # Drop the last recalled keys, not the run's own keys (`implicit`, `subject`).
+        over = len(text) - _METADATA_LIMIT
+        kept = list(keys)
+        while kept and over > 0:
+            over -= len(_dumps(kept.pop())) + 1
+        text = _dumps({**meta, "recalled_keys": kept})
     if len(text) > _METADATA_LIMIT:
-        return json.dumps({"_truncated": True, "_bytes": len(text)})
+        session_keys = {k: meta[k] for k in ("implicit", "subject") if k in meta}
+        return _dumps({"_truncated": True, "_bytes": len(text), **session_keys})
     return text
+
+
+def _dumps(value: Any) -> str:
+    return json.dumps(value, default=str, separators=(",", ":"))
 
 
 def _parse_metadata(raw: Any) -> dict[str, Any]:
@@ -224,6 +252,108 @@ def _user_of(input: RunBeginInput) -> str:
 # ------------------------------------------------------------------- handlers
 
 
+async def begin_session_run(input: RunBeginInput, *, started_at: datetime) -> None:
+    """Open, or re-open, an MCP session's implicit run under the transport's id,
+    with no claim (run.begin cannot name that id); a re-opened run keeps its start,
+    owner and metadata (an earlier close's `recalled_keys`), less the `closed_by`
+    of the close it reopens from."""
+    ch = get_client()
+    with sequential_reads():
+        existing = await runs_store.fetch_run(ch, input.org, input.namespace, input.run_id)
+    version = None
+    if existing is None:
+        started_ns = (started_at - datetime(1970, 1, 1)) // timedelta(microseconds=1) * 1000
+        version = _FIRST_BEGIN_VERSION_BASE - started_ns
+    else:
+        metadata = _parse_metadata(existing.get("metadata"))
+        metadata.pop("closed_by", None)
+        input = input.model_copy(
+            update={
+                "user_id": str(existing.get("user_id") or input.user_id),
+                "session_id": str(existing.get("session_id") or input.session_id),
+                "metadata": {**metadata, **input.metadata},
+            }
+        )
+    await _open_run(ch, input, input.run_id, existing, started_at=started_at, version=version)
+
+
+async def active_session_runs(org: str, run_id: str) -> list[RunLedgerRow]:
+    """An MCP session's implicit run, when a web process of the server has begun
+    it: oldest first, one per namespace when the subject's tokens default to
+    different ones."""
+    with sequential_reads():
+        return await runs_store.active_runs_by_id(get_client(), org, run_id)
+
+
+async def close_session_run(org: str, run_id: str, *, reason: str) -> bool:
+    """Complete every active row of an implicit session run; False when none is."""
+    closed = False
+    for row in await active_session_runs(org, run_id):
+        closed |= await _complete_session_run(row, reason=reason)
+    return closed
+
+
+async def close_idle_session_runs(idle_seconds: int) -> int:
+    """Complete the implicit session runs no call of their token reached within
+    the idle window; the next pass takes what one pass leaves. Returns how many closed."""
+    deadline = time.monotonic() + IDLE_CLOSE_BUDGET_S
+    stale = await runs_store.idle_session_runs(
+        get_client(), idle_seconds=idle_seconds, limit=IDLE_CLOSE_BATCH
+    )
+    slots = asyncio.Semaphore(IDLE_CLOSES_AT_ONCE)
+
+    async def close(row: RunLedgerRow) -> bool:
+        async with slots:
+            if time.monotonic() >= deadline:
+                return False
+            try:
+                return await _complete_session_run(row, reason="idle", idle_seconds=idle_seconds)
+            except Exception as e:  # noqa: BLE001 — one run's close must not hold up the rest
+                log.warning("session run %s: idle close failed: %s", row["run_id"], e)
+                return False
+
+    return sum(await asyncio.gather(*(close(row) for row in stale)))
+
+
+async def _complete_session_run(
+    row: RunLedgerRow, *, reason: str, idle_seconds: int | None = None
+) -> bool:
+    """Complete one row of a session run while it is active (and, for the sweep,
+    still idle), judging nothing, so racing closes only repeat the completion."""
+    ch = get_client()
+    org, namespace, run_id = str(row["org"]), str(row["namespace"]), str(row["run_id"])
+    with sequential_reads():
+        existing = await runs_store.fetch_run(ch, org, namespace, run_id)
+    if existing is None or existing.get("status") != "active":
+        return False
+    subject = str(_parse_metadata(existing.get("metadata")).get("subject") or "")
+    if idle_seconds is not None and await runs_store.busy_lately(
+        ch, org, namespace, run_id, subject, idle_seconds
+    ):
+        return False
+    await _complete(
+        ch,
+        RunCompleteInput(
+            org=org,
+            namespace=namespace,
+            run_id=run_id,
+            status="completed",
+            # The transport cannot say how the session's work went.
+            outcome="none",
+            retain="keep",
+            # 0: from the run's start, which every web process shares.
+            duration_ms=0,
+            metadata={"closed_by": f"mcp_{reason}"},
+        ),
+        existing,
+        drop_claim=False,  # begin_session_run takes no claim
+        # The run id already binds the org, token and session: count every write
+        # under it, whoever closes the run.
+        scope=WHOLE_NAMESPACE,
+    )
+    return True
+
+
 async def handle_run_begin(input: RunBeginInput) -> RunBeginOutput:
     """Open a run. A caller-supplied run_id is claimed in Keeper, then checked
     against its row, then written, then released. A begin that finds the claim
@@ -239,6 +369,10 @@ async def handle_run_begin(input: RunBeginInput) -> RunBeginOutput:
     if not supplied:
         # A server-made id cannot collide: nothing to claim or check.
         return await _open_run(ch, input, uuid.uuid4().hex, None)
+    if is_session_run_id(supplied):
+        # The MCP transport's session runs open only through begin_session_run.
+        run_id, existing = await _own_run(ch, input, supplied)
+        return await _open_run(ch, input, run_id, existing)
     claim = await runs_store.claim_run(
         ch, input.org, input.namespace, supplied, _user_of(input), input.session_id or "-"
     )
@@ -250,16 +384,23 @@ async def handle_run_begin(input: RunBeginInput) -> RunBeginOutput:
 
 
 async def _open_run(
-    ch: Any, input: RunBeginInput, run_id: str, existing: RunLedgerRow | None
+    ch: Any,
+    input: RunBeginInput,
+    run_id: str,
+    existing: RunLedgerRow | None,
+    *,
+    started_at: datetime | None = None,
+    version: int | None = None,
 ) -> RunBeginOutput:
-    """Write the run's active row and answer with its id."""
+    """Write the run's active row and answer with its id. A new row starts at
+    `started_at` (default: now); `version` replaces the server's (a session run's first begin)."""
     # The begin row in the ledger carries the run it opened, so begin and complete join
     # on `run_id` (the body names none; the transport's fallback is the header run, empty
     # for a bare client).
     from server.observability.run_context import set_ledger_run
 
     set_ledger_run(run_id)
-    started = _now()
+    started = started_at or _now()
     if existing is not None and existing.get("started_at"):
         # Same run_id re-sent (hook retry, tracing id reuse): a replace that
         # keeps the original start so duration stays honest.
@@ -293,6 +434,8 @@ async def _open_run(
             else input.metadata
         ),
     }
+    if version is not None:
+        row["version"] = version
     await runs_store.insert_runs(ch, [row])
     return RunBeginOutput(
         run_id=run_id,
@@ -412,7 +555,19 @@ async def handle_run_complete(input: RunCompleteInput) -> RunCompleteOutput:
             "call run.begin first",
             run_id=input.run_id,
         )
+    return await _complete(ch, input, existing)
 
+
+async def _complete(
+    ch: Any,
+    input: RunCompleteInput,
+    existing: RunLedgerRow,
+    *,
+    drop_claim: bool = True,
+    scope: ReadFilters | None = None,
+) -> RunCompleteOutput:
+    """Close the run from its stored row `existing`; the caller checked access.
+    `scope` bounds what it counts as written (default: the request's read scope)."""
     now = _now()
     started = existing.get("started_at")
     duration_ms = int(input.duration_ms or 0)
@@ -458,7 +613,8 @@ async def handle_run_complete(input: RunCompleteInput) -> RunCompleteOutput:
     if outcome in ("positive", "negative") and session_id != "-":
         await _label_session(ch, existing, input, outcome, session_id)
 
-    scope = request_scope()
+    if scope is None:
+        scope = request_scope()
     written = await runs_store.written_keys(
         ch, input.org, input.namespace, input.run_id, scope=scope
     )
@@ -490,8 +646,8 @@ async def handle_run_complete(input: RunCompleteInput) -> RunCompleteOutput:
         }
     )
     await runs_store.insert_runs(ch, [row])
-    # run.begin already dropped its claim; this drops one a begin left behind.
-    await runs_store.delete_claim(ch, input.org, input.namespace, input.run_id)
+    if drop_claim:  # run.begin already dropped its claim; this drops one a begin left behind
+        await runs_store.delete_claim(ch, input.org, input.namespace, input.run_id)
     from server.memory.app.recall_credit import note_closer_from_request
 
     note_closer_from_request(input.org)  # this consumer closes the usage loop

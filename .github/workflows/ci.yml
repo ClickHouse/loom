@@ -24,6 +24,23 @@ env:
   UV_VERSION: "0.12.19"
 
 jobs:
+  clickhouse:
+    name: the ClickHouse release this run tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      image: ${{ steps.resolve.outputs.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # `latest` moves; every job of this run takes the release it names now.
+      # Assigned first: a failed lookup then fails the step instead of writing "image=".
+      - id: resolve
+        run: |
+          image=$(bash dev/clickhouse_release.sh)
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+
   lint:
     name: ruff + mypy-gate
     runs-on: ubuntu-latest
@@ -89,8 +106,11 @@ jobs:
 
   unit:
     name: pytest unit + coverage
+    needs: clickhouse
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      LOOM_CLICKHOUSE_IMAGE: ${{ needs.clickhouse.outputs.image }}
     # No ClickHouse service: unit tests skip cleanly when env config is absent.
     # The clickhouse binary is installed for clickhouse-local / -format checks.
     steps:
@@ -112,11 +132,11 @@ jobs:
         run: git fetch --no-tags --depth=1 origin +refs/heads/main:refs/remotes/origin/main
       # The clickhouse binary (as clickhouse-local and clickhouse-format) for the
       # unit tests that run production SQL locally, such as the pending-grant
-      # checks. Taken from the image dev/ci_start_clickhouse.sh pins, so the
-      # parser and engine match the integration job's server.
-      - name: Install the pinned clickhouse binary
+      # checks. The run's release, so the parser and engine are the
+      # integration job's server.
+      - name: Install the clickhouse binary
         run: |
-          id=$(docker create clickhouse/clickhouse-server:26.5.1.882)
+          id=$(docker create "$LOOM_CLICKHOUSE_IMAGE")
           sudo docker cp -L "$id:/usr/bin/clickhouse" /usr/local/bin/clickhouse
           docker rm "$id" >/dev/null
           sudo ln -sf clickhouse /usr/local/bin/clickhouse-format
@@ -187,9 +207,11 @@ jobs:
 
   schema-check:
     name: schema.sql in sync with migrations
+    needs: clickhouse
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
+      LOOM_CLICKHOUSE_IMAGE: ${{ needs.clickhouse.outputs.image }}
       LOOM_CH_HOST: localhost
       LOOM_CH_PORT: "8123"
       LOOM_CH_USER: loom
@@ -334,9 +356,11 @@ jobs:
 
   integration:
     name: pytest integration (ClickHouse service)
+    needs: clickhouse
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
+      LOOM_CLICKHOUSE_IMAGE: ${{ needs.clickhouse.outputs.image }}
       LOOM_CH_HOST: localhost
       LOOM_CH_PORT: "8123"
       LOOM_CH_USER: loom
@@ -403,10 +427,12 @@ jobs:
           tests/integration/test_provider_source_policy_live_ch.py
           tests/integration/test_provider_staging_live_ch.py
           tests/integration/test_provider_views_live_ch.py
+      # The image's launcher with several web processes, so state that must
+      # bind every process (rate limits, budgets, schema caches) is tested.
       - name: Boot control plane
         run: |
-          nohup uvicorn server.main:app --host 0.0.0.0 --port 7777 --timeout-graceful-shutdown 10 > server.log 2>&1 &
-          for _ in $(seq 1 30); do
+          LOOM_WEB_WORKERS=3 nohup sh scripts/serve.sh > server.log 2>&1 &
+          for _ in $(seq 1 60); do
             curl -fsS http://localhost:7777/v1/health && exit 0
             sleep 1
           done
@@ -424,9 +450,11 @@ jobs:
         env:
           LOOM_AUTH_REQUIRED: "true"
           LOOM_INSTANCE_LABEL: "ci:integration-auth"
+        # Several web processes, as the image runs: a session's MCP calls and its
+        # DELETE land on different ones.
         run: |
-          nohup uvicorn server.main:app --host 127.0.0.1 --port 7778 --timeout-graceful-shutdown 10 > server-auth.log 2>&1 &
-          for _ in $(seq 1 30); do
+          LOOM_WEB_WORKERS=3 PORT=7778 nohup sh scripts/serve.sh > server-auth.log 2>&1 &
+          for _ in $(seq 1 60); do
             curl -fsS http://localhost:7778/v1/health && exit 0
             sleep 1
           done
@@ -447,6 +475,7 @@ jobs:
           tests/integration/test_blacklist.py
           tests/integration/test_sensitivity_high_canary.py
           tests/integration/test_run_begin_claims.py
+          tests/integration/test_mcp_session_run_scope.py
       # The statement corpus: every builder's shapes through
       # EXPLAIN QUERY TREE on the migrated service, and shapes.txt in step
       # with the builders. ~10 s; a rejection here is a statement that would

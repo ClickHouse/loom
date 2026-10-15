@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from server.core.ch_schema_guard import schema_guard_reset
 from server.core.paths import MIGRATIONS_DIR
 from server.core.schema.journal import (
     baseline_map,
@@ -114,13 +115,8 @@ def pending_created_tables(
 
 
 def reset_cache() -> None:
-    """Test hook: this cache, the parsed files, and the client's guard set
-    derived from them."""
+    """Forget this cache, the parsed files, and the client's guard set
+    derived from them (after boot migrations, and in tests)."""
     _cache["at"], _cache["value"] = 0.0, None
     _created_cache.clear()
-    try:
-        from server.core.ch_schema_guard import schema_guard_reset
-
-        schema_guard_reset()
-    except Exception:  # noqa: BLE001 — a test hook never fails a test on import order
-        pass
+    schema_guard_reset()

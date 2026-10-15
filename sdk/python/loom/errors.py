@@ -96,6 +96,20 @@ class SchemaPending(BackendUnavailable):
     code = "SCHEMA_PENDING"
 
 
+class CodedWidthMismatch(BackendUnavailable):
+    """503 CODED_WIDTH_MISMATCH — the server's embedder writes vectors of a width
+    its coded vector tables do not take; `/v1/health` says how to fix it."""
+
+    code = "CODED_WIDTH_MISMATCH"
+
+
+class OverrideNotShared(BackendUnavailable):
+    """503 OVERRIDE_NOT_SHARED — a runtime override could not reach the
+    server's other web processes, so none took it; the server log says why."""
+
+    code = "OVERRIDE_NOT_SHARED"
+
+
 #: `code` of a `BackendUnavailable` for a request that got no complete
 #: response: the server could not be reached, or its answer was cut off.
 NETWORK_ERROR_CODE = "NETWORK"
@@ -135,6 +149,8 @@ ERROR_CODES: dict[str, type[LoomError]] = {
     "OVERLOADED": Overloaded,
     "BACKEND_TIMEOUT": BackendTimeout,
     "SCHEMA_PENDING": SchemaPending,
+    "OVERRIDE_NOT_SHARED": OverrideNotShared,
+    "CODED_WIDTH_MISMATCH": CodedWidthMismatch,
     "IDEMPOTENT_CONFLICT": IdempotentConflict,
     "PRECONDITION_FAILED": PreconditionFailed,
 }

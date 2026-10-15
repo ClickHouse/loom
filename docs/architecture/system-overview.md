@@ -186,8 +186,8 @@ the one tool that is not a registry op).
    and fill omitted namespace and agent from the token and the caller's saved default.
    Explicit arguments win. `code.*` ops default to the deployment's code namespace. The
    reads in `_MCP_CROSS_AGENT_READS` default `agent` to `*`.
-3. **Session run.** One implicit run per `Mcp-Session-Id`: a write that names no run gets
-   the session's `run_id`.
+3. **Session run.** One implicit run per (org, token subject, `Mcp-Session-Id`), filed in the
+   caller's default namespace: a write that names no run gets the session's `run_id`.
 4. **Idempotency key.** An idempotent tool takes `_idempotency_key` (or `idempotency_key`)
    in its arguments, popped before validation.
 5. **Arguments** (`_validated_input`). The misspelled-argument refusal, then validation. A
@@ -236,7 +236,8 @@ One image serves every role. Settings decide what a process does:
 | Branch / A-B server | `LOOM_BOOT_MIGRATE=false`, `LOOM_INSTANCE_LABEL=<who>:<what>:<port>` | Serves a shared ClickHouse without applying migrations.                                                                                                                                                               |
 | Read-replica        | `LOOM_READ_REPLICA=true`                                             | Serves the shared data, ops and writes from its own endpoint with the same tokens: no migrations, workers or git mirrors; takes the main Loom's published settings ([read-replicas](../operations/read-replicas.md)). |
 
-`LOOM_WEB_WORKERS` sets uvicorn processes per container (default 1). Each runs the full
+`LOOM_WEB_WORKERS` sets uvicorn processes per container (unset, the image starts one per
+CPU the container may use, at most one per GiB of memory and at most 8). Each runs the full
 lifespan; under `auto` the host lock picks the one that runs the workers. `on` takes no
 lock, so it belongs only on a single-process workers container.
 

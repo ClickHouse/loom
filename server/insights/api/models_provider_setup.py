@@ -147,6 +147,7 @@ class ProviderCheck(SetupModel):
         "model_unavailable",
         "timeout",
         "invalid_output",
+        "unsupported_dimensions",
         "provider_error",
     ]
     # Status code or expected/actual width; never upstream text, which may echo secrets.
