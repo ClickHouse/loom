@@ -179,5 +179,15 @@ async def sweep() -> None:
     from server.core.ch import get_client
 
     ch = get_client()
-    if await _available(ch):
-        await ch.execute(f"ALTER TABLE {_TABLE} DELETE WHERE expires_at < toUInt32(now())")
+    if not await _available(ch):
+        return
+    try:
+        # Strict: a key renewed after this read it is not deleted.
+        await ch.execute(
+            f"ALTER TABLE {_TABLE} DELETE WHERE expires_at < toUInt32(now()) "
+            "SETTINGS keeper_map_strict_mode = 1"
+        )
+    except Exception as e:  # a key changed meanwhile: the next sweep takes the rest
+        if not _lost_race(e):
+            raise
+        log.info("oauth claims: a key changed during the sweep; left for the next one")

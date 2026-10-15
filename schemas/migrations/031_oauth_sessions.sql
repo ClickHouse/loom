@@ -5,6 +5,9 @@
 -- replayed refresh token) ends all of them.
 -- upstream_refresh: the identity provider's refresh token, sealed, so each
 -- Loom refresh can ask the provider whether the user is still active.
+-- generation: how many rotations of the session came before the token, so a
+-- presented token is known spent once a later generation has been issued.
 ALTER TABLE loom.oauth_state
     ADD COLUMN IF NOT EXISTS family String DEFAULT '',
-    ADD COLUMN IF NOT EXISTS upstream_refresh String DEFAULT '';
+    ADD COLUMN IF NOT EXISTS upstream_refresh String DEFAULT '',
+    ADD COLUMN IF NOT EXISTS generation UInt32 DEFAULT 0;

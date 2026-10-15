@@ -609,3 +609,30 @@ def test_an_exchange_issues_its_tokens_at_the_time_before_its_revocation_read(
     assert claims["iat"] == before
     saved = oauth.store.refresh[oauth.token_id(tok["refresh_token"])]
     assert int(saved["exp"]) - oauth._REFRESH_TTL == before
+
+
+def test_a_read_behind_keeper_is_a_retry_and_a_later_generation_a_replay(monkeypatch) -> None:
+    from server.auth import claims
+
+    c = _client()
+    rt = _refresh_token_for_alice(c)
+    store = oauth.store
+    grant = store.refresh[oauth.token_id(rt)]
+    key = f"family:{grant['family']}"
+    real = store._swap
+
+    async def behind(k: str, old: str | None, new: str, exp: int) -> str | None:
+        return f"0:{'0' * 64}"  # an older value than the token's, as a lagging read shows
+
+    monkeypatch.setattr(store, "_swap", behind)
+    with pytest.raises(claims.Busy):
+        asyncio.run(store.take_refresh(rt, "loom-test"))
+
+    async def ahead(k: str, old: str | None, new: str, exp: int) -> str | None:
+        return f"{grant.get('generation', 0) + 1}:{'1' * 64}"
+
+    monkeypatch.setattr(store, "_swap", ahead)
+    with pytest.raises(oauth.CodeReplayed):
+        asyncio.run(store.take_refresh(rt, "loom-test"))
+    monkeypatch.setattr(store, "_swap", real)
+    assert key in store.keeper

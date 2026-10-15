@@ -403,3 +403,12 @@ def test_logout_forgets_its_session_after_a_refresh_rotated_it(server) -> None:
     )
     assert credentials.logout() is True
     assert _stored()["profiles"] == {}
+
+
+def test_an_internationalized_server_is_its_own_server(server) -> None:
+    tokens = {"access_token": "a1", "refresh_token": "r1", "expires_in": 3600}
+    credentials._save("default", "https://bücher.example", tokens, session="s")
+    auth = credentials.stored_login("https://xn--bcher-kva.example")  # as httpx spells it
+    assert auth is not None
+    with httpx.Client(transport=httpx.MockTransport(server)) as c:
+        assert c.get("https://xn--bcher-kva.example/v1/whoami", auth=auth).status_code == 200

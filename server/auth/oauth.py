@@ -573,7 +573,8 @@ async def oidc_callback(request: Request) -> Response:
     except OAuthError as e:  # answered here, so its cookie goes too
         response = oauth_error_response(request, e)
     state = request.query_params.get("state", "")
-    if state:
+    retryable = response.status_code >= 500 or response.status_code == 429
+    if state and not retryable:  # a retry needs the browser's round trip still
         response.delete_cookie(_state_cookie(state), path="/oauth/callback")
     return response
 
@@ -818,13 +819,16 @@ def _invalid_grant(description: str = "") -> OAuthError:
     return OAuthError("invalid_grant", description=description)
 
 
-async def issue_tokens(grant: Grant | Device, client_id: str, since: int) -> dict[str, Any]:
+async def issue_tokens(
+    grant: Grant | Device, client_id: str, since: int, generation: int = 0
+) -> dict[str, Any]:
     """An access token for the grant's session, and the next refresh token.
     Under OIDC a session with no IdP refresh token gets no Loom refresh token:
     nothing could tell Loom the user was deactivated, so the session ends with
     its access token. A subject revoked since `since` (when the grant was
     issued) gets nothing; that is read from ClickHouse, not this process's
-    snapshot, and a failed read raises so the caller puts the credential back."""
+    snapshot, and a failed read raises so the caller puts the credential back.
+    `generation` is the refresh token's place in its session's rotations."""
     from server.auth.revocation import subjects_revoked
 
     issued_at = int(time.time())  # before the read: a revocation after it postdates the tokens
@@ -861,6 +865,7 @@ async def issue_tokens(grant: Grant | Device, client_id: str, since: int) -> dic
             "roles": list(grant["roles"]),
             "exp": issued_at + _REFRESH_TTL,
             "family": grant["family"],
+            "generation": generation,
             "upstream_refresh": grant["upstream_refresh"],
             "held": grant.get("held", {}),  # a rotation swaps from the token it spent
         },
@@ -1005,7 +1010,9 @@ async def _refresh_token_grant(f: dict[str, str]) -> dict[str, Any]:
         raise _invalid_grant()
     try:
         return await _refresh_session(grant, refresh_token)
-    except OAuthError:
+    except OAuthError as e:
+        if e.status_code != 503:  # refused for good: no token replaces this one
+            await store.retire_refresh(grant)
         raise  # an answer: refused, or retry later with the token put back
     except Exception as e:  # Loom's own failure: unspend the token so the retry is no replay
         log.warning("oauth: refreshing a session failed: %s", e)
@@ -1037,7 +1044,12 @@ async def _refresh_session(grant: Grant, refresh_token: str) -> dict[str, Any]:
             await oidc.revoke(grant["upstream_refresh"])
         await end_session(grant, "account no longer active")
         raise _invalid_grant()
-    return await issue_tokens({**grant, "roles": roles}, grant["client_id"], since=issued_at)
+    return await issue_tokens(
+        {**grant, "roles": roles},
+        grant["client_id"],
+        since=issued_at,
+        generation=grant.get("generation", 0) + 1,
+    )
 
 
 @router.post("/oauth/token")
@@ -1081,9 +1093,10 @@ async def revoke_token(request: Request) -> Response:
         # token could not be matched, and logout would quietly do nothing.
         raise OAuthError("invalid_request", description="client_id required")
     grant: Grant | Device | None = None
+    spent: Grant | None = None  # spent by this logout
     reason = "logout"
     try:
-        grant = await store.take_refresh(token_value, client_id)
+        grant = spent = await store.take_refresh(token_value, client_id)
     except CodeReplayed as e:
         # Spent already: a logout retried, or an old copy. Still a logout,
         # but the audit keeps the difference.
@@ -1091,6 +1104,8 @@ async def revoke_token(request: Request) -> Response:
     if grant is not None:
         try:
             await end_session(grant, reason)
+            if spent is not None:  # nothing replaces it
+                await store.retire_refresh(spent)
         except Exception as e:  # nothing durable landed: the client must not think it did
             log.exception("oauth: logout could not end session %s", grant["family"])
             raise _unavailable() from e

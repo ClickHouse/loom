@@ -21,7 +21,6 @@ or the next step of a device grant.
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import time
@@ -52,6 +51,8 @@ class Grant(TypedDict):
     exp: int
     family: str
     upstream_refresh: str
+    # A refresh token's place in its session's rotations (0 for the first).
+    generation: NotRequired[int]
     held: NotRequired[dict[str, str]]
 
 
@@ -102,6 +103,7 @@ class OAuthStore(Protocol):
     ) -> Grant | None: ...
     async def save_refresh(self, token: str, g: Grant) -> None: ...
     async def take_refresh(self, token: str, client_id: str) -> Grant | None: ...
+    async def retire_refresh(self, g: Grant) -> None: ...
     async def save_pending(self, state: str, data: dict[str, Any]) -> None: ...
     async def take_pending(self, state: str) -> dict[str, Any] | None: ...
     async def use_once(self, key: str, expires_at: int) -> bool: ...
@@ -169,9 +171,19 @@ def _refresh_row(rid: str, g: Grant) -> dict[str, Any]:
         "roles": list(g["roles"]),
         "expires_at": int(g["exp"]),
         "family": g["family"],
+        "generation": g.get("generation", 0),
         "upstream_refresh": seal(UPSTREAM_PURPOSE, g["upstream_refresh"]),
         "version": time.time_ns(),
     }
+
+
+def _current(generation: int, rid: str) -> str:
+    """A session key's value naming its current refresh token."""
+    return f"{generation}:{rid}"
+
+
+def _generation(value: str) -> int:
+    return int(value.split(":", 1)[0])
 
 
 def _held(g: Grant | Device, key: str) -> str | None:
@@ -264,7 +276,8 @@ class ClickHouseStore:
         rid = token_id(token)
         await self._save_refresh_grant(rid, g)
         key = f"family:{g['family']}"
-        if await self._swap(key, _held(g, key), rid, g["exp"]) != rid:
+        current = _current(g.get("generation", 0), rid)
+        if await self._swap(key, _held(g, key), current, g["exp"]) != current:
             raise claims.Changed(key)
 
     async def _save_refresh_grant(self, rid: str, g: Grant) -> None:
@@ -276,7 +289,7 @@ class ClickHouseStore:
         with own_write_reads():  # handed out a moment ago, maybe through another replica
             row = await self._ch().query_one(
                 f"""SELECT client_id, subject, org, namespaces, roles, expires_at, family,
-                           upstream_refresh
+                           generation, upstream_refresh
                     FROM {_T} FINAL
                     WHERE record_type = 'refresh' AND id = {{id:String}} LIMIT 1""",
                 params={"id": rid},
@@ -293,6 +306,7 @@ class ClickHouseStore:
             "roles": list(row["roles"]),
             "exp": int(row["expires_at"]),
             "family": row["family"],
+            "generation": int(row["generation"]),
             "upstream_refresh": unseal(UPSTREAM_PURPOSE, row["upstream_refresh"]),
         }
 
@@ -304,17 +318,25 @@ class ClickHouseStore:
         if not grant["family"]:
             return None  # issued before sessions had families: its owner signs in again
         key = f"family:{grant['family']}"
-        spending = f"spending:{claims.nonce()}"
-        for attempt in range(2):
-            now = await self._swap(key, rid, spending, grant["exp"])
-            if now == spending:
-                return {**grant, "held": {key: spending}}
-            if now is None:
-                return None  # the session's key is gone: it has expired
-            if attempt == 0:
-                # Another token, or a Keeper replica a moment behind: look again.
-                await asyncio.sleep(0.2)
-        raise CodeReplayed(grant)  # no longer the session's current token: spent
+        generation = grant.get("generation", 0)
+        spending = f"{generation}:spending:{claims.nonce()}"
+        now = await self._swap(key, _current(generation, rid), spending, grant["exp"])
+        if now == spending:
+            return {**grant, "held": {key: spending}}
+        if now is None:
+            return None  # the session's key is gone: it has expired
+        # A read may lag behind Keeper, never run ahead of it: a later
+        # generation seen is one that was issued, so this token was spent.
+        if _generation(now) > generation:
+            raise CodeReplayed(grant)
+        raise claims.Busy(key)  # being spent right now, or a read behind: retry
+
+    async def retire_refresh(self, g: Grant) -> None:
+        """A spent token that no token replaces (logout, a refusal): its
+        session key moves on, so presenting it again reads as spent."""
+        key = f"family:{g['family']}"
+        ended = _current(g.get("generation", 0) + 1, "ended")
+        await self._swap(key, _held(g, key), ended, g["exp"])
 
     async def save_pending(self, state: str, data: dict[str, Any]) -> None:
         exp = int(time.time()) + PENDING_TTL

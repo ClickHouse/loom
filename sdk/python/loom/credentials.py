@@ -128,10 +128,11 @@ _DEFAULT_PORTS = {"http": 80, "https": 443}
 
 def _origin(url: str) -> tuple[str, str, int | None]:
     """(scheme, host, port) compared as a browser compares origins: the host
-    in any case, the default port written or not."""
-    u = urlsplit(url)
-    scheme = u.scheme.lower()
-    return scheme, (u.hostname or "").lower(), u.port or _DEFAULT_PORTS.get(scheme)
+    as httpx sends it (lower case, IDNA-encoded), the default port written or
+    not."""
+    u = httpx.URL(url)
+    host = u.raw_host.decode("ascii").lower()
+    return u.scheme, host, u.port or _DEFAULT_PORTS.get(u.scheme)
 
 
 def _same_server(a: str, b: str) -> bool:

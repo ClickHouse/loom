@@ -80,14 +80,15 @@ async def test_a_refresh_token_presented_five_times_at_once_is_spent_once(store:
     results = await _all(*(store.take_refresh(token, "loom-cli") for _ in range(5)))
     won = [r for r in results if isinstance(r, dict)]
     assert len(won) == 1, results
-    assert all(isinstance(r, CodeReplayed) for r in results if r not in won), results
+    # The others see it being spent: told to retry, then finding it spent.
+    assert all(isinstance(r, claims.Busy | CodeReplayed) for r in results if r not in won), results
 
 
 async def test_a_rotation_makes_only_the_new_token_current(store: Any) -> None:
     old, new = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
     await store.save_refresh(old, _grant("loom-cli"))
     grant = await store.take_refresh(old, "loom-cli")
-    await store.save_refresh(new, grant)
+    await store.save_refresh(new, {**grant, "generation": grant["generation"] + 1})  # as issued
     assert await store.take_refresh(new, "loom-cli") is not None
     with pytest.raises(CodeReplayed):
         await store.take_refresh(old, "loom-cli")
