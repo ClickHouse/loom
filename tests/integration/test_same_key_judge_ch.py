@@ -1515,9 +1515,13 @@ async def test_a_deferred_undo_adds_no_weight_to_a_fact_another_live_row_holds(c
     ids = [str(london["memory_id"])]
     async with _another_orgs_erasure_pending(ch):
         await reconcile_row_facts(
-            scope, ids, reopen=True, op="memory.restore", ch=ch,
+            scope,
+            ids,
+            reopen=True,
+            op="memory.restore",
+            ch=ch,
             hashes={ids[0]: london["content_sha256"]},
-        )  # fmt: skip
+        )
         failure = await _recorded_reconcile(ch, org)
     assert (await retry_projection_failure(failure, ch=ch)).resolved
     await _mutations_done(ch, org)
@@ -1556,8 +1560,10 @@ async def test_an_undo_starts_a_fact_dated_ahead_on_its_date(ch, org) -> None:
     )
     berlin, rome = markers
     assert (berlin["object"], berlin["valid_from"], berlin["valid_to"]) == (
-        "berlin", december, None
-    )  # fmt: skip
+        "berlin",
+        december,
+        None,
+    )
     assert (rome["object"], rome["valid_to"]) == ("rome", december)
     assert rome["valid_from"] < december
     edges = await ch.query_all(
@@ -1613,8 +1619,10 @@ async def test_a_replayed_undo_restates_a_fact_dated_ahead_as_stored(ch, org, mo
     )
     berlin, rome = markers  # one each: the replay wrote none
     assert (berlin["object"], berlin["valid_from"], berlin["valid_to"]) == (
-        "berlin", december, None
-    )  # fmt: skip
+        "berlin",
+        december,
+        None,
+    )
     assert (rome["object"], rome["valid_to"]) == ("rome", december)
 
 
@@ -1632,13 +1640,17 @@ async def test_a_bulk_write_keeps_the_value_with_the_newest_observation(ch, org)
     ]
     await handle_memory_bulk_set(
         MemoryBulkSetInput(
-            org=org, namespace=NS, agent="bot", user_id=USER, session_id="s1",
+            org=org,
+            namespace=NS,
+            agent="bot",
+            user_id=USER,
+            session_id="s1",
             entries=[
                 {"memory_key": k, "value": v, "relations": [(*live, city)], "valid_at": at}
                 for k, v, city, at in stated
             ],
         )
-    )  # fmt: skip
+    )
     await _mutations_done(ch, org)
     assert await _open_cities(ch, org, {"london"}) == {"london"}
     (paris,) = await ch.query_all(
@@ -1816,9 +1828,18 @@ async def _support(ch: Any, org: str, city: str, ends: datetime) -> None:
 
     hour_ago = datetime.now(UTC).replace(tzinfo=None, microsecond=0) - timedelta(hours=1)
     row = entity_triple_row(
-        org, NS, "user", "live_in", city, provenance="t", confidence=1.0, adapter_name="t",
-        last_seen=hour_ago, seen_at=hour_ago, valid_to=ends,
-    )  # fmt: skip
+        org,
+        NS,
+        "user",
+        "live_in",
+        city,
+        provenance="t",
+        confidence=1.0,
+        adapter_name="t",
+        last_seen=hour_ago,
+        seen_at=hour_ago,
+        valid_to=ends,
+    )
     await ch.insert("loom.entity_triples", [row], settings={"wait_for_async_insert": 1})
 
 
@@ -1867,9 +1888,13 @@ async def test_an_undo_keeps_its_weight_past_the_end_of_a_row_weighed_now(ch, or
     assert await _marker_weights(ch, org, before) == {"triples": [1], "edges": [1]}
     for labeled in (True, False):
         walk = FactsTraverseInput(
-            org=org, namespace=NS, seed_entity="user", max_hops=1, labeled=labeled,
+            org=org,
+            namespace=NS,
+            seed_entity="user",
+            max_hops=1,
+            labeled=labeled,
             as_of=next_month + timedelta(days=13),
-        )  # fmt: skip
+        )
         nodes = {n.entity: n.via_co_occur for n in (await handle_facts_traverse(walk)).nodes}
         assert nodes.get("london", 0) >= 1, (labeled, nodes)
 
@@ -1944,9 +1969,17 @@ async def test_an_undo_takes_no_end_from_an_older_row_of_its_fact(ch, org) -> No
     december = now + timedelta(days=60)
     hour_ago = now - timedelta(hours=1)
     older = entity_triple_row(
-        org, NS, *live, "london", provenance="t", confidence=1.0, adapter_name="t",
-        last_seen=hour_ago, seen_at=hour_ago, valid_to=december,
-    )  # fmt: skip
+        org,
+        NS,
+        *live,
+        "london",
+        provenance="t",
+        confidence=1.0,
+        adapter_name="t",
+        last_seen=hour_ago,
+        seen_at=hour_ago,
+        valid_to=december,
+    )
     await ch.insert("loom.entity_triples", [older], settings={"wait_for_async_insert": 1})
     london = await _stated(ch, org, "s1", "I live in London", (*live, "london"))
     await close_triples(ch, org=org, namespace=NS, closes=[(*live, "london", now, now)])
@@ -2168,9 +2201,14 @@ async def test_a_replayed_repair_never_closes_a_newer_value(
     live = ("user", "live_in")
     london = await _stated(ch, org, "s1", "I live in London", (*live, "london"), memory_key="k1")
     _, failure = await _failed_repair(
-        ch, org, monkeypatch, "_repair_contradictory_triples", "I moved to Rome",
-        (*live, "rome"), "k2",
-    )  # fmt: skip
+        ch,
+        org,
+        monkeypatch,
+        "_repair_contradictory_triples",
+        "I moved to Rome",
+        (*live, "rome"),
+        "k2",
+    )
     # Paris arrives after Rome's write, in its second or a later one.
     paris = await _stated(ch, org, "s3", "I moved to Paris", (*live, "paris"), memory_key="k3")
     await _mutations_done(ch, org)
@@ -2224,14 +2262,25 @@ async def test_a_replay_that_fails_after_its_close_is_finished_by_the_next(
     live = ("user", "live_in")
     london = await _stated(ch, org, "s1", "I live in London", (*live, "london"), memory_key="k1")
     _, failure = await _failed_repair(
-        ch, org, monkeypatch, "_repair_contradictory_triples", "I moved to Rome",
-        (*live, "rome"), "k2",
-    )  # fmt: skip
+        ch,
+        org,
+        monkeypatch,
+        "_repair_contradictory_triples",
+        "I moved to Rome",
+        (*live, "rome"),
+        "k2",
+    )
     await record_projection_failure(
-        org=org, namespace=NS, agent="bot", projection="entity_triples",
-        source_operation="memory.bulk_set", memory_keys=["k2"],
-        error=failure.error_message, payload=failure.payload, ch=ch,
-    )  # fmt: skip
+        org=org,
+        namespace=NS,
+        agent="bot",
+        projection="entity_triples",
+        source_operation="memory.bulk_set",
+        memory_keys=["k2"],
+        error=failure.error_message,
+        payload=failure.payload,
+        ch=ch,
+    )
 
     async def _stored() -> Any:
         for _ in range(100):
@@ -2266,9 +2315,14 @@ async def test_a_replay_leaves_a_value_stated_again_since(
     live = ("user", "live_in")
     await _stated(ch, org, "s1", "I live in London", (*live, "london"), memory_key="k1")
     _, failure = await _failed_repair(
-        ch, org, monkeypatch, "_retire_memories_behind_repairs", "I moved to Rome",
-        (*live, "rome"), "k2",
-    )  # fmt: skip
+        ch,
+        org,
+        monkeypatch,
+        "_retire_memories_behind_repairs",
+        "I moved to Rome",
+        (*live, "rome"),
+        "k2",
+    )
     await _mutations_done(ch, org)
     # Back to London arrives after Rome, in its second or a later one.
     back = await _stated(
@@ -2298,9 +2352,14 @@ async def _rome_raced_by_back_to_london(
         if not back:
             back["started"] = True  # its own repair's close runs as usual
             back["row"] = await _stated(
-                ch, org, "s3", "I moved back to London", (*live, "london"),
-                memory_key="k3", valid_at=back_from,
-            )  # fmt: skip
+                ch,
+                org,
+                "s3",
+                "I moved back to London",
+                (*live, "london"),
+                memory_key="k3",
+                valid_at=back_from,
+            )
         return await close(*a, **k)
 
     async def _rome_fails(input: Any, *a: Any, **k: Any) -> Any:
@@ -2311,9 +2370,15 @@ async def _rome_raced_by_back_to_london(
     with monkeypatch.context() as patched:
         patched.setattr(projections, "close_triples", _restated_first)
         _, failure = await _failed_repair(
-            ch, org, monkeypatch, "_undo_raced_closes", "I moved to Rome",
-            (*live, "rome"), "k2", fails=_rome_fails,
-        )  # fmt: skip
+            ch,
+            org,
+            monkeypatch,
+            "_undo_raced_closes",
+            "I moved to Rome",
+            (*live, "rome"),
+            "k2",
+            fails=_rome_fails,
+        )
     await _mutations_done(ch, org)
     return london, back["row"], failure
 
@@ -2585,10 +2650,16 @@ async def test_a_high_point_write_puts_no_entity_edge_in_the_shared_graph(ch, or
     ):
         await handle_memory_set(
             MemorySetInput(
-                org=org, namespace=NS, agent="bot", user_id=USER, session_id="s1",
-                memory_key=key, value=value, sensitivity=sensitivity,
+                org=org,
+                namespace=NS,
+                agent="bot",
+                user_id=USER,
+                session_id="s1",
+                memory_key=key,
+                value=value,
+                sensitivity=sensitivity,
             )
-        )  # fmt: skip
+        )
 
     async def _edges() -> list[str]:
         got = await ch.query_all(
@@ -2682,9 +2753,14 @@ async def test_an_undo_stays_newer_than_a_value_dated_before_it(ch, org) -> None
     await _mutations_done(ch, org)
     assert await _open_cities(ch, org, {"london"}) == {"london"}
     await _stated(
-        ch, org, "s3", "I live in Rome", (*live, "rome"), memory_key="k3",
+        ch,
+        org,
+        "s3",
+        "I live in Rome",
+        (*live, "rome"),
+        memory_key="k3",
         valid_at=datetime(2026, 7, 1),
-    )  # fmt: skip
+    )
     await _mutations_done(ch, org)
     assert await _open_cities(ch, org, {"london"}) == {"london"}
 
@@ -2724,7 +2800,7 @@ async def test_a_batch_and_a_racing_writer_leave_one_current_value(ch, org, monk
                 ("london", datetime(2026, 10, 15)),
                 ("berlin", datetime(2026, 10, 14)),
             )
-        ],  # fmt: skip
+        ],
     )
     results = [
         _BulkSetResult(memory_key=e.memory_key, version=1, memory_id="") for e in batch.entries
@@ -2739,7 +2815,7 @@ async def test_a_batch_and_a_racing_writer_leave_one_current_value(ch, org, monk
             (*live, "rome"),
             memory_key="k3",
             valid_at=datetime(2026, 10, 14),
-        ),  # fmt: skip
+        ),
     )
     await _mutations_done(ch, org)
     assert await _open_cities(ch, org, {"london"}) == {"london"}
@@ -2794,7 +2870,7 @@ async def _edges_like_triples(ch: Any, org: str) -> None:
             "valid_from": t["valid_from"],
             "valid_to": t["valid_to"],
             "invalid_at": t["invalid_at"],
-        }  # fmt: skip
+        }
         for t in triples
     ]
     await ch.insert("loom.entity_edges", edges, settings={"wait_for_async_insert": 1})
@@ -2835,13 +2911,18 @@ async def test_every_start_of_a_closed_value_closes_its_edge(ch, org) -> None:
             last_seen=datetime(2026, 9, 1),
             seen_at=datetime(2026, 9, 1),
             valid_from=start,
-        )  # fmt: skip
+        )
         for start in (datetime(2026, 1, 1), datetime(2026, 3, 1))
     ]
     await ch.insert("loom.entity_triples", rows, settings={"wait_for_async_insert": 1})
     await _edges_like_triples(ch, org)
-    paris = {"subject": "user", "relation": "live_in", "object": "paris",
-             "valid_from": datetime(2026, 6, 1), "seen_at": datetime(2026, 9, 2)}  # fmt: skip
+    paris = {
+        "subject": "user",
+        "relation": "live_in",
+        "object": "paris",
+        "valid_from": datetime(2026, 6, 1),
+        "seen_at": datetime(2026, 9, 2),
+    }
     scope = SimpleNamespace(org=org, namespace=NS)
     repairs = await repair_intervals(scope, [paris], ch=ch, at=datetime(2026, 9, 2))
     assert sorted(r.valid_from for r in repairs) == [datetime(2026, 1, 1), datetime(2026, 3, 1)]
@@ -2979,10 +3060,22 @@ async def test_three_values_each_repaired_against_all_three_leave_one_current(
 
     def row(obj: str, valid_from: datetime | None, second: int) -> dict[str, Any]:
         seen = datetime(2026, 10, 15, 0, 0, second)
-        return {"org": org, "namespace": NS, "subject": "user", "relation": "live_in",
-                "object": obj, "provenance": "extracted", "co_occur": 1, "last_seen": seen,
-                "seen_at": seen, "confidence": 1.0, "adapter_name": "itest",
-                "valid_from": valid_from, "valid_to": None, "invalid_at": None}  # fmt: skip
+        return {
+            "org": org,
+            "namespace": NS,
+            "subject": "user",
+            "relation": "live_in",
+            "object": obj,
+            "provenance": "extracted",
+            "co_occur": 1,
+            "last_seen": seen,
+            "seen_at": seen,
+            "confidence": 1.0,
+            "adapter_name": "itest",
+            "valid_from": valid_from,
+            "valid_to": None,
+            "invalid_at": None,
+        }
 
     rows = [
         row("a", datetime(2026, 10, 13, 12), 3),

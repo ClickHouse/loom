@@ -296,8 +296,14 @@ def test_lexical_junk_is_never_a_graph_node() -> None:
 
 
 def _live(obj: str, valid_from: datetime | None, seen: datetime) -> dict:
-    return {"subject": "user", "relation": "live_in", "object": obj, "valid_from": valid_from,
-            "valid_to": None, "seen_at": seen}  # fmt: skip
+    return {
+        "subject": "user",
+        "relation": "live_in",
+        "object": obj,
+        "valid_from": valid_from,
+        "valid_to": None,
+        "seen_at": seen,
+    }
 
 
 def _repairs(existing: list[dict], new: dict, **kw) -> list:
@@ -515,8 +521,14 @@ def test_a_value_seen_again_undated_keeps_its_dated_start() -> None:
     # Beta from 2023, seen again undated in 2025; Acme from 2020 is told late. Beta is
     # the newer: Acme closes when Beta first began, not when it was seen again.
     def beta(start: datetime | None, seen: datetime) -> dict:
-        return {"subject": "alice", "relation": "works_at", "object": "beta",
-                "valid_from": start, "valid_to": None, "seen_at": seen}  # fmt: skip
+        return {
+            "subject": "alice",
+            "relation": "works_at",
+            "object": "beta",
+            "valid_from": start,
+            "valid_to": None,
+            "seen_at": seen,
+        }
 
     repairs = triple_interval_repairs(
         existing=[

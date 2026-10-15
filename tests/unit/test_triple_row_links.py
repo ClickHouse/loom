@@ -169,8 +169,14 @@ async def test_a_bulk_write_reconciles_only_the_rows_it_revised(monkeypatch) -> 
     async def nothing(*a: Any, **k: Any) -> None:
         return None
 
-    for name in ("write_entity_vectors", "write_entity_edges", "write_entity_triples",
-                 "_write_derived_facts", "_bulk_settle_verdicts", "_bulk_audit"):  # fmt: skip
+    for name in (
+        "write_entity_vectors",
+        "write_entity_edges",
+        "write_entity_triples",
+        "_write_derived_facts",
+        "_bulk_settle_verdicts",
+        "_bulk_audit",
+    ):
         monkeypatch.setattr(bulk_set, name, nothing)
     reconciled: list = []
 
@@ -213,13 +219,32 @@ async def test_an_undo_weighs_what_is_open_with_pending_closes_applied(monkeypat
         async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
             self.reads.append(sql)
             if "FROM loom.entity_triples" in sql:
-                return [{"subject": "user", "relation": "live_in", "object": city,
-                         "confidence": 1.0, "provenance": "extracted", "ends": until,
-                         "seen": stored + timedelta(microseconds=i), "start": None, "open": 0,
-                         "newest_open": _NO_OPEN_ROW, "restored": 0, "support": [(None, None)]}
-                        for city, i in (("berlin", 1), ("rome", 0))]  # fmt: skip
-            return [{"entity_a": "berlin", "entity_b": "user", "ends": until,
-                     "restored": 0, "support": [(None, None)]}]  # fmt: skip
+                return [
+                    {
+                        "subject": "user",
+                        "relation": "live_in",
+                        "object": city,
+                        "confidence": 1.0,
+                        "provenance": "extracted",
+                        "ends": until,
+                        "seen": stored + timedelta(microseconds=i),
+                        "start": None,
+                        "open": 0,
+                        "newest_open": _NO_OPEN_ROW,
+                        "restored": 0,
+                        "support": [(None, None)],
+                    }
+                    for city, i in (("berlin", 1), ("rome", 0))
+                ]
+            return [
+                {
+                    "entity_a": "berlin",
+                    "entity_b": "user",
+                    "ends": until,
+                    "restored": 0,
+                    "support": [(None, None)],
+                }
+            ]
 
     async def held(*a: Any, **k: Any) -> list:
         return [("user", "live_in", "berlin"), ("user", "live_in", "rome")]
@@ -274,12 +299,30 @@ async def test_an_undo_refused_on_the_fly_writes_nothing_and_is_recorded(monkeyp
             if "apply_mutations_on_fly" in sql:
                 raise RuntimeError(refusal)
             if "FROM loom.entity_triples" in sql:
-                return [{"subject": "user", "relation": "live_in", "object": "london",
-                         "confidence": 1.0, "provenance": "extracted", "ends": None,
-                         "seen": restored, "start": None, "open": 1, "restored": 0,
-                         "support": [(None, None)]}]  # fmt: skip
-            return [{"entity_a": "london", "entity_b": "user", "ends": None,
-                     "restored": 0, "support": [(None, None)]}]  # fmt: skip
+                return [
+                    {
+                        "subject": "user",
+                        "relation": "live_in",
+                        "object": "london",
+                        "confidence": 1.0,
+                        "provenance": "extracted",
+                        "ends": None,
+                        "seen": restored,
+                        "start": None,
+                        "open": 1,
+                        "restored": 0,
+                        "support": [(None, None)],
+                    }
+                ]
+            return [
+                {
+                    "entity_a": "london",
+                    "entity_b": "user",
+                    "ends": None,
+                    "restored": 0,
+                    "support": [(None, None)],
+                }
+            ]
 
     async def held(*a: Any, **k: Any) -> list:
         return [("user", "live_in", "london")]
@@ -336,14 +379,26 @@ async def _undo_of_rome_and(
     class _ClosedCH(_CH):
         async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
             if "FROM loom.entity_triples" in sql:
-                base = {"subject": "user", "relation": "live_in", "confidence": 1.0,
-                        "provenance": "extracted", "ends": None, "start": None, "open": 0,
-                        "restored": 0, "support": []}  # fmt: skip
-                rows = [{**base, "object": "rome", "seen": stored, **(rome or {})},
-                        {**base, "object": "berlin", "seen": stored, **berlin}]  # fmt: skip
+                base = {
+                    "subject": "user",
+                    "relation": "live_in",
+                    "confidence": 1.0,
+                    "provenance": "extracted",
+                    "ends": None,
+                    "start": None,
+                    "open": 0,
+                    "restored": 0,
+                    "support": [],
+                }
+                rows = [
+                    {**base, "object": "rome", "seen": stored, **(rome or {})},
+                    {**base, "object": "berlin", "seen": stored, **berlin},
+                ]
                 return [_as_read(r, params) for r in rows if r["object"] in cities]
-            return [{"entity_a": a, "entity_b": b, "ends": None, "restored": 0, "support": []}
-                    for a, b in params["pairs"]]  # fmt: skip
+            return [
+                {"entity_a": a, "entity_b": b, "ends": None, "restored": 0, "support": []}
+                for a, b in params["pairs"]
+            ]
 
     cities = held or ["berlin", "rome"]
 
@@ -368,8 +423,13 @@ async def _undo_of_rome_and(
     monkeypatch.setattr(onto, "load_relation_cardinality", declared)
     ch = _ClosedCH()
     restored = datetime(2026, 10, 15, 9, 0, 0, 5)
-    await ep.reopen_held_facts(SimpleNamespace(org="o", namespace="ns"), ["m1"], ch=ch,
-                               restored_at=restored, restore_id=_UNDO_ID)  # fmt: skip
+    await ep.reopen_held_facts(
+        SimpleNamespace(org="o", namespace="ns"),
+        ["m1"],
+        ch=ch,
+        restored_at=restored,
+        restore_id=_UNDO_ID,
+    )
     return ch, repaired
 
 
@@ -387,17 +447,16 @@ def _as_read(row: dict[str, Any], params: Any) -> dict[str, Any]:
 
 
 def _weights(rows: list[dict[str, Any]], *keys: str) -> dict[str, tuple]:
-    return {r["entity_a"] if "entity_a" in r else r["object"]: tuple(r[k] for k in keys)
-            for r in rows}  # fmt: skip
+    return {
+        r["entity_a"] if "entity_a" in r else r["object"]: tuple(r[k] for k in keys) for r in rows
+    }
 
 
 async def test_an_undo_of_two_values_weighs_only_the_one_left_current(monkeypatch) -> None:
     # "I lived in Rome. I now live in Berlin": Berlin's marker closes Rome's as it
     # starts, so Rome's marker is never current and adds no weight to its total.
     ch, _ = await _undo_of_rome_and(monkeypatch, {"seen": datetime(2026, 10, 1, 0, 0, 1)})
-    assert _weights(ch.inserts["loom.entity_triples"], "co_occur") == {
-        "rome": (0,), "berlin": (1,)
-    }  # fmt: skip
+    assert _weights(ch.inserts["loom.entity_triples"], "co_occur") == {"rome": (0,), "berlin": (1,)}
     assert _weights(ch.inserts["loom.entity_edges"], "co_occur") == {"rome": (0,), "berlin": (1,)}
 
 
@@ -408,11 +467,13 @@ async def test_an_undo_keeps_a_fact_dated_ahead_starting_on_its_date(monkeypatch
     dec = datetime(2026, 12, 1)
     ch, repaired = await _undo_of_rome_and(monkeypatch, {"start": dec})
     assert _weights(ch.inserts["loom.entity_triples"], "valid_from", "co_occur") == {
-        "rome": (now, 1), "berlin": (dec, 1)
-    }  # fmt: skip
+        "rome": (now, 1),
+        "berlin": (dec, 1),
+    }
     assert _weights(ch.inserts["loom.entity_edges"], "valid_from", "co_occur") == {
-        "rome": (now, 1), "berlin": (dec, 1)
-    }  # fmt: skip
+        "rome": (now, 1),
+        "berlin": (dec, 1),
+    }
     assert [(t["object"], t["valid_from"]) for t in repaired] == [("rome", now), ("berlin", dec)]
 
 
@@ -452,9 +513,7 @@ async def test_an_undo_weighs_a_value_its_own_open_row_keeps_newer(monkeypatch) 
         {"start": datetime(2026, 12, 10), "open": 1},
         rome={"start": datetime(2026, 12, 5), "open": 1},
     )
-    assert _weights(ch.inserts["loom.entity_triples"], "co_occur") == {
-        "rome": (1,), "berlin": (1,)
-    }  # fmt: skip
+    assert _weights(ch.inserts["loom.entity_triples"], "co_occur") == {"rome": (1,), "berlin": (1,)}
 
 
 async def test_a_replay_restates_the_markers_it_finds_as_they_are_stored(monkeypatch) -> None:
@@ -465,8 +524,14 @@ async def test_a_replay_restates_the_markers_it_finds_as_they_are_stored(monkeyp
     now, dec = restored.replace(microsecond=0), datetime(2026, 12, 1)
 
     def marker(start: datetime, seen: datetime) -> dict[str, Any]:
-        return {"start": start, "seen": seen, "open": 1, "restored": 1,
-                "marker_start": start, "marker_seen": seen}  # fmt: skip
+        return {
+            "start": start,
+            "seen": seen,
+            "open": 1,
+            "restored": 1,
+            "marker_start": start,
+            "marker_seen": seen,
+        }
 
     later = restored + timedelta(microseconds=1)
     ch, repaired = await _undo_of_rome_and(

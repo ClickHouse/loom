@@ -508,8 +508,17 @@ class _Triples(StubCH):
             states: dict[tuple[str, str, str], dict[str, Any]] = {}
             for r in out:
                 k = (r["subject"], r["relation"], r["object"])
-                st = states.setdefault(k, {"subject": k[0], "relation": k[1], "object": k[2],
-                                           "landed": False, "opened": [], "stamped": []})  # fmt: skip
+                st = states.setdefault(
+                    k,
+                    {
+                        "subject": k[0],
+                        "relation": k[1],
+                        "object": k[2],
+                        "landed": False,
+                        "opened": [],
+                        "stamped": [],
+                    },
+                )
                 stamped = r.get("invalid_at") == params["at"]
                 st["landed"] |= stamped
                 if r["valid_to"] is None:
@@ -593,8 +602,15 @@ async def test_a_same_date_value_that_arrived_later_closes_the_new_row(_declared
     # Two writers racing on one date: this one's London arrived before the other's Paris.
     paris = {**_row("paris", datetime(2026, 1, 1)), "seen_at": datetime(2026, 9, 12, 9, 0, 2)}
     ch = _Triples([paris])
-    new = [{"subject": "user", "relation": "works_at", "object": "london",
-            "valid_from": datetime(2026, 1, 1), "seen_at": datetime(2026, 9, 12, 9, 0, 1)}]  # fmt: skip
+    new = [
+        {
+            "subject": "user",
+            "relation": "works_at",
+            "object": "london",
+            "valid_from": datetime(2026, 1, 1),
+            "seen_at": datetime(2026, 9, 12, 9, 0, 1),
+        }
+    ]
     repairs = await _repair_contradictory_triples(_bulk_input(), new, ch=ch, at=_T)
     assert [(r.old_object, r.new_object) for r in repairs] == [("london", "paris")]
 
@@ -611,7 +627,7 @@ async def test_the_later_of_two_same_date_values_in_one_write_stays_current(_dec
             "object": obj,
             "valid_from": day,
             "seen_at": _T.replace(microsecond=i),
-        }  # fmt: skip
+        }
         for i, obj in enumerate(("zurich", "amsterdam"))
     ]
     ch = _Triples([{**_row(t["object"], day), "seen_at": t["seen_at"]} for t in batch])
@@ -956,7 +972,7 @@ async def _stored_batch(monkeypatch, *values: tuple[str, datetime | None]) -> li
             value=f"I live in {city}",
             relations=[("user", "live_in", city)],
             valid_at=day,
-        )  # fmt: skip
+        )
         for i, (city, day) in enumerate(values)
     ]
     write = MemoryBulkSetInput(org="o", namespace="n", agent="a", entries=entries)
@@ -982,7 +998,7 @@ def _current(rows: list[dict]) -> set[str]:
             new_object=new["object"],
             new_valid_at=new["valid_from"],
             new_seen_at=new["seen_at"],
-        )  # fmt: skip
+        )
     }
     return {r["object"] for r in rows} - closed
 
@@ -1006,8 +1022,12 @@ async def test_a_batch_and_a_racing_writer_leave_one_current_value(monkeypatch, 
     rows = await _stored_batch(
         monkeypatch, ("london", datetime(2026, 10, 15)), ("berlin", datetime(2026, 10, 14))
     )
-    rome = {**rows[0], "object": "rome", "valid_from": datetime(2026, 10, 14),
-            "seen_at": _T.replace(microsecond=900)}  # fmt: skip
+    rome = {
+        **rows[0],
+        "object": "rome",
+        "valid_from": datetime(2026, 10, 14),
+        "seen_at": _T.replace(microsecond=900),
+    }
     stored = [*rows, rome]
     closed: set[str] = set()
     for new in (rows, [rome]):
@@ -1028,9 +1048,13 @@ def test_a_value_is_judged_at_its_newest_open_row() -> None:
         {**_row("paris", datetime(2026, 10, 14)), "seen_at": seen},
     ]
     repairs = triple_interval_repairs(
-        existing=existing, new_subject="user", new_relation="works_at", new_object="london",
-        new_valid_at=datetime(2026, 10, 13), new_seen_at=seen,
-    )  # fmt: skip
+        existing=existing,
+        new_subject="user",
+        new_relation="works_at",
+        new_object="london",
+        new_valid_at=datetime(2026, 10, 13),
+        new_seen_at=seen,
+    )
     assert [(r.old_object, r.valid_to, r.valid_from) for r in repairs] == [
         ("paris", datetime(2026, 10, 15), datetime(2026, 10, 14))
     ]

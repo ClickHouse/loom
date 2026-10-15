@@ -463,9 +463,13 @@ def test_a_failed_repairs_closes_ride_the_payload_by_name() -> None:
     made = IntervalRepair(
         "user", "live_in", "london", "paris", datetime(2026, 6, 1), invalid_at=datetime(2026, 10, 1)
     )
-    payload = json.loads(json.dumps(repair_failure_payload(
-        TriplesRepairFailed(datetime(2026, 10, 1), RuntimeError("down"), [made])
-    )))  # fmt: skip
+    payload = json.loads(
+        json.dumps(
+            repair_failure_payload(
+                TriplesRepairFailed(datetime(2026, 10, 1), RuntimeError("down"), [made])
+            )
+        )
+    )
     assert payload["triples_repairs"][0]["old_object"] == "london"
     assert payload["triples_repairs"][0]["valid_to"] == "2026-06-01T00:00:00"
     assert _recorded_repairs(payload) == [made]
