@@ -42,6 +42,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from server.auth.attempts import Attempts, client_address
+from server.auth.delegation import SESSION_TTL
 from server.auth.jwt import AuthInfo, mint_token, new_jti
 from server.core.secrets_at_rest import seal, unseal
 from server.observability import audit
@@ -54,7 +55,7 @@ connect_router = APIRouter()
 
 _ACCESS_TTL = 3600  # 1h access token
 _CODE_TTL = 60  # auth code: short-lived, single-use
-_REFRESH_TTL = 30 * 86400  # 30d refresh token
+_REFRESH_TTL = SESSION_TTL  # 30d refresh token: a session's horizon
 _PENDING_TTL = 600  # OIDC pending-login record: time to complete IdP sign-in
 _UPSTREAM_PURPOSE = "oidc refresh token"
 
@@ -184,9 +185,7 @@ class _CHStore:
     async def take_refresh(self, token: str, client_id: str) -> dict[str, Any] | None:
         return await self._take("refresh", token_id(token), client_id)
 
-    async def _take(
-        self, rtype: str, rid: str, client_id: str | None = None
-    ) -> dict[str, Any] | None:
+    async def _take(self, rtype: str, rid: str, client_id: str) -> dict[str, Any] | None:
         row = await self._ch().query_one(
             f"""SELECT {self._GRANT_COLUMNS}, version FROM {self._T} FINAL
                 WHERE record_type = {{t:String}} AND id = {{id:String}} LIMIT 1""",
@@ -194,8 +193,8 @@ class _CHStore:
         )
         if not row or int(row["expires_at"] or 0) < int(time.time()):
             return None
-        if client_id is not None and row["client_id"] != client_id:
-            return None  # checked before the consume: see take_refresh
+        if row["client_id"] != client_id:
+            return None  # checked before the consume: a wrong presenter can't burn it
         grant = {
             "client_id": row["client_id"],
             "redirect_uri": row["redirect_uri"],
@@ -456,6 +455,20 @@ _BAD_SCHEMES = frozenset({"javascript", "data", "file", "vbscript", "blob", "abo
 _LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
 
 
+def _destination(redirect_uri: str) -> str:
+    """Where an authorization goes, as a consent page names it: the host, or
+    the app scheme of a native client."""
+    return urlsplit(redirect_uri).netloc or redirect_uri.split(":", 1)[0]
+
+
+def _back_to_client(redirect_uri: str, params: dict[str, str], state: str) -> RedirectResponse:
+    """Send the browser back to the MCP client with `params` (and its state)."""
+    if state:
+        params = {**params, "state": state}
+    sep = "&" if "?" in redirect_uri else "?"
+    return RedirectResponse(url=f"{redirect_uri}{sep}{urlencode(params)}", status_code=302)
+
+
 def valid_redirect_uri(uri: str) -> bool:
     """OAuth 2.1 redirect URIs: absolute, no fragment; https, http only to a
     loopback host (native apps, RFC 8252 §7.3), or a private-use app scheme
@@ -571,7 +584,7 @@ async def authorize_form(
     client_name = html.escape(client["client_name"])
     # Dynamic registration lets anyone name a client anything, so the page
     # also says where the authorization goes — the part a phisher cannot fake.
-    destination = html.escape(urlsplit(redirect_uri).netloc or redirect_uri.split(":", 1)[0])
+    destination = html.escape(_destination(redirect_uri))
     # Carry the OAuth params through the consent POST as hidden fields.
     hidden = "".join(
         f'<input type="hidden" name="{html.escape(k)}" value="{html.escape(v)}">'
@@ -659,12 +672,7 @@ async def _redirect_with_code(
             "upstream_refresh": upstream_refresh,
         },
     )
-    params = {"code": code}
-    if state:
-        params["state"] = state
-    target = client["redirect_uri"]
-    sep = "&" if "?" in target else "?"
-    return RedirectResponse(url=f"{target}{sep}{urlencode(params)}", status_code=302)
+    return _back_to_client(client["redirect_uri"], {"code": code}, state)
 
 
 # --------------------------------------------------------------------------
@@ -856,7 +864,7 @@ async def _connect_consent(
         },
     )
     subject, org = identity[0], identity[1]
-    destination = urlsplit(pending["redirect_uri"]).netloc or pending["redirect_uri"].split(":")[0]
+    destination = _destination(pending["redirect_uri"])
     return html_page(
         "Connect Loom",
         f"""<h2>Connect <b>{html.escape(client["client_name"])}</b> to Loom?</h2>
@@ -897,11 +905,9 @@ async def connect_approve(request: Request) -> Response:
             from server.auth import oidc
 
             await oidc.revoke(upstream)
-        params = {"error": "access_denied"}
-        if pending["mcp_state"]:
-            params["state"] = pending["mcp_state"]
-        sep = "&" if "?" in client["redirect_uri"] else "?"
-        return RedirectResponse(f"{client['redirect_uri']}{sep}{urlencode(params)}", 302)
+        return _back_to_client(
+            client["redirect_uri"], {"error": "access_denied"}, pending["mcp_state"]
+        )
     return await _redirect_with_code(
         client,
         (subject, org, namespaces, roles),
@@ -916,6 +922,7 @@ async def _dashboard_signed_in(identity: tuple[str, str, list[str], list[str]]) 
     because the dashboard cannot refresh it and only a refresh asks the IdP
     whether the user is still active."""
     subject, org, namespaces, roles = identity
+    family = new_jti()
     token = mint_token(
         subject=subject,
         org=org,
@@ -925,14 +932,14 @@ async def _dashboard_signed_in(identity: tuple[str, str, list[str], list[str]]) 
         is_service_account=False,
         # A sign-in session like the CLI's: revocable as one, and what it mints
         # is bounded like the person, not by its hour.
-        session_id=new_jti(),
+        session_id=family,
     )
     await audit.emit(
         "auth.sso_signin",
         org=org,
         namespace="-",
         actor=subject,
-        subject={"client": "dashboard", "namespaces": namespaces, "roles": roles},
+        subject={"client": "dashboard", "family": family, "namespaces": namespaces, "roles": roles},
     )
     return RedirectResponse(url=f"/me#token={token}", status_code=302)
 
@@ -1208,7 +1215,7 @@ async def revoke_token(request: Request) -> Response:
             org=info.org,
             namespace="-",
             actor=info.subject,
-            subject={"session": info.session_id, "jti": info.token_id, "reason": "logout"},
+            subject={"family": info.session_id, "jti": info.token_id, "reason": "logout"},
         )
     return Response(status_code=200)
 

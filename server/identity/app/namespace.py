@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from server.core.ch import CHClient, get_client
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.errors import ValidationError
-from server.core.naming import SSO_NAMESPACE_PREFIX
+from server.core.naming import SSO_NAMESPACE_PREFIX, reserved_for_sso
 from server.identity.api.models import (
     NamespaceBrowseInput,
     NamespaceBrowseOutput,
@@ -308,7 +308,7 @@ async def require_admin_of_existing(
 
 def refuse_sso_name(namespace: str) -> None:
     """A new namespace may not take a name single sign-on creates from an email."""
-    if namespace.startswith(SSO_NAMESPACE_PREFIX):
+    if reserved_for_sso(namespace):
         raise ValidationError(
             f"'{SSO_NAMESPACE_PREFIX}' names are reserved for the accounts single sign-on creates"
         )

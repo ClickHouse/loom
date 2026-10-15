@@ -446,8 +446,9 @@ def test_service_accounts_and_account_views_need_no_dashboard(
         json.dumps({"name": "ci-bot", "namespaces": [ns], "role": "viewer"}),
     )
     assert _whoami(base, created["token"])["is_service_account"] is True
-    # Minted from an hour-long session token, it still gets the 90 days it asked for.
-    assert _whoami(base, created["token"])["exp"] - time.time() > 89 * 86400
+    # Minted from an hour-long session token, it lives to the session's horizon
+    # (30 days, though it asked for the 90-day default), not the token's hour.
+    assert 29 * 86400 < _whoami(base, created["token"])["exp"] - time.time() <= 30 * 86400
     listed = _loom(home, "call", "/v1/me/service_accounts")
     assert [r["name"] for r in listed["rows"]] == ["ci-bot"]
     _loom(home, "call", "/v1/me/service_accounts.revoke", "name=ci-bot")
@@ -484,9 +485,21 @@ def test_a_replay_ends_one_session_and_spares_the_persons_others(
     base, _org, ns, email, password = password_server
     laptop, desktop = tmp_path / "laptop", tmp_path / "desktop"
     _session_for(base, desktop, email, password, monkeypatch)
-    other = _loom(desktop, "call", "/v1/me/service_accounts.create", "name=desk", f"namespaces:={json.dumps([ns])}")
+    other = _loom(
+        desktop,
+        "call",
+        "/v1/me/service_accounts.create",
+        "name=desk",
+        f"namespaces:={json.dumps([ns])}",
+    )
     _session_for(base, laptop, email, password, monkeypatch)
-    made = _loom(laptop, "call", "/v1/me/service_accounts.create", "name=ci", f"namespaces:={json.dumps([ns])}")
+    made = _loom(
+        laptop,
+        "call",
+        "/v1/me/service_accounts.create",
+        "name=ci",
+        f"namespaces:={json.dumps([ns])}",
+    )
     first = _stored()
     credentials.access_token(refused=first["access_token"])  # rotate once
     # The spent token comes back at once, as a retry whose answer was lost

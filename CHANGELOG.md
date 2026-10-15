@@ -21,13 +21,15 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   ([without the dashboard](docs/guides/without-the-dashboard.md)).
 - With `LOOM_OAUTH_LOGIN_PROVIDER=oidc` the dashboard signs in through the identity
   provider ([single sign-on](docs/operations/sso.md)), and every refresh first spends the
-  provider's refresh token, so a user deactivated there loses their sessions at their next refresh (machine tokens they made are revoked by `loom revoke-token --subject` when offboarding).
-- A sign-in session's access tokens carry its family as their `sid` claim: logout, a replayed
-  refresh token, code or device code, and a provider refusing the user each revoke the
-  whole session, and a replay also the machine tokens minted from it. Every sign-in, approval, denial and ended session writes an `auth.*`
-  audit row.
+  provider's refresh token, so a user deactivated there loses their sessions at their next
+  refresh. Service accounts and MCP tokens minted from a sign-in session live at most 30
+  days; offboarding revokes them sooner (`loom revoke-token --subject`).
+- A sign-in session's access tokens carry its family as their `sid` claim. Logout, a
+  replayed refresh token, code or device code, and a provider refusing the user each end
+  the whole session; a replay more than 30 seconds after the spend (not a client retrying
+  a lost answer) also ends the machine tokens minted from it. Every sign-in, approval,
+  denial and ended session writes an `auth.*` audit row.
 - Migration `028` adds the device-grant and session columns to `oauth_state`.
-
 - `CODED_WIDTH_MISMATCH` (503): a write whose vector is not the width its coded column was
   created at; `memory.set`, `bulk_set`, `update` and the `knowledge.*` writes are refused before
   any of their rows lands, and `/v1/health` reports `coded_width_mismatch` with the fix. A table
@@ -75,7 +77,8 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   - MCP connect asks the user to approve before it sends a code.
   - Sessions with no provider refresh token stop refreshing, so MCP clients connected
     before this release sign in once more.
-
+  - With `LOOM_OIDC_JIT_PROVISION=true`, new namespaces may not be named `u-…`: that
+    prefix is the accounts single sign-on creates.
 - **Breaking:** `rerank` (`memory.search`, `memory.search_trace`, `code.search`, `code.ask`)
   and a namespace's `rerank_endpoint` take a name, not a URL: `none`, `builtin:openai[:model]`,
   `builtin:cohere[:model]`, or an endpoint the operator names in `LOOM_RERANK_ENDPOINTS_JSON`.

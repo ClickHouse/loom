@@ -205,15 +205,29 @@ async def signed_in(
     identity: tuple[str, str, list[str], list[str]],
     upstream_refresh: str,
 ) -> Response:
-    """The user has signed in: remember who, and ask them to confirm. A code
-    belongs to the first person who signs in with it: someone who saw it
-    later (a screen share, a shared notebook) cannot take the grant over."""
+    """The user has signed in: remember who, and ask them to confirm. Two
+    different people signing in with one code means one of them got it from
+    the other's screen; neither can tell which, so the grant ends and the
+    terminal has to start again."""
     device = await oauth.store.device_by_user_code(_user_code_id(user_code))
     subject, org, namespaces, roles = identity
     if device is None or device["subject"] not in ("", subject):
         if upstream_refresh:
             await oidc.revoke(upstream_refresh)
-        return _expired_page()
+        if device is None:
+            return _expired_page()
+        if device["upstream_refresh"]:
+            await oidc.revoke(device["upstream_refresh"])
+        await oauth.store.save_device(
+            device | {"status": "denied", "ticket": "", "upstream_refresh": ""}
+        )
+        return oauth.html_page(
+            "Sign-in stopped",
+            "<h2>Someone else already used this code</h2>"
+            "<p>Nobody is signed in with it. Run <code>loom login</code> again, "
+            "and share the code with nobody.</p>",
+            409,
+        )
     if device["upstream_refresh"] and device["upstream_refresh"] != upstream_refresh:
         await oidc.revoke(device["upstream_refresh"])  # the same person signed in again
     ticket = secrets.token_urlsafe(32)
@@ -331,6 +345,8 @@ async def device_code_grant(f: dict[str, str]) -> dict[str, Any]:
         raise _token_error("access_denied")
     try:
         return await oauth.issue_tokens(device, DEVICE_CLIENT_ID)
-    except Exception:  # unspend the code so the next poll is no replay; re-raised
+    except HTTPException:
+        raise  # a refusal stands
+    except Exception:  # Loom's own failure: unspend the code so the next poll is no replay
         await oauth.store.save_device(device)
         raise

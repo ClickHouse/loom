@@ -771,7 +771,7 @@ def test_ending_a_session_refuses_its_access_tokens() -> None:
         verify_token(token)
 
 
-def test_a_child_of_a_session_token_is_not_clipped_to_its_hour() -> None:
+def test_a_child_of_a_session_token_lives_to_the_sessions_horizon_not_its_hour() -> None:
     from server.auth import delegation
     from server.auth.jwt import verify_token
 
@@ -788,11 +788,13 @@ def test_a_child_of_a_session_token_is_not_clipped_to_its_hour() -> None:
         )
 
     ninety_days = 90 * 86400
-    assert delegation._child_ttl(parent(session_id="s1"), ninety_days) == ninety_days
+    # Not the parent's hour, but never past how long the session itself may go on.
+    assert delegation._child_ttl(parent(session_id="s1"), ninety_days) == delegation.SESSION_TTL
+    assert delegation._child_ttl(parent(session_id="s1"), 7 * 86400) == 7 * 86400
     assert delegation._child_ttl(parent(), ninety_days) <= 3600  # any other parent still bounds it
 
 
-def test_a_second_person_cannot_take_over_a_code(_world, monkeypatch) -> None:
+def test_two_people_on_one_code_end_the_grant_for_both(_world, monkeypatch) -> None:
     mallory = ("mallory@example.com", "acme", ["mallory"], ["writer"])
 
     async def credentials(identifier: str, password: str, *, address: str = "") -> Any:
@@ -800,22 +802,23 @@ def test_a_second_person_cannot_take_over_a_code(_world, monkeypatch) -> None:
 
     monkeypatch.setattr(login, "resolve_user_credentials", credentials)
     c = _client()
-    grant = _start(c)
-    victim_page = _sign_in(c, grant["user_code"]).text
-    seen = c.post(
-        "/oauth/device",
-        data={
-            "user_code": grant["user_code"],
-            "identifier": "mallory@example.com",
-            "password": "x",
-        },
-    )
-    assert seen.status_code == 400 and "expired" in seen.text
-    _approve(c, grant["user_code"], victim_page)
-    claims = pyjwt.decode(
-        _poll(c, grant["device_code"]).json()["access_token"], options={"verify_signature": False}
-    )
-    assert claims["sub"] == "alice@example.com"
+    # Whoever signs in first, the terminal is signed in as neither.
+    for first, second in (
+        ("alice@example.com", "mallory@example.com"),
+        ("mallory@example.com", "alice@example.com"),
+    ):
+        grant = _start(c)
+        page = c.post(
+            "/oauth/device",
+            data={"user_code": grant["user_code"], "identifier": first, "password": "x"},
+        )
+        seen = c.post(
+            "/oauth/device",
+            data={"user_code": grant["user_code"], "identifier": second, "password": "x"},
+        )
+        assert seen.status_code == 409 and "Someone else already used this code" in seen.text
+        assert _approve(c, grant["user_code"], page.text).status_code == 400
+        assert _error(_poll(c, grant["device_code"])) == "access_denied"
 
 
 def test_a_refused_sso_sign_in_revokes_the_idp_token_it_got(sso, monkeypatch) -> None:

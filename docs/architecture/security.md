@@ -213,18 +213,23 @@ clients); the provider only authenticates the person. The OAuth server:
 family as their `sid` claim, and its refresh tokens rotate within it. Revoking the family in
 `loom.revoked_tokens` ends every token of the session: on logout (`/oauth/revoke`), when the
 provider refuses the user at a refresh, and when a spent refresh token, code or device code
-is presented again. A replay means someone else holds a copy, so it also revokes the
-session's `<sid>/minted` key, which every token delegated from the session carries in
-`parents`: the service accounts and MCP tokens a thief could have minted end with it. No
+is presented again. A replay more than 30 seconds after the spend means someone else holds
+a copy, so it also revokes the session's `<sid>/minted` key, which every token delegated from
+the session carries in `parents`: the service accounts and MCP tokens a thief could have
+minted end with it. A replay sooner than that is taken for a client retrying a request whose
+answer it lost; a thief who lands inside that window keeps what they minted, but loses the
+session. No
 path revokes more than the one session; a person's other sessions and tokens are never
 collateral, and nothing automatic writes a subject-wide revocation (which could replace an
 operator's outright ban). A subject revoked outright is issued nothing.
 
-Tokens delegated from a session are bounded like the person, by their subject and live
-grants, not by the session's hour, and they outlive logout. Under OIDC each refresh first
-spends the provider's refresh token, so a user deactivated there loses their sessions within
-the hour. Their machine tokens are not re-checked at the provider: offboarding revokes the
-subject. A provider that issues no refresh token gets no Loom refresh token.
+Tokens delegated from a session are not clipped to the session's hour but to its horizon,
+30 days (the refresh tokens' lifetime), and they outlive logout. Under OIDC each refresh
+first spends the provider's refresh token, so a user deactivated there loses their sessions
+within the hour. Their machine tokens are not re-checked at the provider and run out within
+30 days; offboarding revokes the subject to end them at once. A provider that issues no
+refresh token gets no Loom refresh token. A stolen access token can mint machine tokens
+without touching the refresh token, so replay detection only covers a stolen refresh token.
 
 **Device grant** (RFC 8628, `server/auth/device.py`). `loom login` gets a device code and
 an eight-letter user code (20 letters, about 2^34.6) that both live ten minutes. Approval

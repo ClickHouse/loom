@@ -81,13 +81,15 @@ The provider can never grant admin.
 - `loom logout` revokes the Loom session on the server and the Okta refresh
   token at Okta.
 - If a spent refresh token is ever presented again, someone else holds a
-  copy. Loom ends that session and the service accounts and MCP tokens minted
+  copy. Loom ends that session and, unless it came back within 30 seconds (a
+  client retrying a lost answer), the service accounts and MCP tokens minted
   from it. The person's other sessions are not affected.
 - Okta refusing the user at a refresh ends that session.
-- Service accounts and MCP tokens a person creates outlive their sign-in
-  session, including `loom logout`. Only a refresh asks Okta about the user,
-  so for someone with no live session nothing checks. When offboarding,
-  revoke the person: `loom revoke-token --subject <their subject>`.
+- Service accounts and MCP tokens a person creates from a sign-in session
+  outlive it, including `loom logout`, for at most 30 days. Only a refresh
+  asks Okta about the user, so for someone with no live session nothing
+  checks before then. When offboarding, revoke the person:
+  `loom revoke-token --subject <their subject>`.
 - Every sign-in, approval, denial, JIT account and ended session writes an
   `auth.*` row to the audit log.
 

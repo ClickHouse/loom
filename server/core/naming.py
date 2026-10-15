@@ -20,9 +20,18 @@ NAMESPACE_MAX_LEN = 128
 # on the wire and in every row.
 SENTINEL = "-"
 # Namespaces single sign-on creates on a first sign-in (`u-<name>-<hash>`).
-# Their names follow from the email, so nobody else may create one: it would
-# be waiting, with its creator's grants, for that person's first sign-in.
+# Their names follow from the email, so where it creates them nobody else
+# may: it would be waiting, with its creator's grants, for that person's
+# first sign-in.
 SSO_NAMESPACE_PREFIX = "u-"
+
+
+def reserved_for_sso(namespace: str) -> bool:
+    """Whether a new namespace by this name is single sign-on's to create."""
+    from server.settings import settings
+
+    return settings.oidc_jit_provision and namespace.startswith(SSO_NAMESPACE_PREFIX)
+
 
 _NAMESPACE_RE = re.compile(r"[a-z0-9][a-z0-9-]*")
 

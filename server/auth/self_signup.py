@@ -37,7 +37,7 @@ from server.auth.login import platform_roles
 from server.auth.passwords import hash_password_off_loop
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now_seconds
-from server.core.naming import SSO_NAMESPACE_PREFIX
+from server.core.naming import SSO_NAMESPACE_PREFIX, reserved_for_sso
 from server.settings import settings
 
 router = APIRouter()
@@ -293,15 +293,15 @@ def _claimable_namespace(name: str) -> str:
         raise HTTPException(
             status_code=422, detail={"code": "VALIDATION_FAILED", "message": str(e)}
         ) from e
-    for prefix in ("personal-", SSO_NAMESPACE_PREFIX):
-        if namespace.startswith(prefix):
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "code": "VALIDATION_FAILED",
-                    "message": f"'{prefix}' names are reserved for auto-provisioned namespaces",
-                },
-            )
+    prefix = "personal-" if namespace.startswith("personal-") else SSO_NAMESPACE_PREFIX
+    if namespace.startswith("personal-") or reserved_for_sso(namespace):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "VALIDATION_FAILED",
+                "message": f"'{prefix}' names are reserved for auto-provisioned namespaces",
+            },
+        )
     return namespace
 
 

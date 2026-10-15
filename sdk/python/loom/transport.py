@@ -389,7 +389,10 @@ class Transport:
         """One request to a route outside the op registry (`/v1/me/...`,
         `/v1/admin/...`, `/v1/health`): the body goes as given, with no
         identity or consumer added, and is not retried. Raises the typed
-        error for a 4xx/5xx; returns the response for the caller to read."""
+        error for a 4xx/5xx; returns the response for the caller to read.
+        `path` is a path on this server: the credential goes nowhere else."""
+        if not path.startswith("/") or path.startswith("//"):
+            raise ValueError(f"not a path on {self.base_url}: {path!r}")
         request_id = str(uuid.uuid4())
         headers = {**self._ident_headers, "X-Request-Id": request_id}
         try:

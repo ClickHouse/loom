@@ -133,10 +133,7 @@ def run(args: argparse.Namespace) -> int:
             result = asyncio.run(_call(args))
             if result is not None:
                 print(json.dumps(result, indent=2, default=str))
-    except LoomError as e:
-        print(f"loom {args.cmd}: {e}", file=sys.stderr)
-        return 1
-    except (httpx.HTTPError, ValueError, OSError) as e:
+    except (LoomError, httpx.HTTPError, ValueError, OSError) as e:
         print(f"loom {args.cmd}: {e}", file=sys.stderr)
         return 1
     return 0

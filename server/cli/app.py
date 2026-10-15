@@ -297,10 +297,12 @@ _SUBCOMMAND_BUILDERS: tuple[Any, ...] = (
 
 
 def main(argv: list[str] | None = None) -> int:
-    _load_dotenv_like_the_container()
     raw = sys.argv[1:] if argv is None else argv
     if raw and raw[0] in SDK_COMMANDS:
+        # Before the checkout's .env, which describes the server and would
+        # otherwise override the user's own session (LOOM_API_KEY, LOOM_BASE_URL).
         return run_sdk_command(raw)
+    _load_dotenv_like_the_container()
     parser = argparse.ArgumentParser(
         prog="loom",
         description="Loom — vendor-neutral agent memory plane on ClickHouse.",

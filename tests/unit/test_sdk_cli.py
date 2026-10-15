@@ -173,3 +173,17 @@ def test_an_unknown_operation_points_at_the_list(capsys) -> None:
 def test_a_stray_option_is_still_an_error() -> None:
     with pytest.raises(SystemExit):
         cli.main(["call", "memory.get", "--bogus", "x"])
+
+
+def test_a_route_call_never_leaves_the_server(wire) -> None:
+    async def go(path: str) -> None:
+        agent = Agent("acme", "support", "t", base_url="http://loom.test", api_key="k")
+        try:
+            await agent.transport.request("GET", path)
+        finally:
+            await agent.close()
+
+    for elsewhere in ("https://other.host/x", "//other.host/x", "v1/health"):
+        with pytest.raises(ValueError, match="not a path"):
+            asyncio.run(go(elsewhere))
+    assert wire.seen == []
