@@ -15,32 +15,23 @@ Bump each of these in the release commit:
 | `loom-code` skill    | `.claude-plugin/plugin.json` and the `metadata.version` of `skills/loom-code/SKILL.md`                                                                                                           |
 | Coding-agent plugins | `integrations/claude-code-plugin/.claude-plugin/plugin.json`, `integrations/codex-plugin/.codex-plugin/plugin.json` (their own version; bump when a hook, the shared library or a skill changes) |
 
-The server reads its version from `server/__init__.py` only; the OpenAPI document, MCP `serverInfo` and `loom report` report it. Four checks keep the numbers consistent:
+The server reads its version from `server/__init__.py` only; the OpenAPI document, MCP `serverInfo` and `loom report` report it. Three checks keep the numbers consistent:
 
-| Check                                    | Asserts                                                                                                            |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `tests/unit/test_release_version.py`     | `server/__init__.py` equals `pyproject.toml` and the top entry of the root changelog, and every surface reports it |
-| `tests/unit/test_sdk_changelogs.py`      | each SDK's version equals its changelog's top entry; entries are newest first                                      |
-| `npm run check:version` (TypeScript SDK) | its four version sources agree                                                                                     |
-| `tests/unit/test_codex_plugin.py`        | both plugin manifests carry one version                                                                            |
+| Check                                    | Asserts                                                                    |
+| ---------------------------------------- | -------------------------------------------------------------------------- |
+| `tests/unit/test_release_version.py`     | `server/__init__.py` equals `pyproject.toml`, and every surface reports it |
+| `npm run check:version` (TypeScript SDK) | its four version sources agree                                             |
+| `tests/unit/test_codex_plugin.py`        | both plugin manifests carry one version                                    |
 
 Two plugin pull requests that bump to the same number merge without a conflict, and the second ships nothing to clients the first already updated. Check the plugin version on `main` before bumping.
 
-## Changelogs
+## Release notes
 
-Three changelogs, each in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format:
-
-- `CHANGELOG.md` at the root: the server, the web app and the plugins;
-- `sdk/python/CHANGELOG.md`;
-- `sdk/typescript/CHANGELOG.md`.
-
-Changes accumulate under a top entry `## [X.Y.Z] - Unreleased`. On release day, replace `Unreleased` with the date in all three files:
-
-```markdown
-## [X.Y.Z] - YYYY-MM-DD
-```
-
-The release workflow refuses a tag unless all three changelogs contain `## [X.Y.Z] - YYYY-MM-DD` for its version. The root entry lists operator steps (new settings, backfills, table rebuilds) and client-visible wire changes, including every removed request field and retired flag. No registry of removed fields exists, so the release notes are where a client learns of one. Generate the wire diff instead of writing it:
+The GitHub Release's notes are generated from the commits since the previous tag. Add what they cannot say
+by editing the release after the workflow creates it: operator steps (new settings, backfills, table rebuilds)
+and client-visible wire changes, including every removed request field and retired flag. No registry of
+removed fields exists, so the release notes are where a client learns of one. Generate the wire diff instead
+of writing it:
 
 ```bash
 python scripts/codegen/wire_changelog.py v<previous> HEAD
@@ -50,8 +41,7 @@ python scripts/codegen/wire_changelog.py v<previous> HEAD
 
 ## Cutting the release
 
-1. On a branch from `main`, open a pull request that sets the version everywhere above and
-   dates the three changelog entries. CI must pass, including `make schema-check` and the
+1. On a branch from `main`, open a pull request that sets the version everywhere above. CI must pass, including `make schema-check` and the
    strict migration dry run.
 2. After it merges, tag the merge commit and push the tag:
 
@@ -68,8 +58,7 @@ python scripts/codegen/wire_changelog.py v<previous> HEAD
    gh workflow run release.yml --ref vX.Y.Z
    ```
 
-5. Open the next `## [X.Y.Z] - Unreleased` entry in each changelog when the next change
-   lands.
+5. Add the operator steps and the wire diff to the release notes (above).
 
 A tag containing `-` (`vX.Y.Z-rc.1`) makes a GitHub pre-release and does not move the `latest` image tag.
 
@@ -80,8 +69,8 @@ A tag containing `-` (`vX.Y.Z-rc.1`) makes a GitHub pre-release and does not mov
 **On a tag push (`v*`)**:
 
 1. `version` takes the version from the tag (`vX.Y.Z` → `X.Y.Z`) and refuses a ref that
-   is not a `v*` tag or not SemVer; it fails unless each of the three changelogs has
-   `## [X.Y.Z] - YYYY-MM-DD` and `server/__init__.py` reads `__version__ = "X.Y.Z"`;
+   is not a `v*` tag or not SemVer; it fails unless `server/__init__.py` reads
+   `__version__ = "X.Y.Z"`;
 2. `clickhouse` names the ClickHouse release the Compose bundle runs: the release
    `clickhouse/clickhouse-server:latest` names now (`dev/clickhouse_release.sh`), or, on a
    re-run, the one this version's published bundle already names, so rerunning the
@@ -173,7 +162,7 @@ The coding-agent plugins install from the repository's marketplaces (`claude plu
 
 ## After the release
 
-- Deploy it ([upgrades](../operations/upgrades.md)). The root changelog's operator steps are the deploy checklist.
+- Deploy it ([upgrades](../operations/upgrades.md)). The release notes' operator steps are the deploy checklist.
 - Client plugins update through each client's plugin manager, not through a server deploy.
 
 ## Related

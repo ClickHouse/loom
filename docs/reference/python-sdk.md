@@ -270,8 +270,8 @@ The SDK's version is the product release version; the server does not gate on
 it. An older SDK keeps working against a newer server, and a newer SDK works for
 every op and field the older server serves: guard newer ones with `probe` or
 `capabilities()` rather than on version numbers. See
-[Client and server versions](./http-api.md#client-and-server-versions). Changes are listed in
-`sdk/python/CHANGELOG.md`.
+[Client and server versions](./http-api.md#client-and-server-versions). Each release's changes are in
+its [GitHub Release](https://github.com/ClickHouse/loom/releases) notes.
 
 ## Examples
 

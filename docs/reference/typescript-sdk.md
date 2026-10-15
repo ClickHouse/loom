@@ -241,7 +241,7 @@ setting it) and an `Idempotency-Key` for a registry-idempotent op.
 The SDK's version is the product release version; the server does not gate on
 it. Guard a newer op or field with `probe` or `capabilities()` rather than on a
 version number. See [Client and server versions](./http-api.md#client-and-server-versions).
-Changes are listed in `sdk/typescript/CHANGELOG.md`.
+Each release's changes are in its [GitHub Release](https://github.com/ClickHouse/loom/releases) notes.
 
 ## Examples and the package README
 

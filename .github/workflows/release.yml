@@ -86,16 +86,6 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
           echo "Releasing v$VERSION (prerelease: $PRERELEASE)"
-      # Each changelog's dated entry is the release gate: a tag whose version
-      # has no entry in the root or either SDK changelog ships nothing.
-      - name: Changelogs name this version
-        env:
-          VERSION: ${{ steps.parse.outputs.version }}
-        run: |
-          for f in CHANGELOG.md sdk/python/CHANGELOG.md sdk/typescript/CHANGELOG.md; do
-            grep -qE "^## \[${VERSION//./\\.}\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" "$f" \
-              || { echo "::error file=$f::no dated entry for $VERSION"; exit 1; }
-          done
       # The server reports its version from server/__init__.py (= pyproject.toml);
       # a tag that disagrees would ship an image that names another release.
       - name: Server version names this tag
@@ -206,7 +196,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
       # The SDK sources carry the tag's version, so every published file names it.
       # check-version.mjs compares package.json, package-lock.json (npm version
-      # rewrites both), src/version.ts and the changelog's top entry.
+      # rewrites both) and src/version.ts.
       - name: Sync SDK versions to the tag
         run: |
           python - <<'PY'
