@@ -563,7 +563,6 @@ def triple_interval_repairs(
     superseded_at: datetime | None = None,
     declared: Mapping[str, str] | None = None,
     later_batch_objects: Collection[str] = (),
-    earlier_batch_objects: Collection[str] = (),
     new_seen_at: datetime | None = None,
 ) -> list[IntervalRepair]:
     """Return deterministic triple closures for contradictory single-valued facts.
@@ -578,11 +577,10 @@ def triple_interval_repairs(
     date nor an arrival, nothing happens. An existing value is newer than the new one
     when any of its open rows is; it then stays current and the new row closes when
     that value's earliest such row starts. Otherwise every start of the existing value
-    closes when the new one starts.
+    closes when the new one starts. One write stores its triples a microsecond apart
+    in the order stated, so on one day its later-stated value is the newer, for every
+    writer that reads them back.
 
-    * `earlier_batch_objects` — values stated earlier in this same write. Their rows
-      of this write share its `seen_at`, so on the same start day the later-stated
-      value wins, in place of the object-text tie-break; a later start day still wins.
     * `later_batch_objects` — objects that a LATER triple in the same write
       asserts for this subject + relation. Those rows are skipped here (the
       later write's own repair closes this one).
@@ -601,7 +599,6 @@ def triple_interval_repairs(
         return []
     obj = canonical_entity_text(new_object)
     skip = {canonical_entity_text(o) for o in later_batch_objects}
-    earlier = {canonical_entity_text(o) for o in earlier_batch_objects}
     new_key = observation_key(new_valid_at, new_seen_at, obj)
     # Stored columns are whole seconds; only `seen_at` keeps microseconds.
     new_start = new_valid_at or _second(new_seen_at)
@@ -629,12 +626,6 @@ def triple_interval_repairs(
             (valid_from, seen)
             for valid_from, seen in rows
             if observation_key(valid_from, seen, old_object) > new_key
-            # Earlier in this write and on the same day: older, whatever its text.
-            and not (
-                old_object in earlier
-                and seen == new_seen_at
-                and observation_key(valid_from, seen, old_object)[0] == new_key[0]
-            )
         ]
         if newer:
             # The row being written is already superseded: close the NEW row.

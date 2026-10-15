@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry
+from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry, _BulkSetResult
 from server.memory.app.projections import (
     _repair_contradictory_edges,
     _repair_contradictory_triples,
@@ -602,7 +602,8 @@ async def test_a_same_date_value_that_arrived_later_closes_the_new_row(_declared
 
 @pytest.mark.asyncio
 async def test_the_later_of_two_same_date_values_in_one_write_stays_current(_declared) -> None:
-    # One batch states Zurich, then Amsterdam, both on the session date: Zurich closes.
+    # One batch states Zurich, then Amsterdam, both on the session date, stored a
+    # microsecond apart in that order: Zurich closes.
     day = datetime(2026, 9, 12)
     batch = [
         {
@@ -610,11 +611,11 @@ async def test_the_later_of_two_same_date_values_in_one_write_stays_current(_dec
             "relation": "works_at",
             "object": obj,
             "valid_from": day,
-            "seen_at": _T,
+            "seen_at": _T.replace(microsecond=i),
         }  # fmt: skip
-        for obj in ("zurich", "amsterdam")
+        for i, obj in enumerate(("zurich", "amsterdam"))
     ]
-    ch = _Triples([{**_row(t["object"], day), "seen_at": _T} for t in batch])
+    ch = _Triples([{**_row(t["object"], day), "seen_at": t["seen_at"]} for t in batch])
     repairs = await _repair_contradictory_triples(_bulk_input(), batch, ch=ch, at=_T)
     assert [(r.old_object, r.new_object) for r in repairs] == [("zurich", "amsterdam")]
 
@@ -668,6 +669,31 @@ async def test_a_replay_closes_a_recorded_value_again_only_when_its_close_never_
         [[("user", "works_at", "london")]] if closed_again else []
     )
     assert done == ([made, made] if finished else [])
+
+
+@pytest.mark.asyncio
+async def test_a_replay_takes_a_later_triple_of_its_own_write_for_one_of_its_rows(
+    monkeypatch,
+) -> None:
+    # The write stored London as its second triple, a microsecond after its arrival:
+    # still a row of the write, not a value stated since, so the replay closes it.
+    from server.memory.app import projections as proj
+    from server.memory.domain.graph_quality import IntervalRepair
+
+    async def finish(input, repairs, *rest, ch):
+        return None
+
+    monkeypatch.setattr(proj, "_repair_contradictory_edges", finish)
+    monkeypatch.setattr(proj, "_retire_memories_behind_repairs", finish)
+    made = IntervalRepair("user", "works_at", "london", "paris", datetime(2026, 1, 1), None, _T)
+    second = _T.replace(microsecond=1)
+    written = [{**_row("paris", None), "seen_at": _T}, {**_row("london", None), "seen_at": second}]
+    ch = _Triples([written[1]])
+    await proj._repair_triples(
+        _bulk_input(), written, [], at=_T, replay=True, repaired=[made], ch=ch
+    )
+    closes = [p for sql, p in ch.execute_calls if "UPDATE valid_to = greatest" in sql]
+    assert [c["triples"] for c in closes] == [[("user", "works_at", "london")]]
 
 
 @pytest.mark.parametrize("paris_since", [False, True])
@@ -842,3 +868,79 @@ def test_a_restatement_is_judged_with_the_namespace_cardinality() -> None:
     args = (closed, datetime(2026, 9, 12), _SEEN)
     assert restates_current(*args, closed_at=_T, declared={"mentor": "one"})
     assert not restates_current(*args, closed_at=_T, declared={})
+
+
+async def _stored_batch(monkeypatch, *values: tuple[str, datetime | None]) -> list[dict]:
+    """The triple rows one bulk write stores for `values`, stated in that order."""
+    from server.memory.app import projections as proj
+
+    async def no_repair(*a: Any, **k: Any) -> None:
+        return None
+
+    monkeypatch.setattr(proj, "_repair_triples", no_repair)
+    monkeypatch.setattr(proj, "naive_utc_now", lambda: _T.replace(microsecond=7))
+    entries = [
+        _BulkSetEntry(
+            memory_key=f"k{i}",
+            value=f"I live in {city}",
+            relations=[("user", "live_in", city)],
+            valid_at=day,
+        )  # fmt: skip
+        for i, (city, day) in enumerate(values)
+    ]
+    write = MemoryBulkSetInput(org="o", namespace="n", agent="a", entries=entries)
+    results = [_BulkSetResult(memory_key=e.memory_key, version=1, memory_id="") for e in entries]
+    ch = StubCH()
+    await proj.write_entity_triples(write, results, ch=ch, entity_map={})
+    (rows,) = [r for t, r, _ in ch.insert_calls if t == "loom.entity_triples"]
+    return [{**r, "valid_to": None} for r in rows]
+
+
+def _current(rows: list[dict]) -> set[str]:
+    """The values left current when a writer reads `rows` from storage and orders them
+    by the stored key alone."""
+    from server.memory.domain.graph_quality import triple_interval_repairs
+
+    closed = {
+        r.old_object
+        for new in rows
+        for r in triple_interval_repairs(
+            existing=rows,
+            new_subject=new["subject"],
+            new_relation=new["relation"],
+            new_object=new["object"],
+            new_valid_at=new["valid_from"],
+            new_seen_at=new["seen_at"],
+        )  # fmt: skip
+    }
+    return {r["object"] for r in rows} - closed
+
+
+@pytest.mark.asyncio
+async def test_a_writes_order_is_stored_so_another_writer_reads_the_later_value(
+    monkeypatch,
+) -> None:
+    # One write: London, then Berlin, both on Oct 14. The later-stated Berlin is
+    # current, for this write and for any writer that reads the stored rows.
+    day = datetime(2026, 10, 14)
+    rows = await _stored_batch(monkeypatch, ("london", day), ("berlin", day))
+    assert [r["seen_at"] for r in rows] == [_T.replace(microsecond=7), _T.replace(microsecond=8)]
+    assert _current(rows) == {"berlin"}
+
+
+@pytest.mark.asyncio
+async def test_a_batch_and_a_racing_writer_leave_one_current_value(monkeypatch, _declared) -> None:
+    # One write: London on Oct 15, then Berlin on Oct 14. Rome, on Oct 14, arrives
+    # later from another writer. Both repairs read all three before any close lands.
+    rows = await _stored_batch(
+        monkeypatch, ("london", datetime(2026, 10, 15)), ("berlin", datetime(2026, 10, 14))
+    )
+    rome = {**rows[0], "object": "rome", "valid_from": datetime(2026, 10, 14),
+            "seen_at": _T.replace(microsecond=900)}  # fmt: skip
+    stored = [*rows, rome]
+    closed: set[str] = set()
+    for new in (rows, [rome]):
+        ch = _Triples([{**r, "invalid_at": None} for r in stored])
+        repairs = await _repair_contradictory_triples(_bulk_input(), new, ch=ch, at=_T)
+        closed |= {r.old_object for r in repairs}
+    assert {r["object"] for r in stored} - closed == {"london"}

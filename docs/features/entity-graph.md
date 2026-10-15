@@ -43,14 +43,15 @@ never fails the write. A `high`-sensitivity bulk entry projects nothing.
    `lower_snake`. `namespace.register_ontology` (admin) registers preferred entity types, verbs and attributes with a
    cardinality. Names outside the set produce `ontology_warnings`; nothing is rejected.
 4. **Supersession closes triples.** When a row supersedes another, the old row's open triples that the new one does
-   not attest get `invalid_at`. For a `one` relation (employer, location), a newer `valid_at` closes the older interval;
-   a write that states the older value again while that close runs keeps it open. Values order by the day they start
-   (an undated value starts when it arrives), then by arrival to the microsecond, so racing writers agree on one
-   current value: the later day, or on one day the later arrival. An Undo (`memory.restore`) makes the restored value
-   current from the restore on: the restored fact and its edge are stored again starting at the restore, and keep the
-   fact's own end if one is still to come, weighing 1 only when no current row still carries the fact's weight (the
-   retirement's pending closes applied), so the graph keeps counting it and Undoing back and forth adds none; the
-   other value's interval closes, and its row stays live. A value dated on a later day still wins, and so does a value
+   not attest get `invalid_at`. For a `one` relation (employer, location), a newer `valid_at` closes the older
+   interval; a write that states the older value again while that close runs keeps it open. Values order by the day
+   they start (an undated value starts when it arrives), then by arrival to the microsecond, so racing writers agree
+   on one current value: the later day, or on one day the later arrival (within one write, the later-stated value). An
+   Undo (`memory.restore`) makes the restored value current from the restore on: the restored fact and its edge are
+   stored again starting at the restore, and keep the fact's own end if one is still to come, weighing 1 only when no
+   current row still carries the fact's weight (the retirement's pending closes applied; while another tenant's
+   erasure blocks that read, always 1), so the graph keeps counting it and Undoing back and forth adds none; the other
+   value's interval closes, and its row stays live. A value dated on a later day still wins, and so does a value
    stated after the Undo, even in its second. A failed close is replayed as of the write (or the Undo) that made it,
    to the microsecond, so a value stated since stays current; a replayed Undo skips a row revised since. A value
    stated with its own end ("London until December") is never closed early: it stays current beside the newer value

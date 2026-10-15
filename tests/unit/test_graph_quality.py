@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -393,36 +393,39 @@ def test_a_future_dated_plan_is_not_closed_before_it_begins(berlin_is_new: bool)
 
 
 def test_within_one_write_the_later_stated_value_wins() -> None:
-    # One write states Zurich, then Amsterdam, on the session date: both rows carry the
-    # write's arrival, and Zurich, written first, closes though it sorts after Amsterdam.
+    # One write states Zurich, then Amsterdam, on the session date: the write stores
+    # Amsterdam a microsecond after Zurich, so Zurich closes though it sorts after it.
     day, seen = datetime(2026, 10, 1), datetime(2026, 10, 1, 10, 0, 0, 7)
     zurich = _live("zurich", day, seen)
-    repairs = _repairs([zurich], _live("amsterdam", day, seen), earlier_batch_objects={"zurich"})
+    amsterdam = _live("amsterdam", day, seen + timedelta(microseconds=1))
+    repairs = _repairs([zurich], amsterdam)
     assert [(r.old_object, r.new_object) for r in repairs] == [("zurich", "amsterdam")]
+    assert _survivors([zurich, amsterdam]) == {"amsterdam"}
     # "I lived in London ... I moved to Paris on Oct 1", London left undated: undated,
     # London starts at the write (Oct 15), a later day than Paris, so it is the newer
     # in either order and Paris closes then. Only a date or an end on London keeps
     # Paris current.
     london = _live("london", None, datetime(2026, 10, 15))
-    paris = _live("paris", datetime(2026, 10, 1), datetime(2026, 10, 15))
-    repairs = _repairs([london], paris, earlier_batch_objects={"london"})
-    assert [(r.old_object, r.valid_to) for r in repairs] == [("paris", datetime(2026, 10, 15))]
-    assert [(r.old_object, r.valid_to) for r in _repairs([paris], london)] == [
+    paris = _live("paris", datetime(2026, 10, 1), datetime(2026, 10, 15, 0, 0, 0, 1))
+    assert [(r.old_object, r.valid_to) for r in _repairs([london], paris)] == [
         ("paris", datetime(2026, 10, 15))
     ]
+    assert _survivors([london, paris]) == {"london"}
 
 
 @pytest.mark.parametrize("berlin_first", [True, False])
 def test_within_one_write_a_later_start_day_wins_whatever_the_order(berlin_first: bool) -> None:
     # One write: "I move to Berlin" (in 45 days) and "I live in Paris" (undated), in
-    # either order. Batch order only breaks a same-day tie: Paris closes when Berlin
+    # either order. Write order only breaks a same-day tie: Paris closes when Berlin
     # begins, and Berlin stays current.
     seen = datetime(2026, 10, 15, 10, 0, 0, 7)
-    berlin = _live("berlin", datetime(2026, 11, 29), seen)
-    paris = _live("paris", None, seen)
+    first, second = seen, seen + timedelta(microseconds=1)
+    berlin = _live("berlin", datetime(2026, 11, 29), first if berlin_first else second)
+    paris = _live("paris", None, second if berlin_first else first)
     old, new = (berlin, paris) if berlin_first else (paris, berlin)
-    repairs = _repairs([old], new, earlier_batch_objects={old["object"]})
+    repairs = _repairs([old], new)
     assert [(r.old_object, r.valid_to) for r in repairs] == [("paris", datetime(2026, 11, 29))]
+    assert _survivors([berlin, paris]) == {"berlin"}
 
 
 @pytest.mark.parametrize(

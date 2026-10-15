@@ -1494,6 +1494,31 @@ async def test_an_undo_of_a_fact_open_until_later_adds_no_weight(ch, org) -> Non
     ]
 
 
+async def test_an_undo_is_weighed_against_what_is_valid_at_the_restore(ch, org) -> None:
+    # London retires behind Paris; another row says London from next week. That row is
+    # not valid at the Undo, so the Undo's own London rows carry the weight then.
+    from server.memory.api.models_facts import FactsTraverseInput
+    from server.memory.app.facts import handle_facts_traverse
+    from server.memory.app.restore import handle_memory_restore
+
+    london = await _stated(ch, org, "s1", "My favourite city is London")
+    paris = await _stated(ch, org, "s2", "My favourite city is Paris")
+    await _follow_retirement(ch, org, london, paris)
+    later = datetime.now(UTC).replace(tzinfo=None, microsecond=0) + timedelta(days=5)
+    await _stated(ch, org, "s3", "My favourite city is London", memory_key="k3", valid_at=later)
+    await _mutations_done(ch, org)
+    await _edges_like_triples(ch, org)
+    assert (await handle_memory_restore(_undo_of(paris))).restored
+    await _mutations_done(ch, org)
+    as_of = datetime.now(UTC).replace(tzinfo=None, microsecond=0) + timedelta(seconds=1)
+    for labeled in (True, False):
+        walk = FactsTraverseInput(
+            org=org, namespace=NS, seed_entity="user", max_hops=1, labeled=labeled, as_of=as_of
+        )
+        nodes = {n.entity: n.via_co_occur for n in (await handle_facts_traverse(walk)).nodes}
+        assert nodes.get("london", 0) >= 1, (labeled, nodes)
+
+
 async def test_an_undo_keeps_no_end_a_supersession_set(ch, org) -> None:
     # London undated; Berlin from next month closes London when Berlin begins; Berlin's
     # fact then closes. That end was Berlin's, not London's: an Undo of London leaves
@@ -2201,6 +2226,62 @@ async def test_an_undo_stays_newer_than_a_value_dated_before_it(ch, org) -> None
         ch, org, "s3", "I live in Rome", (*live, "rome"), memory_key="k3",
         valid_at=datetime(2026, 7, 1),
     )  # fmt: skip
+    await _mutations_done(ch, org)
+    assert await _open_cities(ch, org, {"london"}) == {"london"}
+
+
+async def test_a_batch_and_a_racing_writer_leave_one_current_value(ch, org, monkeypatch) -> None:
+    # One write: London from Oct 15, then Berlin from Oct 14. Rome from Oct 14 arrives
+    # later from another writer. Both repairs read all three rows before any close.
+    from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetResult
+    from server.memory.app import projections
+
+    repair = projections._repair_contradictory_triples
+    arrived: list[int] = []
+    both = asyncio.Event()
+
+    async def _together(*a: Any, **k: Any) -> Any:
+        arrived.append(1)
+        if len(arrived) == 2:
+            both.set()
+        await asyncio.wait_for(both.wait(), 10)
+        return await repair(*a, **k)
+
+    monkeypatch.setattr(projections, "_repair_contradictory_triples", _together)
+    live = ("user", "live_in")
+    batch = MemoryBulkSetInput(
+        org=org,
+        namespace=NS,
+        agent="bot",
+        user_id=USER,
+        entries=[
+            {
+                "memory_key": f"k-{city}",
+                "value": f"I live in {city}",
+                "relations": [(*live, city)],
+                "valid_at": day,
+            }
+            for city, day in (
+                ("london", datetime(2026, 10, 15)),
+                ("berlin", datetime(2026, 10, 14)),
+            )
+        ],  # fmt: skip
+    )
+    results = [
+        _BulkSetResult(memory_key=e.memory_key, version=1, memory_id="") for e in batch.entries
+    ]
+    await asyncio.gather(
+        projections.write_entity_triples(batch, results, ch=ch, entity_map={}),
+        _stated(
+            ch,
+            org,
+            "s3",
+            "I live in Rome",
+            (*live, "rome"),
+            memory_key="k3",
+            valid_at=datetime(2026, 10, 14),
+        ),  # fmt: skip
+    )
     await _mutations_done(ch, org)
     assert await _open_cities(ch, org, {"london"}) == {"london"}
 

@@ -564,8 +564,8 @@ async def reopen_held_facts(
                countIf(adapter_name = 'row-restore' AND seen_at = {seen:DateTime64(6)})
                    AS restored,
                -- What the readers count as current after the Undo's second.
-               countIf(co_occur > 0 AND (valid_to IS NULL OR valid_to > {at:DateTime}))
-                   AS weighted
+               countIf(co_occur > 0 AND (valid_from IS NULL OR valid_from <= {at:DateTime})
+                       AND (valid_to IS NULL OR valid_to > {at:DateTime})) AS weighted
         FROM loom.entity_triples
         WHERE org = {org:String} AND namespace = {ns:String}
           AND (subject, relation, object) IN {triples:Array(Tuple(String, String, String))}
@@ -598,7 +598,9 @@ async def reopen_held_facts(
                    argMaxIf(tuple(valid_to), last_seen, invalid_at IS NULL).1 AS ends,
                    countIf(valid_from = {at:DateTime} AND last_seen = {at:DateTime}
                            AND invalid_at IS NULL) AS restored,
-                   countIf(co_occur > 0 AND (valid_to IS NULL OR valid_to > {at:DateTime})
+                   countIf(co_occur > 0
+                           AND (valid_from IS NULL OR valid_from <= {at:DateTime})
+                           AND (valid_to IS NULL OR valid_to > {at:DateTime})
                            AND invalid_at IS NULL) AS weighted
             FROM loom.entity_edges
             WHERE org = {org:String} AND namespace = {ns:String}

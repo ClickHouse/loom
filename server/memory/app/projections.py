@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from server.core.datetimes import naive_utc_now, parse_iso_dt
@@ -363,7 +363,10 @@ async def write_entity_triples(
     _adapter = _settings.llm_model
 
     # The arrival orders this write's values, to the microsecond; a replay reuses it.
-    # `last_seen` and `invalid_at` store its second.
+    # Each triple is seen one microsecond after the one stated before it, so the stored
+    # key keeps the write's order. `last_seen` and `invalid_at` store the arrival's
+    # second, even when a long write's last offsets run into the next second; an
+    # undated triple starts in the second of its own `seen_at`.
     arrived = inserted_at or naive_utc_now()
     now = arrived.replace(microsecond=0)
     triples: list[dict[str, Any]] = []
@@ -442,7 +445,7 @@ async def write_entity_triples(
                     confidence=conf,
                     adapter_name=_adapter,
                     last_seen=now,
-                    seen_at=arrived,
+                    seen_at=arrived + timedelta(microseconds=len(triples)),
                     valid_from=_vf,
                     valid_to=_vt,
                 )
@@ -560,7 +563,9 @@ async def _repair_triples(
             from server.identity.app.namespace_ontology import load_relation_cardinality
 
             declared = await load_relation_cardinality(input.org, input.namespace)
-            states = await _recorded_close_states(input, repairs, at=at, ch=ch)
+            # Rows seen after the write's last triple were stated since.
+            through = max((t["seen_at"] for t in triples), default=at)
+            states = await _recorded_close_states(input, repairs, at=at, through=through, ch=ch)
             skip: set[tuple[str, str, str]] = set()
             unlanded: set[tuple[str, str, str]] = set()
             for r in repairs:
@@ -691,7 +696,12 @@ class RecordedClose(NamedTuple):
 
 
 async def _recorded_close_states(
-    input: MemoryBulkSetInput, repairs: list[IntervalRepair], *, at: datetime, ch: Any
+    input: MemoryBulkSetInput,
+    repairs: list[IntervalRepair],
+    *,
+    at: datetime,
+    through: datetime,
+    ch: Any,
 ) -> dict[tuple[str, str, str], RecordedClose]:
     """What became of each value the write that arrived at `at` recorded closing. The
     write's close stamped its rows `invalid_at` with its second. A value open beside
@@ -699,7 +709,8 @@ async def _recorded_close_states(
     repair decides. A value open with neither is one whose close never landed. A row
     seen after the write and stamped by its close was stated while the close landed
     ("back to London"): each such row is a `Restatement` the replay judges. "After" is
-    by `seen_at`, in microseconds, so a restatement in the write's own second counts."""
+    by `seen_at`, in microseconds, after `through`, the write's last triple, so a
+    restatement in the write's own second counts."""
     rows = await ch.query_all(
         """
         SELECT subject, relation, object,
@@ -723,7 +734,7 @@ async def _recorded_close_states(
             "ns": input.namespace,
             "triples": sorted({(r.subject, r.relation, r.old_object) for r in repairs}),
             "at": at.replace(microsecond=0),
-            "seen": at,
+            "seen": through,
         },
     )
     states: dict[tuple[str, str, str], RecordedClose] = {}
@@ -962,7 +973,6 @@ async def _repair_contradictory_triples(
     for i, triple in enumerate(dated):
         # A later triple in this same write for the same subject + relation
         # is the value that should survive; leave its row to its own repair.
-        # An earlier one was written before this triple, though in its second.
         repairs = triple_interval_repairs(
             existing=existing,
             new_subject=str(triple["subject"]),
@@ -972,7 +982,6 @@ async def _repair_contradictory_triples(
             superseded_at=second,
             declared=declared,
             later_batch_objects=other_values(triple, dated[i + 1 :]),
-            earlier_batch_objects=other_values(triple, dated[:i]),
             new_seen_at=triple.get("seen_at") or at,
         )
         all_repairs.extend(repairs)

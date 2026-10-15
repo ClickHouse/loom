@@ -340,12 +340,13 @@ the value it was written or stated for (`carried`):
   edge when the graph has one, so both planes show the restored value current. A marker
   keeps the end its fact's latest row stated when that end is still to come ("London
   until December" is undone until December, not for ever); an end a supersession close
-  set (it stamps `invalid_at`) is not one the fact stated, so it is not kept. These observations state
-  nothing new: one carries `co_occur` 1 only when its fact (or edge) has no weighted row
-  the readers count as current after the restore (open, or ending later), the usual Undo
-  of a closed value, so the graph's readers still count it, and 0 otherwise, so Undoing
-  back and forth adds no weight. A close is an `ALTER UPDATE`, so the retirement's
-  closes may still be pending when the Undo weighs its facts: it reads with
+  set (it stamps `invalid_at`) is not one the fact stated, so it is not kept. These
+  observations state nothing new: one carries `co_occur` 1 only when its fact (or edge)
+  has no weighted row the readers count as current after the restore (started by then,
+  and open or ending later), the usual Undo of a closed value, so the graph's readers
+  still count it, and 0 otherwise, so Undoing back and forth adds no weight. A close is
+  an `ALTER UPDATE`, so the retirement's closes may still be pending when the Undo
+  weighs its facts: it reads with
   `apply_mutations_on_fly`, which applies them (their expressions are deterministic),
   rather than waiting on `system.mutations`. ClickHouse refuses that read for the whole
   table while any pending mutation on it has a subquery (a user erasure's delete does);
@@ -381,31 +382,35 @@ the value it was written or stated for (`carried`):
   in the write's own re-check, only when the interval repair, judging it as a new value
   against the value that closed it, finds it the newer: "back to London" dated by its
   session day still beats an undated Rome written earlier that day. "After the write"
-  is by `seen_at`, so a restatement in the write's own second counts. When it had closed none,
-  the replay repairs only the write's triples that are still open (one a newer write
-  closed was handled by that write's repair), dated at the write. A replay that fails in
+  is by `seen_at`, after the write's last triple, so a restatement in the write's own
+  second counts. When it had closed none, the replay repairs only the write's triples
+  that are still open (one a newer write closed was handled by that write's repair),
+  dated at the write. A replay that fails in
   turn records the closes it made on the same failure, for the next one to finish.
 - **Which value is newer:** of two values of a single-valued relation, the newer stays
   current and the older closes when the newer starts. Every triple row is placed by one
   key, `(start day, seen_at, object)`: its start is its `valid_from`, or, undated, its
-  `seen_at`, the arrival of the write that stored it to the microsecond (migration 030;
-  `last_seen`, `valid_from` and `valid_to` stay whole seconds). Values on different days
-  order by day: Rome from July, imported after London was stated undated in October,
-  closes when London was seen, and London undated on Oct 5 closes when Berlin from
-  Dec 1 begins, never Berlin before it begins. On one day the later arrival is newer,
-  whether either is dated: a fact dated by its session's day beats an undated value seen
-  earlier that day, and an undated update later that day beats a dated value. Within one
-  write the rows share one `seen_at`, so on one start day the later-stated value is the
-  newer; a later start day still wins whatever the order ("I move to Berlin" next month,
-  then an undated "I live in Paris": Paris closes when Berlin begins). Two writers racing, even in one second, so agree on one current value: the
-  later arrival. A value can have several open rows, one per observation, so each value
-  gets one verdict: it is the newer when any of its rows is, and the new row then closes
-  when the earliest such row starts; otherwise every start of it closes, each with its
-  own edge (an edge, as a triple, never closes before it starts). One value stays
-  current, never neither. Only an open-ended value is closed: one stated with its own
-  end ("London until December") is left as it is, so it stays current beside the newer
-  value until that end. Two values with one start day, one `seen_at` and two writers
-  are left to their object text: only two writes in the same microsecond tie.
+  `seen_at`, the arrival of the write that stored it to the microsecond, plus one
+  microsecond per triple stated before it in that write (migration 030; `last_seen`,
+  `invalid_at`, `valid_from` and `valid_to` stay whole seconds, the arrival's for the
+  first two). Values on different days order by day: Rome from July, imported after London
+  was stated undated in October, closes when London was seen, and London undated on Oct 5
+  closes when Berlin from Dec 1 begins, never Berlin before it begins. On one day the
+  later arrival is newer, whether either is dated: a fact dated by its session's day beats
+  an undated value seen earlier that day, and an undated update later that day beats a
+  dated value. Within one write the later-stated triple is stored later, so on one start
+  day the later-stated value is the newer, and any other writer reads that order back; a
+  later start day still wins whatever the order ("I move to Berlin" next month, then an
+  undated "I live in Paris": Paris closes when Berlin begins). Two writers racing, even in
+  one second, so agree on one current value: the later arrival. A value can have several
+  open rows, one per observation, so each value gets one verdict: it is the newer when any
+  of its rows is, and the new row then closes when the earliest such row starts; otherwise
+  every start of it closes, each with its own edge (an edge, as a triple, never closes
+  before it starts). One value stays current, never neither. Only an open-ended value is
+  closed: one stated with its own end ("London until December") is left as it is, so it
+  stays current beside the newer value until that end. Two values with one start day, one
+  `seen_at` and two writers are left to their object text: only two writes in the same
+  microsecond tie.
 
   _Why one key._ The rule it replaces compared pairs: by date, by arrival when two
   values shared a start, and by arrival again when a dated and an undated value sat
