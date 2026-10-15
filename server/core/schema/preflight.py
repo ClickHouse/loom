@@ -33,27 +33,33 @@ GRANTS: dict[Need, str] = {
     "serve": "SELECT, INSERT, ALTER UPDATE, ALTER DELETE",
     "read": "SELECT",
 }
-# The system tables Loom reads; clusterAllReplicas also needs REMOTE.
-SYSTEM_TABLES = (
-    "asynchronous_inserts",
+# The system tables the migration runner reads (and the preflight's own): a
+# refused one would fail a migration halfway, so it stops a migrating boot.
+RUNNER_SYSTEM_TABLES = (
     "columns",
-    "data_skipping_indices",
     "databases",
-    "events",
     "merge_tree_settings",
-    "merges",
     "mutations",
     "one",
+    "replicas",
+    "settings",
+    "tables",
+)
+# The ones Loom's telemetry and health views read; those fail soft, so a
+# refused one is a warning. clusterAllReplicas also needs REMOTE.
+TELEMETRY_SYSTEM_TABLES = (
+    "asynchronous_inserts",
+    "data_skipping_indices",
+    "events",
+    "merges",
     "part_log",
     "parts",
     "processes",
     "query_log",
-    "replicas",
-    "settings",
-    "tables",
     "view_refreshes",
     "zookeeper_connection",
 )
+SYSTEM_TABLES = RUNNER_SYSTEM_TABLES + TELEMETRY_SYSTEM_TABLES
 # Every replica's version; a server without the `default` cluster is one node.
 # A replica that is down answers nothing and runs no DDL, so it is skipped.
 REPLICA_VERSIONS_SQL = (
@@ -88,6 +94,8 @@ class Server:
     lightweight_updates: bool
     # False only when a check that may not create it found no `loom` database.
     database: bool = True
+    # Telemetry tables this user may not read: their views stay empty.
+    unreadable: tuple[str, ...] = ()
 
 
 def version_key(version: str) -> tuple[int, ...]:
@@ -155,6 +163,14 @@ def _readable(ch: Client, table: str) -> bool:
     return True
 
 
+def _migrations_pending() -> bool:
+    """Whether the ledger lacks any of this build's migrations (all of them on
+    a database with no ledger yet)."""
+    from server.core.schema.migrate import pending_names
+
+    return bool(pending_names())
+
+
 def oldest_version(ch: Client, *, strict: bool = True) -> str:
     """The oldest version among the server's replicas: a Cloud service in a
     rolling upgrade answers from replicas on two versions, and the old one
@@ -205,13 +221,16 @@ def check(ch: Client, *, need: Need, create_database: bool = True) -> Server:
     only reports it missing. Returns what the doctor reports besides."""
     from server.settings import settings
 
-    version = oldest_version(ch, strict=need == "migrate")
+    user = settings.ch_user
+    database = bool(ch.command(_DATABASE_COUNT))
+    # Strict where DDL is about to run: a restart with nothing pending is
+    # checked like a process that only serves.
+    migrating = need == "migrate" and (not database or _migrations_pending())
+    version = oldest_version(ch, strict=migrating)
     if version_key(version)[:2] < MIN_VERSION:
         floor = ".".join(map(str, MIN_VERSION))
         raise PreflightError(f"ClickHouse {version} is older than {floor}: upgrade the server")
 
-    user = settings.ch_user
-    database = bool(ch.command(_DATABASE_COUNT))
     if not database:
         if need != "migrate":
             raise PreflightError(
@@ -240,14 +259,18 @@ def check(ch: Client, *, need: Need, create_database: bool = True) -> Server:
             needs_admin=True,
         )
 
-    # A refused table here would fail a migration halfway (the runner reads
-    # system.merge_tree_settings, system.mutations and others as it goes).
-    refused = [t for t in SYSTEM_TABLES if need == "migrate" and not _readable(ch, f"system.{t}")]
-    if refused:
-        raise PreflightError(
-            f"{user!r} may not read system.{', system.'.join(refused)}: "
-            "an admin has to run Loom's setup SQL",
-            needs_admin=True,
+    if migrating:
+        refused = [t for t in RUNNER_SYSTEM_TABLES if not _readable(ch, f"system.{t}")]
+        if refused:
+            raise PreflightError(
+                f"{user!r} may not read system.{', system.'.join(refused)}, which the "
+                "migrations need: an admin has to run Loom's setup SQL",
+                needs_admin=True,
+            )
+    unreadable = tuple(t for t in TELEMETRY_SYSTEM_TABLES if not _readable(ch, f"system.{t}"))
+    if unreadable:
+        log.warning(
+            "may not read system.%s: telemetry from them stays empty", ", system.".join(unreadable)
         )
 
     # The table exists only where the server is configured with a Keeper.
@@ -265,6 +288,7 @@ def check(ch: Client, *, need: Need, create_database: bool = True) -> Server:
         keeper=keeper,
         lightweight_updates=lightweight,
         database=database or create_database,
+        unreadable=unreadable,
     )
 
 

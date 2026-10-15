@@ -13,6 +13,12 @@ from server.cli import ch_setup
 from server.core.schema import preflight
 
 
+@pytest.fixture(autouse=True)
+def _migrations_pending(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every check here is about to migrate unless a test says otherwise."""
+    monkeypatch.setattr(preflight, "_migrations_pending", lambda: True)
+
+
 class FakeCH:
     """Answers the preflight's statements from a dict; records the rest."""
 
@@ -80,7 +86,19 @@ def test_replicas_that_cannot_be_asked_are_not_taken_for_one_server(
 def test_a_serving_process_falls_back_when_the_replicas_cannot_be_asked() -> None:
     ch = FakeCH(replica_error="Code: 279. DB::Exception: All connection tries failed")
     assert preflight.check(ch, need="serve").version == "26.5.1.882"
-    assert not any(sql.startswith("SELECT 1 FROM system.") for sql in ch.ran)
+    runner = {f"SELECT 1 FROM system.{t} LIMIT 0" for t in preflight.RUNNER_SYSTEM_TABLES}
+    assert not runner & set(ch.ran)
+
+
+def test_a_restart_with_nothing_pending_is_not_strict(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(preflight, "_migrations_pending", lambda: False)
+    ch = FakeCH(replica_error="Code: 497. DB::Exception: Not enough privileges. (ACCESS_DENIED)")
+    assert preflight.check(ch, need="migrate").version == "26.5.1.882"
+
+
+def test_a_refused_telemetry_table_is_a_warning_not_a_stop() -> None:
+    ch = FakeCH(denied=("SELECT 1 FROM system.query_log",))
+    assert preflight.check(ch, need="migrate").unreadable == ("query_log",)
 
 
 def test_every_system_table_loom_reads_is_checked_before_any_ddl() -> None:
