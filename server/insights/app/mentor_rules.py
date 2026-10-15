@@ -273,6 +273,16 @@ def _usd(amount: float) -> str:
     return "$" + re.sub("0{1,4}$", "", f"{amount:,.6f}")
 
 
+def _duration(seconds: int) -> str:
+    """Seconds as the Runs page shows them: "42s", "30m 0s", "2h 5m"."""
+    if seconds < 90:
+        return f"{seconds}s"
+    minutes = seconds // 60
+    if minutes < 90:
+        return f"{minutes}m {seconds % 60}s"
+    return f"{minutes // 60}h {minutes % 60}m"
+
+
 def _byname(op: str) -> str:
     """The op as written in a hint; the listing note rides the hint's tail."""
     return op
@@ -923,7 +933,7 @@ def _rule_run_over_budget(
     if "time" in over:
         elapsed = int(res.get("elapsed_seconds") or 0)
         allowed = int(run.get("budget_seconds") or 0)
-        spent.append(f"{elapsed} s of {allowed} s")
+        spent.append(f"{_duration(elapsed)} of {_duration(allowed)}")
     budgets = "cost and time budgets" if len(over) > 1 else f"{over[0]} budget"
     return (
         "run_over_budget",

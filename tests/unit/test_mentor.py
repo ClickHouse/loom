@@ -641,18 +641,18 @@ def test_run_over_budget_fires_only_when_run_get_names_a_budget() -> None:
     hint = _call("run.get", {"run_id": "r1"}, over, session="s2")
     assert hint is not None and hint[0] == "run_over_budget"
     assert "cost budget ($2.50 of $2.00 spent)" in hint[1] and "run.complete" in hint[1]
-    assert " s of " not in hint[1]
+    assert hint[1].count(" of ") == 1
 
 
 def test_run_over_budget_names_only_the_budgets_it_went_past() -> None:
     run = {"status": "active", "budget_usd": 0.005, "budget_seconds": 60}
     time_only = {"run": run, "over_budget": ["time"], "cost_usd": 0.0, "elapsed_seconds": 90}
     hint = _call("run.get", {"run_id": "r1"}, time_only, session="s-time")
-    assert hint is not None and "time budget (90 s of 60 s)" in hint[1] and "$" not in hint[1]
+    assert hint is not None and "time budget (1m 30s of 60s)" in hint[1] and "$" not in hint[1]
     both = {"run": run, "over_budget": ["cost", "time"], "cost_usd": 0.0062, "elapsed_seconds": 90}
     hint = _call("run.get", {"run_id": "r1"}, both, session="s-both")
     # A sub-cent budget is shown as it is, not as $0.00.
-    expected = "cost and time budgets ($0.0062 of $0.005 spent, 90 s of 60 s)"
+    expected = "cost and time budgets ($0.0062 of $0.005 spent, 1m 30s of 60s)"
     assert hint is not None and expected in hint[1]
 
 
@@ -673,6 +673,13 @@ def test_run_over_budget_spells_a_large_spend_in_dollars() -> None:
     big = {"run": run, "over_budget": ["cost"], "cost_usd": 12345.0}
     hint = _call("run.get", {"run_id": "r1"}, big, session="s-big")
     assert hint is not None and "$12,345.00 of $10,000.00 spent" in hint[1]
+
+
+def test_run_over_budget_spells_a_long_time_budget_as_the_runs_page_does() -> None:
+    run = {"status": "active", "budget_seconds": 3600}
+    over = {"run": run, "over_budget": ["time"], "elapsed_seconds": 5400}
+    hint = _call("run.get", {"run_id": "r1"}, over, session="s-long")
+    assert hint is not None and "time budget (1h 30m of 60m 0s)" in hint[1]
 
 
 @pytest.mark.parametrize("status", ["completed", "failed", "cancelled"])

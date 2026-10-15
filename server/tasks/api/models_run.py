@@ -66,9 +66,10 @@ class RunBeginInput(BaseModel):
     @classmethod
     def _to_six_places(cls, v: float) -> float:
         # run.get rounds cost to 6 places, so the budget is kept to the same.
-        if 0 < v < 0.000001:
+        rounded = round(v, 6)
+        if v > 0 and rounded == 0:
             raise ValueError("budget_usd is kept to 6 places; the smallest is 0.000001")
-        return round(v, 6)
+        return rounded
 
     @model_validator(mode="after")
     def _cost_budget_has_a_session(self) -> RunBeginInput:

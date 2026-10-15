@@ -702,3 +702,7 @@ def test_a_cost_budget_is_kept_to_six_places() -> None:
     # One that would round to no budget is refused, not read as "keep the old one".
     with pytest.raises(ValidationError):
         RunBeginInput(org="o", namespace="n", agent="a", goal="g", session_id="s1", budget_usd=4e-7)
+    smallest = RunBeginInput(
+        org="o", namespace="n", agent="a", goal="g", session_id="s1", budget_usd=6e-7
+    )
+    assert smallest.budget_usd == 0.000001
