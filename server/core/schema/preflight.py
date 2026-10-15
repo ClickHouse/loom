@@ -94,8 +94,8 @@ class Server:
     database: bool = True
     # Telemetry tables this user may not read: their views stay empty.
     unreadable: tuple[str, ...] = ()
-    # What the next boot with a migration to apply will refuse, passed now
-    # only because nothing is pending.
+    # What the next migration will refuse, passed now only because nothing
+    # is pending.
     next_migration: tuple[PreflightError, ...] = ()
 
 
@@ -323,7 +323,7 @@ def check(
 def warnings(server: Server) -> str:
     """What a passing check still warns of, as one line ('' for nothing): the
     refusals the next migration will hit and the telemetry tables this user
-    may not read. Boot and `loom migrate` log it, the doctor and ch-setup show it."""
+    may not read. Boot and `loom migrate` log it; the doctor shows it."""
     parts = []
     if server.next_migration:
         reasons = "; ".join(gap.reason for gap in server.next_migration)

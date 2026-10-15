@@ -13,8 +13,9 @@ import pytest
 from server.cli import ch_setup
 from server.core.schema import preflight
 
-# The real one, for the tests of it; the fixture below stands in for it elsewhere.
+# The real ones, for the tests of them; fixtures stand in for them elsewhere.
 _real_migrations_pending = preflight._migrations_pending
+_real_require_ready = preflight.require_ready
 
 
 @pytest.fixture(autouse=True)
@@ -44,6 +45,9 @@ class FakeCH:
                 raise RuntimeError("Code: 701. Requested cluster 'default' not found")
             return SimpleNamespace(result_rows=[(v,) for v in self.replicas])
         return SimpleNamespace(result_rows=[])
+
+    def close(self) -> None:
+        pass
 
     def command(self, sql: str, **_: Any) -> Any:
         self.ran.append(sql)
@@ -365,12 +369,7 @@ def test_the_reader_must_not_be_the_loom_user(monkeypatch: pytest.MonkeyPatch) -
     ("found", "logged_in", "problem", "refusal"),
     [
         # A same-named user that does not log in with Loom's password: an analyst's account.
-        (
-            "user",
-            False,
-            "it does not exist or does not accept LOOM_CH_PASSWORD",
-            "DROP USER IF EXISTS",
-        ),
+        ("user", False, "refused", "exists but does not accept LOOM_CH_PASSWORD"),
         # A probe that failed for another reason proves nothing: no advice to drop it.
         ("user", None, "Read timed out", "could not check analyst: Read timed out"),
         # No password, not on its own profile, or a shared profile.
@@ -611,11 +610,22 @@ async def test_boot_logs_what_a_passing_preflight_warns_of_once(
 ) -> None:
     from server import boot
 
-    monkeypatch.setattr(preflight, "require_ready", lambda **_: _TELEMETRY_GAP)
-    with caplog.at_level("WARNING"):
+    class Narrowed(FakeCH):
+        """Nothing pending, but the replicas and system.query_log are refused."""
+
+    ch = Narrowed(
+        replica_error="Code: 497. DB::Exception: Not enough privileges. (ACCESS_DENIED)",
+        denied=("SELECT * FROM system.query_log",),
+    )
+    monkeypatch.setattr(preflight, "require_ready", _real_require_ready)
+    monkeypatch.setattr(preflight, "connect", lambda: ch)
+    monkeypatch.setattr(preflight, "needed_at_boot", lambda: "migrate")
+    monkeypatch.setattr(preflight, "_migrations_pending", lambda ch, journal: False)
+    with caplog.at_level("DEBUG"):
         await boot.require_clickhouse_ready()
-    lines = [r.getMessage() for r in caplog.records if "system.query_log" in r.getMessage()]
+    lines = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
     assert len(lines) == 1 and lines[0].startswith("ClickHouse preflight: ")
+    assert "clusterAllReplicas" in lines[0] and "system.query_log" in lines[0]
 
 
 def test_migrate_prints_what_a_passing_preflight_warns_of(
@@ -637,3 +647,37 @@ def test_ch_setup_names_the_grant_for_an_unreadable_telemetry_table(
     assert ch_setup._set_up(ch, "loom_app", "loom_reader") == 0
     out = capsys.readouterr().out
     assert "GRANT SELECT ON system.query_log TO `loom_app`" in out and "--print-sql" not in out
+
+
+def test_an_empty_reader_user_opts_out_of_the_reader(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from server.settings import settings
+
+    def must_not_touch(*_: Any) -> Any:
+        raise AssertionError("the reader was looked at")
+
+    monkeypatch.setenv("LOOM_CH_READER_USER", "")
+    monkeypatch.setattr(settings, "ch_user", "loom_app")
+    monkeypatch.setattr(settings, "ch_reader_user", "")
+    monkeypatch.setattr(ch_setup, "reader_objects", must_not_touch)
+    monkeypatch.setattr(ch_setup, "reader_status", must_not_touch)
+    ch = FakeCH()
+    monkeypatch.setattr(preflight, "connect", lambda: ch)
+    assert ch_setup._cmd_ch_setup(argparse.Namespace(print_sql=False)) == 0
+    assert "caller-shaped reads run as 'loom_app'" in capsys.readouterr().out
+    assert not any("loom_reader" in sql for sql in ch.ran)
+    ch_setup._cmd_ch_setup(argparse.Namespace(print_sql=True))
+    assert "CREATE USER" not in capsys.readouterr().out
+
+
+def test_an_unset_reader_user_means_the_default_reader(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from server.settings import settings
+
+    monkeypatch.delenv("LOOM_CH_READER_USER", raising=False)
+    monkeypatch.setattr(settings, "ch_user", "loom_app")
+    monkeypatch.setattr(settings, "ch_reader_user", "")
+    ch_setup._cmd_ch_setup(argparse.Namespace(print_sql=True))
+    assert "CREATE USER OR REPLACE `loom_reader`" in capsys.readouterr().out

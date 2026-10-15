@@ -18,6 +18,7 @@ else of that name is left alone.
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from typing import Any, Literal
@@ -80,8 +81,15 @@ def reader_sql(reader: str, password: str) -> list[str]:
     ]
 
 
-def admin_sql(user: str, reader: str) -> list[str]:
-    """Everything `ch-setup` does, for an admin to run on behalf of `user`."""
+def admin_sql(user: str, reader: str | None) -> list[str]:
+    """Everything `ch-setup` does, for an admin to run on behalf of `user`;
+    no reader when `reader` is None."""
+    reader_part = (
+        [f"-- replaces any existing user and settings profile named {reader}"]
+        + reader_sql(reader, _PASSWORD_PLACEHOLDER)
+        if reader
+        else []
+    )
     return [
         f"CREATE DATABASE IF NOT EXISTS {preflight.DATABASE}",
         f"GRANT CURRENT GRANTS ON {preflight.DATABASE}.* TO `{user}`",
@@ -91,8 +99,7 @@ def admin_sql(user: str, reader: str) -> list[str]:
         # clusterAllReplicas, which asks every replica for its version. READ only:
         # on Cloud plain REMOTE also grants writes to any host through remote().
         f"GRANT READ ON REMOTE TO `{user}`",
-        f"-- replaces any existing user and settings profile named {reader}",
-        *reader_sql(reader, _PASSWORD_PLACEHOLDER),
+        *reader_part,
     ]
 
 
@@ -199,7 +206,7 @@ def _drop_reader(ch: Any, reader: str) -> None:
             pass
 
 
-def _print_admin_sql(user: str, reader: str) -> None:
+def _print_admin_sql(user: str, reader: str | None) -> None:
     """The SQL for an admin, on stderr after the reason it follows, so the two
     never interleave when a container relays the streams apart."""
     err = sys.stderr
@@ -297,7 +304,7 @@ def _create_reader(ch: Any, user: str, reader: str, *, fresh: bool) -> bool:
     return True
 
 
-def _set_up(ch: Any, user: str, reader: str) -> int:
+def _set_up(ch: Any, user: str, reader: str | None) -> int:
     from server.settings import settings
 
     try:
@@ -316,9 +323,11 @@ def _set_up(ch: Any, user: str, reader: str) -> int:
             f"an admin can run GRANT SELECT ON system.{table} TO `{user}`"
         )
 
-    if not _ensure_reader(ch, user, reader):
+    if reader is None:
+        print(f"· LOOM_CH_READER_USER is empty: caller-shaped reads run as {user!r}")
+    elif not _ensure_reader(ch, user, reader):
         return 1
-    if not settings.ch_reader_user:
+    elif not settings.ch_reader_user:
         print(f"  set LOOM_CH_READER_USER={reader} so caller-shaped reads run as it")
 
     print(
@@ -336,8 +345,11 @@ def _cmd_ch_setup(args: argparse.Namespace) -> int:
     from server.settings import settings
 
     user = settings.ch_user
-    reader = settings.ch_reader_user or DEFAULT_READER
-    if not (_NAME.match(user) and _NAME.match(reader)):
+    # Set but empty is the opt-out: no reader, the reads run as the Loom user.
+    # Unset (a checkout without it) means the default reader.
+    opted_out = "LOOM_CH_READER_USER" in os.environ and not settings.ch_reader_user
+    reader = None if opted_out else settings.ch_reader_user or DEFAULT_READER
+    if not (_NAME.match(user) and (reader is None or _NAME.match(reader))):
         print(f"✗ cannot use user names {user!r} / {reader!r} in SQL", file=sys.stderr)
         return 2
     if reader == user:
