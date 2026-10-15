@@ -514,8 +514,6 @@ jobs:
               ;;
             *) exit "$status" ;;
           esac
-      # An existing release for the tag is updated and its other files replaced,
-      # so a re-run or the later dispatch leaves the published bytes attached.
       # Notes are generated only when this run creates the release: on an existing
       # one the action appends them again, under notes edited by hand.
       - name: Is there a release for this tag already
@@ -532,6 +530,8 @@ jobs:
             echo "::error::could not tell whether $GITHUB_REF_NAME has a release: $out"
             exit 1
           fi
+      # An existing release for the tag is updated and its other files replaced,
+      # so a re-run or the later dispatch leaves the published bytes attached.
       - name: Create or update the release with notes and files
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:

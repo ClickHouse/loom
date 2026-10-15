@@ -157,17 +157,6 @@ async def _record_turn(a: Any, session_id: str, message_id: str, turn_at: str = 
     return float(out["cost_usd"])
 
 
-async def _get_with_turns(a: Any, run_id: str, turns: int, timeout_s: float = 6.0) -> dict:
-    """run.get once the run's turns are visible (turn rows are inserted asynchronously)."""
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout_s
-    while True:
-        got = await a.run.get(run_id)
-        if got["turns"] >= turns or loop.time() > deadline:
-            return got
-        await asyncio.sleep(0.25)
-
-
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -188,14 +177,12 @@ async def test_each_run_in_a_session_counts_only_its_own_turns(
         await asyncio.sleep(0.2)
         await a.run.complete(first["run_id"], status="completed")
         first_cost = await _record_turn(a, "sess-b", "m1", turn_at=first_turn_at)
-        await _get_with_turns(a, first["run_id"], 1)
 
         await asyncio.sleep(0.2)
         second = await a.run.begin(goal="second", session_id="sess-b", budget_usd=0.05)
         await asyncio.sleep(0.2)
         second_cost = await _record_turn(a, "sess-b", "m2", turn_at=_now_iso())
         assert first_cost > 0.05 and first_cost + second_cost > 0.1
-        await _get_with_turns(a, second["run_id"], 1)
 
         # A re-sent turn keeps its time, and so its run.
         await _record_turn(a, "sess-b", "m1", turn_at=first_turn_at)

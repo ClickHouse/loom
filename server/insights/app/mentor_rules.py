@@ -916,7 +916,8 @@ def _rule_run_over_budget(
         cost = float(res.get("cost_usd") or 0.0)
         spent.append(f"${cost:{fmt}} of ${budget:{fmt}} spent")
     if "time" in over:
-        spent.append(f"{res.get('elapsed_seconds', 0)} s of {run.get('budget_seconds', 0)} s")
+        elapsed, allowed = int(res.get("elapsed_seconds") or 0), int(run.get("budget_seconds") or 0)
+        spent.append(f"{elapsed} s of {allowed} s")
     budgets = "cost and time budgets" if len(over) > 1 else f"{over[0]} budget"
     return (
         "run_over_budget",

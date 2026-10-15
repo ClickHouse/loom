@@ -556,6 +556,7 @@ export function Runs() {
                   open &&
                   (() => {
                     const hasSession = Boolean(open.session_id && open.session_id !== "-");
+                    const over = detail.over_budget ?? [];
                     return (
                       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm">
                         <div>
@@ -610,11 +611,8 @@ export function Runs() {
                           <div className="text-2xs text-[var(--color-text-muted)]">budget</div>
                           <div className="tabular-nums" title={EMPTY_WHY.budget}>
                             {budgetText(detail)}
-                            {(detail.over_budget ?? []).length > 0 && (
-                              <span className="text-[var(--color-danger)]">
-                                {" "}
-                                · over {(detail.over_budget ?? []).join(" and ")}
-                              </span>
+                            {over.length > 0 && (
+                              <span className="text-[var(--color-danger)]"> · over {over.join(" and ")}</span>
                             )}
                           </div>
                         </div>
