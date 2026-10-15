@@ -543,8 +543,9 @@ processes (unset: one per CPU the container may use, at most one per GiB of memo
 (`asyncio`, `auto`, `uvloop`) and `LOOM_GRACEFUL_SHUTDOWN_S` (default 10) are read by
 that script. Unset, the loop is `asyncio`, in `loom serve` and `make server` too: the
 workers and the code ops spawn git, and uvloop forks the whole process for each spawn,
-holding its event loop for tens of milliseconds once the heap is a few GB. `LOOM_BUILD_COMMIT`, stamped at build time, is what `/v1/health`
-reports as `build_commit`.
+holding its event loop for tens of milliseconds once the heap is a few GB.
+`LOOM_BUILD_COMMIT`, stamped at build time, is what `/v1/health` reports as
+`build_commit`.
 
 The web processes share small files (rate-limit table, runtime overrides, graph marks) in
 `/run/loom`, which the compose files mount as a tmpfs owned by the image's user. With a
