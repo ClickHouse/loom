@@ -840,10 +840,10 @@ def pending_migrations(client: Any) -> tuple[str, ...]:
     or 47 — a target that is behind, not a statement defect. The check runs
     against a migrated database (README: "Running"); callers use this to tell
     the two apart before reading verdicts."""
-    from server.core.schema.migrate import _applied, ledger_report
+    from server.core.schema.migrate import applied_migrations, ledger_report
 
     files = sorted((ROOT / "schemas" / "migrations").glob("*.sql"))
-    return ledger_report(_applied(client), files).pending
+    return ledger_report(applied_migrations(client), files).pending
 
 
 def _ch_client() -> Any:

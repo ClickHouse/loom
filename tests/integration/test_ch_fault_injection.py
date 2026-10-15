@@ -23,6 +23,7 @@ together with a successful `insert()` is the proof the retry happened.
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 import uuid
 from datetime import UTC, datetime
@@ -179,8 +180,11 @@ def _rows(n: int, namespace: str) -> list[dict[str, Any]]:
 
 
 async def _dedup_window(direct: Any) -> int:
+    """The table's own window where its definition sets one (migration 028
+    does), else the server default."""
     eng = await direct.query_one(
-        "SELECT engine FROM system.tables WHERE database = 'loom' AND name = 'agent_events'"
+        "SELECT engine, engine_full FROM system.tables "
+        "WHERE database = 'loom' AND name = 'agent_events'"
     )
     engine = str((eng or {}).get("engine") or "")
     name = (
@@ -188,6 +192,8 @@ async def _dedup_window(direct: Any) -> int:
         if "Replicated" in engine or "Shared" in engine
         else "non_replicated_deduplication_window"
     )
+    if own := re.search(rf"\b{name} = (\d+)", str((eng or {}).get("engine_full") or "")):
+        return int(own.group(1))
     row = await direct.query_one(
         "SELECT value FROM system.merge_tree_settings WHERE name = {n:String}", {"n": name}
     )

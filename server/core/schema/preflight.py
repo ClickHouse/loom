@@ -62,8 +62,12 @@ TELEMETRY_SYSTEM_TABLES = (
 )
 SYSTEM_TABLES = RUNNER_SYSTEM_TABLES + TELEMETRY_SYSTEM_TABLES
 # Every replica's version; a server without the `default` cluster is one node.
-# Every configured replica must answer: one that does not is unverified, not absent.
-REPLICA_VERSIONS_SQL = "SELECT version() FROM clusterAllReplicas('default', system.one)"
+# Every configured replica must answer: one that does not is unverified, not
+# absent. Set here, so a profile that skips unavailable shards cannot.
+REPLICA_VERSIONS_SQL = (
+    "SELECT version() FROM clusterAllReplicas('default', system.one) "
+    "SETTINGS skip_unavailable_shards = 0"
+)
 
 _DATABASE_COUNT = f"SELECT count() FROM system.databases WHERE name = '{DATABASE}'"
 

@@ -180,9 +180,15 @@ def reader_objects(ch: Any, reader: str) -> Found:
             "SELECT count() FROM system.settings_profiles WHERE name = {r:String}",
             parameters=params,
         )
+        # Other accounts on the profile: inheriting it, or assigned it directly
+        # (TO <user>, TO <role>, TO ALL), which ch-setup never does.
         shared = ch.command(
             "SELECT count() FROM system.settings_profile_elements "
             "WHERE inherit_profile = {r:String} AND ifNull(user_name, '') != {r:String}",
+            parameters=params,
+        ) or ch.command(
+            "SELECT count() FROM system.settings_profiles "
+            "WHERE name = {r:String} AND (apply_to_all OR notEmpty(apply_to_list))",
             parameters=params,
         )
     except Exception:  # noqa: BLE001 — a login that may not list them cannot tell
@@ -236,8 +242,8 @@ def _ensure_reader(ch: Any, user: str, reader: str) -> bool:
     found = reader_objects(ch, reader)
     drop_hint = (
         f"If it is Loom's reader from an earlier setup (the password changed, or a setup "
-        f"stopped halfway), have an admin run DROP USER IF EXISTS {reader}; DROP SETTINGS "
-        f"PROFILE {reader}; and run this again. Otherwise set LOOM_CH_READER_USER to another name"
+        f"stopped halfway), have an admin run DROP USER IF EXISTS `{reader}`; DROP SETTINGS "
+        f"PROFILE `{reader}`; and run this again. Otherwise set LOOM_CH_READER_USER to another name"
     )
     if found == "foreign":
         return _refuse(

@@ -380,7 +380,7 @@ def test_the_reader_must_not_be_the_loom_user(monkeypatch: pytest.MonkeyPatch) -
             "is taken by a user or settings profile ch-setup did not make",
         ),
         # A profile with no user: Loom's own after DROP USER, or someone else's.
-        ("profile", False, "missing", "DROP SETTINGS PROFILE analyst"),
+        ("profile", False, "missing", "DROP SETTINGS PROFILE `analyst`"),
     ],
 )
 def test_an_account_ch_setup_cannot_prove_is_loom_s_is_left_alone(
@@ -440,9 +440,9 @@ def test_a_reader_in_the_server_s_config_gets_the_fix_for_what_is_wrong(
 class Accounts(FakeCH):
     """A server holding `user` (storage, open login) and profile rows of the reader's name."""
 
-    def __init__(self, user=None, own_profile=0, profiles=0, shared=0):
+    def __init__(self, user=None, own_profile=0, profiles=0, shared=0, assigned=0):
         super().__init__()
-        self.user, self.counts = user, (own_profile, profiles, shared)
+        self.user, self.counts = user, (own_profile, profiles, shared, assigned)
 
     def query(self, sql: str, **kwargs: Any) -> SimpleNamespace:
         if "system.users" in sql:
@@ -450,9 +450,11 @@ class Accounts(FakeCH):
         return super().query(sql, **kwargs)
 
     def command(self, sql: str, **kwargs: Any) -> Any:
-        own_profile, profiles, shared = self.counts
+        own_profile, profiles, shared, assigned = self.counts
         if "user_name = {r:String} AND inherit_profile" in sql:
             return own_profile
+        if "apply_to_all" in sql:
+            return assigned
         if "system.settings_profiles" in sql:
             return profiles
         if "ifNull(user_name" in sql:
@@ -471,6 +473,9 @@ class Accounts(FakeCH):
         (Accounts(user=("local_directory", 0), own_profile=1, profiles=1, shared=1), "foreign"),
         (Accounts(profiles=1, shared=1), "foreign"),
         (Accounts(profiles=1), "profile"),
+        # Assigned to other accounts directly (TO <user>, TO <role>, TO ALL).
+        (Accounts(user=("local_directory", 0), own_profile=1, profiles=1, assigned=1), "foreign"),
+        (Accounts(profiles=1, assigned=1), "foreign"),
     ],
 )
 def test_only_a_reader_in_ch_setup_s_shape_counts_as_a_user(accounts: Accounts, found: str) -> None:
