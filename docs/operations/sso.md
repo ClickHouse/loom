@@ -104,8 +104,9 @@ The provider can never grant admin.
 
 ## Behind a proxy
 
-The device sign-in limits (10 wrong codes, 30 new sign-ins per 15 minutes)
-count per client address. Set `LOOM_TRUSTED_PROXIES` to your proxy's
+The sign-in limits (10 wrong device codes, 30 new device sign-ins and 30
+identity-provider round trips per 15 minutes) count per client address, an
+IPv6 /64 as one. Set `LOOM_TRUSTED_PROXIES` to your proxy's
 addresses so that address is the user's own, not the proxy's for everyone.
 
 ## ClickHouse Keeper

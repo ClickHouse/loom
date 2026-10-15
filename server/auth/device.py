@@ -10,7 +10,6 @@ from __future__ import annotations
 import hashlib
 import hmac
 import html
-import ipaddress
 import secrets
 import time
 from typing import Any
@@ -19,7 +18,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
 from server.auth import claims, oauth, oidc
-from server.auth.attempts import Attempts, client_address
+from server.auth.attempts import Attempts, address_key, client_address
 from server.auth.jwt import new_jti
 from server.auth.oauth_store import CodeReplayed, Device, token_id
 from server.core.secrets_at_rest import seal, unseal
@@ -44,18 +43,6 @@ _wrong_codes_by_address = Attempts(10, 900)
 # One poll per interval (with a second of slack for timer jitter); a faster
 # poll gets `slow_down`.
 _polls = Attempts(1, _INTERVAL - 1)
-
-
-def _guesser(address: str) -> str:
-    """Who a per-address limit counts: the address, or its /64 for IPv6, where
-    one host holds a whole /64 to spread requests over."""
-    try:
-        ip = ipaddress.ip_address(address)
-    except ValueError:
-        return address
-    if ip.version == 6:
-        return str(ipaddress.ip_network(f"{ip}/64", strict=False))
-    return address
 
 
 def _new_user_code() -> str:
@@ -84,7 +71,7 @@ async def device_authorization(request: Request) -> JSONResponse:
     if f.get("client_id") != DEVICE_CLIENT_ID:
         raise oauth.OAuthError("invalid_client")
     address = client_address(request)
-    if not _requests_by_address.allow(_guesser(address)):
+    if not _requests_by_address.allow(address_key(address)):
         raise oauth.OAuthError("slow_down", 429, headers={"Retry-After": "900"})
     device_code = secrets.token_urlsafe(32)
     user_code = _new_user_code()
@@ -156,16 +143,18 @@ async def device_sign_in(request: Request) -> Response:
     f = await oauth.form_body(request)
     typed = f.get("user_code", "")
     address = client_address(request)
-    if _wrong_codes_by_address.blocked(_guesser(address)):
+    if _wrong_codes_by_address.blocked(address_key(address)):
         return _code_form(typed, "Too many wrong codes. Try again later.", 429)
     user_code = normalize_user_code(typed)
     device = await oauth.store.device_by_user_code(_user_code_id(user_code))
     if device is None:
-        _wrong_codes_by_address.record(_guesser(address))
+        _wrong_codes_by_address.record(address_key(address))
         return _code_form(typed, "That code is wrong or has expired.", 400)
     if settings.oauth_login_provider == "oidc":
         # Sealed: the pending row must not hold a usable user code.
-        return await oauth.start_oidc_login("device", user_code=seal(_USER_CODE_PURPOSE, user_code))
+        return await oauth.start_oidc_login(
+            "device", address, user_code=seal(_USER_CODE_PURPOSE, user_code)
+        )
     try:
         identity = await resolve_user_credentials(
             f.get("identifier", ""), f.get("password", ""), address=address

@@ -26,7 +26,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from server.auth import claims
-from server.auth.attempts import Attempts, client_address
+from server.auth.attempts import Attempts, address_key, client_address
 from server.auth.delegation import SESSION_TTL
 from server.auth.jwt import AuthInfo, mint_token, new_jti
 from server.auth.oauth_store import (
@@ -314,6 +314,7 @@ async def authorize_form(
     if settings.oauth_login_provider == "oidc":
         return await start_oidc_login(
             "mcp",
+            client_address(request),
             client_id=client_id,
             redirect_uri=redirect_uri,
             code_challenge=code_challenge,
@@ -429,24 +430,40 @@ def _oidc_callback_url() -> str:
 # cannot be finished in another, so nobody can sign a victim into their own
 # account by sending them a callback link. One cookie per sign-in, so two
 # tabs signing in at once don't undo each other.
-def _state_cookie(state: str) -> tuple[str, str]:
-    """(cookie name, value) for one IdP sign-in."""
-    digest = token_id(state)
-    return f"loom_oidc_{digest[:16]}", digest
+def _state_cookie(state: str) -> str:
+    """The cookie holding one IdP sign-in's browser secret."""
+    return f"loom_oidc_{token_id(state)[:16]}"
 
 
-_sso_starts_by_address = Attempts(30, 900)
+_starts_by_address = Attempts(30, 900)
 
 
-async def start_oidc_login(kind: str, **data: str) -> RedirectResponse:
-    """Send the browser to the IdP; `data` comes back to the callback."""
+async def start_oidc_login(kind: str, address: str, **data: str) -> Response:
+    """Send the browser to the IdP; `data` comes back to the callback. The
+    browser keeps a secret in a cookie, and only a callback carrying it
+    finishes the sign-in: the callback URL alone (a log line, a screenshot)
+    does not."""
     from server.auth import oidc
 
+    if not _starts_by_address.allow(address_key(address)):
+        return html_page(
+            "Sign in to Loom",
+            "<h2>Too many sign-ins from here</h2><p>Try again in 15 minutes.</p>",
+            429,
+        )
     oidc_state = secrets.token_urlsafe(32)
     nonce = secrets.token_urlsafe(32)
     verifier = secrets.token_urlsafe(48)
+    browser = secrets.token_urlsafe(32)
     await store.save_pending(
-        oidc_state, {**data, "kind": kind, "nonce": nonce, "code_verifier": verifier}
+        oidc_state,
+        {
+            **data,
+            "kind": kind,
+            "nonce": nonce,
+            "code_verifier": verifier,
+            "browser": token_id(browser),
+        },
     )
     url = await oidc.build_authorize_url(
         redirect_uri=_oidc_callback_url(),
@@ -457,7 +474,8 @@ async def start_oidc_login(kind: str, **data: str) -> RedirectResponse:
     )
     response = RedirectResponse(url=url, status_code=302)
     response.set_cookie(
-        *_state_cookie(oidc_state),
+        _state_cookie(oidc_state),
+        browser,
         max_age=PENDING_TTL,
         path="/oauth/callback",
         secure=settings.oauth_issuer.startswith("https://"),
@@ -468,13 +486,11 @@ async def start_oidc_login(kind: str, **data: str) -> RedirectResponse:
 
 
 @router.get("/oauth/sso")
-async def dashboard_sso(request: Request) -> RedirectResponse:
+async def dashboard_sso(request: Request) -> Response:
     """The dashboard's "Sign in with SSO" button."""
     if settings.oauth_login_provider != "oidc":
         raise OAuthError("sso_not_configured", 404)
-    if not _sso_starts_by_address.allow(client_address(request)):
-        raise OAuthError("temporarily_unavailable", 429, headers={"Retry-After": "900"})
-    return await start_oidc_login("dashboard")
+    return await start_oidc_login("dashboard", client_address(request))
 
 
 async def _signin_denied(email: str, reason: str) -> None:
@@ -516,7 +532,7 @@ async def oidc_callback(request: Request) -> Response:
     response = await _finish_oidc_login(request)
     state = request.query_params.get("state", "")
     if state:
-        response.delete_cookie(_state_cookie(state)[0], path="/oauth/callback")
+        response.delete_cookie(_state_cookie(state), path="/oauth/callback")
     return response
 
 
@@ -527,11 +543,13 @@ async def _finish_oidc_login(request: Request) -> Response:
     state = request.query_params.get("state", "")
     if not state:
         return _expired_sign_in()
-    name, value = _state_cookie(state)
-    if not secrets.compare_digest(request.cookies.get(name, ""), value):
-        return _expired_sign_in()
+    browser = request.cookies.get(_state_cookie(state), "")
+
+    def same_browser(p: dict[str, Any]) -> bool:
+        return bool(browser) and secrets.compare_digest(p.get("browser", ""), token_id(browser))
+
     try:
-        pending = await store.take_pending(state)  # single-use
+        pending = await store.take_pending(state, same_browser)  # single-use
     except claims.Busy:  # Keeper cannot answer right now
         return _sign_in_unavailable()
     if pending is None:
@@ -758,7 +776,7 @@ async def end_session(grant: Grant | Device, reason: str) -> None:
     When the revocation cannot be written, a `revocation_owed` row stands in
     for it: the revocation snapshot every process loads counts the family as
     revoked. Raises only when neither landed."""
-    from server.auth.revocation import revoke
+    from server.auth.revocation import revoke, revoked_here
 
     family = grant["family"]
     if not family:
@@ -769,6 +787,7 @@ async def end_session(grant: Grant | Device, reason: str) -> None:
     except Exception:  # the owed row stands in for it, or the error goes on
         log.exception("oauth: revoking session %s failed; recording it as owed", family)
         await store.owe_revocation(family, reason)
+        revoked_here(family)  # other processes read the owed row at their next refresh
     await _audit_ended(grant, reason)
 
 

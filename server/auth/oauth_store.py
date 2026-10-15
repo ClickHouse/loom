@@ -103,7 +103,9 @@ class OAuthStore(Protocol):
     async def save_refresh(self, token: str, g: Grant) -> None: ...
     async def take_refresh(self, token: str, client_id: str) -> Grant | None: ...
     async def save_pending(self, state: str, data: dict[str, Any]) -> None: ...
-    async def take_pending(self, state: str) -> dict[str, Any] | None: ...
+    async def take_pending(
+        self, state: str, accept: Callable[[dict[str, Any]], bool] = ...
+    ) -> dict[str, Any] | None: ...
     async def save_device(self, d: Device) -> None: ...
     async def device(self, device_id: str) -> Device | None: ...
     async def device_by_user_code(self, user_code_id: str) -> Device | None: ...
@@ -252,7 +254,8 @@ class ClickHouseStore:
         try:
             spent = await self._put(key, value, {**record, "spent": True, "nonce": claims.nonce()})
         except claims.Changed:
-            raise CodeReplayed(grant) from None  # another request spent it just now
+            await self._raise_if_spent(key, grant)
+            raise
         return {**grant, "held": {key: spent}}
 
     async def save_refresh(self, token: str, g: Grant) -> None:
@@ -319,13 +322,17 @@ class ClickHouseStore:
         record = {"data": data, "exp": exp, "spent": False, "nonce": claims.nonce()}
         await self._put(f"pending:{state}", None, record)
 
-    async def take_pending(self, state: str) -> dict[str, Any] | None:
+    async def take_pending(
+        self, state: str, accept: Callable[[dict[str, Any]], bool] = lambda _data: True
+    ) -> dict[str, Any] | None:
+        """`accept` (the callback came from the browser that started it) is
+        checked before the spend: a callback from elsewhere leaves it unspent."""
         key = f"pending:{state}"
         loaded = await self._load(key)
         if loaded is None:
             return None
         record, value = loaded
-        if record["spent"] or record["exp"] < int(time.time()):
+        if record["spent"] or record["exp"] < int(time.time()) or not accept(record["data"]):
             return None
         try:
             await self._put(key, value, {**record, "spent": True, "nonce": claims.nonce()})
@@ -405,5 +412,13 @@ class ClickHouseStore:
                 key, d["held"][key], {**record, "spent": True, "nonce": claims.nonce()}
             )
         except claims.Changed:
-            raise CodeReplayed(d) from None  # another poll redeemed it just now
+            await self._raise_if_spent(key, d)
+            raise
         return {**d, "held": {key: spent}}
+
+    async def _raise_if_spent(self, key: str, grant: Grant | Device) -> None:
+        """After losing a spend: a replay if another request spent it, else
+        (a change undone, a step taken meanwhile) the request just retries."""
+        loaded = await self._load(key)
+        if loaded is not None and loaded[0]["spent"]:
+            raise CodeReplayed(grant)

@@ -10,9 +10,9 @@ credential exactly one wins, however slow either is and whichever ClickHouse
 replica serves it; nothing here depends on time.
 
 Callers make every value unique (a nonce in it), so reading our value back
-proves our write landed. Each key carries the expiry of what it holds, and the
-sweep drops it soon after; the table's key limit is a backstop against a flood
-of unauthenticated sign-in starts.
+proves our write landed. Each key carries the expiry of what it holds and is
+swept once it passes; the table's key limit is a backstop against a flood of
+unauthenticated sign-in starts, and /v1/health says when it is reached.
 
 A ClickHouse without a Keeper has no claims table. Sign-in then answers a
 retryable 503 (`Busy`) rather than spend credentials unguarded, and
@@ -25,6 +25,7 @@ import asyncio
 import contextlib
 import logging
 import secrets
+import time
 from typing import Any
 
 from server.core.schema.migrate_lease import is_keeper_table, key_exists
@@ -33,12 +34,14 @@ log = logging.getLogger(__name__)
 
 _TABLE = "loom.oauth_claims"
 _TABLE_SQL = "SELECT engine FROM system.tables WHERE database = 'loom' AND name = 'oauth_claims'"
-_GRACE_S = 3600  # an expired credential still reads as expired for this long
 SWEEP_INTERVAL_SECONDS = 300
+_FULL_FOR_S = 900  # how long hitting the key limit stays a health problem
 
 # Whether loom.oauth_claims exists here: None until the boot probe or the
 # first sign-in asks.
 _atomic: bool | None = None
+# When an insert last found the table at its key limit (monotonic seconds).
+_full_at: float | None = None
 
 
 class Busy(Exception):
@@ -56,6 +59,11 @@ def nonce() -> str:
 def keeper_available() -> bool | None:
     """Whether this ClickHouse has the claims table; None = not asked yet."""
     return _atomic
+
+
+def keeper_full() -> bool:
+    """Whether a sign-in found the table at its key limit lately."""
+    return _full_at is not None and time.monotonic() - _full_at < _FULL_FOR_S
 
 
 async def _available(ch: Any) -> bool:
@@ -104,10 +112,12 @@ async def swap(ch: Any, key: str, old: str | None, new: str, expires_at: int) ->
     try:
         return await _swap(ch, key, old, new, expires_at)
     except Busy:
-        if old is not None:
-            # The write may have landed before Keeper failed: undo it, so the
-            # request told to retry finds the key as it read it.
-            with contextlib.suppress(Busy):
+        # The write may have landed before Keeper failed: undo it, so the
+        # request told to retry finds the key as it read it.
+        with contextlib.suppress(Busy):
+            if old is None:
+                await _drop(ch, key, new)
+            else:
                 await _swap(ch, key, new, old, expires_at)
         raise
 
@@ -132,6 +142,7 @@ async def _swap(ch: Any, key: str, old: str | None, new: str, expires_at: int) -
                 )
         except Exception as e:  # a lost race is an answer; Keeper failing is a retry
             if not _lost_race(e):
+                _note_full(e)
                 log.warning("oauth claims: Keeper refused %s: %s", key, e)
                 raise Busy(key) from e
         now = await get(ch, key)
@@ -143,12 +154,28 @@ async def _swap(ch: Any, key: str, old: str | None, new: str, expires_at: int) -
     raise Busy(key)
 
 
+def _note_full(e: BaseException) -> None:
+    global _full_at
+    if "LIMIT_EXCEEDED" in str(e):
+        _full_at = time.monotonic()
+
+
+async def _drop(ch: Any, key: str, value: str) -> None:
+    try:
+        await ch.execute(
+            f"ALTER TABLE {_TABLE} DELETE WHERE claim_key = {{k:String}} AND value = {{v:String}} "
+            "SETTINGS keeper_map_strict_mode = 1",
+            params={"k": key, "v": value},
+        )
+    except Exception as e:  # someone else changed it since: theirs stands
+        if not _lost_race(e):
+            raise Busy(key) from e
+
+
 async def sweep() -> None:
-    """Drop keys whose credential expired more than `_GRACE_S` ago."""
+    """Drop keys whose credential has expired."""
     from server.core.ch import get_client
 
     ch = get_client()
     if await _available(ch):
-        await ch.execute(
-            f"ALTER TABLE {_TABLE} DELETE WHERE expires_at < toUInt32(now()) - {_GRACE_S}"
-        )
+        await ch.execute(f"ALTER TABLE {_TABLE} DELETE WHERE expires_at < toUInt32(now())")

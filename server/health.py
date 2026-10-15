@@ -90,6 +90,7 @@ def _health_provider_fields(
             ch_reader_error=reader_user_error(),
             run_claims_atomic=claims_atomic(),
             oauth_signin_keeper=oauth_claims.keeper_available(),
+            oauth_claims_full=oauth_claims.keeper_full(),
         ),
     )
     return {

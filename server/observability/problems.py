@@ -87,6 +87,8 @@ class HealthState:
     # Whether sign-in state has its Keeper table (loom.oauth_claims exists):
     # None = not asked yet in this process.
     oauth_signin_keeper: bool | None = None
+    # Whether a sign-in lately found loom.oauth_claims at its key limit.
+    oauth_claims_full: bool = False
     env: Mapping[str, str] = field(default_factory=lambda: os.environ)
     # Saved keys take precedence over the environment, including explicit empty keys.
     saved_keys: Mapping[str, bool] = field(default_factory=saved_key_presence)
@@ -624,7 +626,20 @@ def _reader_user_problems(settings: Any, state: HealthState) -> list[Problem]:
 
 
 def _oauth_claim_problems(state: HealthState) -> list[Problem]:
-    """No Keeper: sign-in cannot spend a credential exactly once, so it is off."""
+    """No Keeper: sign-in cannot spend a credential exactly once, so it is off.
+    A full claims table turns new sign-ins away until the sweep frees keys."""
+    if state.oauth_claims_full:
+        return [
+            Problem(
+                "oauth_claims_full",
+                "warn",
+                "loom.oauth_claims reached its key limit, so new sign-ins answer 503. "
+                "Unfinished sign-in starts are swept as they expire (ten minutes).",
+                "Look for one address starting sign-ins over and over (the server log names "
+                "each refused one) and block it at the proxy.",
+                source="runtime",
+            )
+        ]
     if state.oauth_signin_keeper is not False:
         return []
     return [

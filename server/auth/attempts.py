@@ -8,6 +8,7 @@ rate-limit bucket file, or ClickHouse) is the upgrade if that ever matters.
 
 from __future__ import annotations
 
+import ipaddress
 import time
 from typing import Any
 
@@ -60,3 +61,15 @@ def client_address(request: Any) -> str:
     already replaced it with the X-Forwarded-For client when the peer is one
     of LOOM_TRUSTED_PROXIES, so a header from any other peer changes nothing."""
     return request.client.host if request.client else "?"
+
+
+def address_key(address: str) -> str:
+    """Who a per-address limit counts: the address, or its /64 for IPv6, where
+    one host holds a whole /64 to spread requests over."""
+    try:
+        ip = ipaddress.ip_address(address)
+    except ValueError:
+        return address
+    if ip.version == 6:
+        return str(ipaddress.ip_network(f"{ip}/64", strict=False))
+    return address

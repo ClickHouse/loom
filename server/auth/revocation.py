@@ -95,21 +95,22 @@ def is_revoked(jti: str, *, issued_at: int | None = None) -> bool:
 async def revoked_outright(jti: str) -> bool:
     """`is_revoked` read from loom.revoked_tokens itself, for a check that
     cannot wait for this process's copy to catch up with another's write."""
-    from server.core.ch import get_client
+    from server.core.ch import get_client, own_write_reads
 
     if is_revoked(jti):
         return True
-    row = await get_client().query_one(
-        """
-        SELECT 1 FROM loom.revoked_tokens FINAL
-        WHERE jti = {j:String} AND expires_at > now() AND issued_before IS NULL
-        UNION ALL
-        SELECT 1 FROM loom.oauth_state FINAL
-        WHERE record_type = 'revocation_owed' AND id = {j:String}
-          AND expires_at > toUInt32(now())
-        """,
-        params={"j": jti},
-    )
+    with own_write_reads():  # written a moment ago, maybe through another replica
+        row = await get_client().query_one(
+            """
+            SELECT 1 FROM loom.revoked_tokens FINAL
+            WHERE jti = {j:String} AND expires_at > now() AND issued_before IS NULL
+            UNION ALL
+            SELECT 1 FROM loom.oauth_state FINAL
+            WHERE record_type = 'revocation_owed' AND id = {j:String}
+              AND expires_at > toUInt32(now())
+            """,
+            params={"j": jti},
+        )
     return row is not None
 
 
@@ -120,9 +121,9 @@ async def refresh() -> None:
     global _revoked_jtis, _revoked_before, _loaded, _loaded_at
     try:
         ch = get_client()
-        # A session whose revocation could not be written is owed one
-        # (oauth_store.owe_revocation): it counts as revoked from that row,
-        # in every process and after any restart, until the revocation lands.
+        # A session whose revocation could not be written gets a
+        # revocation_owed row instead (oauth_store.owe_revocation), which
+        # stands in for it as long as a session revocation lasts (30 days).
         rows = await ch.query_all(
             """
             SELECT jti, issued_before FROM loom.revoked_tokens FINAL
@@ -208,6 +209,12 @@ async def revoke(
     await refresh()
     _apply_locally(token_id, _cutoff_seconds(issued_before))
     return row
+
+
+def revoked_here(jti: str) -> None:
+    """Refuse `jti` in this process now, for a revocation written elsewhere
+    (an owed one) that the next snapshot will carry."""
+    _apply_locally(jti, None)
 
 
 def _apply_locally(key: str, cutoff: int | None) -> None:

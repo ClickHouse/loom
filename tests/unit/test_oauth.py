@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import json
 import secrets
 import time
 
@@ -484,3 +485,22 @@ def test_a_refresh_token_from_before_session_families_signs_in_again() -> None:
     }
     r = _refresh(_client(), rt)
     assert r.status_code == 400 and r.json()["error"] == "invalid_grant"
+
+
+def test_a_code_spend_lost_to_an_undone_change_is_a_retry_not_a_replay(monkeypatch) -> None:
+    from server.auth import claims
+
+    code, verifier = _seed_code()
+    store = oauth.store
+    real = store._swap
+
+    async def swap(key: str, old: str | None, new: str, expires_at: int) -> str | None:
+        # Another request's change lands first and is undone: not spent.
+        store.keeper[key] = json.dumps(json.loads(store.keeper[key]) | {"nonce": "other"})
+        monkeypatch.setattr(store, "_swap", real)
+        return store.keeper[key]
+
+    monkeypatch.setattr(store, "_swap", swap)
+    with pytest.raises(claims.Changed):
+        asyncio.run(store.take_code(code, "loom-test", lambda _g: True))
+    assert asyncio.run(store.take_code(code, "loom-test", lambda _g: True)) is not None

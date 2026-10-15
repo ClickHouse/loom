@@ -152,6 +152,28 @@ async def test_a_spend_whose_answer_keeper_lost_is_no_replay_on_retry(
     assert await store.take_refresh(token, "loom-cli") is not None  # and the retry works
 
 
+async def test_a_new_key_whose_answer_keeper_lost_is_undone(
+    store: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    grant, token = _grant("loom-cli"), secrets.token_urlsafe(32)
+    real = claims.get
+    failed = False
+
+    async def get(ch: Any, key: str) -> str | None:
+        nonlocal failed
+        if key.startswith("family:") and not failed:  # the insert landed, the read-back failed
+            failed = True
+            raise claims.Busy(key)
+        return await real(ch, key)
+
+    monkeypatch.setattr(claims, "get", get)
+    with pytest.raises(claims.Busy):
+        await store.save_refresh(token, grant)  # the code exchange answers 503
+    retried = secrets.token_urlsafe(32)  # the retried exchange mints a new token
+    await store.save_refresh(retried, grant)
+    assert await store.take_refresh(retried, "loom-cli") is not None
+
+
 async def test_two_people_signing_in_on_one_code_at_once_end_it_for_both(store: Any) -> None:
     d, user_code = _device()
     await store.save_device(d)
@@ -253,8 +275,8 @@ async def test_the_sweep_worker_drops_keys_once_their_credential_expired(store: 
     sweep = getattr(importlib.import_module(row.module), row.pass_attr)
 
     ch, old, fresh = get_client(), f"test:{uuid.uuid4().hex}", f"test:{uuid.uuid4().hex}"
-    await claims.swap(ch, old, None, "x", int(time.time()) - 2 * claims._GRACE_S)
-    await claims.swap(ch, fresh, None, "y", int(time.time()) - 60)  # expired, in its grace
+    await claims.swap(ch, old, None, "x", int(time.time()) - 60)
+    await claims.swap(ch, fresh, None, "y", int(time.time()) + 60)
     await sweep()
     assert await claims.get(ch, old) is None
     assert await claims.get(ch, fresh) == "y"

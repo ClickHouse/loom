@@ -243,18 +243,26 @@ spent. The guarantee is Keeper's, not a lease's: no timing or replica lag can le
 requests through. Ephemeral state (codes, device grants, IdP round trips) is the Keeper
 value itself; a refresh token's grant is a `loom.oauth_state` row written before the token
 is handed out and read with sequential consistency. Each key carries its credential's
-expiry and is swept within minutes of it; the table's key limit caps what unauthenticated
-sign-in starts can hold. When Keeper fails mid-change, the change is undone before the
-client is told to retry, so its retry is not taken for a replay. A ClickHouse without a Keeper has no claims table: sign-in answers 503, `/v1/health`
-reports `oauth_signin_needs_keeper`, and minted tokens keep working. A refresh token issued
-before sessions had a family is refused, so its owner signs in once more.
+expiry and is swept once it passes. Sign-in starts are limited per address (an IPv6 /64
+counts as one), and the table's key limit is the backstop: past it new sign-ins answer 503
+and `/v1/health` reports `oauth_claims_full`. When Keeper fails mid-change, the change is
+undone before the client is told to retry, so its retry is not taken for a replay. A
+ClickHouse without a Keeper has no claims table: sign-in answers 503, `/v1/health` reports
+`oauth_signin_needs_keeper`, and minted tokens keep working. A refresh token issued before
+sessions had a family is refused, so its owner signs in once more.
+
+**The IdP round trip is bound to its browser.** Starting a sign-in gives the browser a
+random secret in an HttpOnly cookie and keeps its hash with the round trip; the callback
+finishes it only with that cookie, checked before the round trip is spent. The callback URL
+alone (from a log, browser history or a screenshot) finishes nothing.
 
 **A revocation that cannot be written is owed.** When ending a session cannot write
-`loom.revoked_tokens`, a `revocation_owed` row in `loom.oauth_state` takes its place: the
-revocation snapshot every process loads (at boot and on its refresh cadence) counts the
-family as revoked, so its access tokens are refused everywhere, after any restart. A
-refresh asks storage itself whether its session ended, so it never waits for a snapshot.
-When neither write lands, the request is answered 503 `temporarily_unavailable`, never a final
+`loom.revoked_tokens`, a `revocation_owed` row in `loom.oauth_state` stands in for it for
+as long as a session revocation lasts (30 days): the process that wrote it refuses the
+session at once, and the revocation snapshot every process loads (at boot and on its
+refresh cadence) counts the family as revoked, after any restart. A refresh asks storage
+itself whether its session ended, so it never waits for a snapshot. When neither write
+lands, the request is answered 503 `temporarily_unavailable`, never a final
 `invalid_grant`.
 
 OAuth answers carry `error` and `error_description` at the top of the JSON body (RFC 6749

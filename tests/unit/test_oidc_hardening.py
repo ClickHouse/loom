@@ -85,7 +85,7 @@ class _Req:
 
     def __init__(self) -> None:
         self.query_params = {"code": "c", "state": "s"}
-        self.cookies = dict([oauth._state_cookie("s")])
+        self.cookies = {oauth._state_cookie("s"): "browser-secret"}
 
 
 @pytest.mark.parametrize(
@@ -108,6 +108,7 @@ async def test_a_failed_callback_does_not_echo_the_idp(
             "client_id": "c",
             "redirect_uri": "r",
             "code_challenge": "x",
+            "browser": oauth.token_id("browser-secret"),
         },
     )
     monkeypatch.setattr(oauth, "store", store)
@@ -135,6 +136,7 @@ async def test_an_unverified_email_is_refused_at_the_callback(
             "client_id": "c",
             "redirect_uri": "r",
             "code_challenge": "x",
+            "browser": oauth.token_id("browser-secret"),
         },
     )
     monkeypatch.setattr(oauth, "store", store)
@@ -199,3 +201,33 @@ async def test_a_malformed_refresh_answer_is_the_idps_fault_not_a_success(
     )
     with pytest.raises(oidc.UpstreamUnavailable):
         await oidc.refresh("idp-refresh")
+
+
+async def test_a_callback_url_alone_does_not_finish_the_sign_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The cookie's value is a secret the starting browser was given, not
+    something the state in the callback URL lets anyone else compute."""
+    store = MemoryOAuthStore()
+    await store.save_pending("s", {"kind": "dashboard", "browser": oauth.token_id("secret")})
+    monkeypatch.setattr(oauth, "store", store)
+    forged = _Req()
+    forged.cookies = {oauth._state_cookie("s"): oauth.token_id("s")}  # all the URL gives
+    page = await oauth.oidc_callback(forged)  # type: ignore[arg-type]
+    assert page.status_code == 400
+    assert not store.records("pending")["s"]["spent"]  # still the starting browser's
+
+
+async def test_sign_in_starts_are_limited_per_address_and_ipv6_net(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def authorize_url(**kw: Any) -> str:
+        return "https://idp/authorize"
+
+    monkeypatch.setattr(oauth, "store", MemoryOAuthStore())
+    monkeypatch.setattr(oidc, "build_authorize_url", authorize_url)
+    monkeypatch.setattr(oauth, "_starts_by_address", oauth.Attempts(2, 900))
+    for host in ("2001:db8::1", "2001:db8::2"):
+        assert (await oauth.start_oidc_login("dashboard", host)).status_code == 302
+    assert (await oauth.start_oidc_login("dashboard", "2001:db8::3")).status_code == 429
+    assert (await oauth.start_oidc_login("dashboard", "2001:db9::1")).status_code == 302

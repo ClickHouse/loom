@@ -642,3 +642,5 @@ def test_sign_in_without_keeper_is_reported() -> None:
     assert _oauth_claim_problems(HealthState(oauth_signin_keeper=None)) == []
     (problem,) = _oauth_claim_problems(HealthState(oauth_signin_keeper=False))
     assert problem.code == "oauth_signin_needs_keeper" and "029_oauth_claims.sql" in problem.fix
+    (full,) = _oauth_claim_problems(HealthState(oauth_signin_keeper=True, oauth_claims_full=True))
+    assert full.code == "oauth_claims_full"

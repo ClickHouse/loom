@@ -63,7 +63,7 @@ def _world(monkeypatch):
         device._polls,
         device._requests_by_address,
         device._wrong_codes_by_address,
-        oauth._sso_starts_by_address,
+        oauth._starts_by_address,
     ):
         limiter.clear()
     return {"store": store, "revoked": revoked, "expiries": expiries, "events": events}
