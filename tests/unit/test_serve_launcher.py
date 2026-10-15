@@ -18,7 +18,6 @@ case "$*" in
   "-m server.core.web_workers") echo 4 ;;
   "-m server.core.env_file LOOM_WEB_WORKERS") echo "$STUB_ENV_FILE_WORKERS" ;;
   "-m server.core.env_file LOOM_RUNTIME_DIR") echo "${STUB_ENV_FILE_RUNTIME_DIR:-}" ;;
-  "-m server.core.env_file LOOM_BACKGROUND_WORKERS") echo "${STUB_ENV_FILE_BACKGROUND:-}" ;;
   "-m server.core.runtime_files")
     [ "$STUB_RUNTIME_DIR" = none ] && { echo "loom: no private directory" >&2; exit 2; }
     [ "$STUB_RUNTIME_DIR" = broken ] && { echo "Traceback: settings invalid" >&2; exit 1; }
@@ -39,7 +38,7 @@ def _launch(
     pinned: str = "",
     env_file: str = "",
     env_file_runtime_dir: str = "",
-    extra_env: dict[str, str] | None = None,
+    loop: str = "",
 ) -> subprocess.CompletedProcess[str]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
@@ -53,8 +52,9 @@ def _launch(
         "STUB_ENV_FILE_WORKERS": env_file,
         "STUB_ENV_FILE_RUNTIME_DIR": env_file_runtime_dir,
         "PORT": "1",
-        **(extra_env or {}),
     }
+    if loop:
+        env["LOOM_UVICORN_LOOP"] = loop
     if pinned:
         env["LOOM_RUNTIME_DIR"] = pinned
     return subprocess.run(
@@ -199,20 +199,10 @@ def test_a_worker_count_that_is_not_a_positive_number_is_refused_by_name(
     assert f"LOOM_WEB_WORKERS={workers} is not a positive whole number" in done.stderr
 
 
-@pytest.mark.parametrize(
-    ("env", "loop"),
-    [
-        ({}, "asyncio"),  # the default `auto` runs the workers in one of the processes
-        ({"LOOM_BACKGROUND_WORKERS": "on"}, "asyncio"),
-        ({"LOOM_BACKGROUND_WORKERS": "off"}, "auto"),  # a web tier alone keeps uvloop
-        ({"STUB_ENV_FILE_BACKGROUND": "off"}, "auto"),
-        ({"LOOM_BACKGROUND_WORKERS": "off", "LOOM_UVICORN_LOOP": "asyncio"}, "asyncio"),
-        ({"LOOM_UVICORN_LOOP": "uvloop"}, "uvloop"),
-    ],
-)
-def test_processes_that_may_run_the_workers_take_the_stdlib_loop(
-    tmp_path: Path, env: dict[str, str], loop: str
+@pytest.mark.parametrize(("loop", "started"), [("", "asyncio"), ("uvloop", "uvloop")])
+def test_the_launcher_runs_the_stdlib_loop_unless_told(
+    tmp_path: Path, loop: str, started: str
 ) -> None:
-    done = _launch(tmp_path, workers="1", runtime_dir="none", extra_env=env)
+    done = _launch(tmp_path, workers="1", runtime_dir="none", loop=loop)
     assert done.returncode == 0, done.stderr
-    assert _arg(done.stdout, "--loop") == loop
+    assert _arg(done.stdout, "--loop") == started

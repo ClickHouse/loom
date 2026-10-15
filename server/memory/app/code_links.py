@@ -219,8 +219,9 @@ async def _link(
             if not m.in_prose or r.get("files")
         }
     )
+    found = await code.candidates(org, cns, names=names) if names else []
     by_name: dict[str, list[Definition]] = defaultdict(list)
-    for d in await code.candidates(org, cns, names=names) if names else []:
+    for d in found:
         by_name[d.name].append(d)
     refs = sorted({str(f) for r in memories for f in r.get("files") or []})
     paths = await code.live_paths(org, cns, refs) if refs else {}

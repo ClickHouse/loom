@@ -83,7 +83,6 @@ def test_a_workers_container_listens_where_it_says_it_binds(path: Path, service:
 
 @pytest.mark.parametrize(("path", "service"), [(CLOUD, "loom-workers"), (COLOUR, "workers")])
 def test_a_workers_container_runs_the_stdlib_loop(path: Path, service: str) -> None:
-    # uvloop forks the whole process for each git or indexer spawn
     workers = _load(path)["services"][service]
     assert "--loop $${LOOM_UVICORN_LOOP:-asyncio} " in workers["command"][-1]
 

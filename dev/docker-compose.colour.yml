@@ -89,7 +89,7 @@ services:
     <<: *colour-common
     container_name: "loom-${LOOM_COLOUR}-workers"
     # Listens on loopback only: nothing outside this container calls it. The
-    # stdlib loop, as scripts/serve.sh picks for a process running the workers.
+    # loop defaults as scripts/serve.sh says.
     command:
       [
         "sh",
