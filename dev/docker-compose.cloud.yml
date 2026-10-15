@@ -116,8 +116,8 @@ services:
       - /run/loom:uid=999,gid=999,mode=0700
     <<: *loom-common
     container_name: loom-workers
-    # Listens on loopback only: nothing outside this container calls it. The
-    # loop defaults as scripts/serve.sh says.
+    # Listens on loopback only: nothing outside this container calls it.
+    # scripts/serve.sh says why the loop defaults to asyncio.
     command:
       [
         "sh",
