@@ -129,6 +129,11 @@ by the time the command starts.
 since Loom never stops it. The run is closed however the work ends: `completed`,
 `cancelled` when it stops for the budget or is cancelled, `failed` on an error.
 
+A SIGTERM that arrives while the run is still opening stops the task by
+default; if `run.begin` had already reached Loom, that run stays `active`, as
+only MCP session runs are closed for idleness. Complete or cancel it with
+`run.complete` if it matters.
+
 A cost budget (`budget_usd`) needs a `session_id`, because a run's spend is the
 turns its session made while the run was open. A sandboxed agent has no
 Claude Code or Codex plugin recording them, so it reports its own with

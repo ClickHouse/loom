@@ -173,6 +173,16 @@ describe("Runs page", () => {
     expect(budget).toHaveTextContent("$1.00 · 30m 0s · 42s elapsed · over cost");
   });
 
+  it("a run with a time budget that has just begun shows 0s elapsed", async () => {
+    const budgeted = { ...full, budget_seconds: 60 };
+    listRuns.mockResolvedValue([budgeted]);
+    getRun.mockResolvedValue(detail({ run: budgeted, elapsed_seconds: 0 }));
+    render(<Runs />);
+    fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByTitle(EMPTY_WHY.budget)).toHaveTextContent("60s · 0s elapsed");
+  });
+
   it("a run without a budget shows a dash", async () => {
     listRuns.mockResolvedValue([full]);
     render(<Runs />);

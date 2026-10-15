@@ -472,10 +472,11 @@ class RunScope:
         if exc_type is not None:
             status = "cancelled" if issubclass(exc_type, asyncio.CancelledError) else "failed"
         outcome = self.outcome
-        if not outcome and status == "failed":
-            outcome = "negative"
-        elif not outcome and status == "completed" and self.used_keys:
-            outcome = "positive"
+        if not outcome:
+            if status == "failed":
+                outcome = "negative"
+            elif status == "completed" and self.used_keys:
+                outcome = "positive"
         try:
             self.completed = await self._client.complete(
                 self.run_id,

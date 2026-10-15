@@ -106,21 +106,21 @@ A tag containing `-` (`vX.Y.Z-rc.1`) makes a GitHub pre-release and does not mov
    names, on amd64 and arm64;
 7. `github-release` creates the GitHub Release only after that image exists, with notes
    generated from the commits since the previous tag, or updates it on a re-run, keeping
-   its notes as they are, and attaches the verified files. A bundle the release already carries is kept, and so is its checksum
-   (one the release lost is written again from it): replacing an asset deletes it first,
-   and a failed upload would leave an installed version without its bundle. A new bundle
-   never names an older ClickHouse release than the bundles of the 30 newest releases
-   (prereleases included) do, since an install upgrading to it would start an older
-   server on data a newer one wrote; the job fails instead, unless the dispatch adds
-   `-f allow_clickhouse_downgrade=true`. This job runs for one tag at a time, so two
-   tags released together cannot both pass the check against the same older bundle.
-   Only one more such job waits: a third tag's publish cancels the waiting one, which must
-   then be re-run by hand (Re-run failed jobs). A refusal here comes after `docker` pushed
-   the tag's image tags (and `:latest` for a final release). A re-run keeps the run's
-   inputs and fails again, so dispatch the tag instead, which also publishes the SDKs:
-   `gh workflow run release.yml --ref vX.Y.Z -f clickhouse_image=<the newer release the error names>`
-   (if that release dumps the tag's `schemas/schema.sql`), or
-   `gh workflow run release.yml --ref vX.Y.Z -f allow_clickhouse_downgrade=true`.
+   its notes as they are, and attaches the verified files. A bundle the release already
+   carries is kept, and so is its checksum (one the release lost is written again from
+   it): replacing an asset deletes it first, and a failed upload would leave an installed
+   version without its bundle. A new bundle never names an older ClickHouse release than
+   the bundles of the 30 newest releases (prereleases included) do, since an install
+   upgrading to it would start an older server on data a newer one wrote; the job fails
+   instead, unless the dispatch adds `-f allow_clickhouse_downgrade=true`. This job runs
+   for one tag at a time, so two tags released together cannot both pass the check against
+   the same older bundle. Only one more such job waits: a third tag's publish cancels the
+   waiting one, which must then be re-run by hand (Re-run failed jobs). A refusal here
+   comes after `docker` pushed the tag's image tags (and `:latest` for a final release). A
+   re-run keeps the run's inputs and fails again, so dispatch the tag instead, which also
+   publishes the SDKs: `gh workflow run release.yml --ref vX.Y.Z -f clickhouse_image=<the
+newer release the error names>` (if that release dumps the tag's `schemas/schema.sql`),
+   or `gh workflow run release.yml --ref vX.Y.Z -f allow_clickhouse_downgrade=true`.
    Otherwise move `:latest` back to the previous release by hand.
 
 The server image is published before the GitHub Release, so an installer shown on the

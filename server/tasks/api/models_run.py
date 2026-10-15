@@ -28,7 +28,8 @@ class RunBeginInput(BaseModel):
     user_id: str = Field(default=SENTINEL)
     # The conversation this run belongs to. Joins the run to the memories,
     # observations and model turns (loom.agent_turn_usage) already keyed by
-    # session — cost per run comes from here without another write.
+    # session — cost per run comes from here without another write. Kept on a
+    # re-sent begin that names none.
     session_id: str = Field(default=SENTINEL)
     # Caller-supplied for end-to-end tracing (re-sending the same id is a
     # replace, not a duplicate). Empty = the server mints one. The shape of an
@@ -54,7 +55,7 @@ class RunBeginInput(BaseModel):
     # Free-form key/values stored on the run; `role`, when set, is added to it.
     metadata: dict[str, Any] = Field(default_factory=dict)
     # Model spend in USD the run may reach (0 = none, kept on a re-sent begin); needs a session_id.
-    # A retry that re-sends the budget re-sends the session too. run.get reports
+    # A retry that re-sends budget_usd must re-send session_id. run.get reports
     # a budget the run went past in `over_budget`: a signal, never a stop.
     budget_usd: float = Field(default=0.0, ge=0.0, le=100_000.0)
     # Seconds the run may take (0 = none, kept on a re-sent begin).

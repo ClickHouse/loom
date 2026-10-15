@@ -400,8 +400,8 @@ async def _open_run(
     `started_at` (default: now); `version` replaces the server's (a session run's first begin)."""
     # A re-sent begin that names no session or budget keeps the run's.
     prior = existing or {}
-    session_id = input.session_id.strip()
-    if session_id in ("", SENTINEL):
+    session_id = input.session_id
+    if session_id.strip() in ("", SENTINEL):
         session_id = str(prior.get("session_id") or SENTINEL)
     budget_usd = input.budget_usd or float(prior.get("budget_usd") or 0.0)
     budget_seconds = input.budget_seconds or int(prior.get("budget_seconds") or 0)

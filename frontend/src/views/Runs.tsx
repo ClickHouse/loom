@@ -131,7 +131,8 @@ function budgetText(detail: RunGetResponse): string {
   if (run?.budget_usd) parts.push(`$${run.budget_usd.toFixed(run.budget_usd < 0.01 ? 4 : 2)}`);
   if (run?.budget_seconds) {
     parts.push(fmtDuration(run.budget_seconds * 1000));
-    parts.push(`${fmtDuration((detail.elapsed_seconds ?? 0) * 1000)} elapsed`);
+    const elapsed = detail.elapsed_seconds ?? 0;
+    parts.push(`${elapsed > 0 ? fmtDuration(elapsed * 1000) : "0s"} elapsed`);
   }
   return parts.length > 0 ? parts.join(" · ") : "—";
 }

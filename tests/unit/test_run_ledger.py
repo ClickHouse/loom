@@ -379,6 +379,20 @@ def test_begin_stores_the_budget_and_complete_carries_it(env) -> None:
     assert closed["budget_usd"] == 1.5 and closed["budget_seconds"] == 600
 
 
+def test_the_session_id_is_stored_as_sent(env) -> None:
+    # cost.record_turns keys turns by the session id as sent, so the run must too.
+    fake, _, h = env
+    asyncio.run(
+        h.handle_run_begin(
+            RunBeginInput(
+                org="o", namespace="n", agent="a", goal="g", session_id=" s1 ", budget_usd=1.0
+            )
+        )
+    )
+    row = next(rows[0] for table, rows in fake.inserted if table == "loom.agent_runs")
+    assert row["session_id"] == " s1 "
+
+
 def test_a_resent_begin_without_a_budget_keeps_the_runs_budget(env) -> None:
     fake, _, h = env
     fake.one.append(_run_row(budget_usd=1.5, budget_seconds=600))
