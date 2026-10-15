@@ -534,13 +534,16 @@ async def _resolve_pending(
         return []
     wanted = sorted({bare_name(r["qualified_name"]) for r in names})
     defs = await code.candidates(org, cns, names=wanted)
+    by_name: dict[str, list[Definition]] = defaultdict(list)
+    for x in defs:
+        by_name[x.name].append(x)
     # the files each memory names pick between namesakes, as when it was first linked
     heads = await store.memory_heads(org, sorted({r["memory_id"] for r in names}))
     named = {h["mid"]: [str(f) for f in h.get("files") or []] for h in heads}
     moves = []
     for r in names:
         m = r["qualified_name"]
-        d = resolve(m, [x for x in defs if x.name == bare_name(m)], named.get(r["memory_id"], []))
+        d = resolve(m, by_name.get(bare_name(m), []), named.get(r["memory_id"], []))
         try:
             here = await links.at_head(files, head, d) if d is not None else None
         except code.ParseFailed:
