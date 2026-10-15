@@ -1401,3 +1401,76 @@ async def test_a_historical_search_shapes_bodies_as_a_current_one(
         assert out["results"] and all(h["content_excerpt"] == "" for h in out["results"])
         with pytest.raises(Exception, match="bodies"):
             await a.call("memory.search", {"query": "office", "valid_as_of": now, "bodies": "unit"})
+
+
+async def test_a_rollback_restores_spans_plans_and_snapshots_as_they_were(
+    control_plane_url, mint_test_token
+) -> None:
+    a, _ = await _agent(control_plane_url, mint_test_token, "rb-shapes")
+    async with a:
+        y = lambda yr: datetime(yr, 1, 1, tzinfo=UTC).isoformat()  # noqa: E731
+        # A closed span, a plan, and a snapshot balance.
+        await a.call(
+            "memory.set",
+            {"memory_key": "lease", "value": "Leeds", "valid_at": y(2020), "valid_to": y(2030)},
+        )
+        await a.call("memory.set", {"memory_key": "office", "value": "Leeds"})
+        await a.call(
+            "memory.amend",
+            {
+                "memory_key": "office",
+                "change_kind": "transition",
+                "value": "York",
+                "effective_at": y(2030),
+            },
+        )
+        snap = {"change_kind": "correct", "temporal_kind": "snapshot"}
+        await a.call(
+            "memory.amend", {"memory_key": "balance", "value": "10", "valid_from": jan(1), **snap}
+        )
+        between = await _now_after(1.1)
+        await a.call("memory.set", {"memory_key": "lease", "value": "York"})
+        await a.call("memory.set", {"memory_key": "office", "value": "Paris"})
+        await a.call(
+            "memory.amend", {"memory_key": "balance", "value": "20", "valid_from": jan(2), **snap}
+        )
+        # A correction of the past, made after as_of, is undone too.
+        await a.call(
+            "memory.amend",
+            {
+                "memory_key": "lease",
+                "change_kind": "correct",
+                "value": "Hull",
+                "valid_from": y(2021),
+                "valid_to": y(2022),
+            },
+        )
+        out = await a.call("namespace.rollback", {"as_of": between, "dry_run": False})
+        assert (out["reinstate"], out["remove"], out["left_out"]) == (3, 0, 0)
+        assert await _value_at(a, "lease", y(2021)) == "Leeds"
+        assert await _value_at(a, "lease", y(2031)) is None
+        assert await _value_at(a, "office") == "Leeds"
+        assert await _value_at(a, "office", y(2031)) == "York"
+        got = await a.call("memory.get", {"memory_key": "balance", "valid_as_of": jan(3)})
+        assert got["value"] == "10" and not got.get("disputed")
+
+
+async def test_an_amended_credential_is_high_whatever_the_keys_tier(
+    control_plane_url, mint_test_token
+) -> None:
+    a, _ = await _agent(control_plane_url, mint_test_token, "amend-high")
+    async with a:
+        await a.call(
+            "memory.set",
+            {"memory_key": "c", "value": "contact alice@example.com", "sensitivity": "medium"},
+        )
+        await a.call(
+            "memory.amend",
+            {
+                "memory_key": "c",
+                "change_kind": "correct",
+                "value": "password: hunter2xyz",
+            },
+        )
+        got = await a.call("memory.get", {"memory_key": "c", "include_tags": True})
+        assert got["sensitivity"] == "high"

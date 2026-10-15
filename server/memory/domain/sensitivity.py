@@ -22,7 +22,9 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
-from typing import Final
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any, Final
 
 HIGH: Final = "high"
 MEDIUM: Final = "medium"
@@ -236,6 +238,49 @@ def relabel(tags: Iterable[str], level: str | None) -> list[str]:
     label, the one that holds)."""
     kept = [t for t in tags if str(t).strip().lower() not in LEVEL_TAGS]
     return [*kept, *sensitivity_tags(level, kept)]
+
+
+@dataclass(frozen=True)
+class Classified:
+    """What a value write stores for its text: the tier, that tier's retention window
+    and post-action, and the tags with the protected-attribute labels and the one
+    level label that holds."""
+
+    sensitivity: str
+    tags: list[str]
+    expires_at: datetime | None
+    on_expire: str
+    windowed: bool  # the retention window changed the expiry or its post-action
+    attribute_tags: list[str]
+
+
+def classify_value(
+    text: str,
+    *,
+    level: str,
+    tags: Iterable[str],
+    expires_at: datetime | None,
+    on_expire: str,
+    now: datetime,
+    settings: Any,
+) -> Classified:
+    """The one policy every value write applies to the text it stores, at tier
+    `level` (the caller resolves it: a stated level, or what the text reads as):
+    a sensitive tier's retention window (a shorter expiry stays), its default
+    post-action, the protected-attribute tags, and the level label."""
+    from server.memory.domain.sensitive_retention import sensitive_retention
+
+    expires_at, on_expire, windowed = sensitive_retention(
+        sensitivity=level, expires_at=expires_at, on_expire=on_expire, now=now, settings=settings
+    )
+    tags = list(tags)
+    attrs = attribute_tags(text, tags)
+    tags = [*tags, *attrs]
+    # Level labels are the server's: the one that holds, or none (a user's level tag
+    # on unlabelled content is not a label); a user's other `sensitivity:*` tags stay.
+    if sensitivity_tags(level, tags) or {str(t).strip().lower() for t in tags} & LEVEL_TAGS:
+        tags = relabel(tags, level)
+    return Classified(level, tags, expires_at, on_expire, windowed, attrs)
 
 
 def contact_intent(query: str) -> bool:

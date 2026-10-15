@@ -6659,11 +6659,9 @@ export interface NamespaceRollbackInput {
 export interface NamespaceRollbackOutput {
   dry_run: boolean;
   as_of: string; // date-time
-  version_at: number;
   reinstate: number;
   remove: number;
-  skipped_no_head?: number;
-  skipped_already_gone?: number;
+  left_out?: number;
   truncated?: boolean;
   sample?: Array<Record<string, unknown>>;
   applied_at?: string | null;

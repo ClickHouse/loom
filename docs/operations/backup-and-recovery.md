@@ -79,20 +79,21 @@ ClickHouse restore. Each is scoped to one namespace. `namespace.snapshot`,
 `namespace.restore` and `namespace.rollback` are not on the MCP `all` listing; call them
 by name or over HTTP.
 
-| Operation            | Role                                                   | Does                                                                                                                                                                                                                                                                           |
-| -------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `memory.restore`     | `WRITER`                                               | brings one tombstoned key back                                                                                                                                                                                                                                                 |
-| `namespace.snapshot` | `ADMIN`                                                | freezes a namespace's memories, types, grants and an audit tail (`include_audit_tail_n`, default 1000) as a JSON payload; `include_embeddings=false` (the default) lets the target re-embed under its own model                                                                |
-| `namespace.restore`  | `VIEWER` on a fresh target, `ADMIN` on an existing one | writes a snapshot payload into `target_namespace` (optionally `rebind_agent`); idempotent by `snapshot_id`. Rows keep `version`, `content_sha256` and the attestation columns, so a restore never strips `verified_by`                                                         |
-| `namespace.rollback` | `ADMIN`                                                | returns every memory head (or `memory_keys`) to the version it had at `as_of`: reinstates the older version as the new head, tombstones keys created after it. Dry run by default (`dry_run=false` applies); at most `max_keys` per call (`truncated` says when to call again) |
+| Operation            | Role                                                   | Does                                                                                                                                                                                                                                                                                                                                        |
+| -------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `memory.restore`     | `WRITER`                                               | brings one tombstoned key back                                                                                                                                                                                                                                                                                                              |
+| `namespace.snapshot` | `ADMIN`                                                | freezes a namespace's memories, types, grants and an audit tail (`include_audit_tail_n`, default 1000) as a JSON payload; `include_embeddings=false` (the default) lets the target re-embed under its own model                                                                                                                             |
+| `namespace.restore`  | `VIEWER` on a fresh target, `ADMIN` on an existing one | writes a snapshot payload into `target_namespace` (optionally `rebind_agent`); idempotent by `snapshot_id`. Rows keep `version`, `content_sha256` and the attestation columns, so a restore never strips `verified_by`                                                                                                                      |
+| `namespace.rollback` | `ADMIN`                                                | returns a namespace's memories (or `memory_keys`) to what they were at `as_of`, in the bi-temporal journal: each changed key serves its earlier claims again as they were, and a key that served nothing then is retracted. Dry run by default (`dry_run=false` applies); at most `max_keys` per call (`truncated` says when to call again) |
 
-`namespace.rollback` and `memory.history` read `loom.memory_versions`, the append-only
-mirror of every insert into `loom.memory` (merges drop superseded versions from
-`loom.memory` itself). Rollback:
+`namespace.rollback` reads the bi-temporal journal (`loom.memory_temporal_commits`),
+which records every write and is the authority on what each key served when. Rollback:
 
 - refuses an `as_of` older than the namespace's history or in the future;
-- skips hard-deleted keys (`skipped_no_head`);
-- leaves the embedding worker to re-embed the reinstated heads.
+- leaves alone a key whose lock refuses the change, or whose earlier value a blacklist
+  now refuses (`left_out`);
+- never serves a redacted or erased value again;
+- rewrites the current rows and their search projections after its commits.
 
 ```bash
 AS_OF=$(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%SZ)   # GNU date; the instant before the bad writes

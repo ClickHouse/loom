@@ -13,7 +13,6 @@ from typing import Any
 from server.core.errors import (
     LoomServerError,
     PreconditionFailedError,
-    TemporalUnavailableError,
     ValidationError,
 )
 from server.identity.app.request_scope import request_scope
@@ -581,39 +580,53 @@ def _inherited(
     n: tm.Assertion, served: Sequence[tm.Assertion], input: MemoryAmendInput, now: datetime
 ) -> tm.Assertion:
     """The new claim with the key's serving metadata as the journal holds it now, from
-    the claim it replaces (under its qualifiers): pin, tags, entities, type, the whole
-    lock in force, the present's expiry (a plan or a past span keeps none), and a
-    sensitivity never below what the value reads as."""
-    from server.memory.domain.sensitivity import resolve_sensitivity
+    the claim it replaces under its qualifiers (one the amendment names that holds
+    nothing yet inherits none of that claim's pin, tags, entities or expiry; the lock
+    is the key's): the whole lock in force, the present's expiry (a plan or a past
+    span keeps none). Its tier is never below the replaced claim's or what the new
+    value reads as, and that tier's policy applies as on any value write: its
+    retention window, the attribute tags and the level label."""
+    from server.memory.domain.sensitivity import (
+        classify_value,
+        max_sensitivity,
+        resolve_sensitivity,
+    )
     from server.memory.domain.temporal_capture import embed_input_sha256
 
     claims = tm.current_claims(served, now)
-    under = [a for a in claims if a.qualifiers == n.qualifiers] or claims
-    if not under:
-        sensitivity = resolve_sensitivity(None, n.value)
-        return replace(
-            n,
-            sensitivity=sensitivity,
-            embed_input_sha256=embed_input_sha256(n.memory_type, n.value, input.memory_key),
-        )
-    was = max(under, key=lambda a: a.source_version)
+    under = [a for a in claims if a.qualifiers == n.qualifiers]
+    if not under and not n.qualifiers:
+        under = claims
+    was = max(under, key=lambda a: a.source_version) if under else None
     lock = publisher._lock_in_force(claims, now)
+    spans = _spans_now(input)
+    memory_type = was.memory_type if was is not None else n.memory_type
+    kept = was.expires_at if was is not None and was.expires_at and was.expires_at > now else None
+    c = classify_value(
+        n.value,
+        level=max_sensitivity(
+            [was.sensitivity if was is not None else "", resolve_sensitivity(None, n.value)]
+        ),
+        tags=was.tags if was is not None else (),
+        expires_at=kept if spans else None,
+        on_expire="",
+        now=now,
+        settings=settings,
+    )
     return replace(
         n,
-        memory_type=was.memory_type,
-        sensitivity=resolve_sensitivity(was.sensitivity or None, n.value),
-        expires_at=was.expires_at
-        if _spans_now(input) and was.expires_at and was.expires_at > now
-        else None,
-        pinned=was.pinned,
+        memory_type=memory_type,
+        sensitivity=c.sensitivity,
+        expires_at=tm.utc(c.expires_at) if spans else None,
+        pinned=was.pinned if was is not None else False,
         lock_mode=str(lock["lock_mode"]),
         lock_until=tm.utc(lock["lock_until"]),
         lock_reason=str(lock["lock_reason"]),
         locked_by=str(lock["locked_by"]),
         locked_at=tm.utc(lock["locked_at"]),
-        tags=was.tags,
-        entities=was.entities,
-        embed_input_sha256=embed_input_sha256(was.memory_type, n.value, input.memory_key),
+        tags=tuple(c.tags),
+        entities=was.entities if was is not None else (),
+        embed_input_sha256=embed_input_sha256(memory_type, n.value, input.memory_key),
     )
 
 
@@ -674,27 +687,10 @@ async def _project_current(input: MemoryAmendInput, read_token: str) -> Any:
     """Rewrite the current-state row to what applies now, every column from the
     journal (the reconciler's own write); tombstone it when the key serves nothing.
     The reconciler repairs a row this fails to write."""
-    from server.memory.app.temporal_projection import _rewrite_current
+    from server.memory.app.temporal_projection import project_keys
 
-    axes = Axes(valid=datetime.now(UTC), known=None)
-    # The cut must cover this amendment's own commit (an allocation in doubt below
-    # it holds the cut back): otherwise the row is left to the reconciler.
-    cut = await reads.cutoff(input.org, input.namespace, axes, read_token=read_token)
-    if any(g.startswith("read_token") for g in cut.gaps):
-        raise TemporalUnavailableError("the amendment's current row is pending; it follows")
-    rows = await reads.served(
-        input.org,
-        cut,
-        scope=WHOLE_NAMESPACE,
-        memory_keys=[input.memory_key],
-        agent=input.agent,
-        user_id=input.user_id,
-        session_id=input.session_id,
-        include_high=True,
-    )
-    want = reads.applies_now(rows, cut, input.memory_key)
     ident = (input.agent, input.user_id, input.session_id, input.memory_key)
-    await _rewrite_current(input.org, input.namespace, ident, want, cut_seq=cut.seq, plans=rows)
+    want = (await project_keys(input.org, input.namespace, [ident], read_token=read_token))[ident]
     return reads.decode_value(want[0].a.value) if want else None
 
 

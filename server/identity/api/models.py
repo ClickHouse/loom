@@ -651,14 +651,14 @@ class NamespaceRestoreOutput(BaseModel):
 
 
 class NamespaceRollbackInput(BaseModel):
-    """Return every memory head in a namespace to the version it had at
-    `as_of`.
+    """Return a namespace's memories to what they were at `as_of`.
 
-    Head-state rollback: for each key, the highest version stamped at or
-    before `as_of` (from loom.memory_versions) is re-inserted as the new
-    head; keys that did not exist yet are tombstoned. Embeddings are
-    regenerated from the reinstated heads by the embedding worker. Defaults
-    to a dry run that reports the plan; set `dry_run=false` to apply.
+    For each key whose claims as known at `as_of` differ from what it serves now,
+    one journal commit serves again what it served then (each claim with its span,
+    plans and kind) or, for a key that served nothing then, retracts it; the current
+    rows and search follow. History is kept: `known_as_of` before the rollback still
+    answers what was known then. A key whose lock refuses the change is left out.
+    Defaults to a dry run that reports the plan; set `dry_run=false` to apply.
     Refuses an `as_of` older than the namespace's history or in the future.
     """
 
@@ -679,19 +679,16 @@ class NamespaceRollbackOutput(BaseModel):
     dry_run: bool
     # The instant rolled back to, as UTC.
     as_of: datetime
-    # `as_of` as an epoch-nanosecond version: the highest version a key may keep.
-    version_at: int
-    # Keys whose head was (or would be) replaced by an older version.
+    # Keys that serve again what they served at as_of (planned, or committed).
     reinstate: int
-    # Keys created after as_of that were (or would be) tombstoned.
+    # Keys that served nothing at as_of, retracted (planned, or committed).
     remove: int
-    # Keys with history at as_of but no live row (hard-deleted): left alone.
-    skipped_no_head: int = 0
-    # Keys created after as_of that are already tombstoned.
-    skipped_already_gone: int = 0
+    # Planned keys a lock in force or a blacklist kept as they are (applied only).
+    left_out: int = 0
     # More keys differ than max_keys; call again (or narrow memory_keys).
     truncated: bool = False
-    # Up to 20 planned moves (`memory_key`, `agent`, `action`, `version_from`, `version_to`).
+    # Up to 20 keys (`memory_key`, `agent`, `user_id`, `session_id`, `action`, the
+    # values served `then` and `now`).
     sample: list[dict[str, Any]] = Field(default_factory=list)
     # When the rollback was written; None on a dry run or when no key differed.
     applied_at: datetime | None = None

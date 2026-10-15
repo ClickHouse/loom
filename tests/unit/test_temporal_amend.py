@@ -132,3 +132,34 @@ def test_historical_reads_refuse_options_only_today_can_answer() -> None:
                 )
             )
         )
+
+
+def test_an_amended_value_takes_its_tiers_policy(monkeypatch) -> None:
+    """A value that reads higher than the key's tier raises it, and that tier's policy
+    applies as on memory.set: the retention window and the one level label."""
+    from datetime import UTC, datetime, timedelta
+
+    from server.memory.domain import temporal_model as tm
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_sensitive_retention_days", 1)
+    note = tm.first('"a note"', tags=("work",))
+    a = _built('"reach me at alice@example.com"', [note])
+    assert a.sensitivity == "medium" and "sensitivity:medium" in a.tags and "work" in a.tags
+    assert a.expires_at is not None and a.expires_at <= datetime.now(UTC) + timedelta(days=1)
+    medium = tm.first('"alice@example.com"', sensitivity="medium", tags=("sensitivity:medium",))
+    b = _built('"password: hunter2xyz"', [medium])
+    assert b.sensitivity == "high" and b.tags == ("sensitivity:high",)
+
+
+def test_a_claim_under_new_qualifiers_inherits_nothing_of_another() -> None:
+    from server.memory.app.temporal_ops import _amendment_builder
+    from server.memory.domain import temporal_model as tm
+
+    eu = tm.first('"x"', qualifiers={"region": "eu"}, pinned=True, tags=("eu",))
+    inp = MemoryAmendInput(
+        org="o", namespace="n", agent="a", memory_key="k", change_kind="correct", value="y",
+        qualifiers={"region": "us"},
+    )  # fmt: skip
+    (us,) = _amendment_builder(inp, _new_assertion(inp, _head("")))([eu]).added
+    assert (us.pinned, us.tags) == (False, ())

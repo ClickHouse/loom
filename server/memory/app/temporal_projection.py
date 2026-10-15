@@ -32,10 +32,11 @@ from server.memory.app.temporal_rows import (
 from server.memory.domain import temporal_model as tm
 from server.memory.domain.embed_text import stored_embedding_texts
 from server.memory.domain.memory_types import is_embedded
+from server.memory.domain.sensitive_retention import sensitive_retention
 from server.memory.domain.temporal_capture import WriteIntent, write_intent
-from server.memory.domain.temporal_reads import Axes
+from server.memory.domain.temporal_reads import Axes, to_epoch_ns
 from server.memory.store import temporal as store
-from server.memory.store.rows import next_version
+from server.settings import settings
 
 log = logging.getLogger(__name__)
 _BATCH = 1000
@@ -330,6 +331,38 @@ async def _reconcile_ns(org: str, ns: str, idents: list[Ident]) -> int | None:
     return fixed
 
 
+async def project_keys(
+    org: str, ns: str, idents: Sequence[Ident], *, read_token: str
+) -> dict[Ident, list[reads.Held]]:
+    """After a handler's own commits: each identity's current row rewritten to what
+    applies now, at a cut that covers the commits `read_token` names (a cut that
+    cannot is refused, and the reconciler brings the rows in line). Returns what
+    each row now shows."""
+    from server.core.errors import TemporalUnavailableError
+
+    cut = await reads.cutoff(
+        org, ns, Axes(valid=datetime.now(UTC), known=None), read_token=read_token
+    )
+    if any(g.startswith("read_token") for g in cut.gaps):
+        raise TemporalUnavailableError("the change's current rows are pending; they follow")
+    out: dict[Ident, list[reads.Held]] = {}
+    for ident in idents:
+        agent, uid, sid, key = ident
+        rows = await reads.served(
+            org,
+            cut,
+            scope=WHOLE_NAMESPACE,
+            memory_keys=[key],
+            agent=agent,
+            user_id=uid,
+            session_id=sid,
+            include_high=True,
+        )
+        out[ident] = reads.applies_now(rows, cut, key)
+        await _rewrite_current(org, ns, ident, out[ident], cut_seq=cut.seq, plans=rows)
+    return out
+
+
 async def _rewrite_current(
     org: str,
     ns: str,
@@ -349,10 +382,6 @@ async def _rewrite_current(
     head = await memory_repo.get_by_key(
         identity, key, scope=WHOLE_NAMESPACE, fresh=True, strong=True, include_tombstoned=True
     )
-    if cut_seq is not None:
-        later = await store.commits_between(org, ns, cut_seq, 2**63 - 1, memory_keys=[key])
-        if any(ident_of(c) == ident for c in later):
-            return False
     if head is not None and (head.status not in _LIVE or head.tombstoned_at is not None):
         # A removed row stays removed when all that remains is ended history: the
         # key's past is read through valid_as_of, not shown as its present.
@@ -368,20 +397,7 @@ async def _rewrite_current(
     elif head is not None and _state_of_row(head) in {_state_of(h.a) for h in want}:
         return False
     now = naive_utc_now()
-    # A version is a recording time (history and rollback read it as epoch ns): the
-    # rewrite is stamped now, and above whatever the key already holds.
-    if head is not None:
-        version = max(next_version(), head.version + 1)
-    else:  # above the key's tombstone or last committed row too
-        raw = await store.memory_heads(org, ns, [ident])
-        committed = await store.newest_row_versions(org, ns, [ident])
-        version = max(
-            [
-                next_version(),
-                *(int(r["version"]) + 1 for r in raw),
-                *(v + 1 for v in committed.values()),
-            ]
-        )
+    version = 0  # stamped under the publisher's lock, below
     if not want:
         assert head is not None
         base, row = (
@@ -398,6 +414,15 @@ async def _rewrite_current(
         row = memory_repo.build_memory_version_row(
             base, version=version, updated_at=now, memory_id=h.memory_id, **_columns(h)
         )
+        # The tier's post-action rides the row, not the journal: a value that became
+        # sensitive takes the default one, as a write at that tier stores it.
+        _, row["on_expire"], _ = sensitive_retention(
+            sensitivity=str(row["sensitivity"] or ""),
+            expires_at=row["expires_at"],
+            on_expire=str(row.get("on_expire") or ""),
+            now=now,
+            settings=settings,
+        )
     embedder = get_embedder()
     embedded = is_embedded(str(row["memory_type"]), str(row["sensitivity"]))
     stub = stub_embedding_row(
@@ -407,11 +432,23 @@ async def _rewrite_current(
         tombstoned_at=row["tombstoned_at"],
         created_at=now,
     )
-    with write_intent(WriteIntent(memory_key=key, journaled=True)):
-        await memory_repo.insert_memory_versions(
-            [row],
-            alongside=[lambda _kept: memory_repo.insert_embedding_rows([stub])] if embedded else [],
-        )
+    from server.memory.app.temporal_publisher import namespace_lock
+
+    # Under the publisher's lock: no commit lands between the last check that the
+    # cut is the key's latest and the row that projects it.
+    async with namespace_lock(org, ns):
+        if cut_seq is not None and await _committed_since(org, ns, ident, cut_seq):
+            return False
+        version = await _projection_version(org, ns, ident, head, plans or want)
+        row["version"] = version
+        stub["version"] = version
+        with write_intent(WriteIntent(memory_key=key, journaled=True)):
+            await memory_repo.insert_memory_versions(
+                [row],
+                alongside=[lambda _kept: memory_repo.insert_embedding_rows([stub])]
+                if embedded
+                else [],
+            )
     if not embedded:
         retire = [(memory_repo.embedding_key(base), version)]
         await memory_repo.retire_vectors_for_keys(retire)
@@ -423,6 +460,40 @@ async def _rewrite_current(
         # deletes the journal first): the row follows it out.
         await _rewrite_current(org, ns, ident, [], cut_seq=None, recheck=False)
     return True
+
+
+async def _committed_since(org: str, ns: str, ident: tuple[str, str, str, str], seq: int) -> bool:
+    """A commit to the key past the cut: it is newer than what the cut serves."""
+    later = await store.commits_between(org, ns, seq, 2**63 - 1, memory_keys=[ident[3]])
+    return any(ident_of(c) == ident for c in later)
+
+
+async def _projection_version(
+    org: str,
+    ns: str,
+    ident: tuple[str, str, str, str],
+    head: memory_repo.MemoryRow | None,
+    held: Sequence[reads.Held],
+) -> int:
+    """The version a projected row takes: the instant the state it shows began (the
+    key's latest commit, or a validity boundary since passed: a plan come due, a span
+    ended), above every version the key holds. History and rollback read a version
+    as that recording time; a write drawn after the state began stays newer."""
+    now = datetime.now(UTC)
+    began = [await store.last_commit_at(org, ns, ident)]
+    for h in held:
+        began += [t for t in (h.a.valid_from, h.a.valid_to) if t is not None and t <= now]
+    raw = await store.memory_heads(org, ns, [ident])
+    committed = await store.newest_row_versions(org, ns, [ident])
+    return max(
+        [
+            1,
+            *(to_epoch_ns(t) for t in began if t is not None),
+            *(int(head.version) + 1 for _ in [0] if head is not None),
+            *(int(r["version"]) + 1 for r in raw),
+            *(v + 1 for v in committed.values()),
+        ]
+    )
 
 
 _LIVE = frozenset({"active", "conflicted", "duplicate", "proposed"})

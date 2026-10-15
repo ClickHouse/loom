@@ -14017,7 +14017,7 @@ class NamespaceRestoreOutput(TypedDict, total=False):
 
 
 class NamespaceRollbackInput(TypedDict, total=False):
-    "Return every memory head in a namespace to the version it had at"
+    "Return a namespace's memories to what they were at `as_of`."
 
     org: Required[str]
     namespace: Required[str]
@@ -14028,7 +14028,7 @@ class NamespaceRollbackInput(TypedDict, total=False):
 
 
 class NamespaceRollbackBody(TypedDict, total=False):
-    "Return every memory head in a namespace to the version it had at"
+    "Return a namespace's memories to what they were at `as_of`."
 
     org: NotRequired[str]
     namespace: NotRequired[str]
@@ -14041,11 +14041,9 @@ class NamespaceRollbackBody(TypedDict, total=False):
 class NamespaceRollbackOutput(TypedDict, total=False):
     dry_run: Required[bool]
     as_of: Required[str]  # date-time as ISO-8601 text
-    version_at: Required[int]
     reinstate: Required[int]
     remove: Required[int]
-    skipped_no_head: NotRequired[int]
-    skipped_already_gone: NotRequired[int]
+    left_out: NotRequired[int]
     truncated: NotRequired[bool]
     sample: NotRequired[list[dict[str, Any]]]
     applied_at: NotRequired[Optional[str]]

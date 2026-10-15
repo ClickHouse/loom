@@ -1,183 +1,160 @@
-"""The memory side of namespace.rollback: the version-history reads the plan is made from,
-and the writes that apply it (reinstated heads re-emitted through the version-row builder,
-removed keys tombstoned, one stub embedding row per touched key for the embedding worker)."""
+"""The memory side of namespace.rollback, planned and applied in the journal: for each
+key whose served set as known at `as_of` differs from what it serves now, one commit
+retires what it serves now and serves again what it served then, every claim as it
+was (its span, its plans, its kind, its qualifiers). The current-state rows follow
+the commits, as after any amendment."""
 
 from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
 import server.memory.store as store
+from server.core.errors import TemporalUnavailableError
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
-from server.memory.domain import rollback as svc
-from server.memory.store.inserts import insert_memory_versions
+from server.memory.app import temporal_publisher as publisher
+from server.memory.app import temporal_reads as reads
+from server.memory.domain import temporal_model as tm
+from server.memory.domain.temporal_reads import Axes
+from server.memory.store.redaction import REDACTED_VALUE
 
 log = logging.getLogger(__name__)
 
-_INSERT_BATCH = 500
+Ident = tuple[str, str, str, str]
 
 
-async def earliest_version(org: str, namespace: str, *, ch: Any) -> int:
-    """Oldest version stamp the history holds for the namespace; 0 when none."""
-    return await store.earliest_version_in_namespace(org, namespace, ch=ch)
+@dataclass(frozen=True)
+class KeyChange:
+    """One key the rollback changes: what it served as known at `as_of`, and now."""
+
+    ident: Ident
+    memory_id: str
+    then: tuple[tm.Assertion, ...]
+    now: tuple[tm.Assertion, ...]
+
+    @property
+    def action(self) -> str:
+        return "reinstate" if self.then else "remove"
+
+    def sample(self) -> dict[str, Any]:
+        agent, uid, sid, key = self.ident
+        return {
+            "memory_key": key,
+            "agent": agent,
+            "user_id": uid,
+            "session_id": sid,
+            "action": self.action,
+            "then": [reads.decode_value(a.value) for a in self.then],
+            "now": [reads.decode_value(a.value) for a in self.now],
+        }
 
 
-async def change_rows(
-    org: str,
-    namespace: str,
-    version_at: int,
-    *,
-    memory_keys: list[str] | None,
-    limit: int,
-    ch: Any,
-) -> list[dict[str, Any]]:
-    """Keys whose head differs from their head as of `version_at` (up to `limit + 1`)."""
-    return await store.rollback_change_rows(
-        org, namespace, version_at, memory_keys=memory_keys, limit=limit, ch=ch
-    )
+@dataclass(frozen=True)
+class Plan:
+    changes: list[KeyChange]
+    truncated: bool
+    # When the namespace's journal begins (None: it has none).
+    first_at: datetime | None
 
 
-async def apply_rollback(
-    org: str,
-    namespace: str,
-    plan: svc.RollbackPlan,
-    *,
-    applied_at: datetime,
-    ch: Any,
-) -> tuple[int, int]:
-    """Re-insert reinstated heads and tombstone removed ones; (reinstated, removed)
-    as the publisher accepted them. A reinstated value is a revision of the present:
-    it holds again from `applied_at` (a transition), whatever span it held before,
-    so a dated value the key has since moved past becomes current again. Only an
-    accepted row gets its projection: a stub embedding row for the worker to drain,
-    or, for a row that is not embedded ('high', a non-searchable type, whose excerpt
-    would carry the value into search), its key's live vectors retired."""
-    from server.memory.app.temporal_projection import _STUB_COLS
-    from server.memory.domain.temporal_capture import WriteIntent, row_key, write_intent
-
-    # (the version row, the row it was built from) of each change.
-    reinstated: list[tuple[dict[str, Any], store.MemoryRow]] = []
-    removed: list[tuple[dict[str, Any], store.MemoryRow]] = []
-
-    # --- reinstate: the historical row becomes the head again ---------------
-    pairs = [(a.memory_key, a.version_to) for a in plan.reinstate]
-    wanted = {
-        (a.agent, a.user_id, a.session_id, a.memory_key, a.version_to) for a in plan.reinstate
-    }
-    for i in range(0, len(pairs), _INSERT_BATCH):
-        historical = await store.fetch_version_rows(
-            org, namespace, pairs[i : i + _INSERT_BATCH], ch=ch
-        )
-        for h in historical:
-            if (h.agent, h.user_id, h.session_id, h.memory_key, h.version) not in wanted:
-                continue
-            row = store.build_memory_version_row(
-                h,
-                version=store.next_version(),
-                updated_at=applied_at,
-                valid_at=applied_at,
-                valid_to=None,
-            )
-            reinstated.append((row, h))
-
-    # --- remove: keys born after as_of are tombstoned ----------------------
-    for a in plan.remove:
-        head = await store.get_by_key(
-            store.Identity(
-                org=org,
-                namespace=namespace,
-                agent=a.agent,
-                user_id=a.user_id,
-                session_id=a.session_id,
-            ),
-            a.memory_key,
-            fresh=True,
-            scope=WHOLE_NAMESPACE,
-        )
-        if head is None or head.tombstoned_at is not None:
+async def plan(
+    org: str, namespace: str, as_of: datetime, *, memory_keys: list[str] | None, limit: int
+) -> Plan:
+    """The keys whose served set as known at `as_of` differs from now (up to `limit`)."""
+    now = datetime.now(UTC)
+    then_cut = await reads.cutoff(org, namespace, Axes(valid=now, known=as_of))
+    now_cut = await reads.cutoff(org, namespace, Axes(valid=now, known=None))
+    if now_cut.watermark < now_cut.seq:
+        raise TemporalUnavailableError("the journal's projection is catching up; retry")
+    then = await _served(org, then_cut, memory_keys)
+    current = await _served(org, now_cut, memory_keys)
+    truncated = any(g.startswith("truncated") for g in (*then_cut.gaps, *now_cut.gaps))
+    changes: list[KeyChange] = []
+    for ident in sorted(then.keys() | current.keys()):
+        was, held = then.get(ident, []), current.get(ident, [])
+        if _state(was) == _state(held):
             continue
-        row = store.build_memory_version_row(
-            head,
-            version=store.next_version(),
-            tombstoned_at=applied_at,
-            updated_at=applied_at,
-        )
-        removed.append((row, head))
-
-    changes = reinstated + removed
-    # The rows the publisher kept, by identity: it may restamp a row's version.
-    kept: dict[tuple[str, ...], dict[str, Any]] = {}
-
-    async def _keep(rows: Any) -> None:
-        kept.update({row_key(r): r for r in rows})
-
-    with write_intent(
-        WriteIntent(change_kind="transition", effective_at=applied_at.replace(tzinfo=UTC))
-    ):
-        for i in range(0, len(changes), _INSERT_BATCH):
-            await insert_memory_versions(
-                [r for r, _ in changes[i : i + _INSERT_BATCH]], ch=ch, alongside=[_keep]
+        if len(changes) == limit:
+            truncated = True
+            break
+        changes.append(
+            KeyChange(
+                ident=ident,
+                memory_id=next((h.memory_id for h in [*was, *held] if h.memory_id), ""),
+                # A redacted claim is never served again as a value.
+                then=tuple(h.a for h in was if h.a.value != REDACTED_VALUE),
+                now=tuple(h.a for h in held),
             )
-    accepted = [(kept[k], base) for r, base in changes if (k := row_key(r)) in kept]
-    await _project(
-        [(r, base.model_copy(update={c: r[c] for c in _STUB_COLS})) for r, base in accepted],
-        applied_at,
-        ch,
+        )
+    return Plan(changes, truncated, now_cut.first_at)
+
+
+async def _served(
+    org: str, cut: reads.Cut, memory_keys: list[str] | None
+) -> dict[Ident, list[reads.Held]]:
+    out: dict[Ident, list[reads.Held]] = {}
+    for h in await reads.served(
+        org, cut, scope=WHOLE_NAMESPACE, memory_keys=memory_keys, include_high=True
+    ):
+        out.setdefault((h.agent, h.user_id, h.session_id, h.memory_key), []).append(h)
+    return out
+
+
+def _state(held: list[reads.Held]) -> list[str]:
+    """What a reader is told: each claim's whole recorded state but its ids."""
+    return sorted(
+        repr(sorted((k, v) for k, v in h.a.to_json().items() if k not in _IDS)) for h in held
     )
-    counts = (
-        sum(row_key(r) in kept for r, _ in reinstated),
-        sum(row_key(r) in kept for r, _ in removed),
-    )
-    log.info(
-        "namespace.rollback applied org=%s ns=%s reinstate=%d/%d remove=%d/%d",
+
+
+_IDS = tm.IDENTITY_FIELDS | {"embed_input_sha256"}
+
+
+async def apply(org: str, namespace: str, changes: list[KeyChange]) -> list[KeyChange]:
+    """Commit each change, then project the current rows; returns the changes that
+    committed. A key whose lock in force refuses the change commits nothing, nor does
+    one whose earlier value a blacklist added since refuses."""
+    from server.memory.app.blacklist_guard import enforce_on_insert
+    from server.memory.app.temporal_projection import project_keys
+
+    allowed = []
+    for c in changes:
+        try:
+            for a in c.then:
+                await enforce_on_insert(org=org, namespace=namespace, value=a.value)
+        except Exception as e:  # noqa: BLE001 — a refused value leaves its key as it is
+            log.info("namespace.rollback: %s left as it is: %s", c.ident[3], e)
+            continue
+        allowed.append(c)
+    receipts = await publisher.publish_amendments(
         org,
         namespace,
-        counts[0],
-        len(plan.reinstate),
-        counts[1],
-        len(plan.remove),
+        [(c.ident, c.memory_id, _build(c)) for c in allowed],
+        operation="namespace.rollback",
     )
-    return counts
+    committed = {r.ident for r in receipts if r.commit_seq}
+    done = [c for c in allowed if c.ident in committed]
+    if done:
+        await project_keys(
+            org, namespace, [c.ident for c in done], read_token=publisher.read_token(receipts)
+        )
+    return done
 
 
-async def _project(
-    accepted: list[tuple[dict[str, Any], store.MemoryRow]], applied_at: datetime, ch: Any
-) -> None:
-    """Each accepted row's search projection: a stub embedding row, or its key's live
-    vectors retired (and a 'high' row fenced, so a plain write still embedding lands
-    below). After the memory insert, as memory.set does, so no reader sees the vector
-    outlive the row that retires it; each key's own version keeps a concurrent newer
-    embedded write's vectors."""
-    from server.embedding import get_embedder
-    from server.memory.app.high_fence import fence_high
-    from server.memory.domain.memory_types import is_embedded
+def _build(c: KeyChange) -> publisher.Build:
+    def build(served: list[tm.Assertion]) -> tm.Amendment:
+        if publisher._locked_against(served, "value" if c.then else "delete", datetime.now(UTC)):
+            return tm.Amendment("rollback")
+        return tm.Amendment(
+            "rollback",
+            tuple(a.assertion_id for a in served),
+            tuple(tm.fresh(a) for a in c.then),
+        )
 
-    embedder = get_embedder()
-    stubs: list[dict[str, Any]] = []
-    retire: list[tuple[store.EmbeddingKey, int]] = []
-    fence: list[tuple[store.EmbeddingKey, int]] = []
-    for row, shown in accepted:
-        version = int(row["version"])
-        if is_embedded(shown.memory_type, shown.sensitivity):
-            stubs.append(
-                stub_embedding_row(
-                    shown,
-                    embedder,
-                    version=version,
-                    tombstoned_at=row["tombstoned_at"],
-                    created_at=applied_at,
-                )
-            )
-            continue
-        retire.append((store.embedding_key(shown), version))
-        if shown.sensitivity == "high":
-            fence.append((store.embedding_key(shown), version))
-    for i in range(0, len(stubs), _INSERT_BATCH):
-        await store.insert_embedding_rows(stubs[i : i + _INSERT_BATCH], ch=ch)
-    await store.retire_vectors_for_keys(retire, ch=ch)
-    await fence_high(fence, ch=ch)
+    return build
 
 
 def stub_embedding_row(

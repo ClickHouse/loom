@@ -441,8 +441,56 @@ def test_a_rewrite_never_overwrites_a_commit_newer_than_its_cut(
         wrote.extend(rows)
         return len(rows)
 
+    from contextlib import asynccontextmanager
+
+    from server.memory.app import temporal_publisher
+    from server.memory.app import temporal_reads as reads
+    from server.memory.domain import temporal_model as tm
+
+    held: list[str] = []
+
+    @asynccontextmanager
+    async def _lock(org: str, ns: str) -> Any:
+        held.append(ns)
+        yield lambda: True
+
     monkeypatch.setattr(tp.memory_repo, "get_by_key", _head)
     monkeypatch.setattr(tp.store, "commits_between", _later)
     monkeypatch.setattr(tp.memory_repo, "insert_memory_versions", _insert)
-    assert asyncio.run(tp._rewrite_current("o", "n", ident, [], cut_seq=5)) is False
-    assert wrote == [("checked past", 5)]  # the journal was asked; nothing written
+    monkeypatch.setattr(temporal_publisher, "namespace_lock", _lock)
+    want = [reads.Held(tm.first('"v"'), "a", "-", "-", "k", "00000000-0000-0000-0000-000000000001")]
+    assert asyncio.run(tp._rewrite_current("o", "n", ident, want, cut_seq=5)) is False
+    # Asked under the publisher's lock, where no commit can land before the insert.
+    assert held == ["n"] and wrote == [("checked past", 5)]  # nothing written
+
+
+@pytest.mark.asyncio
+async def test_a_projected_row_is_stamped_when_its_state_began(monkeypatch) -> None:
+    """Not when the repair ran: a write drawn after the state began stays newer, and
+    history reads the version as the time the state was recorded."""
+    from datetime import UTC, datetime, timedelta
+    from types import SimpleNamespace
+
+    from server.memory.app import temporal_projection as tp
+    from server.memory.domain import temporal_model as tm
+    from server.memory.domain.temporal_reads import to_epoch_ns
+
+    committed = datetime.now(UTC) - timedelta(minutes=5)
+    due = datetime.now(UTC) - timedelta(minutes=1)
+
+    async def _at(*_a, **_k):
+        return committed
+
+    async def _none(*_a, **_k):
+        return {} if _k.get("dict") else []
+
+    async def _versions(*_a, **_k):
+        return {}
+
+    monkeypatch.setattr(tp.store, "last_commit_at", _at)
+    monkeypatch.setattr(tp.store, "memory_heads", _none)
+    monkeypatch.setattr(tp.store, "newest_row_versions", _versions)
+    plan = SimpleNamespace(a=tm.first('"York"', valid_from=due))
+    v = await tp._projection_version("o", "n", ("a", "-", "-", "k"), None, [plan])
+    assert v == to_epoch_ns(due)
+    assert v < to_epoch_ns(datetime.now(UTC))

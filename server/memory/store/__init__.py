@@ -78,11 +78,8 @@ from server.memory.store.entities import (
     read_unentitied_rows,
 )
 from server.memory.store.history import (
-    earliest_version_in_namespace,
-    fetch_version_rows,
     find_history_target,
     list_history,
-    rollback_change_rows,
     version_values,
 )
 from server.memory.store.inserts import (
@@ -200,7 +197,6 @@ __all__ = [
     "delete_procedure_runs_by_key",
     "divergent_namespaces",
     "downgrade_consolidated_dependents",
-    "earliest_version_in_namespace",
     "embedding_key",
     "embedding_mirror_for_keys",
     "EMBEDDING_PERSISTED_COLS",
@@ -208,7 +204,6 @@ __all__ = [
     "ENTITY_MIRROR_RETRY_DELAY_S",
     "ENTITY_SUMMARY_PERSISTED_COLS",
     "FACET_SUFFIX_SYNONYMS",
-    "fetch_version_rows",
     "fence_vectors",
     "find_by_content_terms",
     "find_by_identifier",
@@ -270,7 +265,6 @@ __all__ = [
     "retire_vectors_for_keys",
     "reemit_shared_embedding_rows",
     "restamp_embedding_rows",
-    "rollback_change_rows",
     "serialize_value",
     "SESSION_SUMMARY_PERSISTED_COLS",
     "status_by_keys",

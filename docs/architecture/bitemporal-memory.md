@@ -279,9 +279,14 @@ C < retired_seq)`, then the valid-time test. Content and tag filters run after
   it a page per pass, so an outage only delays it: per namespace, the sequence its
   rows were checked up to (once settled past the publisher lease); globally, the
   valid-time boundaries checked. A namespace that cannot be checked yet (an erasure holds it, its projection lags) keeps its own place in the boundaries and catches up later, without holding the others back. The projection worker finds lagging namespaces
-  the same way, from the published and applied watermarks. The rewrite is one
-  version above the head it replaces, so a newer write still wins,
-  and its stub embedding row is filled by the embedding worker. A namespace or
+  the same way, from the published and applied watermarks. The rewrite's last
+  check that no commit to the key passed its cut, and its insert, run under the
+  publisher's namespace lock, so no write can commit and answer in between. Its
+  version is the instant the state it shows began (the key's latest commit, or a
+  plan come due or a span ended), above every version the key holds: history and
+  rollback read a version as that recording time, and a write drawn after the
+  state began stays newer. Its stub embedding row is filled by the embedding
+  worker. A namespace or
   user under an in-progress erasure, or a failed one still being retried, is left
   alone; an abandoned one no longer holds it.
 
@@ -381,6 +386,9 @@ value the journal still serves is refused, as is a locked key.
 - **The journal, not `memory_versions`, as the time authority:** a version row
   cannot atomically represent a multi-segment correction, and in-place mutations
   bypass its view. `memory_versions` stays the per-row history `memory.history`
-  and `namespace.rollback` read. A content scrub is one function that updates both:
+  reads. `namespace.rollback` is planned and committed in the journal: each key
+  whose claims as known at `as_of` differ from what it serves now gets one commit
+  serving those claims again as they were (spans, plans, kinds), so a dated value,
+  a plan or a snapshot comes back as it was. A content scrub is one function that updates both:
   `memory.redact` rewrites the redacted version's text in `memory_versions` and in
   every journal assertion born from it, and deletes their vectors.

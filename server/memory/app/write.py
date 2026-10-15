@@ -459,50 +459,36 @@ async def _set_prepare_value(w: _SetWrite, _restated: bool) -> None:
             value=serialized_value,
         )
 
-    # Sensitivity tier: the caller's level, else detected from the value. 'high' rows take
-    # the non-embedded path below.
-    from server.memory.domain.sensitivity import resolve_sensitivity
+    # Sensitivity tier: the caller's level, else detected from the value ('high' rows take
+    # the non-embedded path below), and what that tier stores with the value: its
+    # retention window (the caller's or the type's expiry stays when shorter), its
+    # post-action, the protected-attribute tags and the level label the embeddings
+    # table reads (it has no sensitivity column).
+    from server.memory.domain.sensitivity import classify_value, resolve_sensitivity
 
     effective_sensitivity = resolve_sensitivity(getattr(input, "sensitivity", ""), serialized_value)
-    # A sensitive row carries its retention window: the caller's or the type's expiry stays
-    # when shorter; on_expire defaults to the sensitive post-action when the caller set none.
-    from server.memory.domain.sensitive_retention import sensitive_retention
-
-    expires_at, _sens_on_expire, _sens_windowed = sensitive_retention(
-        sensitivity=effective_sensitivity,
+    classified = classify_value(
+        serialized_value,
+        level=effective_sensitivity,
+        tags=input.tags or [],
         expires_at=expires_at,
         on_expire=input.on_expire
         or ((getattr(existing, "on_expire", "") or "") if existing is not None else ""),
         now=datetime.now(UTC),
         settings=settings,
     )
-    if _sens_windowed:
+    expires_at, _sens_on_expire = classified.expires_at, classified.on_expire
+    if classified.windowed:
         state_also("expires_at")  # the sensitive window is the server's own
-    # Protected-attribute label: a tag, never a refusal.
-    from server.memory.domain.sensitivity import attribute_tags
+    if classified.tags != list(input.tags or []):
+        input = input.model_copy(update={"tags": classified.tags})
+    try:
+        from server.observability.metrics import record_attribute_tagged
 
-    _attr_tags = attribute_tags(serialized_value, input.tags or [])
-    if _attr_tags:
-        input = input.model_copy(update={"tags": [*(input.tags or []), *_attr_tags]})
-    # The sensitivity tier rides the tags too: the embeddings table has no sensitivity
-    # column, and the ranking demotes labelled rows on questions that did not ask for a
-    # contact detail.
-    # One level label: the one that holds replaces another level's (a user's other
-    # `sensitivity:*` tags stay).
-    from server.memory.domain.sensitivity import LEVEL_TAGS, relabel, sensitivity_tags
-
-    _sens_tags = sensitivity_tags(effective_sensitivity, input.tags or [])
-    if _sens_tags or {str(t).strip().lower() for t in input.tags or []} & LEVEL_TAGS:
-        # Level labels are the server's: the one that holds, or none (a user's level
-        # tag on unlabelled content is not a label).
-        input = input.model_copy(update={"tags": relabel(input.tags or [], effective_sensitivity)})
-        try:
-            from server.observability.metrics import record_attribute_tagged
-
-            for _t in _attr_tags:
-                record_attribute_tagged(namespace=input.namespace, attribute=_t.split(":", 1)[1])
-        except Exception:  # noqa: BLE001 — metrics never fail a write
-            pass
+        for _t in classified.attribute_tags:
+            record_attribute_tagged(namespace=input.namespace, attribute=_t.split(":", 1)[1])
+    except Exception:  # noqa: BLE001 — metrics never fail a write
+        pass
     w.input = input
     w.serialized_value = serialized_value
     w.new_sha = new_sha

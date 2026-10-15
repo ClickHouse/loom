@@ -19,7 +19,7 @@ person can attest that a row is true. How the version mirror works is in
 | `memory.lineage`     | viewer | The promotion trail of a shared memory: who promoted it, from which rows, through which review.           |
 | `memory.verify`      | writer | Attest that a row is true as the signed-in person or service account, or revoke the attestation.          |
 | `memory.redact`      | admin  | Scrub the value of one historical version, keeping the row and its audit entry.                           |
-| `namespace.rollback` | admin  | Return every memory head in a namespace to its version at a point in time.                                |
+| `namespace.rollback` | admin  | Return a namespace's memories to what they were at a point in time, in the journal.                       |
 | `namespace.snapshot` | admin  | Export a namespace's curated state as a JSON payload.                                                     |
 | `namespace.restore`  | viewer | Import a snapshot into a fresh namespace, or an existing one the caller administers.                      |
 
@@ -31,8 +31,8 @@ operations reference under [memory](../../reference/operations.md#memory) and
 
 `loom.memory` holds current state and is read with `FINAL`, so a merge keeps only the
 newest version of each row. `loom.memory_versions` is an append-only mirror filled by a
-materialized view on every insert; it is the history that `memory.history`,
-`memory.redact` and `namespace.rollback` read.
+materialized view on every insert; it is the history that `memory.history` and
+`memory.redact` read.
 
 A history row carries `version` (the write's nanosecond epoch), `written_at`, `value`,
 `confidence`, `pinned`, `expires_at`, `tombstoned_at`, `redacted_at`,
@@ -154,15 +154,20 @@ To remove a person's data everywhere, use [erasure](./retention-and-erasure.md#e
 
 ## Rolling a namespace back: `namespace.rollback`
 
-`namespace.rollback(as_of)` re-inserts, for each key, the highest version at or before
-`as_of` as the new head, and tombstones keys created after it. The rollback is itself new
-versions, so it can be undone the same way.
+`namespace.rollback(as_of)` works in the bi-temporal journal. Each key whose claims, as
+known at `as_of`, differ from what it serves now gets one commit. The commit serves the
+earlier claims again exactly as they were: a dated span keeps its span, a plan keeps its
+date, and a snapshot stays a snapshot. A key that served nothing at `as_of` is retracted
+instead. The current rows and search follow those commits. History is kept: a read with
+`known_as_of` before the rollback still answers what was known then, and a later
+rollback can undo this one.
 
-- Dry run by default, reporting `reinstate`, `remove` and `sample`; `dry_run=false`
-  applies it.
+- Dry run by default, reporting `reinstate`, `remove` and `sample` (each key's values
+  `then` and `now`); `dry_run=false` applies it.
+- A key whose lock in force refuses the change, or whose earlier value a blacklist now
+  refuses, is left as it is (`left_out`).
 - `memory_keys` (up to 500) restricts it; `max_keys` (default 5,000) bounds one call and
   `truncated` says to call again.
-- The `embedding_worker` re-embeds reinstated heads.
 - An `as_of` older than the namespace's history, or in the future, is refused.
 
 ```bash
@@ -201,7 +206,7 @@ checkpoints chain the log. See [audit](../observability/audit.md).
 - **History is only as complete as the mirror.** A column added to `loom.memory` must be
   added to `loom.memory_versions` and its view in the same migration.
 - **`thread_exists=false` is not an error.**
-- **A rollback does not restore hard-deleted keys** (`skipped_no_head`).
+- **A rollback never restores a redacted or erased value**: the journal no longer serves it.
 
 ## Related
 

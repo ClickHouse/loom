@@ -1006,6 +1006,24 @@ async def last_commits(
     }
 
 
+async def last_commit_at(
+    org: str, namespace: str, ident: tuple[str, str, str, str], *, ch: _CHClient | None = None
+) -> datetime | None:
+    """When the identity's latest commit was recorded (None: it has none)."""
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        f"SELECT max(recorded_at) AS at, count() AS n FROM {COMMITS} "
+        "WHERE org = {org:String} AND namespace = {ns:String} "
+        "AND memory_key = {mk:String} "
+        f"AND {_IDENT} IN {_KEYS}",
+        params={"org": org, "ns": namespace, "mk": ident[3], "keys": [tuple(ident)]},
+    )
+    if not rows or not int(rows[0]["n"] or 0):
+        return None
+    at: datetime = rows[0]["at"]
+    return at if at.tzinfo else at.replace(tzinfo=UTC)
+
+
 async def identity_of_memory_id(
     org: str, memory_id: str, *, ch: _CHClient | None = None
 ) -> dict[str, Any] | None:

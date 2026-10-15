@@ -515,7 +515,7 @@ Fields for every `namespace` op: [operations/namespace.md](operations/namespace.
 | [`namespace.register_category`](operations/namespace.md#namespaceregister_category) | Register a category in a namespace. | writer | write | no | yes |
 | [`namespace.register_ontology`](operations/namespace.md#namespaceregister_ontology) | Register an entity type or relation verb for a namespace. | admin | idempotent | yes | yes |
 | [`namespace.restore`](operations/namespace.md#namespacerestore) | Restore a snapshot payload into a target namespace. | viewer | idempotent | no | yes |
-| [`namespace.rollback`](operations/namespace.md#namespacerollback) | Return every memory head in a namespace to the version it had at `as_of`. | admin | write | no | yes |
+| [`namespace.rollback`](operations/namespace.md#namespacerollback) | Return a namespace's memories to what they were at `as_of`. | admin | write | no | yes |
 | [`namespace.search_categories`](operations/namespace.md#namespacesearch_categories) | Cosine-rank the category registry against a query. | viewer | read | no |  |
 | [`namespace.snapshot`](operations/namespace.md#namespacesnapshot) | Freeze a namespace's curated state as a portable JSON payload. | admin | idempotent | no | yes |
 | [`namespace.summary`](operations/namespace.md#namespacesummary) | Aggregated read-only metadata for one namespace, for a single-shot dashboard tile (category/memory counts, top entities, recent activity). | viewer | read | yes |  |

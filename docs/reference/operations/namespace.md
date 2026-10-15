@@ -366,7 +366,7 @@ Restore a snapshot payload into a target namespace.
 
 ## `namespace.rollback`
 
-Return every memory head in a namespace to the version it had at `as_of`.
+Return a namespace's memories to what they were at `as_of`.
 
 `POST /v1/namespace.rollback` · MCP `loom_namespace_rollback` · role `admin` · write · audited · not listed under the MCP `all` toolset
 
@@ -383,13 +383,11 @@ Return every memory head in a namespace to the version it had at `as_of`.
 | --- | --- | --- |
 | `dry_run` | `bool` | Echoes the request: true when nothing was written. |
 | `as_of` | `datetime` | The instant rolled back to, as UTC. |
-| `version_at` | `int` | `as_of` as an epoch-nanosecond version: the highest version a key may keep. |
-| `reinstate` | `int` | Keys whose head was (or would be) replaced by an older version. |
-| `remove` | `int` | Keys created after as_of that were (or would be) tombstoned. |
-| `skipped_no_head` | `int` | Keys with history at as_of but no live row (hard-deleted): left alone. |
-| `skipped_already_gone` | `int` | Keys created after as_of that are already tombstoned. |
+| `reinstate` | `int` | Keys that serve again what they served at as_of (planned, or committed). |
+| `remove` | `int` | Keys that served nothing at as_of, retracted (planned, or committed). |
+| `left_out` | `int` | Planned keys a lock in force or a blacklist kept as they are (applied only). |
 | `truncated` | `bool` | More keys differ than max_keys; call again (or narrow memory_keys). |
-| `sample` | `list[dict[str, Any]]` | Up to 20 planned moves (`memory_key`, `agent`, `action`, `version_from`, `version_to`). |
+| `sample` | `list[dict[str, Any]]` | Up to 20 keys (`memory_key`, `agent`, `user_id`, `session_id`, `action`, the values served `then` and `now`). |
 | `applied_at` | `datetime \| None` | When the rollback was written; None on a dry run or when no key differed. |
 
 ## `namespace.search_categories`

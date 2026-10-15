@@ -11,7 +11,7 @@ from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
 from server.identity.domain.read_scope import ReadFilters, scope_and
-from server.memory.store.rows import MEMORY_PERSISTED_COLS, Identity, MemoryRow, _hydrate
+from server.memory.store.rows import MEMORY_PERSISTED_COLS, Identity
 from server.memory.store.sql import _is_full_row
 
 
@@ -251,95 +251,3 @@ async def version_values(
         params={"org": org, "mid": memory_id},
     )
     return {int(r["version"]): str(r["value"]) for r in rows}
-
-
-async def rollback_change_rows(
-    org: str,
-    namespace: str,
-    version_at: int,
-    *,
-    memory_keys: list[str] | None = None,
-    limit: int = 5000,
-    ch: _CHClient | None = None,
-) -> list[dict[str, Any]]:
-    """Keys whose head now differs from their head as of `version_at`.
-
-    FULL OUTER JOIN of the live heads (loom.memory FINAL) with the highest
-    version ≤ version_at per key (loom.memory_versions). A side with no row
-    reads as version 0 (join_use_nulls=0). Returns up to `limit + 1` rows so
-    the caller can tell truncation from an exact fit. Rows where both
-    versions agree are excluded in SQL."""
-    ch = ch or _default_client()
-    key_filter = " AND memory_key IN {keys:Array(String)}" if memory_keys else ""
-    params: dict[str, Any] = {"org": org, "ns": namespace, "v": version_at, "lim": limit + 1}
-    if memory_keys:
-        params["keys"] = list(memory_keys)
-    return await ch.query_all(
-        f"""
-        SELECT agent, user_id, session_id, memory_key,
-               version_now, tombstoned_now, version_at
-        FROM (
-            SELECT agent, user_id, session_id, memory_key,
-                   version AS version_now,
-                   toUInt8(tombstoned_at IS NOT NULL) AS tombstoned_now
-            FROM loom.memory FINAL
-            WHERE org = {{org:String}} AND namespace = {{ns:String}}{key_filter}
-        ) AS now
-        FULL OUTER JOIN (
-            SELECT agent, user_id, session_id, memory_key,
-                   max(version) AS version_at
-            FROM loom.memory_versions
-            WHERE org = {{org:String}} AND namespace = {{ns:String}}
-              AND version <= {{v:UInt64}}{key_filter}
-            GROUP BY agent, user_id, session_id, memory_key
-        ) AS at USING (agent, user_id, session_id, memory_key)
-        WHERE version_now != version_at
-        ORDER BY memory_key, agent, user_id, session_id
-        LIMIT {{lim:UInt32}}
-        SETTINGS join_use_nulls = 0
-        """,
-        params=params,
-    )
-
-
-async def fetch_version_rows(
-    org: str,
-    namespace: str,
-    pairs: list[tuple[str, int]],
-    *,
-    ch: _CHClient | None = None,
-) -> list[MemoryRow]:
-    """The exact historical rows for (memory_key, version) pairs, hydrated
-    so build_memory_version_row can re-emit them as new heads."""
-    if not pairs:
-        return []
-    ch = ch or _default_client()
-    rows = await ch.query_all(
-        """
-        SELECT * FROM loom.memory_versions FINAL
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND (memory_key, version) IN {pairs:Array(Tuple(String, UInt64))}
-        """,
-        params={"org": org, "ns": namespace, "pairs": [(k, int(v)) for k, v in pairs]},
-    )
-    return [_hydrate(r) for r in rows]
-
-
-async def earliest_version_in_namespace(
-    org: str,
-    namespace: str,
-    *,
-    ch: _CHClient | None = None,
-) -> int:
-    """Oldest version stamp the history holds for a namespace; 0 when none.
-    A rollback earlier than this would tombstone every key, so the handler
-    refuses it."""
-    ch = ch or _default_client()
-    row = await ch.query_one(
-        """
-        SELECT min(version) AS v FROM loom.memory_versions
-        WHERE org = {org:String} AND namespace = {ns:String}
-        """,
-        params={"org": org, "ns": namespace},
-    )
-    return int((row or {}).get("v") or 0)

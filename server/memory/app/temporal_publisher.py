@@ -391,30 +391,49 @@ async def publish_amendment(
     """Publish an amendment a handler builds from the key's served assertions
     (memory.amend). Fails closed: an amendment that cannot be journaled did not
     happen."""
+    out = await publish_amendments(
+        org, namespace, [(identity, memory_id, build)], operation=operation, scope=scope, ch=ch
+    )
+    return out[0] if out else None
+
+
+async def publish_amendments(
+    org: str,
+    namespace: str,
+    items: Sequence[tuple[Ident, str, Build]],
+    *,
+    operation: str,
+    scope: str = "private",
+    ch: _CHClient | None = None,
+) -> list[Receipt]:
+    """Publish one built amendment per key as one batch (one plan, one lock): a
+    receipt per key that committed; a build that returns an empty amendment commits
+    nothing for its key."""
     from server.memory.app.provenance import writer_actor
     from server.memory.domain.provenance import source_class_for
 
-    agent, uid, sid, key = identity
     # The commit's provenance is the caller's, as a version row would carry it.
-    row = {
-        "agent": agent,
-        "user_id": uid,
-        "session_id": sid,
-        "memory_key": key,
-        "memory_id": memory_id,
-        "actor": writer_actor(),
-        "source_class": source_class_for(default="asserted"),
-    }
-    out = await publish(
-        org,
-        namespace,
-        [_RowChange(row, build)],
-        WriteIntent(),
-        operation=operation,
-        scope=scope,
-        ch=ch,
+    actor, source_class = writer_actor(), source_class_for(default="asserted")
+    changes = [
+        _RowChange(
+            {
+                "agent": agent,
+                "user_id": uid,
+                "session_id": sid,
+                "memory_key": key,
+                "memory_id": memory_id,
+                "actor": actor,
+                "source_class": source_class,
+            },
+            build,
+        )
+        for (agent, uid, sid, key), memory_id, build in items
+    ]
+    if not changes:
+        return []
+    return await publish(
+        org, namespace, changes, WriteIntent(), operation=operation, scope=scope, ch=ch
     )
-    return out[0] if out else None
 
 
 async def publish(
