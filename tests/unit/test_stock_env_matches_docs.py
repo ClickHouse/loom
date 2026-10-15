@@ -65,8 +65,10 @@ QUICKSTART_MUST_MENTION = (
 # and LOOM_SKIP_START to prepare files without starting the stack.
 NON_SETTINGS_VARS = {
     "LOOM_API_KEY",
+    "LOOM_IMAGE_REPOSITORY",
     "LOOM_INSTALL_BUNDLE",
     "LOOM_INSTALL_CHECKSUM",
+    "LOOM_PORT",
     "LOOM_SKIP_START",
     "LOOM_VERSION",
 }

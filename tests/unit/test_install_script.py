@@ -304,3 +304,24 @@ def test_enter_at_a_rerun_prompt_keeps_the_saved_password(install, installer_env
     assert _env(target)["LOOM_CH_PASSWORD"] == '"first"'
     _answer_prompt(installer_env, "https://loom@h.example", b"second\n")
     assert _env(target)["LOOM_CH_PASSWORD"] == '"second"'
+
+
+def test_the_port_and_image_given_to_a_run_stay_in_env(install) -> None:
+    run, target = install
+    given = {"LOOM_PORT": "28977", "LOOM_IMAGE_REPOSITORY": "127.0.0.1:5000/loom"}
+    assert run(**given).returncode == 0
+    assert {k: _env(target)[k] for k in given} == given
+    # A later run without them keeps them: a bare `docker compose` there must
+    # not fall back to port 7777 or the public image.
+    assert run().returncode == 0
+    assert {k: _env(target)[k] for k in given} == given
+
+
+@pytest.mark.parametrize(
+    ("key", "value"), [("LOOM_PORT", "77x"), ("LOOM_IMAGE_REPOSITORY", "repo name")]
+)
+def test_a_setting_env_cannot_keep_is_refused(install, key: str, value: str) -> None:
+    run, target = install
+    result = run(**{key: value})
+    assert result.returncode == 1 and key in result.stderr
+    assert not (target / ".env").exists()

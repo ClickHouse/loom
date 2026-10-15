@@ -23,6 +23,19 @@ fail() {
   exit 1
 }
 
+# Settings this run is given that .env keeps, so a later `docker compose` in the
+# install directory, which reads only .env, uses the same port and image.
+KEPT_SETTINGS="LOOM_PORT LOOM_BIND_HOST LOOM_IMAGE_REPOSITORY"
+for key in $KEPT_SETTINGS; do
+  eval "value=\${$key-}"
+  case $value in
+    *[!A-Za-z0-9._:/@-]*) fail "$key has a character .env cannot keep: $value" ;;
+  esac
+done
+case ${LOOM_PORT-} in
+  *[!0-9]*) fail "LOOM_PORT must be a port number: $LOOM_PORT" ;;
+esac
+
 while [ $# -gt 0 ]; do
   case $1 in
     --clickhouse)
@@ -257,6 +270,10 @@ if [ -n "$CH_URL" ]; then
   [ -n "${KEEP_PASSWORD:-}" ] || set_env LOOM_CH_PASSWORD "$(dotenv_quote "$CH_PASSWORD")"
   printf 'Loom will use ClickHouse at %s:%s as %s\n' "$CH_HOST" "$CH_PORT" "$CH_USER"
 fi
+for key in $KEPT_SETTINGS; do
+  eval "value=\${$key-}"
+  [ -z "$value" ] || set_env "$key" "$value"
+done
 chmod 600 "$INSTALL_DIR/.env"
 umask "$saved_umask"
 
@@ -283,8 +300,7 @@ case ",$(get_env COMPOSE_PROFILES)," in
 esac
 compose up -d
 
-# Compose takes LOOM_PORT from the environment before .env, and so does this.
-port=${LOOM_PORT:-$(get_env LOOM_PORT)}
+port=$(get_env LOOM_PORT)
 port=${port:-7777}
 health="http://127.0.0.1:$port/v1/health"
 attempt=0

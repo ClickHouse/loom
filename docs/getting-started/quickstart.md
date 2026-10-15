@@ -67,6 +67,10 @@ LOOM_INSTALL_BUNDLE="$PWD/loom-stack.tar.gz" \
   LOOM_INSTALL_CHECKSUM="$PWD/loom-stack.tar.gz.sha256" sh install.sh
 ```
 
+`LOOM_PORT`, `LOOM_BIND_HOST` and `LOOM_IMAGE_REPOSITORY` given to the installer are
+written to the install directory's `.env`, so later `docker compose` commands there and
+later installer runs use the same port and image.
+
 Each release runs the ClickHouse release that was latest when it was built, so rerunning
 the same Loom version keeps its ClickHouse; installing a newer Loom version moves it.
 Rerunning the installer updates the managed Compose/configuration files and reconciles
