@@ -1,15 +1,19 @@
 """knowledge.search: hybrid (vector + lexical + tags + recency) over one namespace or the
-caller's namespaces, private ones first.
+caller's namespaces, the addressed one and the private ones first.
 """
 
 from __future__ import annotations
 
 import asyncio
 import dataclasses
+import functools
 import logging
 from typing import TYPE_CHECKING
 
+from server.auth.fanout import namespaces_to_search
+from server.core.vectors.private_first import search_private_first
 from server.embedding import get_embedder
+from server.identity.app import namespace_visibility
 from server.knowledge.api.models_knowledge import (
     KnowledgeSearchInput,
     KnowledgeSearchOutput,
@@ -25,6 +29,10 @@ if TYPE_CHECKING:
     from server.embedding import Embedder
     from server.knowledge.app.search import ChunkHit
 
+# A first-pass hit this close (cosine similarity) ends a private-first search
+# before its public pass.
+PRIVATE_HIT_THRESHOLD = 0.30
+
 
 async def handle_knowledge_search(input: KnowledgeSearchInput) -> KnowledgeSearchOutput:
     from server.observability.otel import traced
@@ -33,7 +41,9 @@ async def handle_knowledge_search(input: KnowledgeSearchInput) -> KnowledgeSearc
     with traced("embed.compute.query", model=embedder.model_name):
         query_vec = await embedder.embed(input.query)
     search_one = _namespace_search(input, embedder, query_vec)
-    namespaces = await _namespaces_of(input)
+    namespaces, skipped = await namespaces_to_search(
+        input.org, input.namespace, input.namespace_scope
+    )
     results_per_ns = await _search_private_first(input, namespaces, search_one)
     all_hits = _as_search_hits(results_per_ns)
     all_hits.sort(key=lambda x: (x.score, x.similarity), reverse=True)
@@ -42,18 +52,9 @@ async def handle_knowledge_search(input: KnowledgeSearchInput) -> KnowledgeSearc
     top = all_hits[: input.top_k]
     if input.narrow_spans and top:
         await _narrow_spans(embedder, query_vec, top)
-    return KnowledgeSearchOutput(results=top, embedding_model=embedder.model_name)
-
-
-async def _namespaces_of(input: KnowledgeSearchInput) -> list[str]:
-    """The namespaces the search covers: the caller's own under `all_mine`
-    (the one asked for when it resolves to none), else the one asked for."""
-    if input.namespace_scope != "all_mine":
-        return [input.namespace]
-    from server.auth.context import resolve_fanout_namespaces
-
-    namespaces = await resolve_fanout_namespaces(input.org)
-    return namespaces or [input.namespace]
+    return KnowledgeSearchOutput(
+        results=top, embedding_model=embedder.model_name, namespaces_skipped=skipped
+    )
 
 
 def _namespace_search(
@@ -116,65 +117,18 @@ async def _search_private_first(
 ) -> list[tuple[str, list[ChunkHit]]]:
     from server.observability.otel import traced
 
-    # Private-first fallback (mirrors memory.search): when scope=all_mine,
-    # search private namespaces first; only fan out to public team
-    # namespaces if the private pass came up dry.
-    PRIVATE_HIT_THRESHOLD = 0.30
-    do_private_first = input.namespace_scope == "all_mine" and len(namespaces) > 1
-    ns_visibility: dict[str, str] = {}
-    if do_private_first:
-        try:
-            from server.core.ch import get_client as _get_ch_vp
-
-            _ch_vp = _get_ch_vp()
-            vis_rows = await _ch_vp.query_all(
-                """
-                SELECT namespace, toString(visibility) AS visibility
-                FROM loom.namespaces FINAL
-                WHERE org = {org:String} AND namespace IN {ns:Array(String)}
-                """,
-                params={"org": input.org, "ns": list(namespaces)},
-            )
-            ns_visibility = {r["namespace"]: r.get("visibility", "private") for r in vis_rows}
-        except Exception:  # noqa: BLE001 — visibility read failure disables private-first only
-            do_private_first = False
-
-    if do_private_first:
-        private_ns = [n for n in namespaces if ns_visibility.get(n, "private") == "private"]
-        public_ns = [n for n in namespaces if ns_visibility.get(n, "private") != "private"]
-        with traced(
-            "ch.query.chunks",
-            op="vector_search.private",
-            top_k=input.top_k,
-            namespaces=len(private_ns),
-        ):
-            results_per_ns = (
-                await asyncio.gather(*[search_one(ns) for ns in private_ns]) if private_ns else []
-            )
-        best_private_similarity = 0.0
-        for _ns, hits in results_per_ns:
-            for h in hits:
-                sim = 1.0 - getattr(h, "distance", 1.0)
-                if sim > best_private_similarity:
-                    best_private_similarity = sim
-        if best_private_similarity < PRIVATE_HIT_THRESHOLD and public_ns:
-            with traced(
-                "ch.query.chunks",
-                op="vector_search.public",
-                top_k=input.top_k,
-                namespaces=len(public_ns),
-            ):
-                public_results = await asyncio.gather(*[search_one(ns) for ns in public_ns])
-            results_per_ns = list(results_per_ns) + list(public_results)
-    else:
-        with traced(
-            "ch.query.chunks",
-            op="vector_search",
-            top_k=input.top_k,
-            namespaces=len(namespaces),
-        ):
-            results_per_ns = await asyncio.gather(*[search_one(ns) for ns in namespaces])
-    return list(results_per_ns)
+    return await search_private_first(
+        input.namespace,
+        namespaces,
+        search_one,
+        visibility=(
+            functools.partial(namespace_visibility.visibility_map, input.org)
+            if input.namespace_scope == "all_mine"
+            else None
+        ),
+        threshold=PRIVATE_HIT_THRESHOLD,
+        span=functools.partial(traced, "ch.query.chunks", top_k=input.top_k),
+    )
 
 
 def _as_search_hits(results_per_ns: list[tuple[str, list[ChunkHit]]]) -> list[_SearchHit]:

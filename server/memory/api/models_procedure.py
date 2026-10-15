@@ -63,7 +63,8 @@ class ProcedureMatchInput(BaseModel):
     top_k: int = Field(default=5, ge=1, le=50)
     # Only procedures carrying at least one of these tags; empty = no tag filter.
     tags: list[str] = Field(default_factory=list)
-    # `all_mine` searches every namespace the caller belongs to; `this` only `namespace`.
+    # `all_mine` also searches the caller's own namespaces (up to the fan-out cap); `this`
+    # only `namespace`.
     namespace_scope: Literal["this", "all_mine"] = "all_mine"
     # When true, only return procedures promoted to reusable templates
     # (proven, well-exercised workflow topologies).

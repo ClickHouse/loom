@@ -16,6 +16,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import server.transport.mcp_call as mcp_call
+from server.auth.fanout import Fanout
 from server.operations.registry import OPERATIONS_BY_NAME
 from server.settings import settings
 
@@ -38,14 +39,14 @@ def calls(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
         seen.append(kw)
         return {k: dict(v) for k, v in PAYLOAD.items()}
 
-    async def _fanout(org: str) -> list[str]:
-        return ["n", "team"]
+    async def _fanout(org: str) -> Fanout:
+        return Fanout(org=org, namespaces=("n", "team"), cap=32)
 
     async def _defaults(auth: Any, client_name: str | None = None) -> dict[str, str]:
         return {"org": "o", "namespace": "n", "agent": "a"}
 
     monkeypatch.setattr(handler_mod, "search_sections", _sections)
-    monkeypatch.setattr("server.auth.context.resolve_fanout_namespaces", _fanout)
+    monkeypatch.setattr("server.auth.fanout.resolve_fanout", _fanout)
     monkeypatch.setattr(mcp_call, "_caller_defaults", _defaults)
     for mod in (mcp_call, mcp_outcome):
         monkeypatch.setattr(mod, "_emit_mcp_event", lambda *a, **k: None)
@@ -72,7 +73,7 @@ def test_http_serves_the_sections(calls: list[dict[str, Any]]) -> None:
     body = r.json()
     assert body["memory"]["results"][0]["memory_key"] == "k"
     assert "tracker" not in body and "withheld" not in body
-    assert calls[0]["fanout_namespaces"] == ["n", "team"] and calls[0]["top_k"] == 3
+    assert calls[0]["namespace_scope"] == "all_mine" and calls[0]["top_k"] == 3
 
 
 def test_http_and_mcp_run_the_same_fan_out(calls: list[dict[str, Any]]) -> None:
@@ -148,6 +149,26 @@ def test_a_this_scope_search_keeps_the_home_namespace_consent(
     assert seen == ["query"]
 
 
+def test_an_unresolvable_fan_out_searches_every_leg_as_this(
+    calls: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Consent was narrowed over the addressed namespace alone, so no leg may
+    read wider than it."""
+    from server.memory.api.models_loom_search import SearchInput
+    from server.memory.app.loom_search.handler import handle_search
+
+    async def _no_fanout(org: str) -> Fanout:
+        raise RuntimeError("grants unreadable")
+
+    async def _resolve(org: str, namespace: str) -> str:
+        return "all"
+
+    monkeypatch.setattr("server.auth.fanout.resolve_fanout", _no_fanout)
+    monkeypatch.setattr("server.observability.capture_consent.resolve", _resolve)
+    asyncio.run(handle_search(SearchInput(org="o", namespace="n", query="q")))
+    assert calls[-1]["namespace_scope"] == "this"
+
+
 def test_unresolvable_consent_or_fan_out_never_widens_capture(
     calls: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -157,7 +178,7 @@ def test_unresolvable_consent_or_fan_out_never_widens_capture(
 
     seen = _consent(monkeypatch, {"n": "all"})
 
-    async def _no_fanout(org: str) -> list[str]:
+    async def _no_fanout(org: str) -> Fanout:
         raise RuntimeError("grants unreadable")
 
     async def _run(start: str) -> None:
@@ -166,13 +187,13 @@ def test_unresolvable_consent_or_fan_out_never_widens_capture(
 
     # The fan-out cannot be resolved: the search narrows to the home namespace
     # and never raises the level the transport set.
-    monkeypatch.setattr("server.auth.context.resolve_fanout_namespaces", _no_fanout)
+    monkeypatch.setattr("server.auth.fanout.resolve_fanout", _no_fanout)
     asyncio.run(_run("query"))
 
     # A fanned-out namespace whose consent lookup fails captures nothing.
-    async def _unknown(org: str) -> list[str]:
-        return ["n", "unknown"]
+    async def _unknown(org: str) -> Fanout:
+        return Fanout(org=org, namespaces=("n", "unknown"), cap=32)
 
-    monkeypatch.setattr("server.auth.context.resolve_fanout_namespaces", _unknown)
+    monkeypatch.setattr("server.auth.fanout.resolve_fanout", _unknown)
     asyncio.run(_run("all"))
     assert seen == ["query", "off"]

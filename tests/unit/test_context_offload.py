@@ -6,6 +6,9 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta
 
+import pytest
+
+from server.core.errors import ValidationError
 from server.memory.api.models_context_offload import ContextFetchInput, ContextOffloadInput
 from server.memory.api.ops_context_offload import context_fetch, context_offload
 from server.memory.app import context_offload as h
@@ -164,3 +167,17 @@ def test_grep_content_scans_at_most_the_offload_cap(monkeypatch) -> None:
     # the cap is bytes: four 3-byte characters are 12 bytes, past a 10-byte cap
     _, matched, _ = h.grep_content("€€€€\nhit", _rx("hit"), offset=0, limit=1000)
     assert matched == 0
+
+
+def test_parked_search_pages_are_neither_fetched_nor_overwritten(monkeypatch) -> None:
+    """A parked page holds hits from every namespace its search fanned out
+    over; only memory.search(page=...) serves it, re-checking each one."""
+
+    ch = _FakeCH(row={"content": "{}", "content_type": "application/json", "summary": ""})
+    monkeypatch.setattr(h, "get_client", lambda: ch)
+    got = asyncio.run(h.handle_context_fetch(ContextFetchInput(**IDENT, blob_key="page/abc")))
+    assert not got.found
+    forged = ContextOffloadInput(**IDENT, content="{}", blob_key="page/abc")
+    with pytest.raises(ValidationError):
+        asyncio.run(h.handle_context_offload(forged))
+    assert ch.inserted == []

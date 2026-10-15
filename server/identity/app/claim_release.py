@@ -21,7 +21,10 @@ from pydantic import BaseModel, Field
 
 from server.auth.authz import Role
 from server.auth.jwt import AuthInfo
+from server.core import grant_cache
 from server.core.ch import CHClient, get_client
+from server.identity.domain.account_ties import kept_aliases
+from server.identity.store import grants as grants_repo
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -128,10 +131,9 @@ async def release_claim(
             }
             for i, g in enumerate(grants)
         ]
-        await ch.insert(
-            "loom.namespace_grants",
+        await grants_repo.insert_rows(
             tombstones,
-            settings={"async_insert": 0, "wait_for_async_insert": 1},
+            ch=ch,
         )
 
     # Clear owner and mark inactive. The row stays, so the name stays taken
@@ -142,6 +144,7 @@ async def release_claim(
     # The contact email and password are cleared with the owner, so the old
     # credential dies with the claim.
     row = dict(existing)
+    row["released_aliases"] = kept_aliases(existing)
     row["owner_email"] = ""
     row["contact_email"] = ""
     row["password_hash"] = ""
@@ -149,6 +152,8 @@ async def release_claim(
     row["description"] = f"Released by {actor_subject}" + (f" ({reason})" if reason else "")
     row["updated_at"] = max(now, existing.get("updated_at") or now)
     await ch.insert("loom.namespaces", [row])
+    # The claim cap reads which accounts tie a person's spellings from this table.
+    grant_cache.invalidate(org)
 
     log.info(
         "claim_release: %s released by %s (was owned by %r, %d grants revoked)",

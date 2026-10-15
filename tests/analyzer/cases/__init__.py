@@ -19,6 +19,7 @@ MODULES = (
     "planes",
     "workers",
     "tracker",
+    "auth",
 )
 
 

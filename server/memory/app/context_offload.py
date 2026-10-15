@@ -17,6 +17,7 @@ from server.memory.api.models_context_offload import (
     ContextOffloadInput,
     ContextOffloadOutput,
 )
+from server.memory.app.search_pages import PAGE_PREFIX
 from server.memory.store.rows import next_version
 from server.settings import settings
 
@@ -105,6 +106,11 @@ async def handle_context_offload(input: ContextOffloadInput) -> ContextOffloadOu
         )
     sha, auto_key = content_key(input.content)
     blob_key = input.blob_key.strip("/") or auto_key
+    if blob_key.startswith(PAGE_PREFIX):
+        raise ValidationError(
+            f"blob keys under {PAGE_PREFIX!r} are memory.search's parked pages",
+            code="RESERVED_BLOB_KEY",
+        )
     summary = input.summary.strip() or default_summary(input.content)
     now = _now()
     expires = now + timedelta(seconds=int(input.ttl_seconds))
@@ -139,6 +145,10 @@ async def handle_context_offload(input: ContextOffloadInput) -> ContextOffloadOu
 
 
 async def handle_context_fetch(input: ContextFetchInput) -> ContextFetchOutput:
+    if input.blob_key.startswith(PAGE_PREFIX):
+        # A parked page holds hits from every namespace its search fanned out
+        # over; memory.search(page=...) serves it, re-checking each of them.
+        return ContextFetchOutput(found=False, blob_key=input.blob_key)
     rx = None
     if input.pattern:
         try:

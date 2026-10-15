@@ -8,6 +8,7 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
+from server.auth.grant_claims import admins_change, grant_change
 from server.core.ch import get_client
 from server.core.grant_sql import LIVE_GRANT
 from server.identity.api.models import (
@@ -38,9 +39,15 @@ async def handle_namespace_join(
     namespace land `pending` — zero access until an admin approves.
     Idempotent: re-joining at or below the current role is a no-op.
     """
-    ch = get_client()
     caller = _registry.resolve_subject(input.subject)
+    async with grant_change(input.org, input.namespace, caller):
+        return await _join(input, caller)
 
+
+async def _join(input: NamespaceJoinInput, caller: str) -> NamespaceJoinOutput:
+    """The join, under the grant's claim."""
+
+    ch = get_client()
     row = await ch.query_one(
         """
         SELECT toString(visibility) AS visibility, active, requires_approval,
@@ -125,10 +132,11 @@ async def handle_namespace_join(
             )
 
     if gated:
-        # No existing grant → status='pending' row (zero access until an
-        # admin flips it active). Existing grant → keep the active base
-        # role and record the elevation as pending_role.
-        if existing is None:
+        # No active grant → status='pending' row (zero access until an
+        # admin flips it active); a second request replaces the first, it
+        # never becomes a base role. Active grant → keep that base role and
+        # record the elevation as pending_role.
+        if existing is None or existing.status == "pending":
             await grants_repo.insert_row(
                 {
                     "org": input.org,
@@ -231,9 +239,27 @@ async def handle_namespace_leave(
     ownership transfer first (via `grants.create` to promote another
     member, then re-leave).
     """
-    ch = get_client()
     caller = _registry.resolve_subject(input.subject)
+    from server.identity.store import grants as grants_repo
 
+    before = await grants_repo.find_active_grant(input.org, input.namespace, caller)
+    if before is None or before.role != "admin":
+        async with grant_change(input.org, input.namespace, caller):
+            now = await grants_repo.find_active_grant(input.org, input.namespace, caller)
+            if now is None or now.role != "admin":
+                return await _leave(input, caller)
+    # Only an admin's leave takes admin away, so only it is counted against the admins.
+    async with (
+        admins_change(input.org, input.namespace),
+        grant_change(input.org, input.namespace, caller),
+    ):
+        return await _leave(input, caller)
+
+
+async def _leave(input: NamespaceLeaveInput, caller: str) -> NamespaceLeaveOutput:
+    """The leave, under the grant's claim."""
+
+    ch = get_client()
     from server.identity.store import grants as grants_repo
 
     existing = await grants_repo.find_active_grant(input.org, input.namespace, caller)
@@ -270,6 +296,14 @@ async def handle_namespace_cancel_request(
 ) -> NamespaceCancelRequestOutput:
     """Clear the caller's pending_role; preserve their base grant."""
     caller = _registry.resolve_subject(input.subject)
+    async with grant_change(input.org, input.namespace, caller):
+        return await _cancel_request(input, caller)
+
+
+async def _cancel_request(
+    input: NamespaceCancelRequestInput, caller: str
+) -> NamespaceCancelRequestOutput:
+    """The cancel, under the grant's claim."""
 
     from server.identity.store import grants as grants_repo
 
@@ -463,11 +497,14 @@ async def handle_namespace_list_mine(
         for r in grant_rows
     ]
 
+    from server.auth.authz import live_claims
     from server.auth.context import current_auth
 
     auth = current_auth()
     if auth is not None:
-        jwt_only = [ns for ns in auth.namespaces if ns != "*" and ns not in seen]
+        jwt_only = await live_claims(
+            auth, input.org, [ns for ns in auth.namespaces if ns not in seen]
+        )
         # Claim-only namespaces have no grant row to JOIN through, so look up
         # kind/visibility directly — otherwise a code namespace named in a
         # token's claim would masquerade as a memory namespace and the header

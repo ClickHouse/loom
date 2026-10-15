@@ -453,7 +453,7 @@ async def _conversations(ch: RecordingCH, c: dict[str, Any]) -> None:
     )
     await R.search_substring(
         ORG,
-        NS,
+        [NS],
         AGENT,
         "deploy",
         thread_id="t1" if f else None,
