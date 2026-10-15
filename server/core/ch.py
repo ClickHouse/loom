@@ -489,7 +489,9 @@ async def _turn_off_unsafe_condition_cache(client: AsyncClient) -> None:
     from server.core.schema.preflight import CLUSTER_DOESNT_EXIST, REPLICA_VERSIONS_SQL, version_key
 
     async def versions(sql: str) -> list[str]:
-        return [str(row[0]) for row in (await client.query(sql)).result_rows]
+        # The raw client, before CHClient tags its queries: name this one here.
+        rows = await client.query(sql, settings={"log_comment": "ch.condition_cache_probe"})
+        return [str(row[0]) for row in rows.result_rows]
 
     try:
         try:

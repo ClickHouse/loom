@@ -82,10 +82,14 @@ Sizing (web replicas, uvicorn processes, the workers container) is in
   the data first with [backup and restore](./backup-and-recovery.md) if you need it.
 
 Every boot runs the same checks before it connects (the oldest replica's version, the
-database, the grants) and stops with one line naming the fix. A process that does not
-migrate (`LOOM_BOOT_MIGRATE=false`, a read replica) is checked only for `SELECT`, `INSERT`,
-`ALTER UPDATE` and `ALTER DELETE` on `loom.*`; one that runs the background workers also
-optimizes, truncates, drops and refreshes tables there, so give it everything on `loom.*`.
+database, the grants) and stops with one line naming the fix. A process that migrates is
+checked for `CREATE TABLE`, `CREATE VIEW`, `ALTER TABLE`, `ALTER VIEW`, `DROP TABLE`,
+`DROP VIEW`, `INSERT` and `SELECT` on `loom.*`, on every boot; one that does not
+(`LOOM_BOOT_MIGRATE=false`, a read replica) only for `SELECT`, `INSERT`, `ALTER UPDATE` and
+`ALTER DELETE`. A process that may run the background workers (`LOOM_BACKGROUND_WORKERS`
+not `off`) also needs `OPTIMIZE`, `TRUNCATE` and `SYSTEM REFRESH VIEW` there.
+`GRANT CURRENT GRANTS ON loom.*` from an admin covers all of them. Only the replica-version
+and system-table reads, which only migrations need, relax while nothing is pending.
 `loom doctor` reports the checks as `clickhouse_preflight`.
 
 ### Local stack from a clone

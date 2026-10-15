@@ -29,13 +29,14 @@ MIN_VERSION = (26, 4)
 # so `CHECK GRANT ALTER ON loom.*` fails even after GRANT ALL ON loom.*.
 Need = Literal["migrate", "serve", "read"]
 GRANTS: dict[Need, str] = {
-    # The migrations, and the running server's workers: compaction (OPTIMIZE),
-    # provider rebuilds (TRUNCATE) and view retirement (SYSTEM REFRESH VIEW).
     "migrate": "CREATE TABLE, CREATE VIEW, ALTER TABLE, ALTER VIEW, DROP TABLE, DROP VIEW, "
-    "INSERT, SELECT, OPTIMIZE, TRUNCATE, SYSTEM VIEWS",
+    "INSERT, SELECT",
     "serve": "SELECT, INSERT, ALTER UPDATE, ALTER DELETE",
     "read": "SELECT",
 }
+# What the background workers run besides: compaction (OPTIMIZE), provider
+# rebuilds (TRUNCATE) and view retirement (SYSTEM REFRESH VIEW).
+WORKER_GRANTS = "OPTIMIZE, TRUNCATE, SYSTEM REFRESH VIEW"
 # The system tables the migration runner reads (and the preflight's own): a
 # refused one would fail a migration halfway, so it stops a migrating boot.
 RUNNER_SYSTEM_TABLES = (
@@ -209,8 +210,9 @@ def oldest_version(
         if code != CLUSTER_DOESNT_EXIST:
             if code == ACCESS_DENIED:
                 refusal = PreflightError(
-                    f"{settings.ch_user!r} may not ask every replica for its version "
-                    "(clusterAllReplicas): an admin has to run Loom's setup SQL",
+                    f"{settings.ch_user!r} may not run clusterAllReplicas('default', "
+                    "system.one) for every replica's version: an admin has to run Loom's "
+                    "setup SQL",
                     needs_admin=True,
                 )
             else:
@@ -222,6 +224,13 @@ def oldest_version(
                 gaps.append(refusal)
         versions = [str(ch.command("SELECT version()"))]
     return min(versions, key=version_key)
+
+
+def _require(ch: Client, user: str, grants: str) -> None:
+    """Raise, naming only the missing ones, unless `user` holds all of `grants`."""
+    if not _granted(ch, grants):
+        missing = [g for g in grants.split(", ") if not _granted(ch, g)]
+        raise _lacks(user, ", ".join(missing))
 
 
 def _granted(ch: Client, grants: str) -> bool:
@@ -252,6 +261,14 @@ def needed_at_boot() -> Need:
     return "migrate" if settings.boot_migrate and not settings.read_replica else "serve"
 
 
+def runs_workers() -> bool:
+    """Whether this process may run the background workers (`auto` lets any
+    process take the lease)."""
+    from server.settings import settings
+
+    return settings.background_workers != "off" and not settings.read_replica
+
+
 def check(
     ch: Client,
     *,
@@ -259,12 +276,14 @@ def check(
     create_database: bool = True,
     journal: Path = MIGRATIONS_DIR,
     strict: bool = False,
+    workers: bool = False,
 ) -> Server:
     """Raise PreflightError unless the server is new enough and `loom` exists
-    with the grants `need` names. A process that will migrate creates a missing
-    database where its user may; with `create_database` off (the doctor) it
-    only reports it missing. `strict` checks as if a migration were pending
-    (ch-setup prepares for the next one). Returns what the doctor reports besides."""
+    with the grants `need` names, and WORKER_GRANTS when this process runs the
+    `workers`. A process that will migrate creates a missing database where
+    its user may; with `create_database` off (the doctor) it only reports it
+    missing. `strict` checks as if a migration were pending (ch-setup prepares
+    for the next one). Returns what the doctor reports besides."""
     from server.settings import settings
 
     user = settings.ch_user
@@ -298,11 +317,11 @@ def check(
         elif str(ch.command(f"CHECK GRANT CREATE DATABASE ON {DATABASE}.*")) != "1":
             raise _cannot_create(user)
 
-    # Strict even with nothing pending: the running server's workers use the
-    # DDL grants too (retention TTLs, compaction, rebuilds, view refreshes).
-    if not _granted(ch, GRANTS[need]):
-        missing = [g for g in GRANTS[need].split(", ") if not _granted(ch, g)]
-        raise _lacks(user, ", ".join(missing))
+    # Strict even with nothing pending: the running server sets retention TTLs
+    # and rebuilds tables with these grants too.
+    _require(ch, user, GRANTS[need])
+    if workers:
+        _require(ch, user, WORKER_GRANTS)
 
     if need == "migrate":
         refused = [t for t in RUNNER_SYSTEM_TABLES if not _readable(ch, f"system.{t}")]
@@ -356,11 +375,17 @@ def warnings(server: Server) -> str:
 
 
 def require_ready(
-    *, need: Need, create_database: bool = True, journal: Path = MIGRATIONS_DIR
+    *,
+    need: Need,
+    create_database: bool = True,
+    journal: Path = MIGRATIONS_DIR,
+    workers: bool = False,
 ) -> Server:
     """`check` on a fresh connection, closed afterwards."""
     ch = connect()
     try:
-        return check(ch, need=need, create_database=create_database, journal=journal)
+        return check(
+            ch, need=need, create_database=create_database, journal=journal, workers=workers
+        )
     finally:
         ch.close()

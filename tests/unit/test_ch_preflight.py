@@ -776,3 +776,33 @@ def test_a_missing_ddl_grant_stops_even_with_nothing_pending(
         preflight.check(DmlOnly(), need="migrate")
     assert "is missing CREATE TABLE" in str(e.value)
     assert "SELECT" not in str(e.value).split(" on loom.*")[0]
+
+
+def test_a_process_that_runs_the_workers_needs_their_grants() -> None:
+    class NoWorkerGrants(FakeCH):
+        def command(self, sql: str, **kwargs: Any) -> Any:
+            if sql.startswith("CHECK GRANT ") and any(
+                g in sql for g in ("OPTIMIZE", "TRUNCATE", "SYSTEM REFRESH VIEW")
+            ):
+                return 0
+            return super().command(sql, **kwargs)
+
+    # A migration-only run never uses them.
+    assert preflight.check(NoWorkerGrants(), need="migrate").version
+    with pytest.raises(preflight.PreflightError) as e:
+        preflight.check(NoWorkerGrants(), need="serve", workers=True)
+    assert "is missing OPTIMIZE, TRUNCATE, SYSTEM REFRESH VIEW on loom.*" in str(e.value)
+
+
+@pytest.mark.parametrize(
+    ("mode", "replica", "runs"),
+    [("auto", False, True), ("on", False, True), ("off", False, False), ("auto", True, False)],
+)
+def test_which_processes_run_the_workers(
+    monkeypatch: pytest.MonkeyPatch, mode: str, replica: bool, runs: bool
+) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "background_workers", mode)
+    monkeypatch.setattr(settings, "read_replica", replica)
+    assert preflight.runs_workers() is runs

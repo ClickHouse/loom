@@ -172,7 +172,11 @@ def _doctor_preflight_check() -> tuple[str, str, str]:
     from server.core.schema import preflight
 
     try:
-        server = preflight.require_ready(need=preflight.needed_at_boot(), create_database=False)
+        server = preflight.require_ready(
+            need=preflight.needed_at_boot(),
+            create_database=False,
+            workers=preflight.runs_workers(),
+        )
     except preflight.PreflightError as e:
         return ("clickhouse_preflight", FAIL, str(e))
     except Exception as e:  # noqa: BLE001 — a doctor line must never crash the doctor

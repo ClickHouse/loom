@@ -21,7 +21,12 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   settings profile with SQL, or prints the SQL for an admin (`--print-sql`, password as a
   placeholder). Boot, `loom migrate` and `loom doctor` (`clickhouse_preflight`) check the
   server first: version 26.4 or later on its oldest replica, the database and the grants
-  the migrations need, each failure with its fix, before any DDL.
+  Loom needs, each failure with its fix, before any DDL. **Upgrading on a self-managed
+  or Cloud ClickHouse:** the first boot after the upgrade has a migration pending, so it
+  also needs `READ ON REMOTE`, `SELECT` on the system tables the migrations read, and,
+  with the workers on, `OPTIMIZE`, `TRUNCATE` and `SYSTEM REFRESH VIEW` on `loom.*`; run
+  `loom doctor` or `loom ch-setup` (or have an admin run `loom ch-setup --print-sql`)
+  before upgrading.
 - Every Loom session on a ClickHouse older than 26.8 runs with the query condition cache
   off (the vector-read fix, ClickHouse #112086), on every target; boot used to warn only.
 

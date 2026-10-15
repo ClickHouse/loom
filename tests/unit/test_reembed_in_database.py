@@ -174,8 +174,10 @@ async def test_a_session_turns_the_condition_cache_off_when_any_replica_is_old(
     class _Client:
         def __init__(self) -> None:
             self.settings: dict[str, object] = {}
+            self.tags: set[object] = set()
 
-        async def query(self, sql: str) -> SimpleNamespace:
+        async def query(self, sql: str, settings: dict[str, object]) -> SimpleNamespace:
+            self.tags.add(settings.get("log_comment"))
             if "clusterAllReplicas" in sql:
                 if replicas is None:
                     raise RuntimeError("Code: 701. Requested cluster 'default' not found")
@@ -188,3 +190,4 @@ async def test_a_session_turns_the_condition_cache_off_when_any_replica_is_old(
     client = _Client()
     await _real_cache_guard(client)  # type: ignore[arg-type]
     assert (client.settings == {"use_query_condition_cache": 0}) is turned_off
+    assert client.tags == {"ch.condition_cache_probe"}
