@@ -7603,7 +7603,7 @@ class ConversationListOutput(TypedDict, total=False):
 
 
 class ConversationSearchInput(TypedDict, total=False):
-    "Text search across a namespace's conversation history (ILIKE over message content)."
+    "Vector search across a namespace's conversation history: messages ranked by"
 
     org: Required[str]
     namespace: Required[str]
@@ -7617,7 +7617,7 @@ class ConversationSearchInput(TypedDict, total=False):
 
 
 class ConversationSearchBody(TypedDict, total=False):
-    "Text search across a namespace's conversation history (ILIKE over message content)."
+    "Vector search across a namespace's conversation history: messages ranked by"
 
     org: NotRequired[str]
     namespace: NotRequired[str]
