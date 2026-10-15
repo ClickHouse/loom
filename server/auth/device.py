@@ -7,6 +7,7 @@ and the limits look as they do: docs/architecture/security.md ("Device grant").
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import html
@@ -364,6 +365,9 @@ async def device_code_grant(f: dict[str, str]) -> dict[str, Any]:
         return await oauth.issue_tokens(device, DEVICE_CLIENT_ID, since=device["exp"] - _DEVICE_TTL)
     except oauth.OAuthError:
         raise  # a refusal stands
+    except asyncio.CancelledError:  # the CLI went away: the device code is its again
+        await asyncio.shield(oauth.store.save_device(device))
+        raise
     except Exception as e:  # Loom's own failure: unspend the code so the next poll is no replay
         oauth.log.warning("oauth: issuing tokens for a device grant failed: %s", e)
         await oauth.store.save_device(device)

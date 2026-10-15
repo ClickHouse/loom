@@ -88,6 +88,7 @@ _PENDING = {
     "client_id": "c",
     "redirect_uri": "r",
     "code_challenge": "x",
+    "mcp_state": "",
     "state": "s",
     "exp": 2**31 - 1,
 }
@@ -359,5 +360,19 @@ async def test_only_a_callback_refused_before_the_idp_exchange_keeps_its_cookie(
     monkeypatch.setattr(oidc, "verify_id_token", verified)
     monkeypatch.setattr(oauth.store, "use_once", keeper_away)
     page = await oauth.oidc_callback(_Req())  # type: ignore[arg-type]
-    # The IdP code is spent: a reload could not finish it, so start again.
+    # The IdP code is spent: a reload could not finish it, so the page starts
+    # a fresh sign-in where this one began.
     assert page.status_code == 503 and "Max-Age=0" in page.headers["set-cookie"]
+    assert b'href="/oauth/authorize?' in page.body
+
+
+def test_a_restart_begins_each_sign_in_where_it_began() -> None:
+    from urllib.parse import parse_qs, urlsplit
+
+    assert oauth._restart_url({"kind": "dashboard"}) == "/oauth/sso"
+    assert oauth._restart_url({"kind": "device", "user_code": "BCDFGHJK"}) == (
+        "/oauth/device?user_code=BCDFGHJK"
+    )
+    mcp = urlsplit(oauth._restart_url(_PENDING | {"mcp_state": "st"}))
+    assert mcp.path == "/oauth/authorize"
+    assert parse_qs(mcp.query)["client_id"] == ["c"] and parse_qs(mcp.query)["state"] == ["st"]

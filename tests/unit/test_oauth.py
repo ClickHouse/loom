@@ -654,3 +654,18 @@ def test_a_spend_abandoned_long_ago_counts_as_spent(monkeypatch) -> None:
     monkeypatch.setattr(time, "time", lambda: started + 600)
     with pytest.raises(oauth.CodeReplayed):  # never will: its owner signs in again
         asyncio.run(store.take_refresh(rt, "loom-test"))
+
+
+def test_a_refresh_cancelled_midway_leaves_the_token_usable(monkeypatch) -> None:
+    c = _client()
+    rt = _refresh_token_for_alice(c)
+
+    async def cancelled(subject: str, org: str, roles: list[str]) -> list[str]:
+        raise asyncio.CancelledError  # the client hung up while its refresh ran
+
+    form = {"grant_type": "refresh_token", "refresh_token": rt, "client_id": "loom-test"}
+    with monkeypatch.context() as gone:
+        gone.setattr(login, "refreshed_roles", cancelled)
+        with pytest.raises(asyncio.CancelledError):
+            asyncio.run(oauth._refresh_token_grant(form))
+    assert _refresh(c, rt).status_code == 200

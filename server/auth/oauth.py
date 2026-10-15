@@ -11,6 +11,7 @@ docs/architecture/security.md ("OIDC and OAuth").
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import html
@@ -561,12 +562,32 @@ def _expired_sign_in() -> Response:
     )
 
 
-def _sign_in_unavailable() -> Response:
-    return html_page(
-        "Sign in to Loom",
-        "<h2>Sign-in is unavailable right now</h2>"
-        "<p>In a minute, start again from where you began.</p>",
-        503,
+def _sign_in_unavailable(restart: str = "") -> Response:
+    """Loom could not finish a sign-in it may not resume: the IdP's code is
+    spent, so `restart` (where it began) starts a fresh one."""
+    again = (
+        f'<p><a href="{html.escape(restart)}">Start again</a> in a minute.</p>'
+        if restart
+        else "<p>In a minute, start again from where you began.</p>"
+    )
+    return html_page("Sign in to Loom", f"<h2>Sign-in is unavailable right now</h2>{again}", 503)
+
+
+def _restart_url(pending: dict[str, Any]) -> str:
+    """Where the sign-in `pending` carries began, to begin it once more."""
+    if pending["kind"] == "dashboard":
+        return "/oauth/sso"
+    if pending["kind"] == "device":
+        return "/oauth/device?" + urlencode({"user_code": pending["user_code"]})
+    return "/oauth/authorize?" + urlencode(
+        {
+            "response_type": "code",
+            "client_id": pending["client_id"],
+            "redirect_uri": pending["redirect_uri"],
+            "code_challenge": pending["code_challenge"],
+            "code_challenge_method": "S256",
+            "state": pending["mcp_state"],
+        }
     )
 
 
@@ -679,7 +700,7 @@ async def _finish_oidc_login(request: Request) -> Response:
         first = await store.use_once(f"callback:{state}", pending["exp"])
     except claims.Busy:  # Keeper cannot answer right now
         await oidc.revoke(upstream)
-        return _sign_in_unavailable()
+        return _sign_in_unavailable(_restart_url(pending))
     if not first:
         await oidc.revoke(upstream)
         return _expired_sign_in()
@@ -695,7 +716,7 @@ async def _finish_oidc_login(request: Request) -> Response:
         except SignInUnavailable as e:
             log.warning("oidc callback: the account could not be read: %s", e)
             await oidc.revoke(upstream)
-            return _sign_in_unavailable()
+            return _sign_in_unavailable(_restart_url(pending))
     if resolved is None:
         reason = "no loom account for this email" if email else "verified email required"
         await _signin_denied(str(id_claims.get("email") or ""), reason)
@@ -740,7 +761,7 @@ async def _connect_consent(
         from server.auth import oidc
 
         await oidc.revoke(upstream_refresh)
-        return _sign_in_unavailable()
+        return _sign_in_unavailable(_restart_url(pending))
     subject, org = identity[0], identity[1]
     destination = _destination(pending["redirect_uri"])
     return html_page(
@@ -760,14 +781,31 @@ authorization to <b>{html.escape(destination)}</b>.</p>
 @connect_router.post("/oauth/authorize/approve")
 async def connect_approve(request: Request) -> Response:
     f = await form_body(request)
-    try:
-        pending = await store.take_pending(token_id(f.get("ticket", "")))
-    except claims.Busy:  # Keeper cannot answer right now
-        return _sign_in_unavailable()
+    ticket = token_id(f.get("ticket", ""))
+    expired = html_page("Connect Loom", "<h2>This approval has expired</h2>", 400)
+    pending = await store.pending(ticket)
     if pending is None or pending.get("kind") != "connect":
-        return html_page("Connect Loom", "<h2>This approval has expired</h2>", 400)
+        return expired
     subject, org, namespaces, roles = pending["identity"]
     approved = f.get("decision") == "approve"
+    client = {
+        "client_id": pending["client_id"],
+        "redirect_uri": pending["redirect_uri"],
+        "code_challenge": pending["code_challenge"],
+    }
+    if approved:
+        # Minted before the ticket is spent, so a failed write leaves the
+        # approval to submit again; of two submits only the one that spends
+        # the ticket answers with its code.
+        answer = await _redirect_with_code(
+            client,
+            (subject, org, namespaces, roles),
+            upstream_refresh=unseal(UPSTREAM_PURPOSE, pending["upstream_refresh"]),
+            state=pending["mcp_state"],
+            since=pending["since"],
+        )
+    if await store.take_pending(ticket) is None:
+        return expired  # the other submit answered
     await audit.emit(
         "auth.connect_approved" if approved else "auth.connect_denied",
         org=org,
@@ -775,25 +813,12 @@ async def connect_approve(request: Request) -> Response:
         actor=subject,
         subject={"client_id": pending["client_id"], "redirect_uri": pending["redirect_uri"]},
     )
-    client = {
-        "client_id": pending["client_id"],
-        "redirect_uri": pending["redirect_uri"],
-        "code_challenge": pending["code_challenge"],
-    }
-    if not approved:
-        from server.auth import oidc
+    if approved:
+        return answer
+    from server.auth import oidc
 
-        await oidc.revoke(unseal(UPSTREAM_PURPOSE, pending["upstream_refresh"]))
-        return _back_to_client(
-            client["redirect_uri"], {"error": "access_denied"}, pending["mcp_state"]
-        )
-    return await _redirect_with_code(
-        client,
-        (subject, org, namespaces, roles),
-        upstream_refresh=unseal(UPSTREAM_PURPOSE, pending["upstream_refresh"]),
-        state=pending["mcp_state"],
-        since=pending["since"],
-    )
+    await oidc.revoke(unseal(UPSTREAM_PURPOSE, pending["upstream_refresh"]))
+    return _back_to_client(client["redirect_uri"], {"error": "access_denied"}, pending["mcp_state"])
 
 
 async def _dashboard_signed_in(identity: tuple[str, str, list[str], list[str]]) -> Response:
@@ -977,6 +1002,9 @@ async def _authorization_code_grant(f: dict[str, str]) -> dict[str, Any]:
         return await issue_tokens(grant, client_id, since=grant["since"])
     except OAuthError:
         raise
+    except asyncio.CancelledError:  # the client went away: the code is theirs again
+        await asyncio.shield(store.save_code(code, grant))
+        raise
     except Exception as e:  # Loom's own failure: unspend the code so the retry is no replay
         log.warning("oauth: issuing tokens for a code failed: %s", e)
         await store.save_code(code, grant)
@@ -1025,6 +1053,9 @@ async def _refresh_token_grant(f: dict[str, str]) -> dict[str, Any]:
         if e.status_code != 503:  # refused for good: no token replaces this one
             await store.retire_refresh(grant)
         raise  # an answer: refused, or retry later with the token put back
+    except asyncio.CancelledError:  # the client went away: the token is theirs again
+        await asyncio.shield(store.save_refresh(refresh_token, grant))
+        raise
     except Exception as e:  # Loom's own failure: unspend the token so the retry is no replay
         log.warning("oauth: refreshing a session failed: %s", e)
         await store.save_refresh(refresh_token, grant)  # with the IdP token it may have rotated

@@ -1148,3 +1148,25 @@ def test_a_keeper_outage_at_the_first_step_is_a_retryable_503(_world, monkeypatc
     monkeypatch.setattr(_world["store"], "save_device", down)
     r = _client().post("/oauth/device_authorization", data={"client_id": device.DEVICE_CLIENT_ID})
     assert r.status_code == 503 and r.json()["error"] == "temporarily_unavailable"
+
+
+def test_an_approval_whose_code_could_not_be_saved_can_be_submitted_again(
+    sso, _world, monkeypatch
+) -> None:
+    from server.auth import claims
+
+    c = _client()
+    ticket = _ticket(_connect_through_sso(c).text)
+    store = _world["store"]
+    real = store.save_code
+
+    async def flaky(code: str, g: dict[str, Any]) -> None:
+        monkeypatch.setattr(store, "save_code", real)
+        raise claims.Busy("Keeper away")
+
+    monkeypatch.setattr(store, "save_code", flaky)
+    approve = {"ticket": ticket, "decision": "approve"}
+    first = c.post("/oauth/authorize/approve", data=approve, follow_redirects=False)
+    assert first.status_code == 503
+    again = c.post("/oauth/authorize/approve", data=approve, follow_redirects=False)
+    assert again.status_code == 302 and "code=" in again.headers["location"]
