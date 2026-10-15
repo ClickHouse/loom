@@ -26,7 +26,8 @@ def test_a_release_keeps_the_pair_the_account_tied(
     ("existing", "owner", "moved"),
     [
         ({"owner_email": "bob", "contact_email": "bob@x.io"}, "eve", True),
-        ({"owner_email": "bob", "contact_email": "bob@x.io"}, "Bob", False),
+        ({"owner_email": "bob", "contact_email": "bob@x.io"}, "bob", False),
+        ({"owner_email": "bob", "contact_email": "bob@x.io"}, "Bob", True),  # revocations are exact
         # the handle is who the login signs in as: the account's email is another owner
         ({"owner_email": "bob", "contact_email": "bob@x.io"}, "bob@x.io", True),
         # an agent account: no email, its claim code is its password

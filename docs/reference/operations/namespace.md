@@ -266,7 +266,7 @@ Create a shared memory workspace within an org; caller becomes admin.
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | Recommend kebab-case, e.g. eng-tooling |
-| `owner_email` | `str` | required | not EmailStr — local-only dev may use non-email strings |
+| `owner_email` | `str` | required | The namespace's owner. |
 | `description` | `str \| None` | `None` | Every setting left None (or omitted) keeps the stored value, and a fresh row takes the default named here, so a re-register that sends only what it changes resets nothing. |
 | `kind` | `Literal['memory', 'code', 'bench'] \| None` | `None` | None = keep the existing row's kind (a fresh row is classified by name: `bench` under a bench prefix, else `memory`), so a settings-only re-register never demotes a code namespace to memory. |
 | `tags` | `list[str]` | *(computed)* | Labels on the namespace; the list is replaced whole, so a register that omits it clears the stored tags. |

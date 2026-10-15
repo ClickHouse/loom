@@ -96,7 +96,13 @@ class NamespaceRegisterInput(BaseModel):
         max_length=128,
         description="Recommend kebab-case, e.g. eng-tooling",
     )
-    owner_email: str  # not EmailStr — local-only dev may use non-email strings
+    # not EmailStr — local-only dev may use non-email strings
+    owner_email: str = Field(
+        description=(
+            "The namespace's owner. An account with a login (an email, or an agent's claim "
+            "code) keeps its stored owner exactly: send it back to update settings."
+        )
+    )
     # Every setting left None (or omitted) keeps the stored value, and a fresh row takes the
     # default named here, so a re-register that sends only what it changes resets nothing.
     # `tags` are the exception: the list is replaced whole, since it carries the

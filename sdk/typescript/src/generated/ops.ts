@@ -6255,6 +6255,7 @@ export interface NamespaceRegisterInput {
   org: string;
   /** Recommend kebab-case, e.g. eng-tooling */
   namespace: string;
+  /** The namespace's owner. An account with a login (an email, or an agent's claim code) keeps its stored owner exactly: send it back to update settings. */
   owner_email: string;
   description?: string | null;
   kind?: "memory" | "code" | "bench" | null;

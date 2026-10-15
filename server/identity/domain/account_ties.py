@@ -29,4 +29,5 @@ def owner_moved(existing: dict[str, Any], owner: str) -> bool:
     password such as an agent's claim code) changes who the login signs in as."""
     if not (existing.get("contact_email") or existing.get("password_hash")):
         return False
-    return owner.lower() != (existing.get("owner_email") or "").lower()
+    # Exact: the owner is the login's token subject, and revocations match it exactly.
+    return owner != (existing.get("owner_email") or "")

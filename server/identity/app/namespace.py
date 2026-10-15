@@ -335,9 +335,10 @@ async def handle_namespace_register(
             # The account's login signs in as its owner, and the claim cap ties the
             # owner to the email: neither may move to someone else here.
             raise PreconditionFailedError(
-                f"{input.namespace!r} is an account with a login; its owner stays "
-                f"{existing.get('owner_email')!r}. Release it (loom claim-release) to hand "
-                "it on."
+                f"{input.namespace!r} is an account with a login, owned by "
+                f"{existing.get('owner_email')!r}: send that owner_email to update its "
+                "settings. To hand it to someone else, release it (loom claim-release), "
+                "which ends its grants and its login."
             )
 
     now = naive_utc_now_seconds()

@@ -139,8 +139,8 @@ async def test_the_handler_writes_the_whole_stored_row_forward(
     assert out.visibility == "public", "the answer names the stored visibility"
 
 
-def test_the_same_owner_keeps_the_login_whatever_its_case() -> None:
-    existing = _existing(owner_email="O@X", contact_email="o@x.io", password_hash="h")
+def test_the_same_owner_keeps_the_login() -> None:
+    existing = _existing(owner_email="o@x", contact_email="o@x.io", password_hash="h")
     row = _row(existing)
     assert (row["contact_email"], row["password_hash"]) == ("o@x.io", "h")
 
@@ -151,6 +151,8 @@ def test_the_same_owner_keeps_the_login_whatever_its_case() -> None:
         ({"contact_email": "bob@x.io", "password_hash": "h"}, "eve"),
         ({"contact_email": "bob@x.io", "password_hash": "h"}, "bob@x.io"),  # its own email
         ({"contact_email": "", "password_hash": "claim"}, "eve"),  # an agent's claim code
+        # case too: the owner is the token subject, and revocations match it exactly
+        ({"contact_email": "bob@x.io", "password_hash": "h"}, "BOB"),
     ],
 )
 def test_an_account_with_a_login_does_not_change_owner(
@@ -178,6 +180,6 @@ def test_an_account_with_a_login_does_not_change_owner(
     monkeypatch.setattr(h, "get_client", lambda: _CH())
     monkeypatch.setattr(h, "resolve_subject", lambda: "bob")
     inp = NamespaceRegisterInput(org="o", namespace="n", owner_email=owner)
-    with pytest.raises(PreconditionFailedError, match="owner stays 'bob'"):
+    with pytest.raises(PreconditionFailedError, match="owned by 'bob': send that owner_email"):
         asyncio.run(h.handle_namespace_register(inp))
     assert written == []
