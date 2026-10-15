@@ -1,4 +1,4 @@
-"""Sign-in transitions against the real store: of several requests spending one
+"""Sign-in state against the real store: of several requests spending one
 credential or moving one device grant at the same moment, exactly one goes
 ahead. Needs a ClickHouse with a Keeper (loom.oauth_claims, migration 029)."""
 
@@ -80,7 +80,25 @@ async def test_a_refresh_token_presented_five_times_at_once_is_spent_once(store:
     results = await _all(*(store.take_refresh(token, "loom-cli") for _ in range(5)))
     won = [r for r in results if isinstance(r, dict)]
     assert len(won) == 1, results
-    assert all(isinstance(r, CodeReplayed | claims.Busy) for r in results if r not in won)
+    assert all(isinstance(r, CodeReplayed) for r in results if r not in won), results
+
+
+async def test_a_rotation_makes_only_the_new_token_current(store: Any) -> None:
+    old, new = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
+    await store.save_refresh(old, _grant("loom-cli"))
+    grant = await store.take_refresh(old, "loom-cli")
+    await store.save_refresh(new, grant)
+    assert await store.take_refresh(new, "loom-cli") is not None
+    with pytest.raises(CodeReplayed):
+        await store.take_refresh(old, "loom-cli")
+
+
+async def test_a_refresh_token_put_back_after_a_failure_works_again(store: Any) -> None:
+    token = secrets.token_urlsafe(32)
+    await store.save_refresh(token, _grant("loom-cli"))
+    grant = await store.take_refresh(token, "loom-cli")
+    await store.save_refresh(token, grant)  # Loom failed after spending it
+    assert await store.take_refresh(token, "loom-cli") is not None
 
 
 async def test_a_code_presented_five_times_at_once_is_spent_once(store: Any) -> None:
@@ -91,12 +109,24 @@ async def test_a_code_presented_five_times_at_once_is_spent_once(store: Any) -> 
 
 
 async def test_an_approved_device_code_is_redeemed_once(store: Any) -> None:
-    d, _ = _device("approved")
+    d, _ = _device()
     code = secrets.token_urlsafe(32)
     d["id"] = token_id(code)
     await store.save_device(d)
+    approved = await store.device(d["id"])
+    await store.save_device(approved | {"status": "approved", "family": uuid.uuid4().hex})
     results = await _all(*(store.take_device(code) for _ in range(5)))
     assert len([r for r in results if isinstance(r, dict)]) == 1, results
+
+
+async def test_a_swap_from_a_value_already_replaced_loses(store: Any) -> None:
+    from server.core.ch import get_client
+
+    ch, key = get_client(), f"test:{uuid.uuid4().hex}"
+    assert await claims.swap(ch, key, None, "v1") == "v1"
+    first, second = await _all(claims.swap(ch, key, "v1", "a"), claims.swap(ch, key, "v1", "b"))
+    assert sorted([first, second]) in (["a", "a"], ["b", "b"])  # both see the one winner
+    assert await claims.swap(ch, key, "v1", "late") in ("a", "b")
 
 
 async def test_two_people_signing_in_on_one_code_at_once_end_it_for_both(store: Any) -> None:
@@ -109,9 +139,9 @@ async def test_two_people_signing_in_on_one_code_at_once_end_it_for_both(store: 
     )
     codes = sorted(p.status_code for p in pages)
     # One signs in first; the other then finds it taken, and the grant ends.
-    assert codes in ([200, 409], [409, 409]), codes
-    final = await store.device(d["id"])
-    assert final is not None and final["status"] == "denied"
+    assert codes == [200, 409], codes
+    found = await store._device(d["id"])
+    assert found is not None and found[0]["status"] == "denied"
 
 
 async def test_one_approval_ticket_approves_once(store: Any) -> None:
@@ -141,172 +171,41 @@ async def test_one_approval_ticket_approves_once(store: Any) -> None:
     assert len(approved) == 1, [a.status_code for a in answers]
 
 
-async def test_a_holder_taken_over_cannot_release_the_new_holders_claim(
-    store: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from server.core.ch import get_client
-
-    ch = get_client()
-    key = f"test:{uuid.uuid4().hex}"
-    held = "SELECT holder FROM loom.oauth_claims WHERE claim_key = {k:String}"
-    monkeypatch.setattr(claims, "_STALE_S", 0)  # A stalls past it at once
-    a_inside, b_inside, a_done = asyncio.Event(), asyncio.Event(), asyncio.Event()
-
-    async def a() -> None:
-        async with claims.holding(ch, key):
-            a_inside.set()
-            await b_inside.wait()  # still running while B has taken over
-        a_done.set()
-
-    async def b() -> str:
-        await a_inside.wait()
-        await asyncio.sleep(0.05)
-        async with claims.holding(ch, key):
-            b_inside.set()
-            await a_done.wait()  # A has left and run its release
-            row = await ch.query_one(held, params={"k": key})
-            return str(row["holder"]) if row else ""
-
-    _, b_holder = await asyncio.gather(a(), b())
-    assert b_holder, "A's release dropped the claim B held"
-    assert await ch.query_one(held, params={"k": key}) is None  # B dropped its own
-
-
-async def test_of_many_waiters_on_a_dead_holders_claim_one_takes_it_over(store: Any) -> None:
-    from server.core.ch import get_client
-
-    ch = get_client()
-    key = f"test:{uuid.uuid4().hex}"
-    await ch.execute(
-        "INSERT INTO loom.oauth_claims (claim_key, holder, claimed_at) "
-        "VALUES ({k:String}, 'dead', now64(3) - INTERVAL 1 HOUR)",
-        params={"k": key},
-    )
-    inside, most = 0, 0
-
-    async def wait_and_enter() -> None:
-        nonlocal inside, most
-        async with claims.holding(ch, key):
-            inside += 1
-            most = max(most, inside)
-            await asyncio.sleep(0.05)
-            inside -= 1
-
-    results = await _all(*(wait_and_enter() for _ in range(6)))
-    assert most == 1
-    assert any(r is None for r in results), results  # someone got in
-
-
-async def test_a_claim_insert_retried_after_a_lost_answer_is_still_ours(store: Any) -> None:
-    from server.core.ch import get_client
-
-    ch = get_client()
-    key = f"test:{uuid.uuid4().hex}"
-    assert await claims._claim(ch, key, "me")
-    assert await claims._claim(ch, key, "me")  # the retry finds its own key
-    assert not await claims._claim(ch, key, "someone-else")
-    await ch.execute(
-        "ALTER TABLE loom.oauth_claims DELETE WHERE claim_key = {k:String}", params={"k": key}
-    )
-
-
-async def test_a_holder_past_its_time_writes_nothing(
-    store: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from server.core.ch import get_client
-
-    ch = get_client()
-    key = f"test:{uuid.uuid4().hex}"
-    monkeypatch.setattr(claims, "_HOLD_S", 0.1)
-    with pytest.raises(claims.Busy):
-        async with claims.holding(ch, key):
-            await asyncio.sleep(0.2)
-            claims.before_write()
-    held = "SELECT holder FROM loom.oauth_claims WHERE claim_key = {k:String}"
-    assert await ch.query_one(held, params={"k": key}) is None
-
-
-async def test_a_slow_takeover_cannot_write_once_the_next_waiter_may_take_it(
-    store: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from server.core.ch import get_client
-
-    ch = get_client()
-    key = f"test:{uuid.uuid4().hex}"
-    monkeypatch.setattr(claims, "_STALE_S", 1)  # the real bounds, scaled down
-    monkeypatch.setattr(claims, "_HOLD_S", 0.67)
-    await ch.execute(
-        "INSERT INTO loom.oauth_claims (claim_key, holder, claimed_at) "
-        "VALUES ({k:String}, 'dead', now64(3) - INTERVAL 1 HOUR)",
-        params={"k": key},
-    )
-    real = type(ch).query_one
-    reads = 0
-
-    async def query_one(self: Any, sql: str, *a: Any, **k: Any) -> Any:
-        nonlocal reads
-        if "SELECT holder FROM loom.oauth_claims" in sql:
-            reads += 1
-            if reads == 2:  # the first waiter confirms its takeover slowly
-                await asyncio.sleep(0.8)
-        return await real(self, sql, *a, **k)
-
-    monkeypatch.setattr(type(ch), "query_one", query_one)
-
-    async def write_after(delay: float) -> str:
-        await asyncio.sleep(delay)
-        async with claims.holding(ch, key):
-            await asyncio.sleep(0.3)
-            claims.before_write()
-            return "wrote"
-
-    first, second = await _all(write_after(0), write_after(1.2))
-    assert isinstance(first, claims.Busy) and second == "wrote"
-
-
-async def test_a_spend_that_fails_but_lands_is_put_back(
-    store: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from server.core.ch import get_client
-
-    ch = get_client()
-    token = secrets.token_urlsafe(32)
-    await store.save_refresh(token, _grant("loom-cli"))
-    real = type(ch).insert
-    failed = False
-
-    async def insert(self: Any, table: str, rows: list[dict[str, Any]], *a: Any, **k: Any) -> Any:
-        nonlocal failed
-        result = await real(self, table, rows, *a, **k)
-        if not failed and rows[0].get("consumed") == 1:
-            failed = True  # the write landed, but its answer was lost
-            raise TimeoutError("ClickHouse write statement exceeded 5 s")
-        return result
-
-    monkeypatch.setattr(type(ch), "insert", insert)
-    with pytest.raises(TimeoutError):
-        await store.take_refresh(token, "loom-cli")
-    assert await store.take_refresh(token, "loom-cli") is not None  # the retry, not a replay
-
-
-async def test_polling_a_pending_device_grant_takes_no_claim(
+async def test_polling_a_pending_device_grant_writes_nothing(
     store: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     d, _ = _device()
     code = secrets.token_urlsafe(32)
     d["id"] = token_id(code)
     await store.save_device(d)
-    claimed: list[str] = []
-    real = claims.holding
+    swaps: list[str] = []
+    real = store._swap
 
-    def holding(ch: Any, key: str) -> Any:
-        claimed.append(key)
-        return real(ch, key)
+    async def swap(key: str, old: str | None, new: str) -> str | None:
+        swaps.append(key)
+        return await real(key, old, new)
 
-    monkeypatch.setattr(claims, "holding", holding)
+    monkeypatch.setattr(store, "_swap", swap)
     polled = await store.take_device(code)
     assert polled is not None and polled["status"] == "pending"
-    assert claimed == []
+    assert swaps == []
+
+
+async def test_without_a_keeper_sign_in_answers_busy(
+    store: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(claims, "_atomic", False)
+    with pytest.raises(claims.Busy):
+        await store.save_code(secrets.token_urlsafe(32), _grant("loom-mcp"))
+
+
+async def test_an_owed_revocation_counts_in_every_process(store: Any) -> None:
+    from server.auth import revocation
+
+    family = uuid.uuid4().hex
+    await store.owe_revocation(family, "logout")
+    await revocation.refresh()  # what every process loads, at boot and on its cadence
+    assert revocation.is_revoked(family)
 
 
 async def test_a_session_another_process_ended_reads_as_ended(
@@ -319,3 +218,24 @@ async def test_a_session_another_process_ended_reads_as_ended(
     await revocation.revoke(family, reason="logout", revoked_by="claims-it")
     monkeypatch.setattr(revocation, "_revoked_jtis", frozenset())  # this process lags
     assert await revocation.revoked_outright(family)
+
+
+async def test_the_sweep_worker_drops_keys_untouched_for_a_month(store: Any) -> None:
+    import importlib
+
+    from server.core.ch import get_client
+    from server.workers.registry import _WORKERS
+
+    row = next(w for w in _WORKERS if w.name == "oauth_claims_sweep")
+    sweep = getattr(importlib.import_module(row.module), row.pass_attr)
+
+    ch, old, fresh = get_client(), f"test:{uuid.uuid4().hex}", f"test:{uuid.uuid4().hex}"
+    await ch.execute(
+        "INSERT INTO loom.oauth_claims (claim_key, value, updated_at) "
+        "VALUES ({k:String}, 'x', now64(3) - INTERVAL 40 DAY)",
+        params={"k": old},
+    )
+    await claims.swap(ch, fresh, None, "y")
+    await sweep()
+    assert await claims.get(ch, old) is None
+    assert await claims.get(ch, fresh) == "y"

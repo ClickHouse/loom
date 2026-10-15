@@ -470,6 +470,20 @@
    }
   },
   {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 3600,
+   "max_pass_seconds": null,
+   "name": "oauth_claims_sweep",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.auth.claims:sweep"
+   }
+  },
+  {
    "deadline_seconds()": 240.0,
    "due_scope": null,
    "first_pass_due": null,
@@ -902,6 +916,20 @@
    "owned_tables": [],
    "pass_callable": {
     "id": "server.tasks.workers.lease_sweep:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 3600,
+   "max_pass_seconds": null,
+   "name": "oauth_claims_sweep",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.auth.claims:sweep"
    }
   },
   {
@@ -1423,6 +1451,20 @@
    "owned_tables": [],
    "pass_callable": {
     "id": "server.tasks.workers.lease_sweep:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 3600,
+   "max_pass_seconds": null,
+   "name": "oauth_claims_sweep",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.auth.claims:sweep"
    }
   },
   {

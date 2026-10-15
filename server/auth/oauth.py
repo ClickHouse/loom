@@ -504,6 +504,14 @@ def _expired_sign_in() -> Response:
     )
 
 
+def _sign_in_unavailable() -> Response:
+    return html_page(
+        "Sign in to Loom",
+        "<h2>Sign-in is unavailable right now</h2><p>Try again in a minute.</p>",
+        503,
+    )
+
+
 @router.get("/oauth/callback")
 async def oidc_callback(request: Request) -> Response:
     response = await _finish_oidc_login(request)
@@ -525,8 +533,8 @@ async def _finish_oidc_login(request: Request) -> Response:
         return _expired_sign_in()
     try:
         pending = await store.take_pending(state)  # single-use
-    except claims.Busy:  # the same callback twice at once: the other one finishes it
-        return _expired_sign_in()
+    except claims.Busy:  # Keeper cannot answer right now
+        return _sign_in_unavailable()
     if pending is None:
         return _expired_sign_in()
     kind = pending["kind"]
@@ -624,8 +632,8 @@ async def connect_approve(request: Request) -> Response:
     f = await form_body(request)
     try:
         pending = await store.take_pending(token_id(f.get("ticket", "")))
-    except claims.Busy:  # a double click: the first one decides
-        pending = None
+    except claims.Busy:  # Keeper cannot answer right now
+        return _sign_in_unavailable()
     if pending is None or pending.get("kind") != "connect":
         return html_page("Connect Loom", "<h2>This approval has expired</h2>", 400)
     subject, org, namespaces, roles = pending["identity"]
@@ -735,6 +743,7 @@ async def issue_tokens(grant: Grant | Device, client_id: str) -> dict[str, Any]:
             "exp": int(time.time()) + _REFRESH_TTL,
             "family": grant["family"],
             "upstream_refresh": grant["upstream_refresh"],
+            "held": grant.get("held", {}),  # a rotation swaps from the token it spent
         },
     )
     body["refresh_token"] = refresh
@@ -971,7 +980,7 @@ async def token(request: Request) -> JSONResponse:
     try:
         body = await grants[grant_type](f)
     except claims.Busy:
-        raise _unavailable() from None  # the same credential is being spent right now
+        raise _unavailable() from None  # Keeper cannot answer right now: retry
     return JSONResponse(body, headers={"Cache-Control": "no-store"})
 
 

@@ -103,7 +103,10 @@ async def revoked_outright(jti: str) -> bool:
         """
         SELECT 1 FROM loom.revoked_tokens FINAL
         WHERE jti = {j:String} AND expires_at > now() AND issued_before IS NULL
-        LIMIT 1
+        UNION ALL
+        SELECT 1 FROM loom.oauth_state FINAL
+        WHERE record_type = 'revocation_owed' AND id = {j:String}
+          AND expires_at > toUInt32(now())
         """,
         params={"j": jti},
     )
@@ -117,10 +120,16 @@ async def refresh() -> None:
     global _revoked_jtis, _revoked_before, _loaded, _loaded_at
     try:
         ch = get_client()
+        # A session whose revocation could not be written is owed one
+        # (oauth_store.owe_revocation): it counts as revoked from that row,
+        # in every process and after any restart, until the revocation lands.
         rows = await ch.query_all(
             """
             SELECT jti, issued_before FROM loom.revoked_tokens FINAL
             WHERE expires_at > now()
+            UNION ALL
+            SELECT id AS jti, NULL AS issued_before FROM loom.oauth_state FINAL
+            WHERE record_type = 'revocation_owed' AND expires_at > toUInt32(now())
             """,
         )
         full: set[str] = set()

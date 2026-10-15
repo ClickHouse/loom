@@ -1,34 +1,34 @@
-"""Where OAuth state lives: registered clients, codes, refresh tokens, device
-grants and in-flight IdP sign-ins, in `loom.oauth_state` (ClickHouse).
+"""Where OAuth state lives.
 
-Codes, refresh tokens and device codes are bearer secrets, so rows are keyed by
-`token_id(token)` (sha256 hex), never the token: a row read out of the table
-(a backup, a SELECT grant) is not a working credential. Device user codes are
-keyed with the server secret by device.py; the identity provider's refresh
-token has to be sent back to it, so it is sealed (secrets_at_rest). Expiry is
-a Unix epoch `UInt32`, which round-trips without the naive-DateTime timezone
-shift.
+What a sign-in spends or moves once is kept in Keeper (claims.py), changed only
+by compare-and-set: a code, an identity provider round trip in flight
+(`pending`), a device grant, and which refresh token is each session's current
+one (`family:<id>`). Of two requests spending the same credential exactly one
+wins. The rest is in `loom.oauth_state` (ClickHouse): registered clients,
+refresh tokens' grants (written before the token is handed out, read with
+sequential consistency) and owed revocations.
 
-Every state change is a new ReplacingMergeTree version read back with FINAL.
-A change that depends on the current state (spending a credential, a step of
-a device grant) runs inside `transition(key)`, which claims the grant in
-Keeper (claims.py) so two requests cannot both pass the same check.
+Codes, refresh tokens and device codes are bearer secrets, so they are keyed by
+`token_id(token)` (sha256 hex), never the token: a key or row read out of
+storage is not a working credential. Device user codes are keyed with the
+server secret by device.py; the identity provider's refresh token has to be
+sent back to it, so it is sealed (secrets_at_rest). Expiry is a Unix epoch.
+
+A record read from Keeper carries `held`, the values this request read or
+wrote by key, so its next write swaps from them: a put-back after a failure,
+or the next step of a device grant.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-import logging
 import time
-from collections.abc import AsyncIterator, Callable
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from typing import Any, Literal, Protocol, TypedDict
+from collections.abc import Callable
+from typing import Any, Literal, NotRequired, Protocol, TypedDict, cast
 
 from server.auth import claims
 from server.core.secrets_at_rest import seal, unseal
-
-log = logging.getLogger(__name__)
 
 _T = "loom.oauth_state"
 UPSTREAM_PURPOSE = "oidc refresh token"
@@ -51,6 +51,7 @@ class Grant(TypedDict):
     exp: int
     family: str
     upstream_refresh: str
+    held: NotRequired[dict[str, str]]
 
 
 class Device(TypedDict):
@@ -70,6 +71,7 @@ class Device(TypedDict):
     status: DeviceStatus
     address: str
     ticket: str
+    held: NotRequired[dict[str, str]]
 
 
 class CodeReplayed(Exception):
@@ -86,9 +88,10 @@ def token_id(token: str) -> str:
 
 
 class OAuthStore(Protocol):
-    """What oauth.py and device.py need from the store (tests use an
-    in-memory one). take_* spend a credential: None when it is unknown,
-    expired or another client's (left unspent), CodeReplayed when spent."""
+    """What oauth.py and device.py need from the store. take_* spend a
+    credential: None when it is unknown, expired or another client's (left
+    unspent), CodeReplayed when it was spent. A save that finds the record
+    changed since this request read it raises claims.Changed."""
 
     async def save_client(self, client_id: str, redirect_uris: list[str], name: str) -> None: ...
     async def get_client(self, client_id: str) -> dict[str, Any] | None: ...
@@ -106,31 +109,58 @@ class OAuthStore(Protocol):
     async def take_device(self, device_code: str) -> Device | None: ...
     async def owe_revocation(self, family: str, reason: str) -> None: ...
     async def revocation_owed(self, family: str) -> bool: ...
-    def transition(self, key: str) -> AbstractAsyncContextManager[None]: ...
 
 
-def _grant(row: dict[str, Any]) -> Grant:
+_GRANT_FIELDS = (
+    "client_id",
+    "redirect_uri",
+    "code_challenge",
+    "subject",
+    "org",
+    "namespaces",
+    "roles",
+    "exp",
+    "family",
+)
+_DEVICE_FIELDS = (
+    "id",
+    "client_id",
+    "subject",
+    "org",
+    "namespaces",
+    "roles",
+    "exp",
+    "family",
+    "user_code",
+    "status",
+    "address",
+    "ticket",
+)
+
+
+def _record(g: Grant | Device, fields: tuple[str, ...], spent: bool) -> dict[str, Any]:
+    """A grant as kept in Keeper: its IdP token sealed, and a nonce so no two
+    versions are equal (claims.swap relies on it)."""
+    record: dict[str, Any] = {f: g[f] for f in fields}  # type: ignore[literal-required]
+    record["upstream_refresh"] = seal(UPSTREAM_PURPOSE, g["upstream_refresh"])
+    return record | {"spent": spent, "nonce": claims.nonce()}
+
+
+def _grant(r: dict[str, Any]) -> Grant:
+    g = {f: r[f] for f in _GRANT_FIELDS}
+    return cast(Grant, g | {"upstream_refresh": unseal(UPSTREAM_PURPOSE, r["upstream_refresh"])})
+
+
+def _device(r: dict[str, Any]) -> Device:
+    d = {f: r[f] for f in _DEVICE_FIELDS}
+    return cast(Device, d | {"upstream_refresh": unseal(UPSTREAM_PURPOSE, r["upstream_refresh"])})
+
+
+def _refresh_row(rid: str, g: Grant) -> dict[str, Any]:
     return {
-        "client_id": row["client_id"],
-        "redirect_uri": row["redirect_uri"],
-        "code_challenge": row["code_challenge"],
-        "subject": row["subject"],
-        "org": row["org"],
-        "namespaces": list(row["namespaces"]),
-        "roles": list(row["roles"]),
-        "exp": int(row["expires_at"]),
-        "family": row["family"],
-        "upstream_refresh": unseal(UPSTREAM_PURPOSE, row["upstream_refresh"]),
-    }
-
-
-def _grant_row(rtype: str, rid: str, g: Grant, consumed: int) -> dict[str, Any]:
-    return {
-        "record_type": rtype,
+        "record_type": "refresh",
         "id": rid,
         "client_id": g["client_id"],
-        "redirect_uri": g["redirect_uri"],
-        "code_challenge": g["code_challenge"],
         "subject": g["subject"],
         "org": g["org"],
         "namespaces": list(g["namespaces"]),
@@ -138,72 +168,40 @@ def _grant_row(rtype: str, rid: str, g: Grant, consumed: int) -> dict[str, Any]:
         "expires_at": int(g["exp"]),
         "family": g["family"],
         "upstream_refresh": seal(UPSTREAM_PURPOSE, g["upstream_refresh"]),
-        "consumed": consumed,
         "version": time.time_ns(),
     }
 
 
-def _device(row: dict[str, Any]) -> Device:
-    return {
-        "id": row["id"],
-        "client_id": row["client_id"],
-        "subject": row["subject"],
-        "org": row["org"],
-        "namespaces": list(row["namespaces"]),
-        "roles": list(row["roles"]),
-        "exp": int(row["expires_at"]),
-        "family": row["family"],
-        "upstream_refresh": unseal(UPSTREAM_PURPOSE, row["upstream_refresh"]),
-        "user_code": row["user_code"],
-        "status": row["status"],
-        "address": row["address"],
-        "ticket": row["ticket"],
-    }
-
-
-def _device_row(d: Device, consumed: int) -> dict[str, Any]:
-    return {
-        "record_type": "device",
-        "id": d["id"],
-        "client_id": d["client_id"],
-        "subject": d["subject"],
-        "org": d["org"],
-        "namespaces": list(d["namespaces"]),
-        "roles": list(d["roles"]),
-        "expires_at": int(d["exp"]),
-        "family": d["family"],
-        "upstream_refresh": seal(UPSTREAM_PURPOSE, d["upstream_refresh"]),
-        "user_code": d["user_code"],
-        "status": d["status"],
-        "address": d["address"],
-        "ticket": d["ticket"],
-        "consumed": consumed,
-        "version": time.time_ns(),
-    }
-
-
-_GRANT_COLUMNS = (
-    "client_id, redirect_uri, code_challenge, subject, org, namespaces, roles, "
-    "expires_at, consumed, family, upstream_refresh"
-)
-_DEVICE_COLUMNS = (
-    "id, client_id, subject, org, namespaces, roles, expires_at, family, upstream_refresh, "
-    "user_code, status, address, ticket, consumed"
-)
+def _held(g: Grant | Device, key: str) -> str | None:
+    return g.get("held", {}).get(key)
 
 
 class ClickHouseStore:
-    """OAuth state in loom.oauth_state: durable across restarts and replicas."""
+    """OAuth state in Keeper and loom.oauth_state: durable across restarts
+    and replicas."""
 
     def _ch(self) -> Any:
         from server.core.ch import get_client
 
         return get_client()
 
-    @asynccontextmanager
-    async def transition(self, key: str) -> AsyncIterator[None]:
-        async with claims.holding(self._ch(), key):
-            yield
+    async def _get(self, key: str) -> str | None:
+        return await claims.get(self._ch(), key)
+
+    async def _swap(self, key: str, old: str | None, new: str) -> str | None:
+        return await claims.swap(self._ch(), key, old, new)
+
+    async def _load(self, key: str) -> tuple[dict[str, Any], str] | None:
+        value = await self._get(key)
+        return (json.loads(value), value) if value is not None else None
+
+    async def _put(self, key: str, old: str | None, record: dict[str, Any]) -> str:
+        """Write `record` over `old` (None: a new key); the value written.
+        Raises claims.Changed when someone else changed it first."""
+        new = json.dumps(record)
+        if await self._swap(key, old, new) != new:
+            raise claims.Changed(key)
+        return new
 
     async def save_client(self, client_id: str, redirect_uris: list[str], name: str) -> None:
         await self._ch().insert(
@@ -230,106 +228,110 @@ class ClickHouseStore:
         return {"redirect_uris": list(row["redirect_uris"]), "client_name": row["client_name"]}
 
     async def save_code(self, code: str, g: Grant) -> None:
-        await self._ch().insert(_T, [_grant_row("code", token_id(code), g, 0)])
-
-    async def save_refresh(self, token: str, g: Grant) -> None:
-        await self._ch().insert(_T, [_grant_row("refresh", token_id(token), g, 0)])
+        """A new code, or a spent one put back."""
+        key = f"code:{token_id(code)}"
+        await self._put(key, _held(g, key), _record(g, _GRANT_FIELDS, spent=False))
 
     async def take_code(
         self, code: str, client_id: str, accept: Callable[[Grant], bool]
     ) -> Grant | None:
         """`accept` (the redirect URI and PKCE verifier match) is checked before
         the spend, like the client: a code presented wrongly is left unspent."""
-        return await self._take("code", token_id(code), client_id, accept)
+        key = f"code:{token_id(code)}"
+        loaded = await self._load(key)
+        if loaded is None or loaded[0]["exp"] < int(time.time()):
+            return None
+        record, value = loaded
+        grant = _grant(record)
+        if grant["client_id"] != client_id or not accept(grant):
+            return None
+        if record["spent"]:
+            raise CodeReplayed(grant)
+        try:
+            spent = await self._put(key, value, {**record, "spent": True, "nonce": claims.nonce()})
+        except claims.Changed:
+            raise CodeReplayed(grant) from None  # another request spent it just now
+        return {**grant, "held": {key: spent}}
+
+    async def save_refresh(self, token: str, g: Grant) -> None:
+        """Make `token` its session's current refresh token: a new session's
+        first, the next in a rotation, or a spent one put back. Its grant is
+        written before the token is handed out."""
+        rid = token_id(token)
+        await self._save_refresh_grant(rid, g)
+        key = f"family:{g['family']}"
+        if await self._swap(key, _held(g, key), rid) != rid:
+            raise claims.Changed(key)
+
+    async def _save_refresh_grant(self, rid: str, g: Grant) -> None:
+        await self._ch().insert(_T, [_refresh_row(rid, g)])
+
+    async def _refresh_grant(self, rid: str) -> Grant | None:
+        from server.core.ch import own_write_reads
+
+        with own_write_reads():  # handed out a moment ago, maybe through another replica
+            row = await self._ch().query_one(
+                f"""SELECT client_id, subject, org, namespaces, roles, expires_at, family,
+                           upstream_refresh
+                    FROM {_T} FINAL
+                    WHERE record_type = 'refresh' AND id = {{id:String}} LIMIT 1""",
+                params={"id": rid},
+            )
+        if not row:
+            return None
+        return {
+            "client_id": row["client_id"],
+            "redirect_uri": "",
+            "code_challenge": "",
+            "subject": row["subject"],
+            "org": row["org"],
+            "namespaces": list(row["namespaces"]),
+            "roles": list(row["roles"]),
+            "exp": int(row["expires_at"]),
+            "family": row["family"],
+            "upstream_refresh": unseal(UPSTREAM_PURPOSE, row["upstream_refresh"]),
+        }
 
     async def take_refresh(self, token: str, client_id: str) -> Grant | None:
-        return await self._take("refresh", token_id(token), client_id)
-
-    async def _take(
-        self,
-        rtype: str,
-        rid: str,
-        client_id: str,
-        accept: Callable[[Grant], bool] = lambda g: True,
-    ) -> Grant | None:
-        async with self.transition(f"{rtype}:{rid}"):
-            row = await self._ch().query_one(
-                f"""SELECT {_GRANT_COLUMNS} FROM {_T} FINAL
-                    WHERE record_type = {{t:String}} AND id = {{id:String}} LIMIT 1""",
-                params={"t": rtype, "id": rid},
-            )
-            if not row or int(row["expires_at"] or 0) < int(time.time()):
-                return None
-            grant = _grant(row)
-            if row["client_id"] != client_id or not accept(grant):
-                return None  # checked before the spend: a wrong presenter can't burn it
-            if row["consumed"]:
-                raise CodeReplayed(grant)
-            await self._spend(
-                _grant_row(rtype, rid, grant, 1), lambda: _grant_row(rtype, rid, grant, 0)
-            )
-            return grant
-
-    async def _spend(self, spent: dict[str, Any], unspent: Callable[[], dict[str, Any]]) -> None:
-        """Write a credential's spent version. A failed write may still land,
-        so the unspent version goes in after it (the later version wins under
-        FINAL), and the client's retry is not taken for a replay."""
-        claims.before_write()
-        try:
-            await self._ch().insert(_T, [spent])
-        except Exception:
-            try:
-                await self._ch().insert(_T, [unspent()])
-            except Exception as e:  # noqa: BLE001 — the spend's own error is the answer
-                log.warning(
-                    "oauth: could not put back %s %s: %s", spent["record_type"], spent["id"][:8], e
-                )
-            raise
+        rid = token_id(token)
+        grant = await self._refresh_grant(rid)
+        if grant is None or grant["exp"] < int(time.time()) or grant["client_id"] != client_id:
+            return None
+        if not grant["family"]:
+            return None  # issued before sessions had families: its owner signs in again
+        key = f"family:{grant['family']}"
+        spending = f"spending:{claims.nonce()}"
+        now = await self._swap(key, rid, spending)
+        if now == spending:
+            return {**grant, "held": {key: spending}}
+        if now is None:
+            return None  # the session's key is gone: it ended a month ago
+        raise CodeReplayed(grant)  # no longer the session's current token: spent
 
     async def save_pending(self, state: str, data: dict[str, Any]) -> None:
-        # The JSON rides the client_name column, unused for non-client rows.
-        await self._ch().insert(
-            _T,
-            [
-                {
-                    "record_type": "oidc_pending",
-                    "id": state,
-                    "client_name": json.dumps(data),
-                    "expires_at": int(time.time()) + PENDING_TTL,
-                    "version": time.time_ns(),
-                }
-            ],
-        )
+        exp = int(time.time()) + PENDING_TTL
+        record = {"data": data, "exp": exp, "spent": False, "nonce": claims.nonce()}
+        await self._put(f"pending:{state}", None, record)
 
     async def take_pending(self, state: str) -> dict[str, Any] | None:
-        async with self.transition(f"pending:{state}"):
-            row = await self._ch().query_one(
-                f"SELECT client_name, expires_at FROM {_T} FINAL WHERE "
-                "record_type = 'oidc_pending' AND id = {id:String} AND consumed = 0 LIMIT 1",
-                params={"id": state},
-            )
-            if not row or int(row["expires_at"] or 0) < int(time.time()):
-                return None
-            claims.before_write()
-            await self._ch().insert(
-                _T,
-                [
-                    {
-                        "record_type": "oidc_pending",
-                        "id": state,
-                        "client_name": row["client_name"],
-                        "expires_at": int(row["expires_at"]),
-                        "consumed": 1,
-                        "version": time.time_ns(),
-                    }
-                ],
-            )
-        data: dict[str, Any] = json.loads(row["client_name"])
+        key = f"pending:{state}"
+        loaded = await self._load(key)
+        if loaded is None:
+            return None
+        record, value = loaded
+        if record["spent"] or record["exp"] < int(time.time()):
+            return None
+        try:
+            await self._put(key, value, {**record, "spent": True, "nonce": claims.nonce()})
+        except claims.Changed:
+            return None  # the same callback twice: the other one finishes it
+        data: dict[str, Any] = record["data"]
         return data
 
     async def owe_revocation(self, family: str, reason: str) -> None:
         """Record that the session must be revoked: the revocation itself did
-        not land. A refresh in the family is refused while this stands."""
+        not land. Until it does, revocation.refresh() treats the family as
+        revoked and a refresh in it is refused."""
         await self._ch().insert(
             _T,
             [
@@ -352,49 +354,52 @@ class ClickHouseStore:
         return row is not None
 
     async def save_device(self, d: Device) -> None:
-        claims.before_write()  # a no-op outside a transition
-        await self._ch().insert(_T, [_device_row(d, 0)])
+        """A new device grant, or its next step (from the version this
+        request read), or a redeemed one put back."""
+        key = f"device:{d['id']}"
+        held = _held(d, key)
+        if held is None:  # new: its user code leads to it
+            await self._put(f"user_code:{d['user_code']}", None, {"id": d["id"]})
+        await self._put(key, held, _record(d, _DEVICE_FIELDS, spent=False))
+
+    async def _device(self, device_id: str) -> tuple[Device, dict[str, Any]] | None:
+        key = f"device:{device_id}"
+        loaded = await self._load(key)
+        if loaded is None:
+            return None
+        record, value = loaded
+        return {**_device(record), "held": {key: value}}, record
 
     async def device(self, device_id: str) -> Device | None:
-        row = await self._ch().query_one(
-            f"""SELECT {_DEVICE_COLUMNS} FROM {_T} FINAL
-                WHERE record_type = 'device' AND id = {{id:String}} AND consumed = 0 LIMIT 1""",
-            params={"id": device_id},
-        )
-        return _device(row) if row else None
+        found = await self._device(device_id)
+        return found[0] if found and not found[1]["spent"] else None
 
     async def device_by_user_code(self, user_code_id: str) -> Device | None:
         """The live, undecided device grant whose user code keys to this."""
-        row = await self._ch().query_one(
-            f"""SELECT {_DEVICE_COLUMNS} FROM {_T} FINAL
-                WHERE record_type = 'device' AND user_code = {{u:String}}
-                  AND consumed = 0 AND status = 'pending'
-                  AND expires_at >= toUInt32(now())
-                LIMIT 1""",
-            params={"u": user_code_id},
-        )
-        return _device(row) if row else None
+        pointer = await self._load(f"user_code:{user_code_id}")
+        d = await self.device(pointer[0]["id"]) if pointer else None
+        if d is None or d["status"] != "pending" or d["exp"] < int(time.time()):
+            return None
+        return d
 
     async def take_device(self, device_code: str) -> Device | None:
         """The device grant as the polling client sees it. An approved or
         denied grant is spent by this read; a pending one is not."""
-        rid = token_id(device_code)
-        undecided = await self.device(rid)
-        if undecided is not None and undecided["status"] == "pending":
-            return undecided  # a poll that writes nothing needs no claim
-        async with self.transition(f"device:{rid}"):
-            row = await self._ch().query_one(
-                f"""SELECT {_DEVICE_COLUMNS} FROM {_T} FINAL
-                    WHERE record_type = 'device' AND id = {{id:String}} LIMIT 1""",
-                params={"id": rid},
-            )
-            if not row:
-                return None
-            d = _device(row)
-            if d["exp"] < int(time.time()):
-                return d  # expired: the poller hears so, spent or not
-            if row["consumed"]:
-                raise CodeReplayed(d)
-            if d["status"] != "pending":
-                await self._spend(_device_row(d, 1), lambda: _device_row(d, 0))
+        found = await self._device(token_id(device_code))
+        if found is None:
+            return None
+        d, record = found
+        if d["exp"] < int(time.time()):
+            return d  # expired: the poller hears so, spent or not
+        if record["spent"]:
+            raise CodeReplayed(d)
+        if d["status"] == "pending":
             return d
+        key = f"device:{d['id']}"
+        try:
+            spent = await self._put(
+                key, d["held"][key], {**record, "spent": True, "nonce": claims.nonce()}
+            )
+        except claims.Changed:
+            raise CodeReplayed(d) from None  # another poll redeemed it just now
+        return {**d, "held": {key: spent}}

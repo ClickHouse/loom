@@ -641,4 +641,4 @@ def test_sign_in_without_keeper_is_reported() -> None:
     assert _oauth_claim_problems(HealthState(oauth_claims_atomic=True)) == []
     assert _oauth_claim_problems(HealthState(oauth_claims_atomic=None)) == []
     (problem,) = _oauth_claim_problems(HealthState(oauth_claims_atomic=False))
-    assert problem.code == "oauth_transitions_not_atomic" and "029_oauth_claims.sql" in problem.fix
+    assert problem.code == "oauth_signin_needs_keeper" and "029_oauth_claims.sql" in problem.fix

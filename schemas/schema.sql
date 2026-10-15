@@ -2610,8 +2610,8 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS loom.oauth_claims
 (
     `claim_key` String,
-    `holder` String,
-    `claimed_at` DateTime64(3)
+    `value` String,
+    `updated_at` DateTime64(3)
 )
 ENGINE = KeeperMap('/loom/oauth_claims')
 PRIMARY KEY claim_key;
@@ -2635,12 +2635,7 @@ CREATE TABLE IF NOT EXISTS loom.oauth_state
     `expires_at` UInt32 DEFAULT 0,
     `version` UInt64 DEFAULT toUnixTimestamp64Nano(now64(9)),
     `family` String DEFAULT '',
-    `user_code` String DEFAULT '',
-    `status` LowCardinality(String) DEFAULT '',
-    `address` String DEFAULT '',
-    `ticket` String DEFAULT '',
-    `upstream_refresh` String DEFAULT '',
-    INDEX user_code_bloom_idx user_code TYPE bloom_filter(0.01) GRANULARITY 1
+    `upstream_refresh` String DEFAULT ''
 )
 ENGINE = ReplacingMergeTree(version)
 PARTITION BY record_type

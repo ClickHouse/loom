@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import secrets
 import time
 
 import pytest
@@ -105,7 +106,7 @@ def _seed_code(
 ) -> tuple[str, str]:
     """Seed an authorized code (as if consent succeeded). Returns (code, verifier)."""
     verifier = "verifier-" + base64.urlsafe_b64encode(b"x" * 24).decode()
-    code = "test-code-123"
+    code = f"test-code-{secrets.token_hex(4)}"
     grant = {
         "client_id": client_id,
         "redirect_uri": redirect_uri,
@@ -115,7 +116,7 @@ def _seed_code(
         "namespaces": ["alice-ns"],
         "roles": ["writer"],
         "exp": int(time.time()) + 60,
-        "family": "f-seed",
+        "family": f"f-{secrets.token_hex(4)}",
         "upstream_refresh": "",
     }
     asyncio.run(oauth.store.save_code(code, grant))
@@ -246,62 +247,10 @@ def test_store_keeps_token_hashes_not_tokens() -> None:
     c = _client()
     store = oauth.store
     code, _ = _seed_code()
-    assert list(store.codes) == [hashlib.sha256(code.encode()).hexdigest()]
+    assert list(store.records("code")) == [hashlib.sha256(code.encode()).hexdigest()]
     rt = _refresh_token_for_alice(c)
     assert list(store.refresh) == [hashlib.sha256(rt.encode()).hexdigest()]
-
-
-class _FakeCH:
-    """Just enough of the CH client for ClickHouseStore: inserts append
-    versions, query_one answers the FINAL read of one (record_type, id)."""
-
-    def __init__(self) -> None:
-        self.rows: list[dict] = []
-
-    async def insert(self, table: str, rows: list[dict]) -> None:
-        self.rows.extend(dict(r) for r in rows)
-
-    async def query_one(self, sql: str, params: dict | None = None) -> dict | None:
-        p = params or {}
-        versions = [
-            r for r in self.rows if r["record_type"] == p.get("t") and r["id"] == p.get("id")
-        ]
-        if not versions:
-            return None
-        last = max(versions, key=lambda r: r["version"])
-        return {"consumed": 0, **last}
-
-
-def _ch_store(monkeypatch) -> _FakeCH:
-    from server.auth import claims, oauth_store
-
-    ch = _FakeCH()
-    monkeypatch.setattr(claims, "_atomic", False)  # no Keeper behind this fake
-    store = oauth_store.ClickHouseStore()
-    monkeypatch.setattr(store, "_ch", lambda: ch)
-    monkeypatch.setattr(oauth, "store", store)
-    return ch
-
-
-def test_ch_store_writes_token_hashes(monkeypatch) -> None:
-    ch = _ch_store(monkeypatch)
-    c = _client()
-    code, verifier = _seed_code()
-    tok = c.post(
-        "/oauth/token",
-        data={
-            "grant_type": "authorization_code",
-            "code": code,
-            "redirect_uri": "http://127.0.0.1:9999/cb",
-            "client_id": "loom-test",
-            "code_verifier": verifier,
-        },
-    ).json()
-    rt = tok["refresh_token"]
-    ids = {r["id"] for r in ch.rows}
-    assert code not in ids and rt not in ids
-    assert hashlib.sha256(rt.encode()).hexdigest() in ids
-    assert _refresh(c, rt).status_code == 200
+    assert not any(token in str(store.keeper) for token in (code, rt))
 
 
 def test_refresh_refused_for_subject_revoked_after_issue(monkeypatch) -> None:
@@ -421,7 +370,7 @@ def test_consent_page_names_where_the_code_goes() -> None:
 def _refresh_token(c: TestClient, roles: list[str] | None = None) -> str:
     code, verifier = _seed_code()
     if roles is not None:
-        oauth.store.codes[oauth.token_id(code)]["roles"] = roles
+        oauth.store.change("code", roles=roles)
     return c.post(
         "/oauth/token",
         data={
@@ -515,3 +464,23 @@ def test_a_non_utf8_form_body_is_a_400_not_a_500(path: str) -> None:
     )
     assert r.status_code == 400
     assert r.json()["error"] == "invalid_request"
+
+
+def test_a_refresh_token_from_before_session_families_signs_in_again() -> None:
+    """A grant written before sessions had a family could not be ended by
+    logout or a replay, so it is not rotated: its owner signs in again."""
+    rt = "legacy-refresh-token"
+    oauth.store.refresh[oauth.token_id(rt)] = {
+        "client_id": "loom-test",
+        "redirect_uri": "",
+        "code_challenge": "",
+        "subject": "alice@example.com",
+        "org": "test-org",
+        "namespaces": ["alice-ns"],
+        "roles": ["writer"],
+        "exp": int(time.time()) + 3600,
+        "family": "",
+        "upstream_refresh": "",
+    }
+    r = _refresh(_client(), rt)
+    assert r.status_code == 400 and r.json()["error"] == "invalid_grant"

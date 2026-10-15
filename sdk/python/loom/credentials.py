@@ -23,6 +23,7 @@ import asyncio
 import contextlib
 import json
 import os
+import secrets
 import sys
 import tempfile
 import time
@@ -122,6 +123,21 @@ def _json(r: httpx.Response) -> dict[str, Any]:
     return body
 
 
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def _origin(url: str) -> tuple[str, str, int | None]:
+    """(scheme, host, port) compared as a browser compares origins: the host
+    in any case, the default port written or not."""
+    u = urlsplit(url)
+    scheme = u.scheme.lower()
+    return scheme, (u.hostname or "").lower(), u.port or _DEFAULT_PORTS.get(scheme)
+
+
+def _same_server(a: str, b: str) -> bool:
+    return _origin(a) == _origin(b) and urlsplit(a).path.rstrip("/") == urlsplit(b).path.rstrip("/")
+
+
 def _endpoints(client: httpx.Client) -> dict[str, str]:
     """The server's sign-in endpoints, each checked to be on the server itself,
     so a code or token only ever goes where the user chose to sign in."""
@@ -134,15 +150,12 @@ def _endpoints(client: httpx.Client) -> dict[str, str]:
     if r.status_code != 200:
         raise _failed(r, "reading the server's sign-in endpoints")
     meta = _json(r)
-    server = urlsplit(str(client.base_url))
     endpoints = {}
     for name in ("device_authorization_endpoint", "token_endpoint", "revocation_endpoint"):
-        url = urlsplit(str(meta.get(name, "")))
-        if (url.scheme, url.netloc) != (server.scheme, server.netloc):
-            raise LoomError(
-                f"{client.base_url} signs in at {url.scheme}://{url.netloc}; use that as the server"
-            )
-        endpoints[name] = str(meta[name])
+        url = str(meta.get(name, ""))
+        if _origin(url) != _origin(str(client.base_url)):
+            raise LoomError(f"{client.base_url} signs in at {url}; use that as the server")
+        endpoints[name] = url
     return endpoints
 
 
@@ -175,10 +188,12 @@ def _oauth_error(r: httpx.Response) -> str:
     return str(detail.get("error", "")) if isinstance(detail, dict) else ""
 
 
-def _save(profile: str, server: str, tokens: dict[str, Any]) -> None:
+def _save(profile: str, server: str, tokens: dict[str, Any], session: str) -> None:
+    """`session` names one sign-in: a login makes a new one, a refresh keeps it."""
     data = _read()
     data["profiles"][profile] = {
         "server": server,
+        "session": session,
         "access_token": tokens["access_token"],
         "refresh_token": tokens.get("refresh_token", ""),
         "expires_at": int(time.time()) + int(tokens.get("expires_in", 3600)),
@@ -221,7 +236,7 @@ def login(
                 webbrowser.open(grant["verification_uri_complete"])
         tokens = _poll(client, meta["token_endpoint"], grant)
         replaced = _read()["profiles"].get(profile)
-        if replaced and replaced["server"] == server:
+        if replaced and _same_server(replaced["server"], server):
             # The session this sign-in replaces ends too, not left to run out.
             with contextlib.suppress(httpx.HTTPError):
                 client.post(
@@ -232,7 +247,7 @@ def login(
                     },
                 )
     with _locked():  # another process may be rotating a profile in the same file
-        _save(profile, server, tokens)
+        _save(profile, server, tokens, session=secrets.token_hex(8))
     info = whoami(profile=profile)
     # Said every time: a code someone else approved signs you in as them.
     echo(f"Signed in to {server} as {info.get('subject')} ({info.get('org')}).")
@@ -319,7 +334,7 @@ def _refresh(profile: str, refused: str, server: str | None) -> dict[str, Any]:
     if r.status_code != 200:
         # A 503 spent nothing (the identity provider could not be asked): retry later.
         raise _failed(r, f"refreshing the session at {entry['server']}")
-    _save(profile, entry["server"], _json(r))
+    _save(profile, entry["server"], _json(r), session=entry.get("session", ""))
     return dict(_read()["profiles"][profile])
 
 
@@ -356,10 +371,13 @@ def access_token(
     return str(entry["access_token"])
 
 
-def forget(profile: str) -> None:
-    """Drop the profile's tokens from the credentials file."""
+def forget(profile: str, session: str | None = None) -> None:
+    """Drop the profile's tokens from the credentials file; with `session`,
+    only while the profile still holds that sign-in."""
     with _locked():
-        _drop(profile)
+        entry = _read()["profiles"].get(profile)
+        if entry and (session is None or entry.get("session", "") == session):
+            _drop(profile)
 
 
 def logout(profile: str | None = None) -> bool:
@@ -382,7 +400,8 @@ def logout(profile: str | None = None) -> bool:
     except LoomError:
         return False
     finally:
-        forget(profile)
+        # A login made meanwhile is a new session: it stays.
+        forget(profile, session=entry.get("session", ""))
 
 
 def whoami(profile: str | None = None) -> dict[str, Any]:
@@ -403,7 +422,7 @@ def stored_login(server: str, profile: str | None = None) -> StoredLogin | None:
     profile's token is never sent anywhere else."""
     profile = profile or default_profile()
     entry = _read()["profiles"].get(profile)
-    if not entry or entry["server"] != server.rstrip("/"):
+    if not entry or not _same_server(entry["server"], server):
         return None
     return StoredLogin(profile, entry["server"])
 
@@ -422,9 +441,8 @@ class StoredLogin(httpx.Auth):
         return str(entry.get("access_token", "")) if entry.get("server") == self.server else ""
 
     def _token(self, request: httpx.Request, refused: str = "") -> str:
-        target = urlsplit(str(request.url))
-        if (target.scheme, target.netloc) != urlsplit(self.server)[:2]:
-            raise AuthInvalid(f"refusing to send {self.server}'s session to {target.netloc}")
+        if _origin(str(request.url)) != _origin(self.server):
+            raise AuthInvalid(f"refusing to send {self.server}'s session to {request.url.host}")
         return access_token(self.profile, refused=refused, server=self.server)
 
     def sync_auth_flow(

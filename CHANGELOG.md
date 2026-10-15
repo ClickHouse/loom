@@ -31,10 +31,13 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   row.
 - The dashboard's **Sign out** ends an SSO sign-in session on the server too; a token
   opened with `#token=` is still only forgotten in that browser.
-- Migration `028` adds the device-grant and session columns to `oauth_state`, and a skip
-  index on its user codes. Migration `029` adds `oauth_claims` (KeeperMap): each sign-in
-  state transition runs alone per grant. A ClickHouse without a Keeper skips it, and
-  `/v1/health` reports `oauth_transitions_not_atomic`.
+- Migration `028` adds the session columns to `oauth_state`. Migration `029` adds
+  `oauth_claims` (KeeperMap): codes, device grants and each session's current refresh token
+  change only by compare-and-set in Keeper, so each is spent exactly once. Sign-in needs a
+  Keeper: without one it answers 503 and `/v1/health` reports `oauth_signin_needs_keeper`
+  (minted tokens keep working).
+- An MCP client connected before this release signs in once more: its refresh token
+  predates sessions, so it is not rotated.
 - `CODED_WIDTH_MISMATCH` (503): a write whose vector is not the width its coded column was
   created at; `memory.set`, `bulk_set`, `update` and the `knowledge.*` writes are refused before
   any of their rows lands, and `/v1/health` reports `coded_width_mismatch` with the fix. A table

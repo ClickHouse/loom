@@ -41,6 +41,7 @@ class _Server:
         self.pending = 1
         self.refresh_ok = True
         self.n = 0
+        self.while_revoking: Any = None  # run while a revoke is in flight
 
     def tokens(self) -> dict[str, Any]:
         self.n += 1
@@ -76,6 +77,8 @@ class _Server:
                 return httpx.Response(400, json={"detail": {"error": "invalid_grant"}})
             return httpx.Response(200, json=self.tokens())
         if path == "/oauth/revoke":
+            if self.while_revoking:
+                self.while_revoking()
             return httpx.Response(200)
         if path == "/v1/whoami":
             auth = request.headers.get("authorization", "")
@@ -368,3 +371,35 @@ def test_a_stored_session_is_only_sent_to_its_own_server(server) -> None:
     auth = credentials.StoredLogin("default", _SERVER)
     with httpx.Client() as c, pytest.raises(AuthInvalid, match="refusing to send"):
         c.get("https://elsewhere.example/v1/ping", auth=auth)
+
+
+def test_a_server_spelled_another_way_is_the_same_server(server) -> None:
+    spelled = "https://LOOM.example:443"
+    credentials.login(spelled, open_browser=False, echo=lambda _: None)
+    auth = credentials.stored_login(_SERVER)
+    assert auth is not None
+    with httpx.Client(transport=httpx.MockTransport(server)) as c:
+        assert c.get(f"{_SERVER}/v1/whoami", auth=auth).status_code == 200
+    assert credentials.stored_login("https://loom.example:8443") is None
+
+
+def test_logout_leaves_a_login_made_while_it_ran(server) -> None:
+    credentials.login(_SERVER, open_browser=False, echo=lambda _: None)
+
+    def another_login() -> None:  # another terminal signs in meanwhile
+        tokens = {"access_token": "new", "refresh_token": "rnew", "expires_in": 3600}
+        credentials._save("default", _SERVER, tokens, session="another")
+
+    server.while_revoking = another_login
+    assert credentials.logout() is True
+    assert _stored()["profiles"]["default"]["access_token"] == "new"
+
+
+def test_logout_forgets_its_session_after_a_refresh_rotated_it(server) -> None:
+    credentials.login(_SERVER, open_browser=False, echo=lambda _: None)
+    session = _stored()["profiles"]["default"]["session"]
+    server.while_revoking = lambda: credentials._save(
+        "default", _SERVER, {"access_token": "a9", "refresh_token": "r9"}, session=session
+    )
+    assert credentials.logout() is True
+    assert _stored()["profiles"] == {}

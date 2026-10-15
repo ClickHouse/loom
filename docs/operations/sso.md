@@ -110,10 +110,11 @@ addresses so that address is the user's own, not the proxy's for everyone.
 
 ## ClickHouse Keeper
 
-Sign-in claims each state change of a code, refresh token or device grant in
-ClickHouse Keeper, so two requests at the same moment cannot both spend one.
-The Loom stacks and ClickHouse Cloud have a Keeper; on a self-managed
-ClickHouse without one, `/v1/health` reports `oauth_transitions_not_atomic`.
+Sign-in keeps codes, device grants and each session's current refresh token in
+ClickHouse Keeper and changes them only by compare-and-set, so each is spent
+exactly once. The Loom stacks and ClickHouse Cloud have a Keeper. On a
+self-managed ClickHouse without one, sign-in answers 503 and `/v1/health`
+reports `oauth_signin_needs_keeper`; tokens from `loom mint-token` still work.
 
 ## Break glass
 

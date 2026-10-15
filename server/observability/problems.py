@@ -84,8 +84,8 @@ class HealthState:
     # Whether run.begin claims run ids in Keeper (loom.agent_run_claims exists):
     # None = no run.begin has asked yet in this process.
     run_claims_atomic: bool | None = None
-    # Whether sign-in transitions are claimed in Keeper (loom.oauth_claims
-    # exists): None = not asked yet in this process.
+    # Whether sign-in state has its Keeper table (loom.oauth_claims exists):
+    # None = not asked yet in this process.
     oauth_claims_atomic: bool | None = None
     env: Mapping[str, str] = field(default_factory=lambda: os.environ)
     # Saved keys take precedence over the environment, including explicit empty keys.
@@ -624,16 +624,16 @@ def _reader_user_problems(settings: Any, state: HealthState) -> list[Problem]:
 
 
 def _oauth_claim_problems(state: HealthState) -> list[Problem]:
-    """No Keeper: two requests spending one sign-in credential can both pass."""
+    """No Keeper: sign-in cannot spend a credential exactly once, so it is off."""
     if state.oauth_claims_atomic is not False:
         return []
     return [
         Problem(
-            "oauth_transitions_not_atomic",
+            "oauth_signin_needs_keeper",
             "warn",
-            "loom.oauth_claims is absent (no ClickHouse Keeper), so spending a code or "
-            "refresh token and each step of a device sign-in is a read then a write: two "
-            "requests at the same moment can both pass the same check.",
+            "loom.oauth_claims is absent (no ClickHouse Keeper), so `loom login`, SSO and "
+            "MCP connect answer 503: their codes and refresh tokens could not be spent "
+            "exactly once. Tokens from `loom mint-token` and service accounts still work.",
             "Run ClickHouse with a Keeper (deploy/clickhouse-config/keeper.xml), create the "
             "table from schemas/migrations/029_oauth_claims.sql (the migration skipped it) "
             "and restart Loom.",

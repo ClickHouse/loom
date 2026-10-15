@@ -233,19 +233,27 @@ a password change does not end it; under OIDC the provider's own session limits 
 every refresh. A stolen access token can mint machine tokens
 without touching the refresh token, so replay detection only covers a stolen refresh token.
 
-**One transition at a time.** Spending a code, refresh token or device code, finishing an
-IdP sign-in, and each step of a device grant (who signed in on it, its one-time approval)
-reads the grant's row and writes its next version. Each runs holding the grant's key in
-`loom.oauth_claims`, a KeeperMap table (`server/auth/claims.py`): Keeper refuses a second
-insert of the key, so of two concurrent transitions exactly one runs and the other waits
-briefly or is answered "retry". A ClickHouse without a Keeper has no claims table; the
-transitions then run unclaimed and `/v1/health` reports `oauth_transitions_not_atomic`.
+**Each credential is spent exactly once.** What a sign-in spends or moves lives in
+`loom.oauth_claims`, a KeeperMap table (`server/auth/claims.py`), one key each: a code, an
+IdP round trip in flight, a device grant, and the id of each session's current refresh
+token. Every change is a compare-and-set, a strict-mode Keeper write applied only while the
+key still holds the value the request read: spending a refresh token swaps its session's
+key from that token's id, so of two requests presenting it one wins and the other finds it
+spent. The guarantee is Keeper's, not a lease's: no timing or replica lag can let two
+requests through. Ephemeral state (codes, device grants, IdP round trips) is the Keeper
+value itself; a refresh token's grant is a `loom.oauth_state` row written before the token
+is handed out and read with sequential consistency. Keys are swept a month after their last
+change. A ClickHouse without a Keeper has no claims table: sign-in answers 503, `/v1/health`
+reports `oauth_signin_needs_keeper`, and minted tokens keep working. A refresh token issued
+before sessions had a family is refused, so its owner signs in once more.
 
 **A revocation that cannot be written is owed.** When ending a session cannot write
-`loom.revoked_tokens`, a `revocation_owed` row in `loom.oauth_state` refuses every refresh in
-the family (each retries the revocation) and the process retries it in the background so
-the session's access tokens die too. When neither write lands, the request is answered 503
-`temporarily_unavailable`, never a final `invalid_grant`.
+`loom.revoked_tokens`, a `revocation_owed` row in `loom.oauth_state` takes its place: the
+revocation snapshot every process loads (at boot and on its refresh cadence) counts the
+family as revoked, so its access tokens are refused everywhere, after any restart, and its
+refreshes are refused too. The process retries the real revocation in the background. When
+neither write lands, the request is answered 503 `temporarily_unavailable`, never a final
+`invalid_grant`.
 
 OAuth answers carry `error` and `error_description` at the top of the JSON body (RFC 6749
 §5.2, RFC 8628 §3.5).

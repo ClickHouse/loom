@@ -1,22 +1,20 @@
-"""An in-process stand-in for the OAuth store (`server.auth.oauth._CHStore`).
+"""The OAuth store with Keeper and ClickHouse held in process memory.
 
-Install it with `monkeypatch.setattr(oauth, "store", MemoryOAuthStore())`;
-codes, refresh tokens and device codes are kept under their hashes, as the
-real store does, and a spent one is kept (marked) so a replay is seen.
+Install it with `monkeypatch.setattr(oauth, "store", MemoryOAuthStore())`. It
+is the real store (`server.auth.oauth_store.ClickHouseStore`) with only its
+storage swapped: Keeper is a dict with the same compare-and-set, and the few
+ClickHouse rows (clients, refresh grants, owed revocations) are dicts.
 """
 
 from __future__ import annotations
 
-import asyncio
-import time
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+import json
 from typing import Any
 
 from fastapi import FastAPI
 
 from server.auth import device, oauth
-from server.auth.oauth import CodeReplayed, token_id
+from server.auth.oauth_store import ClickHouseStore, Grant
 
 
 def oauth_app() -> FastAPI:
@@ -29,18 +27,20 @@ def oauth_app() -> FastAPI:
     return app
 
 
-class MemoryOAuthStore:
-    """The OAuth store in process memory, with `_CHStore`'s async interface."""
-
+class MemoryOAuthStore(ClickHouseStore):
     def __init__(self) -> None:
-        self.locks: dict[str, asyncio.Lock] = {}
-        self.owed: set[str] = set()
+        self.keeper: dict[str, str] = {}
         self.clients: dict[str, dict[str, Any]] = {}
-        self.codes: dict[str, dict[str, Any]] = {}
-        self.refresh: dict[str, dict[str, Any]] = {}
-        self.pending: dict[str, dict[str, Any]] = {}
-        self.devices: dict[str, dict[str, Any]] = {}
-        self.spent: dict[str, float] = {}  # key -> when it was spent
+        self.refresh: dict[str, Grant] = {}  # by token id
+        self.owed: set[str] = set()
+
+    async def _get(self, key: str) -> str | None:
+        return self.keeper.get(key)
+
+    async def _swap(self, key: str, old: str | None, new: str) -> str | None:
+        if self.keeper.get(key) == old:
+            self.keeper[key] = new
+        return self.keeper.get(key)
 
     async def save_client(self, client_id: str, redirect_uris: list[str], name: str) -> None:
         self.clients[client_id] = {"redirect_uris": list(redirect_uris), "client_name": name}
@@ -48,47 +48,12 @@ class MemoryOAuthStore:
     async def get_client(self, client_id: str) -> dict[str, Any] | None:
         return self.clients.get(client_id)
 
-    async def save_code(self, code: str, g: dict[str, Any]) -> None:
-        self.codes[token_id(code)] = {"family": "", "upstream_refresh": "", **g}
-        self.spent.pop(token_id(code), None)
+    async def _save_refresh_grant(self, rid: str, g: Grant) -> None:
+        self.refresh[rid] = {k: v for k, v in g.items() if k != "held"}  # type: ignore[assignment]
 
-    async def save_refresh(self, token: str, g: dict[str, Any]) -> None:
-        self.refresh[token_id(token)] = {"family": "", "upstream_refresh": "", **g}
-        self.spent.pop(token_id(token), None)
-
-    def _take(
-        self,
-        rows: dict[str, dict[str, Any]],
-        key: str,
-        client_id: str,
-        accept: Any = lambda g: True,
-    ) -> dict[str, Any] | None:
-        g = rows.get(key)
-        if g is None or g["exp"] < int(time.time()):
-            return None
-        if g["client_id"] != client_id or not accept(g):
-            return None
-        if key in self.spent:
-            raise CodeReplayed(dict(g))
-        self.spent[key] = time.time()
-        return dict(g)
-
-    async def take_code(self, code: str, client_id: str, accept: Any) -> dict[str, Any] | None:
-        return self._take(self.codes, token_id(code), client_id, accept)
-
-    async def take_refresh(self, token: str, client_id: str) -> dict[str, Any] | None:
-        return self._take(self.refresh, token_id(token), client_id)
-
-    async def save_pending(self, state: str, data: dict[str, Any]) -> None:
-        self.pending[state] = dict(data)
-
-    async def take_pending(self, state: str) -> dict[str, Any] | None:
-        return self.pending.pop(state, None)
-
-    @asynccontextmanager
-    async def transition(self, key: str) -> AsyncIterator[None]:
-        async with self.locks.setdefault(key, asyncio.Lock()):
-            yield
+    async def _refresh_grant(self, rid: str) -> Grant | None:
+        g = self.refresh.get(rid)
+        return dict(g) if g else None  # type: ignore[return-value]
 
     async def owe_revocation(self, family: str, reason: str) -> None:
         self.owed.add(family)
@@ -96,40 +61,17 @@ class MemoryOAuthStore:
     async def revocation_owed(self, family: str) -> bool:
         return family in self.owed
 
-    async def device(self, device_id: str) -> dict[str, Any] | None:
-        d = self.devices.get(device_id)
-        return None if d is None or device_id in self.spent else dict(d)
+    def records(self, kind: str) -> dict[str, dict[str, Any]]:
+        """The `kind` records in Keeper ("code", "device"…), by id."""
+        prefix = f"{kind}:"
+        return {
+            k.removeprefix(prefix): json.loads(v)
+            for k, v in self.keeper.items()
+            if k.startswith(prefix)
+        }
 
-    async def save_device(self, d: dict[str, Any]) -> None:
-        self.devices[d["id"]] = dict(d)
-        self.spent.pop(d["id"], None)  # a new unconsumed version, as the real store writes
-
-    async def device_by_user_code(self, user_code_id: str) -> dict[str, Any] | None:
-        for d in self.devices.values():
-            if (
-                d["user_code"] == user_code_id
-                and d["status"] == "pending"
-                and d["id"] not in self.spent
-                and d["exp"] >= int(time.time())
-            ):
-                return dict(d)
-        return None
-
-    async def take_device(self, device_code: str) -> dict[str, Any] | None:
-        undecided = await self.device(token_id(device_code))
-        if undecided is not None and undecided["status"] == "pending":
-            return undecided
-        async with self.transition(f"device:{token_id(device_code)}"):
-            return self._take_device(device_code)
-
-    def _take_device(self, device_code: str) -> dict[str, Any] | None:
-        d = self.devices.get(token_id(device_code))
-        if d is None:
-            return None
-        if d["exp"] < int(time.time()):
-            return dict(d)
-        if d["id"] in self.spent:
-            raise CodeReplayed(dict(d))
-        if d["status"] != "pending":
-            self.spent[d["id"]] = time.time()
-        return dict(d)
+    def change(self, kind: str, **fields: Any) -> None:
+        """Edit every `kind` record in Keeper in place (an expiry passing…)."""
+        for key, value in self.keeper.items():
+            if key.startswith(f"{kind}:"):
+                self.keeper[key] = json.dumps(json.loads(value) | fields)

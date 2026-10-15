@@ -144,7 +144,7 @@ def test_device_authorization_answers_rfc_8628_fields(_world) -> None:
     assert grant["verification_uri"].endswith("/oauth/device")
     assert grant["verification_uri_complete"].endswith(f"?user_code={grant['user_code']}")
     assert (grant["expires_in"], grant["interval"]) == (600, 5)
-    stored = next(iter(_world["store"].devices.values()))
+    stored = next(iter(_world["store"].records("device").values()))
     # Neither code is stored as itself.
     assert grant["device_code"] not in str(stored)
     assert device.normalize_user_code(grant["user_code"]) not in str(stored)
@@ -203,8 +203,7 @@ def test_a_device_code_for_another_client_is_refused() -> None:
 def test_an_expired_device_code_says_so(_world) -> None:
     c = _client()
     grant = _start(c)
-    for d in _world["store"].devices.values():
-        d["exp"] = int(time.time()) - 1
+    _world["store"].change("device", exp=int(time.time()) - 1)
     assert _error(_poll(c, grant["device_code"])) == "expired_token"
 
 
@@ -572,7 +571,7 @@ def test_the_pending_sign_in_holds_no_usable_user_code(sso, _world) -> None:
     c = _client()
     grant = _start(c)
     c.post("/oauth/device", data={"user_code": grant["user_code"]}, follow_redirects=False)
-    pending = str(_world["store"].pending)
+    pending = str(_world["store"].records("pending"))
     assert device.normalize_user_code(grant["user_code"]) not in pending
 
 
@@ -649,7 +648,11 @@ def _connect_through_sso(c: TestClient) -> httpx.Response:
 def test_mcp_connect_under_sso_asks_before_it_sends_a_code(sso, _world) -> None:
     c = _client()
     page = _connect_through_sso(c)
-    assert page.status_code == 200 and "127.0.0.1:9" in page.text and not _world["store"].codes
+    assert (
+        page.status_code == 200
+        and "127.0.0.1:9" in page.text
+        and not _world["store"].records("code")
+    )
     ticket = _ticket(page.text)
     r = c.post(
         "/oauth/authorize/approve",
@@ -671,7 +674,7 @@ def test_denying_mcp_connect_sends_the_client_an_error(sso, _world) -> None:
         data={"ticket": ticket, "decision": "deny"},
         follow_redirects=False,
     )
-    assert "error=access_denied" in r.headers["location"] and not _world["store"].codes
+    assert "error=access_denied" in r.headers["location"] and not _world["store"].records("code")
 
 
 async def test_logout_survives_an_unreachable_identity_provider(monkeypatch) -> None:
@@ -747,7 +750,7 @@ def test_user_codes_are_keyed_with_the_server_secret(_world) -> None:
     import hashlib
 
     grant = _start(_client())
-    stored = next(iter(_world["store"].devices.values()))["user_code"]
+    stored = next(iter(_world["store"].records("device").values()))["user_code"]
     plain = hashlib.sha256(device.normalize_user_code(grant["user_code"]).encode()).hexdigest()
     assert stored != plain and len(stored) == 64
 

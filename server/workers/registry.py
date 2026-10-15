@@ -378,6 +378,15 @@ _WORKERS: tuple[_Worker, ...] = (
         "task_lease_sweep_interval_seconds",
         idle_interval="task_lease_sweep_idle_interval_seconds",
     ),
+    # oauth_claims_sweep: always-on; drops sign-in keys a month after their last change.
+    _Worker(
+        "oauth_claims_sweep",
+        "server.auth.claims",
+        None,
+        "SWEEP_INTERVAL_SECONDS",
+        interval_in_module=True,
+        pass_attr="sweep",
+    ),
     _Worker(
         "mcp_session_run_sweep",
         "server.tasks.workers.session_run_sweep",

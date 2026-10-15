@@ -13,8 +13,6 @@ import html
 import ipaddress
 import secrets
 import time
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -187,21 +185,11 @@ def _expired_page() -> Response:
     )
 
 
-@asynccontextmanager
-async def _claimed(user_code: str) -> AsyncIterator[Device | None]:
-    """The undecided grant for `user_code`, read again while it is claimed, so
-    the change the block writes is the only one made to it at a time. None when
-    it is gone, decided or expired. Raises claims.Busy when another request is
-    changing it."""
-    found = await oauth.store.device_by_user_code(_user_code_id(user_code))
-    if found is None:
-        yield None
-        return
-    async with oauth.store.transition(f"device:{found['id']}"):
-        device = await oauth.store.device(found["id"])
-        if device is None or device["status"] != "pending" or device["exp"] < int(time.time()):
-            device = None
-        yield device
+async def _undecided(user_code: str) -> Device | None:
+    """The undecided grant for `user_code` as it stands now, or None when it is
+    gone, decided or expired. Saving a change to it raises claims.Changed if
+    another request changed it first."""
+    return await oauth.store.device_by_user_code(_user_code_id(user_code))
 
 
 def _busy_page() -> Response:
@@ -227,34 +215,21 @@ async def signed_in(
     different people signing in with one code means one of them got it from
     the other's screen; neither can tell which, so the grant ends and the
     terminal has to start again."""
-    subject, org, namespaces, roles = identity
+    subject, org, *_ = identity
     ticket = secrets.token_urlsafe(32)
     try:
-        async with _claimed(user_code) as device:
+        for attempt in range(3):
+            device = await _undecided(user_code)
             if device is None:
                 outcome, dropped = "expired", [upstream_refresh]
-            elif device["subject"] not in ("", subject):
-                outcome, dropped = "conflict", [upstream_refresh, device["upstream_refresh"]]
-                await oauth.store.save_device(
-                    device | {"status": "denied", "ticket": "", "upstream_refresh": ""}
-                )
-            else:
-                outcome = "confirm"
-                # The same person signing in again replaces their IdP token.
-                dropped = (
-                    [device["upstream_refresh"]]
-                    if device["upstream_refresh"] != upstream_refresh
-                    else []
-                )
-                device |= {
-                    "subject": subject,
-                    "org": org,
-                    "namespaces": namespaces,
-                    "roles": roles,
-                    "upstream_refresh": upstream_refresh,
-                    "ticket": token_id(ticket),
-                }
-                await oauth.store.save_device(device)
+                break
+            try:
+                outcome, dropped = await _sign_in(device, identity, upstream_refresh, ticket)
+                break
+            except claims.Changed:
+                if attempt == 2:
+                    raise
+                # Someone signed in on it at the same moment: decide again on what they wrote.
     except claims.Busy:
         await _revoke_all(upstream_refresh)
         return _busy_page()
@@ -289,6 +264,36 @@ If someone sent you this code, deny it.</p>
     )
 
 
+async def _sign_in(
+    device: Device,
+    identity: tuple[str, str, list[str], list[str]],
+    upstream_refresh: str,
+    ticket: str,
+) -> tuple[str, list[str]]:
+    """Record who signed in on `device`: the outcome, and the IdP tokens no
+    longer needed."""
+    subject, org, namespaces, roles = identity
+    if device["subject"] not in ("", subject):
+        await oauth.store.save_device(
+            device | {"status": "denied", "ticket": "", "upstream_refresh": ""}
+        )
+        return "conflict", [upstream_refresh, device["upstream_refresh"]]
+    # The same person signing in again replaces their IdP token.
+    previous = device["upstream_refresh"]
+    await oauth.store.save_device(
+        device
+        | {
+            "subject": subject,
+            "org": org,
+            "namespaces": namespaces,
+            "roles": roles,
+            "upstream_refresh": upstream_refresh,
+            "ticket": token_id(ticket),
+        }
+    )
+    return "confirm", [previous] if previous != upstream_refresh else []
+
+
 def unseal_user_code(sealed: str) -> str:
     """The user code an IdP round trip carried in its pending row."""
     return unseal(_USER_CODE_PURPOSE, sealed)
@@ -299,11 +304,11 @@ async def deny(user_code: str) -> None:
     grant so `loom login` stops waiting, unless someone else already signed
     in on it (a stranger's failed sign-in must not end theirs)."""
     try:
-        async with _claimed(user_code) as device:
-            if device is not None and not device["subject"]:
-                await oauth.store.save_device(device | {"status": "denied", "ticket": ""})
+        device = await _undecided(user_code)
+        if device is not None and not device["subject"]:
+            await oauth.store.save_device(device | {"status": "denied", "ticket": ""})
     except claims.Busy:
-        pass  # someone is changing it: their change decides
+        pass  # someone else changed it (their change decides), or Keeper is down
 
 
 @router.post("/oauth/device/approve")
@@ -312,24 +317,24 @@ async def device_approve(request: Request) -> Response:
     ticket = f.get("ticket", "")
     approved = f.get("decision") == "approve"
     try:
-        async with _claimed(normalize_user_code(f.get("user_code", ""))) as device:
-            if (
-                device is None
-                or not device["ticket"]
-                or not ticket
-                or not secrets.compare_digest(device["ticket"], token_id(ticket))
-            ):
-                return _expired_page()
-            dropped = "" if approved else device["upstream_refresh"]
-            device |= {
-                "status": "approved" if approved else "denied",
-                "ticket": "",  # one use
-                "family": new_jti() if approved else "",
-                "upstream_refresh": device["upstream_refresh"] if approved else "",
-            }
-            await oauth.store.save_device(device)
+        device = await _undecided(normalize_user_code(f.get("user_code", "")))
+        if (
+            device is None
+            or not device["ticket"]
+            or not ticket
+            or not secrets.compare_digest(device["ticket"], token_id(ticket))
+        ):
+            return _expired_page()
+        dropped = "" if approved else device["upstream_refresh"]
+        device |= {
+            "status": "approved" if approved else "denied",
+            "ticket": "",  # one use
+            "family": new_jti() if approved else "",
+            "upstream_refresh": device["upstream_refresh"] if approved else "",
+        }
+        await oauth.store.save_device(device)
     except claims.Busy:
-        return _busy_page()
+        return _busy_page()  # a double submit (the other one decided), or Keeper is down
     await _revoke_all(dropped)
     await audit.emit(
         "auth.device_approved" if approved else "auth.device_denied",

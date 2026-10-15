@@ -348,7 +348,7 @@ async def test_authorize_redirects_to_idp(monkeypatch) -> None:
     assert r.status_code == 307 or r.status_code == 302, r.text
     assert r.headers["location"].startswith(f"{_ISS}/authorize")
     # The pending record carries the MCP client's params + nonce, keyed by state.
-    pend = oauth.store.pending[captured["state"]]
+    pend = oauth.store.records("pending")[captured["state"]]["data"]
     assert pend["client_id"] == cid and pend["mcp_state"] == "mcp-state"
     assert pend["nonce"] == captured["nonce"]
     # PKCE on the IdP leg: the challenge sent is the S256 of the kept verifier.
