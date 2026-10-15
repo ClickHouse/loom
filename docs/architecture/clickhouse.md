@@ -416,7 +416,10 @@ with `purge=true` and runner state.
   grant change: an op that reads a grant and then writes it holds the grant's key from
   the read to the write, so a concurrent change to the same grant waits for it. Its reads
   are sequentially consistent, and it is cut off after 20 s (each statement after 10 s),
-  well before its claim may be taken over at 60 s.
+  well before its claim may be taken over at 60 s. A repository maintainer's change across
+  branches (a revoke's fan-out, a sync's mirrors) first holds one claim per (repository,
+  subject), `repo:<owner/name>`, then its branches' claims in namespace order, and writes
+  the branches in one insert inside that bound.
 
 **Classification for erasure.** `server/erasure/store/census.py` puts every table in
 `schemas/schema.sql` in exactly one list, and `tests/unit/test_every_table_is_classified.py`

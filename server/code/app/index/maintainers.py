@@ -25,7 +25,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from contextlib import AbstractAsyncContextManager, nullcontext
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, nullcontext
 from datetime import datetime
 from typing import Any
 
@@ -177,38 +177,43 @@ async def _write_under_claims(
     *,
     hold_repo: bool,
 ) -> int:
-    """Write each planned row under its grant's claim while `still_wanted`
-    holds, and under the subject's repository claim with `hold_repo` (else the
-    caller holds it). A row that fails does not stop the others; the first
-    failure is raised once all were tried."""
+    """Write each subject's planned rows that `still_wanted` keeps in one insert,
+    holding its branch claims (in namespace order, so two writers never wait on
+    each other) and, with `hold_repo`, its repository claim first (else the
+    caller holds it). A failure writes none of that subject's rows."""
     from server.auth.grant_claims import grant_change
     from server.core import grant_cache
 
     seen = {(str(r["namespace"]), str(r["subject"])): r for r in read}
-    written, failed = 0, []
+    by_subject: dict[str, list[dict[str, Any]]] = {}
     for row in planned:
-        ns, subject = row["namespace"], row["subject"]
-        try:
-            repo = repo_change(org, ns, subject) if hold_repo else nullcontext()
-            async with repo, grant_change(org, ns, subject):
+        by_subject.setdefault(row["subject"], []).append(row)
+    written = 0
+    for subject, rows in by_subject.items():
+        rows.sort(key=lambda r: r["namespace"])
+        async with AsyncExitStack() as held:
+            if hold_repo:
+                await held.enter_async_context(repo_change(org, rows[0]["namespace"], subject))
+            for row in rows:
+                await held.enter_async_context(grant_change(org, row["namespace"], subject))
+            wanted = []
+            for row in rows:
+                ns = row["namespace"]
                 now = await client.query_one(
                     _GRANT_ROW_SQL, params={"org": org, "ns": ns, "sub": subject}
                 )
-                if not await still_wanted(client, org, row, now, seen.get((ns, subject))):
-                    continue
-                await client.insert(
-                    "loom.namespace_grants",
-                    [row],
-                    settings={"async_insert": 0, "wait_for_async_insert": 1},
-                )
-        except Exception as e:  # noqa: BLE001 — the other branches are still written
-            failed.append(e)
-            continue
-        finally:
-            grant_cache.invalidate(org)
-        written += 1
-    if failed:
-        raise failed[0]
+                if await still_wanted(client, org, row, now, seen.get((ns, subject))):
+                    wanted.append(row)
+            if wanted:
+                try:
+                    await client.insert(
+                        "loom.namespace_grants",
+                        wanted,
+                        settings={"async_insert": 0, "wait_for_async_insert": 1},
+                    )
+                finally:
+                    grant_cache.invalidate(org)
+        written += len(wanted)
     return written
 
 

@@ -299,7 +299,7 @@ async def test_a_lowering_that_lands_while_a_sync_plans_is_not_written_over() ->
     assert [r["namespace"] for r in ch.inserted] == ["code-x-26-5"]
 
 
-async def test_a_sibling_that_fails_does_not_stop_the_revoke_of_the_others(
+async def test_a_branch_that_cannot_be_claimed_leaves_every_branch_for_the_retry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from server.auth import grant_claims
@@ -316,7 +316,7 @@ async def test_a_sibling_that_fails_does_not_stop_the_revoke_of_the_others(
     monkeypatch.setattr(grant_claims, "grant_change", _busy_on_26_5)
     with pytest.raises(GrantBusyError):
         await maintainers.revoke_repo_maintainer("clickhouse", "code-x", "alice", ch=ch)
-    assert [r["namespace"] for r in ch.inserted] == ["code-x-26-6"]
+    assert ch.inserted == [], "one insert for every branch, or none"
 
 
 async def test_a_mirror_onto_a_new_branch_does_not_override_a_lowering_on_another() -> None:
@@ -437,3 +437,76 @@ async def test_one_subject_changes_one_repository_at_a_time_across_its_branches(
     assert log == ["a in", "b in", "b out", "a out"], "another repository does not wait"
     async with maintainers.repo_change("clickhouse", "team", "alice"):
         pass  # no repository: nothing held
+
+
+def _recording_claims(monkeypatch: pytest.MonkeyPatch, log: list[str]) -> None:
+    """Record every grant claim taken and dropped, in order."""
+    from contextlib import asynccontextmanager
+
+    from server.auth import grant_claims
+
+    held = grant_claims.grant_change
+
+    @asynccontextmanager
+    async def _recorded(org: str, ns: str, subject: str) -> Any:
+        async with held(org, ns, subject):
+            log.append(f"+{ns}")
+            yield
+            log.append(f"-{ns}")
+
+    monkeypatch.setattr(grant_claims, "grant_change", _recorded)
+    monkeypatch.setattr(grants_mod, "grant_change", _recorded)
+
+
+async def test_a_sync_takes_the_repository_claim_before_the_branch_s(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    log: list[str] = []
+    _recording_claims(monkeypatch, log)
+
+    class _Logged(_FakeCH):
+        async def insert(self, table: str, rows: list[dict[str, Any]], **k: Any) -> None:
+            log.append(f"insert {sorted(r['namespace'] for r in rows)}")
+            await super().insert(table, rows, **k)
+
+    ch = _Logged([_admin("code-x", "alice")])
+    await maintainers.sync_repo_maintainers("clickhouse", "code-x", ch=ch)
+    assert log == [
+        "+repo:Org/x",
+        "+code-x-26-5",
+        "+code-x-26-6",
+        "insert ['code-x-26-5', 'code-x-26-6']",
+        "-code-x-26-6",
+        "-code-x-26-5",
+        "-repo:Org/x",
+    ]
+
+
+async def test_a_revoke_holds_the_repository_claim_across_its_fan_out_and_write(
+    _handler_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    log: list[str] = []
+    _recording_claims(monkeypatch, log)
+
+    async def _any(*_a: Any, **_k: Any) -> GrantState:
+        return GrantState.from_row(
+            {"subject": "alice", "role": "admin", "status": "active", "granted_by": "ops"}
+        )
+
+    async def _two(*_a: Any, **_k: Any) -> int:
+        return 2
+
+    async def _fan_out(*_a: Any, **_k: Any) -> None:
+        log.append("fan-out")
+
+    async def _insert(row: dict[str, Any], **_k: Any) -> None:
+        log.append("write")
+
+    monkeypatch.setattr(grants_repo, "find_any_grant", _any)
+    monkeypatch.setattr(grants_repo, "count_active_admins", _two)
+    monkeypatch.setattr(grants_repo, "insert_row", _insert)
+    monkeypatch.setattr(maintainers, "revoke_repo_maintainer", _fan_out)
+    await grants_mod.handle_grants_revoke(
+        GrantsRevokeInput(org="clickhouse", namespace="code-x", subject="alice")
+    )
+    assert log == ["+repo:Org/x", "fan-out", "+code-x", "write", "-code-x", "-repo:Org/x"]

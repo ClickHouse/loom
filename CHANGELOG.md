@@ -77,9 +77,11 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
 - **Security:** `context.fetch` no longer serves, and `context.offload` refuses to write,
   `page/` blobs: a parked `memory.search` page holds hits from every namespace its search
   fanned out over, and only `memory.search(page=...)` serves it, re-checking each of them.
-- `grants.revoke` of a repository maintainer revokes them on the other branches first; when
-  one cannot be written it answers a retryable error and leaves the grant until a retry,
-  where it used to revoke the grant and log the failed branches.
+- `grants.revoke` of a repository maintainer revokes them on the other branches first, in one
+  write; when that cannot be written it answers a retryable error and leaves the grant until
+  a retry, where it used to revoke the grant and log the failed branches. A maintainer's
+  revoke and a maintainer sync of the same person hold one claim on the repository, so a
+  sync can no longer copy a revoked maintainer's admin grant back onto a branch.
 - `grants.approve` refuses (409 `GRANT_WOULD_DOWNGRADE`) to approve a request below the
   subject's current grant; lower a grant with `grants.create replace=true`.
 - **Security:** two changes of one grant no longer interleave. An op that reads a grant
