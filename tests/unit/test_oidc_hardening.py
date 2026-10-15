@@ -85,7 +85,7 @@ class _Req:
 
     def __init__(self) -> None:
         self.query_params = {"code": "c", "state": "s"}
-        self.cookies = {"loom_oidc_state": oauth.token_id("s")}
+        self.cookies = dict([oauth._state_cookie("s")])
 
 
 @pytest.mark.parametrize(

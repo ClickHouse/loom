@@ -674,11 +674,17 @@ def _oidc_callback_url() -> str:
     return f"{settings.oauth_issuer.rstrip('/')}/oauth/callback"
 
 
-# The browser that starts an IdP sign-in carries this cookie (the hash of the
-# `state`), and the callback requires it: a sign-in started in one browser
+# The browser that starts an IdP sign-in carries a cookie named after its
+# `state`, and the callback requires it: a sign-in started in one browser
 # cannot be finished in another, so nobody can sign a victim into their own
-# account by sending them a callback link.
-_STATE_COOKIE = "loom_oidc_state"
+# account by sending them a callback link. One cookie per sign-in, so two
+# tabs signing in at once don't undo each other.
+def _state_cookie(state: str) -> tuple[str, str]:
+    """(cookie name, value) for one IdP sign-in."""
+    digest = token_id(state)
+    return f"loom_oidc_{digest[:16]}", digest
+
+
 _sso_starts_by_address = Attempts(30, 900)
 
 
@@ -697,11 +703,11 @@ async def start_oidc_login(kind: str, **data: str) -> RedirectResponse:
         state=oidc_state,
         nonce=nonce,
         code_challenge=_b64url(hashlib.sha256(verifier.encode("ascii")).digest()),
+        offline=kind != "dashboard",  # the dashboard's token never refreshes
     )
     response = RedirectResponse(url=url, status_code=302)
     response.set_cookie(
-        _STATE_COOKIE,
-        token_id(oidc_state),
+        *_state_cookie(oidc_state),
         max_age=_PENDING_TTL,
         path="/oauth/callback",
         secure=settings.oauth_issuer.startswith("https://"),
@@ -739,10 +745,20 @@ def _denied_page(reason: str) -> Response:
     )
 
 
+def _expired_sign_in() -> Response:
+    return html_page(
+        "Sign in to Loom",
+        "<h2>This sign-in has expired</h2><p>Start it again from where you began.</p>",
+        400,
+    )
+
+
 @router.get("/oauth/callback")
 async def oidc_callback(request: Request) -> Response:
     response = await _finish_oidc_login(request)
-    response.delete_cookie(_STATE_COOKIE, path="/oauth/callback")
+    state = request.query_params.get("state", "")
+    if state:
+        response.delete_cookie(_state_cookie(state)[0], path="/oauth/callback")
     return response
 
 
@@ -751,12 +767,14 @@ async def _finish_oidc_login(request: Request) -> Response:
     from server.auth.login import jit_provision_for_email, resolve_identity_for_email
 
     state = request.query_params.get("state", "")
-    started_here = request.cookies.get(_STATE_COOKIE, "")
-    if not state or not secrets.compare_digest(started_here, token_id(state)):
-        raise HTTPException(status_code=400, detail={"error": "invalid_state"})
+    if not state:
+        return _expired_sign_in()
+    name, value = _state_cookie(state)
+    if not secrets.compare_digest(request.cookies.get(name, ""), value):
+        return _expired_sign_in()
     pending = await store.take_pending(state)  # single-use
     if pending is None:
-        raise HTTPException(status_code=400, detail={"error": "invalid_state"})
+        return _expired_sign_in()
     kind = pending["kind"]
     user_code = device.unseal_user_code(pending["user_code"]) if kind == "device" else ""
     if request.query_params.get("error"):
@@ -867,6 +885,11 @@ async def connect_approve(request: Request) -> Response:
         "code_challenge": pending["code_challenge"],
     }
     if not approved:
+        upstream = unseal(_UPSTREAM_PURPOSE, pending["upstream_refresh"])
+        if upstream:
+            from server.auth import oidc
+
+            await oidc.revoke(upstream)
         params = {"error": "access_denied"}
         if pending["mcp_state"]:
             params["state"] = pending["mcp_state"]
@@ -1095,9 +1118,17 @@ async def revoke_token(request: Request) -> Response:
 
     f = await form_body(request)
     token_value = f.get("token", "")
+    client_id = f.get("client_id", "")
+    if not client_id:
+        # A public client names itself (RFC 7009 §2.1); without it a refresh
+        # token could not be matched, and logout would quietly do nothing.
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "invalid_request", "error_description": "client_id required"},
+        )
     grant = None
     try:
-        grant = await store.take_refresh(token_value, f.get("client_id", ""))
+        grant = await store.take_refresh(token_value, client_id)
     except CodeReplayed as e:
         grant = e.grant
     if grant is not None:
@@ -1113,10 +1144,13 @@ async def revoke_token(request: Request) -> Response:
         return Response(status_code=200)  # unknown, expired or already revoked
     if info.token_id:
         # The jti may name a whole session, whose refresh tokens outlive this
-        # access token: the revocation lasts as long as they can.
+        # access token, and the token may be a long-lived one minted elsewhere:
+        # the revocation lasts as long as either can.
+        session_end = datetime.now(UTC) + timedelta(seconds=_REFRESH_TTL)
+        token_end = datetime.fromtimestamp(info.expires_at, UTC) if info.expires_at else None
         await revoke(
             info.token_id,
-            expires_at=datetime.now(UTC) + timedelta(seconds=_REFRESH_TTL),
+            expires_at=max(token_end, session_end) if token_end else None,
             reason="logout",
             revoked_by=info.subject,
         )

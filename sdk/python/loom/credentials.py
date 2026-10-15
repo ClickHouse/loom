@@ -34,7 +34,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from loom.errors import AuthInvalid, LoomError
+from loom.errors import AuthInvalid, BackendUnavailable, LoomError
 
 CREDENTIALS_FILE = Path("~/.loom/credentials")
 DEFAULT_SERVER = "http://localhost:7777"
@@ -179,14 +179,19 @@ def _poll(client: httpx.Client, token_endpoint: str, grant: dict[str, Any]) -> d
     deadline = time.monotonic() + int(grant.get("expires_in", 600))
     while time.monotonic() < deadline:
         time.sleep(interval)
-        r = client.post(
-            token_endpoint,
-            data={
-                "grant_type": _DEVICE_GRANT,
-                "device_code": grant["device_code"],
-                "client_id": CLIENT_ID,
-            },
-        )
+        try:
+            r = client.post(
+                token_endpoint,
+                data={
+                    "grant_type": _DEVICE_GRANT,
+                    "device_code": grant["device_code"],
+                    "client_id": CLIENT_ID,
+                },
+            )
+        except httpx.TransportError:
+            continue  # the user may already have approved: keep asking until the deadline
+        if r.status_code >= 500:
+            continue
         if r.status_code == 200:
             tokens: dict[str, Any] = r.json()
             return tokens
@@ -237,6 +242,9 @@ def _refresh(profile: str, refused: str) -> dict[str, Any]:
     if r.status_code == 400 and _oauth_error(r) == "invalid_grant":
         _drop(profile)
         raise AuthInvalid(f"the session for profile {profile!r} ended; run `loom login`")
+    if r.status_code == 503:
+        # Nothing was spent (the identity provider could not be asked): retry later.
+        raise BackendUnavailable(f"{entry['server']} cannot refresh the session right now; retry")
     r.raise_for_status()
     _save(profile, entry["server"], r.json())
     return dict(_read()["profiles"][profile])

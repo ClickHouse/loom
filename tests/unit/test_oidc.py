@@ -283,7 +283,9 @@ async def test_authorize_redirects_to_idp(monkeypatch) -> None:
 
     captured: dict[str, Any] = {}
 
-    async def fake_build(*, redirect_uri: str, state: str, nonce: str, code_challenge: str) -> str:
+    async def fake_build(
+        *, redirect_uri: str, state: str, nonce: str, code_challenge: str, offline: bool
+    ) -> str:
         captured.update(redirect_uri=redirect_uri, state=state, nonce=nonce, pkce=code_challenge)
         return f"{_ISS}/authorize?state={state}&nonce={nonce}"
 

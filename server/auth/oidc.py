@@ -68,24 +68,22 @@ class UpstreamUnavailable(Exception):
     secret, a malformed reply): Loom's or the IdP's problem, not the user's."""
 
 
-def _scope(doc: dict[str, Any]) -> str:
-    # Some IdPs reject a scope they don't list, so offline_access is asked
-    # for only where the discovery document advertises it.
-    if "offline_access" in (doc.get("scopes_supported") or []):
-        return "openid email profile offline_access"
-    return "openid email profile"
-
-
 async def build_authorize_url(
-    *, redirect_uri: str, state: str, nonce: str, code_challenge: str
+    *, redirect_uri: str, state: str, nonce: str, code_challenge: str, offline: bool
 ) -> str:
-    """The IdP authorize URL loom redirects the browser to (auth-code flow)."""
+    """The IdP authorize URL loom redirects the browser to (auth-code flow).
+    `offline` asks for an IdP refresh token, for a sign-in whose Loom session
+    refreshes; some IdPs reject a scope they don't list, so only where the
+    discovery document advertises `offline_access`."""
     doc = await _discover()
+    scope = "openid email profile"
+    if offline and "offline_access" in (doc.get("scopes_supported") or []):
+        scope += " offline_access"
     params = {
         "response_type": "code",
         "client_id": settings.oidc_client_id,
         "redirect_uri": redirect_uri,
-        "scope": _scope(doc),
+        "scope": scope,
         "state": state,
         "nonce": nonce,
         "code_challenge": code_challenge,

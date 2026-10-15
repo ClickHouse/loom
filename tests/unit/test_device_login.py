@@ -370,27 +370,29 @@ def sso(monkeypatch):
     monkeypatch.setattr(oauth.settings, "oauth_login_provider", "oidc")
     # The TestClient's own origin, so the state cookie (Secure only on https) comes back.
     monkeypatch.setattr(oauth.settings, "oauth_issuer", "http://testserver")
-    state: dict[str, Any] = {"email": "alice@example.com", "upstream": "ok", "refresh": "idp-r1"}
+    idp: dict[str, Any] = {"email": "alice@example.com", "upstream": "ok", "refresh": "idp-r1"}
 
-    async def build(*, redirect_uri: str, state: str, nonce: str, code_challenge: str) -> str:
+    async def build(
+        *, redirect_uri: str, state: str, nonce: str, code_challenge: str, offline: bool
+    ) -> str:
         return f"https://idp.example/authorize?state={state}"
 
     async def exchange(**kw: Any) -> dict[str, Any]:
         out: dict[str, Any] = {"id_token": "t"}
-        if state["refresh"]:
-            out["refresh_token"] = state["refresh"]
+        if idp["refresh"]:
+            out["refresh_token"] = idp["refresh"]
         return out
 
     async def verify(token: str, *, nonce: str) -> dict[str, Any]:
-        return {"email": state["email"], "email_verified": True}
+        return {"email": idp["email"], "email_verified": True}
 
     async def issuer_ok(iss: str) -> bool:
         return iss in ("", "https://idp.example")
 
     async def refresh(token: str) -> str:
-        if state["upstream"] == "refused":
+        if idp["upstream"] == "refused":
             raise oidc.UpstreamRefused
-        if state["upstream"] == "down":
+        if idp["upstream"] == "down":
             raise oidc.UpstreamUnavailable("ConnectError")
         return token + "+"
 
@@ -407,7 +409,7 @@ def sso(monkeypatch):
     monkeypatch.setattr(oidc, "refresh", refresh)
     monkeypatch.setattr(login, "resolve_identity_for_email", by_email)
     monkeypatch.setattr(login, "jit_provision_for_email", no_jit)
-    return state
+    return idp
 
 
 def _sso_round_trip(c: TestClient, user_code: str, iss: str = "") -> httpx.Response:
@@ -539,7 +541,9 @@ def test_a_callback_from_another_browser_is_refused(sso) -> None:
     state = r.headers["location"].split("state=")[1]
     other_browser = _client()  # no state cookie
     back = other_browser.get("/oauth/callback", params={"code": "c", "state": state})
-    assert (back.status_code, back.json()["detail"]["error"]) == (400, "invalid_state")
+    assert back.status_code == 400 and "expired" in back.text
+    # The browser that started it still can.
+    assert c.get("/oauth/callback", params={"code": "c", "state": state}).status_code == 200
 
 
 def test_the_pending_sign_in_holds_no_usable_user_code(sso, _world) -> None:
@@ -640,3 +644,73 @@ async def test_logout_survives_an_unreachable_identity_provider(monkeypatch) -> 
 
     monkeypatch.setattr(oidc, "_discover", down)
     await oidc.revoke("idp-refresh")  # logged, not raised
+
+
+# ── round 2: revocation that lasts, parallel sign-ins, tokens left at the IdP ─
+
+
+def test_revoking_a_long_lived_token_lasts_as_long_as_the_token(_world) -> None:
+    year = mint_token(
+        subject="bot", org="acme", namespaces=["x"], roles=["writer"], ttl_seconds=365 * 86400
+    )
+    forever = mint_token(subject="bot", org="acme", namespaces=["x"], roles=["writer"])
+    c = _client()
+    c.post("/oauth/revoke", data={"token": year, "client_id": "loom-cli"})
+    c.post("/oauth/revoke", data={"token": forever, "client_id": "loom-cli"})
+    assert _world["expiries"][0] - datetime.now(UTC) > timedelta(days=364)
+    assert _world["expiries"][1] is None  # the revocation module keeps it for as long as it allows
+
+
+def test_revocation_needs_a_client_id(_world) -> None:
+    tokens = _signed_in_tokens(_client())
+    r = _client().post("/oauth/revoke", data={"token": tokens["refresh_token"]})
+    assert (r.status_code, _error(r)) == (400, "invalid_request")
+
+
+def test_two_sign_ins_at_once_in_one_browser_both_finish(sso) -> None:
+    c = _client()
+    first, second = _start(c), _start(c)
+    states = []
+    for grant in (first, second):
+        r = c.post("/oauth/device", data={"user_code": grant["user_code"]}, follow_redirects=False)
+        states.append(r.headers["location"].split("state=")[1])
+    for state in states:
+        assert c.get("/oauth/callback", params={"code": "c", "state": state}).status_code == 200
+
+
+def test_only_refreshing_sign_ins_ask_for_an_idp_refresh_token(sso, monkeypatch) -> None:
+    asked: dict[str, bool] = {}
+
+    async def build(
+        *, redirect_uri: str, state: str, nonce: str, code_challenge: str, offline: bool
+    ) -> str:
+        asked[state] = offline
+        return f"https://idp.example/authorize?state={state}"
+
+    monkeypatch.setattr(oidc, "build_authorize_url", build)
+    c = _client()
+    c.get("/oauth/sso", follow_redirects=False)
+    c.post("/oauth/device", data={"user_code": _start(c)["user_code"]}, follow_redirects=False)
+    assert list(asked.values()) == [False, True]
+
+
+def test_denying_after_sso_revokes_the_idp_token(sso, monkeypatch) -> None:
+    revoked: list[str] = []
+
+    async def revoke(token: str) -> None:
+        revoked.append(token)
+
+    monkeypatch.setattr(oidc, "revoke", revoke)
+    c = _client()
+    grant = _start(c)
+    _approve(c, grant["user_code"], _sso_round_trip(c, grant["user_code"]).text, decision="deny")
+    assert revoked == ["idp-r1"]
+
+
+def test_user_codes_are_keyed_with_the_server_secret(_world) -> None:
+    import hashlib
+
+    grant = _start(_client())
+    stored = next(iter(_world["store"].devices.values()))["user_code"]
+    plain = hashlib.sha256(device.normalize_user_code(grant["user_code"]).encode()).hexdigest()
+    assert stored != plain and len(stored) == 64

@@ -10,6 +10,24 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
 
 ### Added
 
+- `loom login`, `loom logout`, `loom whoami` (and `python -m loom …` with only the SDK): sign
+  in on any browser with a one-time code, with the password form or SSO, using the OAuth
+  device grant. The session (an hour-long access token and a rotating refresh token) lives
+  in `~/.loom/credentials`. The sign-in routes (`/oauth/device*`, `/oauth/token`,
+  `/oauth/revoke`, `/oauth/callback`, `/oauth/sso`, discovery) are served whenever auth is
+  on; `LOOM_OAUTH_ENABLED` still gates MCP connect.
+- `loom call <op|/path> key=value …`: every operation and every route outside the registry
+  from a shell, with the stored session or `LOOM_API_KEY`
+  ([without the dashboard](docs/guides/without-the-dashboard.md)).
+- With `LOOM_OAUTH_LOGIN_PROVIDER=oidc` the dashboard signs in through the identity
+  provider ([single sign-on](docs/operations/sso.md)), and every refresh first spends the
+  provider's refresh token, so a user deactivated there loses Loom within the hour.
+- A sign-in session's access tokens carry its family as their `jti`: logout, a replayed
+  refresh token, code or device code, and a provider refusing the user each revoke the
+  whole session. Every sign-in, approval, denial and ended session writes an `auth.*`
+  audit row.
+- Migration `028` adds the device-grant and session columns to `oauth_state`.
+
 - `CODED_WIDTH_MISMATCH` (503): a write whose vector is not the width its coded column was
   created at; `memory.set`, `bulk_set`, `update` and the `knowledge.*` writes are refused before
   any of their rows lands, and `/v1/health` reports `coded_width_mismatch` with the fix. A table
@@ -47,6 +65,16 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   clone stays a plain `git clone`.
 
 ### Changed
+
+- **Breaking, under `LOOM_OAUTH_LOGIN_PROVIDER=oidc`:**
+  - Password sign-in is refused everywhere (`/v1/auth/login` and a password POST to
+    `/oauth/authorize`).
+  - An SSO email no longer matches an account that was created with a password, because
+    self-signup never verified that address. Grant the person's SSO account on such a
+    namespace instead ([single sign-on](docs/operations/sso.md#accounts)).
+  - MCP connect asks the user to approve before it sends a code.
+  - Sessions with no provider refresh token stop refreshing, so MCP clients connected
+    before this release sign in once more.
 
 - **Breaking:** `rerank` (`memory.search`, `memory.search_trace`, `code.search`, `code.ask`)
   and a namespace's `rerank_endpoint` take a name, not a URL: `none`, `builtin:openai[:model]`,

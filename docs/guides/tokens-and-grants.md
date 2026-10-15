@@ -65,9 +65,11 @@ $ loom logout
 ```
 
 Open the URL on any device, sign in, check that the code matches, and approve.
-In Python the same flow is `loom.login("https://loom.example.com")`, and
-`python -m loom login` works with only the SDK installed (`loom login` needs
-it too: `pip install clickhouse-loom`).
+In Python the same flow is `loom.login("https://loom.example.com")`. With
+only the SDK installed (`pip install clickhouse-loom`), the commands are
+`python -m loom login`, `python -m loom whoami` and so on. The `loom` command
+comes with a checkout of the server (`pip install -e .`), and it needs the
+SDK beside it for these.
 
 The session is stored in `~/.loom/credentials` (mode `0600`): a one-hour
 access token and a refresh token that rotates on every use. An `Agent` given

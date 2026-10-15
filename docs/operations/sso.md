@@ -57,9 +57,12 @@ Group claims are not mapped. Namespace access comes from Loom's own grants.
 The verified email matches an SSO account (one with no password) by its
 contact email. An account created with a password is never matched: self-signup
 takes any email without verifying it, so matching would hand that account to
-whoever owns the address at the provider. To carry such an account over, have
-its owner grant the person's SSO account on the namespace. For a person with
-no account:
+whoever owns the address at the provider. To carry such an account over, an
+org admin grants the person's SSO account on it once they have signed in
+(`loom whoami` shows its subject):
+`loom call grants.create namespace=<ns> subject=<sso subject> role=admin`.
+With SSO the only way in, the admin's own token can come from the break-glass
+path below. For a person with no account:
 
 - `LOOM_OIDC_JIT_PROVISION=true` creates one on their first sign-in: a
   personal namespace in `LOOM_OIDC_JIT_ORG`, role `writer`.
@@ -81,6 +84,12 @@ The provider can never grant admin.
   session, because someone else holds a copy.
 - Every sign-in, approval, denial, JIT account and ended session writes an
   `auth.*` row to the audit log.
+
+## Behind a proxy
+
+The device sign-in limits (10 wrong codes, 30 new sign-ins per 15 minutes)
+count per client address. Set `LOOM_TRUSTED_PROXIES` to your proxy's
+addresses so that address is the user's own, not the proxy's for everyone.
 
 ## Break glass
 

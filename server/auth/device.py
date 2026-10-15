@@ -13,11 +13,14 @@ where the request came from and when, and needs an explicit click: a code
 someone else started and sent you is the phishing case this flow is known for.
 That page carries a one-time ticket bound to the signed-in user, so a forged
 POST from another site cannot approve anything. Device and user codes are
-stored as sha256; both expire after ten minutes.
+stored only as hashes (the user code keyed with the server's secret); both
+expire after ten minutes.
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import html
 import secrets
 import time
@@ -26,7 +29,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
-from server.auth import oauth
+from server.auth import oauth, oidc
 from server.auth.attempts import Attempts, client_address
 from server.auth.jwt import new_jti
 from server.core.secrets_at_rest import seal, unseal
@@ -62,6 +65,13 @@ def normalize_user_code(raw: str) -> str:
     return "".join(c for c in raw.upper() if c in _USER_CODE_ALPHABET)
 
 
+def _user_code_id(user_code: str) -> str:
+    """How a user code is stored: keyed with the server's secret, since a plain
+    hash of a space this small (2**34.6) is reversed in seconds."""
+    key = hashlib.sha256(b"loom.device user code:" + settings.jwt_secret.encode()).digest()
+    return hmac.new(key, user_code.encode(), hashlib.sha256).hexdigest()
+
+
 def _display(user_code: str) -> str:
     return f"{user_code[:4]}-{user_code[4:]}"
 
@@ -91,7 +101,7 @@ async def device_authorization(request: Request) -> JSONResponse:
             "exp": int(time.time()) + _DEVICE_TTL,
             "family": "",
             "upstream_refresh": "",
-            "user_code": oauth.token_id(user_code),
+            "user_code": _user_code_id(user_code),
             "status": "pending",
             "address": address,
             "ticket": "",
@@ -151,7 +161,7 @@ async def device_sign_in(request: Request) -> Response:
     if _wrong_codes_by_address.blocked(address):
         return _code_form(typed, "Too many wrong codes. Try again later.", 429)
     user_code = normalize_user_code(typed)
-    device = await oauth.store.device_by_user_code(oauth.token_id(user_code))
+    device = await oauth.store.device_by_user_code(_user_code_id(user_code))
     if device is None:
         _wrong_codes_by_address.record(address)
         return _code_form(typed, "That code is wrong or has expired.", 400)
@@ -183,7 +193,7 @@ async def signed_in(
     upstream_refresh: str,
 ) -> Response:
     """The user has signed in: remember who, and ask them to confirm."""
-    device = await oauth.store.device_by_user_code(oauth.token_id(user_code))
+    device = await oauth.store.device_by_user_code(_user_code_id(user_code))
     if device is None:
         return _expired_page()
     subject, org, namespaces, roles = identity
@@ -225,7 +235,7 @@ def unseal_user_code(sealed: str) -> str:
 async def deny(user_code: str) -> None:
     """The IdP sign-in failed or Loom has no account for the user: end the
     grant so `loom login` stops waiting."""
-    device = await oauth.store.device_by_user_code(oauth.token_id(user_code))
+    device = await oauth.store.device_by_user_code(_user_code_id(user_code))
     if device is not None:
         await oauth.store.save_device(device | {"status": "denied", "ticket": ""})
 
@@ -234,7 +244,7 @@ async def deny(user_code: str) -> None:
 async def device_approve(request: Request) -> Response:
     f = await oauth.form_body(request)
     device = await oauth.store.device_by_user_code(
-        oauth.token_id(normalize_user_code(f.get("user_code", "")))
+        _user_code_id(normalize_user_code(f.get("user_code", "")))
     )
     ticket = f.get("ticket", "")
     if (
@@ -245,10 +255,13 @@ async def device_approve(request: Request) -> Response:
     ):
         return _expired_page()
     approved = f.get("decision") == "approve"
+    if not approved and device["upstream_refresh"]:
+        await oidc.revoke(device["upstream_refresh"])
     device |= {
         "status": "approved" if approved else "denied",
         "ticket": "",
         "family": new_jti() if approved else "",
+        "upstream_refresh": device["upstream_refresh"] if approved else "",
     }
     await oauth.store.save_device(device)
     await audit.emit(

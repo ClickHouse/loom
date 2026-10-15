@@ -225,3 +225,22 @@ def test_the_code_line_is_flushed_for_a_piped_terminal(monkeypatch) -> None:
     monkeypatch.setattr("builtins.print", lambda *a, flush=False, **kw: flushes.append(flush))
     credentials._say("To sign in, open …")
     assert flushes == [True]
+
+
+def test_login_keeps_polling_through_a_server_hiccup(server, monkeypatch) -> None:
+    monkeypatch.setattr(credentials.time, "sleep", lambda _: None)
+    server.queued["/oauth/token"] = [httpx.Response(502), httpx.Response(503)]
+    credentials.login(_SERVER, open_browser=False, echo=lambda _: None)
+    assert _stored()["profiles"]["default"]["access_token"]
+
+
+def test_a_refresh_the_server_cannot_answer_now_is_retryable(server) -> None:
+    from loom.errors import BackendUnavailable
+
+    credentials.login(_SERVER, open_browser=False, echo=lambda _: None)
+    server.queued["/oauth/token"] = [
+        httpx.Response(503, json={"detail": {"error": "temporarily_unavailable"}})
+    ]
+    with pytest.raises(BackendUnavailable):
+        credentials.access_token(refused="a1")
+    assert _stored()["profiles"]["default"]["refresh_token"] == "r1"  # kept for the retry
