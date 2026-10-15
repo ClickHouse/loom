@@ -71,6 +71,7 @@ def _row(
     now: datetime,
     revoked: bool = False,
     granted_at: datetime | None = None,
+    version: int | None = None,
 ) -> dict[str, Any]:
     return {
         "org": org,
@@ -83,7 +84,7 @@ def _row(
         "granted_at": granted_at or now,
         "granted_by": granted_by,
         "revoked_at": now if revoked else None,
-        "version": time.time_ns(),
+        "version": version or time.time_ns(),
     }
 
 
@@ -240,36 +241,37 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
 
     client = ch or get_client()
     rows = await _grant_rows(client, org, branches)
-    active: dict[str, dict[str, datetime]] = {ns: {} for ns in branches}
+    # Grant changes are ordered by row version: `granted_at` keeps whole seconds,
+    # so a lowering and a promotion within one would compare equal.
+    active: dict[str, dict[str, tuple[int, datetime]]] = {ns: {} for ns in branches}
     # When a subject's admin ended on a branch: revoked, or set to a lower role.
-    revoked: dict[tuple[str, str], datetime] = {}
+    ended: dict[tuple[str, str], int] = {}
     for r in rows:
         ns, subject = str(r["namespace"]), str(r["subject"])
         if ns not in active:
             continue
         live = r.get("revoked_at") is None and str(r.get("status") or "active") in _ACTIVE
         if live and r.get("role") == "admin":
-            active[ns][subject] = r["granted_at"]
+            active[ns][subject] = (int(r["version"]), r["granted_at"])
         elif r.get("revoked_at") is not None or live:
             key = (ns, subject)
-            ended = r["revoked_at"] if r.get("revoked_at") is not None else r["granted_at"]
-            revoked[key] = max(revoked.get(key, ended), ended)
+            ended[key] = max(ended.get(key, 0), int(r["version"]))
     # newest sibling grant per subject, and the branch it came from
-    union: dict[str, tuple[datetime, str]] = {}
+    union: dict[str, tuple[int, datetime, str]] = {}
     for ns, subs in active.items():
-        for subject, at in subs.items():
-            if subject not in union or at > union[subject][0]:
-                union[subject] = (at, ns)
+        for subject, (version, at) in subs.items():
+            if subject not in union or version > union[subject][0]:
+                union[subject] = (version, at, ns)
     now = naive_utc_now()
     inserts: list[dict[str, Any]] = []
     for ns in branches:
-        for subject, (at, src) in union.items():
+        for subject, (version, at, src) in union.items():
             if subject in active[ns]:
                 continue
-            rv = revoked.get((ns, subject))
-            if rv is not None and rv >= at:
+            if ended.get((ns, subject), 0) > version:
                 continue  # removed or lowered on this branch after their newest sibling grant
-            # A mirror keeps its source's time: it is no newer a promotion than that grant.
+            # A mirror keeps its source's time and version: it is no newer a promotion
+            # than that grant. The version still replaces the branch's row, which is older.
             inserts.append(
                 _row(
                     org,
@@ -278,6 +280,7 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
                     granted_by=f"{GRANTED_BY_PREFIX}{src}",
                     now=now,
                     granted_at=at,
+                    version=version,
                 )
             )
     written = (

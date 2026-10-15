@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 
 from server.auth.authz import Role
 from server.auth.jwt import AuthInfo
+from server.core import grant_cache
 from server.core.ch import CHClient, get_client
 from server.identity.store import grants as grants_repo
 
@@ -155,6 +156,8 @@ async def release_claim(
     row["description"] = f"Released by {actor_subject}" + (f" ({reason})" if reason else "")
     row["updated_at"] = max(now, existing.get("updated_at") or now)
     await ch.insert("loom.namespaces", [row])
+    # The claim cap reads which accounts tie a person's spellings from this table.
+    grant_cache.invalidate(org)
 
     log.info(
         "claim_release: %s released by %s (was owned by %r, %d grants revoked)",

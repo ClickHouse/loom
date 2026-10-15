@@ -85,6 +85,7 @@ async def org(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[str]:
         ("r", {"live": 0, "gone": 0}),  # released: caps, never admits
         ("r@x", {"live": 2, "gone": 0}),  # a spelling's own grants count
         ("q", {}),  # the row's current owner is not the released person
+        ("admin", {"live": 2, "gone": 0}),  # nor is the released person its owner
     ],
 )
 async def test_which_tied_spellings_set_the_rank(

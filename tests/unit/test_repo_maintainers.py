@@ -65,7 +65,10 @@ def _admin(
     status: str = "active",
     revoked_at: datetime | None = None,
     role: str = "admin",
+    version: int | None = None,
 ) -> dict[str, Any]:
+    # Versions follow the change's time, ties broken by the order rows are made.
+    event = revoked_at or at
     return {
         "namespace": ns,
         "subject": subject,
@@ -74,7 +77,7 @@ def _admin(
         "revoked_at": revoked_at,
         "granted_at": at,
         "granted_by": "ops",
-        "version": next(_VERSIONS),
+        "version": version or int(event.timestamp()) * 10**9 + next(_VERSIONS),
     }
 
 
@@ -556,3 +559,29 @@ async def test_a_keeper_that_cannot_answer_stops_a_sync_at_the_first_subject(
     with pytest.raises(BackendUnavailableError):
         await maintainers.sync_repo_maintainers("clickhouse", "code-x", ch=ch)
     assert len(set(tried)) == 1, "no wait per subject on a Keeper that is down"
+
+
+async def test_a_promotion_in_the_same_second_as_a_lowering_elsewhere_reaches_it() -> None:
+    # Lowered to viewer on 26-5, then made admin on code-x within the same second:
+    # the promotion is the later change, and only the row version says so.
+    ch = _FakeCH(
+        [
+            _admin("code-x-26-5", "alice", role="viewer", version=1_000),
+            _admin("code-x", "alice", version=1_001),
+        ]
+    )
+    await maintainers.sync_repo_maintainers("clickhouse", "code-x", ch=ch)
+    mirrored = {r["namespace"]: r for r in ch.inserted}
+    assert set(mirrored) == {"code-x-26-5", "code-x-26-6"}
+    assert mirrored["code-x-26-5"]["version"] == 1_001, "a mirror keeps its source's version"
+
+
+async def test_a_lowering_in_the_same_second_after_a_promotion_stands() -> None:
+    ch = _FakeCH(
+        [
+            _admin("code-x", "alice", version=1_000),
+            _admin("code-x-26-5", "alice", role="viewer", version=1_001),
+        ]
+    )
+    await maintainers.sync_repo_maintainers("clickhouse", "code-x", ch=ch)
+    assert [r["namespace"] for r in ch.inserted] == ["code-x-26-6"]

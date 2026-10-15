@@ -6,7 +6,8 @@ row there; where it holds one, the claim is capped at that grant
 read per (org, subject), every spelling of the person included, is kept for
 `grant_cache_ttl_seconds`.
 
-A grant write in this process drops its org's entries at once (a writer knows
+A grant write in this process, or a write to the accounts that tie a
+person's spellings, drops its org's entries at once (a writer knows
 the spelling it wrote, not the ones a token may carry); another process sees it
 within the TTL. A miss reads the org's grant rows, so a busy org pays one such
 read per active subject per TTL. A failed re-read serves the old entry while it is
@@ -126,7 +127,7 @@ async def _read(org: str, subject: str) -> GrantMap:
                 SELECT (
                     arrayFlatten(groupArrayIf(pair, own AND live)),
                     arrayFlatten(groupArray(
-                        arrayConcat(if(own AND NOT live, pair, []), released_aliases)
+                        arrayConcat(if(own AND NOT live, pair, []), if(own, [], released_aliases))
                     ))
                 )
                 FROM (

@@ -13,6 +13,7 @@ import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
+from server.core import grant_cache
 from server.core.ch import CHClient, get_client
 from server.core.datetimes import naive_utc_now_seconds
 from server.identity.api.models import (
@@ -332,6 +333,8 @@ async def handle_namespace_register(
     now = naive_utc_now_seconds()
     row = registry_row(input, existing, now)
     await ch.insert("loom.namespaces", [row])
+    # The claim cap reads which accounts tie a person's spellings from this table.
+    grant_cache.invalidate(input.org)
     # The class this row implies is what the next request in this process runs as — no
     # re-read.
     from server.identity.app.traffic_class_registry import note_registered
@@ -566,6 +569,8 @@ async def handle_namespace_delete(
     row["active"] = False
     row["updated_at"] = now
     await ch.insert("loom.namespaces", [row])
+    # The claim cap reads which accounts tie a person's spellings from this table.
+    grant_cache.invalidate(input.org)
     return NamespaceDeleteOutput(
         deleted=True,
         namespace=input.namespace,

@@ -6,6 +6,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from server.core import grant_cache
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.grant_sql import LIVE_GRANT
@@ -205,6 +206,7 @@ async def handle_namespace_restore(
     # mutates loom.namespaces.
     if target_existing is not None and not bool(target_existing.get("active", False)):
         await ch.insert("loom.namespaces", [{**target_existing, "active": True, "updated_at": now}])
+        grant_cache.invalidate(input.org)  # the claim cap reads account ties from this table
     elif target_existing is None:
         await ch.insert(
             "loom.namespaces",
