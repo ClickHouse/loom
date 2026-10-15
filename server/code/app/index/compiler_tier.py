@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 from server.code.app.index.entry_lock import EntryLockHeld, entry_lock
-from server.code.app.index.gitrepo import is_local_remote
+from server.code.app.index.gitrepo import is_local_remote, upload_pack_args
 from server.code.app.index.producer_inference import worker_owns
 from server.code.app.index.sandbox import run_job, sandbox_available
 from server.code.domain.index.repos import checkout_for
@@ -278,11 +278,6 @@ def resolve_binary(configured: str) -> Path:
 # ~2 GB pack every pass on a ClickHouse checkout.
 SCIP_HEAD_REF = "refs/loom/scip-head"
 
-# A local fetch starts upload-pack in the bare clone with the config passed in the
-# environment cleared, so auth_env's safe.directory does not reach it, and a clone
-# owned by another uid (one the host operator made) is refused as dubious.
-_UPLOAD_PACK = "git -c 'safe.directory=*' upload-pack"
-
 
 def checkout_fetch_args(bare: Path | str, target: str) -> list[str]:
     """`git` arguments that fetch `target` from the local bare clone into a
@@ -291,7 +286,7 @@ def checkout_fetch_args(bare: Path | str, target: str) -> list[str]:
     return [
         "fetch",
         "--recurse-submodules=no",
-        f"--upload-pack={_UPLOAD_PACK}",
+        *upload_pack_args(str(bare)),
         str(bare),
         f"+{target}:{SCIP_HEAD_REF}",
     ]

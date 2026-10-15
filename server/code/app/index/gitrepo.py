@@ -144,6 +144,18 @@ def remote_access(remote: str) -> RemoteAccess:
     return {"network": True, "allow_remote_port": remote_port(remote)}
 
 
+# A local fetch, ls-remote or clone starts upload-pack in the source repository with
+# the environment's config cleared, so auth_env's safe.directory does not reach it
+# and a repository another uid owns (one the host operator made) is refused as
+# dubious. It gets the setting on its own command line instead.
+_LOCAL_UPLOAD_PACK = "git -c 'safe.directory=*' upload-pack"
+
+
+def upload_pack_args(remote: str) -> list[str]:
+    """The `--upload-pack` a fetch, ls-remote or clone from `remote` needs."""
+    return [f"--upload-pack={_LOCAL_UPLOAD_PACK}"] if is_local_remote(remote) else []
+
+
 def remote_port(remote: str) -> int | None:
     """The port a network remote is reached on: an explicit `:port`, else 443
     for https and 22 for ssh. None for a local path."""
@@ -208,6 +220,8 @@ async def _git(
     runs as a repository job (sandbox.run_job): the network only through the egress
     proxy, the clone the one writable path, `token` for the remote's host. A local
     command reads and writes `index_file` as its index when given."""
+    if remote:
+        args = (args[0], *upload_pack_args(remote), *args[1:])
     argv = ["git", *UNQUOTED_PATHS, "--git-dir", git_dir, *args]
     returncode: int | None
     if remote:

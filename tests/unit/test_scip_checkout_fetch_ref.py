@@ -78,23 +78,56 @@ def test_the_fetched_target_lands_on_the_ref_and_the_next_fetch_sends_only_new(
     assert got <= 2 * 3  # two commits: commit + tree + blob each
 
 
-def test_a_bare_clone_another_uid_owns_is_fetched_from(tmp_path: Path) -> None:
-    """A repository job's git reads no system config; the fetch must still trust a
-    bare clone the host operator owns. The test variable makes git treat every
-    repository as owned by someone else."""
+def _foreign_owner_env(remote: Path) -> dict[str, str]:
+    """A repository job's environment, with every repository taken as another uid's."""
     from server.code.app.index.gitrepo import auth_env
+
+    return {**auth_env(remote=str(remote)), "GIT_TEST_ASSUME_DIFFERENT_OWNER": "1"}
+
+
+def _require_owner_check(checkout: Path, bare: Path, target: str) -> None:
+    """Git 2.45.1 began refusing a foreign-owned source in upload-pack; later releases
+    take the environment's safe.directory there again, so only some versions show it."""
+    plain = subprocess.run(
+        ["git", "-C", str(checkout), "fetch", str(bare), f"+{target}:refs/plain"],
+        capture_output=True,
+        text=True,
+        env=_foreign_owner_env(bare),
+    )
+    if plain.returncode == 0:
+        pytest.skip("this git's upload-pack does not refuse a foreign-owned source")
+    assert "dubious ownership" in plain.stderr
+
+
+def test_a_bare_clone_another_uid_owns_is_fetched_from(tmp_path: Path) -> None:
+    src, bare, checkout = _setup(tmp_path)
+    target = _commits(src, 1, "c")
+    _git(src, "push", "-q", str(bare), "master")
+    _require_owner_check(checkout, bare, target)
+    done = subprocess.run(
+        ["git", "-C", str(checkout), *checkout_fetch_args(bare, target)],
+        capture_output=True,
+        text=True,
+        env=_foreign_owner_env(bare),
+    )
+    assert done.returncode == 0, done.stderr
+    assert _git(checkout, "rev-parse", SCIP_HEAD_REF) == target
+
+
+@pytest.mark.asyncio
+async def test_a_local_remote_another_uid_owns_is_read(tmp_path: Path, monkeypatch) -> None:
+    from server.code.app.index import gitrepo, sandbox
 
     src, bare, checkout = _setup(tmp_path)
     target = _commits(src, 1, "c")
     _git(src, "push", "-q", str(bare), "master")
-    env = {**auth_env(remote=str(bare)), "GIT_TEST_ASSUME_DIFFERENT_OWNER": "1"}
-
-    def fetch(*args: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            ["git", "-C", str(checkout), *args], capture_output=True, text=True, env=env
-        )
-
-    plain = fetch("fetch", "--recurse-submodules=no", str(bare), f"+{target}:{SCIP_HEAD_REF}")
-    assert plain.returncode and "dubious ownership" in plain.stderr
-    assert fetch(*checkout_fetch_args(bare, target)).returncode == 0
-    assert _git(checkout, "rev-parse", SCIP_HEAD_REF) == target
+    _require_owner_check(checkout, bare, target)
+    real = gitrepo.auth_env
+    monkeypatch.setattr(sandbox, "sandbox_available", lambda: False)
+    monkeypatch.setattr(
+        gitrepo,
+        "auth_env",
+        lambda token="", remote="": {**real(token, remote), "GIT_TEST_ASSUME_DIFFERENT_OWNER": "1"},
+    )
+    heads = await gitrepo.remote_branches(str(checkout / ".git"), str(bare))
+    assert heads["master"] == target
