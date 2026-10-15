@@ -1300,3 +1300,13 @@ async def test_retracting_the_current_claim_leaves_no_row_for_it_when_only_plans
             {"memory_key": "r", "change_kind": "retract", "qualifiers": {"role": "a"}},
         )
         assert (await a.call("memory.get", {"memory_key": "r"}))["found"] is False
+
+
+async def test_clear_expiry_on_a_set_clears_it(control_plane_url, mint_test_token) -> None:
+    # The caller stated the expiry: the journal's earlier deadline is not carried.
+    a, _ = await _agent(control_plane_url, mint_test_token, "clearexp")
+    async with a:
+        await a.call("memory.set", {"memory_key": "e", "value": "v", "ttl_seconds": 3600})
+        assert (await a.call("memory.get", {"memory_key": "e"}))["expires_at"]
+        await a.call("memory.set", {"memory_key": "e", "value": "v", "clear_expiry": True})
+        assert (await a.call("memory.get", {"memory_key": "e"}))["expires_at"] is None

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
@@ -583,6 +584,37 @@ def _replayed_revision(existing: MemoryRow) -> MemoryUpdateByIdOutput:
     )
 
 
+def _vector_filter(new_sha: str) -> tuple[list[Any], Callable[[Any], list[Any]]]:
+    """A vector only for a kept row that still carries the text it was embedded
+    from (by content: the same JSON however it is spaced or ordered); the first
+    list collects those rows."""
+    embedded: list[Any] = []
+
+    def same_text(kept: Any) -> list[Any]:
+        same = [r for r in kept if str(r.get("content_sha256") or "") == new_sha]
+        embedded.extend(same)
+        return same
+
+    return embedded, same_text
+
+
+def _revision_intent(
+    input: Any, existing: MemoryRow, memory_row: dict[str, Any], new_sha: str
+) -> tuple[dict[tuple[str, ...], frozenset[str]], frozenset[str]]:
+    """What a revision declares: kept the value, it is a metadata write of the
+    columns its request supplied (the rest, a pin, an expiry, a value committed
+    since its read, the journal's); a new value states its expiry only when it
+    revives (its pin and the rest the journal's when it is planned)."""
+    from server.memory.app import verify as _verify
+
+    supplied = frozenset(
+        f for f in ("tags", "concepts", "confidence", "char_limit") if f in input.model_fields_set
+    )
+    keeps_value = new_sha == _verify.current_content_sha256(existing) and not input.revive
+    declared = {row_key(memory_row): supplied} if keeps_value else {}
+    return declared, frozenset({"expires_at"} if input.revive else ())
+
+
 async def _write_revision(
     input: Any, existing: MemoryRow, ch: Any, *, op: str
 ) -> MemoryUpdateByIdOutput:
@@ -689,26 +721,15 @@ async def _write_revision(
         else []
     )
     written = -1  # unknown until the insert returns
-    from server.memory.app import verify as _verify
+    declared, stated = _revision_intent(input, existing, memory_row, new_sha)
 
-    built_value = memory_row["value"]
-    # A revision that keeps the value is a metadata write: only what it sets is its
-    # own, the rest (a pin, an expiry, a value committed since its read) the journal's.
-    declared = (
-        {row_key(memory_row): frozenset({"tags", "concepts", "confidence", "char_limit"})}
-        if new_sha == _verify.current_content_sha256(existing) and not input.revive
-        else {}
-    )
-
-    def _same_text(kept: Any) -> Any:
-        # A vector only for a row that still carries the text it was embedded from.
-        return [r for r in kept if r["value"] == built_value]
+    embedded, _same_text = _vector_filter(new_sha)
 
     try:
         # The vector writes go with the version row, once the journal accepted it; a
         # revision of a memory removed since it was read is refused, not re-asserted.
         with (
-            write_intent(WriteIntent(memory_key=existing.memory_key, existing=True)),
+            write_intent(WriteIntent(memory_key=existing.memory_key, existing=True, stated=stated)),
             declare_fields(declared),
         ):
             written = await insert_memory_versions(
@@ -737,14 +758,15 @@ async def _write_revision(
             )
     finally:
         new_version = int(memory_row["version"])  # as the publisher stamped it
-        if sensitivity == "high" and written:
+        if memory_row.get("sensitivity") == "high" and written:
             # After the retire (at the same version, the later insert wins the tie),
             # and even when the gather failed: the version row may be in.
             await fence_high([(memory_repo.embedding_key(existing), new_version)], ch=ch)
     if not written:
         return _replayed_revision(existing)
     # Its version was drawn when the write began: a slow write indexes its own BM25 stats.
-    await memory_repo.index_late_rows(emb_rows, ch=ch)
+    if embedded:
+        await memory_repo.index_late_rows(emb_rows, ch=ch)
     cfg = await cfg_task
     _cd.schedule_settle(
         _settle_identity(input.org, existing, revision_run_id),
@@ -756,11 +778,13 @@ async def _write_revision(
     await _update_post_write(input, existing, conflict_result, ch)
 
     # Same-key supersession, exactly as memory.set runs it after its insert.
-    await _revision_supersession(input.org, existing, serialized_value, ch, cfg.policy)
+    # From the row the journal accepted (a tags-only update lands on the value that
+    # holds now, which may not be the one it read).
+    await _revision_supersession(input.org, existing, str(memory_row["value"]), ch, cfg.policy)
     return MemoryUpdateByIdOutput(
         updated=True,
         new_version=new_version,
-        content_sha256=new_sha,
+        content_sha256=str(memory_row["content_sha256"]),
         conflict_verdict=conflict_result.verdict if conflict_result is not None else "",
         conflict_peers=len(conflict_result.peers) if conflict_result is not None else 0,
         duplicate_of=duplicate_of_id,

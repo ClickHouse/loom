@@ -368,22 +368,12 @@ async def test_retention_apply_emits_multiif_with_per_namespace_overrides(
 
     finally:
         try:
-            for t in (
-                "loom.audit_log",
-                "loom.agent_events",
-                "loom.memory_embeddings",
-                "loom.conversations",
-                "loom.chunks",
-                "loom.documents",
-            ):
+            # Every managed table, so a rerun on the same database starts from none.
+            for t in managed:
                 try:
                     await ch.execute(f"ALTER TABLE {t} REMOVE TTL")
                 except Exception:  # noqa: BLE001 — teardown: a table may lack a TTL; must not raise
                     pass
-            try:
-                await ch.execute("ALTER TABLE loom.memory REMOVE TTL")
-            except Exception:  # noqa: BLE001 — teardown: memory may lack a TTL; must not raise
-                pass
         except Exception:  # noqa: BLE001 — teardown must not raise
             pass
 

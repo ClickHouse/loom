@@ -1119,3 +1119,68 @@ def test_a_value_write_never_lowers_the_texts_sensitivity(journal: Journal) -> N
     with write_intent(WriteIntent(memory_key="k", stated=frozenset())):
         (row,) = run(pub.publish_rows([again]))
     assert row["sensitivity"] == "high"
+
+
+def test_an_inherited_pin_never_authorizes_replacing_the_pinned_value(journal: Journal) -> None:
+    from server.memory.domain.temporal_capture import WriteIntent, write_intent
+
+    base = mrow('"A"', **_LOCKLESS, pinned=0)
+    run(pub.publish_rows([base]))
+    pin = _copy(base, pinned=1)
+    with _meta(pin, "pinned"):
+        run(pub.publish_rows([pin]))
+    b = _copy(base, value='"B"', content_sha256=sha256_value_json('"B"'))
+    with write_intent(WriteIntent(memory_key="k", pin_guard=True, stated=frozenset())):
+        assert run(pub.publish_rows([b])) == []
+
+
+def test_a_metadata_write_never_lands_on_a_recreated_memory(journal: Journal) -> None:
+    base = mrow('"A"', **_LOCKLESS)
+    run(pub.publish_rows([base]))
+    run(pub.publish_rows([_copy(base, tombstoned_at=datetime.now(UTC))]))
+    reborn = _copy(
+        base,
+        value='"B"',
+        content_sha256=sha256_value_json('"B"'),
+        memory_id="00000000-0000-0000-0000-0000000000bb",
+    )
+    run(pub.publish_rows([reborn]))
+    lock = _copy(base, lock_mode="no_delete")  # read A, under A's memory id
+    with _meta(lock, *_LOCKCOLS):
+        assert run(pub.publish_rows([lock])) == []
+
+
+def test_a_new_value_never_inherits_an_expiry_that_has_passed(journal: Journal) -> None:
+    from server.memory.domain.temporal_capture import WriteIntent, write_intent
+
+    gone = datetime.now(UTC).replace(tzinfo=None, microsecond=0) - timedelta(seconds=5)
+    base = mrow('"A"', **_LOCKLESS, expires_at=gone)
+    run(pub.publish_rows([base]))
+    new = _copy(base, value='"B"', content_sha256=sha256_value_json('"B"'), expires_at=None)
+    with write_intent(WriteIntent(memory_key="k", stated=frozenset())):
+        (row,) = run(pub.publish_rows([new]))
+    assert row["expires_at"] is None
+
+
+def test_late_evidence_keeps_its_own_expiry(journal: Journal) -> None:
+    from server.memory.domain.temporal_capture import WriteIntent, write_intent
+
+    ahead = datetime.now(UTC).replace(tzinfo=None, microsecond=0) + timedelta(days=1)
+    run(
+        pub.publish_rows(
+            [
+                mrow(
+                    '"now"',
+                    **_LOCKLESS,
+                    valid_at=datetime(2026, 1, 1, tzinfo=UTC),
+                    expires_at=ahead,
+                )
+            ]
+        )
+    )
+    old = datetime(2024, 1, 1, tzinfo=UTC)
+    late = mrow('"then"', **_LOCKLESS, valid_at=old, valid_to=old + timedelta(days=30))
+    with write_intent(WriteIntent(memory_key="k", stated=frozenset())):
+        assert run(pub.publish_rows([late])) == []
+    added = json.loads(journal.commits[-1]["assertions"])
+    assert [a["expires_at"] for a in added if a["value"] == '"then"'] == [None]

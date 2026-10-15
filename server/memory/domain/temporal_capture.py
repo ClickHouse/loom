@@ -106,6 +106,15 @@ def write_intent(intent: WriteIntent) -> Iterator[None]:
         _intent.reset(token)
 
 
+def state_also(*columns: str) -> None:
+    """The write in progress stated these columns itself (a handler that computed
+    them: a retention window, a type's default expiry). Lasts until its intent's
+    block ends."""
+    cur = _intent.get()
+    if cur is not None and cur.stated is not None:
+        _intent.set(replace(cur, stated=cur.stated | frozenset(columns)))
+
+
 def current_intent() -> WriteIntent:
     return _intent.get() or WriteIntent()
 

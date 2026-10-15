@@ -655,8 +655,9 @@ def _past_only(
         return True
     if not removes(row):
         return False
+    # Only a claim that holds now keeps the key's row: an ended one is history.
     after = tm.apply({a.assertion_id: a for a in active}, amendment).values()
-    return bool(tm.current_claims(after, now))
+    return bool(tm.valid_now(after, now))
 
 
 def _plan_row(
@@ -680,7 +681,8 @@ def _plan_row(
     left_out = _left_out_before(row, intent, active, head, floor, ident)
     if not left_out:
         if fields is not None:
-            left_out = _as_metadata(row, fields, head, active, intent, now)
+            memory_ids = {aid: x.memory_id for aid, x in current.items()}
+            left_out = _as_metadata(row, fields, head, active, intent, now, memory_ids)
         else:
             left_out = _as_value_write(row, active, intent, now)
     if left_out:
@@ -689,11 +691,12 @@ def _plan_row(
         # Only what it sets, on what holds now: the row was built from the journal.
         return _assess_fields(row, fields, active, now) or tm.Amendment("restate")
     if fields is not None and intent.conditional:
-        # An expiry removes only the claims of the text it found expired (what the
-        # current row shows); the key's other claims stay.
-        claims = tm.current_claims(active, now)
-        sha = _claim_shown(claims, head).content_sha256 if claims else ""
-        gone = [a.assertion_id for a in claims if a.content_sha256 == sha]
+        # An expiry removes only the claims that have expired; the key's others stay.
+        gone = [
+            a.assertion_id
+            for a in tm.current_claims(active, now)
+            if a.expires_at is not None and a.expires_at <= now
+        ]
         kind = "redact" if row.get("redacted_at") is not None else "retract"
         return tm.Amendment(kind, tuple(gone), ())
     try:
@@ -811,6 +814,7 @@ def _as_metadata(
     served: Sequence[tm.Assertion],
     intent: WriteIntent,
     now: datetime,
+    memory_ids: Mapping[str, str],
 ) -> str:
     """A metadata write (it declared the columns it sets): its row becomes the key's
     state now, the journal's current claim (and the current row's columns the
@@ -818,9 +822,8 @@ def _as_metadata(
     declared columns its own. '' or why it is left out."""
     claims = tm.current_claims(served, now)
     if intent.conditional and claims:
-        sha = _claim_shown(claims, head).content_sha256
-        mine = [a for a in claims if a.content_sha256 == sha]
-        if any(a.expires_at is None or a.expires_at > now for a in mine):
+        shown = _claim_shown(claims, head)
+        if shown.expires_at is None or shown.expires_at > now:
             return "superseded"  # no longer expired: touched since the sweep read it
     if intent.tighten_lock and _loosens(row, claims, now):
         return "locked"
@@ -834,6 +837,8 @@ def _as_metadata(
     if attests and all(a.content_sha256 != attests for a in claims):
         return "superseded"  # attests text that no longer holds: never another's
     claim = _claim_shown(claims, head)
+    if memory_ids.get(claim.assertion_id, "") not in ("", str(row.get("memory_id") or "")):
+        return "superseded"  # the key was deleted and written anew since the read
     theirs = columns_of(claim)
     if head is not None and int(head.get("version") or 0) >= claim.source_version:
         theirs = dict(head) | theirs
@@ -877,24 +882,33 @@ def _as_value_write(
         r.update(_lock_in_force(claims, now))
     if removes(row):
         return ""
-    _carry(r, claims, intent)
     sha = str(row.get("content_sha256") or "")
     new_value = bool(claims) and all(a.content_sha256 != sha for a in claims)
     if new_value and _locked_against(served, "value", now):
         return "locked"
-    if intent.pin_guard and new_value and not row.get("pinned") and any(a.pinned for a in claims):
+    # Against what the caller asked for, before anything is inherited: a pin the row
+    # would take from the journal never authorizes replacing the pinned value.
+    own_pin = bool(row.get("pinned")) and (intent.stated is None or "pinned" in intent.stated)
+    if intent.pin_guard and new_value and not own_pin and any(a.pinned for a in claims):
         return "pinned"
+    _carry(r, claims, intent, now)
     return ""
 
 
 _SENSITIVITY = {"": 0, "low": 1, "medium": 2, "high": 3}
 
 
-def _carry(r: dict[str, Any], claims: Sequence[tm.Assertion], intent: WriteIntent) -> None:
+def _carry(
+    r: dict[str, Any], claims: Sequence[tm.Assertion], intent: WriteIntent, now: datetime
+) -> None:
     """A value write's metadata its caller did not state, from the journal as it holds
-    now rather than from the head its writer read: the pin and expiry of the claim
-    it replaces, the attestation of the same text, and a sensitivity never lower
-    than the journal's for that text."""
+    now rather than from the head its writer read:
+    - the pin of the same text (a pin binds content), or, for an edit that does not
+      guard pins (memory.update of a pinned value), of the value it replaces;
+    - the expiry of the claim it replaces, while that expiry is still ahead and the
+      write's own claim holds now (late evidence keeps its own);
+    - the attestation of the same text, and a sensitivity never lower than the
+      journal's for that text."""
     if not claims:
         return
     sha = str(r.get("content_sha256") or "")
@@ -903,10 +917,13 @@ def _carry(r: dict[str, Any], claims: Sequence[tm.Assertion], intent: WriteInten
     replaced = same or max(under, key=lambda a: a.source_version)
     stated = intent.stated
     if stated is not None:
-        if "pinned" not in stated and "pinned" in r:
+        if "pinned" not in stated and "pinned" in r and (same is not None or not intent.pin_guard):
             r["pinned"] = int(replaced.pinned)
-        if "expires_at" not in stated and "expires_at" in r:
-            r["expires_at"] = tm.utc(replaced.expires_at)
+        if "expires_at" not in stated and "expires_at" in r and _holds_now(r, now):
+            ahead = (
+                replaced.expires_at if replaced.expires_at and replaced.expires_at > now else None
+            )
+            r["expires_at"] = tm.utc(ahead)
     if same is not None:
         for c in ("verified_by", "verified_at", "verified_sha256"):
             if c in r:
@@ -916,6 +933,13 @@ def _carry(r: dict[str, Any], claims: Sequence[tm.Assertion], intent: WriteInten
             held, 0
         ) > _SENSITIVITY.get(str(r.get("sensitivity") or ""), 0):
             r["sensitivity"] = held
+
+
+def _holds_now(r: Mapping[str, Any], now: datetime) -> bool:
+    """Does the row's own claim hold now by its validity (an undated one does)?"""
+    start = tm.utc(r.get("valid_at")) or tm.utc(r.get("temporal_anchor"))
+    end = tm.utc(r.get("valid_to"))
+    return (start is None or start <= now) and (end is None or end > now)
 
 
 def _lock_in_force(claims: Sequence[tm.Assertion], now: datetime) -> dict[str, Any]:
@@ -1023,8 +1047,14 @@ def _shows_current(
     if own in current:
         shown = own
     elif amendment.change_kind == "assess":
-        revised = [a for a in current if a in amendment.added]
-        shown = next((a for a in revised if carries(a)), None) or next(iter(revised), None)
+        revised = [a for a in current if a in amendment.added and carries(a)] or [
+            a for a in current if a in amendment.added
+        ]
+        # The revision of the claim the row was built from (its validity is the row's).
+        span = (tm.utc(row.get("valid_at")), tm.utc(row.get("valid_to")))
+        shown = next((a for a in revised if (tm.row_start(a), a.valid_to) == span), None) or next(
+            iter(revised), None
+        )
     elif amendment.change_kind == "restate":
         # The row carries its own metadata: only a current claim that agrees with it.
         mine = assertion_from_row(row, WriteIntent())
@@ -1174,19 +1204,23 @@ _serving = False
 # stamped with): a commit by another publisher since then means a second writer in
 # process mode.
 _STARTED: datetime | None = None
+# When this process started, on its own clock (`serve`); `_started` moves it onto
+# ClickHouse's once, so siblings started together see each other's commits.
+_BOOTED = datetime.now(UTC)
 
 
 async def _started() -> datetime:
     global _STARTED
     if _STARTED is None:
-        _STARTED = await store.server_now()
+        _STARTED = _BOOTED + (await store.server_now() - datetime.now(UTC))
     return _STARTED
 
 
 def serve() -> None:
     """Mark this process as the server: the one that may publish without a Keeper."""
-    global _serving
+    global _serving, _BOOTED
     _serving = True
+    _BOOTED = datetime.now(UTC)
 
 
 async def _served(

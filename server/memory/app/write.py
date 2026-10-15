@@ -47,6 +47,7 @@ from server.memory.domain.temporal_capture import (
     WriteIntent,
     current_intent,
     intent_for,
+    state_also,
     write_intent,
 )
 from server.memory.domain.value_shape import value_shape_advisories
@@ -180,7 +181,7 @@ def _stated(input: MemorySetInput) -> frozenset[str]:
     out = set()
     if "pinned" in given:
         out.add("pinned")
-    if given & {"ttl_seconds", "on_expire", "expire_reason"}:
+    if given & {"ttl_seconds", "clear_expiry"}:
         out.add("expires_at")
     if "sensitivity" in given:
         out.add("sensitivity")
@@ -397,6 +398,7 @@ async def _set_expiry(
             type_cfg = await _cf.type_config_for(_cfg_task, input, resolved_memory_type)
         if type_cfg.retention_days > 0:
             expires_at = datetime.now(UTC) + timedelta(days=type_cfg.retention_days)
+            state_also("expires_at")  # the server's own: the journal's never replaces it
     return expires_at
 
 
@@ -470,6 +472,8 @@ async def _set_prepare_value(w: _SetWrite, _restated: bool) -> None:
         now=datetime.now(UTC),
         settings=settings,
     )
+    if _sens_windowed:
+        state_also("expires_at")  # the sensitive window is the server's own
     # Protected-attribute label: a tag, never a refusal.
     from server.memory.domain.sensitivity import attribute_tags
 
