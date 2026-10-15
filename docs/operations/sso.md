@@ -108,6 +108,13 @@ The device sign-in limits (10 wrong codes, 30 new sign-ins per 15 minutes)
 count per client address. Set `LOOM_TRUSTED_PROXIES` to your proxy's
 addresses so that address is the user's own, not the proxy's for everyone.
 
+## ClickHouse Keeper
+
+Sign-in claims each state change of a code, refresh token or device grant in
+ClickHouse Keeper, so two requests at the same moment cannot both spend one.
+The Loom stacks and ClickHouse Cloud have a Keeper; on a self-managed
+ClickHouse without one, `/v1/health` reports `oauth_transitions_not_atomic`.
+
 ## Break glass
 
 With SSO on, nobody can sign in with a password, including operators. If the

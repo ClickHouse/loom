@@ -225,8 +225,8 @@ def test_refresh_rotates_and_a_replayed_token_ends_the_session(password_server) 
     # one they kept: refused, and the session ends.
     credentials.access_token(refused=second["access_token"])
     third = _stored()
-    assert _refresh(base, first["refresh_token"]).json()["detail"]["error"] == "invalid_grant"
-    assert _refresh(base, third["refresh_token"]).json()["detail"]["error"] == "invalid_grant"
+    assert _refresh(base, first["refresh_token"]).json()["error"] == "invalid_grant"
+    assert _refresh(base, third["refresh_token"]).json()["error"] == "invalid_grant"
     assert _whoami(base, third["access_token"])["authenticated"] is False
 
 
@@ -238,7 +238,7 @@ def test_logout_revokes_the_session_on_the_server(password_server) -> None:
     entry = _stored()
     assert credentials.logout() is True
     assert _whoami(base, entry["access_token"])["authenticated"] is False
-    assert _refresh(base, entry["refresh_token"]).json()["detail"]["error"] == "invalid_grant"
+    assert _refresh(base, entry["refresh_token"]).json()["error"] == "invalid_grant"
     assert json.loads(credentials.CREDENTIALS_FILE.read_text())["profiles"] == {}
 
 
@@ -387,6 +387,11 @@ def _loom(home: Path, *args: str) -> Any:
     """`loom …` in a shell whose HOME holds one user's session; its JSON answer."""
     env = {**os.environ, "HOME": str(home), "LOOM_ENV_FILE": ""}
     env.pop("LOOM_API_KEY", None)
+    # The child runs `loom`, whose session commands are this checkout's SDK; the
+    # server environment CI installs does not carry it.
+    env["PYTHONPATH"] = os.pathsep.join(
+        filter(None, [str(ROOT), str(ROOT / "sdk" / "python"), os.environ.get("PYTHONPATH")])
+    )
     done = subprocess.run(
         [sys.executable, "-m", "server.cli", *args],
         env=env,
@@ -508,7 +513,7 @@ def test_a_replayed_session_ends_and_spares_the_rest(
     credentials.access_token(refused=_stored()["access_token"])
     # ...and a copy of the first token turns up: this session ends. The CI
     # token minted from it is its owner's to revoke (it lives at most 30 days).
-    assert _refresh(base, first["refresh_token"]).json()["detail"]["error"] == "invalid_grant"
+    assert _refresh(base, first["refresh_token"]).json()["error"] == "invalid_grant"
     assert _whoami(base, _stored()["access_token"])["authenticated"] is False
     assert _whoami(base, made["token"])["authenticated"] is True
     # The same person's other session, and what it minted, are untouched.

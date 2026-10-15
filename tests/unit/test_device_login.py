@@ -132,7 +132,7 @@ def _refresh(c: TestClient, token: str) -> httpx.Response:
 
 
 def _error(r: httpx.Response) -> str:
-    return str(r.json()["detail"]["error"])
+    return str(r.json()["error"])
 
 
 # ── device authorization ──────────────────────────────────────────────────
@@ -459,7 +459,7 @@ def test_sso_page_offers_no_password_form(sso) -> None:
 def test_a_callback_naming_another_issuer_is_refused(sso) -> None:
     c = _client()
     r = _sso_round_trip(c, _start(c)["user_code"], iss="https://evil.example")
-    assert (r.status_code, r.json()["detail"]["error"]) == (400, "invalid_issuer")
+    assert (r.status_code, r.json()["error"]) == (400, "invalid_issuer")
 
 
 def test_sso_without_an_account_denies_the_device(sso, _world) -> None:
@@ -1004,3 +1004,74 @@ def test_a_replays_revocation_lapses_with_the_session(_world) -> None:
 def test_discovery_always_names_its_response_types(monkeypatch) -> None:
     monkeypatch.setattr(oauth.settings, "oauth_enabled", False)
     assert oauth.authorization_server_metadata("https://x")["response_types_supported"] == []
+
+
+# ── wire format, owed revocations, the replay signal ──────────────────────
+
+
+def test_oauth_errors_are_at_the_top_of_the_body() -> None:
+    """RFC 8628 §3.5 / RFC 6749 §5.2: device clients read `error` there."""
+    c = _client()
+    r = _poll(c, _start(c)["device_code"])
+    assert r.json() == {"error": "authorization_pending"}
+    assert r.headers["cache-control"] == "no-store"
+
+
+def test_a_replay_says_why_the_session_ended(_world) -> None:
+    c = _client()
+    first = _signed_in_tokens(c)
+    _refresh(c, first["refresh_token"])
+    r = _refresh(c, first["refresh_token"])
+    assert r.json()["error"] == "invalid_grant"
+    assert "presented again" in r.json()["error_description"]
+
+
+def _failing_revoke(monkeypatch, *, owe_fails: bool, store: Any) -> None:
+    async def down(token_id: str, **kw: Any) -> dict[str, Any]:
+        raise RuntimeError("revoked_tokens unwritable")
+
+    monkeypatch.setattr(revocation, "revoke", down)
+    monkeypatch.setattr(oauth, "_keep_trying", lambda grant, reason: None)
+    if owe_fails:
+
+        async def owe_down(family: str, reason: str) -> None:
+            raise RuntimeError("oauth_state unwritable")
+
+        monkeypatch.setattr(store, "owe_revocation", owe_down)
+
+
+def test_a_revocation_that_cannot_be_written_is_owed_and_refuses_the_family(
+    _world, monkeypatch
+) -> None:
+    c = _client()
+    first = _signed_in_tokens(c)
+    second = _refresh(c, first["refresh_token"]).json()
+    _failing_revoke(monkeypatch, owe_fails=False, store=_world["store"])
+    assert _error(_refresh(c, first["refresh_token"])) == "invalid_grant"  # the replay
+    sid = pyjwt.decode(first["access_token"], options={"verify_signature": False})["sid"]
+    assert sid in _world["store"].owed
+    # The family's live token is refused while the debt stands.
+    assert _error(_refresh(c, second["refresh_token"])) == "invalid_grant"
+
+
+def test_a_replay_whose_end_is_recorded_nowhere_is_told_to_retry(_world, monkeypatch) -> None:
+    c = _client()
+    first = _signed_in_tokens(c)
+    _refresh(c, first["refresh_token"])
+    _failing_revoke(monkeypatch, owe_fails=True, store=_world["store"])
+    r = _refresh(c, first["refresh_token"])
+    assert r.status_code == 503 and r.json()["error"] == "temporarily_unavailable"
+
+
+def test_a_busy_grant_is_a_retry_not_a_refusal(_world, monkeypatch) -> None:
+    from server.auth import claims
+
+    c = _client()
+    tokens = _signed_in_tokens(c)
+
+    async def busy(token: str, client_id: str) -> None:
+        raise claims.Busy("refresh:x")
+
+    monkeypatch.setattr(_world["store"], "take_refresh", busy)
+    r = _refresh(c, tokens["refresh_token"])
+    assert r.status_code == 503 and r.json()["error"] == "temporarily_unavailable"

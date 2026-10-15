@@ -84,6 +84,9 @@ class HealthState:
     # Whether run.begin claims run ids in Keeper (loom.agent_run_claims exists):
     # None = no run.begin has asked yet in this process.
     run_claims_atomic: bool | None = None
+    # Whether sign-in transitions are claimed in Keeper (loom.oauth_claims
+    # exists): None = not asked yet in this process.
+    oauth_claims_atomic: bool | None = None
     env: Mapping[str, str] = field(default_factory=lambda: os.environ)
     # Saved keys take precedence over the environment, including explicit empty keys.
     saved_keys: Mapping[str, bool] = field(default_factory=saved_key_presence)
@@ -620,6 +623,25 @@ def _reader_user_problems(settings: Any, state: HealthState) -> list[Problem]:
     ]
 
 
+def _oauth_claim_problems(state: HealthState) -> list[Problem]:
+    """No Keeper: two requests spending one sign-in credential can both pass."""
+    if state.oauth_claims_atomic is not False:
+        return []
+    return [
+        Problem(
+            "oauth_transitions_not_atomic",
+            "warn",
+            "loom.oauth_claims is absent (no ClickHouse Keeper), so spending a code or "
+            "refresh token and each step of a device sign-in is a read then a write: two "
+            "requests at the same moment can both pass the same check.",
+            "Run ClickHouse with a Keeper (deploy/clickhouse-config/keeper.xml), create the "
+            "table from schemas/migrations/029_oauth_claims.sql (the migration skipped it) "
+            "and restart Loom.",
+            source="runtime",
+        )
+    ]
+
+
 def _run_claim_problems(state: HealthState) -> list[Problem]:
     """No Keeper: two concurrent run.begin calls on one run id can both keep it."""
     if state.run_claims_atomic is not False:
@@ -662,6 +684,7 @@ def collect_problems(settings: Any, state: HealthState | None = None) -> list[Pr
         + _sandbox_problems(settings, st)
         + _reader_user_problems(settings, st)
         + _run_claim_problems(st)
+        + _oauth_claim_problems(st)
     )
     return sorted(problems, key=lambda p: (SEVERITY_RANK.get(p.severity, 9), p.code))
 

@@ -7,7 +7,10 @@ real store does, and a spent one is kept (marked) so a replay is seen.
 
 from __future__ import annotations
 
+import asyncio
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI
@@ -19,6 +22,7 @@ from server.auth.oauth import CodeReplayed, token_id
 def oauth_app() -> FastAPI:
     """Every OAuth route: sign-in, the device grant and MCP connect."""
     app = FastAPI()
+    app.add_exception_handler(oauth.OAuthError, oauth.oauth_error_response)
     app.include_router(oauth.router)
     app.include_router(device.router)
     app.include_router(oauth.connect_router)
@@ -29,6 +33,8 @@ class MemoryOAuthStore:
     """The OAuth store in process memory, with `_CHStore`'s async interface."""
 
     def __init__(self) -> None:
+        self.locks: dict[str, asyncio.Lock] = {}
+        self.owed: set[str] = set()
         self.clients: dict[str, dict[str, Any]] = {}
         self.codes: dict[str, dict[str, Any]] = {}
         self.refresh: dict[str, dict[str, Any]] = {}
@@ -74,6 +80,21 @@ class MemoryOAuthStore:
 
     async def take_pending(self, state: str) -> dict[str, Any] | None:
         return self.pending.pop(state, None)
+
+    @asynccontextmanager
+    async def transition(self, key: str) -> AsyncIterator[None]:
+        async with self.locks.setdefault(key, asyncio.Lock()):
+            yield
+
+    async def owe_revocation(self, family: str, reason: str) -> None:
+        self.owed.add(family)
+
+    async def revocation_owed(self, family: str) -> bool:
+        return family in self.owed
+
+    async def device(self, device_id: str) -> dict[str, Any] | None:
+        d = self.devices.get(device_id)
+        return None if d is None or device_id in self.spent else dict(d)
 
     async def save_device(self, d: dict[str, Any]) -> None:
         self.devices[d["id"]] = dict(d)

@@ -1,20 +1,8 @@
 """Device authorization grant (RFC 8628): how `loom login` signs in with no
-browser on the machine it runs on.
-
-  CLI → POST /oauth/device_authorization → device_code + user_code + URL
-  user, on any browser → /oauth/device → enters the code → signs in (the
-      password form, or the identity provider under OIDC) → confirm page →
-      Approve
-  CLI → POST /oauth/token (device_code grant), every `interval` seconds,
-      until the grant is approved, denied or expired.
-
-The approval happens on a page shown only after sign-in, which names the code,
-where the request came from and when, and needs an explicit click: a code
-someone else started and sent you is the phishing case this flow is known for.
-That page carries a one-time ticket bound to the signed-in user, so a forged
-POST from another site cannot approve anything. Device and user codes are
-stored only as hashes (the user code keyed with the server's secret); both
-expire after ten minutes.
+browser on the machine it runs on. The CLI asks for a code, the user enters
+it on any browser, signs in and approves on a confirm page; the CLI polls the
+token endpoint until the grant is decided. Why the confirm page, the ticket
+and the limits look as they do: docs/architecture/security.md ("Device grant").
 """
 
 from __future__ import annotations
@@ -25,14 +13,17 @@ import html
 import ipaddress
 import secrets
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
-from server.auth import oauth, oidc
+from server.auth import claims, oauth, oidc
 from server.auth.attempts import Attempts, client_address
 from server.auth.jwt import new_jti
+from server.auth.oauth_store import CodeReplayed, Device, token_id
 from server.core.secrets_at_rest import seal, unseal
 from server.observability import audit
 from server.settings import settings
@@ -93,19 +84,15 @@ def _display(user_code: str) -> str:
 async def device_authorization(request: Request) -> JSONResponse:
     f = await oauth.form_body(request)
     if f.get("client_id") != DEVICE_CLIENT_ID:
-        raise HTTPException(status_code=400, detail={"error": "invalid_client"})
+        raise oauth.OAuthError("invalid_client")
     address = client_address(request)
     if not _requests_by_address.allow(_guesser(address)):
-        raise HTTPException(
-            status_code=429,
-            detail={"error": "slow_down"},
-            headers={"Retry-After": "900"},
-        )
+        raise oauth.OAuthError("slow_down", 429, headers={"Retry-After": "900"})
     device_code = secrets.token_urlsafe(32)
     user_code = _new_user_code()
     await oauth.store.save_device(
         {
-            "id": oauth.token_id(device_code),
+            "id": token_id(device_code),
             "client_id": DEVICE_CLIENT_ID,
             "subject": "",
             "org": "",
@@ -200,6 +187,37 @@ def _expired_page() -> Response:
     )
 
 
+@asynccontextmanager
+async def _claimed(user_code: str) -> AsyncIterator[Device | None]:
+    """The undecided grant for `user_code`, read again while it is claimed, so
+    the change the block writes is the only one made to it at a time. None when
+    it is gone, decided or expired. Raises claims.Busy when another request is
+    changing it."""
+    found = await oauth.store.device_by_user_code(_user_code_id(user_code))
+    if found is None:
+        yield None
+        return
+    async with oauth.store.transition(f"device:{found['id']}"):
+        device = await oauth.store.device(found["id"])
+        if device is None or device["status"] != "pending" or device["exp"] < int(time.time()):
+            device = None
+        yield device
+
+
+def _busy_page() -> Response:
+    return oauth.html_page(
+        "Sign in to Loom",
+        "<h2>This sign-in is busy</h2><p>Something else is changing it. Try again.</p>",
+        409,
+    )
+
+
+async def _revoke_all(*tokens: str) -> None:
+    for token in tokens:
+        if token:
+            await oidc.revoke(token)
+
+
 async def signed_in(
     user_code: str,
     identity: tuple[str, str, list[str], list[str]],
@@ -209,19 +227,41 @@ async def signed_in(
     different people signing in with one code means one of them got it from
     the other's screen; neither can tell which, so the grant ends and the
     terminal has to start again."""
-    device = await oauth.store.device_by_user_code(_user_code_id(user_code))
     subject, org, namespaces, roles = identity
-    if device is None:
-        if upstream_refresh:
-            await oidc.revoke(upstream_refresh)
+    ticket = secrets.token_urlsafe(32)
+    try:
+        async with _claimed(user_code) as device:
+            if device is None:
+                outcome, dropped = "expired", [upstream_refresh]
+            elif device["subject"] not in ("", subject):
+                outcome, dropped = "conflict", [upstream_refresh, device["upstream_refresh"]]
+                await oauth.store.save_device(
+                    device | {"status": "denied", "ticket": "", "upstream_refresh": ""}
+                )
+            else:
+                outcome = "confirm"
+                # The same person signing in again replaces their IdP token.
+                dropped = (
+                    [device["upstream_refresh"]]
+                    if device["upstream_refresh"] != upstream_refresh
+                    else []
+                )
+                device |= {
+                    "subject": subject,
+                    "org": org,
+                    "namespaces": namespaces,
+                    "roles": roles,
+                    "upstream_refresh": upstream_refresh,
+                    "ticket": token_id(ticket),
+                }
+                await oauth.store.save_device(device)
+    except claims.Busy:
+        await _revoke_all(upstream_refresh)
+        return _busy_page()
+    await _revoke_all(*dropped)
+    if outcome == "expired" or device is None:
         return _expired_page()
-    if device["subject"] not in ("", subject):
-        for token in (upstream_refresh, device["upstream_refresh"]):
-            if token:
-                await oidc.revoke(token)
-        await oauth.store.save_device(
-            device | {"status": "denied", "ticket": "", "upstream_refresh": ""}
-        )
+    if outcome == "conflict":
         return oauth.html_page(
             "Sign-in stopped",
             "<h2>Someone else already used this code</h2>"
@@ -229,18 +269,6 @@ async def signed_in(
             "and share the code with nobody.</p>",
             409,
         )
-    if device["upstream_refresh"] and device["upstream_refresh"] != upstream_refresh:
-        await oidc.revoke(device["upstream_refresh"])  # the same person signed in again
-    ticket = secrets.token_urlsafe(32)
-    device |= {
-        "subject": subject,
-        "org": org,
-        "namespaces": namespaces,
-        "roles": roles,
-        "upstream_refresh": upstream_refresh,
-        "ticket": oauth.token_id(ticket),
-    }
-    await oauth.store.save_device(device)
     asked = time.strftime("%H:%M UTC", time.gmtime(device["exp"] - _DEVICE_TTL))
     return oauth.html_page(
         "Approve sign-in",
@@ -270,35 +298,39 @@ async def deny(user_code: str) -> None:
     """Loom has no account for the person who signed in at the IdP: end the
     grant so `loom login` stops waiting, unless someone else already signed
     in on it (a stranger's failed sign-in must not end theirs)."""
-    device = await oauth.store.device_by_user_code(_user_code_id(user_code))
-    if device is not None and not device["subject"]:
-        await oauth.store.save_device(device | {"status": "denied", "ticket": ""})
+    try:
+        async with _claimed(user_code) as device:
+            if device is not None and not device["subject"]:
+                await oauth.store.save_device(device | {"status": "denied", "ticket": ""})
+    except claims.Busy:
+        pass  # someone is changing it: their change decides
 
 
 @router.post("/oauth/device/approve")
 async def device_approve(request: Request) -> Response:
     f = await oauth.form_body(request)
-    device = await oauth.store.device_by_user_code(
-        _user_code_id(normalize_user_code(f.get("user_code", "")))
-    )
     ticket = f.get("ticket", "")
-    if (
-        device is None
-        or not device["ticket"]
-        or not ticket
-        or not secrets.compare_digest(device["ticket"], oauth.token_id(ticket))
-    ):
-        return _expired_page()
     approved = f.get("decision") == "approve"
-    if not approved and device["upstream_refresh"]:
-        await oidc.revoke(device["upstream_refresh"])
-    device |= {
-        "status": "approved" if approved else "denied",
-        "ticket": "",
-        "family": new_jti() if approved else "",
-        "upstream_refresh": device["upstream_refresh"] if approved else "",
-    }
-    await oauth.store.save_device(device)
+    try:
+        async with _claimed(normalize_user_code(f.get("user_code", ""))) as device:
+            if (
+                device is None
+                or not device["ticket"]
+                or not ticket
+                or not secrets.compare_digest(device["ticket"], token_id(ticket))
+            ):
+                return _expired_page()
+            dropped = "" if approved else device["upstream_refresh"]
+            device |= {
+                "status": "approved" if approved else "denied",
+                "ticket": "",  # one use
+                "family": new_jti() if approved else "",
+                "upstream_refresh": device["upstream_refresh"] if approved else "",
+            }
+            await oauth.store.save_device(device)
+    except claims.Busy:
+        return _busy_page()
+    await _revoke_all(dropped)
     await audit.emit(
         "auth.device_approved" if approved else "auth.device_denied",
         org=device["org"],
@@ -321,20 +353,20 @@ async def device_approve(request: Request) -> Response:
     )
 
 
-def _token_error(error: str) -> HTTPException:
-    return HTTPException(status_code=400, detail={"error": error})
+def _token_error(error: str) -> oauth.OAuthError:
+    return oauth.OAuthError(error)
 
 
 async def device_code_grant(f: dict[str, str]) -> dict[str, Any]:
     """The token endpoint's answer to a polling CLI (RFC 8628 §3.5)."""
     if f.get("client_id") != DEVICE_CLIENT_ID:
-        raise HTTPException(status_code=400, detail={"error": "invalid_client"})
+        raise oauth.OAuthError("invalid_client")
     device_code = f.get("device_code", "")
-    if not _polls.allow(oauth.token_id(device_code)):
+    if not _polls.allow(token_id(device_code)):
         raise _token_error("slow_down")
     try:
         device = await oauth.store.take_device(device_code)
-    except oauth.CodeReplayed as e:
+    except CodeReplayed as e:
         raise await oauth.end_replayed_session(e, "device code") from None
     if device is None:
         raise _token_error("invalid_grant")
@@ -346,7 +378,7 @@ async def device_code_grant(f: dict[str, str]) -> dict[str, Any]:
         raise _token_error("access_denied")
     try:
         return await oauth.issue_tokens(device, DEVICE_CLIENT_ID)
-    except HTTPException:
+    except oauth.OAuthError:
         raise  # a refusal stands
     except Exception:  # Loom's own failure: unspend the code so the next poll is no replay
         await oauth.store.save_device(device)

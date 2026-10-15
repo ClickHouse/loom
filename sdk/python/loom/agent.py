@@ -83,7 +83,7 @@ def _credentials(
             raise ValueError(
                 f"profile {profile!r} is a session for {server}; pass one or the other"
             )
-        return server, None, StoredLogin(profile)
+        return server, None, StoredLogin(profile, server)
     base_url = base_url or os.environ.get("LOOM_BASE_URL") or DEFAULT_SERVER
     api_key = api_key or os.environ.get("LOOM_API_KEY")
     if api_key:

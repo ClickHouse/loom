@@ -32,7 +32,9 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
 - The dashboard's **Sign out** ends an SSO sign-in session on the server too; a token
   opened with `#token=` is still only forgotten in that browser.
 - Migration `028` adds the device-grant and session columns to `oauth_state`, and a skip
-  index on its user codes.
+  index on its user codes. Migration `029` adds `oauth_claims` (KeeperMap): each sign-in
+  state transition runs alone per grant. A ClickHouse without a Keeper skips it, and
+  `/v1/health` reports `oauth_transitions_not_atomic`.
 - `CODED_WIDTH_MISMATCH` (503): a write whose vector is not the width its coded column was
   created at; `memory.set`, `bulk_set`, `update` and the `knowledge.*` writes are refused before
   any of their rows lands, and `/v1/health` reports `coded_width_mismatch` with the fix. A table
@@ -78,6 +80,9 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
     self-signup never verified that address. Grant the person's SSO account on such a
     namespace instead ([single sign-on](docs/operations/sso.md#accounts)).
   - MCP connect asks the user to approve before it sends a code.
+- `/oauth/token`, `/oauth/register`, `/oauth/revoke` and the device grant answer errors as
+  `{"error": …, "error_description": …}` at the top of the body (RFC 6749 §5.2), not
+  inside `detail`.
   - Sessions with no provider refresh token stop refreshing, so MCP clients connected
     before this release sign in once more.
   - With `LOOM_OIDC_JIT_PROVISION=true`, new namespaces may not be named `u-…`: that

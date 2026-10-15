@@ -233,6 +233,23 @@ a password change does not end it; under OIDC the provider's own session limits 
 every refresh. A stolen access token can mint machine tokens
 without touching the refresh token, so replay detection only covers a stolen refresh token.
 
+**One transition at a time.** Spending a code, refresh token or device code, finishing an
+IdP sign-in, and each step of a device grant (who signed in on it, its one-time approval)
+reads the grant's row and writes its next version. Each runs holding the grant's key in
+`loom.oauth_claims`, a KeeperMap table (`server/auth/claims.py`): Keeper refuses a second
+insert of the key, so of two concurrent transitions exactly one runs and the other waits
+briefly or is answered "retry". A ClickHouse without a Keeper has no claims table; the
+transitions then run unclaimed and `/v1/health` reports `oauth_transitions_not_atomic`.
+
+**A revocation that cannot be written is owed.** When ending a session cannot write
+`loom.revoked_tokens`, a `revocation_owed` row in `loom.oauth_state` refuses every refresh in
+the family (each retries the revocation) and the process retries it in the background so
+the session's access tokens die too. When neither write lands, the request is answered 503
+`temporarily_unavailable`, never a final `invalid_grant`.
+
+OAuth answers carry `error` and `error_description` at the top of the JSON body (RFC 6749
+§5.2, RFC 8628 §3.5).
+
 **Device grant** (RFC 8628, `server/auth/device.py`). `loom login` gets a device code and
 an eight-letter user code (20 letters, about 2^34.6) that both live ten minutes. Approval
 happens on a page shown only after sign-in. The page names the code, the requesting

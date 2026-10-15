@@ -202,7 +202,9 @@ def test_the_stored_login_refreshes_once_after_a_401(server) -> None:
     credentials.login(_SERVER, open_browser=False, echo=lambda _: None)
     server.queued["/v1/ping"] = [httpx.Response(401), httpx.Response(200)]
     with httpx.Client(base_url=_SERVER) as c:
-        assert c.get("/v1/ping", auth=credentials.StoredLogin("default")).status_code == 200
+        assert (
+            c.get("/v1/ping", auth=credentials.StoredLogin("default", _SERVER)).status_code == 200
+        )
     # The 401 led to one refresh (r1 spent) and the retry carried the new token.
     assert [form.get("refresh_token") for path, form in server.sent if path == "/oauth/token"][
         -1
@@ -342,3 +344,27 @@ def test_an_early_refresh_that_fails_keeps_the_token_that_still_works(server) ->
         httpx.Response(503, json={"detail": {"error": "temporarily_unavailable"}})
     ]
     assert credentials.access_token() == "a1"
+
+
+def test_a_client_never_sends_a_token_from_another_server(server) -> None:
+    """A profile signed in again to another server must not lend that server's
+    token to an Agent made for the first one."""
+    credentials.login(_SERVER, open_browser=False, echo=lambda _: None)
+    auth = credentials.stored_login(_SERVER)
+    assert auth is not None
+    data = _stored()
+    data["profiles"]["default"] |= {
+        "server": "https://other.example",
+        "access_token": "other-token",
+    }
+    credentials.CREDENTIALS_FILE.write_text(json.dumps(data))
+    assert auth.current_token() == ""
+    with httpx.Client(base_url=_SERVER) as c, pytest.raises(AuthInvalid, match="now signed in"):
+        c.get("/v1/ping", auth=auth)
+
+
+def test_a_stored_session_is_only_sent_to_its_own_server(server) -> None:
+    credentials.login(_SERVER, open_browser=False, echo=lambda _: None)
+    auth = credentials.StoredLogin("default", _SERVER)
+    with httpx.Client() as c, pytest.raises(AuthInvalid, match="refusing to send"):
+        c.get("https://elsewhere.example/v1/ping", auth=auth)

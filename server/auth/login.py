@@ -326,8 +326,12 @@ async def jit_provision_for_email(
         params={"org": _settings.oidc_jit_org, "ns": ns},
     )
     if taken is not None:
-        # Not this person's (their account would have resolved): someone made
-        # it first, and their grants on it must not reach this person's data.
+        # This person's own first sign-in, a moment ago in another request?
+        mine = await resolve_identity_for_email(ident)
+        if mine is not None:
+            return mine
+        # Else someone else made it first, and their grants on it must not
+        # reach this person's data.
         log.warning("oidc jit: namespace %r already exists; refusing the sign-in", ns)
         await audit.emit(
             "auth.signin_denied",

@@ -115,6 +115,8 @@ def _seed_code(
         "namespaces": ["alice-ns"],
         "roles": ["writer"],
         "exp": int(time.time()) + 60,
+        "family": "f-seed",
+        "upstream_refresh": "",
     }
     asyncio.run(oauth.store.save_code(code, grant))
     return code, verifier
@@ -172,7 +174,7 @@ def test_pkce_mismatch_rejected() -> None:
             "code_verifier": "the-wrong-verifier",
         },
     )
-    assert r.status_code == 400 and r.json()["detail"]["error"] == "invalid_grant"
+    assert r.status_code == 400 and r.json()["error"] == "invalid_grant"
 
 
 def test_refresh_token_rotates() -> None:
@@ -223,7 +225,7 @@ def test_refresh_refused_for_another_client() -> None:
     c = _client()
     rt = _refresh_token_for_alice(c)
     r = _refresh(c, rt, client_id="loom-other")
-    assert r.status_code == 400 and r.json()["detail"]["error"] == "invalid_grant"
+    assert r.status_code == 400 and r.json()["error"] == "invalid_grant"
     r = _refresh(c, rt)
     assert r.status_code == 200 and r.json()["access_token"]
 
@@ -234,7 +236,7 @@ def test_refresh_without_client_id_is_refused_unconsumed() -> None:
     c = _client()
     rt = _refresh_token_for_alice(c)
     r = _refresh(c, rt, client_id="")
-    assert r.status_code == 400 and r.json()["detail"]["error"] == "invalid_request"
+    assert r.status_code == 400 and r.json()["error"] == "invalid_request"
     assert _refresh(c, rt).status_code == 200
 
 
@@ -250,8 +252,8 @@ def test_store_keeps_token_hashes_not_tokens() -> None:
 
 
 class _FakeCH:
-    """Just enough of the CH client for _CHStore: inserts append versions,
-    query_one answers the FINAL + consumed = 0 read of one (record_type, id)."""
+    """Just enough of the CH client for ClickHouseStore: inserts append
+    versions, query_one answers the FINAL read of one (record_type, id)."""
 
     def __init__(self) -> None:
         self.rows: list[dict] = []
@@ -267,12 +269,15 @@ class _FakeCH:
         if not versions:
             return None
         last = max(versions, key=lambda r: r["version"])
-        return None if last.get("consumed", 0) else last
+        return {"consumed": 0, **last}
 
 
 def _ch_store(monkeypatch) -> _FakeCH:
+    from server.auth import claims, oauth_store
+
     ch = _FakeCH()
-    store = oauth._CHStore()
+    monkeypatch.setattr(claims, "_atomic", False)  # no Keeper behind this fake
+    store = oauth_store.ClickHouseStore()
     monkeypatch.setattr(store, "_ch", lambda: ch)
     monkeypatch.setattr(oauth, "store", store)
     return ch
@@ -309,7 +314,7 @@ def test_refresh_refused_for_subject_revoked_after_issue(monkeypatch) -> None:
     monkeypatch.setattr(revocation, "_revoked_jtis", frozenset())
     monkeypatch.setattr(revocation, "_revoked_before", {"alice@example.com": int(time.time()) + 5})
     r = _refresh(c, rt)
-    assert r.status_code == 400 and r.json()["detail"]["error"] == "invalid_grant"
+    assert r.status_code == 400 and r.json()["error"] == "invalid_grant"
 
 
 def test_refresh_refused_for_fully_revoked_subject(monkeypatch) -> None:
@@ -320,7 +325,7 @@ def test_refresh_refused_for_fully_revoked_subject(monkeypatch) -> None:
     monkeypatch.setattr(revocation, "_revoked_jtis", frozenset({"alice@example.com"}))
     monkeypatch.setattr(revocation, "_revoked_before", {})
     r = _refresh(c, rt)
-    assert r.status_code == 400 and r.json()["detail"]["error"] == "invalid_grant"
+    assert r.status_code == 400 and r.json()["error"] == "invalid_grant"
 
 
 def test_refresh_allowed_when_cutoff_predates_issue(monkeypatch) -> None:
@@ -391,7 +396,7 @@ def test_redirect_uri_policy(uri: str, ok: bool) -> None:
 )
 def test_registration_refuses_unsafe_redirects(body: object) -> None:
     r = _client().post("/oauth/register", json=body)
-    assert r.status_code == 400 and r.json()["detail"]["error"] == "invalid_redirect_uri"
+    assert r.status_code == 400 and r.json()["error"] == "invalid_redirect_uri"
 
 
 def test_consent_page_names_where_the_code_goes() -> None:
@@ -436,7 +441,7 @@ def test_refresh_by_another_client_is_refused() -> None:
         "/oauth/token",
         data={"grant_type": "refresh_token", "refresh_token": rt, "client_id": "loom-other"},
     )
-    assert r.status_code == 400 and r.json()["detail"]["error"] == "invalid_grant"
+    assert r.status_code == 400 and r.json()["error"] == "invalid_grant"
 
 
 def test_refresh_ends_when_the_account_is_gone(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -447,7 +452,7 @@ def test_refresh_ends_when_the_account_is_gone(monkeypatch: pytest.MonkeyPatch) 
     c = _client()
     rt = _refresh_token(c)
     r = _refresh(c, rt)
-    assert r.status_code == 400 and r.json()["detail"]["error"] == "invalid_grant"
+    assert r.status_code == 400 and r.json()["error"] == "invalid_grant"
 
 
 def test_refresh_carries_the_re_derived_roles(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -498,7 +503,7 @@ def test_a_malformed_registration_body_is_a_400_not_a_500(body: bytes) -> None:
         "/oauth/register", content=body, headers={"content-type": "application/json"}
     )
     assert r.status_code == 400
-    assert r.json()["detail"]["error"] == "invalid_client_metadata"
+    assert r.json()["error"] == "invalid_client_metadata"
 
 
 @pytest.mark.parametrize("path", ["/oauth/token", "/oauth/authorize"])
@@ -509,4 +514,4 @@ def test_a_non_utf8_form_body_is_a_400_not_a_500(path: str) -> None:
         headers={"content-type": "application/x-www-form-urlencoded"},
     )
     assert r.status_code == 400
-    assert r.json()["detail"]["error"] == "invalid_request"
+    assert r.json()["error"] == "invalid_request"

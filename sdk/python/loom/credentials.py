@@ -157,6 +157,15 @@ def _failed(r: httpx.Response, doing: str) -> LoomError:
     return LoomError(f"{doing}: {error}")
 
 
+def _oauth_description(r: httpx.Response) -> str:
+    try:
+        body = r.json()
+    except ValueError:
+        return ""
+    detail = body.get("detail", body) if isinstance(body, dict) else {}
+    return str(detail.get("error_description", "")) if isinstance(detail, dict) else ""
+
+
 def _oauth_error(r: httpx.Response) -> str:
     try:
         body = r.json()
@@ -212,12 +221,15 @@ def login(
                 webbrowser.open(grant["verification_uri_complete"])
         tokens = _poll(client, meta["token_endpoint"], grant)
         replaced = _read()["profiles"].get(profile)
-        if replaced and replaced["server"] == server and replaced.get("refresh_token"):
+        if replaced and replaced["server"] == server:
             # The session this sign-in replaces ends too, not left to run out.
             with contextlib.suppress(httpx.HTTPError):
                 client.post(
                     meta["revocation_endpoint"],
-                    data={"token": replaced["refresh_token"], "client_id": CLIENT_ID},
+                    data={
+                        "token": replaced.get("refresh_token") or replaced["access_token"],
+                        "client_id": CLIENT_ID,
+                    },
                 )
     with _locked():  # another process may be rotating a profile in the same file
         _save(profile, server, tokens)
@@ -274,11 +286,9 @@ def _drop(profile: str) -> None:
         _write(data)
 
 
-def _refresh(profile: str, refused: str) -> dict[str, Any]:
+def _refresh(profile: str, refused: str, server: str | None) -> dict[str, Any]:
     """Rotate the profile's tokens. Called with the lock held."""
-    entry = _read()["profiles"].get(profile)
-    if not entry:
-        raise AuthInvalid(f"not signed in (profile {profile!r}); run `loom login`")
+    entry = _entry_for(profile, server)  # read again: another process may have changed it
     if _usable(entry, refused):
         return dict(entry)  # another process refreshed it while we waited
     if not entry.get("refresh_token"):
@@ -299,7 +309,13 @@ def _refresh(profile: str, refused: str) -> dict[str, Any]:
             r = client.post(endpoint, data=form, timeout=_REFRESH_TIMEOUT_S)
     if r.status_code == 400 and _oauth_error(r) == "invalid_grant":
         _drop(profile)
-        raise AuthInvalid(f"the session for profile {profile!r} ended; run `loom login`")
+        why = _oauth_description(r)
+        if "presented again" in why:
+            # Maybe a stolen copy: what it could have minted is the owner's to check.
+            why += "; if you did not just lose a refresh, check `loom call /v1/me/service_accounts`"
+        raise AuthInvalid(
+            f"the session for profile {profile!r} ended ({why or 'expired'}); run `loom login`"
+        )
     if r.status_code != 200:
         # A 503 spent nothing (the identity provider could not be asked): retry later.
         raise _failed(r, f"refreshing the session at {entry['server']}")
@@ -307,17 +323,32 @@ def _refresh(profile: str, refused: str) -> dict[str, Any]:
     return dict(_read()["profiles"][profile])
 
 
-def access_token(profile: str | None = None, *, refused: str = "") -> str:
-    """A live access token for the profile, refreshed first when it is about
-    to expire or is the one the server just `refused`."""
-    profile = profile or default_profile()
+def _entry_for(profile: str, server: str | None) -> dict[str, Any]:
+    """The profile's tokens, which must still be the ones for `server` (when
+    given): a profile signed in again to another server never lends its
+    token to a client made for the first."""
     entry = _read()["profiles"].get(profile)
     if not entry:
         raise AuthInvalid(f"not signed in (profile {profile!r}); run `loom login`")
+    if server is not None and entry["server"] != server:
+        raise AuthInvalid(
+            f"profile {profile!r} is now signed in to {entry['server']}, not {server}"
+        )
+    return dict(entry)
+
+
+def access_token(
+    profile: str | None = None, *, refused: str = "", server: str | None = None
+) -> str:
+    """A live access token for the profile, refreshed first when it is about
+    to expire or is the one the server just `refused`. With `server`, only
+    while the profile still signs in there."""
+    profile = profile or default_profile()
+    entry = _entry_for(profile, server)
     if not _usable(entry, refused):
         try:
             with _locked():
-                entry = _refresh(profile, refused)
+                entry = _refresh(profile, refused, server)
         except BackendUnavailable:
             # Early, not yet expired, and not the one refused: it still works.
             if entry["access_token"] == refused or entry["expires_at"] <= time.time():
@@ -374,39 +405,47 @@ def stored_login(server: str, profile: str | None = None) -> StoredLogin | None:
     entry = _read()["profiles"].get(profile)
     if not entry or entry["server"] != server.rstrip("/"):
         return None
-    return StoredLogin(profile)
+    return StoredLogin(profile, entry["server"])
 
 
 class StoredLogin(httpx.Auth):
     """httpx auth that sends the profile's access token, refreshing it before
-    it expires and once more when the server answers 401."""
+    it expires and once more when the server answers 401. Bound to the
+    server it was made for: every read, refresh and request checks it."""
 
-    def __init__(self, profile: str) -> None:
+    def __init__(self, profile: str, server: str) -> None:
         self.profile = profile
+        self.server = server.rstrip("/")
 
     def current_token(self) -> str:
         entry = _read()["profiles"].get(self.profile) or {}
-        return str(entry.get("access_token", ""))
+        return str(entry.get("access_token", "")) if entry.get("server") == self.server else ""
+
+    def _token(self, request: httpx.Request, refused: str = "") -> str:
+        target = urlsplit(str(request.url))
+        if (target.scheme, target.netloc) != urlsplit(self.server)[:2]:
+            raise AuthInvalid(f"refusing to send {self.server}'s session to {target.netloc}")
+        return access_token(self.profile, refused=refused, server=self.server)
 
     def sync_auth_flow(
         self, request: httpx.Request
     ) -> Generator[httpx.Request, httpx.Response, None]:
-        token = access_token(self.profile)
+        token = self._token(request)
         request.headers["Authorization"] = f"Bearer {token}"
         response = yield request
         if response.status_code == 401:
-            request.headers["Authorization"] = f"Bearer {access_token(self.profile, refused=token)}"
+            request.headers["Authorization"] = f"Bearer {self._token(request, token)}"
             yield request
 
     async def async_auth_flow(
         self, request: httpx.Request
     ) -> AsyncGenerator[httpx.Request, httpx.Response]:
         # File locking and the refresh call block; keep them off the loop.
-        token = await asyncio.to_thread(access_token, self.profile)
+        token = await asyncio.to_thread(self._token, request)
         request.headers["Authorization"] = f"Bearer {token}"
         response = yield request
         if response.status_code == 401:
-            token = await asyncio.to_thread(access_token, self.profile, refused=token)
+            token = await asyncio.to_thread(self._token, request, token)
             request.headers["Authorization"] = f"Bearer {token}"
             yield request
 

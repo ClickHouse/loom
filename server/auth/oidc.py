@@ -58,6 +58,12 @@ async def _discover() -> dict[str, Any]:
     return doc
 
 
+# The whole IdP leg of a Loom refresh (discovery and the token call): the
+# SDK waits longer than this for a refresh, so it never gives up on one the
+# server is still answering.
+_REFRESH_DEADLINE_S = 20
+
+
 class UpstreamRefused(Exception):
     """The IdP answered a refresh with `invalid_grant`: the user's IdP session
     is gone (deactivated, signed out everywhere, token revoked)."""
@@ -104,7 +110,14 @@ async def _token_request(form: dict[str, str]) -> dict[str, Any]:
             },
         )
     r.raise_for_status()
-    tokens: dict[str, Any] = r.json()
+    tokens = r.json()
+    # A success is an object naming the token it issued (RFC 6749 §5.1).
+    if (
+        not isinstance(tokens, dict)
+        or not tokens.get("access_token")
+        or not tokens.get("token_type")
+    ):
+        raise ValueError("the identity provider's token response is not a token response")
     return tokens
 
 
@@ -125,14 +138,15 @@ async def refresh(refresh_token: str) -> str:
     rotate it). Raises UpstreamRefused for `invalid_grant` and
     UpstreamUnavailable for anything else that goes wrong."""
     try:
-        tokens = await _token_request(
-            {"grant_type": "refresh_token", "refresh_token": refresh_token}
-        )
+        async with asyncio.timeout(_REFRESH_DEADLINE_S):
+            tokens = await _token_request(
+                {"grant_type": "refresh_token", "refresh_token": refresh_token}
+            )
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 400 and _error_code(e.response) == "invalid_grant":
             raise UpstreamRefused from e
         raise UpstreamUnavailable(f"HTTP {e.response.status_code}") from e
-    except (httpx.HTTPError, ValueError, KeyError) as e:
+    except (httpx.HTTPError, ValueError, KeyError, TimeoutError) as e:
         raise UpstreamUnavailable(type(e).__name__) from e
     return str(tokens.get("refresh_token") or refresh_token)
 

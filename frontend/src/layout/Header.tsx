@@ -45,8 +45,8 @@ export function Header() {
   const role = useNamespaceRole(identity?.namespace);
   const readOnly = !canWrite(role);
 
-  const onLogout = async () => {
-    await signOut();
+  const onLogout = () => {
+    signOut();
     toast("Signed out", "info");
     setTimeout(() => location.reload(), 300);
   };

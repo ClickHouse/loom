@@ -48,6 +48,7 @@ def _health_provider_fields(
     fix; `status` is `degraded` when ClickHouse is down or any entry is an
     error — a configured fake is a warn unless LOOM_REQUIRE_REAL_PROVIDERS.
     """
+    from server.auth import claims as oauth_claims
     from server.auth import revocation
     from server.code.app.index.sandbox import layout_refusal, sandbox_state
     from server.core.ch import reader_user_error, reader_user_state
@@ -88,6 +89,7 @@ def _health_provider_fields(
             ch_reader_ok=reader_user_state(),
             ch_reader_error=reader_user_error(),
             run_claims_atomic=claims_atomic(),
+            oauth_claims_atomic=oauth_claims.transitions_atomic(),
         ),
     )
     return {

@@ -633,3 +633,12 @@ def test_run_ids_without_keeper_claims_are_an_info_problem(monkeypatch: pytest.M
         if p.code == "run_claims_not_atomic"
     ]
     assert [p.severity for p in found] == ["info"]
+
+
+def test_sign_in_without_keeper_is_reported() -> None:
+    from server.observability.problems import HealthState, _oauth_claim_problems
+
+    assert _oauth_claim_problems(HealthState(oauth_claims_atomic=True)) == []
+    assert _oauth_claim_problems(HealthState(oauth_claims_atomic=None)) == []
+    (problem,) = _oauth_claim_problems(HealthState(oauth_claims_atomic=False))
+    assert problem.code == "oauth_transitions_not_atomic" and "029_oauth_claims.sql" in problem.fix

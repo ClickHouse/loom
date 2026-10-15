@@ -80,8 +80,9 @@ def _refuse(message: str) -> HTTPException:
     return HTTPException(status_code=403, detail={"code": "AUTH_INSUFFICIENT", "message": message})
 
 
-# How long one sign-in session may go on refreshing (the refresh tokens of
-# server/auth/oauth.py): the longest a token minted from a session lives.
+# A refresh token's lifetime (server/auth/oauth.py). It rolls: each refresh
+# issues one good for this long, so a session used at least this often has no
+# fixed end. It is the cap on a token minted from a session.
 SESSION_TTL = 30 * 86400
 
 
@@ -146,10 +147,9 @@ def _child_org(parent: AuthInfo, org: str) -> str:
 def _child_ttl(parent: AuthInfo, ttl_seconds: int | None) -> int:
     """The child's TTL: the one asked for, else the default, clipped so the
     child never outlives its parent. A sign-in session's access token lives an
-    hour and the next refresh replaces it, so its children are clipped to the
-    session's own horizon instead: a person deactivated at the identity
-    provider stops refreshing, and nothing they minted outlives that by more
-    than SESSION_TTL."""
+    hour and the next refresh replaces it, so its children are capped at
+    SESSION_TTL instead: a person deactivated at the identity provider stops
+    refreshing, and nothing they minted outlives their last refresh by more."""
     ttl = ttl_seconds if ttl_seconds is not None else DEFAULT_TTL_DAYS * 86400
     if parent.session_id:
         return min(ttl, SESSION_TTL)

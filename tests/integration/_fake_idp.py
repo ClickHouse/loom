@@ -129,7 +129,11 @@ class FakeIdP:
                 if email is None or email in self.deactivated:
                     return JSONResponse({"error": "invalid_grant"}, status_code=400)
                 return JSONResponse(
-                    {"access_token": "a", "refresh_token": self._new_refresh(email)}
+                    {
+                        "access_token": "a",
+                        "token_type": "Bearer",
+                        "refresh_token": self._new_refresh(email),
+                    }
                 )
             grant = self._codes.pop(form.get("code", ""), None)
             if grant is None or _s256(form.get("code_verifier", "")) != grant["challenge"]:

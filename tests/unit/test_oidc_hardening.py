@@ -116,10 +116,10 @@ async def test_a_failed_callback_does_not_echo_the_idp(
         raise exc
 
     monkeypatch.setattr(oidc, "exchange_code", boom)
-    with pytest.raises(oauth.HTTPException) as ei:
+    with pytest.raises(oauth.OAuthError) as ei:
         await oauth.oidc_callback(_Req())  # type: ignore[arg-type]
     assert ei.value.status_code == status
-    assert ei.value.detail == {"error": error}
+    assert (ei.value.error, ei.value.description) == (error, "")
 
 
 async def test_an_unverified_email_is_refused_at_the_callback(
@@ -179,4 +179,23 @@ async def test_only_invalid_grant_ends_a_session_at_refresh(
     monkeypatch.setattr(oidc, "_token_request", token_request)
     expected = oidc.UpstreamRefused if refused else oidc.UpstreamUnavailable
     with pytest.raises(expected):
+        await oidc.refresh("idp-refresh")
+
+
+@pytest.mark.parametrize("body", [{}, [], {"access_token": "a"}, {"token_type": "Bearer"}])
+async def test_a_malformed_refresh_answer_is_the_idps_fault_not_a_success(
+    monkeypatch: pytest.MonkeyPatch, body: Any
+) -> None:
+    async def discover() -> dict[str, Any]:
+        return {"token_endpoint": "https://idp.example/token"}
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=body)
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(oidc, "_discover", discover)
+    monkeypatch.setattr(
+        oidc.httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(respond), **kw)
+    )
+    with pytest.raises(oidc.UpstreamUnavailable):
         await oidc.refresh("idp-refresh")

@@ -224,6 +224,9 @@ class _NamespacesCH:
     async def query_one(self, sql: str, params: Any = None) -> dict[str, Any] | None:
         return {"1": 1} if self.taken else None
 
+    async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+        return []  # no account of this person's
+
 
 async def test_jit_refuses_a_namespace_someone_made_first(monkeypatch) -> None:
     """The JIT name follows from the email; one already there is someone
@@ -350,3 +353,23 @@ async def test_authorize_redirects_to_idp(monkeypatch) -> None:
     assert pend["nonce"] == captured["nonce"]
     # PKCE on the IdP leg: the challenge sent is the S256 of the kept verifier.
     assert oauth.verify_pkce_s256(pend["code_verifier"], captured["pkce"])
+
+
+async def test_two_first_sign_ins_of_one_person_both_get_the_account(monkeypatch) -> None:
+    """Both requests found no account, one created it first: the second must
+    find the person's own new account, not refuse it as someone else's."""
+    monkeypatch.setattr(settings, "oidc_jit_provision", True)
+    monkeypatch.setattr(settings, "oidc_jit_org", "acme")
+    monkeypatch.setattr(settings, "oidc_jit_email_domains", "")
+    mine = ("u-bob-1a2b3c4d", "acme", ["u-bob-1a2b3c4d"], ["writer"])
+
+    async def resolve(email: str) -> Any:
+        return mine  # the other request's account is there by now
+
+    async def never(**kw: Any) -> None:
+        raise AssertionError("provisioned twice")
+
+    monkeypatch.setattr(login, "resolve_identity_for_email", resolve)
+    monkeypatch.setattr(self_signup, "provision_account", never)
+    monkeypatch.setattr(login, "get_client", lambda: _NamespacesCH(taken=True))
+    assert await login.jit_provision_for_email("bob@acme.com") == mine
