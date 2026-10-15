@@ -1482,14 +1482,17 @@ async def _open_weights(ch: Any, org: str, city: str) -> dict[str, int]:
     return {str(w["plane"]): int(w["n"]) for w in weights}
 
 
-async def _walked(org: str, want: list[str], *, labeled: bool) -> list[str]:
-    """The entities one hop of `facts.traverse` from `user` reaches, waiting up to two
-    seconds for `want`: it counts a fact closed this very second as current."""
+async def _walked(
+    org: str, want: list[str], *, labeled: bool, as_of: datetime | None = None
+) -> list[str]:
+    """The entities one hop of `facts.traverse` from `user` reaches (at `as_of`, when
+    given), waiting up to two seconds for `want`: it counts a fact closed this very
+    second as current."""
     from server.memory.api.models_facts import FactsTraverseInput
     from server.memory.app.facts import handle_facts_traverse
 
     walk = FactsTraverseInput(
-        org=org, namespace=NS, seed_entity="user", max_hops=1, labeled=labeled
+        org=org, namespace=NS, seed_entity="user", max_hops=1, labeled=labeled, as_of=as_of
     )
     for _ in range(10):
         out = await handle_facts_traverse(walk)
@@ -1498,6 +1501,25 @@ async def _walked(org: str, want: list[str], *, labeled: bool) -> list[str]:
             break
         await asyncio.sleep(0.2)
     return walked
+
+
+async def test_an_undo_keeps_its_edge_open_past_another_relations_end(ch, org) -> None:
+    # The pair's latest edge is a bounded work fact; the restored London is open-ended,
+    # and so is its edge: past the work fact's end both walks still reach London.
+    from server.memory.app.restore import handle_memory_restore
+
+    until = naive_utc_now() + timedelta(days=17)
+    london = await _stated(ch, org, "s1", "I live in London", ("user", "live_in", "london"))
+    paris = await _stated(ch, org, "s2", "I live in Paris", ("user", "live_in", "paris"))
+    work = ("user", "work_in", "london")
+    await _stated(ch, org, "s3", "I work in London", work, memory_key="job", fact_valid_to=until)
+    await _edges_like_triples(ch, org)
+    await _follow_retirement(ch, org, london, paris)
+    assert (await handle_memory_restore(_undo_of(paris))).restored
+    await _mutations_done(ch, org)
+    later = until + timedelta(days=30)
+    assert await _walked(org, ["london"], labeled=True, as_of=later) == ["london"]
+    assert await _walked(org, ["london"], labeled=False, as_of=later) == ["london"]
 
 
 async def _undo_in_the_second_of(ch: Any, org: str, city: str, monkeypatch: Any) -> datetime:

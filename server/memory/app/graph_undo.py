@@ -199,8 +199,9 @@ async def _insert_edge_markers(
     ch: Any,
 ) -> None:
     """Give each fresh marker's edge an observation from the Undo, from its earliest
-    marker's start: only an edge the graph has, weighed like its triples. An edge row
-    carrying the Undo's id is an earlier attempt's, and none is added."""
+    marker's start to its markers' own end (`_edge_end`): only an edge the graph has,
+    weighed like its triples. An edge row carrying the Undo's id is an earlier
+    attempt's, and none is added."""
     edge_markers: dict[tuple[str, str], list[_Marker]] = {}
     for m in fresh:
         pair = canonical_edge_pair(m.row["subject"], m.row["object"])
@@ -211,8 +212,6 @@ async def _insert_edge_markers(
         await ch.query_all(
             """
             SELECT entity_a, entity_b,
-                   argMax(tuple(if(invalid_at IS NULL, valid_to, NULL)), last_seen).1
-                       AS ends,
                    countIf(restore_id = {rid:String}) AS restored,
                    groupArrayIf(tuple(valid_from, valid_to),
                                 co_occur > 0 AND invalid_at IS NULL) AS support
@@ -237,7 +236,7 @@ async def _insert_edge_markers(
         pair = (e["entity_a"], e["entity_b"])
         if e["restored"]:
             continue
-        start = starts[pair]
+        start, ends = starts[pair], _edge_end(edge_markers[pair])
         lost = all(_triple(m) in beaten for m in edge_markers[pair])
         edge_rows.append(
             entity_edge_row(
@@ -247,13 +246,21 @@ async def _insert_edge_markers(
                 pair[1],
                 last_seen=now,
                 valid_from=start,
-                valid_to=_still_ahead(e["ends"], start),
-                co_occur=0 if _covered(e["support"], start, e["ends"]) or lost else 1,
+                valid_to=ends,
+                co_occur=0 if _covered(e["support"], start, ends) or lost else 1,
                 restore_id=restore_id,
             )
         )
     if edge_rows:
         await ch.insert("loom.entity_edges", edge_rows, settings=settings)
+
+
+def _edge_end(markers: list[_Marker]) -> datetime | None:
+    """The end an edge's markers keep: none while any of them is open, else the latest.
+    Another relation's row of the same pair never gives the edge its end."""
+    ends = [_still_ahead(m.row["ends"], m.start) for m in markers]
+    bounded = [end for end in ends if end is not None]
+    return max(bounded) if len(bounded) == len(ends) else None
 
 
 def _newest(m: _Marker) -> tuple[date, datetime, str]:

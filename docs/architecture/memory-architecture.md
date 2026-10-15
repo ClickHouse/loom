@@ -371,13 +371,14 @@ the value it was written or stated for (`carried`):
   asserted after the Undo, or starting on a later day, stays current. An Undo never
   retires a row. A replayed Undo reuses the restore's instant from the failure, not the
   replay's clock, so it keeps its place in the order: a value asserted after the Undo,
-  even in its second, stays current. Each Undo has an id (`restore_id`, migration 031),
+  even in its second, stays current. Each Undo has an id (`restore_id`, the restore_id migration),
   stored on every triple and edge marker it writes and recorded in its failure: a marker
   is this Undo's when it carries that id, open or closed since, so a replay adds none
   and restates each as stored, from its own start ("Berlin on Dec 1" still closes Rome
   on Dec 1), while a fact held only since gets its marker after those stored, and
   another Undo, even a microsecond apart, never takes them for its own. An edge marker
-  is written before its triple marker, so a replay after a failed triple insert finds
+  keeps its triple markers' end, open while any of them is, never the end of another
+  relation's row of the same two entities; it is written before its triple marker, so a replay after a failed triple insert finds
   the edge by the id and does not repeat it. The failure records each
   restored row's `content_sha256`; a replay skips a row revised since, whose revision
   reconciles its facts, so the revised value is never dated at the Undo.
