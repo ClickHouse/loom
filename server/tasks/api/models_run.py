@@ -65,6 +65,8 @@ class RunBeginInput(BaseModel):
     def _cost_budget_has_a_session(self) -> RunBeginInput:
         if self.budget_usd > 0 and not names_session(self.session_id):
             raise ValueError("budget_usd needs a session_id: a run's spend is its session's turns")
+        # To the 6 places run.get rounds cost to, so the two compare like for like.
+        self.budget_usd = round(self.budget_usd, 6)
         return self
 
 

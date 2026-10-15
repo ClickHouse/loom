@@ -691,3 +691,11 @@ def test_mcp_offers_the_time_budget_but_not_the_cost_one(toolset: str) -> None:
     begin = next(t for t in tools if t["name"] == "loom_run_begin")
     assert "budget_seconds" in begin["inputSchema"]["properties"]
     assert "budget_usd" not in begin["inputSchema"]["properties"]
+
+
+def test_a_cost_budget_is_kept_to_six_places() -> None:
+    # run.get rounds cost to 6 places, so the budget it is compared with is too.
+    inp = RunBeginInput(
+        org="o", namespace="n", agent="a", goal="g", session_id="s1", budget_usd=1.23456789
+    )
+    assert inp.budget_usd == 1.234568

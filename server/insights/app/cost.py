@@ -30,8 +30,10 @@ from server.observability.budget import effective_cap
 # The events-only dimensions (memory_key, user_id, model, traffic_class,
 # instance_label, build_commit) and the cache columns exist only on the direct
 # scan; a roll-up row reads them as None / 0.
-_AHEAD_SLACK = timedelta(seconds=5)
 _SCAN_DIMS = ("memory_key", "user_id", "model", "traffic_class", "instance_label", "build_commit")
+
+# Ordinary clock skew; a turn dated further ahead counts in turns_dated_ahead.
+_AHEAD_SLACK = timedelta(seconds=5)
 
 
 def _summary_row(r: dict[str, Any], *, scan: bool) -> CostSummaryRow:
@@ -232,8 +234,7 @@ async def handle_cost_record_turns(input: CostRecordTurnsInput) -> CostRecordTur
             except ValueError:
                 turn_at = now
             # Kept as sent, so a replay lands in the same run; a client clock
-            # running ahead is reported instead (`turns_dated_ahead`), past
-            # a few seconds of ordinary skew.
+            # running ahead is reported instead (`turns_dated_ahead`).
             if turn_at > now + _AHEAD_SLACK:
                 ahead += 1
         rows.append(

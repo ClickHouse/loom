@@ -902,6 +902,12 @@ def _rule_set_large_value(
     )
 
 
+def _usd(amount: float) -> str:
+    # Cost and budgets are kept to 6 places; showing all of them means a spend
+    # just past its budget never reads as at it. "$2.50", "$1.000004".
+    return "$" + re.sub("0{1,4}$", "", f"{amount:,.6f}")
+
+
 def _rule_run_over_budget(
     op: str, args: dict[str, Any], res: dict[str, Any], facts: dict[str, Any], st: dict[str, Any]
 ) -> _Call:
@@ -913,12 +919,8 @@ def _rule_run_over_budget(
         return None
     spent = []
     if "cost" in over:
-        # To the 6 places run.get rounds cost to, so a run just past its budget
-        # never reads as at it.
-        budget = float(run.get("budget_usd") or 0.0)
-        fmt = ",.6f" if budget < 0.01 else ",.2f"
-        cost = float(res.get("cost_usd") or 0.0)
-        spent.append(f"${cost:,.6f} of ${budget:{fmt}} spent")
+        budget = _usd(float(run.get("budget_usd") or 0.0))
+        spent.append(f"{_usd(float(res.get('cost_usd') or 0.0))} of {budget} spent")
     if "time" in over:
         elapsed = int(res.get("elapsed_seconds") or 0)
         allowed = int(run.get("budget_seconds") or 0)

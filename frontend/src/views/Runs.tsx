@@ -123,13 +123,19 @@ export const EMPTY_WHY = {
   unpriced: "turns from a model the price table does not know: they cost 0, so they never count toward budget_usd",
 } as const;
 
+/** Dollars to the 6 places cost and budgets are kept to, so a spend just past its budget
+ * never reads as at it: "$2.50", "$1.000004". */
+function usd(amount: number): string {
+  return `$${amount.toFixed(6).replace(/0{1,4}$/, "")}`;
+}
+
 /** The budget run.begin set and the time used against it, e.g. "$1.00 · 30m 0s · 42s
  * elapsed"; "—" when it set none. Read off run.get: run.list rows are projected and do
  * not carry it. */
 function budgetText(detail: RunGetResponse): string {
   const run = detail.run;
   const parts: string[] = [];
-  if (run?.budget_usd) parts.push(`$${run.budget_usd.toFixed(run.budget_usd < 0.01 ? 6 : 2)}`);
+  if (run?.budget_usd) parts.push(usd(run.budget_usd));
   if (run?.budget_seconds) {
     parts.push(fmtDuration(run.budget_seconds * 1000));
     const elapsed = detail.elapsed_seconds ?? 0;
@@ -613,7 +619,7 @@ export function Runs() {
                             {!hasSession ? (
                               <span className="text-[var(--color-text-subtle)]">no session</span>
                             ) : detail.cost_usd > 0 ? (
-                              `$${detail.cost_usd.toFixed(4)}`
+                              usd(detail.cost_usd)
                             ) : (
                               "—"
                             )}
