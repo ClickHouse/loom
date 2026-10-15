@@ -58,10 +58,12 @@ def _admin(
     at: datetime = T0,
     status: str = "active",
     revoked_at: datetime | None = None,
+    role: str = "admin",
 ) -> dict[str, Any]:
     return {
         "namespace": ns,
         "subject": subject,
+        "role": role,
         "status": status,
         "revoked_at": revoked_at,
         "granted_at": at,
@@ -253,3 +255,24 @@ async def test_grants_revoke_admin_fans_out(
         GrantsRevokeInput(org="clickhouse", namespace="code-x", subject="alice")
     )
     assert out.revoked and _handler_env["revoke"] == [("clickhouse", "code-x", "alice")]
+
+
+@pytest.mark.parametrize(
+    ("lowered_after_the_admin_grant", "mirrored"), [(True, False), (False, True)]
+)
+async def test_a_maintainer_lowered_on_one_branch_is_not_made_admin_there_again(
+    lowered_after_the_admin_grant: bool, mirrored: bool
+) -> None:
+    # The lower role set on 26-5 after the admin grant on code-x stands; one
+    # set before it is older than the admin grant, which reaches 26-5.
+    lowered_at = T0 + timedelta(hours=2 if lowered_after_the_admin_grant else -2)
+    ch = _FakeCH(
+        [
+            _admin("code-x", "alice"),
+            _admin("code-x-26-5", "alice", role="writer", at=lowered_at),
+            _admin("code-x-26-6", "alice"),
+        ]
+    )
+    await maintainers.sync_repo_maintainers("clickhouse", "code-x", ch=ch)
+    written = [(r["namespace"], r["subject"]) for r in ch.inserted]
+    assert written == ([("code-x-26-5", "alice")] if mirrored else [])
