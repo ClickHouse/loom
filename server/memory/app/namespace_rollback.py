@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import server.memory.store as store
@@ -46,28 +46,20 @@ async def apply_rollback(
     *,
     applied_at: datetime,
     ch: Any,
-) -> None:
-    """Re-insert reinstated heads and tombstone removed ones, with a stub
-    embedding row per touched key for the worker to drain. A row that is not
-    embedded ('high', or a non-searchable type) gets no stub: its excerpt would
-    carry the value into search. Its key's live vectors are retired instead."""
-    from server.embedding import get_embedder
-    from server.memory.app.high_fence import fence_high
-    from server.memory.domain.memory_types import is_embedded
+) -> tuple[int, int]:
+    """Re-insert reinstated heads and tombstone removed ones; (reinstated, removed)
+    as the publisher accepted them. A reinstated value is a revision of the present:
+    it holds again from `applied_at` (a transition), whatever span it held before,
+    so a dated value the key has since moved past becomes current again. Only an
+    accepted row gets its projection: a stub embedding row for the worker to drain,
+    or, for a row that is not embedded ('high', a non-searchable type, whose excerpt
+    would carry the value into search), its key's live vectors retired."""
+    from server.memory.app.temporal_projection import _STUB_COLS
+    from server.memory.domain.temporal_capture import WriteIntent, row_key, write_intent
 
-    embedder = get_embedder()
-
-    memory_rows: list[dict[str, Any]] = []
-    embedding_rows: list[dict[str, Any]] = []
-    # (identity key, the new memory row's version) of each row that is not embedded.
-    retire: list[tuple[store.EmbeddingKey, int]] = []
-    # The 'high' ones among them, fenced too: a plain write still embedding lands below.
-    fence: list[tuple[store.EmbeddingKey, int]] = []
-
-    def _retire(row: store.MemoryRow, version: int) -> None:
-        retire.append((store.embedding_key(row), version))
-        if row.sensitivity == "high":
-            fence.append((store.embedding_key(row), version))
+    # (the version row, the row it was built from) of each change.
+    reinstated: list[tuple[dict[str, Any], store.MemoryRow]] = []
+    removed: list[tuple[dict[str, Any], store.MemoryRow]] = []
 
     # --- reinstate: the historical row becomes the head again ---------------
     pairs = [(a.memory_key, a.version_to) for a in plan.reinstate]
@@ -81,22 +73,14 @@ async def apply_rollback(
         for h in historical:
             if (h.agent, h.user_id, h.session_id, h.memory_key, h.version) not in wanted:
                 continue
-            new_version = store.next_version()
-            memory_rows.append(
-                store.build_memory_version_row(h, version=new_version, updated_at=applied_at)
+            row = store.build_memory_version_row(
+                h,
+                version=store.next_version(),
+                updated_at=applied_at,
+                valid_at=applied_at,
+                valid_to=None,
             )
-            if is_embedded(h.memory_type, h.sensitivity):
-                embedding_rows.append(
-                    stub_embedding_row(
-                        h,
-                        embedder,
-                        version=new_version,
-                        tombstoned_at=h.tombstoned_at,
-                        created_at=applied_at,
-                    )
-                )
-            else:
-                _retire(h, new_version)
+            reinstated.append((row, h))
 
     # --- remove: keys born after as_of are tombstoned ----------------------
     for a in plan.remove:
@@ -114,44 +98,86 @@ async def apply_rollback(
         )
         if head is None or head.tombstoned_at is not None:
             continue
-        new_version = store.next_version()
-        memory_rows.append(
-            store.build_memory_version_row(
-                head,
-                version=new_version,
-                tombstoned_at=applied_at,
-                updated_at=applied_at,
-            )
+        row = store.build_memory_version_row(
+            head,
+            version=store.next_version(),
+            tombstoned_at=applied_at,
+            updated_at=applied_at,
         )
-        if is_embedded(head.memory_type, head.sensitivity):
-            embedding_rows.append(
+        removed.append((row, head))
+
+    changes = reinstated + removed
+    # The rows the publisher kept, by identity: it may restamp a row's version.
+    kept: dict[tuple[str, ...], dict[str, Any]] = {}
+
+    async def _keep(rows: Any) -> None:
+        kept.update({row_key(r): r for r in rows})
+
+    with write_intent(
+        WriteIntent(change_kind="transition", effective_at=applied_at.replace(tzinfo=UTC))
+    ):
+        for i in range(0, len(changes), _INSERT_BATCH):
+            await insert_memory_versions(
+                [r for r, _ in changes[i : i + _INSERT_BATCH]], ch=ch, alongside=[_keep]
+            )
+    accepted = [(kept[k], base) for r, base in changes if (k := row_key(r)) in kept]
+    await _project(
+        [(r, base.model_copy(update={c: r[c] for c in _STUB_COLS})) for r, base in accepted],
+        applied_at,
+        ch,
+    )
+    counts = (
+        sum(row_key(r) in kept for r, _ in reinstated),
+        sum(row_key(r) in kept for r, _ in removed),
+    )
+    log.info(
+        "namespace.rollback applied org=%s ns=%s reinstate=%d/%d remove=%d/%d",
+        org,
+        namespace,
+        counts[0],
+        len(plan.reinstate),
+        counts[1],
+        len(plan.remove),
+    )
+    return counts
+
+
+async def _project(
+    accepted: list[tuple[dict[str, Any], store.MemoryRow]], applied_at: datetime, ch: Any
+) -> None:
+    """Each accepted row's search projection: a stub embedding row, or its key's live
+    vectors retired (and a 'high' row fenced, so a plain write still embedding lands
+    below). After the memory insert, as memory.set does, so no reader sees the vector
+    outlive the row that retires it; each key's own version keeps a concurrent newer
+    embedded write's vectors."""
+    from server.embedding import get_embedder
+    from server.memory.app.high_fence import fence_high
+    from server.memory.domain.memory_types import is_embedded
+
+    embedder = get_embedder()
+    stubs: list[dict[str, Any]] = []
+    retire: list[tuple[store.EmbeddingKey, int]] = []
+    fence: list[tuple[store.EmbeddingKey, int]] = []
+    for row, shown in accepted:
+        version = int(row["version"])
+        if is_embedded(shown.memory_type, shown.sensitivity):
+            stubs.append(
                 stub_embedding_row(
-                    head,
+                    shown,
                     embedder,
-                    version=new_version,
-                    tombstoned_at=applied_at,
+                    version=version,
+                    tombstoned_at=row["tombstoned_at"],
                     created_at=applied_at,
                 )
             )
-        else:
-            _retire(head, new_version)
-
-    for i in range(0, len(memory_rows), _INSERT_BATCH):
-        await insert_memory_versions(memory_rows[i : i + _INSERT_BATCH], ch=ch)
-    for i in range(0, len(embedding_rows), _INSERT_BATCH):
-        await store.insert_embedding_rows(embedding_rows[i : i + _INSERT_BATCH], ch=ch)
-    # After the memory insert, as memory.set does, so no reader sees the vector
-    # outlive the row that retires it. Each key's own version keeps a concurrent
-    # newer embedded write's vectors.
+            continue
+        retire.append((store.embedding_key(shown), version))
+        if shown.sensitivity == "high":
+            fence.append((store.embedding_key(shown), version))
+    for i in range(0, len(stubs), _INSERT_BATCH):
+        await store.insert_embedding_rows(stubs[i : i + _INSERT_BATCH], ch=ch)
     await store.retire_vectors_for_keys(retire, ch=ch)
     await fence_high(fence, ch=ch)
-    log.info(
-        "namespace.rollback applied org=%s ns=%s reinstate=%d remove=%d",
-        org,
-        namespace,
-        len(plan.reinstate),
-        len(plan.remove),
-    )
 
 
 def stub_embedding_row(

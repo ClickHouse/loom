@@ -35,6 +35,7 @@ from server.memory.domain.memory_types import is_embedded
 from server.memory.domain.temporal_capture import WriteIntent, write_intent
 from server.memory.domain.temporal_reads import Axes
 from server.memory.store import temporal as store
+from server.memory.store.rows import next_version
 
 log = logging.getLogger(__name__)
 _BATCH = 1000
@@ -367,13 +368,19 @@ async def _rewrite_current(
     elif head is not None and _state_of_row(head) in {_state_of(h.a) for h in want}:
         return False
     now = naive_utc_now()
+    # A version is a recording time (history and rollback read it as epoch ns): the
+    # rewrite is stamped now, and above whatever the key already holds.
     if head is not None:
-        version = head.version + 1
-    else:  # just above the key's tombstone or last committed row: a write drawn since wins
+        version = max(next_version(), head.version + 1)
+    else:  # above the key's tombstone or last committed row too
         raw = await store.memory_heads(org, ns, [ident])
         committed = await store.newest_row_versions(org, ns, [ident])
         version = max(
-            [1, *(int(r["version"]) + 1 for r in raw), *(v + 1 for v in committed.values())]
+            [
+                next_version(),
+                *(int(r["version"]) + 1 for r in raw),
+                *(v + 1 for v in committed.values()),
+            ]
         )
     if not want:
         assert head is not None

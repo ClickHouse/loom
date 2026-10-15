@@ -1332,3 +1332,72 @@ async def test_a_key_with_a_scheduled_change_is_not_moved(
             await a.call("memory.move", {"from_key": "employer", "to_key": "job"})
         assert (await a.call("memory.get", {"memory_key": "employer"}))["value"] == "Acme"
         assert not (await a.call("memory.get", {"memory_key": "job"}))["found"]
+
+
+async def test_a_rollback_makes_a_dated_value_current_again(
+    control_plane_url, mint_test_token
+) -> None:
+    a, ns = await _agent(control_plane_url, mint_test_token, "rb-dated")
+    async with a:
+        await a.call("memory.set", {"memory_key": "office", "value": "Leeds", "valid_at": jan(1)})
+        between = await _now_after(1.1)
+        await a.call("memory.set", {"memory_key": "office", "value": "York", "valid_at": jan(20)})
+        out = await a.call("namespace.rollback", {"as_of": between, "dry_run": False})
+        assert out["reinstate"] == 1
+        assert (await a.call("memory.get", {"memory_key": "office"}))["value"] == "Leeds"
+
+
+async def test_a_rollback_to_before_an_amendment_undoes_it(
+    control_plane_url, mint_test_token
+) -> None:
+    a, _ = await _agent(control_plane_url, mint_test_token, "rb-amend")
+    async with a:
+        await a.call("memory.set", {"memory_key": "office", "value": "Leeds"})
+        between = await _now_after(1.1)
+        await a.call(
+            "memory.amend", {"memory_key": "office", "change_kind": "correct", "value": "York"}
+        )
+        assert (await a.call("memory.get", {"memory_key": "office"}))["value"] == "York"
+        out = await a.call("namespace.rollback", {"as_of": between, "dry_run": False})
+        assert out["reinstate"] == 1
+        assert (await a.call("memory.get", {"memory_key": "office"}))["value"] == "Leeds"
+
+
+async def test_an_amendment_keeps_the_whole_lock_and_the_char_limit(
+    control_plane_url, mint_test_token
+) -> None:
+    a, _ = await _agent(control_plane_url, mint_test_token, "amend-guards")
+    async with a:
+        await a.call("memory.set", {"memory_key": "k", "value": "ab", "char_limit": 4})
+        with pytest.raises(Exception, match="CHAR_LIMIT_EXCEEDED"):
+            await a.call(
+                "memory.amend",
+                {"memory_key": "k", "change_kind": "correct", "value": "x" * 40},
+            )
+        until = (datetime.now(UTC) + timedelta(days=3)).replace(microsecond=0)
+        await a.call(
+            "memory.lock",
+            {"memory_key": "k", "mode": "no_delete", "reason": "audit", "until": until.isoformat()},
+        )
+        await a.call("memory.amend", {"memory_key": "k", "change_kind": "correct", "value": "cd"})
+        got = await a.call("memory.get", {"memory_key": "k"})
+        assert (got["value"], got["lock_mode"], got["lock_reason"]) == ("cd", "no_delete", "audit")
+        assert (
+            datetime.fromisoformat(got["lock_until"].replace("Z", "+00:00")).replace(tzinfo=UTC)
+            == until
+        )
+
+
+async def test_a_historical_search_shapes_bodies_as_a_current_one(
+    control_plane_url, mint_test_token
+) -> None:
+    a, _ = await _agent(control_plane_url, mint_test_token, "hist-bodies")
+    async with a:
+        await a.call("memory.set", {"memory_key": "notes", "value": "office move " * 100})
+        now = await _now_after()
+        out = await a.call(
+            "memory.search", {"query": "office move", "valid_as_of": now, "bodies": "none"}
+        )
+        assert out["results"] and all(h["content_excerpt"] == "" for h in out["results"])
+        with pytest.raises(Exception, match="bodies"):
+            await a.call("memory.search", {"query": "office", "valid_as_of": now, "bodies": "unit"})

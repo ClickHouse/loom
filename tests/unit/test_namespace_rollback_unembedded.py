@@ -73,8 +73,14 @@ def calls(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[Any]]:
     async def _get(ident: Any, key: str, **_: Any) -> MemoryRow:
         return heads[key]
 
-    async def _memory(rows: list[dict[str, Any]], **_: Any) -> None:
+    async def _memory(rows: list[dict[str, Any]], *, alongside: Any = (), **_: Any) -> None:
+        from server.memory.domain.temporal_capture import current_intent
+
         seen["memory"].extend(rows)
+        seen.setdefault("intents", []).append(current_intent())
+        kept = [r for r in rows if r["memory_key"] not in seen.get("refused", ())]
+        for f in alongside:
+            await f(kept)
 
     async def _stubs(rows: list[dict[str, Any]], **_: Any) -> None:
         seen["stubs"].extend(rows)
@@ -159,3 +165,30 @@ async def test_a_reinstated_stub_carries_its_memory_rows_version(
     [stub] = calls["stubs"]
     [mem] = calls["memory"]
     assert stub["version"] == mem["version"]
+
+
+async def test_a_row_the_publisher_refused_gets_no_projection(
+    calls: dict[str, list[Any]],
+) -> None:
+    calls["refused"] = ["plain", "secret"]
+    plan = RollbackPlan(
+        reinstate=[_action("plain", "reinstate", 10), _action("secret", "reinstate", 11)],
+        remove=[_action("gone", "remove", 21)],
+    )
+    applied = await rb.apply_rollback("test", "personal", plan, applied_at=_NOW, ch=object())
+    assert applied == (0, 1)
+    assert [r["memory_key"] for r in calls["stubs"]] == ["gone"]
+    assert calls["retired"] == [] and calls["fenced"] == []
+
+
+async def test_a_reinstated_value_holds_from_the_rollback(
+    calls: dict[str, list[Any]],
+) -> None:
+    """A revision of the present: the dated value the key moved past becomes current
+    again, from the rollback on."""
+    plan = RollbackPlan(reinstate=[_action("plain", "reinstate", 10)], remove=[])
+    await rb.apply_rollback("test", "personal", plan, applied_at=_NOW, ch=object())
+    [mem] = calls["memory"]
+    assert (mem["valid_at"], mem["valid_to"]) == (_NOW, None)
+    [intent] = calls["intents"]
+    assert (intent.change_kind, intent.effective_at) == ("transition", _NOW.replace(tzinfo=UTC))

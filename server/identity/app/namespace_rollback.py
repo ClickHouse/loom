@@ -91,7 +91,8 @@ async def handle_namespace_rollback(
         return out
 
     applied_at = _naive_utc(now)
-    await memory_rollback.apply_rollback(
+    # What the publisher accepted: a key changed since the plan was read keeps its row.
+    out.reinstate, out.remove = await memory_rollback.apply_rollback(
         input.org, input.namespace, plan, applied_at=applied_at, ch=ch
     )
 
@@ -104,8 +105,8 @@ async def handle_namespace_rollback(
         subject={
             "as_of": as_of.isoformat(),
             "version_at": version_at,
-            "reinstate": len(plan.reinstate),
-            "remove": len(plan.remove),
+            "reinstate": out.reinstate,
+            "remove": out.remove,
             "truncated": truncated,
             "memory_keys": input.memory_keys or [],
         },

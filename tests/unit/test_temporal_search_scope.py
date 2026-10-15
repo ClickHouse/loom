@@ -28,3 +28,52 @@ async def test_a_historical_search_gets_the_resolved_scope(monkeypatch: pytest.M
     assert await handler.handle_memory_search(asked) == "answered"
     (got,) = seen
     assert got.agent == "*" and got.namespace_scope is not None
+
+
+@pytest.mark.asyncio
+async def test_a_scoped_tokens_historical_search_stops_at_the_first_confident_namespace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from server.auth.fanout import Fanout, Split
+    from server.memory.domain.temporal_reads import Axes
+
+    read: list[str] = []
+
+    async def _split(org: str, ns: str, scope: Any) -> Split:
+        return Split(["n3", "n1", "n5"], [])
+
+    async def _fanout(org: str) -> Fanout:
+        return Fanout(org=org, namespaces=("n3", "n1", "n5"), cap=2, ordered=True)
+
+    async def _hits(input: Any, ns: str, *_a: Any) -> Any:
+        read.append(ns)
+        sim = 0.9 if ns == "n1" else 0.1
+        return [SimpleNamespace(similarity=sim, memory_key=ns)], SimpleNamespace()
+
+    class _Embedder:
+        model_name = "fake"
+
+        async def embed(self, q: str) -> list[float]:
+            return [0.0]
+
+    async def _cal(*_a: Any) -> None:
+        return None
+
+    monkeypatch.setattr(temporal_search, "namespaces_to_search", _split)
+    monkeypatch.setattr(temporal_search, "resolve_fanout", _fanout)
+    monkeypatch.setattr(temporal_search, "_namespace_hits", _hits)
+    monkeypatch.setattr(temporal_search, "get_embedder", lambda: _Embedder())
+    monkeypatch.setattr(temporal_search, "resolve_calibration", _cal)
+    monkeypatch.setattr(temporal_search.reads, "axes_of", lambda _i: Axes(valid=None, known=None))
+    monkeypatch.setattr(temporal_search, "_record_exposure", lambda *_a: None)
+    asked = MemorySearchInput(
+        org="o", namespace="n3", agent="*", query="q", namespace_scope="all_mine",
+        known_as_of=datetime(2026, 1, 1, tzinfo=UTC),
+    )  # fmt: skip
+    try:
+        await temporal_search.search(asked)
+    except Exception:  # noqa: BLE001 — only which namespaces were read is asserted
+        pass
+    assert read == ["n3", "n1"]

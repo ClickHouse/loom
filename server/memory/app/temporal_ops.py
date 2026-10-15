@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from collections.abc import Sequence
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -530,9 +532,12 @@ async def _amend_guards(input: MemoryAmendInput) -> MemoryRow | None:
             head, "delete" if input.change_kind == "retract" else "value", op="memory.amend"
         )
     if input.value is not None:
-        await enforce_on_insert(
-            org=input.org, namespace=input.namespace, value=json.dumps(input.value)
-        )
+        from server.memory.app.update import _enforce_char_limit
+
+        serialized = json.dumps(input.value)
+        await enforce_on_insert(org=input.org, namespace=input.namespace, value=serialized)
+        # The cap is the key's row's (loom.memory keeps it; the journal does not).
+        _enforce_char_limit(getattr(head, "char_limit", None), serialized)
     return head
 
 
@@ -548,18 +553,16 @@ def _spans_now(input: MemoryAmendInput) -> bool:
 
 
 def _new_assertion(input: MemoryAmendInput, head: MemoryRow | None) -> tm.Assertion | None:
-    """The assertion a correct or transition adds; None for a retract."""
+    """The assertion a correct or transition adds, before it takes the key's serving
+    metadata (`_inherited`, from the claims the publisher plans against); None for a
+    retract."""
     if input.value is None:
         return None
     from server.memory.app.provenance import writer_actor
-    from server.memory.domain.sensitivity import resolve_sensitivity
-    from server.memory.domain.temporal_capture import embed_input_sha256
 
-    serialized = json.dumps(input.value)
-    memory_type = str(getattr(head, "memory_type", "") or "semantic")
     return tm.first(
-        serialized,
-        memory_type=memory_type,
+        json.dumps(input.value),
+        memory_type=str(getattr(head, "memory_type", "") or "semantic"),
         temporal_kind=input.temporal_kind or "state",
         validity_basis=input.validity_basis,
         valid_text=input.valid_text,
@@ -569,19 +572,63 @@ def _new_assertion(input: MemoryAmendInput, head: MemoryRow | None) -> tm.Assert
         confidence=input.confidence,
         actor=writer_actor(),
         source_class=source_class_for(default="asserted"),
-        # An amendment changes the claim; the key's serving metadata stays as the
-        # current row holds it (and as the current-state rewrite keeps it). A value
-        # that reads as high is high, as memory.set would store it.
-        sensitivity=resolve_sensitivity(getattr(head, "sensitivity", "") or None, serialized),
-        # The present's expiry is the present's: a plan or a past span keeps none.
-        expires_at=tm.utc(head.expires_at) if head is not None and _spans_now(input) else None,
-        pinned=bool(head.pinned) if head is not None else False,
-        lock_mode=str(getattr(head, "lock_mode", "") or ""),
-        tags=tuple(head.tags) if head is not None else (),
-        entities=tuple(head.entities) if head is not None else (),
-        embed_input_sha256=embed_input_sha256(memory_type, serialized, input.memory_key),
         qualifiers=dict(input.qualifiers),
         evidence_ids=tuple(input.evidence_ids),
+    )
+
+
+def _inherited(
+    n: tm.Assertion, served: Sequence[tm.Assertion], input: MemoryAmendInput, now: datetime
+) -> tm.Assertion:
+    """The new claim with the key's serving metadata as the journal holds it now, from
+    the claim it replaces (under its qualifiers): pin, tags, entities, type, the whole
+    lock in force, the present's expiry (a plan or a past span keeps none), and a
+    sensitivity never below what the value reads as."""
+    from server.memory.domain.sensitivity import resolve_sensitivity
+    from server.memory.domain.temporal_capture import embed_input_sha256
+
+    claims = tm.current_claims(served, now)
+    under = [a for a in claims if a.qualifiers == n.qualifiers] or claims
+    if not under:
+        sensitivity = resolve_sensitivity(None, n.value)
+        return replace(
+            n,
+            sensitivity=sensitivity,
+            embed_input_sha256=embed_input_sha256(n.memory_type, n.value, input.memory_key),
+        )
+    was = max(under, key=lambda a: a.source_version)
+    lock = publisher._lock_in_force(claims, now)
+    return replace(
+        n,
+        memory_type=was.memory_type,
+        sensitivity=resolve_sensitivity(was.sensitivity or None, n.value),
+        expires_at=was.expires_at
+        if _spans_now(input) and was.expires_at and was.expires_at > now
+        else None,
+        pinned=was.pinned,
+        lock_mode=str(lock["lock_mode"]),
+        lock_until=tm.utc(lock["lock_until"]),
+        lock_reason=str(lock["lock_reason"]),
+        locked_by=str(lock["locked_by"]),
+        locked_at=tm.utc(lock["locked_at"]),
+        tags=was.tags,
+        entities=was.entities,
+        embed_input_sha256=embed_input_sha256(was.memory_type, n.value, input.memory_key),
+    )
+
+
+def _refuse_if_locked(
+    served: Sequence[tm.Assertion], input: MemoryAmendInput, now: datetime
+) -> None:
+    from types import SimpleNamespace
+
+    from server.memory.domain import lock as _lock
+
+    held = SimpleNamespace(
+        memory_key=input.memory_key, **publisher._lock_in_force(tm.current_claims(served, now), now)
+    )
+    _lock.assert_unlocked(
+        held, "delete" if input.change_kind == "retract" else "value", op="memory.amend"
     )
 
 
@@ -605,7 +652,11 @@ def _amendment_builder(input: MemoryAmendInput, new: tm.Assertion | None) -> pub
             raise PreconditionFailedError(
                 f"{input.memory_key!r} no longer serves revision {input.expected_revision}; re-read"
             )
-        n = new and inherit_shape(new, served, shape)
+        now = datetime.now(UTC)
+        # Against the journal as this plan reads it: a lock taken since the handler's
+        # read refuses here, on every planning attempt.
+        _refuse_if_locked(served, input, now)
+        n = new and _inherited(inherit_shape(new, served, shape), served, input, now)
         if input.change_kind == "transition":
             assert n is not None and input.effective_at is not None
             return tm.transition(served, tm.utc(input.effective_at) or input.effective_at, n)

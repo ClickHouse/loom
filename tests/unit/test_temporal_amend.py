@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 
 from server.memory.api.models_temporal import MemoryAmendInput
 from server.memory.app.temporal_ops import _new_assertion
@@ -21,10 +22,73 @@ def _head(sensitivity: str) -> SimpleNamespace:
     )  # fmt: skip
 
 
+def _built(value: str, served: list) -> Any:
+    from server.memory.app.temporal_ops import _amendment_builder
+
+    inp = _amend(value)
+    am = _amendment_builder(inp, _new_assertion(inp, _head("")))(served)
+    (added,) = am.added
+    return added
+
+
 def test_a_high_key_stays_high_and_a_secret_value_reads_high() -> None:
-    assert _new_assertion(_amend("hello"), _head("high")).sensitivity == "high"
-    assert _new_assertion(_amend("password: hunter2xyz"), _head("")).sensitivity == "high"
-    assert _new_assertion(_amend("hello"), _head("")).sensitivity == ""
+    from server.memory.domain import temporal_model as tm
+
+    assert _built('"hello"', [tm.first('"x"', sensitivity="high")]).sensitivity == "high"
+    assert _built('"password: hunter2xyz"', [tm.first('"x"')]).sensitivity == "high"
+    assert _built('"hello"', [tm.first('"x"')]).sensitivity == ""
+
+
+def test_an_amendment_takes_the_metadata_the_journal_holds_when_it_is_planned() -> None:
+    """Not the head the handler read: a pin, tags and a timed lock committed since
+    are carried, the whole lock (its deadline and reason with its mode)."""
+    from datetime import UTC, datetime, timedelta
+
+    from server.memory.domain import temporal_model as tm
+
+    until = (datetime.now(UTC) + timedelta(days=3)).replace(microsecond=0)
+    held = tm.first(
+        '"x"', pinned=True, tags=("t",), lock_mode="no_delete", lock_until=until,
+        lock_reason="audit", locked_by="human:ann",
+    )  # fmt: skip
+    a = _built('"y"', [held])
+    assert (a.pinned, a.tags, a.lock_mode, a.lock_until, a.lock_reason, a.locked_by) == (
+        True, ("t",), "no_delete", until, "audit", "human:ann",
+    )  # fmt: skip
+
+
+def test_a_lock_taken_since_the_handler_read_refuses_the_amendment() -> None:
+    import pytest
+    from fastapi import HTTPException
+
+    from server.memory.domain import temporal_model as tm
+
+    with pytest.raises(HTTPException) as e:
+        _built('"y"', [tm.first('"x"', lock_mode="read_only")])
+    assert e.value.status_code == 423
+
+
+def test_an_amendment_over_the_keys_char_limit_is_refused(monkeypatch) -> None:
+    import asyncio
+
+    import pytest
+    from fastapi import HTTPException
+
+    import server.memory.store as memory_repo
+    from server.memory.app import blacklist_guard
+    from server.memory.app.temporal_ops import _amend_guards
+
+    async def _get(*_a, **_k):
+        return SimpleNamespace(**vars(_head("")), char_limit=4, lock_until=None)
+
+    async def _clean(**_k):
+        return None
+
+    monkeypatch.setattr(memory_repo, "get_by_key", _get)
+    monkeypatch.setattr(blacklist_guard, "enforce_on_insert", _clean)
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(_amend_guards(_amend("forty characters of text, well over four")))
+    assert e.value.detail["code"] == "CHAR_LIMIT_EXCEEDED"
 
 
 def test_a_retract_under_qualifiers_keeps_the_other_qualifiers_claim() -> None:

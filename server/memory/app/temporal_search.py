@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import re
 
-from server.auth.fanout import namespaces_to_search
+from server.auth.fanout import namespaces_to_search, resolve_fanout
 from server.core.errors import ValidationError
 from server.embedding import get_embedder
 from server.identity.app.request_scope import request_scope
@@ -26,6 +26,7 @@ from server.memory.app.embedder_calibration import (
     effective_noise_floor,
     resolve_calibration,
 )
+from server.memory.app.search.payload import _apply_bodies
 from server.memory.domain.excerpt import build_excerpt
 from server.memory.domain.fact_quality import drop_junk_and_restatements
 from server.memory.domain.memory_types import HIDDEN_FROM_UNFILTERED_SEARCH, is_searchable_type
@@ -47,6 +48,9 @@ def _unsupported(input: MemorySearchInput) -> list[str]:
         out.append("entity_filter")
     if input.category and not input.category_soft:
         out.append("category")
+    if input.bodies in ("unit", "source"):
+        # Whole values within a budget, or a linked source, are read from today's rows.
+        out.append(f"bodies={input.bodies!r}")
     return out
 
 
@@ -60,9 +64,24 @@ async def search(input: MemorySearchInput) -> MemorySearchOutput:
     )
     embedder = get_embedder()
     query_vec = await embedder.embed(input.query)
-    per_ns = await asyncio.gather(
-        *(_namespace_hits(input, ns, axes, embedder.model_name, query_vec) for ns in namespaces)
-    )
+    if len(namespaces) > 1 and (await resolve_fanout(input.org)).ordered:
+        # A scoped token's order is a priority, read as a current search reads it:
+        # one namespace at a time, stopping at the first with a confident hit.
+        per_ns = []
+        for ns in namespaces:
+            per_ns.append(await _namespace_hits(input, ns, axes, embedder.model_name, query_vec))
+            best = max((h.similarity for h in per_ns[-1][0]), default=0.0)
+            if best >= settings.memory_search_tier_stop_similarity:
+                break
+    else:
+        per_ns = list(
+            await asyncio.gather(
+                *(
+                    _namespace_hits(input, ns, axes, embedder.model_name, query_vec)
+                    for ns in namespaces
+                )
+            )
+        )
     # The same gates as a current search: the calibrated noise floor drops a row, and
     # a best row under the abstain threshold says "I don't know".
     cal = await resolve_calibration(input.org, input.namespace)
@@ -75,6 +94,7 @@ async def search(input: MemorySearchInput) -> MemorySearchOutput:
     if input.quality_filter:
         hits, _ = drop_junk_and_restatements(hits)
     hits = hits[: input.top_k]
+    _apply_bodies(hits, input)
     abstain = not hits or hits[0].similarity < effective_abstain_threshold(
         settings.memory_search_abstain_threshold, cal
     )
