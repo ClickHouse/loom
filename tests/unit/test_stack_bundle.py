@@ -150,16 +150,15 @@ def _release_workflow() -> dict:
     )
 
 
-def test_the_release_refuses_a_downgrade_before_it_builds() -> None:
+def test_the_release_warns_when_a_published_bundle_keeps_its_own_release() -> None:
     (resolve,) = [
         s for s in _release_workflow()["jobs"]["clickhouse"]["steps"] if s.get("id") == "resolve"
     ]
-    assert 'refuse_downgrade.sh "$image"' in resolve["run"]
     assert "::warning::clickhouse_image=" in resolve["run"]
 
 
-# `gh` as the publish step sees it: v1.1.0 is not published yet, and v1.2.0's
-# bundle (STUB_BUNDLE) was published by another tag's run a moment ago.
+# `gh` as a release step sees it: v1.1.0 is not published yet, and v1.2.0's
+# bundle (STUB_BUNDLE) was published by another tag's run.
 STUB_GH = """#!/usr/bin/env bash
 if [ "$1" = api ]; then
   case "$2" in
@@ -172,49 +171,86 @@ while [ $# -gt 0 ]; do [ "$1" = --dir ] && dir=$2; shift; done
 cp "$STUB_BUNDLE" "$dir/loom-stack.tar.gz"
 """
 
-
-@pytest.mark.parametrize(
-    ("own", "allow", "published"),
+DOWNGRADES = pytest.mark.parametrize(
+    ("own", "allow", "passes"),
     [
         ("clickhouse/clickhouse-server:26.9.17.8", "", False),
         ("clickhouse/clickhouse-server:26.9.17.8", "true", True),
         ("clickhouse/clickhouse-server:26.9.18.11", "", True),
     ],
 )
-def test_overlapping_releases_recheck_the_bundle_another_tag_published(
-    tmp_path: Path, own: str, allow: str, published: bool
-) -> None:
-    """Two tags resolve ClickHouse before either publishes; the publish step,
-    one at a time across tags, refuses the one that would now be a downgrade."""
+
+
+def _run_step(tmp_path: Path, script: str, **env: str):
+    """Run a release step's script in a checkout whose `gh` is STUB_GH."""
     import os
     import subprocess
 
-    module = _module()
-    other, _ = module.build("1.2.0", tmp_path / "other", "clickhouse/clickhouse-server:26.9.18.11")
-    module.build("1.1.0", tmp_path / "work" / "release" / "stack", own)
-    (tmp_path / "work" / "scripts").symlink_to(Path(__file__).parents[2] / "scripts")
+    work = tmp_path / "work"
+    work.mkdir(exist_ok=True)
+    (work / "scripts").symlink_to(Path(__file__).parents[2] / "scripts")
+    other, _ = _module().build(
+        "1.2.0", tmp_path / "other", "clickhouse/clickhouse-server:26.9.18.11"
+    )
     gh = tmp_path / "bin" / "gh"
     gh.parent.mkdir()
     gh.write_text(STUB_GH)
     gh.chmod(0o755)
-
-    job = _release_workflow()["jobs"]["github-release"]
-    assert job["concurrency"] == {"group": "release-publish", "cancel-in-progress": False}
-    (keep,) = [s for s in job["steps"] if "published_bundle.sh" in s.get("run", "")]
-    run = subprocess.run(
-        ["bash", "-e", "-c", keep["run"]],
-        cwd=tmp_path / "work",
+    return subprocess.run(
+        ["bash", "-e", "-c", script],
+        cwd=work,
         env={
             **os.environ,
             "PATH": f"{gh.parent}:{os.environ['PATH']}",
             "GITHUB_REPOSITORY": "o/r",
             "VERSION": "1.1.0",
-            "ALLOW_DOWNGRADE": allow,
             "STUB_BUNDLE": str(other),
+            **env,
         },
         capture_output=True,
         text=True,
     )
-    assert (run.returncode == 0) is published, run.stderr
-    if not published:
+
+
+@DOWNGRADES
+def test_the_release_refuses_a_downgrade_before_it_builds(
+    tmp_path: Path, own: str, allow: str, passes: bool
+) -> None:
+    """A refusal here stops the run before it builds and pushes any image."""
+    (resolve,) = [
+        s for s in _release_workflow()["jobs"]["clickhouse"]["steps"] if s.get("id") == "resolve"
+    ]
+    latest = tmp_path / "work" / "dev" / "clickhouse_release.sh"
+    latest.parent.mkdir(parents=True)
+    latest.write_text(f"echo {own}\n")
+    output = tmp_path / "github_output"
+    output.touch()
+    run = _run_step(
+        tmp_path,
+        resolve["run"],
+        CLICKHOUSE_IMAGE="",
+        ALLOW_DOWNGRADE=allow,
+        GITHUB_OUTPUT=str(output),
+    )
+    assert (run.returncode == 0) is passes, run.stderr
+    if passes:
+        assert output.read_text() == f"image={own}\n"
+    else:
+        assert output.read_text() == ""
+        assert "older than clickhouse/clickhouse-server:26.9.18.11" in run.stderr
+
+
+@DOWNGRADES
+def test_overlapping_releases_recheck_the_bundle_another_tag_published(
+    tmp_path: Path, own: str, allow: str, passes: bool
+) -> None:
+    """Two tags resolve ClickHouse before either publishes; the publish step,
+    one at a time across tags, refuses the one that would now be a downgrade."""
+    job = _release_workflow()["jobs"]["github-release"]
+    assert job["concurrency"] == {"group": "release-publish", "cancel-in-progress": False}
+    (keep,) = [s for s in job["steps"] if "published_bundle.sh" in s.get("run", "")]
+    _module().build("1.1.0", tmp_path / "work" / "release" / "stack", own)
+    run = _run_step(tmp_path, keep["run"], ALLOW_DOWNGRADE=allow)
+    assert (run.returncode == 0) is passes, run.stderr
+    if not passes:
         assert "older than clickhouse/clickhouse-server:26.9.18.11" in run.stderr
