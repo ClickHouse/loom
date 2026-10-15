@@ -190,9 +190,10 @@ describe("MemoryInspector restore of a superseded row", () => {
     seed("writer");
     const { finish, view } = await restoreThenMove(() => {});
     // Back to user_city: its load read answers the superseded row before the restore does.
+    // The parent rebuilds the identity object on the way back, as App does per agent.
     vi.mocked(getMemory).mockResolvedValue(SUPERSEDED);
     view.rerender(
-      <MemoryInspector identity={identity} memoryKey="user_city" onClose={() => {}} onChanged={() => {}} />,
+      <MemoryInspector identity={{ ...identity }} memoryKey="user_city" onClose={() => {}} onChanged={() => {}} />,
     );
     await screen.findByText("lives in Lisbon");
     expect(screen.getByRole("button", { name: "Restore" })).toBeTruthy();

@@ -161,8 +161,8 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
   // Bumped whenever the drawer moves to another memory or identity, or closes.
   const inspection = useRef(0);
   // The memory the drawer has open, so a restore that answers late can tell
-  // whether the drawer came back to it.
-  const shown = useRef<{ identity: Identity; memoryKey: string } | null>(null);
+  // whether the drawer came back to it. Compared by value: parents rebuild identity.
+  const shown = useRef<string | null>(null);
   const toggleSection = (id: SectionId) =>
     setSections((cur) => {
       const next = { ...cur, [id]: !cur[id] };
@@ -259,7 +259,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
     setLineage(null);
     setProvenance(null);
     inspection.current += 1;
-    shown.current = { identity, memoryKey };
+    shown.current = shownAs(identity, memoryKey);
     requested.current = new Set();
     setDone(new Set());
     // A read for a key the drawer has moved off must not land: its value under the new
@@ -575,8 +575,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
         toast(r.restored ? `Restored ${memoryKey}` : `Nothing to restore for ${memoryKey}`, r.restored ? "ok" : "info");
         // Back on this memory (A, B, A): its load read may have shown the row before the
         // restore, so read it again.
-        const back = shown.current;
-        if (r.restored && back?.identity === identity && back.memoryKey === memoryKey) {
+        if (r.restored && shown.current === shownAs(identity, memoryKey)) {
           const now = inspection.current;
           getMemory(identity, memoryKey, { include_recall_breakdown: true })
             .then((fresh) => {
@@ -1160,6 +1159,10 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
       </Dialog.Portal>
     </Dialog.Root>
   );
+}
+
+function shownAs(identity: Identity, memoryKey: string): string {
+  return `${identity.org}/${identity.namespace}/${identity.agent}/${memoryKey}`;
 }
 
 /** Map the backend's status enum to a human label. */
