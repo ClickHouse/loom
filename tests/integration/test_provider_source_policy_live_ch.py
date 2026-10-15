@@ -1,12 +1,15 @@
 """Canonical rebuild inputs choose current records across old model labels."""
 
 import os
+from datetime import datetime
 from uuid import UUID, uuid4
 
 import pytest
 
 from server.core.repo_base import _default_client
+from server.core.vectors.placeholders import placeholder
 from server.insights.store.provider_staging import StagingNames, _source_selection, source_schema
+from server.settings import settings
 
 
 @pytest.mark.asyncio
@@ -26,22 +29,38 @@ async def test_latest_full_row_and_equal_revision_deletion_win_across_models():
             {"table": table},
         )
         identity = UUID(str(created["uuid"]))
-        await client.execute(
-            f"INSERT INTO loom.{table} "
-            "(org, namespace, agent, user_id, session_id, scope, memory_key, memory_type, "
-            "content_excerpt, embedding_model, version, tombstoned_at, verified) VALUES "
-            "('test', 'ns', 'agent', '-', '-', 'private', 'updated', 'semantic', "
-            "'old text', 'old-a', 10, NULL, 0), "
-            "('test', 'ns', 'agent', '-', '-', 'private', 'updated', 'semantic', "
-            "'current text', 'old-b', 20, NULL, 1), "
-            "('test', 'ns', 'agent', '-', '-', 'private', 'deleted', 'semantic', "
-            "'old text', 'old-a', 20, NULL, 0), "
-            "('test', 'ns', 'agent', '-', '-', 'private', 'deleted', 'semantic', "
-            "'', 'old-b', 20, '2026-10-05 00:00:00', 0), "
-            "('test', 'ns', 'agent', '-', '-', 'private', 'restored', 'semantic', "
-            "'', 'old-a', 20, '2026-10-05 00:00:00', 0), "
-            "('test', 'ns', 'agent', '-', '-', 'private', 'restored', 'semantic', "
-            "'explicit restore', 'old-b', 30, NULL, 1)"
+        deleted = datetime(2026, 10, 5)
+        rows = [
+            ("updated", "old text", "old-a", 10, None, 0),
+            ("updated", "current text", "old-b", 20, None, 1),
+            ("deleted", "old text", "old-a", 20, None, 0),
+            ("deleted", "", "old-b", 20, deleted, 0),
+            ("restored", "", "old-a", 20, deleted, 0),
+            ("restored", "explicit restore", "old-b", 30, None, 1),
+        ]
+        vector = placeholder(settings.embedding_dim)  # a coded column takes this width only
+        await client.insert(
+            f"loom.{table}",
+            [
+                {
+                    "org": "test",
+                    "namespace": "ns",
+                    "agent": "agent",
+                    "user_id": "-",
+                    "session_id": "-",
+                    "scope": "private",
+                    "memory_type": "semantic",
+                    "memory_key": key,
+                    "content_excerpt": text,
+                    "embedding_model": model,
+                    "version": version,
+                    "tombstoned_at": tombstoned,
+                    "verified": verified,
+                    "embedding": vector,
+                    "memory_key_embedding": vector,
+                }
+                for key, text, model, version, tombstoned, verified in rows
+            ],
         )
         selection = _source_selection(names, schema).replace(
             "FROM loom.memory_embeddings FINAL", f"FROM loom.{table} FINAL"

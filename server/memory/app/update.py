@@ -15,6 +15,7 @@ from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value as _content_sha256
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
+from server.core.vectors import codes_state
 from server.embedding import get_embedder
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_crud import (
@@ -604,6 +605,9 @@ async def _write_revision(
     sensitivity, new_tags = _update_sensitivity(existing, serialized_value, new_tags)
     searchable = is_embedded(existing.memory_type, sensitivity)
     embedder = get_embedder() if searchable else None
+    if embedder is not None:
+        # Before the version row lands beside an embedding the coded table refuses.
+        await codes_state.refuse_width("memory_embeddings", embedder.dim)
     # The namespace's write config in one round trip beside the embedding call, as memory.set
     # does — not six reads in a row.
     cfg_task = _cf_start_write_config(input.org, existing, embedder is not None)

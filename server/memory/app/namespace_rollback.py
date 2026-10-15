@@ -58,7 +58,8 @@ async def apply_rollback(
     from server.memory.domain.trust import attests
 
     embedder = get_embedder()
-    stub_vector = [0.0] * int(embedder.dim)
+    # Empty: the insert gives it the width its coded column takes.
+    stub_vector: list[float] = []
 
     memory_rows: list[dict[str, Any]] = []
     embedding_rows: list[dict[str, Any]] = []

@@ -48,13 +48,13 @@ def test_provider_returns_exact_repeatable_model_dimensions(provider):
 
 
 def test_injected_failure_recovers_without_changing_model_or_data(provider):
-    payload = {"model": "docker-smoke-12", "input": ["context"]}
+    payload = {"model": "docker-smoke-16", "input": ["context"]}
     expected = post(provider, "/v1/embeddings", payload)
-    post(provider, "/control", {"failed_model": "docker-smoke-12"})
+    post(provider, "/control", {"failed_model": "docker-smoke-16"})
     assert post(
         provider,
         "/v1/embeddings",
-        {"model": "docker-smoke-12", "input": ["Loom provider connection check."]},
+        {"model": "docker-smoke-16", "input": ["Loom provider connection check."]},
     )["data"]
     with pytest.raises(urllib.error.HTTPError) as error:
         post(provider, "/v1/embeddings", payload)

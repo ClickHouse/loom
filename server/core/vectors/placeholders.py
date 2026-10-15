@@ -8,8 +8,9 @@ column carries exactly the declared dimension (else code 190), and
 writer emitting an empty vector would fail its INSERT.
 
 Every insert into
-`loom.memory_embeddings` replaces an empty vector with a zero vector of
-`settings.embedding_dim` elements. The `*_dim` columns stay what the writer
+`loom.memory_embeddings` replaces an empty vector with a zero vector of the
+width its coded column was created at (`settings.embedding_dim` before the
+columns are probed). The `*_dim` columns stay what the writer
 set (0 for a stub), and they are what reads trust: every leg filters
 `embedding_dim > 0`, and the key axis takes the key vector
 only when `memory_key_embedding_dim` matches the query. A zero vector is
@@ -21,8 +22,10 @@ carries an empty vector.
 
 from __future__ import annotations
 
+from functools import cache
 from typing import Any
 
+from server.core.vectors import codes_state
 from server.core.vectors.code_tables import is_chunks_table, vector_dim_for_table
 
 PLACEHOLDER_COLUMNS: dict[str, tuple[str, ...]] = {
@@ -56,28 +59,46 @@ def placeholder(dim: int) -> list[float]:
     return [0.0] * int(dim)
 
 
-def pad_rows(table: str, rows: list[dict[str, Any]]) -> int:
-    """Replace empty vectors in `rows` (in place) for a table that has
-    placeholder columns. Returns the number of vectors replaced; 0 for every
-    other table or when nothing was empty."""
+@cache
+def _shared_placeholder(dim: int) -> list[float]:
+    # One list per width for every padded row; nothing writes into it.
+    return placeholder(dim)
+
+
+def _placeholder_spec(table: str) -> tuple[str, tuple[str, ...], int]:
+    """(qualified table, placeholder columns, width when not coded)."""
     from server.settings import settings
 
     full = table if "." in table else f"loom.{table}"
-    cols = PLACEHOLDER_COLUMNS.get(full)
     dim = int(settings.embedding_dim)
-    if not cols:
+    if full in PLACEHOLDER_COLUMNS:
+        return full, PLACEHOLDER_COLUMNS[full], dim
+    if is_chunks_table(full):
         # A second model's chunk table carries that model's
         # width; the map says which, and the placeholder must match it.
-        if not is_chunks_table(full):
-            return 0
-        cols = PLACEHOLDER_COLUMNS["loom.code_chunks"]
-        dim = vector_dim_for_table(full) or dim
-    if dim <= 0:
-        return 0
-    n = 0
-    for r in rows:
-        for c in cols:
+        return full, PLACEHOLDER_COLUMNS["loom.code_chunks"], vector_dim_for_table(full) or dim
+    return full, (), dim
+
+
+def pad_rows(table: str, rows: list[dict[str, Any]]) -> list[tuple[int, str]]:
+    """Replace empty vectors in `rows` (in place) for a table that has
+    placeholder columns. Returns the (row index, column) of each placeholder."""
+    full, cols, dim = _placeholder_spec(table)
+    padded: list[tuple[int, str]] = []
+    for c in cols:
+        # A placeholder is never scored: it takes the width its coded column was
+        # created at, so a write without a vector is never refused for its width.
+        width = codes_state.stored_width(full, c) or dim
+        if width <= 0:
+            continue
+        for i, r in enumerate(rows):
             if c in r and not r[c]:
-                r[c] = placeholder(dim)
-                n += 1
-    return n
+                r[c] = _shared_placeholder(width)
+                padded.append((i, c))
+    return padded
+
+
+def unpad(rows: list[dict[str, Any]], padded: list[tuple[int, str]]) -> None:
+    """Empty the placeholders `pad_rows` wrote, to size them again."""
+    for i, c in padded:
+        rows[i][c] = []

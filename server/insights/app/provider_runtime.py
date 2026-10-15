@@ -145,7 +145,9 @@ async def _refresh_calibration() -> None:
 
     code_tables.reset()
     codes_state.reset()
-    await codes_state.ensure_probed(get_client())
+    # Read again even when a reading landed meanwhile: a background probe that
+    # started before the rebuild may have published the old widths.
+    await codes_state.ensure_probed(get_client(), reread=True)
 
     embedder_calibration.set_calibration(None)
     embedder_calibration.clear_ns_overrides()

@@ -3,8 +3,8 @@
 Existing tables move onto `Array(BFloat16) CODEC(Quantized('rabitq', dim, 0))`
 with `scripts/ops/vector_codec_rebuild.py`; a fresh install would otherwise
 create them as `CODEC(NONE)` (the schema declares `Array(Float32)` or
-bf16), because the codec cannot be added by ALTER and the CI
-floor (26.5) does not know it. The migration runner therefore rewrites, at
+bf16), because the codec cannot be added by ALTER and a server
+before 26.8 does not know it. The migration runner therefore rewrites, at
 apply time and only when the server supports the codec:
 
 - in a `CREATE TABLE` of a coded table, each vector column's declaration to
@@ -41,6 +41,25 @@ _CREATE_RE = re.compile(r"CREATE TABLE(?: IF NOT EXISTS)?\s+(?:loom\.)?`?(\w+)`?
 _ALTER_RE = re.compile(r"ALTER TABLE\s+(?:loom\.)?`?(\w+)`?", re.I)
 
 
+_WIDTH = re.compile(r"Quantized\([^,]*,\s*(\d+)")
+
+
+def codec_width(codec: str) -> int | None:
+    """The vector width a column's `compression_codec` fixes; None when not coded."""
+    found = _WIDTH.search(codec)
+    return int(found.group(1)) if found else None
+
+
+def creates_coded_table(sql: str) -> bool:
+    """Whether `sql` creates a table whose vector columns get the codec."""
+    return any(m.group(1) in CODED_TABLES for m in _CREATE_RE.finditer(sql))
+
+
+def codable(dim: int) -> bool:
+    """Whether the codec takes `dim`: RaBitQ packs one bit per dimension into whole bytes."""
+    return dim > 0 and dim % 8 == 0
+
+
 def codec_clause(dim: int, chain: str | None) -> str:
     inner = f"Quantized('rabitq', {int(dim)}, 0)" + (f", {chain}" if chain else "")
     return f"CODEC({inner})"
@@ -70,7 +89,7 @@ def rewrite_statement(stmt: str, dim: int) -> str | None:
 
 
 def statement_settings(stmt: str) -> dict[str, int]:
-    """Per-statement settings a coded CREATE needs on ClickHouse >= 26.7.
+    """Per-statement settings a coded CREATE needs on ClickHouse >= 26.8.
 
     `allow_suspicious_codecs` is READONLY on ClickHouse Cloud (the driver rejects
     the statement outright), and the server only asks for

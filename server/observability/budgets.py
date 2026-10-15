@@ -27,10 +27,10 @@ A value is an integer (milliseconds) or a string multiplier such as "3x"
 consumer without listing them. The transport then applies the deployment's
 `latency_budget_multiplier` to whatever this resolves.
 
-Threading note: like the ratelimit overrides, the runtime table is
-per-process state that's not synchronized across replicas; the settings map
-is the fleet-wide half. For fleet-wide runtime policy, push the override
-table into CH.
+The runtime table binds every web process of one server: with more than one
+(`LOOM_WEB_WORKERS`) it lives in a per-server file in the runtime directory
+(`server/core/runtime_files.py`), re-read on every op and updated under a lock.
+It is not shared across replicas; the settings map is the fleet-wide half.
 """
 
 from __future__ import annotations
@@ -38,7 +38,12 @@ from __future__ import annotations
 import json
 import logging
 import threading
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 from typing import Any
+
+from server.core.numbers import finite_non_negative
+from server.core.shared_document import SharedDocument, server_document, share_override
 
 log = logging.getLogger(__name__)
 
@@ -47,23 +52,20 @@ ANY_OP = "*"
 
 def _parse_value(raw: Any) -> int | float | None:
     """An override entry: int/float milliseconds, or "<n>x" multiplier
-    returned as a float factor. None when unusable."""
+    returned as a float factor. None when unusable (negative, not finite)."""
     if isinstance(raw, bool):
         return None
     if isinstance(raw, int | float):
-        return int(raw) if raw >= 0 else None
+        return int(raw) if finite_non_negative(raw) else None
     if isinstance(raw, str):
         text = raw.strip().lower()
-        if text.endswith("x"):
-            try:
-                factor = float(text[:-1])
-            except ValueError:
-                return None
-            return factor if factor >= 0 else None
         try:
-            return int(float(text)) if float(text) >= 0 else None
+            number = float(text.removesuffix("x"))
         except ValueError:
             return None
+        if not finite_non_negative(number):
+            return None
+        return number if text.endswith("x") else int(number)
     return None
 
 
@@ -74,36 +76,104 @@ def _apply(value: int | float, default_ms: int) -> int:
     return int(value)
 
 
+@dataclass(frozen=True)
+class _Budgets:
+    ops: dict[str, int]
+    by_consumer: dict[tuple[str, str], int | float]
+
+
+def _stored_ms(raw: Any) -> int:
+    """An op budget as `set` stores it: whole milliseconds, finite and >= 0."""
+    if not isinstance(raw, int) or not finite_non_negative(raw):
+        raise ValueError(f"budget_ms must be a whole number of ms >= 0, not {raw!r}")
+    return raw
+
+
+def _stored_budget(raw: Any) -> int | float:
+    """A consumer budget as `set_for_consumer` stores it: ms, or a float multiplier."""
+    return raw if isinstance(raw, float) and finite_non_negative(raw) else _stored_ms(raw)
+
+
+def _decode(data: Any) -> _Budgets:
+    return _Budgets(
+        ops={str(k): _stored_ms(v) for k, v in data["ops"].items()},
+        by_consumer={(str(c), str(o)): _stored_budget(v) for c, o, v in data["consumer"]},
+    )
+
+
+def _encode(budgets: _Budgets) -> dict[str, Any]:
+    return {
+        "ops": budgets.ops,
+        "consumer": [[c, o, v] for (c, o), v in budgets.by_consumer.items()],
+    }
+
+
 class BudgetOverrides:
     """Singleton overrides registry: op_name → budget_ms, plus
     (consumer, op_name | "*") → budget_ms or multiplier."""
 
-    def __init__(self) -> None:
+    def __init__(self, path: str | None = None) -> None:
+        """`path` names the shared file; None = one per server once there are
+        several web workers."""
+        self._path = path
         self._overrides: dict[str, int] = {}
         self._by_consumer: dict[tuple[str, str], int | float] = {}
         self._lock = threading.Lock()
         # The settings map, parsed once per distinct raw string.
         self._settings_raw: str | None = None
         self._settings_map: dict[str, dict[str, int | float]] = {}
+        # Shared with the server's other web processes (`_document`).
+        self._doc: SharedDocument[_Budgets] | None = None
+        self._doc_key: int | None = None
+
+    # -- the host file the web processes share -----------------------------
+
+    def _document(self) -> SharedDocument[_Budgets] | None:
+        """This server's runtime overrides file; None with one web process.
+        Resolved once per setting, as the rate limiter's is."""
+        from server.settings import settings
+
+        workers = int(settings.web_workers)
+        if workers != self._doc_key:
+            self._doc_key = workers
+            if self._path:
+                self._doc = SharedDocument(self._path, _decode, _encode)
+            else:
+                self._doc = server_document("budgets", _decode, _encode) if workers > 1 else None
+        return self._doc
+
+    def _poll(self) -> None:
+        """Adopt another worker's change (caller holds `_lock`)."""
+        doc = self._document()
+        latest = doc.poll() if doc is not None else None
+        if latest is not None:
+            self._overrides, self._by_consumer = latest.ops, latest.by_consumer
+
+    def _change(self, change: Callable[[_Budgets], _Budgets]) -> None:
+        """Apply `change` to the overrides of every web process; a change that
+        cannot be shared is refused and this process keeps its own."""
+        with self._lock:
+            mine = _Budgets(self._overrides, self._by_consumer)
+            new = share_override(self._document(), change, mine, what="budget override")
+            self._overrides, self._by_consumer = new.ops, new.by_consumer
 
     # -- per op (unchanged API) -------------------------------------------
 
     def set(self, op_name: str, budget_ms: int) -> None:
-        if budget_ms < 0:
-            raise ValueError("budget_ms must be >= 0")
-        with self._lock:
-            self._overrides[op_name] = budget_ms
+        stored = _stored_ms(budget_ms)  # what every sibling's read takes back
+        self._change(lambda b: replace(b, ops={**b.ops, op_name: stored}))
 
     def get(self, op_name: str) -> int | None:
         with self._lock:
+            self._poll()
             return self._overrides.get(op_name)
 
     def clear(self, op_name: str) -> None:
-        with self._lock:
-            self._overrides.pop(op_name, None)
+        self._change(lambda b: replace(b, ops={k: v for k, v in b.ops.items() if k != op_name}))
 
     def snapshot(self) -> dict[str, int]:
         with self._lock:
+            self._poll()
             return dict(self._overrides)
 
     # -- per consumer --------------------------------------
@@ -116,22 +186,26 @@ class BudgetOverrides:
         parsed = _parse_value(value)
         if parsed is None:
             raise ValueError("budget must be a non-negative integer (ms) or '<n>x'")
-        with self._lock:
-            self._by_consumer[(consumer, op_name or ANY_OP)] = parsed
+        key = (consumer, op_name or ANY_OP)
+        self._change(lambda b: replace(b, by_consumer={**b.by_consumer, key: parsed}))
 
     def get_for_consumer(self, consumer: str, op_name: str) -> int | float | None:
         with self._lock:
+            self._poll()
             hit = self._by_consumer.get((consumer, op_name))
             if hit is None:
                 hit = self._by_consumer.get((consumer, ANY_OP))
             return hit
 
     def clear_for_consumer(self, consumer: str, op_name: str = ANY_OP) -> None:
-        with self._lock:
-            self._by_consumer.pop((consumer, op_name or ANY_OP), None)
+        key = (consumer, op_name or ANY_OP)
+        self._change(
+            lambda b: replace(b, by_consumer={k: v for k, v in b.by_consumer.items() if k != key})
+        )
 
     def snapshot_by_consumer(self) -> dict[str, dict[str, int | float]]:
         with self._lock:
+            self._poll()
             out: dict[str, dict[str, int | float]] = {}
             for (consumer, op_name), value in self._by_consumer.items():
                 out.setdefault(consumer, {})[op_name] = value

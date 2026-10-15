@@ -10,6 +10,9 @@
 
 services:
   loom-read-replica:
+    # The per-server runtime files (server/core/runtime_files.py), empty on every start.
+    tmpfs:
+      - /run/loom:uid=999,gid=999,mode=0700
     build:
       context: ..
       dockerfile: Dockerfile
@@ -30,6 +33,9 @@ services:
       LOOM_BLOB_DIR: /app/var/blobs
       LOOM_DEPLOYMENT: "1"
       LOOM_INSTANCE_LABEL: "deploy:read-replica"
+      # One process unless .env names a count: the image's own default (one per
+      # CPU) would change an existing deployment's size on upgrade.
+      LOOM_WEB_WORKERS: "${LOOM_WEB_WORKERS:-1}"
       # The address the port is published on; see docs/operations/deployment.md.
       LOOM_BIND_HOST: "${LOOM_BIND_HOST:-127.0.0.1}"
     volumes:

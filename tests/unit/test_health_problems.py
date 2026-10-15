@@ -129,6 +129,31 @@ def test_gemini_embedder_accepts_either_key(monkeypatch: pytest.MonkeyPatch) -> 
     )
 
 
+def test_a_width_the_coded_tables_do_not_take_is_an_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    s = _settings(
+        monkeypatch,
+        LOOM_EMBEDDING_MODEL="fake-ngram-1024",
+        LOOM_EMBEDDING_DIM="1024",
+        LOOM_LLM_PROVIDER="fake",
+    )
+    tables = ["categories", "chunks", "entities", "memory_embeddings", "shared"]
+    stale = HealthState(
+        probed_dim=1024,
+        width_mismatches={f"loom.{t}.embedding": (3072, 1024) for t in tables}
+        | {"loom.code_chunks_small.embedding": (16, 8)},
+    )
+    p = _by_code(collect_problems(s, stale), "coded_width_mismatch")
+    assert p.severity == "error"
+    assert (
+        "3072-dim columns written at 1024: loom.categories.embedding, loom.chunks.embedding, "
+        "loom.entities.embedding and 2 more; "
+        "16-dim columns written at 8: loom.code_chunks_small.embedding" in p.message
+    )
+    assert "coded_width_mismatch" not in _codes(collect_problems(s, HealthState(probed_dim=1024)))
+
+
 def test_embedding_dim_mismatch_is_an_error_naming_the_probed_dim(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -415,3 +415,28 @@ async def test_bulk_insert_decides_a_keys_vectors_by_the_row_that_wins(
     else:
         assert retire_calls == []
         assert len(inserted) == sum(1 for s, _ in entries if s != "high")
+
+
+@pytest.mark.asyncio
+async def test_a_batch_at_another_width_is_refused_before_it_embeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Refused before the embed call it would pay for; a batch with nothing to
+    embed carries no vector and is written."""
+    from server.core.errors import CodedWidthMismatchError
+    from server.core.vectors import codes_state
+
+    ch = _StubCH()
+    embedder = _BatchEmbedder()
+    captured: list[dict[str, Any]] = []
+    _wire_stubs(monkeypatch, ch, embedder, captured)
+    monkeypatch.setattr(codes_state._state, "widths", {"loom.memory_embeddings.embedding": 8})
+    with pytest.raises(CodedWidthMismatchError):
+        await mem_extract.handle_memory_bulk_set(
+            _bulk_input([_BulkSetEntry(memory_key="rv/fact/a", value="the sky is blue")])
+        )
+    assert embedder.batches == [] and ch.insert_calls == [] and captured == []
+    out = await mem_extract.handle_memory_bulk_set(
+        _bulk_input([_BulkSetEntry(memory_key="rv/ep/a", memory_type="episodic", value="ran")])
+    )
+    assert [r.memory_key for r in out.written] == ["rv/ep/a"] and captured == []

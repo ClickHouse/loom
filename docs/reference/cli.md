@@ -80,7 +80,7 @@ writer token when auth is on, and prints the dashboard URL and first-call
 snippets; `--no-build` reuses the cached image and a stack that already answers
 health is left alone unless you pass `--rebuild`. `loom doctor` exits 1 on any
 failing check. `loom serve` runs the control plane under uvicorn for local use
-(the image runs uvicorn directly). Migrations and upgrades are covered in
+(the image starts it through `scripts/serve.sh`). Migrations and upgrades are covered in
 [Upgrades](../operations/upgrades.md); health checks in
 [Monitoring](../operations/monitoring.md).
 

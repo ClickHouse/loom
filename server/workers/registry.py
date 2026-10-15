@@ -114,6 +114,8 @@ class _Worker:
     # WorkerSpec.max_pass_seconds: pinned here, or float() of a settings field.
     max_pass_seconds: float | None = None
     max_pass_setting: str | None = None
+    # WorkerSpec.max_pass_seconds from this module attribute.
+    max_pass_attr: str | None = None
     # WorkerSpec.first_pass_due from this module attribute.
     first_pass_due: str | None = None
     # WorkerSpec.owned_tables / due_scope from the module's OWNED_TABLES +
@@ -130,6 +132,8 @@ def _spec_for(row: _Worker) -> WorkerSpec:
     max_pass = row.max_pass_seconds
     if row.max_pass_setting is not None:
         max_pass = float(getattr(settings, row.max_pass_setting))
+    if row.max_pass_attr is not None:
+        max_pass = float(getattr(mod, row.max_pass_attr))
     return WorkerSpec(
         row.name,
         interval,
@@ -373,6 +377,14 @@ _WORKERS: tuple[_Worker, ...] = (
         "task_lease_sweep_enabled",
         "task_lease_sweep_interval_seconds",
         idle_interval="task_lease_sweep_idle_interval_seconds",
+    ),
+    _Worker(
+        "mcp_session_run_sweep",
+        "server.tasks.workers.session_run_sweep",
+        None,
+        "INTERVAL_SECONDS",
+        interval_in_module=True,
+        max_pass_attr="MAX_PASS_SECONDS",
     ),
     _Worker(
         "task_webhook_deliver",

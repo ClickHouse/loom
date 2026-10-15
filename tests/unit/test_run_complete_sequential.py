@@ -68,3 +68,18 @@ async def test_begin_with_a_client_run_id_labels_that_id(monkeypatch):
     )
     assert out.run_id == "client-chosen"
     assert current_ledger_run() == "client-chosen"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("supplied", "kept"),
+    [("mcp-" + "a" * 40, False), ("mcp-server-nightly-1", True), ("my-run-1", True)],
+)
+async def test_an_explicit_begin_never_takes_a_session_runs_id(monkeypatch, supplied, kept):
+    """Only the exact shape of a session run's id is the transport's."""
+    client = _Client()
+    monkeypatch.setattr(run_handlers, "get_client", lambda: client)
+    out = await run_handlers.handle_run_begin(
+        RunBeginInput(org="o", namespace="n", agent="a", goal="g", run_id=supplied, user_id="eve")
+    )
+    assert (out.run_id == supplied) is kept

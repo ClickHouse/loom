@@ -14,6 +14,8 @@ import httpx
 
 from server.clients._http_errors import provider_error_code
 from server.core.llm_provider import provider_for_model
+from server.core.schema.vector_codec_ddl import codable
+from server.core.vectors import codes_state
 from server.embedding._provider import MalformedEmbedding
 from server.embedding.compatible import CompatibleEmbedder
 from server.embedding.gemini import GeminiEmbedder
@@ -150,15 +152,28 @@ async def validate_providers(
         for provider, model in sorted(models)
     ]
     embedding = setup.embedding
-    checks.append(
-        await _check(
-            "embedding",
-            embedding.provider,
-            embedding.model,
-            keys.get(embedding.provider, ""),
-            embedding.dimensions,
-            embedding.base_url,
-            embedding.send_dimensions,
+    if await codes_state.served_model_writes_coded() and not codable(embedding.dimensions):
+        # The rebuild re-creates the coded vector tables at the new width.
+        checks.append(
+            ProviderCheck(
+                role="embedding",
+                provider=embedding.provider,
+                model=embedding.model,
+                ready=False,
+                code="unsupported_dimensions",
+                detail=f"{embedding.dimensions} is not a multiple of 8",
+            )
         )
-    )
+    else:
+        checks.append(
+            await _check(
+                "embedding",
+                embedding.provider,
+                embedding.model,
+                keys.get(embedding.provider, ""),
+                embedding.dimensions,
+                embedding.base_url,
+                embedding.send_dimensions,
+            )
+        )
     return ProviderValidation(ready=all(check.ready for check in checks), checks=checks)

@@ -181,6 +181,9 @@ def get_secondary_embedder(spec: str) -> Embedder:
             f"vector_model {spec!r} is not enabled on this deployment "
             f"(LOOM_CODE_SEARCH_VECTOR_MODELS lists {allowed_vector_models() or 'nothing'})"
         )
+    if spec == settings.embedding_model:
+        # The served model: the same embedder, at the same width.
+        return get_embedder()
     inst = _secondary.get(spec)
     if inst is None:
         # Inferred from the spec: LOOM_EMBEDDING_PROVIDER names the served

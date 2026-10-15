@@ -19,19 +19,9 @@ from collections.abc import Iterable
 from functools import lru_cache
 from typing import Protocol
 
+from server.settings._models import DEFAULT_LOCAL_EMBEDDING_MODEL, LOCAL_EMBEDDING_MODELS
+
 log = logging.getLogger(__name__)
-
-
-# `local:<alias>` → (HuggingFace id, dim). Dim is fixed per model;
-# LOOM_EMBEDDING_DIM must match the model's native dimension (the boot probe
-# warns otherwise).
-_MODEL_ALIAS_TO_HF: dict[str, tuple[str, int]] = {
-    "bge-small": ("BAAI/bge-small-en-v1.5", 384),
-    "bge-base": ("BAAI/bge-base-en-v1.5", 768),
-    "minilm": ("sentence-transformers/all-MiniLM-L6-v2", 384),
-}
-
-_DEFAULT_LOCAL_MODEL = "bge-small"
 
 
 class _Vector(Protocol):
@@ -51,19 +41,27 @@ def _resolve_model(spec: str) -> tuple[str, int]:
     """`local` or `local:<alias>` -> (Hugging Face id, dim); ValueError on
     an unknown alias."""
     if spec == "local":
-        alias = _DEFAULT_LOCAL_MODEL
+        alias = DEFAULT_LOCAL_EMBEDDING_MODEL
     elif spec.startswith("local:"):
         alias = spec.split(":", 1)[1].strip()
         if not alias:
-            alias = _DEFAULT_LOCAL_MODEL
+            alias = DEFAULT_LOCAL_EMBEDDING_MODEL
     else:
         raise ValueError(f"not a local model spec: {spec!r}")
-    if alias not in _MODEL_ALIAS_TO_HF:
+    if alias not in LOCAL_EMBEDDING_MODELS:
         raise ValueError(
             f"unknown local embedding model alias {alias!r}; supported: "
-            f"{sorted(_MODEL_ALIAS_TO_HF)}"
+            f"{sorted(LOCAL_EMBEDDING_MODELS)}"
         )
-    return _MODEL_ALIAS_TO_HF[alias]
+    return LOCAL_EMBEDDING_MODELS[alias]
+
+
+def onnx_threads() -> int:
+    """This process's share of the CPUs: every web worker runs its own session."""
+    from server.core.web_workers import cpu_limit
+    from server.settings import settings
+
+    return max(1, cpu_limit() // max(1, int(settings.web_workers)))
 
 
 class LocalEmbedder:
@@ -102,7 +100,9 @@ class LocalEmbedder:
                     self.hf_model_id,
                     self.dim,
                 )
-                embedder: _TextEmbedding = TextEmbedding(model_name=self.hf_model_id)
+                embedder: _TextEmbedding = TextEmbedding(
+                    model_name=self.hf_model_id, threads=onnx_threads()
+                )
                 return embedder
 
             self._embedder = await asyncio.to_thread(_load)

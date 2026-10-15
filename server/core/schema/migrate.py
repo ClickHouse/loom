@@ -35,8 +35,10 @@ import re
 import socket
 import sys
 import time
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -79,13 +81,18 @@ def client(*, receive_timeout_s: int | None = None) -> Client:
 
     from server.core.ch_target import connection_kwargs
 
-    return clickhouse_connect.get_client(
+    ch = clickhouse_connect.get_client(
         **connection_kwargs(),
         # A statement waits for its mutation on every replica; the read
         # timeout must outlast that wait, which the runner bounds itself.
         send_receive_timeout=receive_timeout_s
         or max(300, int(settings.migrate_mutation_wait_s) + 60),
+        # UTC whatever the server's <timezone>, as server.core.ch pins it.
+        settings={"session_timezone": "UTC"},
+        tz_source="server",
     )
+    ch.server_tz = UTC
+    return ch
 
 
 def _reads_loom_table(stmt: str) -> bool:
@@ -417,7 +424,7 @@ def _tolerated_errors(sql: str) -> set[int]:
 
 
 def _codec_supported(ch: Client) -> bool:
-    """Does this server know the Quantized codec (26.7+)? A fresh table is
+    """Does this server know the Quantized codec (26.8+)? A fresh table is
     created coded where it does, plain where it does not. Probed once per run."""
     try:
         rows = ch.query(
@@ -426,6 +433,58 @@ def _codec_supported(ch: Client) -> bool:
         return bool(rows and rows[0][0])
     except Exception:  # noqa: BLE001 — an older server: plain layout
         return False
+
+
+def _install_vector_width(ch: Client) -> int | None:
+    """The width a new coded table takes, or None to create it plain: the width
+    the install's coded tables hold (a model chosen in the dashboard leaves
+    LOOM_EMBEDDING_DIM behind); None when its vector tables are plain, so one
+    install never mixes the layouts (`scripts/ops/vector_codec_rebuild.py`
+    moves it); on a fresh install, LOOM_EMBEDDING_DIM."""
+    from server.core.schema.vector_codec_ddl import CODED_TABLES, codec_width
+    from server.core.vectors.codes_state import written_by_served_model
+    from server.settings import settings
+
+    rows = ch.query(
+        "SELECT table, name, compression_codec FROM system.columns WHERE database = 'loom' "
+        "AND table IN {tables:Array(String)}",
+        parameters={"tables": sorted(CODED_TABLES)},
+    ).result_rows
+    widths: Counter[int] = Counter()
+    plain = False
+    for table, name, codec in rows:
+        if name not in CODED_TABLES[str(table)][0] or not written_by_served_model(str(table)):
+            continue
+        width = codec_width(str(codec))
+        if width is None:
+            plain = True
+        else:
+            widths[width] += 1
+    if len(widths) > 1:
+        print(f"  ! coded vector tables hold several widths {sorted(widths)}: a rebuild stopped")
+    if widths:
+        return widths.most_common(1)[0][0]
+    return None if plain else int(settings.embedding_dim)
+
+
+def _new_table_layout(ch: Client) -> tuple[int | None, str]:
+    """The width new vector tables are coded at (None: plain), and a line saying why."""
+    from server.core.schema.vector_codec_ddl import codable
+
+    if not _codec_supported(ch):
+        return (
+            None,
+            "vector tables created plain: no Quantized codec here (it needs 26.8 or later)",
+        )
+    width = _install_vector_width(ch)
+    if width is None:
+        return None, "vector tables created plain, as the install's existing ones are"
+    if not codable(width):
+        return None, (
+            f"vector tables created plain: width {width} is not a multiple of 8, "
+            "which the Quantized codec needs"
+        )
+    return width, "Quantized codec available: fresh vector tables are created coded"
 
 
 DIMENSIONS_SETTING = "allow_dimensions_outside_sorting_key"
@@ -489,6 +548,7 @@ def _apply_file(
     dry: bool,
     nlp_ok: bool = True,
     coded: bool = False,
+    codec_dim: int = 0,
     sync: SyncPolicy = NO_SYNC,
     dims: bool = False,
 ) -> None:
@@ -509,9 +569,8 @@ def _apply_file(
             continue
         if coded:
             from server.core.schema.vector_codec_ddl import rewrite_statement, statement_settings
-            from server.settings import settings as _s
 
-            rewritten = rewrite_statement(stmt, int(_s.embedding_dim))
+            rewritten = rewrite_statement(stmt, codec_dim)
             if rewritten is None:
                 print("    ~ skipped: restates a coded vector column")
                 continue
@@ -619,14 +678,23 @@ def _acquire_lease(ch: Client) -> Lease:
 
 
 def _run_file(
-    ch: Client, f: Path, *, nlp_ok: bool, coded: bool, sync: SyncPolicy, dims: bool = False
+    ch: Client,
+    f: Path,
+    *,
+    nlp_ok: bool,
+    coded: bool,
+    sync: SyncPolicy,
+    dims: bool = False,
+    codec_dim: int = 0,
 ) -> None:
     """Apply one file, then wait for the mutations it started."""
     from server.settings import settings as _s
 
     tables = _mutated_tables(f.read_text())
     before = {(r[0], r[1]) for r in _pending_mutations(ch, tables)} if tables else set()
-    _apply_file(ch, f, dry=False, nlp_ok=nlp_ok, coded=coded, sync=sync, dims=dims)
+    _apply_file(
+        ch, f, dry=False, nlp_ok=nlp_ok, coded=coded, codec_dim=codec_dim, sync=sync, dims=dims
+    )
     if tables:
         _await_mutations(ch, tables, before, wait_s=float(_s.migrate_mutation_wait_s))
 
@@ -641,17 +709,20 @@ def _apply_pending(
 ) -> int:
     """Apply `to_apply` in order, recording each; 1 on the first failure. A
     file in `baselined` is recorded without running."""
+    from server.core.schema.vector_codec_ddl import creates_coded_table
+
     # Probe NLP support once: it decides whether the NLP experimental flag is
     # sent at all (ClickHouse Cloud forbids it).
     nlp_ok = _nlp_available(ch)
-    coded = _codec_supported(ch)
+    width, layout = _new_table_layout(ch)
+    coded, codec_dim = width is not None, width or 0
     dims = _dimensions_setting_known(ch)
     sync = NO_SYNC if dry else sync_policy(ch)
     if sync.accepted:
         scope = "active replicas" if sync.level == 3 else "all replicas"
         print(f"  · waits: level {sync.level} ({scope})")
-    if coded:
-        print("  · Quantized codec available: fresh vector tables are created coded")
+    if any(creates_coded_table(f.read_text()) for f in to_apply):
+        print(f"  · {layout}")
     if dims:
         print(f"  · aggregating tables are created with {DIMENSIONS_SETTING} = 1")
     for f in to_apply:
@@ -666,9 +737,11 @@ def _apply_pending(
             print(f"  → {f.name}")
         try:
             if dry:
-                _apply_file(ch, f, dry=True, nlp_ok=nlp_ok, coded=coded)
+                _apply_file(ch, f, dry=True, nlp_ok=nlp_ok, coded=coded, codec_dim=codec_dim)
             else:
-                _run_file(ch, f, nlp_ok=nlp_ok, coded=coded, sync=sync, dims=dims)
+                _run_file(
+                    ch, f, nlp_ok=nlp_ok, coded=coded, sync=sync, dims=dims, codec_dim=codec_dim
+                )
                 _record(ch, f.name, _checksum(f.read_text()))
                 print(f"  ✓ {f.name}")
         except Exception as e:  # noqa: BLE001 — report any migration failure and stop

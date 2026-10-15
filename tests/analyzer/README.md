@@ -76,7 +76,7 @@ Three more tests keep the case set honest, and none of them needs ClickHouse:
 
 ```
 # a migrated ClickHouse: the CI integration service, or a throwaway container
-docker run -d --name corpus-ch -p 127.0.0.1:18160:8123 -e CLICKHOUSE_DB=loom \
+docker run -d --pull always --name corpus-ch -p 127.0.0.1:18160:8123 -e CLICKHOUSE_DB=loom \
   -e CLICKHOUSE_USER=loom -e CLICKHOUSE_PASSWORD=loomdev \
   -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 \
   -v $PWD/deploy/lemmagen3:/var/lib/clickhouse/lemmagen3:ro \
@@ -84,7 +84,7 @@ docker run -d --name corpus-ch -p 127.0.0.1:18160:8123 -e CLICKHOUSE_DB=loom \
   -v $PWD/deploy/clickhouse-config/nlp_user_settings.xml:/etc/clickhouse-server/users.d/nlp_user_settings.xml:ro \
   -v $PWD/deploy/clickhouse-config/merge_tree_settings.xml:/etc/clickhouse-server/config.d/merge_tree_settings.xml:ro \
   -v $PWD/deploy/clickhouse-config/keeper.xml:/etc/clickhouse-server/config.d/keeper.xml:ro \
-  clickhouse/clickhouse-server:26.5.1.882
+  clickhouse/clickhouse-server:latest
 export LOOM_CH_HOST=127.0.0.1 LOOM_CH_PORT=18160 LOOM_CH_USER=loom LOOM_CH_PASSWORD=loomdev \
        LOOM_CH_DATABASE=loom LOOM_CH_SECURE=false
 python -m server.core.schema.migrate

@@ -34,7 +34,7 @@ _SCHEMA_GUARD_WARNED: set[str] = set()
 
 
 def schema_guard_reset() -> None:
-    """Test hook: forget the pending set and the warnings."""
+    """Forget the pending set and the warnings (after migrations, and in tests)."""
     _schema_guard["at"], _schema_guard["tables"], _schema_guard["refreshing"] = None, {}, False
     _SCHEMA_GUARD_WARNED.clear()
 

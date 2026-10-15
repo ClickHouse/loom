@@ -13,3 +13,15 @@ import os
 def env_file_path() -> str | None:
     """LOOM_ENV_FILE, else `.env` in the working directory; empty reads none."""
     return os.environ.get("LOOM_ENV_FILE", ".env") or None
+
+
+if __name__ == "__main__":
+    # `python -m server.core.env_file NAME` prints NAME's value in the env file
+    # ("" when the file or the name is missing), for scripts/serve.sh.
+    import sys
+
+    from dotenv import dotenv_values
+
+    path = env_file_path()
+    values = dotenv_values(path) if path and os.path.isfile(path) else {}
+    print(values.get(sys.argv[1]) or "")

@@ -71,10 +71,10 @@ def test_a_table_without_ddl_fails_the_dump() -> None:
 
 
 def _run(monkeypatch: pytest.MonkeyPatch, out: Path, *args: str, text: str | None) -> int:
-    def build() -> str:
+    def build() -> tuple[str, str]:
         if text is None:
             raise ConnectionError("refused")
-        return text
+        return text, "26.9.18.11"
 
     monkeypatch.setattr(ds, "build", build)
     return ds.main(["--out", str(out), *args])
@@ -97,7 +97,7 @@ def test_check_never_writes_and_prints_the_diff(
     assert _run(monkeypatch, out, "--check", text="new\n") == 1
     assert out.read_text() == "old\n"
     err = capsys.readouterr().err
-    assert "-old" in err and "+new" in err
+    assert "-old" in err and "+new" in err and "dumped from ClickHouse 26.9.18.11" in err
     assert _run(monkeypatch, out, "--check", text="old\n") == 0
 
 

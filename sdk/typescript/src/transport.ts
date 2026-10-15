@@ -438,7 +438,11 @@ export class Transport {
       const retryAfterS = res.status === 429 ? retryAfterFrom(res.headers, this.now()) : undefined;
       const err = errorFromResponse(op, res.status, body, echoed, retryAfterS);
       if (err instanceof RateLimited) throw err;
-      if (policy.statuses.has(res.status) && (ctx.idempotent || neverRan(res.status, err.code))) {
+      const retried =
+        policy.statuses.has(res.status) &&
+        !CONFIGURATION_CODES.has(err.code) &&
+        (ctx.idempotent || neverRan(res.status, err.code));
+      if (retried) {
         const hintS = retryHint(res.headers, err.detail, this.now());
         if (await retryAfter(attempt, `${res.status}${err.code ? ` ${err.code}` : ""}`, hintS)) continue;
         if (attempt < policy.maxAttempts)
@@ -456,6 +460,12 @@ export class Transport {
  * the server makes before dispatch.
  */
 const NEVER_RAN_CODES: ReadonlySet<string> = new Set(["AUTH_UNAVAILABLE"]);
+
+/**
+ * 5xx answers to a deployment's configuration, which no retry changes: the
+ * operator's fix is named in the error (and in /v1/health).
+ */
+const CONFIGURATION_CODES: ReadonlySet<string> = new Set(["CODED_WIDTH_MISMATCH", "OVERRIDE_NOT_SHARED"]);
 
 function neverRan(status: number, code: string): boolean {
   return status === 408 || NEVER_RAN_CODES.has(code);

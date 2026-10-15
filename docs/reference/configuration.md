@@ -91,7 +91,7 @@ Source: `server/settings/_clickhouse.py`
 | `LOOM_VECTOR_SEARCH_INDEX_FETCH_MULTIPLIER` | `float` | `10.0` | Post-filter over-fetch for a `vector_similarity` (HNSW) index: the index returns top-N before the tenant predicate drops rows. Sent on uncoded vector reads; coded reads use `vector_search_quantized_fetch_multiplier`. |
 | `LOOM_VECTOR_SEARCH_QUANTIZED_CODES` | `bool` | `True` | Send `vector_search_use_quantized_codes = 1` on vector-ranked reads whose column has a `Quantized(...)` codec and whose table has no patch parts: a codes-first scan plus full-precision rescore. A replica that rejects the setting (code 115) drops the fragment and retries. |
 | `LOOM_VECTOR_SEARCH_QUANTIZED_FETCH_MULTIPLIER` | `float` | `3.0` | Over-fetch for the codes-first read: stage 1 keeps LIMIT × this by code distance, stage 2 rescores. Only read when the codes setting is sent. |
-| `LOOM_VECTOR_CODES_STATE_PROBE_SECONDS` | `int` | `60` | Seconds between re-reads of which vector columns are coded and which coded tables carry patch parts. |
+| `LOOM_VECTOR_CODES_STATE_PROBE_SECONDS` | `int` | `60` | Seconds between re-reads of which vector columns are coded and which coded tables carry patch parts. A write that embeds reads again on its own when the reading is older than a few seconds (codes_state.FRESH_READING_S). |
 
 ## Code
 
@@ -566,7 +566,7 @@ Source: `server/settings/_mcp.py`
 | `LOOM_MCP_TOOLSET` | `str` | `'core'` | Which tools `tools/list` shows — VISIBILITY only; every op stays callable by name over MCP and /v1/*. Rosters are the frozensets in server/operations/toolsets.py plus loom_search and loom_activate. "core"   — (default) _MCP_CORE_OPS (+ _MCP_CODE_CORE_OPS when mcp_code_tools is on). "coding" — _MCP_CODING_OPS + _MCP_CODE_CORE_OPS; the plugin selects it per request with `?toolset=coding`. "all"    — every op except _MCP_HIDDEN_OPS and the experimental ones no curated tier lists (they stay callable by name). "atomic" — CRUD + scratchpad + run ledger (_MCP_ATOMIC_OPS), policy-shaped descriptions. An unknown value is "core". |
 | `LOOM_MCP_SCHEMA_PROFILE` | `'standard' \| 'full' \| 'compact'` | `'standard'` | tools/list schema profile: "standard" (curated prose + inputSchema), "full" (+ outputSchema) or "compact" (first paragraph, argument tree). Per request: `?schema_profile=`. |
 | `LOOM_MCP_ALWAYS_LOAD_TOOLS` | `str` | `'code.search,code.symbol'` | Ops whose tools/list entry carries `_meta: {"anthropic/alwaysLoad": true}`, so a host that defers MCP tools behind tool search lists these up front and an agent calls them on its first turn instead of spending a turn loading them. Comma-separated op names; empty = none. |
-| `LOOM_MCP_SESSION_RUN_IDLE_SECONDS` | `int` | `1800` | Seconds without a tool call after which an MCP session's implicit run (one per `Mcp-Session-Id`, begun on the first run-scoped tool call) is closed. |
+| `LOOM_MCP_SESSION_RUN_IDLE_SECONDS` | `int` | `1800` | Seconds without a tool call after which the mcp_session_run_sweep worker closes an MCP session's implicit run (one per token and `Mcp-Session-Id`, begun on the first run-scoped tool call); with no background workers anywhere, idle runs stay open. At least 60: each web process re-checks its cached run once a minute (mcp_runs.CHECK_INTERVAL_S), so a shorter window would close runs a process still treats as open. |
 | `LOOM_MCP_RATELIMIT_RETRY_MAX_WAIT_S` | `float` | `2.0` | A rate-limited tool call waits out its Retry-After once and re-checks before returning RATE_LIMITED (MCP clients don't retry). This is the longest Retry-After, seconds, that one retry waits out; a longer hint is refused at once, and 0 refuses every limited call at once. |
 | `LOOM_MCP_CODE_TOOLS` | `bool` | `False` | List code.* tools on the MCP surface (core toolset union). Off = code ops are HTTP/SDK-only. |
 
@@ -1042,7 +1042,7 @@ Source: `server/settings/_providers.py`
 
 | Variable | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `LOOM_EMBEDDING_DIM` | `int` | `3072` | Inherits ModelSettings for `llm_model`, which the provider resolution below reads and fills. Vector width the embedder is asked for and the schema is sized from; the width probed from the embedder at boot wins when they differ. Change it together with `embedding_model`. |
+| `LOOM_EMBEDDING_DIM` | `int` | `3072` | Inherits ModelSettings for `llm_model`, which the provider resolution below reads and fills. Vector width the embedder is asked for and the schema is sized from; the width probed from the embedder at boot wins when they differ. Change it together with `embedding_model`. Unset with a `local:*` model, it is that model's own width. |
 | `LOOM_EMBEDDING_PROVIDER` | `'' \| 'openai' \| 'gemini' \| 'compatible' \| 'local' \| 'fake'` | `''` | "" = infer from `embedding_model` (fake-ngram-* → fake, text-embedding-* → openai, gemini* → gemini, local/local:* → local CPU embedder); or pin "openai", "gemini", "local", "fake". Switching providers changes the embedding space: a full re-embed is required. |
 | `LOOM_EMBEDDING_BASE_URL` | `str` | `''` | API root for an explicitly selected OpenAI-compatible embedding service, e.g. https://provider.example/v1. Empty is invalid for compatible providers. |
 | `LOOM_EMBEDDING_SEND_DIMENSIONS` | `bool` | `False` | Send the optional dimensions request parameter to a compatible endpoint. False uses its native output width; responses must still match embedding_dim. |
@@ -1077,7 +1077,7 @@ Source: `server/settings/_ratelimit.py`
 | --- | --- | --- | --- |
 | `LOOM_RATELIMIT_ACTOR_FRACTION` | `float` | `1.0` | Per-actor rate-limit bucket, keyed (namespace, token subject), as a fraction of the namespace limit. 1.0 = no actor bucket; 0.6 leaves a second credential budget while one sweeps. |
 | `LOOM_RATELIMIT_SHARED` | `'auto' \| 'on' \| 'off'` | `'auto'` | Share rate buckets across one server's web workers via a memory-mapped file, so a keep-alive client pinned to one worker sees the full cap. auto = when web_workers > 1; on = always; off = per-process buckets divided by replicas × workers. |
-| `LOOM_RATELIMIT_SHARED_PATH` | `str` | `''` | Bucket file; "" = <runtime dir>/loom-ratelimit-<parent pid>.buckets ($XDG_RUNTIME_DIR/loom, else /run/loom, else /tmp). The file is 0600 and never opened through a symlink. Set it for two servers sharing one cap. |
+| `LOOM_RATELIMIT_SHARED_PATH` | `str` | `''` | Bucket file; "" = one per server in the runtime dir (server/core/runtime_files.py). The file is 0600 and never opened through a symlink. Set it for two servers sharing one cap; while LOOM_RATELIMIT_SHARED uses the table, their rate-limit overrides share `<path>.overrides.json`. |
 | `LOOM_RATELIMIT_SHARED_SLOTS` | `int` | `16384` | Table slots (32 bytes each). Every process of a server must agree; a mismatch falls back to per-process buckets and shows in /v1/health. |
 | `LOOM_RATELIMIT_CLASS_FRACTIONS` | `str` | `'{"bench": 0.5}'` | JSON {class: fraction}: a traffic class carved into its own bucket of the base cap × fraction, so a bench sweep never spends production's budget. Class = token `traffic_class` claim, else namespace row, else request hint, else interactive. Absent class = 1.0 (base bucket). |
 | `LOOM_TENANT_MAX_CONCURRENT_REQUESTS` | `int` | `256` | Requests one org may have in flight at once, deployment-wide. Each process holds its share (divided by replicas × web workers, at least 1); a call over it gets 429 RATE_LIMITED. 0 = no cap. |
@@ -1111,9 +1111,10 @@ Source: `server/settings/_runtime.py`
 | `LOOM_TRAFFIC_CLASS_REGISTRY_TTL_SECONDS` | `int` | `300` | How long a namespace's registry class is kept in the process cache. |
 | `LOOM_DEFAULT_DAILY_COST_CAP_USD` | `float` | `1.0` | Daily LLM spend cap per namespace, USD: extraction workers skip a namespace whose rolling 24 h cost reached it. Overridden per namespace by loom.namespaces.daily_cost_cap_usd; 0.0 disables on both tiers. |
 | `LOOM_REPLICA_COUNT` | `int` | `1` | The in-process rate limiter divides every cap by this count so the replicas' sum matches the target (approximate, not cluster-strict). |
-| `LOOM_WEB_WORKERS` | `int` | `1` | uvicorn worker processes per container, read by the image's CMD and by the rate limiter (N workers count as N replicas). |
+| `LOOM_WEB_WORKERS` | `int` | `1` | uvicorn processes per container (the image's default: server.core.web_workers); the rate limiter counts N workers as N replicas. |
+| `LOOM_RUNTIME_DIR` | `str` | `''` | Directory of the files one server's web processes share (rate-limit table, runtime overrides, graph marks); "" = chosen per process by server/core/runtime_files.py. scripts/serve.sh sets it once, before the workers start, so all of them name the same files. |
 | `LOOM_GRAPH_WRITE_MARKS_SHARED` | `'auto' \| 'on' \| 'off'` | `'auto'` | Entity-graph write marks shared by the processes of one server (server/memory/app/graph_write_marks.py): each namespace's last graph write and its in-flight projections, so a graph walk on one worker never serves a walk remembered from before a write another process made. auto = shared when graph_write_marks_dir is set or web_workers > 1; on = always; off = process-local only. |
-| `LOOM_GRAPH_WRITE_MARKS_DIR` | `str` | `''` | Directory of the shared marks; "" = <runtime dir>/loom-graph-marks-<parent pid> (the workers of one uvicorn share a parent). Set it to a directory every process that writes the graph mounts, the workers container too. |
+| `LOOM_GRAPH_WRITE_MARKS_DIR` | `str` | `''` | Directory of the shared marks; "" = one per server in the runtime dir (server/core/runtime_files.py). Set it to a directory every process that writes the graph mounts, the workers container too. |
 | `LOOM_BACKGROUND_WORKERS` | `'auto' \| 'on' \| 'off'` | `'auto'` | Which processes run the WorkerSupervisor: auto = one per host, elected by an advisory flock on supervisor_lock_path; on = always; off = never (a pure web replica). |
 | `LOOM_SUPERVISOR_LOCK_PATH` | `str` | `'/tmp/loom-supervisor.lock'` | File whose advisory flock elects the one supervisor process per host in auto mode. |
 | `LOOM_SUPERVISOR_LEASE_RETRY_S` | `float` | `5.0` | auto mode: seconds between lease retries by a process that lost it at boot, so the new blue/green colour takes the workers when the old one exits. 0 = one try at boot. |
@@ -1188,7 +1189,7 @@ Source: `server/settings/_tasks.py`
 
 | Variable | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `LOOM_MEMORY_RUN_COMPLETE_RETAIN` | `'keep' \| 'demote' \| 'expire'` | `'keep'` | What run.complete does to the rows the run wrote when the call does not say: keep = nothing; demote = scale confidence by the expiry demote factor now; expire = expires_at now + memory_run_complete_expire_days with on_expire=demote. Pinned, verified, promoted, locked, episodic and reflection rows are always kept. |
+| `LOOM_MEMORY_RUN_COMPLETE_RETAIN` | `'keep' \| 'demote' \| 'expire'` | `'keep'` | What run.complete does to the rows the run wrote when the call does not say: keep = nothing; demote = scale confidence by the expiry demote factor now; expire = expires_at now + memory_run_complete_expire_days with on_expire=demote. Pinned, verified, promoted, locked, episodic and reflection rows are always kept, and so is everything an MCP session's implicit run wrote when the transport closes it. |
 | `LOOM_MEMORY_RUN_COMPLETE_EXPIRE_DAYS` | `int` | `7` | Days until expiry for `memory_run_complete_retain = expire`. |
 
 ## Tracker

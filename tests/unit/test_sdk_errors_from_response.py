@@ -12,10 +12,12 @@ from loom.errors import (
     AuthInvalid,
     BackendTimeout,
     BackendUnavailable,
+    CodedWidthMismatch,
     IdempotentConflict,
     LoomError,
     NotFound,
     Overloaded,
+    OverrideNotShared,
     PreconditionFailed,
     RateLimited,
     SchemaPending,
@@ -120,6 +122,8 @@ _SERVER_CODE_CLASSES: dict[str, type[LoomError]] = {
     "BACKEND_UNAVAILABLE": BackendUnavailable,
     "BACKEND_TIMEOUT": BackendTimeout,
     "SCHEMA_PENDING": SchemaPending,
+    "OVERRIDE_NOT_SHARED": OverrideNotShared,
+    "CODED_WIDTH_MISMATCH": CodedWidthMismatch,
     "POLICY_FORBIDDEN": AuthInsufficient,
     "EMBED_TIMEOUT": BackendUnavailable,  # a 503 with no SDK class: mapped by status
 }

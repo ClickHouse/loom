@@ -8,11 +8,14 @@ name: release
 # release's one-line installer never points at an image that does not exist.
 # docs/development/release-process.md is the maintainer procedure.
 #
-# Jobs: version (derive and gate the version) -> build -> verify (inspect the
-# exact files) -> docker -> docker-smoke -> github-release -> pypi, npm (dispatch only). A
-# re-run after a partial publish is safe: the release is updated in place,
-# PyPI skips files it already has, npm skips a version it already has, and the
-# image tags are overwritten with the same build.
+# Jobs: version (derive and gate the version) -> clickhouse (the ClickHouse
+# release the installer bundle names, migrated and schema-checked) -> build ->
+# verify (inspect the exact files) -> docker -> docker-smoke -> github-release
+# -> pypi, npm (dispatch only). A re-run after a partial publish is safe: the
+# bundle keeps the ClickHouse release it was first published with, the
+# release is updated in place, PyPI skips files it already has, npm skips a
+# version it already has, and the image tags are overwritten with the same
+# build.
 #
 # The PyPI and npm jobs are dispatch-only, so a tag's GitHub Release can be
 # checked before the SDKs reach the registries.
@@ -21,6 +24,21 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      clickhouse_image:
+        description: >-
+          An exact ClickHouse release for a bundle not yet published (e.g.
+          clickhouse/clickhouse-server:26.9.18.11), when `latest` names a bad one
+        required: false
+        default: ""
+      allow_clickhouse_downgrade:
+        description: >-
+          Publish a bundle whose ClickHouse release is older than one a recent
+          published bundle names (installs that upgrade then run an older
+          server on data a newer one wrote)
+        type: boolean
+        required: false
+        default: false
 
 # One release run per tag at a time; a second run waits instead of cancelling
 # a publish halfway.
@@ -34,6 +52,7 @@ permissions:
 env:
   PYTHON_VERSION: "3.12"
   NODE_VERSION: "22"
+  UV_VERSION: "0.12.19"
 
 jobs:
   version:
@@ -86,9 +105,91 @@ jobs:
           grep -qxF "__version__ = \"$VERSION\"" server/__init__.py \
             || { echo "::error file=server/__init__.py::__version__ is not $VERSION"; exit 1; }
 
+  # The bundle names the ClickHouse release that is latest now, so an installed
+  # Loom version keeps its ClickHouse; it is migrated and checked here first.
+  clickhouse:
+    name: The ClickHouse release the bundle names
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      image: ${{ steps.resolve.outputs.image }}
+    env:
+      LOOM_CH_HOST: localhost
+      LOOM_CH_PORT: "8123"
+      LOOM_CH_USER: loom
+      LOOM_CH_PASSWORD: loomdev
+      LOOM_CH_DATABASE: loom
+      LOOM_CH_SECURE: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        id: python
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: Install Loom from uv.lock (no extras)
+        run: |
+          uv sync --locked --python "${{ steps.python.outputs.python-path }}"
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      # A re-run keeps the release this version's published bundle names, so
+      # rerunning the installer for it never moves ClickHouse.
+      # A dispatch may name the release in place of `latest`; a published
+      # bundle keeps its own either way. A downgrade is refused here so the
+      # run stops before it builds and pushes images; github-release checks
+      # again before it uploads.
+      - id: resolve
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+          CLICKHOUSE_IMAGE: ${{ inputs.clickhouse_image }}
+          ALLOW_DOWNGRADE: ${{ inputs.allow_clickhouse_downgrade }}
+        run: |
+          if [ -n "$CLICKHOUSE_IMAGE" ]; then
+            python - <<'PY'
+          import os, sys
+          sys.path.insert(0, "scripts/release")
+          from build_stack_bundle import EXACT_CLICKHOUSE
+          image = os.environ["CLICKHOUSE_IMAGE"]
+          if not EXACT_CLICKHOUSE.fullmatch(image):
+              sys.exit(f"::error::not one ClickHouse release: {image!r}")
+          PY
+          fi
+          status=0
+          bash scripts/release/published_bundle.sh "$VERSION" published || status=$?
+          case $status in
+            0)
+              image=$(python scripts/release/build_stack_bundle.py pinned-in published/loom-stack.tar.gz)
+              if [ -n "$CLICKHOUSE_IMAGE" ] && [ "$CLICKHOUSE_IMAGE" != "$image" ]; then
+                echo "::warning::clickhouse_image=$CLICKHOUSE_IMAGE ignored: v$VERSION's published bundle names $image"
+              fi
+              ;;
+            3)
+              if [ -n "$CLICKHOUSE_IMAGE" ]; then
+                image=$CLICKHOUSE_IMAGE
+              else
+                image=$(bash dev/clickhouse_release.sh)
+              fi
+              bash scripts/release/refuse_downgrade.sh "$image"
+              ;;
+            *) exit "$status" ;;
+          esac
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+      - name: Migrate a fresh server of that release and check schema.sql
+        env:
+          LOOM_CLICKHOUSE_IMAGE: ${{ steps.resolve.outputs.image }}
+        run: |
+          bash dev/ci_start_clickhouse.sh
+          python -m server.core.schema.migrate
+          make schema-check
+
   build:
     name: Build the release files
-    needs: version
+    needs: [version, clickhouse]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -148,8 +249,11 @@ jobs:
           zip -q "release/plugins/loom-codex-plugin-v${VERSION}.zip" LICENSE NOTICE THIRD_PARTY_NOTICES
           ls -la release/*
       - name: Build the source-free Compose installer bundle
+        env:
+          CLICKHOUSE_IMAGE: ${{ needs.clickhouse.outputs.image }}
         run: |
-          python scripts/release/build_stack_bundle.py --version "$VERSION"
+          python scripts/release/build_stack_bundle.py build --version "$VERSION" \
+            --clickhouse-image "$CLICKHOUSE_IMAGE"
           cp install.sh release/stack/install.sh
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -159,11 +263,12 @@ jobs:
 
   verify:
     name: Verify the release files
-    needs: [version, build]
+    needs: [version, clickhouse, build]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      CLICKHOUSE_IMAGE: ${{ needs.clickhouse.outputs.image }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -184,6 +289,9 @@ jobs:
           python - <<'PY'
           import json, os, pathlib, subprocess, sys, tarfile, zipfile
           from packaging.version import Version
+
+          sys.path.insert(0, os.getcwd())
+          from scripts.release.build_stack_bundle import pinned_image
 
           version = os.environ["VERSION"]
           pyv = str(Version(version))
@@ -271,6 +379,9 @@ jobs:
                   if missing:
                       errors.append(f"stack bundle is missing {sorted(missing)}")
                   release_version = t.extractfile("loom-stack/VERSION").read().decode().strip()
+                  pinned = pinned_image(archive)
+                  if pinned != os.environ["CLICKHOUSE_IMAGE"]:
+                      errors.append(f"stack bundle names {pinned}, not the checked release")
                   if release_version != version:
                       errors.append(f"stack bundle version {release_version}, expected {version}")
 
@@ -331,7 +442,7 @@ jobs:
 
   docker-smoke:
     name: Released quickstart (${{ matrix.arch }})
-    needs: [version, docker]
+    needs: [version, clickhouse, docker]
     strategy:
       fail-fast: false
       matrix:
@@ -359,22 +470,62 @@ jobs:
       - name: Fresh installer stack, compiler indexing and dashboard provider recovery
         env:
           VERSION: ${{ needs.version.outputs.version }}
-        run: python3 scripts/gates/docker_quickstart_smoke.py --image "ghcr.io/clickhouse/loom:$VERSION"
+          CLICKHOUSE_IMAGE: ${{ needs.clickhouse.outputs.image }}
+        run: |
+          python3 scripts/gates/docker_quickstart_smoke.py --image "ghcr.io/clickhouse/loom:$VERSION" \
+            --clickhouse-image "$CLICKHOUSE_IMAGE"
 
   github-release:
     name: GitHub Release (artifacts attached)
     needs: [version, verify, docker, docker-smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # One publish at a time across every tag, so the downgrade check below
+    # sees the bundle another tag's run published a moment ago.
+    concurrency:
+      group: release-publish
+      cancel-in-progress: false
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: release-files
           path: release
-      # An existing release for the tag is updated and its files replaced, so
-      # a re-run or the later dispatch leaves the published bytes attached.
+      # Replacing an asset deletes it first: a failed upload would leave an
+      # installed version without its bundle, and its pin with it. A published
+      # bundle and its checksum stay; a checksum file the release lost is
+      # written again from the published bundle. A new bundle never names an
+      # older ClickHouse release than a recent published one (prereleases
+      # included), unless the dispatch allows it.
+      - name: Keep this version's published bundle, or refuse a ClickHouse downgrade
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+          ALLOW_DOWNGRADE: ${{ inputs.allow_clickhouse_downgrade }}
+        run: |
+          status=0
+          bash scripts/release/published_bundle.sh "$VERSION" published || status=$?
+          case $status in
+            0)
+              rm release/stack/loom-stack.tar.gz release/stack/loom-stack.tar.gz.sha256
+              if [ -f published/loom-stack.tar.gz.sha256 ]; then
+                (cd published && sha256sum -c loom-stack.tar.gz.sha256)
+              else
+                (cd published && sha256sum loom-stack.tar.gz) >release/stack/loom-stack.tar.gz.sha256
+              fi
+              ;;
+            3)
+              image=$(python3 scripts/release/build_stack_bundle.py pinned-in release/stack/loom-stack.tar.gz)
+              bash scripts/release/refuse_downgrade.sh "$image"
+              ;;
+            *) exit "$status" ;;
+          esac
+      # An existing release for the tag is updated and its other files replaced,
+      # so a re-run or the later dispatch leaves the published bytes attached.
       - name: Create or update the release with notes and files
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:

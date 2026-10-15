@@ -206,9 +206,9 @@ class GraphWriteMarks:
 
 
 def _default_dir() -> str:
-    from server.core.ratelimit_shared import runtime_dir
+    from server.core.runtime_files import server_file
 
-    return os.path.join(runtime_dir(), f"loom-graph-marks-{os.getppid()}")
+    return server_file("graph-marks")
 
 
 def _resolve_dir() -> str | None:
@@ -219,13 +219,13 @@ def _resolve_dir() -> str | None:
     workers = max(1, int(settings.web_workers))
     if mode == "off" or (mode == "auto" and not configured and workers <= 1):
         return None
-    path = configured or _default_dir()
     try:
+        path = configured or _default_dir()
         os.makedirs(path, mode=_DIR_MODE, exist_ok=True)
     except OSError as e:
         log.warning(
             "graph write marks: cannot use %s (%s); walks read this process's own writes",
-            path,
+            configured or "the runtime directory",
             e,
         )
         return None
@@ -236,7 +236,8 @@ _marks: GraphWriteMarks | None = None
 
 
 def marks() -> GraphWriteMarks:
-    """This process's marks, resolved from settings on first use."""
+    """This process's marks, resolved from settings on first use: a directory
+    that cannot be used then keeps them in-process until a restart."""
     global _marks
     if _marks is None:
         _marks = GraphWriteMarks(_resolve_dir())

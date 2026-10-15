@@ -9,7 +9,8 @@ This page sets up a checkout for working on Loom's code. To evaluate Loom withou
   leg's lemmatizer), which has no wheel and compiles against `Python.h`:
   `sudo apt-get install -y build-essential python3-dev` on Debian/Ubuntu,
   `xcode-select --install` on macOS. A plain `pip install -e .` needs neither.
-- **Docker** with compose, for ClickHouse and the stacks.
+- **Docker** with Compose 2.34 or later (the dev compose file pulls ClickHouse daily),
+  for ClickHouse and the stacks.
 - **Node 22** (the version CI uses) for the dashboard and the TypeScript SDK.
 
 ## Python environment

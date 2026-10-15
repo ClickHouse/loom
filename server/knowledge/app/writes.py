@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from server.core.hashing import sha256_document_text as _content_sha256
+from server.core.vectors import codes_state
 from server.embedding import get_embedder
 from server.knowledge.api.models_knowledge import (
     KnowledgeAddInput,
@@ -176,6 +177,7 @@ async def handle_knowledge_upsert(input: KnowledgeUpsertInput) -> KnowledgeUpser
     from server.knowledge.store import chunks as knowledge_repo
 
     embedder = get_embedder()
+    await codes_state.refuse_width("chunks", embedder.dim)
     doc_id = str(uuid.uuid4())
     version = _nano_version()
     now = datetime.now(UTC).replace(tzinfo=None)
@@ -294,6 +296,7 @@ async def handle_knowledge_add(input: KnowledgeAddInput) -> KnowledgeAddOutput:
     from server.observability.otel import traced
 
     embedder = get_embedder()
+    await codes_state.refuse_width("chunks", embedder.dim)
     doc_id = str(uuid.uuid4())
     version = _nano_version()
     now = datetime.now(UTC).replace(tzinfo=None)
@@ -548,6 +551,7 @@ async def handle_knowledge_bulk_add(
     Chunking + embedding still per-doc per the configured policy."""
 
     embedder = get_embedder()
+    await codes_state.refuse_width("chunks", embedder.dim)
     now = datetime.now(UTC).replace(tzinfo=None)
 
     doc_rows: list[DocumentInsertRow] = []

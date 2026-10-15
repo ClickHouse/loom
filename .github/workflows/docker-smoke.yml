@@ -12,8 +12,10 @@ on:
         "frontend/**",
         "tests/fixtures/docker_provider_app.py",
         "scripts/install-code-toolchains.sh",
+        "scripts/serve.sh",
         "scripts/scip_harness/**",
         "scripts/release/build_stack_bundle.py",
+        "dev/clickhouse_release.sh",
         "deploy/standalone/**",
         "deploy/clickhouse-config/**",
         "deploy/apparmor/**",
@@ -37,8 +39,10 @@ on:
         "frontend/**",
         "tests/fixtures/docker_provider_app.py",
         "scripts/install-code-toolchains.sh",
+        "scripts/serve.sh",
         "scripts/scip_harness/**",
         "scripts/release/build_stack_bundle.py",
+        "dev/clickhouse_release.sh",
         "deploy/standalone/**",
         "deploy/clickhouse-config/**",
         "deploy/apparmor/**",
@@ -61,8 +65,25 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  clickhouse:
+    name: the ClickHouse release this run tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      image: ${{ steps.resolve.outputs.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Both architectures install the release `latest` names now.
+      - id: resolve
+        run: |
+          image=$(bash dev/clickhouse_release.sh)
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+
   quickstart:
     name: Quickstart (${{ matrix.arch }})
+    needs: clickhouse
     strategy:
       fail-fast: false
       matrix:
@@ -98,7 +119,11 @@ jobs:
           cache-from: type=gha,scope=docker-smoke-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=docker-smoke-${{ matrix.arch }}
       - name: Fresh installer, compiler indexing and dashboard provider recovery
-        run: python3 scripts/gates/docker_quickstart_smoke.py --image loom:docker-smoke
+        env:
+          CLICKHOUSE_IMAGE: ${{ needs.clickhouse.outputs.image }}
+        run: |
+          python3 scripts/gates/docker_quickstart_smoke.py --image loom:docker-smoke \
+            --clickhouse-image "$CLICKHOUSE_IMAGE"
 
   sandbox-profile:
     # Where the shipped AppArmor profile first runs: the colours' security

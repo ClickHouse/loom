@@ -144,9 +144,9 @@ whether it is refreshable. `make lint` fails when the page is stale.
 | Table | Engine | ORDER BY | PARTITION BY | TTL | Indexes |
 | --- | --- | --- | --- | --- | --- |
 | `agent_cost_rollup_daily` | `AggregatingMergeTree` | `(org, namespace, agent, day, operation)` | `toYYYYMM(day)` |  |  |
-| `agent_events` | `MergeTree` | `(org, namespace, agent, ts)` | `toYYYYMM(ts)` |  |  |
+| `agent_events` | `MergeTree` | `(org, namespace, agent, ts)` | `toYYYYMM(ts)` |  | 1 skip index (bloom_filter) |
 | `agent_run_claims` | `KeeperMap('/loom/agent_run_claims')` |  |  |  |  |
-| `agent_runs` | `ReplacingMergeTree(version)` | `(org, namespace, run_id)` |  |  |  |
+| `agent_runs` | `ReplacingMergeTree(version)` | `(org, namespace, run_id)` |  |  | 1 skip index (bloom_filter) |
 | `agent_turn_usage` | `ReplacingMergeTree(version)` | `(org, namespace, session_id, message_id)` | `toYYYYMM(turn_at)` |  |  |
 | `audit_checkpoints` | `MergeTree` | `window_start` |  |  |  |
 | `audit_log` | `MergeTree` | `(org, namespace, event_type, ts)` | `toYYYYMM(ts)` |  | 1 skip index (bloom_filter) |

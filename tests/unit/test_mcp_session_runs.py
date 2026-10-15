@@ -16,16 +16,25 @@ import pytest
 from server.observability import run_context
 from server.observability.ledger import run_id_of
 from server.operations.registry import OPERATIONS_BY_NAME
+from server.tasks.domain.session_runs import session_run_id
 from server.transport import mcp_runs
 
 DEFAULTS = {"org": "clickhouse", "namespace": "ns-a", "agent": "cursor"}
+
+
+CALLER = mcp_runs.Caller()
+
+
+def rid(session_id: str) -> str:
+    """The implicit run id of `session_id` under DEFAULTS' org, for an unpinned caller."""
+    return session_run_id("clickhouse", CALLER.subject, session_id)
 
 
 @pytest.fixture(autouse=True)
 def _fresh(monkeypatch):
     from server.settings import settings
 
-    monkeypatch.setattr(settings, "mcp_session_run_idle_seconds", 1800, raising=False)
+    monkeypatch.setattr(settings, "mcp_session_run_idle_seconds", 1800)
     mcp_runs.reset()
     run_context.set_ledger_run("")
     yield
@@ -40,20 +49,26 @@ class _Ledger:
         self.begins: list[Any] = []
         self.completes: list[Any] = []
         self.fail_begin = False
+        # run_id -> the namespace its row was begun in.
+        self.active: dict[str, str] = {}
 
-    async def begin(self, inp: Any) -> Any:
+    async def active_runs(self, org: str, run_id: str) -> list[dict[str, Any]]:
+        if run_id not in self.active:
+            return []
+        return [{"org": org, "namespace": self.active[run_id], "run_id": run_id}]
+
+    async def begin(self, inp: Any, *, started_at: Any) -> None:
         if self.fail_begin:
             raise RuntimeError("ledger down")
         self.begins.append(inp)
-        from server.tasks.api.models_run import RunBeginOutput
+        self.active[inp.run_id] = inp.namespace
 
-        return RunBeginOutput(run_id=f"run-{len(self.begins)}", started_at="t0")
+    async def fetch(self, ch: Any, org: str, ns: str, run_id: str) -> dict[str, Any] | None:
+        return {"status": "active", "metadata": "{}"} if run_id in self.active else None
 
-    async def complete(self, inp: Any) -> Any:
+    async def complete(self, ch: Any, inp: Any, existing: Any, **_: Any) -> None:
         self.completes.append(inp)
-        from server.tasks.api.models_run import RunCompleteOutput
-
-        return RunCompleteOutput(run_id=inp.run_id, status=inp.status, duration_ms=inp.duration_ms)
+        self.active.pop(inp.run_id, None)
 
 
 @pytest.fixture
@@ -61,8 +76,10 @@ def ledger(monkeypatch) -> _Ledger:
     import server.tasks.app.run as h
 
     led = _Ledger()
-    monkeypatch.setattr(h, "handle_run_begin", led.begin)
-    monkeypatch.setattr(h, "handle_run_complete", led.complete)
+    monkeypatch.setattr(h, "begin_session_run", led.begin)
+    monkeypatch.setattr(h, "active_session_runs", led.active_runs)
+    monkeypatch.setattr(h, "_complete", led.complete)
+    monkeypatch.setattr(h.runs_store, "fetch_run", led.fetch)
     return led
 
 
@@ -97,47 +114,60 @@ def test_writes_stamp_reads_label_ledger_and_code_never() -> None:
     assert code and not any(mcp_runs.takes_run(o) for o in code)
 
 
-def test_goal_is_the_first_query_then_key_then_fallback() -> None:
-    assert mcp_runs.goal_of({"query": "  what broke CI  "}, "x") == "what broke CI"
-    assert mcp_runs.goal_of({"memory_key": "ci:flaky"}, "x") == "ci:flaky"
-    assert mcp_runs.goal_of({"value": 1}, "mcp session (cursor)") == "mcp session (cursor)"
-    assert len(mcp_runs.goal_of({"query": "q" * 5000}, "x")) == mcp_runs.GOAL_MAX_CHARS
-
-
 # ---- ensure: one run per session, begun once ----
 
 
 def test_ensure_mints_one_run_per_session_and_reuses_it(ledger: _Ledger) -> None:
     async def _run() -> None:
-        r1 = await mcp_runs.ensure("sess-1", DEFAULTS, goal="what broke CI", now=100.0)
-        r2 = await mcp_runs.ensure("sess-1", DEFAULTS, goal="second call", now=101.0)
-        r3 = await mcp_runs.ensure("sess-2", DEFAULTS, goal="other session", now=102.0)
-        assert r1 is not None and r2 is r1 and r1.run_id == "mcp-sess-1"
-        assert r3 is not None and r3.run_id == "mcp-sess-2"
-        assert r1.calls == 2 and r1.last_seen == 101.0
-        await mcp_runs.drain_begins()  # run.begin lands off the call's path
+        r1 = await mcp_runs.ensure("sess-1", DEFAULTS, CALLER, now=100.0)
+        r2 = await mcp_runs.ensure("sess-1", DEFAULTS, CALLER, now=101.0)
+        r3 = await mcp_runs.ensure("sess-2", DEFAULTS, CALLER, now=102.0)
+        assert r1 is not None and r2 is r1 and r1.run_id == rid("sess-1")
+        assert r3 is not None and r3.run_id == rid("sess-2")
+        assert list(mcp_runs._RUNS) == [rid("sess-1"), rid("sess-2")]  # least recent first
+        await mcp_runs.drain_ledger_writes()  # run.begin lands off the call's path
         b = ledger.begins[0]
-        assert b.run_id == "mcp-sess-1"
+        assert b.run_id == rid("sess-1")
         assert (b.org, b.namespace, b.agent, b.session_id) == (
             "clickhouse",
             "ns-a",
             "cursor",
             "sess-1",
         )
-        assert b.goal == "what broke CI" and b.environment == "mcp" and b.consumer == "cursor"
-        assert b.metadata == {"implicit": True, "transport": "mcp"}
-        assert mcp_runs.live_count() == 2
+        # A label: a read's query may reach any namespace the caller reads.
+        assert b.goal == "mcp session (cursor)"
+        assert b.environment == "mcp" and b.consumer == "cursor"
+        assert b.metadata == {"implicit": True, "transport": "mcp", "subject": ""}
+        assert len(mcp_runs._RUNS) == 2
+
+    asyncio.run(_run())
+
+
+def test_a_sibling_worker_does_not_begin_the_sessions_run_again(ledger: _Ledger) -> None:
+    """Another web process serving the same session finds the run active and
+    joins it; once the run is closed, a later call reopens it."""
+
+    async def _run() -> None:
+        await mcp_runs.ensure("sess-1", DEFAULTS, CALLER, now=100.0)
+        await mcp_runs.drain_ledger_writes()
+        mcp_runs.reset()  # the next call lands on a sibling worker
+        await mcp_runs.ensure("sess-1", DEFAULTS, CALLER, now=101.0)
+        await mcp_runs.drain_ledger_writes()
+        assert len(ledger.begins) == 1
+        await mcp_runs.close_session("sess-1", "clickhouse", "-")
+        await mcp_runs.ensure("sess-1", DEFAULTS, CALLER, now=103.0)
+        await mcp_runs.drain_ledger_writes()
+        assert len(ledger.begins) == 2
 
     asyncio.run(_run())
 
 
 def test_ensure_needs_a_session_and_an_identity(ledger: _Ledger) -> None:
     async def _run() -> None:
-        assert await mcp_runs.ensure(None, DEFAULTS, goal="g") is None
-        assert await mcp_runs.ensure("s", None, goal="g") is None
+        assert await mcp_runs.ensure(None, DEFAULTS, CALLER) is None
+        assert await mcp_runs.ensure("s", None, CALLER) is None
         assert (
-            await mcp_runs.ensure("s", {"org": "-", "namespace": "-", "agent": "-"}, goal="g")
-            is None
+            await mcp_runs.ensure("s", {"org": "-", "namespace": "-", "agent": "-"}, CALLER) is None
         )
         assert ledger.begins == []
 
@@ -148,91 +178,67 @@ def test_begin_failure_is_swallowed_and_not_retried_every_call(ledger: _Ledger) 
     async def _run() -> None:
         ledger.fail_begin = True
         # The call gets its run at once; the failed begin forgets it.
-        assert await mcp_runs.ensure("s", DEFAULTS, goal="g", now=10.0) is not None
-        await mcp_runs.drain_begins()
-        assert mcp_runs.current("s") is None
+        assert await mcp_runs.ensure("s", DEFAULTS, CALLER, now=10.0) is not None
+        await mcp_runs.drain_ledger_writes()
+        assert mcp_runs.current(rid("s")) is None
         ledger.fail_begin = False
-        # Within the idle window the failed session is not retried (no
+        # Within a check interval the failed session is not retried (no
         # run.begin per tool call while the ledger is down) …
-        assert await mcp_runs.ensure("s", DEFAULTS, goal="g", now=20.0) is None
+        assert await mcp_runs.ensure("s", DEFAULTS, CALLER, now=20.0) is None
         assert ledger.begins == []
         # … and after it, it is.
-        r = await mcp_runs.ensure("s", DEFAULTS, goal="g", now=20.0 + mcp_runs.idle_seconds())
-        assert r is not None and r.run_id == "mcp-s"
+        r = await mcp_runs.ensure("s", DEFAULTS, CALLER, now=10.0 + mcp_runs.CHECK_INTERVAL_S)
+        assert r is not None and r.run_id == rid("s")
 
     asyncio.run(_run())
 
 
-def test_failed_begins_are_forgotten_while_no_run_is_live(ledger: _Ledger) -> None:
-    """With the ledger down no run is ever live; the sweep still runs and
-    forgets each failed session after the idle window."""
+def test_failed_begins_are_capped_like_the_runs(ledger: _Ledger, monkeypatch) -> None:
+    monkeypatch.setattr(mcp_runs, "SESSION_RUN_CAP", 2)
 
     async def _run() -> None:
         ledger.fail_begin = True
-        for i in range(3):
-            await mcp_runs.ensure(f"s{i}", DEFAULTS, goal="g", now=10.0)
-        await mcp_runs.drain_begins()
-        assert mcp_runs.live_count() == 0
-        later = 10.0 + mcp_runs.idle_seconds() + 1.0
-        assert mcp_runs.sweep_due(now=later)
-        await mcp_runs.sweep_idle(now=later)
-        assert mcp_runs._BEGIN_FAILED_AT == {}
-        assert not mcp_runs.sweep_due(now=later + mcp_runs.SWEEP_MIN_INTERVAL_S)
+        for session in ("a", "b", "c"):
+            await mcp_runs.ensure(session, DEFAULTS, CALLER, now=10.0)
+        await mcp_runs.drain_ledger_writes()
+        assert list(mcp_runs._BEGIN_FAILED_AT) == [rid("b"), rid("c")]
 
     asyncio.run(_run())
 
 
-# ---- close: DELETE /mcp, idle sweep, cap eviction ----
+# ---- close: DELETE /mcp; the cache cap ----
 
 
 def test_close_session_completes_with_outcome_none(ledger: _Ledger) -> None:
     async def _run() -> None:
-        await mcp_runs.ensure("s", DEFAULTS, goal="g", now=100.0)
-        assert await mcp_runs.close_session("s", now=160.0) is True
-        assert await mcp_runs.close_session("s") is False  # already gone
-        assert await mcp_runs.close_session("never-seen") is False
+        await mcp_runs.ensure("s", DEFAULTS, CALLER, now=100.0)
+        assert await mcp_runs.close_session("s", "clickhouse", "-") is True
+        assert await mcp_runs.close_session("s", "clickhouse", "-") is False  # already gone
+        assert await mcp_runs.close_session("never-seen", "clickhouse", "-") is False
         c = ledger.completes[0]
-        assert (c.org, c.namespace, c.run_id) == ("clickhouse", "ns-a", "mcp-s")
+        assert (c.org, c.namespace, c.run_id) == ("clickhouse", "ns-a", rid("s"))
         assert c.status == "completed" and c.outcome == "none" and c.memories_used == []
-        assert c.duration_ms == 60_000
-        assert c.metadata == {"closed_by": "mcp_session_end", "calls": 1}
-        assert mcp_runs.live_count() == 0
+        assert c.duration_ms == 0  # from the run's start, which every process shares
+        assert c.metadata == {"closed_by": "mcp_session_end"}  # the ledger holds the calls
+        assert len(mcp_runs._RUNS) == 0
 
     asyncio.run(_run())
 
 
-def test_idle_sweep_closes_only_stale_runs_and_is_throttled(ledger: _Ledger) -> None:
-    async def _run() -> None:
-        await mcp_runs.ensure("old", DEFAULTS, goal="g", now=0.0)
-        await mcp_runs.ensure("fresh", DEFAULTS, goal="g", now=1000.0)
-        idle = mcp_runs.idle_seconds()
-        assert mcp_runs.sweep_due(now=idle + 1.0)
-        closed = await mcp_runs.sweep_idle(now=idle + 1.0)
-        assert closed == 1 and [c.run_id for c in ledger.completes] == ["mcp-old"]
-        assert ledger.completes[0].metadata["closed_by"] == "mcp_idle"
-        assert mcp_runs.live_count() == 1
-        # Throttled: a second sweep inside the interval does nothing even
-        # when forced=False, and sweep_due says so.
-        assert not mcp_runs.sweep_due(now=idle + 2.0)
-        assert await mcp_runs.sweep_idle(now=idle + 2.0) == 0
-        # Forced past the fresh run's window it closes too.
-        assert await mcp_runs.sweep_idle(now=1000.0 + idle + 1.0, force=True) == 1
-        assert mcp_runs.live_count() == 0 and not mcp_runs.sweep_due()
-
-    asyncio.run(_run())
-
-
-def test_cap_evicts_the_idlest_run_by_closing_it(ledger: _Ledger, monkeypatch) -> None:
+def test_the_cap_forgets_the_idlest_run_without_closing_it(ledger: _Ledger, monkeypatch) -> None:
+    """A cap, not a sign the session ended: the evicted session's next call joins
+    its run, which only the idle sweep or a DELETE closes."""
     monkeypatch.setattr(mcp_runs, "SESSION_RUN_CAP", 2)
 
     async def _run() -> None:
-        await mcp_runs.ensure("a", DEFAULTS, goal="g", now=0.0)
-        await mcp_runs.ensure("b", DEFAULTS, goal="g", now=5.0)
-        await mcp_runs.ensure("a", DEFAULTS, goal="g", now=10.0)  # a is now the fresher one
-        await mcp_runs.ensure("c", DEFAULTS, goal="g", now=20.0)
-        assert mcp_runs.live_count() == 2 and mcp_runs.current("b") is None
-        assert [c.run_id for c in ledger.completes] == ["mcp-b"]
-        assert ledger.completes[0].metadata["closed_by"] == "mcp_evicted"
+        await mcp_runs.ensure("a", DEFAULTS, CALLER, now=0.0)
+        await mcp_runs.ensure("b", DEFAULTS, CALLER, now=5.0)
+        await mcp_runs.ensure("a", DEFAULTS, CALLER, now=10.0)  # a is now the fresher one
+        await mcp_runs.ensure("c", DEFAULTS, CALLER, now=20.0)
+        assert len(mcp_runs._RUNS) == 2 and mcp_runs.current(rid("b")) is None
+        await mcp_runs.ensure("b", DEFAULTS, CALLER, now=30.0)
+        await mcp_runs.drain_ledger_writes()
+        assert ledger.completes == [] and len(ledger.begins) == 3  # b joined, not begun again
 
     asyncio.run(_run())
 
@@ -283,26 +289,57 @@ def test_call_tool_stamps_writes_only_and_binds_the_ledger_run() -> None:
     import server.transport.mcp_call as mcp_call
 
     call = inspect.getsource(mcp_call._call_tool)
-    stamp_at = call.index("await _bind_session_run(op, arguments, defaults, mcp_session_id)")
+    stamp_at = call.index("_stamp_session_run(op, arguments, defaults, mcp_session_id)")
+    validate_at = call.index("_validated_input(")
+    admitted_at = call.index("refused = await _admission_refusal(call)")
+    begin_at = call.index("await _bind_session_run(op, defaults, mcp_session_id, run_caller)")
     handler_at = call.index("result = await op.handler(input_obj)")
-    assert stamp_at < handler_at, "the session run must be bound before the handler runs"
-    src = inspect.getsource(mcp_call._bind_session_run)
-    assert 'arguments["run_id"] = session_run_id' in src
-    assert "set_ledger_run(session_run_id)" in src
+    # Stamped before validation; begun only once the call is admitted.
+    assert stamp_at < validate_at < admitted_at < begin_at < handler_at
+    src = inspect.getsource(mcp_call._stamp_session_run)
+    assert 'arguments["run_id"] = run_id' in src
+    assert "set_ledger_run(session_run_id)" in inspect.getsource(mcp_call._bind_session_run)
     # Reads are never stamped: the only assignment is guarded by stamps_run.
-    guard = src[src.index("if _mcp_runs.stamps_run(op)") :].split("\n", 1)[0]
+    guard = src[src.index("if run_id and _mcp_runs.stamps_run(op)") :].split("\n", 1)[0]
     assert "stamps_run(op)" in guard and 'arguments.get("run_id")' in guard
 
 
-def test_delete_route_and_sweep_are_wired() -> None:
+def test_a_refused_call_begins_no_run(ledger: _Ledger, monkeypatch) -> None:
+    """A call the gates refuse (here: a rate limit) carries the stamped id but
+    writes no run row, so rotating Mcp-Session-Id cannot fill the ledger."""
+    from server.transport import mcp_call
+
+    stamped: list[str] = []
+
+    async def _defaults(auth: Any, client_name: str | None = None) -> dict[str, str]:
+        return DEFAULTS
+
+    async def _refuse(call: Any) -> dict[str, Any]:
+        stamped.append(call.arguments.get("run_id"))
+        return {"jsonrpc": "2.0", "id": call.req_id, "result": {"isError": True}}
+
+    monkeypatch.setattr(mcp_call, "_caller_defaults", _defaults)
+    monkeypatch.setattr(mcp_call, "_admission_refusal", _refuse)
+    params = {"name": "loom_memory_set", "arguments": {"memory_key": "k", "value": "v"}}
+
+    async def _run() -> None:
+        await mcp_call._call_tool(1, params, mcp_session_id="s")
+        await mcp_runs.drain_ledger_writes()
+
+    asyncio.run(_run())
+    assert stamped == [rid("s")]
+    assert ledger.begins == [] and mcp_runs.current(rid("s")) is None
+
+
+def test_delete_route_is_wired() -> None:
     import inspect
 
     import server.transport.mcp as mcp
 
     src = inspect.getsource(mcp.attach)
     assert '@router.delete("/mcp"' in src
-    assert "_mcp_runs.close_session(session_id)" in src
-    assert "_mcp_runs.sweep_due()" in src and "_mcp_runs.sweep_idle()" in src
+    assert "_mcp_runs.close_session(" in src and "_mcp_runs.subject_of(auth)" in src
+    assert src.index("set_current_auth(auth)") < src.index("_mcp_runs.close_session(")
 
 
 def test_loom_search_labels_the_read_and_emits_the_run() -> None:
@@ -334,3 +371,309 @@ def test_working_memory_is_labelled_but_never_stamped() -> None:
         if mcp_runs.takes_run(ops[name]):
             assert not mcp_runs.stamps_run(ops[name]), name
     assert mcp_runs.takes_run(ops["working_memory.set"])  # still labelled on the ledger
+
+
+def test_a_delete_reaching_a_sibling_closes_the_run_by_id(ledger: _Ledger) -> None:
+    async def _run() -> None:
+        await mcp_runs.ensure("s", DEFAULTS, CALLER, now=0.0)
+        await mcp_runs.drain_ledger_writes()
+        mcp_runs.reset()  # the DELETE lands on a web process that never served it
+        assert await mcp_runs.close_session("s", "", "-") is False  # no org, no lookup
+        assert await mcp_runs.close_session("s", "clickhouse", "-") is True
+        assert [(c.run_id, c.namespace) for c in ledger.completes] == [(rid("s"), "ns-a")]
+
+    asyncio.run(_run())
+
+
+def test_a_cached_run_is_checked_with_the_ledger_once_a_minute(ledger: _Ledger) -> None:
+    """The idle sweep or a DELETE on another web process may close the run: the
+    next check re-opens it, and joins it while it is active."""
+
+    async def _run() -> None:
+        first = await mcp_runs.ensure("s", DEFAULTS, CALLER, now=0.0)
+        await mcp_runs.drain_ledger_writes()
+        ledger.active.pop(rid("s"))  # a sibling closed it
+        await mcp_runs.ensure("s", DEFAULTS, CALLER, now=10.0)  # within the minute
+        await mcp_runs.drain_ledger_writes()
+        assert len(ledger.begins) == 1
+        again = await mcp_runs.ensure("s", DEFAULTS, CALLER, now=61.0)
+        await mcp_runs.drain_ledger_writes()
+        assert again is first and len(ledger.begins) == 2 and rid("s") in ledger.active
+        await mcp_runs.ensure("s", DEFAULTS, CALLER, now=130.0)
+        await mcp_runs.drain_ledger_writes()
+        assert len(ledger.begins) == 2  # still active: joined
+
+    asyncio.run(_run())
+
+
+def test_a_session_run_lives_in_the_callers_org() -> None:
+    """A DELETE knows only the caller, never a call's arguments, so the run sits
+    in the caller's org and default namespace whatever a call names."""
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport import mcp_call
+
+    arguments = {"org": "other", "namespace": "ns-b", "memory_key": "k", "value": "v"}
+    mcp_call._stamp_session_run(OPERATIONS_BY_NAME["memory.set"], arguments, DEFAULTS, "s")
+    assert arguments["run_id"] == rid("s")  # the caller's org, not the call's
+
+
+def test_two_callers_sending_one_session_id_hold_two_runs(ledger: _Ledger) -> None:
+    """The id binds the caller's principal: one's writes never carry the other's
+    run, and one's DELETE never closes the other's."""
+
+    async def _run() -> None:
+        alice, bob = mcp_runs.Caller(subject="alice"), mcp_runs.Caller(subject="bob")
+        a = await mcp_runs.ensure("shared", DEFAULTS, alice, now=0.0)
+        b = await mcp_runs.ensure("shared", {**DEFAULTS, "namespace": "ns-b"}, bob, now=1.0)
+        await mcp_runs.drain_ledger_writes()
+        assert a is not None and b is not None and a.run_id != b.run_id
+        assert [x.namespace for x in ledger.begins] == ["ns-a", "ns-b"]
+        assert await mcp_runs.close_session("shared", "clickhouse", "bob") is True
+        assert [c.run_id for c in ledger.completes] == [b.run_id]
+        assert mcp_runs.current(a.run_id) is a
+
+    asyncio.run(_run())
+
+
+def test_a_failed_check_keeps_the_run_and_tries_again(ledger: _Ledger, monkeypatch) -> None:
+    """Only a failed first begin waits a check interval; a check that cannot
+    reach the ledger leaves the session's run in place."""
+    import server.tasks.app.run as h
+
+    async def _run() -> None:
+        run = await mcp_runs.ensure("s", DEFAULTS, CALLER, now=0.0)
+        await mcp_runs.drain_ledger_writes()
+
+        async def _down(org: str, run_id: str) -> Any:
+            raise RuntimeError("ledger down")
+
+        monkeypatch.setattr(h, "active_session_runs", _down)
+        assert await mcp_runs.ensure("s", DEFAULTS, CALLER, now=61.0) is run
+        await mcp_runs.drain_ledger_writes()
+        assert await mcp_runs.ensure("s", DEFAULTS, CALLER, now=62.0) is run
+        monkeypatch.setattr(h, "active_session_runs", ledger.active_runs)
+        assert await mcp_runs.ensure("s", DEFAULTS, CALLER, now=125.0) is run
+        await mcp_runs.drain_ledger_writes()
+        assert len(ledger.begins) == 1  # still active: joined, never begun twice
+
+    asyncio.run(_run())
+
+
+def test_a_delete_after_this_processs_begin_failed_still_asks_the_ledger(
+    ledger: _Ledger,
+) -> None:
+    """A sibling began the run for the session's later calls; the client's DELETE
+    lands on the process whose own begin failed."""
+
+    async def _run() -> None:
+        ledger.fail_begin = True
+        await mcp_runs.ensure("s", DEFAULTS, CALLER, now=0.0)
+        await mcp_runs.drain_ledger_writes()
+        ledger.fail_begin = False
+        ledger.active[rid("s")] = "ns-a"  # the sibling's begin
+        assert await mcp_runs.close_session("s", "clickhouse", "-") is True
+        assert [c.run_id for c in ledger.completes] == [rid("s")]
+
+    asyncio.run(_run())
+
+
+@pytest.mark.parametrize(
+    ("claims", "arguments", "expected"),
+    [
+        ({}, {"user_id": "u"}, ("sa:t", "-", "-")),  # namespace-wide: no owner
+        ({"read_user_id": "u"}, {}, ("sa:t", "u", "-")),  # a pinned user
+        (
+            {"read_scope": "own_session", "read_user_id": "u"},
+            {"session_id": "app-1"},
+            ("sa:t", "u", "app-1"),  # the session the call names, not the MCP one
+        ),
+        ({"read_scope": "own_session", "read_user_id": "u"}, {}, None),  # refused at the gate
+    ],
+)
+def test_the_caller_is_the_one_the_calls_read_scope_resolves(
+    claims: dict[str, str], arguments: dict[str, str], expected: Any
+) -> None:
+    from server.auth.jwt import AuthInfo
+
+    auth = AuthInfo(
+        subject="sa:t",
+        org="o",
+        namespaces=("n",),
+        roles=("writer",),
+        is_service_account=True,
+        **claims,
+    )
+    caller = mcp_runs.Caller.of_call(auth, arguments)
+    got = None if caller is None else (caller.subject, caller.user_id, caller.session_id)
+    assert got == expected
+
+
+@pytest.mark.parametrize("warm", [True, False])
+def test_a_delete_closes_a_run_whose_calls_named_another_org(
+    ledger: _Ledger, monkeypatch, warm: bool
+) -> None:
+    """The run sits in the caller's org, which the DELETE names too, whatever org
+    the calls named; the ledger counts those calls by run id."""
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport import mcp_call
+
+    async def _run() -> None:
+        op = OPERATIONS_BY_NAME["memory.set"]
+        arguments = {"org": "other", "namespace": "ns-b", "memory_key": "k", "value": "v"}
+        caller, _ = mcp_call._stamp_session_run(op, arguments, DEFAULTS, "s")
+        await mcp_call._bind_session_run(op, DEFAULTS, "s", caller)
+        await mcp_runs.drain_ledger_writes()
+        assert arguments["run_id"] == rid("s")
+        if not warm:
+            mcp_runs.reset()  # the DELETE lands on a process that never served it
+        assert await mcp_runs.close_session("s", "clickhouse", "-") is True
+        assert [(c.org, c.run_id) for c in ledger.completes] == [("clickhouse", rid("s"))]
+
+    asyncio.run(_run())
+
+
+def test_a_delete_the_ledger_did_not_answer_leaves_the_run_open(
+    ledger: _Ledger, monkeypatch
+) -> None:
+    """The idle sweep closes it later, from the ledger."""
+    import server.tasks.app.run as h
+
+    async def _run() -> None:
+        await mcp_runs.ensure("s", DEFAULTS, CALLER, now=0.0)
+        await mcp_runs.drain_ledger_writes()
+
+        async def _down(org: str, run_id: str) -> Any:
+            raise ConnectionError("ledger down")
+
+        monkeypatch.setattr(h, "active_session_runs", _down)
+        assert await mcp_runs.close_session("s", "clickhouse", "-") is False
+        assert ledger.completes == [] and rid("s") in ledger.active
+        assert mcp_runs.current(rid("s")) is None
+
+    asyncio.run(_run())
+
+
+def test_the_run_names_the_subject_the_idle_sweep_counts(ledger: _Ledger) -> None:
+    async def _run() -> None:
+        await mcp_runs.ensure("s", DEFAULTS, mcp_runs.Caller(subject="sa:t"), now=0.0)
+        await mcp_runs.ensure("t", DEFAULTS, CALLER, now=0.0)
+        await mcp_runs.drain_ledger_writes()
+        assert [b.metadata["subject"] for b in ledger.begins] == ["sa:t", ""]
+
+    asyncio.run(_run())
+
+
+def test_the_detached_begin_counts_against_the_callers_quota(ledger: _Ledger, monkeypatch) -> None:
+    import server.tasks.app.run as h
+    from server.core.ch import current_query_tag, quota_key_var, set_quota_key
+
+    seen: list[tuple[str, str]] = []
+
+    async def begin(inp: Any, *, started_at: Any) -> None:
+        seen.append((quota_key_var.get(), current_query_tag()))
+
+    monkeypatch.setattr(h, "begin_session_run", begin)
+
+    async def _run() -> None:
+        set_quota_key("tenant-a")
+        await mcp_runs.ensure("s", DEFAULTS, CALLER, now=0.0)
+        await mcp_runs.drain_ledger_writes()
+
+    asyncio.run(_run())
+    assert seen == [("tenant-a", "mcp.session_run")]
+
+
+def test_a_delete_closes_against_the_callers_quota(ledger: _Ledger, monkeypatch) -> None:
+    import server.tasks.app.run as h
+    from server.core.ch import quota_key_var, set_quota_key
+
+    seen: list[str] = []
+    complete = ledger.complete
+
+    async def counted(ch: Any, inp: Any, existing: Any, **_: Any) -> None:
+        seen.append(quota_key_var.get())
+        await complete(ch, inp, existing)
+
+    monkeypatch.setattr(h, "_complete", counted)
+
+    async def _run() -> None:
+        await mcp_runs.ensure("s", DEFAULTS, CALLER, now=0.0)
+        await mcp_runs.drain_ledger_writes()
+        set_quota_key("tenant-a")  # as the DELETE route sets it from the token
+        assert await mcp_runs.close_session("s", "clickhouse", "-") is True
+
+    asyncio.run(_run())
+    assert seen == ["tenant-a"]
+
+
+def test_the_idle_window_is_no_shorter_than_a_processs_check() -> None:
+    """A run closed sooner than a web process re-checks it would still be stamped."""
+    from pydantic import ValidationError
+
+    from server.settings import Settings
+
+    assert Settings(mcp_session_run_idle_seconds=60).mcp_session_run_idle_seconds == 60
+    with pytest.raises(ValidationError):
+        Settings(mcp_session_run_idle_seconds=59)
+    assert mcp_runs.CHECK_INTERVAL_S == 60
+
+
+def test_a_loop_of_deletes_is_rate_limited_before_it_reads_the_ledger(monkeypatch) -> None:
+    """DELETE names no namespace, so it draws run.complete's buckets under the caller."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from server.core.ratelimit import Limit, get_limiter
+    from server.settings import settings
+    from server.transport import mcp as mcp_mod
+
+    monkeypatch.setattr(settings, "auth_required", False)
+    monkeypatch.setattr(settings, "mcp_auth_mode", "open")
+    monkeypatch.setattr(settings, "web_workers", 1)
+    monkeypatch.setattr(settings, "ratelimit_shared", "off")
+    closes: list[str] = []
+
+    async def close_session(session_id: Any, org: str, subject: str) -> bool:
+        closes.append(session_id)
+        return False
+
+    monkeypatch.setattr(mcp_runs, "close_session", close_session)
+    limiter = get_limiter()
+    limiter.reset_all()
+    limiter.set_namespace_limit("mcp-session-end:", "default", Limit(capacity=1, rate=0.0))
+    app = FastAPI()
+    mcp_mod.attach(app)
+    try:
+        c = TestClient(app)
+        assert c.delete("/mcp", headers={"Mcp-Session-Id": "a"}).status_code == 200
+        r = c.delete("/mcp", headers={"Mcp-Session-Id": "b"})
+        assert r.status_code == 429 and r.headers["Retry-After"]
+        assert r.json()["code"] == "RATE_LIMITED"
+        assert closes == ["a"]
+    finally:
+        limiter.reset_all()
+
+
+def test_one_subjects_deletes_do_not_spend_anothers(monkeypatch) -> None:
+    from server.auth.jwt import AuthInfo
+    from server.core.ratelimit import Limit, get_limiter
+    from server.settings import settings
+    from server.transport import gates
+
+    monkeypatch.setattr(settings, "web_workers", 1)
+    monkeypatch.setattr(settings, "ratelimit_shared", "off")
+
+    def token(subject: str) -> AuthInfo:
+        return AuthInfo(
+            subject=subject, org="acme", namespaces=(), roles=(), is_service_account=False
+        )
+
+    limiter = get_limiter()
+    limiter.reset_all()
+    limiter.set_namespace_limit("mcp-session-end:alice", "default", Limit(capacity=1, rate=0.0))
+    try:
+        assert gates.session_end_rate_limit(token("alice"), "acme").allowed
+        assert not gates.session_end_rate_limit(token("alice"), "acme").allowed
+        assert gates.session_end_rate_limit(token("bob"), "acme").allowed
+    finally:
+        limiter.reset_all()

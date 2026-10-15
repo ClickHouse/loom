@@ -70,7 +70,8 @@ leave that key out of `memories_used` so the run is not counted twice. See
 
 Pinned, verified, promoted, locked, episodic and reflection rows are kept whatever the
 mode, and no mode tombstones anything. The default comes from
-`LOOM_MEMORY_RUN_COMPLETE_RETAIN`.
+`LOOM_MEMORY_RUN_COMPLETE_RETAIN`; an MCP session's implicit run always keeps, since
+the transport that closes it cannot judge the work.
 
 ## Graded runs
 
@@ -89,15 +90,52 @@ namespace owner set `proposal_policy.mode` to `auto`; otherwise a person decides
 
 `run.list(grade="ungraded")` lists the closed runs still owed a verdict.
 
+An MCP session gets an implicit run without asking: its first run-scoped tool
+call begins one, and `DELETE /mcp` or the `mcp_session_run_sweep` worker closes
+it (see [MCP](../reference/mcp.md)). The sweep closes an active run with
+`environment='mcp'` and `metadata.implicit` true whose id is `mcp-` plus 40 hex
+characters (the shape only the transport makes), or an earlier server's run
+whose id starts with `mcp-` and whose metadata says `transport: mcp` and records
+no subject. It closes one once no call of its token (of anyone, for a run that
+records no token) reached it within `LOOM_MCP_SESSION_RUN_IDLE_SECONDS`. The run sits in the caller's default
+namespace, so what its readers see stays there: its goal is the label
+`mcp session (<agent>)`, never a call's text (a read's query may reach any
+namespace the caller reads), and `memories_written` lists the writes in that
+namespace only (the others still carry its `run_id`). Closing it judges nothing:
+its outcome is `none` and its memories are kept whatever the server's default
+retain mode, so two closes racing for it (the sweep on two hosts, a `DELETE`)
+at worst write the same completion twice.
+
+How the run spans web processes. Its id is a hash of the caller's org, the
+token's subject and the `Mcp-Session-Id`, so every process of the server names
+the same run for the session and no other token can name it by sending the same
+session id. A process registers the run on the session's first admitted
+run-scoped call and writes the begin row in the background (an awaited insert
+would hold that call for seconds on ClickHouse Cloud); a call the gates refuse
+writes no run row. Two processes that both find no row each write a first begin,
+and the earlier start and its owner win (a first begin's row version counts down from
+its start; every later write supersedes it). Each process checks a cached run with the ledger at most once
+a minute and re-opens it when a `DELETE` or the sweep closed it in the meantime.
+A `DELETE` closes the run whichever process it reaches, by its id; the close
+counts every write under that id, whoever closes it. A `DELETE` that reaches
+another process before the begin row has landed finds nothing to close, and the
+begin then lands an open run that the sweep closes once it goes idle: a short
+retry would not cover a begin that takes seconds, and would delay the `DELETE`
+of every session that never took a run. A re-opened run keeps its original
+`started_at`, so a run closed by the sweep and re-opened later reports a
+`duration_ms` counted from the session's first call, gaps included. A check that
+finds no row at all, because an erasure deleted it, begins a new run started then,
+so no run dated before the erasure comes back.
+
 ## Operations
 
-| Operation      | Role   | Does                                                                                                                                                                                                     |
-| -------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `run.begin`    | writer | Open a run: `goal` (required), `user_request`, `expected_outcome`, `run_id` (else minted), `session_id`, `role`, `model`, `metadata`. Re-sending the same `run_id` replaces the row.                     |
-| `run.complete` | writer | Close it once: `status`, `memories_used`, `recalled_keys`, `outcome`, `reflection`, `retain`. Not idempotent: completing twice appends usage events twice.                                               |
-| `run.get`      | viewer | One run with its live derivations.                                                                                                                                                                       |
-| `run.list`     | viewer | Newest first, filtered by `agent`, `session_id`, `status`, `grade`, and `memory_activity` (`with` keeps runs that relied on or wrote a memory, `without` the hollow ones; filters apply before `limit`). |
-| `run.grade`    | writer | Grade a closed run or a session's runs `pass` / `fail`.                                                                                                                                                  |
+| Operation      | Role   | Does                                                                                                                                                                                                                                                                      |
+| -------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `run.begin`    | writer | Open a run: `goal` (required), `user_request`, `expected_outcome`, `run_id` (else minted), `session_id`, `role`, `model`, `metadata`. Re-sending the same `run_id` replaces the row; an id of the MCP transport's shape (`mcp-` and 40 hex digits) gets an id of its own. |
+| `run.complete` | writer | Close it once: `status`, `memories_used`, `recalled_keys`, `outcome`, `reflection`, `retain`. Not idempotent: completing twice appends usage events twice.                                                                                                                |
+| `run.get`      | viewer | One run with its live derivations.                                                                                                                                                                                                                                        |
+| `run.list`     | viewer | Newest first, filtered by `agent`, `session_id`, `status`, `grade`, and `memory_activity` (`with` keeps runs that relied on or wrote a memory, `without` the hollow ones; filters apply before `limit`).                                                                  |
+| `run.grade`    | writer | Grade a closed run or a session's runs `pass` / `fail`.                                                                                                                                                                                                                   |
 
 The full field lists are in the [operations reference](../reference/operations.md#run).
 `memory.outcome_run` records one helped / hurt outcome for every memory recalled under a

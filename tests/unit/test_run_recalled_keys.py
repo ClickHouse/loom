@@ -20,7 +20,7 @@ def test_recalled_keys_is_a_distinct_field_from_memories_used() -> None:
     assert inp.recalled_keys == ["coffee_type", "where_i_live"] and inp.memories_used == []
     # It rides the metadata, not the usage ledger: the complete handler folds
     # it into `meta` and no usage-event branch reads it.
-    src = inspect.getsource(hr.handle_run_complete)
+    src = inspect.getsource(hr._complete)
     assert 'meta["recalled_keys"] = _merge_recalled(' in src
     used_block = inspect.getsource(hr._credit_used) + src[: src.index("meta = _parse_metadata")]
     assert "input.recalled_keys" not in used_block, "never credited as used/evidence/harm"

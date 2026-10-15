@@ -13,7 +13,7 @@ from typing import Any
 from uuid import UUID
 
 from server.core.repo_base import _CHClient, _default_client
-from server.insights.domain.provider_rebuild import REBUILD_TABLES
+from server.insights.domain.provider_rebuild import EMBEDDING_SURFACES, REBUILD_TABLES
 from server.insights.domain.provider_source_policy import MODEL_KEYED_SOURCES, SOURCE_POLICY_VERSION
 
 _ORDINAL = "_loom_rebuild_ordinal"
@@ -150,7 +150,16 @@ async def create_snapshot(
     current = await source_schema(names, ch=client)
     if current != schema:
         raise ValueError("Rebuild source schema changed before snapshot")
-    columns = ", ".join(_identifier(name) for name in schema.columns)
+    vectors = {surface.column for surface in EMBEDDING_SURFACES if surface.table == names.table}
+    # A copy made by CREATE ... AS SELECT keeps a Quantized column's fixed width in
+    # memory though its DDL shows no codec; the cast drops it, so the copies hold
+    # vectors of any width (the new model's included).
+    columns = ", ".join(
+        f"CAST({_identifier(name)}, toTypeName({_identifier(name)})) AS {_identifier(name)}"
+        if name in vectors
+        else _identifier(name)
+        for name in schema.columns
+    )
     # ClickHouse's COMMENT grammar requires a literal, not a query parameter.
     # Both identities are validated UUIDs; the marker contains no user text.
     marker = names.marker(schema.table_uuid)

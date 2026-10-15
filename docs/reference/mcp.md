@@ -16,10 +16,10 @@ and others) with `loom install` or by hand is in
 
 ## Endpoint
 
-| Request                          | Does                                                                                                                        |
-| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `POST /mcp`                      | One JSON-RPC request or a batch. The answer is a JSON body, not an event stream. A notification answers `202` with no body. |
-| `DELETE /mcp` + `Mcp-Session-Id` | Ends the session and closes its implicit run.                                                                               |
+| Request                          | Does                                                                                                                                                                |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /mcp`                      | One JSON-RPC request or a batch. The answer is a JSON body, not an event stream. A notification answers `202` with no body.                                         |
+| `DELETE /mcp` + `Mcp-Session-Id` | Ends the session and closes its implicit run. Rate-limited as `run.complete`, per caller within the org's budget: past the cap it answers `429` with `Retry-After`. |
 
 Query parameters on the URL select what `tools/list` shows for that connection:
 
@@ -121,11 +121,15 @@ connect by browser sign-in instead of a pasted token (`server/auth/oauth.py`):
   Claude Code plugin sends the repository its checkout resolved to). It applies
   to every `code.*` call that names no namespace, and authorization then runs on
   that namespace as if it had been named.
-- **Implicit run.** The first run-scoped tool call of a session begins a run in
-  the run ledger;
-  writes carry its `run_id`, and reads are labelled with it but not filtered.
-  The run closes on `DELETE /mcp` or after `LOOM_MCP_SESSION_RUN_IDLE_SECONDS`
-  (default 1800) without a call. See [Runs](../features/runs.md).
+- **Implicit run.** One run per (org, token subject, session), begun in the
+  run ledger by the session's first run-scoped tool call and filed in the
+  caller's default namespace; writes carry its `run_id`, and reads are labelled
+  with it but not filtered. The run closes on `DELETE /mcp`, or when the
+  `mcp_session_run_sweep` worker finds no call of the token under it for
+  `LOOM_MCP_SESSION_RUN_IDLE_SECONDS` (default 1800); a deployment that runs
+  no background workers anywhere keeps idle runs open. The run stores no call
+  count: its calls are the `agent_events` rows with its `run_id`. See
+  [Runs](../features/runs.md).
 
 ## Tool list
 

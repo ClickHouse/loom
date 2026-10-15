@@ -13,6 +13,9 @@ async def seed() -> None:
     from server.core.background import register_buffer_drainer
 
     register_buffer_drainer("boot-writes", boot.drain_writes)
+    # The served width: a coded vector column takes vectors of that length only.
+    width = settings.embedding_dim
+    vector = [1.0] + [0.0] * (width - 1)
     async with model_command():
         client = get_client()
         await client.execute(
@@ -21,9 +24,9 @@ async def seed() -> None:
             "content_excerpt, embedding_model, embedding_dim, embedding, memory_key_embedding, "
             "memory_key_embedding_dim, verified, tags) SETTINGS async_insert = 0 VALUES "
             "('dev', 'local', 'docker-smoke', '-', '-', 'docker/vector-smoke', 'semantic', "
-            "'private', 'Provider rebuild preserves metadata', {model:String}, 8, "
-            "[1,0,0,0,0,0,0,0], [1,0,0,0,0,0,0,0], 8, 1, ['provider-smoke'])",
-            {"model": settings.embedding_model},
+            "'private', 'Provider rebuild preserves metadata', {model:String}, {dim:UInt16}, "
+            "{vec:Array(BFloat16)}, {vec:Array(BFloat16)}, {dim:UInt16}, 1, ['provider-smoke'])",
+            {"model": settings.embedding_model, "dim": width, "vec": vector},
         )
         await client.execute(
             "INSERT INTO loom.code_chunks "
@@ -31,8 +34,8 @@ async def seed() -> None:
             "embedding_dim, start_line, end_line) SETTINGS async_insert = 0 VALUES "
             "('dev', 'code-provider-smoke', {model:String}, 'example.py', "
             "'ace68a73-808a-4b37-9ae0-2ab1a03b1c53', 'def greet(): return 42', "
-            "'greet return', [1,0,0,0,0,0,0,0], 8, 1, 1)",
-            {"model": settings.embedding_model},
+            "'greet return', {vec:Array(BFloat16)}, {dim:UInt16}, 1, 1)",
+            {"model": settings.embedding_model, "dim": width, "vec": vector},
         )
 
 

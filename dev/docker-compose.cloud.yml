@@ -68,6 +68,9 @@ x-loom-common: &loom-common
 
 services:
   loom:
+    # The per-server runtime files (server/core/runtime_files.py), empty on every start.
+    tmpfs:
+      - /run/loom:uid=999,gid=999,mode=0700
     <<: *loom-common
     # Server lifespan applies pending schema migrations on boot (see
     # server/main.py:lifespan). The `loom migrate` CLI is still
@@ -78,6 +81,9 @@ services:
       LOOM_BLOB_DIR: /app/var/blobs
       # The web tier serves requests and nothing else.
       LOOM_BACKGROUND_WORKERS: "off"
+      # One process unless .env names a count: the image's own default (one per
+      # CPU) would change an existing deployment's size on upgrade.
+      LOOM_WEB_WORKERS: "${LOOM_WEB_WORKERS:-1}"
       LOOM_SUPERVISOR_LOCK_PATH: /app/var/run/supervisor.lock
       # Graph-write marks shared by the web workers and the workers container.
       LOOM_GRAPH_WRITE_MARKS_DIR: /app/var/run/graph-marks
@@ -105,6 +111,9 @@ services:
       start_period: 45s
 
   loom-workers:
+    # The per-server runtime files (server/core/runtime_files.py), empty on every start.
+    tmpfs:
+      - /run/loom:uid=999,gid=999,mode=0700
     <<: *loom-common
     container_name: loom-workers
     # Listens on loopback only: nothing outside this container calls it.
@@ -132,11 +141,10 @@ services:
       LOOM_INSTANCE_LABEL: "deploy:workers"
       # No published port.
       LOOM_BIND_HOST: "127.0.0.1"
-      # The shared rate table is keyed by the uvicorn parent pid
-      # and shared by the web workers of ONE server. This process serves no
-      # client traffic (no published port) and runs one web worker, so it
-      # takes the per-process fallback (`single web worker` in /v1/health)
-      # and needs no table; the web tier's four workers keep theirs.
+      # The shared rate table is one per server (server/core/runtime_files.py).
+      # This process serves no client traffic (no published port) and runs one
+      # web worker, so it takes the per-process fallback (`single web worker`
+      # in /v1/health) and needs no table.
     healthcheck:
       test:
         [

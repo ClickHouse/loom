@@ -32,12 +32,13 @@ import fcntl
 import hashlib
 import mmap
 import os
-import stat
 import struct
 import threading
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+
+from server.core.runtime_files import open_private, server_file
 
 MAGIC = b"LRL1"
 VERSION = 2  # 2: bucket keys carry the traffic class
@@ -55,56 +56,17 @@ def key_hash(key: str) -> int:
     return h or 1
 
 
-FILE_MODE = 0o600
-RUN_DIR = "/run/loom"
-_TMP_DIR = "/tmp"
-
-
-def runtime_dir() -> str:
-    """The directory the table lives in: `$XDG_RUNTIME_DIR/loom`
-    when the variable names a writable directory, else `/run/loom` when it
-    exists or can be created, else `/tmp`. The first two are per-user or
-    per-service tmpfs paths another local account cannot list; `/tmp` is
-    the fallback for a container without one."""
-    xdg = str(os.environ.get("XDG_RUNTIME_DIR") or "").strip()
-    for base in ([os.path.join(xdg, "loom")] if xdg else []) + [RUN_DIR]:
-        try:
-            os.makedirs(base, mode=0o700, exist_ok=True)
-            if os.access(base, os.W_OK | os.X_OK):
-                return base
-        except OSError:
-            continue
-    return _TMP_DIR
-
-
 def default_path() -> str:
-    """One table per server: the workers of one `uvicorn --workers N` share a
-    parent, so the parent pid is the rendezvous. Two servers on one host
-    (two isolated worktrees, say) get two files."""
-    return os.path.join(runtime_dir(), f"loom-ratelimit-{os.getppid()}.buckets")
+    """One table per server (`server_file`)."""
+    return server_file("ratelimit") + ".buckets"
 
 
 def open_table_fd(path: str) -> int:
     """Open (or create) the backing file the way a shared table must be
-    opened: never through a symlink (`O_NOFOLLOW`), created
-    private to the server's user (0600), and — because the file may predate
-    this build or have been created by something else — checked to be a
-    regular file owned by this process, then tightened to 0600 if it was
-    wider. Raises OSError; the limiter falls back to per-process buckets
-    and names the reason in /v1/health."""
-    fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, FILE_MODE)
-    try:
-        st = os.fstat(fd)
-        if not stat.S_ISREG(st.st_mode):
-            raise OSError(f"{path}: not a regular file")
-        if st.st_uid != os.geteuid():
-            raise OSError(f"{path}: owned by uid {st.st_uid}, this process is {os.geteuid()}")
-        if stat.S_IMODE(st.st_mode) & 0o077:
-            os.fchmod(fd, FILE_MODE)
-    except Exception:
-        os.close(fd)
-        raise
-    return fd
+    opened (`open_private`): the file may predate this build or have been
+    created by something else. Raises OSError; the limiter falls back to
+    per-process buckets and names the reason in /v1/health."""
+    return open_private(path, os.O_RDWR | os.O_CREAT)
 
 
 @dataclass(frozen=True)

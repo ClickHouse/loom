@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from server.core.ch import get_client
 from server.core.hashing import hash_text
 from server.core.hashing import sha256_value as _content_sha256
+from server.core.vectors import codes_state
 from server.embedding import get_embedder
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import scope_and
@@ -640,6 +641,9 @@ async def handle_memory_bulk_set(
 
     _bulk_clock.mark("entity_resolution")
     await _bulk_build_rows(input, state, identity_dupes, entity_resolution, now_utc)
+    if state.pending:
+        # Before the calls it pays for: a vector the coded table cannot take fails the batch.
+        await codes_state.refuse_width("memory_embeddings", embedder.dim)
 
     emb_idx_of, value_vectors, entity_embeddings = await _bulk_embed_rows(
         input, state, embedder, entity_resolution, _bulk_clock, now_utc

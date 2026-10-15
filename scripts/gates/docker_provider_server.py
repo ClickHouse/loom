@@ -11,7 +11,7 @@ import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-DIMENSIONS = {"docker-smoke-8": 8, "docker-smoke-12": 12}
+DIMENSIONS = {"docker-smoke-8": 8, "docker-smoke-16": 16}
 KEYS = {"docker-smoke-embedding-key", "docker-smoke-rotated-key"}
 
 

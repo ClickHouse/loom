@@ -80,16 +80,23 @@ SDK has no class for raises the class its HTTP status maps to (a 409
 
 ## Retrying
 
-| Code               | Status | Retry?                                                                                                                                                                                                                                                         |
-| ------------------ | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `RATE_LIMITED`     | 429    | Yes, after `Retry-After` (`detail.retry_after_s`). The SDKs pace on the `X-RateLimit-*` headers and wait out a 429 for up to 15 s per call by default.                                                                                                         |
-| `OVERLOADED`       | 503    | Yes, after `retry_after_s` (1 s by default). The request was refused before it queued, so any op is safe to resend.                                                                                                                                            |
-| `AUTH_UNAVAILABLE` | 503    | Yes, after `Retry-After` (5 s). The process has not loaded the token revocation list yet; the op did not run, so the SDKs retry it for any op.                                                                                                                 |
-| `SCHEMA_PENDING`   | 503    | After the migration it names has run. No `Retry-After`: the wait is an operator action, not a timer.                                                                                                                                                           |
-| `EMBED_TIMEOUT`    | 503    | The SDKs retry it for idempotent ops (`memory.search` is one: three attempts by default). A raw HTTP or MCP caller retries once, straight away: the search wrote nothing. If it repeats, the embedding provider is down; back off rather than retry in a loop. |
-| `BACKEND_TIMEOUT`  | 504    | Only an idempotent op, and preferably a narrower request. The statement exceeded its class deadline and the server does not retry it.                                                                                                                          |
-| `INTERNAL_ERROR`   | 500    | An idempotent op, once. Report the `request_id` if it repeats.                                                                                                                                                                                                 |
-| 4xx other than 429 | 4xx    | No. The same request gets the same answer; fix the request, the token or the data first.                                                                                                                                                                       |
+| Code                   | Status | Retry?                                                                                                                                                                                                                                                         |
+| ---------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `RATE_LIMITED`         | 429    | Yes, after `Retry-After` (`detail.retry_after_s`). The SDKs pace on the `X-RateLimit-*` headers and wait out a 429 for up to 15 s per call by default.                                                                                                         |
+| `OVERLOADED`           | 503    | Yes, after `retry_after_s` (1 s by default). The request was refused before it queued, so any op is safe to resend.                                                                                                                                            |
+| `AUTH_UNAVAILABLE`     | 503    | Yes, after `Retry-After` (5 s). The process has not loaded the token revocation list yet; the op did not run, so the SDKs retry it for any op.                                                                                                                 |
+| `SCHEMA_PENDING`       | 503    | After the migration it names has run. No `Retry-After`: the wait is an operator action, not a timer.                                                                                                                                                           |
+| `OVERRIDE_NOT_SHARED`  | 503    | After the runtime directory is fixed (permissions, space, or none private enough to use); the next update tries it again, and the server log says what failed. No `Retry-After`: nothing changed.                                                              |
+| `CODED_WIDTH_MISMATCH` | 503    | After the embedder and the vector tables agree on a width; `/v1/health` (`coded_width_mismatch`) names the fix. A `memory.set`, `bulk_set`, `update` or `knowledge.*` write left nothing behind.                                                               |
+| `EMBED_TIMEOUT`        | 503    | The SDKs retry it for idempotent ops (`memory.search` is one: three attempts by default). A raw HTTP or MCP caller retries once, straight away: the search wrote nothing. If it repeats, the embedding provider is down; back off rather than retry in a loop. |
+| `BACKEND_TIMEOUT`      | 504    | Only an idempotent op, and preferably a narrower request. The statement exceeded its class deadline and the server does not retry it.                                                                                                                          |
+| `INTERNAL_ERROR`       | 500    | An idempotent op, once. Report the `request_id` if it repeats.                                                                                                                                                                                                 |
+| 4xx other than 429     | 4xx    | No. The same request gets the same answer; fix the request, the token or the data first.                                                                                                                                                                       |
+
+`SCHEMA_PENDING`, `OVERRIDE_NOT_SHARED` and `CODED_WIDTH_MISMATCH` are 503s because
+the server cannot serve the request in its current state, not because the request is
+wrong; they send no `Retry-After` since only an operator's fix ends them, and the SDKs
+never retry the last two.
 
 The SDKs' default policy: three attempts with exponential backoff; 408 and 5xx
 retried for ops the registry marks idempotent (any other op only on a 408 or a
@@ -115,7 +122,7 @@ deduplicates; a `Retry-After` honoured up to 60 s. Each op's kind is in the
 | `BLACKLISTED`                       | 422  | The value matches a refuse pattern registered with `blacklist.add` (`pattern_id`, `scope`, `reason`).                                                                                                   | Do not retry the value. If the pattern is wrong, an admin removes it (`blacklist.remove`).                                                                                                                                                                                                                                                                            |
 | `LOCKED`                            | 423  | The row carries a `memory.lock` that refuses this write.                                                                                                                                                | Wait for `lock_until` to pass, or have a namespace admin release it with `memory.unlock`.                                                                                                                                                                                                                                                                             |
 | `RATE_LIMITED`                      | 429  | A namespace, org or actor token bucket is empty for the op's class.                                                                                                                                     | Wait `Retry-After`. Sustained 429s mean the caller needs pacing or a batch op (`memory.bulk_set`); limits are in [HTTP API](./http-api.md#rate-limits).                                                                                                                                                                                                               |
-| `OVERLOADED`                        | 503  | Every pooled ClickHouse connection of the serving process stayed busy longer than `LOOM_CH_POOL_WAIT_MS`.                                                                                               | Retry after `retry_after_s`. Repeated across callers, the deployment needs more capacity or has a slow query holding connections; see [Troubleshooting](../operations/troubleshooting.md).                                                                                                                                                                            |
+| `OVERLOADED`                        | 503  | Every pooled ClickHouse connection of the serving process stayed busy longer than `LOOM_CH_POOL_WAIT_MS`, or a budget or rate-limit update waited more than a second for another web process's.         | Retry after `retry_after_s`. Repeated across callers, the deployment needs more capacity or has a slow query holding connections; see [Troubleshooting](../operations/troubleshooting.md).                                                                                                                                                                            |
 | `BACKEND_TIMEOUT`                   | 504  | A ClickHouse statement ran past its class deadline (by default reads 30 s, writes 60 s, DDL 300 s: `LOOM_CH_TIMEOUT_READ_S`, `_WRITE_S`, `_DDL_S`); `detail.statement_class` and `timeout_s` say which. | Narrow the request (a smaller `top_k`, a namespace or path filter). Retry only an idempotent op.                                                                                                                                                                                                                                                                      |
 | `SCHEMA_PENDING`                    | 503  | The call needs a table from a migration this build carries but the database has not applied (`table`, `migration`).                                                                                     | An operator runs `loom migrate` (or restarts with `LOOM_BOOT_MIGRATE=true`); see [Upgrades](../operations/upgrades.md).                                                                                                                                                                                                                                               |
 | `EMBED_TIMEOUT`                     | 503  | The embedding provider did not answer a search's query embedding within `LOOM_MEMORY_SEARCH_EMBED_BOUND_S` on any attempt (`LOOM_MEMORY_SEARCH_EMBED_BOUND_RETRIES`).                                   | A raw HTTP or MCP caller retries once; an SDK caller has already retried, so it backs off. Repeated, the provider is slow or down: the log's `query embed exceeded` warnings and `loom.agent_events` rows with this code show it (a hung provider sets no health flag); see [Troubleshooting](../operations/troubleshooting.md#searches-fail-with-503-embed_timeout). |
@@ -288,6 +295,10 @@ Raised in `server/memory/app/ops.py`.
 #### `CHAR_LIMIT_EXCEEDED`
 
 Raised in `server/memory/app/bulk_rows.py`, `server/memory/app/update.py`, `server/memory/app/write.py`.
+
+#### `CODED_WIDTH_MISMATCH`
+
+HTTP 503, raised as `server.core.errors.CodedWidthMismatchError`. 503 — a vector in the write is not the width its `Quantized` column was created at, so ClickHouse would refuse the insert.
 
 #### `CONFIRM_CANONICAL_KEY_MISMATCH`
 
@@ -511,7 +522,11 @@ Raised in `server/transport/mcp_auth.py`.
 
 #### `OVERLOADED`
 
-HTTP 503, raised as `server.core.errors.OverloadedError`. 503 — every pooled ClickHouse connection of this process was busy for longer than `ch_pool_wait_ms`. What to do: [common errors](#common-errors-and-what-to-do).
+HTTP 503, raised as `server.core.errors.OverloadedError`. 503 — too busy, retry: every pooled ClickHouse connection was busy past `ch_pool_wait_ms`, or a sibling held an override's lock past its wait. What to do: [common errors](#common-errors-and-what-to-do).
+
+#### `OVERRIDE_NOT_SHARED`
+
+HTTP 503, raised as `server.core.errors.OverrideNotSharedError`. 503 — a runtime override (budget or rate limit) could not be shared with the server's other web processes, so none of them took it.
 
 #### `PINNED_CONFLICT`
 

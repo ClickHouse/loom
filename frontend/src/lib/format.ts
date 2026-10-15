@@ -125,6 +125,8 @@ const ERROR_CODE_PREFIXES: Record<string, string> = {
   BACKEND_TIMEOUT: "Loom took too long to answer — try again.",
   BACKEND_UNAVAILABLE: "Loom's database is unreachable — try again shortly.",
   SCHEMA_PENDING: "Loom is mid-upgrade — a table this needs isn't ready yet.",
+  CODED_WIDTH_MISMATCH: "The embedding model's width doesn't match the vector tables — see Settings → Models & keys.",
+  OVERRIDE_NOT_SHARED: "The override couldn't reach Loom's other processes, so none took it.",
   SELF_SIGNUP_DISABLED: "Sign-up is off on this instance. Ask your operator.",
   INTERNAL_ERROR: "Loom hit an internal error.",
 };

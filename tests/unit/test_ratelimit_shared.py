@@ -226,6 +226,21 @@ def test_shared_cap_is_divided_by_replicas_not_workers(settings_override, tmp_pa
     assert ratelimit.effective_divisor(shared=False) == 8
 
 
+def test_a_limit_is_sized_for_shared_buckets_before_any_check(
+    settings_override, tmp_path: Path
+) -> None:
+    """Sizing a limit resolves the store itself, so no call order matters."""
+    settings_override(
+        ratelimit_shared="on",
+        web_workers=4,
+        replica_count=1,
+        ratelimit_shared_path=str(tmp_path / "rl"),
+        ratelimit_shared_slots=256,
+    )
+    lim = Limiter(clock=FakeClock())
+    assert lim._ns_limit_for("ns", "memory") == DEFAULT_LIMITS["memory"]  # not divided by 4
+
+
 def test_per_process_fallback_keeps_the_worker_division(settings_override) -> None:
     settings_override(ratelimit_shared="off", web_workers=4, replica_count=1)
     lim = Limiter(clock=FakeClock())
@@ -316,13 +331,28 @@ def test_the_slot_memo_is_bounded_and_a_forgotten_key_keeps_its_bucket(tmp_path:
     again.close()
 
 
+def test_overrides_set_through_two_workers_both_survive(shared_on: str) -> None:
+    """Each update re-reads the host's file under its lock, so a worker that
+    has not checked since a sibling's update never overwrites it."""
+    a, b = Limiter(clock=FakeClock()), Limiter(clock=FakeClock())
+    b.check("ns0", "memory.set", org="o")
+    a.set_namespace_limit("ns1", "memory", Limit(capacity=1, rate=0.0))
+    b.set_org_limit("o", "memory", Limit(capacity=5, rate=1.0))
+    c = Limiter(clock=FakeClock())
+    c.check("ns2", "memory.set", org="o")
+    assert c._ns_overrides[("ns1", "memory")] == Limit(capacity=1, rate=0.0)
+    assert c._org_overrides[("o", "memory")] == Limit(capacity=5, rate=1.0)
+    a.reset_all()
+    b.reset_all()
+    c.reset_all()
+
+
 def test_an_override_set_through_one_worker_binds_every_worker_on_the_host(
     shared_on: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """admin/ratelimit.set lands in one web worker; with the shared table the
-    override file beside it carries it to the others within the check
-    interval, and a clear travels the same way."""
-    monkeypatch.setattr(ratelimit, "_OVERRIDES_CHECK_S", 0.0)
+    override file beside it carries it to the others on their next check,
+    and a clear travels the same way."""
     a, b = Limiter(clock=FakeClock()), Limiter(clock=FakeClock())
     assert a.shared_active and b.shared_active
     a.set_namespace_limit("ns1", "memory", Limit(capacity=1, rate=0.0))
@@ -335,5 +365,31 @@ def test_an_override_set_through_one_worker_binds_every_worker_on_the_host(
     b.set_org_limit("o", "memory", Limit(capacity=5, rate=1.0))
     a.check("ns3", "memory.set", org="o")
     assert a._org_overrides[("o", "memory")] == Limit(capacity=5, rate=1.0)
+    a.reset_all()
+    b.reset_all()
+
+
+def test_a_read_of_an_unreadable_override_file_keeps_the_cached_overrides(
+    shared_on: str,
+) -> None:
+    """Reads fall back to what the worker last adopted; only updates refuse."""
+    a, b = Limiter(clock=FakeClock()), Limiter(clock=FakeClock())
+    a.set_namespace_limit("ns1", "memory", Limit(capacity=1, rate=0.0))
+    b.check("ns0", "memory.set", org="o")
+    Path(shared_on + ".overrides.json").write_text("{not json")
+    assert b.check("ns1", "memory.set", org="o").allowed
+    assert not b.check("ns1", "memory.set", org="o").allowed
+    a.reset_all()
+    b.reset_all()
+
+
+def test_an_org_limit_cleared_through_one_worker_clears_on_the_other(shared_on: str) -> None:
+    a, b = Limiter(clock=FakeClock()), Limiter(clock=FakeClock())
+    a.set_org_limit("o", "memory", Limit(capacity=5, rate=1.0))
+    b.check("ns0", "memory.set", org="o")
+    assert ("o", "memory") in b._org_overrides
+    a.clear_org_limit("o", "memory")
+    b.check("ns0", "memory.set", org="o")
+    assert ("o", "memory") not in b._org_overrides
     a.reset_all()
     b.reset_all()

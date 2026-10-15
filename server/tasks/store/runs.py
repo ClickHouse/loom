@@ -73,7 +73,10 @@ _SYNC_INSERT = {"async_insert": 0, "wait_for_async_insert": 1}
 def run_row(row: RunLedgerRow) -> dict[str, Any]:
     """Every agent_runs column of `row`, the grade columns defaulted."""
     cols: dict[str, Any] = dict(row)
-    return {c: cols[c] if c in cols else _COLUMN_DEFAULTS[c] for c in RUN_COLUMNS}
+    out = {c: cols[c] if c in cols else _COLUMN_DEFAULTS[c] for c in RUN_COLUMNS}
+    if "version" in cols:
+        out["version"] = cols["version"]
+    return out
 
 
 async def fetch_run(ch: Any, org: str, ns: str, run_id: str) -> RunLedgerRow | None:
@@ -321,6 +324,96 @@ async def observation_count(ch: Any, org: str, ns: str, run_id: str, *, scope: R
         params=params,
     )
     return int((row or {}).get("n") or 0)
+
+
+async def active_runs_by_id(ch: Any, org: str, run_id: str) -> list[RunLedgerRow]:
+    """The active MCP session runs under `run_id` in `org`, oldest first: one, or
+    one per namespace when the subject's tokens default to different ones."""
+    rows: list[RunLedgerRow] = await ch.query_all(
+        f"""
+        SELECT {_RUN_SELECT}
+        FROM loom.agent_runs FINAL
+        WHERE org = {{org:String}} AND run_id = {{rid:String}} AND status = 'active'
+          AND environment = 'mcp' AND match(run_id, '^mcp-[0-9a-f]{{40}}$')
+        ORDER BY started_at, namespace
+        """,
+        params={"org": org, "rid": run_id},
+    )
+    return rows
+
+
+async def idle_session_runs(ch: Any, *, idle_seconds: int, limit: int) -> list[RunLedgerRow]:
+    """Up to `limit` active implicit MCP session runs, in every org, that
+    no request of their token reached within `idle_seconds`, in random order so
+    runs that fail to close cannot hold the front."""
+    rows: list[RunLedgerRow] = await ch.query_all(
+        """
+        WITH candidates AS (
+            SELECT run_id FROM loom.agent_runs
+            WHERE status = 'active' AND environment = 'mcp'
+              AND (
+                  -- Only the transport writes this shape (run.begin remaps it).
+                  match(run_id, '^mcp-[0-9a-f]{40}$')
+                  -- An earlier server's `mcp-<session id>`, which records no subject.
+                  -- Its session id was the client's, so it has no tighter shape: a
+                  -- hand-begun run copying all of this metadata is closed like one.
+                  -- Drop this clause once runs begun before this release have closed.
+                  OR (
+                      startsWith(run_id, 'mcp-')
+                      AND JSONExtractString(metadata, 'transport') = 'mcp'
+                      AND NOT JSONHas(metadata, 'subject')
+                  )
+              )
+        ),
+        -- Calls by run and token; a run that records no subject (an earlier
+        -- server's, or no auth) stays busy while any call reaches it.
+        recent AS (
+            SELECT org, run_id, subject FROM loom.agent_events
+            WHERE ts >= now64(3) - INTERVAL {idle:UInt32} SECOND AND run_id IN candidates
+        )
+        SELECT org, namespace, run_id FROM loom.agent_runs FINAL
+        WHERE run_id IN candidates
+          AND status = 'active' AND JSONExtractBool(metadata, 'implicit')
+          -- Neither begun nor written since: a first begin's version is no time
+          -- (begin_session_run), so its start says when it was begun.
+          AND started_at < now64(3) - INTERVAL {idle:UInt32} SECOND
+          AND version < toUInt64(toUnixTimestamp64Nano(now64(9) - INTERVAL {idle:UInt32} SECOND))
+          AND (org, run_id, JSONExtractString(metadata, 'subject')) NOT IN recent
+          AND (
+              JSONExtractString(metadata, 'subject') != ''
+              OR (org, run_id) NOT IN (SELECT org, run_id FROM recent)
+          )
+        ORDER BY rand()
+        LIMIT {lim:UInt32}
+        """,
+        params={"idle": idle_seconds, "lim": limit},
+    )
+    return rows
+
+
+async def busy_lately(
+    ch: Any, org: str, ns: str, run_id: str, subject: str, idle_seconds: int
+) -> bool:
+    """Whether the run was begun or re-opened, or a request of the token
+    `subject` ("" = anyone) labelled it, within `idle_seconds`."""
+    row = await ch.query_one(
+        """
+        SELECT
+            (SELECT count() FROM loom.agent_events
+             WHERE org = {org:String} AND run_id = {rid:String}
+               AND ts >= now64(3) - INTERVAL {idle:UInt32} SECOND
+               AND ({subject:String} = '' OR subject = {subject:String})) > 0
+            OR (SELECT max(version) FROM loom.agent_runs
+                WHERE org = {org:String} AND namespace = {ns:String} AND run_id = {rid:String})
+               >= toUInt64(toUnixTimestamp64Nano(now64(9) - INTERVAL {idle:UInt32} SECOND))
+            OR (SELECT max(started_at) FROM loom.agent_runs
+                WHERE org = {org:String} AND namespace = {ns:String} AND run_id = {rid:String})
+               >= now64(3) - INTERVAL {idle:UInt32} SECOND
+            AS busy
+        """,
+        params={"org": org, "ns": ns, "rid": run_id, "subject": subject, "idle": idle_seconds},
+    )
+    return bool((row or {}).get("busy"))
 
 
 async def traced_recall_keys(ch: Any, org: str, ns: str, run_id: str) -> list[str]:

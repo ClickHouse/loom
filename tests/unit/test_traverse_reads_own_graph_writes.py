@@ -290,3 +290,18 @@ def test_single_worker_default_shares_nothing(
     assert gwm._resolve_dir() is not None
     monkeypatch.setattr(settings, "graph_write_marks_shared", "off")
     assert gwm._resolve_dir() is None
+
+
+def test_no_private_runtime_directory_leaves_the_marks_in_process(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.settings import settings
+
+    def nowhere() -> str:
+        raise OSError("none of /run/loom, /tmp/loom-1 is a directory only this user can enter")
+
+    monkeypatch.setattr(gwm, "_default_dir", nowhere)
+    monkeypatch.setattr(settings, "graph_write_marks_shared", "auto")
+    monkeypatch.setattr(settings, "graph_write_marks_dir", "")
+    monkeypatch.setattr(settings, "web_workers", 4)
+    assert gwm._resolve_dir() is None
