@@ -25,7 +25,7 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { Tip } from "../components/ui/Tooltip";
 import { useStore, viewHref, type View } from "../lib/state";
-import { countConflicts, countNewAgents, hasAutoResolved } from "../api";
+import { countConflicts, countNewAgents } from "../api";
 import { readSession, useAfterPaint, writeSession } from "../lib/afterPaint";
 import { sharedBudgetStatus } from "../lib/sharedReads";
 
@@ -318,7 +318,9 @@ export function Sidebar() {
       if (canCall("audit.list", roleHere, whoami)) {
         tasks.push(
           // The newest auto-resolve record: enough to know the Auto-resolved tab is not empty.
-          hasAutoResolved({ org: identity.org, namespace: identity.namespace })
+          // Imported on demand so the admin API stays out of the index chunk.
+          import("../api/admin")
+            .then(({ hasAutoResolved }) => hasAutoResolved({ org: identity.org, namespace: identity.namespace }))
             .then((found) => {
               if (!cancelled) {
                 next.autoResolved = found;

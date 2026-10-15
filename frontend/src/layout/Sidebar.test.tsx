@@ -25,10 +25,15 @@ vi.mock("../api", async (importOriginal) => {
     countConflicts: vi.fn(async () => 0),
     getBudgetStatus: vi.fn(async () => ({ over_cap: false })),
     countNewAgents: vi.fn(async () => 0), // The badge asks for a number
-    hasAutoResolved: vi.fn(async () => false),
   };
 });
-import { getBudgetStatus, countConflicts, countNewAgents, hasAutoResolved } from "../api";
+// The sidebar imports the admin API on demand.
+vi.mock("../api/admin", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api/admin")>()),
+  hasAutoResolved: vi.fn(async () => false),
+}));
+import { getBudgetStatus, countConflicts, countNewAgents } from "../api";
+import { hasAutoResolved } from "../api/admin";
 
 const row = (namespace: string, role: MyNamespaceEntry["role"]): MyNamespaceEntry => ({
   namespace,
