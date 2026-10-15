@@ -70,7 +70,7 @@ async def device_authorization(request: Request) -> JSONResponse:
         raise oauth.OAuthError("invalid_client")
     address = client_address(request)
     if not _requests_by_address.allow(address_key(address)):
-        oauth._log_refused("device start", address)
+        oauth.log_refused("device start", address)
         raise oauth.OAuthError("slow_down", 429, headers={"Retry-After": "900"})
     device_code = secrets.token_urlsafe(32)
     user_code = _new_user_code()

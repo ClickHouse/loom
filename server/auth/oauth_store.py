@@ -53,6 +53,8 @@ class Grant(TypedDict):
     upstream_refresh: str
     # A refresh token's place in its session's rotations (0 for the first).
     generation: NotRequired[int]
+    # A code's: when its identity was resolved, the cutoff for revocations.
+    since: NotRequired[int]
     held: NotRequired[dict[str, str]]
 
 
@@ -152,6 +154,8 @@ def _record(g: Grant | Device, fields: tuple[str, ...], spent: bool) -> dict[str
 
 def _grant(r: dict[str, Any]) -> Grant:
     g = {f: r[f] for f in _GRANT_FIELDS}
+    if "since" in r:  # a code's
+        g["since"] = r["since"]
     return cast(Grant, g | {"upstream_refresh": unseal(UPSTREAM_PURPOSE, r["upstream_refresh"])})
 
 
@@ -184,6 +188,16 @@ def _current(generation: int, rid: str) -> str:
 
 def _generation(value: str) -> int:
     return int(value.split(":", 1)[0])
+
+
+_ABANDONED_S = 120  # longer than any refresh takes, put-back included
+
+
+def _abandoned(value: str) -> bool:
+    """A spend begun this long ago never finished: its process died, or
+    Keeper failed on its write and its undo."""
+    _, kind, *rest = value.split(":")
+    return kind == "spending" and time.time() - int(rest[0]) > _ABANDONED_S
 
 
 def _held(g: Grant | Device, key: str) -> str | None:
@@ -245,7 +259,8 @@ class ClickHouseStore:
     async def save_code(self, code: str, g: Grant) -> None:
         """A new code, or a spent one put back."""
         key = f"code:{token_id(code)}"
-        await self._put(key, _held(g, key), _record(g, _GRANT_FIELDS, spent=False))
+        record = _record(g, _GRANT_FIELDS, spent=False) | {"since": g["since"]}
+        await self._put(key, _held(g, key), record)
 
     async def take_code(
         self, code: str, client_id: str, accept: Callable[[Grant], bool]
@@ -319,17 +334,18 @@ class ClickHouseStore:
             return None  # issued before sessions had families: its owner signs in again
         key = f"family:{grant['family']}"
         generation = grant.get("generation", 0)
-        spending = f"{generation}:spending:{claims.nonce()}"
+        spending = f"{generation}:spending:{int(time.time())}:{claims.nonce()}"
         now = await self._swap(key, _current(generation, rid), spending, grant["exp"])
         if now == spending:
             return {**grant, "held": {key: spending}}
         if now is None:
             return None  # the session's key is gone: it has expired
         # A read may lag behind Keeper, never run ahead of it: a later
-        # generation seen is one that was issued, so this token was spent.
-        if _generation(now) > generation:
+        # generation seen is one that was issued, so this token was spent. So
+        # was one whose spend was abandoned: that costs its owner a sign-in.
+        if _generation(now) > generation or _abandoned(now):
             raise CodeReplayed(grant)
-        raise claims.Busy(key)  # being spent right now, or a read behind: retry
+        raise claims.Busy(f"{key} is being spent")  # or this read is behind: retry
 
     async def retire_refresh(self, g: Grant) -> None:
         """A spent token that no token replaces (logout, a refusal): its

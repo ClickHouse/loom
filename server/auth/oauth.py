@@ -387,7 +387,7 @@ async def authorize_submit(request: Request) -> RedirectResponse:
         resolved,
         upstream_refresh="",
         state=state,
-        issued_at=issued_at,
+        since=issued_at,
     )
 
 
@@ -397,10 +397,11 @@ async def _redirect_with_code(
     *,
     upstream_refresh: str,
     state: str,
-    issued_at: int,
+    since: int,
 ) -> RedirectResponse:
     """Mint the MCP client's single-use code for a signed-in user and send the
-    browser back to the client with it."""
+    browser back to the client with it. `since` is when the identity was
+    resolved: a subject revoked after it gets no tokens for the code."""
     subject, org, namespaces, roles = identity
     code = secrets.token_urlsafe(32)
     await store.save_code(
@@ -413,7 +414,8 @@ async def _redirect_with_code(
             "org": org,
             "namespaces": namespaces,
             "roles": roles,
-            "exp": issued_at + _CODE_TTL,
+            "exp": int(time.time()) + _CODE_TTL,
+            "since": since,
             "family": new_jti(),
             "upstream_refresh": upstream_refresh,
         },
@@ -447,7 +449,8 @@ def _state_cookie(state: str) -> str:
 _PENDING_PURPOSE = "oidc sign-in in flight"
 _COOKIE_MAX = 3800  # browsers drop a cookie past 4 KB
 _starts_by_address = Attempts(300, 900)
-# Callbacks whose code the IdP would not exchange: each costs a call to it.
+# Callbacks that failed (cancelled, or a code the IdP would not exchange): a
+# flood of them costs audit rows and calls to the IdP.
 _failed_callbacks_by_address = Attempts(30, 900)
 
 
@@ -472,7 +475,7 @@ async def start_oidc_login(kind: str, address: str, **data: str) -> Response:
     from server.auth import oidc
 
     if not _starts_by_address.allow(address_key(address)):
-        _log_refused("start", address)
+        log_refused("start", address)
         return html_page(
             "Sign in to Loom",
             "<h2>Too many sign-ins from here</h2><p>Try again in 15 minutes.</p>",
@@ -513,14 +516,14 @@ async def start_oidc_login(kind: str, address: str, **data: str) -> Response:
     return response
 
 
-_refused_logged_at = 0.0
+_refused_logged_at: dict[str, float] = {}
 
 
-def _log_refused(what: str, address: str) -> None:
-    """At most once a minute, so a flood shows up without filling the log."""
-    global _refused_logged_at
-    if time.monotonic() - _refused_logged_at > 60:
-        _refused_logged_at = time.monotonic()
+def log_refused(what: str, address: str) -> None:
+    """At most once a minute per kind, so a flood shows up without filling
+    the log."""
+    if time.monotonic() - _refused_logged_at.get(what, -60.0) > 60:
+        _refused_logged_at[what] = time.monotonic()
         log.warning("oauth: too many sign-in %ss from %s; refused", what, address)
 
 
@@ -561,7 +564,8 @@ def _expired_sign_in() -> Response:
 def _sign_in_unavailable() -> Response:
     return html_page(
         "Sign in to Loom",
-        "<h2>Sign-in is unavailable right now</h2><p>Try again in a minute.</p>",
+        "<h2>Sign-in is unavailable right now</h2>"
+        "<p>In a minute, start again from where you began.</p>",
         503,
     )
 
@@ -573,8 +577,10 @@ async def oidc_callback(request: Request) -> Response:
     except OAuthError as e:  # answered here, so its cookie goes too
         response = oauth_error_response(request, e)
     state = request.query_params.get("state", "")
-    retryable = response.status_code >= 500 or response.status_code == 429
-    if state and not retryable:  # a retry needs the browser's round trip still
+    # Refused before the IdP exchange (it is away, or this address is over its
+    # limit): the IdP code is unspent and a retry needs the round trip still.
+    retryable = response.status_code in (429, 502)
+    if state and not retryable:
         response.delete_cookie(_state_cookie(state), path="/oauth/callback")
     return response
 
@@ -641,7 +647,7 @@ async def _finish_oidc_login(request: Request) -> Response:
     kind, user_code = pending["kind"], pending.get("user_code", "")
     address = address_key(client_address(request))
     if _failed_callbacks_by_address.blocked(address):
-        _log_refused("callback", address)
+        log_refused("callback", address)
         return html_page(
             "Sign in to Loom",
             "<h2>Too many failed sign-ins from here</h2><p>Try again in 15 minutes.</p>",
@@ -716,19 +722,25 @@ async def _connect_consent(
     if client is None:
         raise OAuthError("invalid_client")
     ticket = secrets.token_urlsafe(32)
-    await store.save_pending(
-        token_id(ticket),
-        {
-            "kind": "connect",
-            "client_id": pending["client_id"],
-            "redirect_uri": pending["redirect_uri"],
-            "code_challenge": pending["code_challenge"],
-            "mcp_state": pending["mcp_state"],
-            "identity": list(identity),
-            "issued_at": int(time.time()),  # the identity was resolved now
-            "upstream_refresh": seal(UPSTREAM_PURPOSE, upstream_refresh),
-        },
-    )
+    try:
+        await store.save_pending(
+            token_id(ticket),
+            {
+                "kind": "connect",
+                "client_id": pending["client_id"],
+                "redirect_uri": pending["redirect_uri"],
+                "code_challenge": pending["code_challenge"],
+                "mcp_state": pending["mcp_state"],
+                "identity": list(identity),
+                "since": int(time.time()),  # the identity was resolved now
+                "upstream_refresh": seal(UPSTREAM_PURPOSE, upstream_refresh),
+            },
+        )
+    except claims.Busy:
+        from server.auth import oidc
+
+        await oidc.revoke(upstream_refresh)
+        return _sign_in_unavailable()
     subject, org = identity[0], identity[1]
     destination = _destination(pending["redirect_uri"])
     return html_page(
@@ -780,7 +792,7 @@ async def connect_approve(request: Request) -> Response:
         (subject, org, namespaces, roles),
         upstream_refresh=unseal(UPSTREAM_PURPOSE, pending["upstream_refresh"]),
         state=pending["mcp_state"],
-        issued_at=pending["issued_at"],
+        since=pending["since"],
     )
 
 
@@ -962,8 +974,7 @@ async def _authorization_code_grant(f: dict[str, str]) -> dict[str, Any]:
     if grant is None:
         raise _invalid_grant()
     try:
-        # exp is always saved as mint time + _CODE_TTL.
-        return await issue_tokens(grant, client_id, since=int(grant["exp"]) - _CODE_TTL)
+        return await issue_tokens(grant, client_id, since=grant["since"])
     except OAuthError:
         raise
     except Exception as e:  # Loom's own failure: unspend the code so the retry is no replay
@@ -1140,7 +1151,7 @@ async def revoke_token(request: Request) -> Response:
 
 def _busy_response(request: Request, exc: Exception) -> JSONResponse:
     """Keeper could not answer a sign-in step: retryable, wherever it was."""
-    log.warning("oauth: %s answered 503: Keeper: %s", request.url.path, exc)
+    log.warning("oauth: %s answered 503: %s", request.url.path, exc)
     return oauth_error_response(request, _unavailable())
 
 

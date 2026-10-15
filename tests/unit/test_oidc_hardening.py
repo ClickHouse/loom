@@ -333,10 +333,18 @@ async def test_a_rejected_client_secret_is_the_servers_fault_not_the_users(
         assert (await oauth.oidc_callback(_Req())).status_code == 502  # type: ignore[arg-type]
 
 
-async def test_a_retryable_callback_keeps_the_browsers_round_trip(
+async def test_only_a_callback_refused_before_the_idp_exchange_keeps_its_cookie(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from server.auth import claims
+
+    async def away(**kw: Any) -> Any:
+        raise httpx.ConnectError("idp down")
+
+    monkeypatch.setattr(oauth, "store", MemoryOAuthStore())
+    monkeypatch.setattr(oidc, "exchange_code", away)
+    page = await oauth.oidc_callback(_Req())  # type: ignore[arg-type]
+    assert page.status_code == 502 and "set-cookie" not in page.headers  # retry it
 
     async def exchanged(**kw: Any) -> dict[str, str]:
         return {"id_token": "t"}
@@ -344,15 +352,12 @@ async def test_a_retryable_callback_keeps_the_browsers_round_trip(
     async def verified(token: str, *, nonce: str) -> dict[str, Any]:
         return {"email": "a@x.io", "email_verified": True}
 
-    store = MemoryOAuthStore()
-
     async def keeper_away(key: str, expires_at: int) -> bool:
         raise claims.Busy(key)
 
-    monkeypatch.setattr(store, "use_once", keeper_away)
-    monkeypatch.setattr(oauth, "store", store)
     monkeypatch.setattr(oidc, "exchange_code", exchanged)
     monkeypatch.setattr(oidc, "verify_id_token", verified)
+    monkeypatch.setattr(oauth.store, "use_once", keeper_away)
     page = await oauth.oidc_callback(_Req())  # type: ignore[arg-type]
-    assert page.status_code == 503
-    assert "set-cookie" not in page.headers  # the retry still carries it
+    # The IdP code is spent: a reload could not finish it, so start again.
+    assert page.status_code == 503 and "Max-Age=0" in page.headers["set-cookie"]

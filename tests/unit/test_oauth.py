@@ -130,6 +130,7 @@ def _seed_code(
         "namespaces": ["alice-ns"],
         "roles": ["writer"],
         "exp": int(time.time()) + 60,
+        "since": int(time.time()),
         "family": f"f-{secrets.token_hex(4)}",
         "upstream_refresh": "",
     }
@@ -615,14 +616,15 @@ def test_a_read_behind_keeper_is_a_retry_and_a_later_generation_a_replay(monkeyp
     from server.auth import claims
 
     c = _client()
-    rt = _refresh_token_for_alice(c)
+    rt = _refresh(c, _refresh_token_for_alice(c)).json()["refresh_token"]  # generation 1
     store = oauth.store
     grant = store.refresh[oauth.token_id(rt)]
+    assert grant["generation"] == 1
     key = f"family:{grant['family']}"
     real = store._swap
 
     async def behind(k: str, old: str | None, new: str, exp: int) -> str | None:
-        return f"0:{'0' * 64}"  # an older value than the token's, as a lagging read shows
+        return f"0:{'0' * 64}"  # generation 0: what a read behind the rotation shows
 
     monkeypatch.setattr(store, "_swap", behind)
     with pytest.raises(claims.Busy):
@@ -636,3 +638,19 @@ def test_a_read_behind_keeper_is_a_retry_and_a_later_generation_a_replay(monkeyp
         asyncio.run(store.take_refresh(rt, "loom-test"))
     monkeypatch.setattr(store, "_swap", real)
     assert key in store.keeper
+
+
+def test_a_spend_abandoned_long_ago_counts_as_spent(monkeypatch) -> None:
+    from server.auth import claims
+
+    rt = _refresh_token_for_alice(_client())
+    store = oauth.store
+    grant = store.refresh[oauth.token_id(rt)]
+    key = f"family:{grant['family']}"
+    started = int(time.time())
+    store.keeper[key] = f"0:spending:{started}:n"  # its process died mid-refresh
+    with pytest.raises(claims.Busy):  # still in time to finish
+        asyncio.run(store.take_refresh(rt, "loom-test"))
+    monkeypatch.setattr(time, "time", lambda: started + 600)
+    with pytest.raises(oauth.CodeReplayed):  # never will: its owner signs in again
+        asyncio.run(store.take_refresh(rt, "loom-test"))

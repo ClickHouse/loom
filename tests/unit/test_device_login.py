@@ -672,6 +672,22 @@ def test_mcp_connect_under_sso_asks_before_it_sends_a_code(sso, _world) -> None:
     assert "auth.connect_approved" in [n for n, _ in _world["events"]]
 
 
+def test_a_connect_approved_after_a_minute_still_gives_a_live_code(
+    sso, _world, monkeypatch
+) -> None:
+    c = _client()
+    ticket = _ticket(_connect_through_sso(c).text)
+    later = time.time() + 65  # the person read the page for a while
+    monkeypatch.setattr(time, "time", lambda: later)
+    r = c.post(
+        "/oauth/authorize/approve",
+        data={"ticket": ticket, "decision": "approve"},
+        follow_redirects=False,
+    )
+    (code,) = _world["store"].records("code").values()
+    assert r.status_code == 302 and code["exp"] > later
+
+
 def test_denying_mcp_connect_sends_the_client_an_error(sso, _world) -> None:
     c = _client()
     ticket = _ticket(_connect_through_sso(c).text)

@@ -45,6 +45,7 @@ def _grant(client_id: str) -> Grant:
         "namespaces": ["alice"],
         "roles": ["writer"],
         "exp": int(time.time()) + 600,
+        "since": int(time.time()),
         "family": uuid.uuid4().hex,
         "upstream_refresh": "",
     }
