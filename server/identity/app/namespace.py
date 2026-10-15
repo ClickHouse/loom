@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from server.core import grant_cache
 from server.core.ch import CHClient, get_client
 from server.core.datetimes import naive_utc_now_seconds
+from server.core.errors import PreconditionFailedError
 from server.identity.api.models import (
     NamespaceBrowseInput,
     NamespaceBrowseOutput,
@@ -31,7 +32,7 @@ from server.identity.api.models import (
     _NamespaceEntry,
 )
 from server.identity.domain import join_policy as _jp
-from server.identity.domain.account_ties import kept_aliases, owner_moved
+from server.identity.domain.account_ties import owner_moved
 from server.identity.store import grants as grants_repo
 from server.identity.store import namespaces as namespaces_repo
 from server.memory.app import namespace_retrieval_defaults as _rd
@@ -103,19 +104,6 @@ async def insert_admin_grant(ch: CHClient, org: str, namespace: str, subject: st
         ],
         ch=ch,
     )
-
-
-def _login_fields(existing: dict[str, Any], owner: str) -> dict[str, Any]:
-    """The account's login, kept by a settings-only update (else it would wipe
-    the user's login silently) and cleared when the row is handed to another
-    owner; the old handle and email stay tied for the claim cap alone."""
-    moved = owner_moved(existing, owner)
-    contact = "" if moved else str(existing.get("contact_email") or "")
-    return {
-        "contact_email": contact,
-        "password_hash": "" if moved else str(existing.get("password_hash") or ""),
-        "released_aliases": kept_aliases(existing, owner, contact),
-    }
 
 
 def registry_row(
@@ -235,7 +223,11 @@ def registry_row(
         "code_change_policy": _set_or_stored(
             input.code_change_policy, existing, "code_change_policy", ""
         ),
-        **_login_fields(existing or {}, input.owner_email),
+        # Preserve auth fields written by self_signup, else a
+        # settings-only update wipes the user's login silently.
+        "contact_email": ((existing or {}).get("contact_email") or ""),
+        "password_hash": ((existing or {}).get("password_hash") or ""),
+        "released_aliases": list((existing or {}).get("released_aliases") or []),
         # Not on the form: a re-register keeps the namespace's own override and birth date.
         "duplicate_threshold": (existing or {}).get("duplicate_threshold"),
         "created_at": (existing or {}).get("created_at") or now,
@@ -339,6 +331,14 @@ async def handle_namespace_register(
         await require_admin_of_existing(
             existing, input.org, input.namespace, caller, visibility=input.visibility
         )
+        if owner_moved(existing, input.owner_email):
+            # The account's login signs in as its owner, and the claim cap ties the
+            # owner to the email: neither may move to someone else here.
+            raise PreconditionFailedError(
+                f"{input.namespace!r} is an account with a login; its owner stays "
+                f"{existing.get('owner_email')!r}. Release it (loom claim-release) to hand "
+                "it on."
+            )
 
     now = naive_utc_now_seconds()
     row = registry_row(input, existing, now)

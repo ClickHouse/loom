@@ -144,7 +144,7 @@ async def release_claim(
     # The contact email and password are cleared with the owner, so the old
     # credential dies with the claim.
     row = dict(existing)
-    row["released_aliases"] = kept_aliases(existing, "", "")
+    row["released_aliases"] = kept_aliases(existing)
     row["owner_email"] = ""
     row["contact_email"] = ""
     row["password_hash"] = ""

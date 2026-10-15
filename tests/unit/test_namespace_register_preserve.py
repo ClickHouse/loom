@@ -139,24 +139,45 @@ async def test_the_handler_writes_the_whole_stored_row_forward(
     assert out.visibility == "public", "the answer names the stored visibility"
 
 
-def test_a_new_owner_does_not_take_the_old_login_and_keeps_its_tie_for_the_cap() -> None:
-    existing = _existing(owner_email="bob", contact_email="bob@x.io", password_hash="h")
-    row = _row(existing)  # registered again with owner o@x
-    assert row["contact_email"] == "" and row["password_hash"] == "", "bob's login stays bob's"
-    assert row["released_aliases"] == ["bob", "bob@x.io", "mal", "victim@corp"]
-
-
-def test_the_same_owner_keeps_the_login() -> None:
-    existing = _existing(owner_email="o@x", contact_email="o@x.io", password_hash="h")
+def test_the_same_owner_keeps_the_login_whatever_its_case() -> None:
+    existing = _existing(owner_email="O@X", contact_email="o@x.io", password_hash="h")
     row = _row(existing)
     assert (row["contact_email"], row["password_hash"]) == ("o@x.io", "h")
 
 
-def test_an_agent_s_claim_code_does_not_follow_it_to_another_owner() -> None:
-    existing = _existing(owner_email="agent-x", contact_email="", password_hash="claim")
-    assert _row(existing)["password_hash"] == "", "the claim code signs in as the owner"
+@pytest.mark.parametrize(
+    ("login", "owner"),
+    [
+        ({"contact_email": "bob@x.io", "password_hash": "h"}, "eve"),
+        ({"contact_email": "bob@x.io", "password_hash": "h"}, "bob@x.io"),  # its own email
+        ({"contact_email": "", "password_hash": "claim"}, "eve"),  # an agent's claim code
+    ],
+)
+def test_an_account_with_a_login_does_not_change_owner(
+    monkeypatch: pytest.MonkeyPatch, login: dict[str, str], owner: str
+) -> None:
+    import asyncio
 
+    from server.core.errors import PreconditionFailedError
 
-def test_the_account_s_own_email_as_owner_keeps_the_login() -> None:
-    existing = _existing(owner_email="bob", contact_email="o@x", password_hash="h")
-    assert _row(existing)["password_hash"] == "h"  # registered with owner o@x, bob's email
+    existing = _existing(owner_email="bob", **login)
+    written: list[Any] = []
+
+    async def _fetch(*_a: Any, **_k: Any) -> dict[str, Any]:
+        return existing
+
+    async def _admin(*_a: Any, **_k: Any) -> None:
+        return None
+
+    class _CH:
+        async def insert(self, table: str, rows: list[Any], **_k: Any) -> None:
+            written.append(rows)
+
+    monkeypatch.setattr(h.namespaces_repo, "fetch_row", _fetch)
+    monkeypatch.setattr(h, "require_admin_of_existing", _admin)
+    monkeypatch.setattr(h, "get_client", lambda: _CH())
+    monkeypatch.setattr(h, "resolve_subject", lambda: "bob")
+    inp = NamespaceRegisterInput(org="o", namespace="n", owner_email=owner)
+    with pytest.raises(PreconditionFailedError, match="owner stays 'bob'"):
+        asyncio.run(h.handle_namespace_register(inp))
+    assert written == []
