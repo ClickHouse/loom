@@ -139,11 +139,20 @@ def reader_owner(ch: Any, reader: str) -> str:
 
 
 def _print_admin_sql(user: str, reader: str) -> None:
-    print(f"\nHave an admin run this, with the password of {user} in place of the placeholder:\n")
+    """The SQL for an admin, on stderr after the reason it follows, so the two
+    never interleave when a container relays the streams apart."""
+    err = sys.stderr
+    print(
+        f"\nHave an admin run this, with the password of {user} in place of the placeholder:\n",
+        file=err,
+    )
     for stmt in admin_sql(user, reader):
-        print(f"  {stmt}" if stmt.startswith("--") else f"  {stmt};")
-    print("\nThen run the installer again, or `docker compose run --rm loom loom ch-setup` in the")
-    print("install directory (`loom ch-setup` from a checkout).")
+        print(f"  {stmt}" if stmt.startswith("--") else f"  {stmt};", file=err)
+    print(
+        "\nThen run the installer again, or `docker compose run --rm loom loom ch-setup` in the",
+        file=err,
+    )
+    print("install directory (`loom ch-setup` from a checkout).", file=err)
 
 
 def _set_up(ch: Any, user: str, reader: str) -> int:

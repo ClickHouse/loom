@@ -272,7 +272,7 @@ def test_a_reader_whose_owner_cannot_be_seen_is_not_replaced(
     assert not any(sql.startswith("CREATE USER") for sql in ch.ran)
     captured = capsys.readouterr()
     assert "cannot tell who owns someone_elses" in captured.err
-    assert "CREATE USER OR REPLACE `someone_elses`" in captured.out  # for an admin to judge
+    assert "CREATE USER OR REPLACE `someone_elses`" in captured.err  # for an admin to judge
 
 
 def test_a_user_who_may_not_create_the_reader_gets_the_admin_sql(
@@ -286,7 +286,7 @@ def test_a_user_who_may_not_create_the_reader_gets_the_admin_sql(
     assert ch_setup._set_up(ch, "loom_app", "loom_reader") == 1
     captured = capsys.readouterr()
     assert "may not create users or settings profiles" in captured.err
-    assert "CREATE USER OR REPLACE `loom_reader`" in captured.out
+    assert "CREATE USER OR REPLACE `loom_reader`" in captured.err
     assert "s3cret-value" not in captured.out + captured.err
 
 
