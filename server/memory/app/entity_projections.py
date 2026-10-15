@@ -480,8 +480,7 @@ async def reconcile_row_facts(
     the time of the restore its replay is dated at, the Undo's id its replay finds its
     rows by, and the `content_sha256` each restored row had (`hashes`), so the replay
     skips a row revised since."""
-    restored_at = naive_utc_now()
-    restore_id = uuid.uuid4().hex
+    restored_at, restore_id = naive_utc_now(), uuid.uuid4().hex
     try:
         if reopen:
             await reopen_held_facts(
@@ -538,8 +537,8 @@ async def reopen_held_facts(
     ids: list[str],
     *,
     ch: Any,
+    restore_id: str,
     restored_at: datetime | None = None,
-    restore_id: str = "",
 ) -> None:
     """Open again the facts the rows `ids` hold now: an Undo brings a retired row's
     facts back. An Undo is an assertion made at the restore, so each fact gets a new
@@ -556,7 +555,6 @@ async def reopen_held_facts(
         return
     restored = restored_at or naive_utc_now()
     now = restored.replace(microsecond=0)  # as the DateTime columns store it
-    restore_id = restore_id or uuid.uuid4().hex
     # On the fly: a retirement's closes are mutations, and a row they will close is
     # weighed as closed already (the close expressions are deterministic).
     latest = await ch.query_all(

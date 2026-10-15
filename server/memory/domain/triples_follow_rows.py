@@ -322,8 +322,10 @@ def _still_named(words: Sequence[str], triple: Triple) -> bool:
 # closes it, since words alone cannot tell detail from a retraction ("..., near the
 # river" from "..., until May"): a closed triple comes back with the next write that
 # states it, a wrongly open one never leaves.
-# A sentence ends at a mark followed by a space or the end: "next.js" and "3.12" go on.
-_SENTENCE_END_RE = re.compile(r"(?<=[.;?!])(?=\s|$)")
+# A sentence ends at a mark, maybe closed by a quote or bracket, followed by a space or
+# the end: "next.js" and "3.12" go on.
+_SENTENCE_END_RE = re.compile(r"(?:(?<=[.;?!])|(?<=[.;?!][\"')\]]))(?=\s|$)")
+_CLOSERS = "\"')]"
 _CLAUSE_BREAK_RE = re.compile(r"[,:]")
 _CONJUNCTIONS = frozenset({"and", "but"})
 
@@ -346,7 +348,7 @@ def _sentences(text: str, keep: set[str]) -> list[_Sentence]:
     breaks = _CONJUNCTIONS - keep
     out: list[_Sentence] = []
     for raw in _SENTENCE_END_RE.split(text or ""):
-        asks = raw.rstrip().endswith("?")
+        asks = raw.rstrip().rstrip(_CLOSERS).endswith("?")
         clauses: list[list[str]] = []
         for part in _CLAUSE_BREAK_RE.split(raw):
             clause: list[str] = []

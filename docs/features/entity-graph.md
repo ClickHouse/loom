@@ -53,8 +53,8 @@ never fails the write. A `high`-sensitivity bulk entry projects nothing.
    on Dec 1 again), in their stored order (of two values the row held, the later stays current), and keep the fact's
    own end if one is still to come, weighing 1 unless one row still carrying the fact's weight spans their whole
    interval (the retirement's pending closes applied) or a later value of the same Undo closes it as it starts, so the
-   graph keeps counting it and Undoing back and forth adds none; the other value's interval closes, and its row stays live. While
-   another tenant's erasure blocks that read, the row is restored at once and its graph follows when
+   graph keeps counting it and Undoing back and forth adds none; the other value's interval closes, and its row stays
+   live. While another tenant's erasure blocks that read, the row is restored at once and its graph follows when
    `projection_repair` replays the Undo. A value dated on a later day still wins, and so does a value stated after the
    Undo, even in its second. A failed close is replayed as of the write (or the Undo) that made it, to the
    microsecond, so a value stated since stays current; a replayed Undo skips a row revised since. A value stated with

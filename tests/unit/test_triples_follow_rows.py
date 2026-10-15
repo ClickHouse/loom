@@ -743,3 +743,15 @@ def test_a_revision_that_restates_the_statement_keeps_its_successor(old, new, tr
 )
 def test_a_revision_that_does_not_restate_it_closes_its_successor(old, new, triple) -> None:
     assert not tfr.restates(old, new, triple)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        'Do I live in London?"',
+        "Do I live in London?)",
+        'Bob asked: do I live in London?" I said yes.',
+    ],
+)
+def test_a_question_closed_by_a_quote_or_bracket_states_nothing(text) -> None:
+    assert tfr._statements(tfr._sentences(text, set()), _LIVES) == {}

@@ -235,7 +235,7 @@ async def test_an_undo_weighs_what_is_open_with_pending_closes_applied(monkeypat
     monkeypatch.setattr(ep, "repair_intervals", repair)
     ch = _WeighingCH()
     scope = SimpleNamespace(org="o", namespace="ns")
-    await ep.reopen_held_facts(scope, ["m1"], ch=ch, restored_at=restored)
+    await ep.reopen_held_facts(scope, ["m1"], ch=ch, restored_at=restored, restore_id="u1")
     assert len(ch.reads) == 2
     assert all("apply_mutations_on_fly = 1" in sql for sql in ch.reads)
     assert not any("system.mutations" in sql for sql in ch.reads)

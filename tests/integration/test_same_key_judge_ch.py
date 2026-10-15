@@ -7,6 +7,7 @@ import asyncio
 import contextlib
 import hashlib
 import json
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -1660,7 +1661,9 @@ async def test_an_undo_of_a_fact_open_until_later_adds_no_weight(ch, org) -> Non
     )
     await _edges_like_triples(ch, org)
     scope = SimpleNamespace(org=org, namespace=NS, agent="bot")
-    await entity_projections.reopen_held_facts(scope, [str(london["memory_id"])], ch=ch)
+    await entity_projections.reopen_held_facts(
+        scope, [str(london["memory_id"])], ch=ch, restore_id=uuid.uuid4().hex
+    )
     await _mutations_done(ch, org)
     assert await _open_weights(ch, org, "london") == {"triples": 1, "edges": 1}
     # The Undo's own rows end where London does, so London is not current past then.
@@ -1724,7 +1727,9 @@ async def test_an_undo_keeps_no_end_a_supersession_set(ch, org) -> None:
     await close_triples(ch, org=org, namespace=NS, closes=[(*live, "berlin", now, now)])
     await _mutations_done(ch, org)
     scope = SimpleNamespace(org=org, namespace=NS, agent="bot")
-    await entity_projections.reopen_held_facts(scope, [str(london["memory_id"])], ch=ch)
+    await entity_projections.reopen_held_facts(
+        scope, [str(london["memory_id"])], ch=ch, restore_id=uuid.uuid4().hex
+    )
     await _mutations_done(ch, org)
     ends = await ch.query_all(
         "SELECT 'triples' AS plane, valid_to FROM loom.entity_triples WHERE org = {org:String}"
@@ -1780,7 +1785,9 @@ async def test_an_undo_weighs_a_fact_whose_row_a_close_ends_ahead(ch, org) -> No
     await close_triples(ch, org=org, namespace=NS, closes=[(*live, "london", december, now)])
     await _mutations_done(ch, org)
     scope = SimpleNamespace(org=org, namespace=NS, agent="bot")
-    await entity_projections.reopen_held_facts(scope, [str(london["memory_id"])], ch=ch)
+    await entity_projections.reopen_held_facts(
+        scope, [str(london["memory_id"])], ch=ch, restore_id=uuid.uuid4().hex
+    )
     await _mutations_done(ch, org)
     (marker,) = await ch.query_all(
         "SELECT co_occur FROM loom.entity_triples WHERE org = {org:String}"
@@ -1933,7 +1940,9 @@ async def test_an_undo_takes_no_end_from_an_older_row_of_its_fact(ch, org) -> No
     await _mutations_done(ch, org)
     await _edges_like_triples(ch, org)
     scope = SimpleNamespace(org=org, namespace=NS, agent="bot")
-    await entity_projections.reopen_held_facts(scope, [str(london["memory_id"])], ch=ch)
+    await entity_projections.reopen_held_facts(
+        scope, [str(london["memory_id"])], ch=ch, restore_id=uuid.uuid4().hex
+    )
     await _mutations_done(ch, org)
     ends = await ch.query_all(
         "SELECT 'triples' AS plane, valid_to FROM loom.entity_triples WHERE org = {org:String}"

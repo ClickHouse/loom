@@ -353,17 +353,17 @@ the value it was written or stated for (`carried`):
   end, or open when the marker is), so Undoing back and forth adds no weight; and 1
   otherwise (the usual Undo of a closed value), so the graph's readers still count it
   after a shorter row ends. Rows that only together span the marker do not count: at
-  worst one weight too many, never a fact lost. A marker the interval repair closes as it starts is never current, so it
-  weighs 0 too: another marker of the same Undo (same subject, same single-valued
-  relation) starts no later and is newer than the value's newest row, the marker or its
-  fact's newest open row by start day. Rome's total stays the same however often that
-  row is undone. A close is an `ALTER UPDATE`, so the retirement's closes may still be
-  pending when the Undo weighs its facts: it reads with `apply_mutations_on_fly`, which
-  applies them (their expressions are deterministic), rather than waiting on
-  `system.mutations`. ClickHouse refuses that read for the whole table while any pending
-  mutation on it has a subquery (another tenant's erasure delete does). The Undo then
-  writes nothing to the graph: the memory row is restored at once, the refusal is
-  recorded as a `triples_reconcile` failure dated at the restore, and
+  worst one weight too many, never a fact lost. A marker the interval repair closes as
+  it starts is never current, so it weighs 0 too: another marker of the same Undo (same
+  subject, same single-valued relation) starts no later and is newer than the value's
+  newest row, the marker or its fact's newest open row by start day. Rome's total stays
+  the same however often that row is undone. A close is an `ALTER UPDATE`, so the
+  retirement's closes may still be pending when the Undo weighs its facts: it reads with
+  `apply_mutations_on_fly`, which applies them (their expressions are deterministic),
+  rather than waiting on `system.mutations`. ClickHouse refuses that read for the whole
+  table while any pending mutation on it has a subquery (another tenant's erasure delete
+  does). The Undo then writes nothing to the graph: the memory row is restored at once,
+  the refusal is recorded as a `triples_reconcile` failure dated at the restore, and
   `projection_repair` replays it once that mutation has landed and the read works again
   (until then each pass fails it again and it stays active). Its facts then go through
   the interval repair by the usual rule, as values seen at their markers: the retirement
