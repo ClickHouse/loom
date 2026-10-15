@@ -126,9 +126,10 @@ The bundled ClickHouse starts with the files in `deploy/clickhouse-config/`:
   is `LOOM_CH_PASSWORD`. The bundled server defines it in `nlp_user_settings.xml`;
   `loom ch-setup` creates the same user and profile with SQL on any other server, from
   the current `LOOM_CH_CALLER_SHAPED_*` values. Raising one of those settings on the
-  bundled server needs the XML profile raised too; elsewhere, change `.env`, re-run
-  `ch-setup`, then recreate Loom (`up -d --force-recreate loom`): caller-shaped reads in
-  between fail on the profile's bounds. After
+  bundled server needs the XML profile raised too. Elsewhere, so no read fails on the
+  profile's bounds in between: to raise a cap, change `.env`, re-run `ch-setup`, then
+  recreate Loom (`up -d --force-recreate loom`); to lower one, change `.env`, recreate
+  Loom, then re-run `ch-setup`. After
   changing `LOOM_CH_PASSWORD`, which the reader shares, drop the reader
   (`DROP USER loom_reader; DROP SETTINGS PROFILE loom_reader`) and re-run `ch-setup`: it
   replaces only a reader that logs in with the current password. The server probes the
@@ -163,9 +164,9 @@ containers from it against the ClickHouse in `.env` (run `loom ch-setup` against
 | `loom-workers` | background workers; `/v1/health` on internal `:7778` | `LOOM_BACKGROUND_WORKERS=on`, `LOOM_WEB_WORKERS=1` |
 
 A long worker pass never shares an event loop with client requests, so it cannot show up
-as request latency. Both containers mount the same `.env`, the blob volume and the code
-mirror volume. Whichever boots first applies pending migrations
-([upgrades](./upgrades.md#how-migrations-run)).
+as request latency. Both containers mount the same `.env`, the blob volume and
+`var/code_repos` (the code index's git mirrors). Whichever boots first applies pending
+migrations ([upgrades](./upgrades.md#how-migrations-run)).
 
 ## How settings are read
 

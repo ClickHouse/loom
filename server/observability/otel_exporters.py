@@ -58,7 +58,7 @@ def _unwritable(exc: BaseException) -> str:
     if code == 60 or "UNKNOWN_TABLE" in str(exc):
         return "it does not exist (ClickStack/HyperDX is not deployed against this cluster)"
     if code == 497:
-        return "this ClickHouse user may not write it"
+        return "this ClickHouse user may not access it"
     return ""
 
 

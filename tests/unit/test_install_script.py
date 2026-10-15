@@ -369,3 +369,17 @@ def test_a_prepared_install_on_an_outside_clickhouse_names_ch_setup(install) -> 
     result = run("--clickhouse", "https://loom:pw@h.example")
     assert result.returncode == 0, result.stderr
     assert "run --rm loom loom ch-setup" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("url", "message"),
+    [
+        ("http://lo%24om%20x@h.example:8123", "the ClickHouse user may hold only"),
+        ("http://loom@h%24x.example:8123", "invalid host"),
+    ],
+)
+def test_a_user_or_host_env_cannot_keep_is_refused(install, url: str, message: str) -> None:
+    run, target = install
+    result = run("--clickhouse", url, LOOM_CH_PASSWORD="pw")
+    assert result.returncode == 1 and message in result.stderr
+    assert not (target / ".env").exists()

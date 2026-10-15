@@ -756,3 +756,20 @@ def test_the_reader_holds_select_on_loom_alone(
 
     monkeypatch.setattr(clickhouse_connect, "get_client", lambda **_: Reader())
     assert ch_setup.reader_status(reader) == (True, problem)
+
+
+def test_an_up_to_date_process_needs_only_the_grants_it_serves_with(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class DmlOnly(FakeCH):
+        def command(self, sql: str, **kwargs: Any) -> Any:
+            if sql == f"CHECK GRANT {preflight.GRANTS['migrate']} ON loom.*":
+                return 0
+            return super().command(sql, **kwargs)
+
+    monkeypatch.setattr(preflight, "_migrations_pending", lambda ch, journal: False)
+    (gap,) = preflight.check(DmlOnly(), need="migrate").next_migration
+    assert "lacks" in gap.reason and gap.needs_admin
+    monkeypatch.setattr(preflight, "_migrations_pending", lambda ch, journal: True)
+    with pytest.raises(preflight.PreflightError, match="lacks"):
+        preflight.check(DmlOnly(), need="migrate")

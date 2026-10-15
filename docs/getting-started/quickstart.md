@@ -254,7 +254,7 @@ selected: that mode keeps authentication off. Keep the installer's generated
 # Released stack:
 docker compose --project-directory "$HOME/.loom" up -d --force-recreate loom
 # Checkout stack (run from the repository root):
-docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml up -d --force-recreate loom
+docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml --profile bundled up -d --force-recreate loom
 ```
 
 `/me` then opens on **Sign up**, and every SDK and MCP call needs a token. The identity

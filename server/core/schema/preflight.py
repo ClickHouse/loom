@@ -216,6 +216,18 @@ def oldest_version(ch: Client, *, strict: bool = True) -> str:
     return min(versions, key=version_key)
 
 
+def _granted(ch: Client, grants: str) -> bool:
+    return str(ch.command(f"CHECK GRANT {grants} ON {DATABASE}.*")) == "1"
+
+
+def _lacks(user: str, grants: str) -> PreflightError:
+    return PreflightError(
+        f"{user!r} lacks {grants} on {DATABASE}.*: "
+        f"an admin has to run GRANT CURRENT GRANTS ON {DATABASE}.* TO `{user}`",
+        needs_admin=True,
+    )
+
+
 def _cannot_create(user: str) -> PreflightError:
     return PreflightError(
         f"{user!r} cannot see a database {DATABASE} and may not create it: "
@@ -284,13 +296,13 @@ def check(
         elif str(ch.command(f"CHECK GRANT CREATE DATABASE ON {DATABASE}.*")) != "1":
             raise _cannot_create(user)
 
-    grants = GRANTS[need]
-    if str(ch.command(f"CHECK GRANT {grants} ON {DATABASE}.*")) != "1":
-        raise PreflightError(
-            f"{user!r} lacks {grants} on {DATABASE}.*: "
-            f"an admin has to run GRANT CURRENT GRANTS ON {DATABASE}.* TO `{user}`",
-            needs_admin=True,
-        )
+    # The DDL grants are needed only while a migration is pending, like the
+    # checks below; an up-to-date process needs those it serves with.
+    deferred = need == "migrate" and not migrating
+    if not _granted(ch, GRANTS["serve" if deferred else need]):
+        raise _lacks(user, GRANTS["serve" if deferred else need])
+    if deferred and not _granted(ch, GRANTS["migrate"]):
+        later.append(_lacks(user, GRANTS["migrate"]))
 
     if need == "migrate":
         refused = [t for t in RUNNER_SYSTEM_TABLES if not _readable(ch, f"system.{t}")]

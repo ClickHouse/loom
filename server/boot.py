@@ -227,6 +227,8 @@ async def require_clickhouse_ready() -> None:
     try:
         server = await asyncio.to_thread(preflight.require_ready, need=preflight.needed_at_boot())
     except preflight.PreflightError as e:
+        # Logged first, so the reason heads the startup failure's traceback.
+        logging.getLogger(__name__).error("ClickHouse preflight: %s", e)
         raise RuntimeError(f"ClickHouse preflight: {e}") from None
     if warning := preflight.warnings(server):
         logging.getLogger(__name__).warning("ClickHouse preflight: %s", warning)

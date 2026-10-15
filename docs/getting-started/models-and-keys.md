@@ -203,7 +203,7 @@ curl -fsS http://localhost:7777/v1/health
 Use your installation directory and port if different. Recreate the container: a plain
 `docker compose restart` does not reload its environment from `.env`. Native servers
 must restart with the updated environment. For the checkout stack, run
-`docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml up -d --build --force-recreate loom`.
+`docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml --profile bundled up -d --build --force-recreate loom`.
 
 Health reports `fake_llm`, `fake_embedding`, `providers_degraded` and actionable
 `problems`. With both real providers configured, the fake flags should be false. This
