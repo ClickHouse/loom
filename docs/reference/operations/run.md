@@ -103,8 +103,8 @@ Replay one run: goal, status, final response, the memories it relied on, the mem
 | `recalled_keys` | `list[str]` | Keys memory.search returned under the run plus keys the hooks reported as served; empty when neither is known. |
 | `memories_written` | `list[str]` | Keys written under this run's id, read live from `loom.memory`. |
 | `observations` | `int` | Episodic observations (`observe.record`) tagged with this run's id. |
-| `turns` | `int` | From loom.agent_turn_usage by session_id (the plugin's Stop hook writes it); 0 when the run has no session or the hook is not installed. |
-| `cost_usd` | `float` | Summed model cost in USD of the run's session turns; 0 as for `turns`. |
+| `turns` | `int` | The session's turns in loom.agent_turn_usage (the plugin's Stop hook writes them) from the run's start to its close; 0 when the run has no session or the hook is not installed. |
+| `cost_usd` | `float` | Summed model cost in USD of those turns; 0 as for `turns`. |
 | `elapsed_seconds` | `int` | Seconds the run has taken: until now while active, its duration once closed. |
 | `over_budget` | `list[Literal['cost', 'time']]` | The budgets the run has gone past: `cost` (cost_usd > budget_usd) and `time` (elapsed_seconds > budget_seconds). |
 

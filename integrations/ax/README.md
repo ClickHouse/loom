@@ -128,9 +128,13 @@ starts.
 
 ## Budgets
 
-`agent.py` opens its run with `budget_usd` and `budget_seconds`. `run.get`
-answers `over_budget` (`cost`, `time`) once the run goes past either, and the
-agent decides what to do; Loom never stops it. `cost_usd` counts the turns the
-Claude Code or Codex plugin recorded for the run's session, so an agent without
-a plugin reports its own spend with `cost.record_turns`, or has only the time
-budget. See [runs](../../docs/features/runs.md#budgets).
+`agent.py` opens its run with `budget_seconds`, and `run.get` answers
+`over_budget: ["time"]` once the run goes past it; the agent decides what to do,
+since Loom never stops it. The run is closed however the work ends: `completed`,
+`cancelled` when it stops for the budget or is cancelled, `failed` on an error.
+
+A cost budget (`budget_usd`) needs a `session_id`, because a run's spend is the
+turns its session recorded while the run was open. A sandboxed agent has no
+Claude Code or Codex plugin recording them, so it reports its own with
+`cost.record_turns` under that session to use one. See
+[runs](../../docs/features/runs.md#budgets).

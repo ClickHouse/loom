@@ -945,11 +945,7 @@ async def handle_run_get(input: RunGetInput) -> RunGetOutput:
     stashed = run.metadata.get("recalled_keys") if isinstance(run.metadata, dict) else None
     if stashed:
         recalled = _merge_recalled(recalled, stashed)
-    turns, cost = (
-        await runs_store.session_cost(ch, input.org, input.namespace, run.session_id)
-        if run.session_id != "-"
-        else (0, 0.0)
-    )
+    turns, cost = await _run_cost(ch, existing)
     elapsed = _elapsed_seconds(existing)
     return RunGetOutput(
         found=True,
@@ -962,6 +958,18 @@ async def handle_run_get(input: RunGetInput) -> RunGetOutput:
         cost_usd=cost,
         elapsed_seconds=elapsed,
         over_budget=_budgets_exceeded(run, cost, elapsed),
+    )
+
+
+async def _run_cost(ch: Any, row: RunLedgerRow) -> tuple[int, float]:
+    """The turns and cost the run's session recorded while the run was open."""
+    session_id = str(row.get("session_id") or "-")
+    started = row.get("started_at")
+    if session_id == "-" or not isinstance(started, datetime):
+        return 0, 0.0
+    until = row.get("completed_at") or _now()
+    return await runs_store.run_cost(
+        ch, str(row["org"]), str(row["namespace"]), session_id, started, until
     )
 
 

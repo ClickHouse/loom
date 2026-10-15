@@ -906,7 +906,7 @@ def _rule_run_over_budget(
     op: str, args: dict[str, Any], res: dict[str, Any], facts: dict[str, Any], st: dict[str, Any]
 ) -> _Call:
     over = res.get("over_budget") or []
-    if op != "run.get" or not over:
+    if op != "run.get" or not over or (res.get("run") or {}).get("status") != "active":
         return None
     return (
         "run_over_budget",

@@ -634,12 +634,19 @@ def test_set_rules_duplicate_large_value_and_churn() -> None:
 
 
 def test_run_over_budget_fires_only_when_run_get_names_a_budget() -> None:
-    within = {"found": True, "over_budget": [], "cost_usd": 0.4, "elapsed_seconds": 30}
+    active = {"status": "active"}
+    within = {"run": active, "over_budget": [], "cost_usd": 0.4, "elapsed_seconds": 30}
     assert _call("run.get", {"run_id": "r1"}, within) is None
-    over = {"found": True, "over_budget": ["cost"], "cost_usd": 2.5, "elapsed_seconds": 30}
+    over = {"run": active, "over_budget": ["cost"], "cost_usd": 2.5, "elapsed_seconds": 30}
     hint = _call("run.get", {"run_id": "r1"}, over, session="s2")
     assert hint is not None and hint[0] == "run_over_budget"
     assert "cost budget" in hint[1] and "$2.50" in hint[1] and "run.complete" in hint[1]
+
+
+@pytest.mark.parametrize("status", ["completed", "failed", "cancelled"])
+def test_run_over_budget_says_nothing_about_a_closed_run(status: str) -> None:
+    closed = {"run": {"status": status}, "over_budget": ["time"], "elapsed_seconds": 90}
+    assert _call("run.get", {"run_id": "r1"}, closed, session=f"s-{status}") is None
 
 
 def test_search_abstain_points_at_the_plane_the_namespace_has() -> None:

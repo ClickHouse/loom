@@ -58,6 +58,13 @@ class RunBeginInput(BaseModel):
     budget_usd: float = Field(default=0.0, ge=0.0, le=100_000.0)
     budget_seconds: int = Field(default=0, ge=0, le=30 * 86400)
 
+    @model_validator(mode="after")
+    def _cost_budget_has_a_session(self) -> RunBeginInput:
+        # A run's spend is read from its session's recorded turns.
+        if self.budget_usd > 0 and self.session_id in ("", SENTINEL):
+            raise ValueError("budget_usd needs a session_id: a run's spend is its session's turns")
+        return self
+
 
 class RunBeginOutput(BaseModel):
     run_id: str
@@ -309,10 +316,11 @@ class RunGetOutput(BaseModel):
     memories_written: list[str] = Field(default_factory=list)
     # Episodic observations (`observe.record`) tagged with this run's id.
     observations: int = 0
-    # From loom.agent_turn_usage by session_id (the plugin's Stop hook writes
-    # it); 0 when the run has no session or the hook is not installed.
+    # The session's turns in loom.agent_turn_usage (the plugin's Stop hook writes
+    # them) from the run's start to its close; 0 when the run has no session or
+    # the hook is not installed.
     turns: int = 0
-    # Summed model cost in USD of the run's session turns; 0 as for `turns`.
+    # Summed model cost in USD of those turns; 0 as for `turns`.
     cost_usd: float = 0.0
     # Seconds the run has taken: until now while active, its duration once closed.
     elapsed_seconds: int = 0

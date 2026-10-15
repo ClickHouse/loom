@@ -131,3 +131,75 @@ async def test_complete_unknown_run_is_404(control_plane_url: str) -> None:
     async with Agent(org="run-test", namespace=ns, agent="w", base_url=control_plane_url) as a:
         with pytest.raises(NotFound):
             await a.run.complete("never-begun", status="failed")
+
+
+async def _record_turn(a: Any, session_id: str, message_id: str) -> float:
+    """One priced turn (10k input + 1k output tokens of claude-opus-5-5) under the session."""
+    out = await a.transport.post(
+        "/v1/cost.record_turns",
+        {
+            "org": a.org,
+            "namespace": a.namespace,
+            "agent": a.agent,
+            "session_id": session_id,
+            "turns": [
+                {
+                    "message_id": message_id,
+                    "model": "claude-opus-5-5",
+                    "input_tokens": 10_000,
+                    "output_tokens": 1_000,
+                }
+            ],
+        },
+    )
+    return float(out["cost_usd"])
+
+
+async def _get_with_turns(a: Any, run_id: str, turns: int, timeout_s: float = 6.0) -> dict:
+    """run.get once the run's turns are visible (turn rows are inserted asynchronously)."""
+    deadline = asyncio.get_event_loop().time() + timeout_s
+    while True:
+        got = await a.run.get(run_id)
+        if got["turns"] >= turns or asyncio.get_event_loop().time() > deadline:
+            return got
+        await asyncio.sleep(0.25)
+
+
+@pytest.mark.asyncio
+async def test_each_run_in_a_session_counts_only_its_own_turns(control_plane_url: str) -> None:
+    from loom import Agent
+
+    ns = f"run-ledger-{uuid.uuid4().hex[:6]}"
+    async with Agent(org="run-test", namespace=ns, agent="w", base_url=control_plane_url) as a:
+        first = await a.run.begin(goal="first", session_id="sess-b", budget_usd=0.1)
+        first_cost = await _record_turn(a, "sess-b", "m1")
+        await _get_with_turns(a, first["run_id"], 1)
+        await a.run.complete(first["run_id"], status="completed")
+        await asyncio.sleep(0.2)
+
+        second = await a.run.begin(goal="second", session_id="sess-b", budget_usd=0.05)
+        second_cost = await _record_turn(a, "sess-b", "m2")
+        assert first_cost > 0.05 and first_cost + second_cost > 0.1
+
+        # The second run's turn does not reach the closed first run.
+        got_second = await _get_with_turns(a, second["run_id"], 1)
+        got_first = await a.run.get(first["run_id"])
+        assert got_first["turns"] == 1 and got_first["cost_usd"] == first_cost
+        assert got_first["over_budget"] == []
+        # The first run's turn does not count against the second.
+        assert got_second["turns"] == 1 and got_second["cost_usd"] == second_cost
+        assert got_second["over_budget"] == ["cost"]
+
+
+@pytest.mark.asyncio
+async def test_a_cost_budget_without_a_session_is_refused(control_plane_url: str) -> None:
+    from loom import Agent
+    from loom.errors import ValidationError
+
+    ns = f"run-ledger-{uuid.uuid4().hex[:6]}"
+    async with Agent(org="run-test", namespace=ns, agent="w", base_url=control_plane_url) as a:
+        with pytest.raises(ValidationError) as e:
+            await a.run.begin(goal="no session", budget_usd=1.0)
+        assert "session_id" in str(e.value.detail["errors"])
+        timed = await a.run.begin(goal="time only", budget_seconds=60)
+        assert timed["status"] == "active"

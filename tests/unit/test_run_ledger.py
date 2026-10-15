@@ -354,7 +354,13 @@ def test_begin_stores_the_budget_and_complete_carries_it(env) -> None:
     asyncio.run(
         h.handle_run_begin(
             RunBeginInput(
-                org="o", namespace="n", agent="claude", goal="g", budget_usd=1.5, budget_seconds=600
+                org="o",
+                namespace="n",
+                agent="claude",
+                session_id="s1",
+                goal="g",
+                budget_usd=1.5,
+                budget_seconds=600,
             )
         )
     )
@@ -400,6 +406,39 @@ def test_a_closed_run_is_timed_by_its_duration(env) -> None:
     row = _run_row(status="completed", completed_at=T0, duration_ms=90_000, budget_seconds=60)
     out = _get_with(env, row, cost=0.0)
     assert out.elapsed_seconds == 90 and out.over_budget == ["time"]
+
+
+def test_a_cost_budget_needs_a_session() -> None:
+    with pytest.raises(ValidationError, match="session_id"):
+        RunBeginInput(org="o", namespace="n", agent="a", goal="g", budget_usd=1.0)
+    RunBeginInput(org="o", namespace="n", agent="a", goal="g", session_id="s1", budget_usd=1.0)
+    RunBeginInput(org="o", namespace="n", agent="a", goal="g", budget_seconds=60)
+
+
+def _cost_window(fake: Any) -> tuple[Any, Any]:
+    params = [c[2] for c in fake.calls if "agent_turn_usage" in c[1]][0]
+    return params["since"], params["until"]
+
+
+def test_cost_counts_only_the_turns_while_the_run_was_open(env) -> None:
+    fake, _, h = env
+    closed_at = datetime(2026, 9, 11, 12, 0, 5)
+    _get_with(env, _run_row(status="completed", completed_at=closed_at, duration_ms=5000), 0.1)
+    assert _cost_window(fake) == (T0, closed_at)
+
+    fake.calls.clear()
+    _get_with(env, _run_row(), 0.1)  # active: up to now
+    assert _cost_window(fake) == (T0, datetime(2026, 9, 11, 12, 0, 42, 500000))
+
+
+def test_a_run_without_a_session_reads_no_cost(env) -> None:
+    fake, _, h = env
+    fake.one.append(_run_row(session_id="-"))
+    fake.all.append([])
+    fake.one.append({"n": 0})
+    out = asyncio.run(h.handle_run_get(RunGetInput(org="o", namespace="n", run_id="r1")))
+    assert out.turns == 0 and out.cost_usd == 0.0
+    assert not [c for c in fake.calls if "agent_turn_usage" in c[1]]
 
 
 def test_get_missing_run(env) -> None:
