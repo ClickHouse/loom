@@ -49,9 +49,10 @@ Limits:
 - **The client's clock.** The window compares the client's turn times with the server's run times; a clock minutes
   off misplaces the turns at a run's edges. A turn keeps the time it was sent with, so a re-sent turn stays with
   the run it first fell in. One sent without a time (or with one that does not parse) takes the time its
-  `message_id` was first recorded with, or now if it is new. `cost.record_turns` answers with `turns_dated_ahead`, the turns it received dated more than
-  5 s after the server's clock, so a caller that posts turns itself can see a fast clock; the plugins post them without
-  reading the answer.
+  `message_id` is recorded with, or now if it is new; a re-send within a fraction of a second of the first may
+  still be dated now. `cost.record_turns` answers with `turns_dated_ahead`, the turns it received dated more than
+  5 s after the server's clock, so a caller that posts turns itself can see a fast clock; the plugins post them
+  without reading the answer.
 - **One session, many runs.** Runs open at once in one session see the same turns: a nested run counts toward both,
   and concurrent workers that each want a cost budget need their own sessions.
 - **Unpriced models.** A turn whose model the price table does not know costs 0; `run.get` counts those in

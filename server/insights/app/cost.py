@@ -198,7 +198,8 @@ async def handle_budget_status(input: BudgetStatusInput) -> BudgetStatusOutput:
 
 
 def _parse_turn_at(text: str) -> datetime | None:
-    """A turn's ISO-8601 time as an aware datetime, or None when it has none."""
+    """A turn's ISO-8601 time as an aware datetime, or None when it has none
+    or it does not parse."""
     try:
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError:
@@ -218,19 +219,19 @@ async def handle_cost_record_turns(input: CostRecordTurnsInput) -> CostRecordTur
     total = 0.0
     now = datetime.now(UTC)
     ahead = 0
-    sent = [_parse_turn_at(t.turn_at) for t in input.turns]
-    # A turn sent without a time keeps the one it was first recorded with, so a
+    parsed = [_parse_turn_at(t.turn_at) for t in input.turns]
+    # A turn sent without a time keeps the one it is recorded with, so a
     # replay lands in the same run.
-    undated = [t.message_id for t, at in zip(input.turns, sent, strict=True) if at is None]
-    first: dict[str, datetime] = {}
+    undated = [t.message_id for t, at in zip(input.turns, parsed, strict=True) if at is None]
+    recorded: dict[str, datetime | None] = {}
     if undated:
         try:
-            first = await cost_store.first_turn_times(
+            recorded = await cost_store.recorded_turn_times(
                 input.org, input.namespace, input.session_id, undated, ch=get_client()
             )
         except Exception:  # noqa: BLE001 — a spend ledger must never fail the turn
-            first = {}
-    for t, turn_at in zip(input.turns, sent, strict=True):
+            recorded = {}
+    for t, turn_at in zip(input.turns, parsed, strict=True):
         cost = turn_cost_usd(
             t.model,
             input_tokens=t.input_tokens,
@@ -246,7 +247,7 @@ async def handle_cost_record_turns(input: CostRecordTurnsInput) -> CostRecordTur
         elif t.model not in unpriced:
             unpriced.append(t.model)
         if turn_at is None:
-            turn_at = first.get(t.message_id, now)
+            turn_at = recorded.get(t.message_id) or now
         elif turn_at > now + _AHEAD_SLACK:
             # Kept as sent, so a replay lands in the same run; a client clock
             # running ahead is reported instead.

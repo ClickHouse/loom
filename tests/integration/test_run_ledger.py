@@ -267,14 +267,52 @@ async def test_a_replayed_turn_without_a_time_does_not_move_between_runs(
         await a.run.complete(first["run_id"], status="completed")
         second = await a.run.begin(goal="second", session_id="sess-u", budget_usd=1.0)
 
-        # The same usage again, still without a time: it keeps the first one.
-        await a.transport.post("/v1/cost.record_turns", turn)
+        # The same usage again, still without a time: it keeps the one it has.
+        # A second turn in the batch makes the block new, so insert dedup
+        # does not simply drop the replay.
+        later = {"message_id": "m2", "model": "claude-opus-5-5", "turn_at": _now_iso()}
+        await a.transport.post("/v1/cost.record_turns", {**turn, "turns": [*turn["turns"], later]})
         ch_client.command("SYSTEM FLUSH ASYNC INSERT QUEUE")
 
         after = await a.run.get(first["run_id"])
         assert (after["cost_usd"], after["over_budget"]) == (before["cost_usd"], ["cost"])
         got_second = await a.run.get(second["run_id"])
-        assert got_second["turns"] == 0 and got_second["cost_usd"] == 0.0
+        assert got_second["turns"] == 1 and got_second["cost_usd"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_an_undated_replay_keeps_the_time_a_later_send_gave_the_turn(
+    control_plane_url: str, ch_client: Any
+) -> None:
+    from loom import Agent
+
+    ns = f"run-ledger-{uuid.uuid4().hex[:6]}"
+    async with Agent(org="run-test", namespace=ns, agent="w", base_url=control_plane_url) as a:
+
+        async def send(*turns: dict[str, Any]) -> None:
+            body = {
+                "org": a.org,
+                "namespace": a.namespace,
+                "agent": a.agent,
+                "session_id": "sess-d",
+            }
+            await a.transport.post("/v1/cost.record_turns", {**body, "turns": list(turns)})
+            ch_client.command("SYSTEM FLUSH ASYNC INSERT QUEUE")
+
+        m1 = {"message_id": "m1", "model": "claude-opus-5-5", "input_tokens": 400_000}
+        first = await a.run.begin(goal="first", session_id="sess-d")
+        await send(m1)
+        await a.run.complete(first["run_id"], status="completed")
+        second = await a.run.begin(goal="second", session_id="sess-d")
+        # Re-sent with a time inside the second run: the turn is now the second's.
+        await send({**m1, "turn_at": _now_iso()})
+        cost = (await a.run.get(second["run_id"]))["cost_usd"]
+        assert cost > 0
+
+        # An undated replay keeps that time, not the older row's.
+        await send(m1, {"message_id": "m2", "model": "claude-opus-5-5", "turn_at": _now_iso()})
+        assert (await a.run.get(first["run_id"]))["cost_usd"] == 0.0
+        assert (await a.run.get(second["run_id"]))["cost_usd"] == cost
 
 
 @pytest.mark.asyncio
