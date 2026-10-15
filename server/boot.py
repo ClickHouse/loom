@@ -274,7 +274,7 @@ async def _fenced_boot_migrations(
     log = logging.getLogger(__name__)
     async with configuration_lock(
         wait_s=settings.boot_migrate_lease_wait_s,
-        out=lambda m: log.info("provider configuration lock: %s", m.strip(" ·")),
+        out=lambda m: log.info(m.strip(" ·")),
     ):
         if pending_configuration(await configurations(ch=ch)) is not None:
             raise RuntimeError("Finish the provider rebuild before applying schema migrations")

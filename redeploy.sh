@@ -147,6 +147,7 @@ swap_to() {
     [[ -f "$UPSTREAM.prev" ]] && mv -f "$UPSTREAM.prev" "$UPSTREAM"
     return 1
   fi
+  rm -f "$UPSTREAM.prev"
   # The reload is asynchronous for in-flight requests but immediate for new
   # ones; confirm through the proxy that the new build answers.
   local got

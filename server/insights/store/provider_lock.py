@@ -18,6 +18,8 @@ class ProcessKeeperLock(KeeperLock):
     no residual ClickHouse work. An unreachable remote owner blocks recovery.
     """
 
+    label = "provider configuration lock"
+
     def _storage_idle(self) -> bool:
         checks = (
             "SELECT count() FROM system.processes WHERE query_id != currentQueryID() "
