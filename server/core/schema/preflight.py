@@ -9,9 +9,11 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from server.core.ch_errors import error_code
+from server.core.paths import MIGRATIONS_DIR
 
 if TYPE_CHECKING:
     from clickhouse_connect.driver.client import Client
@@ -61,11 +63,8 @@ TELEMETRY_SYSTEM_TABLES = (
 )
 SYSTEM_TABLES = RUNNER_SYSTEM_TABLES + TELEMETRY_SYSTEM_TABLES
 # Every replica's version; a server without the `default` cluster is one node.
-# A replica that is down answers nothing and runs no DDL, so it is skipped.
-REPLICA_VERSIONS_SQL = (
-    "SELECT version() FROM clusterAllReplicas('default', system.one) "
-    "SETTINGS skip_unavailable_shards = 1"
-)
+# Every configured replica must answer: one that does not is unverified, not absent.
+REPLICA_VERSIONS_SQL = "SELECT version() FROM clusterAllReplicas('default', system.one)"
 
 _DATABASE_COUNT = f"SELECT count() FROM system.databases WHERE name = '{DATABASE}'"
 
@@ -96,6 +95,9 @@ class Server:
     database: bool = True
     # Telemetry tables this user may not read: their views stay empty.
     unreadable: tuple[str, ...] = ()
+    # What the next boot with a migration to apply will refuse, passed now
+    # only because nothing is pending.
+    next_migration: tuple[str, ...] = ()
 
 
 def version_key(version: str) -> tuple[int, ...]:
@@ -153,7 +155,9 @@ def _readable(ch: Client, table: str) -> bool:
     """Whether this user may read `table`; one the server lacks counts as
     readable (part_log and view_refreshes appear on first use)."""
     try:
-        ch.command(f"SELECT 1 FROM {table} LIMIT 0")
+        # Every column: a column-level grant would pass `SELECT 1` yet fail the
+        # runner's own queries.
+        ch.command(f"SELECT * FROM {table} LIMIT 0")
     except Exception as e:
         if error_code(e) == ACCESS_DENIED:
             return False
@@ -163,12 +167,26 @@ def _readable(ch: Client, table: str) -> bool:
     return True
 
 
-def _migrations_pending() -> bool:
-    """Whether the ledger lacks any of this build's migrations (all of them on
-    a database with no ledger yet)."""
-    from server.core.schema.migrate import pending_names
+def _migrations_pending(ch: Client, journal: Path) -> bool:
+    """Whether the ledger lacks any migration in `journal`, the directory the
+    command will apply (all of them where there is no ledger yet). A ledger
+    that cannot be read, or no migration files to compare it with (an installed
+    package that ships none), counts as pending: only a confirmed empty set
+    relaxes the checks."""
+    from server.core.schema.journal import sorted_migrations
+    from server.core.schema.migrate import ledger_report
 
-    return bool(pending_names())
+    files = sorted_migrations(journal.glob("*.sql"))
+    if not files:
+        return True
+    try:
+        rows = ch.query(f"SELECT filename, checksum FROM {DATABASE}._migrations FINAL").result_rows
+    except Exception as e:  # noqa: BLE001 — unknown means pending, the strict side
+        if error_code(e) not in (60, 81):  # no ledger yet: everything is pending
+            log.warning("migration ledger unreadable, checking as if migrating: %s", str(e)[:160])
+        return True
+    applied = {str(name): str(checksum).rstrip("\x00") for name, checksum in rows}
+    return bool(ledger_report(applied, files).pending)
 
 
 def oldest_version(ch: Client, *, strict: bool = True) -> str:
@@ -214,7 +232,9 @@ def needed_at_boot() -> Need:
     return "migrate" if settings.boot_migrate and not settings.read_replica else "serve"
 
 
-def check(ch: Client, *, need: Need, create_database: bool = True) -> Server:
+def check(
+    ch: Client, *, need: Need, create_database: bool = True, journal: Path = MIGRATIONS_DIR
+) -> Server:
     """Raise PreflightError unless the server is new enough and `loom` exists
     with the grants `need` names. A process that will migrate creates a missing
     database where its user may; with `create_database` off (the doctor) it
@@ -225,8 +245,15 @@ def check(ch: Client, *, need: Need, create_database: bool = True) -> Server:
     database = bool(ch.command(_DATABASE_COUNT))
     # Strict where DDL is about to run: a restart with nothing pending is
     # checked like a process that only serves.
-    migrating = need == "migrate" and (not database or _migrations_pending())
-    version = oldest_version(ch, strict=migrating)
+    migrating = need == "migrate" and (not database or _migrations_pending(ch, journal))
+    later: list[str] = []
+    try:
+        version = oldest_version(ch, strict=need == "migrate")
+    except PreflightError as e:
+        if migrating:
+            raise
+        later.append(e.reason)
+        version = oldest_version(ch, strict=False)
     if version_key(version)[:2] < MIN_VERSION:
         floor = ".".join(map(str, MIN_VERSION))
         raise PreflightError(f"ClickHouse {version} is older than {floor}: upgrade the server")
@@ -259,18 +286,24 @@ def check(ch: Client, *, need: Need, create_database: bool = True) -> Server:
             needs_admin=True,
         )
 
-    if migrating:
+    if need == "migrate":
         refused = [t for t in RUNNER_SYSTEM_TABLES if not _readable(ch, f"system.{t}")]
         if refused:
-            raise PreflightError(
+            error = PreflightError(
                 f"{user!r} may not read system.{', system.'.join(refused)}, which the "
                 "migrations need: an admin has to run Loom's setup SQL",
                 needs_admin=True,
             )
+            if migrating:
+                raise error
+            later.append(error.reason)
+    if later:
+        log.warning("nothing to migrate now; the next migration will refuse: %s", "; ".join(later))
     unreadable = tuple(t for t in TELEMETRY_SYSTEM_TABLES if not _readable(ch, f"system.{t}"))
     if unreadable:
         log.warning(
-            "may not read system.%s: telemetry from them stays empty", ", system.".join(unreadable)
+            "may not read system.%s: telemetry from these tables stays empty",
+            ", system.".join(unreadable),
         )
 
     # The table exists only where the server is configured with a Keeper.
@@ -289,13 +322,16 @@ def check(ch: Client, *, need: Need, create_database: bool = True) -> Server:
         lightweight_updates=lightweight,
         database=database or create_database,
         unreadable=unreadable,
+        next_migration=tuple(later),
     )
 
 
-def require_ready(*, need: Need, create_database: bool = True) -> Server:
+def require_ready(
+    *, need: Need, create_database: bool = True, journal: Path = MIGRATIONS_DIR
+) -> Server:
     """`check` on a fresh connection, closed afterwards."""
     ch = connect()
     try:
-        return check(ch, need=need, create_database=create_database)
+        return check(ch, need=need, create_database=create_database, journal=journal)
     finally:
         ch.close()

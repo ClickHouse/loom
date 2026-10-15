@@ -4,6 +4,7 @@ ch-setup`, against a scripted client: no ClickHouse needed."""
 from __future__ import annotations
 
 import argparse
+import dataclasses
 from types import SimpleNamespace
 from typing import Any
 
@@ -12,11 +13,14 @@ import pytest
 from server.cli import ch_setup
 from server.core.schema import preflight
 
+# The real one, for the tests of it; the fixture below stands in for it elsewhere.
+_real_migrations_pending = preflight._migrations_pending
+
 
 @pytest.fixture(autouse=True)
 def _migrations_pending(monkeypatch: pytest.MonkeyPatch) -> None:
     """Every check here is about to migrate unless a test says otherwise."""
-    monkeypatch.setattr(preflight, "_migrations_pending", lambda: True)
+    monkeypatch.setattr(preflight, "_migrations_pending", lambda ch, journal: True)
 
 
 class FakeCH:
@@ -41,7 +45,7 @@ class FakeCH:
             return SimpleNamespace(result_rows=[(v,) for v in self.replicas])
         return SimpleNamespace(result_rows=[])
 
-    def command(self, sql: str) -> Any:
+    def command(self, sql: str, **_: Any) -> Any:
         self.ran.append(sql)
         if any(sql.startswith(prefix) for prefix in self.denied):
             raise RuntimeError("Code: 497. DB::Exception: Not enough privileges. (ACCESS_DENIED)")
@@ -86,23 +90,79 @@ def test_replicas_that_cannot_be_asked_are_not_taken_for_one_server(
 def test_a_serving_process_falls_back_when_the_replicas_cannot_be_asked() -> None:
     ch = FakeCH(replica_error="Code: 279. DB::Exception: All connection tries failed")
     assert preflight.check(ch, need="serve").version == "26.5.1.882"
-    runner = {f"SELECT 1 FROM system.{t} LIMIT 0" for t in preflight.RUNNER_SYSTEM_TABLES}
+    runner = {f"SELECT * FROM system.{t} LIMIT 0" for t in preflight.RUNNER_SYSTEM_TABLES}
     assert not runner & set(ch.ran)
 
 
+def test_pending_comes_from_the_journal_the_command_runs(tmp_path) -> None:
+    class Ledger(FakeCH):
+        def query(self, sql: str, **kwargs: Any) -> SimpleNamespace:
+            if "_migrations" in sql:
+                return SimpleNamespace(result_rows=[("000_migrations.sql", "x")])
+            return super().query(sql, **kwargs)
+
+    (tmp_path / "000_migrations.sql").write_text("SELECT 1")
+    assert not _real_migrations_pending(Ledger(), tmp_path)
+    (tmp_path / "001_custom.sql").write_text("SELECT 1")
+    assert _real_migrations_pending(Ledger(), tmp_path)
+
+
+def test_an_unreadable_ledger_counts_as_pending(tmp_path) -> None:
+    class Refused(FakeCH):
+        def query(self, sql: str, **kwargs: Any) -> SimpleNamespace:
+            if "_migrations" in sql:
+                raise RuntimeError("Code: 497. DB::Exception: Not enough privileges")
+            return super().query(sql, **kwargs)
+
+    (tmp_path / "000_migrations.sql").write_text("SELECT 1")
+    assert _real_migrations_pending(Refused(), tmp_path)
+
+
+def test_no_migration_files_to_compare_counts_as_pending(tmp_path) -> None:
+    assert _real_migrations_pending(FakeCH(), tmp_path / "not-shipped")
+
+
 def test_a_restart_with_nothing_pending_is_not_strict(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(preflight, "_migrations_pending", lambda: False)
+    monkeypatch.setattr(preflight, "_migrations_pending", lambda ch, journal: False)
     ch = FakeCH(replica_error="Code: 497. DB::Exception: Not enough privileges. (ACCESS_DENIED)")
-    assert preflight.check(ch, need="migrate").version == "26.5.1.882"
+    server = preflight.check(ch, need="migrate")
+    assert server.version == "26.5.1.882"
+    assert "clusterAllReplicas" in server.next_migration[0]
+
+
+def test_what_the_next_migration_needs_is_reported_while_nothing_is_pending(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(preflight, "_migrations_pending", lambda ch, journal: False)
+    ch = FakeCH(denied=("SELECT * FROM system.mutations",))
+    (gap,) = preflight.check(ch, need="migrate").next_migration
+    assert "system.mutations" in gap
+    assert preflight.check(ch, need="serve").next_migration == ()
+
+
+def test_the_doctor_warns_of_what_the_next_migration_will_refuse(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.cli import doctor
+
+    gap = "'loom' may not read system.mutations, which the migrations need"
+    server = preflight.Server("26.5.1.882", keeper=True, lightweight_updates=True)
+    monkeypatch.setattr(preflight, "needed_at_boot", lambda: "migrate")
+    monkeypatch.setattr(
+        preflight, "require_ready", lambda **_: dataclasses.replace(server, next_migration=(gap,))
+    )
+    name, grade, detail = doctor._doctor_preflight_check()
+    assert (name, grade) == ("clickhouse_preflight", doctor.WARN)
+    assert "next boot with a migration" in detail and gap in detail
 
 
 def test_a_refused_telemetry_table_is_a_warning_not_a_stop() -> None:
-    ch = FakeCH(denied=("SELECT 1 FROM system.query_log",))
+    ch = FakeCH(denied=("SELECT * FROM system.query_log",))
     assert preflight.check(ch, need="migrate").unreadable == ("query_log",)
 
 
 def test_every_system_table_loom_reads_is_checked_before_any_ddl() -> None:
-    ch = FakeCH(denied=("SELECT 1 FROM system.merge_tree_settings",))
+    ch = FakeCH(denied=("SELECT * FROM system.merge_tree_settings",))
     with pytest.raises(preflight.PreflightError) as e:
         preflight.check(ch, need="migrate")
     assert "system.merge_tree_settings" in str(e.value) and e.value.needs_admin
@@ -293,15 +353,38 @@ def test_the_reader_must_not_be_the_loom_user(monkeypatch: pytest.MonkeyPatch) -
     assert ch_setup._cmd_ch_setup(argparse.Namespace(print_sql=True)) == 2
 
 
-def test_an_existing_user_ch_setup_did_not_make_is_left_alone(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize(
+    ("found", "problem", "refusal"),
+    [
+        # A same-named user that does not log in with Loom's password: an analyst's account.
+        ("user", ch_setup.CANNOT_LOG_IN, "does not accept LOOM_CH_PASSWORD"),
+        # A same-named profile with no reader user, or one other accounts inherit.
+        ("profile", ch_setup.CANNOT_LOG_IN, "a settings profile named analyst exists"),
+    ],
+)
+def test_an_account_ch_setup_cannot_prove_is_loom_s_is_left_alone(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    found: str,
+    problem: str,
+    refusal: str,
 ) -> None:
-    monkeypatch.setattr(ch_setup, "reader_problem", lambda reader: "missing")
-    monkeypatch.setattr(ch_setup, "reader_owner", lambda ch, reader: "other")
+    monkeypatch.setattr(ch_setup, "reader_problem", lambda reader: problem)
+    monkeypatch.setattr(ch_setup, "reader_objects", lambda ch, reader: found)
     ch = FakeCH()
     assert ch_setup._set_up(ch, "loom_app", "analyst") == 1
-    assert "analyst is an existing user ch-setup did not make" in capsys.readouterr().err
-    assert not any(sql.startswith("CREATE USER") for sql in ch.ran)
+    assert refusal in capsys.readouterr().err
+    assert not any(sql.startswith(("CREATE USER", "CREATE SETTINGS")) for sql in ch.ran)
+
+
+def test_a_reader_that_logs_in_with_loom_s_password_is_rebuilt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ch_setup, "reader_problem", lambda r: "its profile does not match")
+    monkeypatch.setattr(ch_setup, "reader_objects", lambda ch, r: "user")
+    ch = FakeCH()
+    assert ch_setup._set_up(ch, "loom", "loom_reader") == 0
+    assert any(sql.startswith("CREATE USER OR REPLACE `loom_reader`") for sql in ch.ran)
 
 
 def test_a_bundled_reader_whose_caps_differ_is_a_failure(
@@ -310,7 +393,7 @@ def test_a_bundled_reader_whose_caps_differ_is_a_failure(
     monkeypatch.setattr(
         ch_setup, "reader_problem", lambda r: "its profile does not match the current caps"
     )
-    monkeypatch.setattr(ch_setup, "reader_owner", lambda ch, r: "config")
+    monkeypatch.setattr(ch_setup, "reader_objects", lambda ch, r: "config")
     assert ch_setup._set_up(FakeCH(), "loom", "loom_reader") == 1
     assert (
         "raise its profile in deploy/clickhouse-config/nlp_user_settings.xml"
@@ -329,7 +412,7 @@ def test_a_reader_whose_owner_cannot_be_seen_is_not_replaced(
 
     monkeypatch.setattr(ch_setup, "reader_problem", lambda reader: "missing")
     ch = MayNotListUsers()
-    assert ch_setup.reader_owner(ch, "someone_elses") == "unknown"
+    assert ch_setup.reader_objects(ch, "someone_elses") == "unknown"
     assert ch_setup._set_up(ch, "delegate", "someone_elses") == 1
     assert not any(sql.startswith("CREATE USER") for sql in ch.ran)
     captured = capsys.readouterr()

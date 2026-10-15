@@ -176,13 +176,21 @@ def _doctor_preflight_check() -> tuple[str, str, str]:
         return ("clickhouse_preflight", FAIL, str(e))
     except Exception as e:  # noqa: BLE001 — a doctor line must never crash the doctor
         return ("clickhouse_preflight", FAIL, f"{type(e).__name__}: {e}")
+    if server.next_migration:
+        return (
+            "clickhouse_preflight",
+            WARN,
+            f"ClickHouse {server.version}: up now, but the next boot with a migration to apply "
+            f"will refuse: {'; '.join(server.next_migration)} "
+            "(`loom ch-setup --print-sql` prints it)",
+        )
     if server.unreadable:
         tables = ", ".join(f"system.{t}" for t in server.unreadable)
         return (
             "clickhouse_preflight",
             WARN,
             f"ClickHouse {server.version}: may not read {tables}, so the telemetry from "
-            "them stays empty; `loom ch-setup --print-sql` has the grant",
+            "these tables stays empty; `loom ch-setup --print-sql` has the grant",
         )
     if not server.database:
         return (

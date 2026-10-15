@@ -867,7 +867,10 @@ def main(argv: list[str] | None = None, *, check_server: bool = True) -> int:
 
     try:
         if check_server:
-            preflight.require_ready(need="read" if args.status or args.dry_run else "migrate")
+            preflight.require_ready(
+                need="read" if args.status or args.dry_run else "migrate",
+                journal=Path(args.migrations_dir),
+            )
         ch = client()
     except preflight.PreflightError as e:
         print(f"  ✗ {e}", file=sys.stderr)

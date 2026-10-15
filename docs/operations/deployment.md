@@ -49,10 +49,10 @@ Sizing (web replicas, uvicorn processes, the workers container) is in
   starts Loom. It creates the `loom` database and the read-only `loom_reader` user
   (below), and checks the version and the grants. Run it again at any time with
   `docker compose --project-directory ~/.loom run --rm loom loom ch-setup`; what is
-  already in place is left alone, and an existing user it did not make is never
-  replaced.
+  already in place is left alone, and a user or settings profile of the reader's name
+  that does not log in with `LOOM_CH_PASSWORD` is never replaced.
 - **Without admin rights.** When the user cannot create the database, read the system
-  tables, create the reader or its settings profile, `ch-setup` stops and prints the SQL
+  tables the migrations read, create the reader or its settings profile, `ch-setup` stops and prints the SQL
   for an admin, with the password as a placeholder. `loom ch-setup --print-sql` prints
   it without connecting. The SQL grants the Loom user everything the admin holds on
   `loom.*` through `GRANT CURRENT GRANTS` (ClickHouse Cloud does not accept `GRANT ALL`),
@@ -117,8 +117,9 @@ The bundled ClickHouse starts with the files in `deploy/clickhouse-config/`:
   is `LOOM_CH_PASSWORD`. The bundled server defines it in `nlp_user_settings.xml`;
   `loom ch-setup` creates the same user and profile with SQL on any other server, from
   the current `LOOM_CH_CALLER_SHAPED_*` values. Raising one of those settings on the
-  bundled server needs the XML profile raised too; elsewhere, re-run `ch-setup`, as after
-  changing `LOOM_CH_PASSWORD`, which the reader shares. The
+  bundled server needs the XML profile raised too; elsewhere, re-run `ch-setup`. After changing
+  `LOOM_CH_PASSWORD`, which the reader shares, drop the reader (`DROP USER loom_reader`) and
+  re-run `ch-setup`: it takes only a reader that logs in with the current password as Loom's. The
   server probes the user at boot; `/v1/health` and `loom doctor` report
   `ch_reader_user_failing` when ClickHouse refuses it. Unset, the reads run as
   `LOOM_CH_USER`.
