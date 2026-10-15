@@ -137,7 +137,7 @@ def test_a_turn_without_a_time_keeps_the_one_it_is_recorded_with() -> None:
 
         async def query_all(self, sql, params=None):
             asked.extend(params["ids"])
-            return [{"message_id": "m1", "turn_at": recorded}]
+            return [{"message_id": "m1", "recorded_at": recorded}]
 
     client = _Client()
     inp = CostRecordTurnsInput(
@@ -148,13 +148,19 @@ def test_a_turn_without_a_time_keeps_the_one_it_is_recorded_with() -> None:
             {"message_id": "m1", "model": "claude-opus-5-5"},
             {"message_id": "m2", "model": "claude-opus-5-5", "turn_at": "not a time"},
             {"message_id": "m3", "model": "claude-opus-5-5", "turn_at": "2026-10-15T13:00:00Z"},
+            # Parses, but its offset takes it before year 1.
+            {
+                "message_id": "m4",
+                "model": "claude-opus-5-5",
+                "turn_at": "0001-01-01T00:00:00+01:00",
+            },
         ],
     )
     with patch.object(h, "get_client", return_value=client):
         asyncio.run(h.handle_cost_record_turns(inp))
     rows = [dict(zip(fake.cols, row, strict=True)) for row in fake.rows]
     at = {r["message_id"]: r["turn_at"] for r in rows}
-    assert asked == ["m1", "m2"]  # only the turns that came without a time
+    assert asked == ["m1", "m2", "m4"]  # only the turns that came without a time
     assert at["m1"] == recorded.replace(tzinfo=UTC)
     # Never recorded before: now.
     assert abs((datetime.now(UTC) - at["m2"]).total_seconds()) < 60

@@ -455,6 +455,7 @@
 4fcb350175fd	SELECT m.org, m.namespace, m.agent, m.user_id, m.session_id, m.memory_key, m.memory_type, m.value AS content_excerpt, m.run_id, m.entities, m.tags, m.files, m.concepts, m.valid_at, m.valid_to, m.expir
 502b6dac17fa	ALTER TABLE loom.search_trace_log DELETE WHERE (org = {org:String} AND namespace = {ns:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
 505ea8a01f4a	ALTER TABLE loom.entity_triple_memories DELETE WHERE (org = {org:String} AND namespace IN {ns:Array(String)}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_syn
+5085b2c9f74f	SELECT message_id, argMax(turn_at, version) AS recorded_at FROM loom.agent_turn_usage WHERE org = {org:String} AND namespace = {ns:String} AND session_id = {sid:String} AND message_id IN {ids:Array(St
 50baf1256eb9	SELECT count() AS n FROM loom.memory_code_links FINAL WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL
 51005813e7c3	SELECT unit_id, path, churn, amp, tested, callees, computed_at FROM loom.code_unit_risk FINAL WHERE org = {org:String} AND namespace = {ns:String} AND unit_id IN {ids:Array(String)}
 513947c6bd74	UPDATE loom.memory SET status = ?, rejection_reason = {reason:String} WHERE org = {org:String} AND namespace = {ns:String} AND agent = {agent:String} AND user_id = {uid:String} AND memory_key = {key:S
@@ -1088,7 +1089,6 @@ b0fc78c5f445	SELECT count() AS n FROM loom.memory_belief_sources FINAL WHERE org
 b10df17f0b0d	ALTER TABLE loom.memory_record_fields UPDATE tombstoned_at = {now:DateTime} WHERE (org = {org:String} AND tombstoned_at IS NULL AND record_id IN (SELECT record_id FROM loom.memory_records WHERE org = 
 b12468f0e092	SELECT ? FROM loom.memory WHERE tombstoned_at IS NULL AND expires_at IS NOT NULL AND expires_at <= now() AND (org, namespace) NOT IN (SELECT org, namespace FROM loom.namespaces FINAL WHERE retention_d
 b12d34885e03	ALTER TABLE loom.working_memory UPDATE tombstoned_at = {now:DateTime} WHERE (org = {org:String} AND tombstoned_at IS NULL AND namespace = {ns:String}) AND ({erasure_mutation_tag:String} = {erasure_mut
-b13e440443d1	SELECT message_id, argMax(turn_at, version) AS turn_at FROM loom.agent_turn_usage WHERE org = {org:String} AND namespace = {ns:String} AND session_id = {sid:String} AND message_id IN {ids:Array(String
 b17835f57d67	ALTER TABLE loom.working_memory DELETE WHERE (org = {org:String} AND namespace IN {ns:Array(String)}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
 b193058daa93	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 b21e9b73a809	SELECT count() AS n FROM loom.entity_degree WHERE org = {org:String} AND namespace IN {ns:Array(String)}

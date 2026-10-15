@@ -8,6 +8,7 @@ operations→handlers layering acyclic.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -26,6 +27,8 @@ from server.insights.api.models_cost import (
 )
 from server.insights.store import cost as cost_store
 from server.observability.budget import effective_cap
+
+log = logging.getLogger(__name__)
 
 # The events-only dimensions (memory_key, user_id, model, traffic_class,
 # instance_label, build_commit) and the cache columns exist only on the direct
@@ -198,13 +201,13 @@ async def handle_budget_status(input: BudgetStatusInput) -> BudgetStatusOutput:
 
 
 def _parse_turn_at(text: str) -> datetime | None:
-    """A turn's ISO-8601 time as an aware datetime, or None when it has none
-    or it does not parse."""
+    """A turn's ISO-8601 time in UTC, or None when it has none or it does not
+    parse (an offset that takes it past year 1 or 9999 included)."""
     try:
-        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-    except ValueError:
+        parsed = datetime.fromisoformat(text)
+        return (parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)).astimezone(UTC)
+    except (ValueError, OverflowError):
         return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
 async def handle_cost_record_turns(input: CostRecordTurnsInput) -> CostRecordTurnsOutput:
@@ -223,14 +226,16 @@ async def handle_cost_record_turns(input: CostRecordTurnsInput) -> CostRecordTur
     # A turn sent without a time keeps the one it is recorded with, so a
     # replay lands in the same run.
     undated = [t.message_id for t, at in zip(input.turns, parsed, strict=True) if at is None]
-    recorded: dict[str, datetime | None] = {}
+    recorded: dict[str, datetime] = {}
     if undated:
         try:
             recorded = await cost_store.recorded_turn_times(
                 input.org, input.namespace, input.session_id, undated, ch=get_client()
             )
-        except Exception:  # noqa: BLE001 — a spend ledger must never fail the turn
-            recorded = {}
+        except Exception:  # a failed lookup dates the turns now; the turn still records
+            log.warning(
+                "cost.record_turns: turn time lookup failed; undated turns dated now", exc_info=True
+            )
     for t, turn_at in zip(input.turns, parsed, strict=True):
         cost = turn_cost_usd(
             t.model,
@@ -247,7 +252,7 @@ async def handle_cost_record_turns(input: CostRecordTurnsInput) -> CostRecordTur
         elif t.model not in unpriced:
             unpriced.append(t.model)
         if turn_at is None:
-            turn_at = recorded.get(t.message_id) or now
+            turn_at = recorded.get(t.message_id, now)
         elif turn_at > now + _AHEAD_SLACK:
             # Kept as sent, so a replay lands in the same run; a client clock
             # running ahead is reported instead.
@@ -269,7 +274,7 @@ async def handle_cost_record_turns(input: CostRecordTurnsInput) -> CostRecordTur
                 t.output_tokens,
                 round(cost if priced else 0.0, 6),
                 priced,
-                turn_at.astimezone(UTC),  # aware: the driver reads a naive one as local
+                turn_at,  # aware UTC: the driver reads a naive one as local
             ]
         )
     try:
