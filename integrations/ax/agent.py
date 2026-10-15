@@ -30,9 +30,10 @@ async def work(agent: Agent, run_id: str) -> str:
         if await step(agent, run_id, n):
             return "completed"
         report = await agent.run.get(run_id)
-        if report["over_budget"]:
+        over = report.get("over_budget") or []  # absent on a server without budgets
+        if over:
             # Loom only reports the budget; stopping is the agent's call.
-            print(f"over budget ({', '.join(report['over_budget'])}); stopping")
+            print(f"over budget ({', '.join(over)}); stopping")
             return "cancelled"
 
 

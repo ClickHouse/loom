@@ -162,6 +162,25 @@ describe("Runs page", () => {
     expect(useStore.getState().recallRunFilter).toBe("r-full");
   });
 
+  it("shows the run's budget and which part of it the run went past", async () => {
+    const budgeted = { ...full, budget_usd: 1, budget_seconds: 1800 };
+    listRuns.mockResolvedValue([budgeted]);
+    getRun.mockResolvedValue(detail({ run: budgeted, cost_usd: 1.25, over_budget: ["cost"] }));
+    render(<Runs />);
+    fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
+    const dialog = await screen.findByRole("dialog");
+    const budget = await within(dialog).findByTitle(EMPTY_WHY.budget);
+    expect(budget).toHaveTextContent("$1 · 30m 0s · over cost");
+  });
+
+  it("a run without a budget shows a dash", async () => {
+    listRuns.mockResolvedValue([full]);
+    render(<Runs />);
+    fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByTitle(EMPTY_WHY.budget)).toHaveTextContent("—");
+  });
+
   it("drops a run.list answer that lands after the status filter changed", async () => {
     let answerAll: (v: RunRow[]) => void = () => {};
     listRuns

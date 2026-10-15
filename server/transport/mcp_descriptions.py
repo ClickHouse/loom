@@ -839,7 +839,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "loom_search and observe.record so everything this run recalls, "
         "relies on and writes joins one ledger row. Close it with "
         "run.complete. This is how loom learns which memories were USED, "
-        "not only returned, and how a later agent can replay what you did."
+        "not only returned, and how a later agent can replay what you did. "
+        "Optionally set budget_usd and budget_seconds; run.get then says when "
+        "the run goes past them."
     ),
     "run.complete": (
         "Close a run opened with run.begin — call EXACTLY ONCE when the task "
@@ -879,8 +881,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "run.get": (
         "Replay one run: goal, status, final response, the memories it relied "
         "on, the memory_keys it wrote, how many memories it recalled and "
-        "observed, and what its model turns cost. Use it to resume or audit a "
-        "previous execution before repeating its work."
+        "observed, and what its model turns cost. over_budget names a budget "
+        "the run has gone past. Use it to resume or audit a previous execution "
+        "before repeating its work."
     ),
     "procedure.record_run": (
         "Report one execution of a procedure so loom can learn which path "
@@ -2042,7 +2045,8 @@ ATOMIC_TOOL_DESCRIPTIONS: dict[str, str] = {
         "WHEN: A conclusion to keep alongside the current state without rewriting it."
     ),
     "run.begin": (
-        "WHAT: Open the run ledger entry for this task (goal, request). Returns run_id; "
+        "WHAT: Open the run ledger entry for this task (goal, request, optional "
+        "budget_usd / budget_seconds). Returns run_id; "
         "pass it on every memory call so notes and credit attach to this run.\n"
         "WHEN: Once, at the start of a task."
     ),

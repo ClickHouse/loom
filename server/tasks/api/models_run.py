@@ -52,16 +52,17 @@ class RunBeginInput(BaseModel):
     role: str = Field(default="", max_length=64)
     # Free-form key/values stored on the run; `role`, when set, is added to it.
     metadata: dict[str, Any] = Field(default_factory=dict)
-    # An optional budget: the model spend in USD and the seconds the run may
-    # take. run.get names the ones the run has gone past in `over_budget`.
-    # Loom does not run the agent, so this is a signal, never a stop. 0 = none.
+    # Model spend in USD the run may reach; needs a session_id. 0 = none.
+    # run.get reports a budget the run went past in `over_budget`: a signal for
+    # the agent, never a stop.
     budget_usd: float = Field(default=0.0, ge=0.0, le=100_000.0)
+    # Seconds the run may take; 0 = none.
     budget_seconds: int = Field(default=0, ge=0, le=30 * 86400)
 
     @model_validator(mode="after")
     def _cost_budget_has_a_session(self) -> RunBeginInput:
         # A run's spend is read from its session's recorded turns.
-        if self.budget_usd > 0 and self.session_id in ("", SENTINEL):
+        if self.budget_usd > 0 and self.session_id.strip() in ("", SENTINEL):
             raise ValueError("budget_usd needs a session_id: a run's spend is its session's turns")
         return self
 

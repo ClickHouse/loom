@@ -32,8 +32,10 @@ compares them with `cost_usd` and `elapsed_seconds` and lists the ones the run h
 mentor hint `run_over_budget`, which the plugins hand to the model as advice; a closed run still reports
 `over_budget` but gets no hint.
 
-A run's spend is the turns its session recorded between the run's start and its close, so `budget_usd` needs a
-`session_id` (a 422 otherwise), and two runs in one session each count only their own window.
+A run's spend is the turns Loom recorded for its session between the run's start and its close, so `budget_usd`
+needs a `session_id` (a 422 otherwise), and two runs in one session each count only their own window. The window
+goes by when Loom recorded each turn, not the turn's own timestamp, so a client clock that runs behind cannot hide
+spend; a turn recorded after the run closed does not count.
 
 Loom does not run the agent, so a budget is a signal for whoever does, never a stop. The cost side is only as fresh
 as the turns the plugin's Stop hook has recorded, and a call's cost is known only after it returns, so a run can go

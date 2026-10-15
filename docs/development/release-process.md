@@ -27,11 +27,13 @@ Two plugin pull requests that bump to the same number merge without a conflict, 
 
 ## Release notes
 
-The GitHub Release's notes are generated from the commits since the previous tag. Add what they cannot say
-by editing the release after the workflow creates it: operator steps (new settings, backfills, table rebuilds)
-and client-visible wire changes, including every removed request field and retired flag. No registry of
-removed fields exists, so the release notes are where a client learns of one. Generate the wire diff instead
-of writing it:
+The tag push generates the GitHub Release's notes from the commits since the previous tag; the later
+registry dispatch keeps them as they are. What commits cannot say goes in a "Release notes" section of the
+release pull request's description, so it is reviewed before the tag: operator steps (new settings,
+backfills, table rebuilds) and client-visible wire changes, including every removed request field and
+retired flag. No registry of removed fields exists, so the release notes are where a client learns of one.
+Once the workflow creates the release, paste that section above the generated notes. Generate the wire
+diff instead of writing it:
 
 ```bash
 python scripts/codegen/wire_changelog.py v<previous> HEAD
@@ -41,8 +43,9 @@ python scripts/codegen/wire_changelog.py v<previous> HEAD
 
 ## Cutting the release
 
-1. On a branch from `main`, open a pull request that sets the version everywhere above. CI must pass, including `make schema-check` and the
-   strict migration dry run.
+1. On a branch from `main`, open a pull request that sets the version everywhere above, with the
+   [release notes](#release-notes) section in its description. CI must pass, including
+   `make schema-check` and the strict migration dry run.
 2. After it merges, tag the merge commit and push the tag:
 
    ```bash
@@ -58,7 +61,7 @@ python scripts/codegen/wire_changelog.py v<previous> HEAD
    gh workflow run release.yml --ref vX.Y.Z
    ```
 
-5. Add the operator steps and the wire diff to the release notes (above).
+5. Paste the pull request's release notes section into the GitHub Release, above the generated notes.
 
 A tag containing `-` (`vX.Y.Z-rc.1`) makes a GitHub pre-release and does not move the `latest` image tag.
 

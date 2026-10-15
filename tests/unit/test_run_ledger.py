@@ -379,6 +379,18 @@ def test_begin_stores_the_budget_and_complete_carries_it(env) -> None:
     assert closed["budget_usd"] == 1.5 and closed["budget_seconds"] == 600
 
 
+def test_a_resent_begin_without_a_budget_keeps_the_runs_budget(env) -> None:
+    fake, _, h = env
+    fake.one.append(_run_row(budget_usd=1.5, budget_seconds=600))
+    asyncio.run(
+        h.handle_run_begin(
+            RunBeginInput(org="o", namespace="n", agent="claude", run_id="r1", goal="retry")
+        )
+    )
+    row = next(rows[0] for table, rows in fake.inserted if table == "loom.agent_runs")
+    assert row["budget_usd"] == 1.5 and row["budget_seconds"] == 600
+
+
 def _get_with(env, row: dict[str, Any], cost: float) -> Any:
     fake, _, h = env
     fake.one.append(row)
@@ -409,8 +421,11 @@ def test_a_closed_run_is_timed_by_its_duration(env) -> None:
 
 
 def test_a_cost_budget_needs_a_session() -> None:
-    with pytest.raises(ValidationError, match="session_id"):
-        RunBeginInput(org="o", namespace="n", agent="a", goal="g", budget_usd=1.0)
+    for blank in ("-", "", " "):
+        with pytest.raises(ValidationError, match="session_id"):
+            RunBeginInput(
+                org="o", namespace="n", agent="a", goal="g", session_id=blank, budget_usd=1.0
+            )
     RunBeginInput(org="o", namespace="n", agent="a", goal="g", session_id="s1", budget_usd=1.0)
     RunBeginInput(org="o", namespace="n", agent="a", goal="g", budget_seconds=60)
 

@@ -13,6 +13,11 @@ it cost.
 | `egress-policy.yaml` | The task's egress policy: Loom with the token injected by the gateway, and GitHub for the clone            |
 | `agent.py`           | The Loom calls an agent makes with the Python SDK: a run with a budget, checked between steps, then closed |
 
+There are two ways in, and the example ships both. `agent.py` is the SDK path
+and is what the `Task` runs. `.mcp.json` and `AGENTS.md` are for an image that
+runs an MCP agent instead (Claude Code reads `.mcp.json` from its working
+directory). Only the SDK path has been run inside an AX sandbox.
+
 The token never enters the task. AX's API has no authentication yet, a Task's
 `env` is printed by `ax get task`, and code in the sandbox reads its own
 environment (AX's `SECURITY.md`). So the Task carries a placeholder, and
@@ -106,25 +111,13 @@ and a Task created before its Workspace starts with an empty one. The task is
 created suspended, so the policy is in place before it first runs. Substrate
 denies all egress from an actor with no policy, and AX creates none.
 
-## The Workspace's git clone on AX `22954f6`
+## Known issue: the Workspace's git clone
 
-Substrate turns on an actor's egress only once the actor's wakeup probe
-passes, and AX `22954f6` probes `/readyz`, which waits for workspace setup.
-So the clone runs before the sandbox has a network: git fails with a TLS
-handshake error after five tries, the runner marks the workspace ready
-anyway, egress comes up, and the agent's own calls to Loom succeed. The task
-runs, but without its repository.
-
-An AX change that probes `/healthz` instead, reports a failed clone as not
-ready, and keeps `ax resume` inside its deadline while the workspace is not
-ready fixes this. It is proposed in
-[google/ax#482](https://github.com/google/ax/issues/482), since AX does not
-take external pull requests yet. Tested on a kind cluster with Substrate `f6a1dc72` (the
-commit AX pins): the repository cloned on the first try, the run, budget and
-memories reached Loom through the injected token, and a suspend and resume
-did it again. On an AX without that change, leave `spec.git` empty and have
-the agent clone the repository itself; egress is up by the time the command
-starts.
+On current AX the clone runs before the sandbox has a network, so it fails and
+the task runs without its repository. The fix is proposed in
+[google/ax#482](https://github.com/google/ax/issues/482). Until it lands, leave
+`spec.git` empty and have the agent clone the repository itself; egress is up
+by the time the command starts.
 
 ## Budgets
 

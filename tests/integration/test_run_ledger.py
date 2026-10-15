@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import uuid
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -133,7 +134,7 @@ async def test_complete_unknown_run_is_404(control_plane_url: str) -> None:
             await a.run.complete("never-begun", status="failed")
 
 
-async def _record_turn(a: Any, session_id: str, message_id: str) -> float:
+async def _record_turn(a: Any, session_id: str, message_id: str, turn_at: str = "") -> float:
     """One priced turn (10k input + 1k output tokens of claude-opus-5-5) under the session."""
     out = await a.transport.post(
         "/v1/cost.record_turns",
@@ -148,6 +149,7 @@ async def _record_turn(a: Any, session_id: str, message_id: str) -> float:
                     "model": "claude-opus-5-5",
                     "input_tokens": 10_000,
                     "output_tokens": 1_000,
+                    "turn_at": turn_at,
                 }
             ],
         },
@@ -189,6 +191,21 @@ async def test_each_run_in_a_session_counts_only_its_own_turns(control_plane_url
         # The first run's turn does not count against the second.
         assert got_second["turns"] == 1 and got_second["cost_usd"] == second_cost
         assert got_second["over_budget"] == ["cost"]
+
+
+@pytest.mark.asyncio
+async def test_a_turn_stamped_by_a_slow_client_clock_still_counts(control_plane_url: str) -> None:
+    from loom import Agent
+
+    ns = f"run-ledger-{uuid.uuid4().hex[:6]}"
+    async with Agent(org="run-test", namespace=ns, agent="w", base_url=control_plane_url) as a:
+        run = await a.run.begin(goal="slow clock", session_id="sess-c", budget_usd=0.01)
+        # A client clock five minutes behind the server stamps the turn before the run began.
+        behind = datetime.now(UTC) - timedelta(minutes=5)
+        cost = await _record_turn(a, "sess-c", "m1", turn_at=behind.isoformat())
+        got = await _get_with_turns(a, run["run_id"], 1)
+        assert got["turns"] == 1 and got["cost_usd"] == cost
+        assert got["over_budget"] == ["cost"]
 
 
 @pytest.mark.asyncio

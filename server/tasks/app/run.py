@@ -435,8 +435,9 @@ async def _open_run(
             if input.role.strip()
             else input.metadata
         ),
-        "budget_usd": input.budget_usd,
-        "budget_seconds": input.budget_seconds,
+        # A re-sent begin that names no budget keeps the one the run has.
+        "budget_usd": input.budget_usd or float((existing or {}).get("budget_usd") or 0.0),
+        "budget_seconds": input.budget_seconds or int((existing or {}).get("budget_seconds") or 0),
     }
     if version is not None:
         row["version"] = version
@@ -962,7 +963,7 @@ async def handle_run_get(input: RunGetInput) -> RunGetOutput:
 
 
 async def _run_cost(ch: Any, row: RunLedgerRow) -> tuple[int, float]:
-    """The turns and cost the run's session recorded while the run was open."""
+    """The turns and cost Loom recorded for the run's session while the run was open."""
     session_id = str(row.get("session_id") or "-")
     started = row.get("started_at")
     if session_id == "-" or not isinstance(started, datetime):

@@ -586,7 +586,7 @@ Fields for every `run` op: [operations/run.md](operations/run.md).
 | --- | --- | --- | --- | --- | --- |
 | [`run.begin`](operations/run.md#runbegin) | Open a RUN — one execution of a task — BEFORE you start working on it. | writer | idempotent | yes | yes |
 | [`run.complete`](operations/run.md#runcomplete) | Close a run opened with run.begin — call EXACTLY ONCE when the task ends. | writer | write | yes | yes |
-| [`run.get`](operations/run.md#runget) | Replay one run: goal, status, final response, the memories it relied on, the memory_keys it wrote, how many memories it recalled and observed, and what its model turns cost. | viewer | read | yes |  |
+| [`run.get`](operations/run.md#runget) | Replay one run: goal, status, final response, the memories it relied on, the memory_keys it wrote, how many memories it recalled and observed, and what its model turns cost. over_budget names a… | viewer | read | yes |  |
 | [`run.grade`](operations/run.md#rungrade) | A verdict on a CLOSED run, usually days after it — a maintainer confirmed the finding, CI passed, a reviewer rejected it. | writer | idempotent | no | yes |
 | [`run.list`](operations/run.md#runlist) | List a namespace's agent runs, newest first, filtered by agent, session, status or grade. | viewer | read | no |  |
 

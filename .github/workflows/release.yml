@@ -521,7 +521,9 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
-          generate_release_notes: true # from the commits since the previous tag
+          # From the commits since the previous tag, on the tag push only: on an
+          # existing release the action appends them again, under notes edited by hand.
+          generate_release_notes: ${{ github.event_name == 'push' }}
           draft: false
           prerelease: ${{ needs.version.outputs.prerelease == 'true' }}
           overwrite_files: true

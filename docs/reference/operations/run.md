@@ -30,8 +30,8 @@ Open a RUN — one execution of a task — BEFORE you start working on it.
 | `consumer` | `str` | `''` | The calling integration's tag, recorded on the ledger row. |
 | `role` | `str` | `''` | The agent's role in a multi-agent run — planner, executor, critic, or the team's own word. |
 | `metadata` | `dict[str, Any]` | *(computed)* | Free-form key/values stored on the run; `role`, when set, is added to it. |
-| `budget_usd` | `float` | `0.0` | An optional budget: the model spend in USD and the seconds the run may take. run.get names the ones the run has gone past in `over_budget`. |
-| `budget_seconds` | `int` | `0` |  |
+| `budget_usd` | `float` | `0.0` | Model spend in USD the run may reach; needs a session_id. 0 = none. run.get reports a budget the run went past in `over_budget`: a signal for the agent, never a stop. |
+| `budget_seconds` | `int` | `0` | Seconds the run may take; 0 = none. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -85,7 +85,7 @@ Close a run opened with run.begin — call EXACTLY ONCE when the task ends.
 
 ## `run.get`
 
-Replay one run: goal, status, final response, the memories it relied on, the memory_keys it wrote, how many memories it recalled and observed, and what its model turns cost.
+Replay one run: goal, status, final response, the memories it relied on, the memory_keys it wrote, how many memories it recalled and observed, and what its model turns cost. over_budget names a…
 
 `POST /v1/run.get` · MCP `loom_run_get` · role `viewer` · read
 

@@ -640,7 +640,23 @@ def test_run_over_budget_fires_only_when_run_get_names_a_budget() -> None:
     over = {"run": active, "over_budget": ["cost"], "cost_usd": 2.5, "elapsed_seconds": 30}
     hint = _call("run.get", {"run_id": "r1"}, over, session="s2")
     assert hint is not None and hint[0] == "run_over_budget"
-    assert "cost budget" in hint[1] and "$2.50" in hint[1] and "run.complete" in hint[1]
+    assert "cost budget" in hint[1] and "$2.5 spent" in hint[1] and "run.complete" in hint[1]
+    assert "elapsed" not in hint[1]
+
+
+def test_run_over_budget_names_only_the_budgets_it_went_past() -> None:
+    active = {"status": "active"}
+    time_only = {"run": active, "over_budget": ["time"], "cost_usd": 0.0, "elapsed_seconds": 90}
+    hint = _call("run.get", {"run_id": "r1"}, time_only, session="s-time")
+    assert hint is not None and "time budget (90 s elapsed)" in hint[1] and "$" not in hint[1]
+    both = {
+        "run": active,
+        "over_budget": ["cost", "time"],
+        "cost_usd": 0.0042,
+        "elapsed_seconds": 90,
+    }
+    hint = _call("run.get", {"run_id": "r1"}, both, session="s-both")
+    assert hint is not None and "cost and time budgets ($0.0042 spent, 90 s elapsed)" in hint[1]
 
 
 @pytest.mark.parametrize("status", ["completed", "failed", "cancelled"])

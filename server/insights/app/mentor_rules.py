@@ -908,11 +908,16 @@ def _rule_run_over_budget(
     over = res.get("over_budget") or []
     if op != "run.get" or not over or (res.get("run") or {}).get("status") != "active":
         return None
+    spent = []
+    if "cost" in over:
+        spent.append(f"${res.get('cost_usd', 0):.4g} spent")
+    if "time" in over:
+        spent.append(f"{res.get('elapsed_seconds', 0)} s elapsed")
+    budgets = "cost and time budgets" if len(over) > 1 else f"{over[0]} budget"
     return (
         "run_over_budget",
-        f"this run is past its {' and '.join(over)} budget (${res.get('cost_usd', 0):.2f} spent, "
-        f"{res.get('elapsed_seconds', 0)} s elapsed): wrap up and run.complete, or ask the user "
-        "before going on.",
+        f"this run is past its {budgets} ({', '.join(spent)}): wrap up and run.complete, "
+        "or ask the user before going on.",
     )
 
 
