@@ -16,6 +16,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, model_validator
 
 from server.core.naming import SENTINEL, names_session
+from server.operations.base import MCP_HIDDEN
 from server.operations.read_projection import ProjectedRow
 from server.tasks.domain.budgets import BudgetKind
 from server.tasks.domain.states import RunStatus
@@ -54,9 +55,10 @@ class RunBeginInput(BaseModel):
     role: str = Field(default="", max_length=64)
     # Free-form key/values stored on the run; `role`, when set, is added to it.
     metadata: dict[str, Any] = Field(default_factory=dict)
-    # Model spend in USD the run may reach (0 = none, kept on a re-sent begin).
-    # Needs a session_id, re-sent with it; run.get reports going past it in `over_budget`.
-    budget_usd: float = Field(default=0.0, ge=0.0, le=100_000.0)
+    # Model spend in USD the run may reach; needs a session_id (0 = none, kept on a re-sent begin).
+    # Re-sent with its session; run.get reports going past it in `over_budget`. Not
+    # offered over MCP, which hides session_id: a model cannot name its own session.
+    budget_usd: float = Field(default=0.0, ge=0.0, le=100_000.0, json_schema_extra=MCP_HIDDEN)
     # Seconds the run may take (0 = none, kept on a re-sent begin).
     budget_seconds: int = Field(default=0, ge=0, le=30 * 86400)
 

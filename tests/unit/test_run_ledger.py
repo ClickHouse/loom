@@ -664,3 +664,14 @@ def test_a_narrowed_runs_written_keys_and_observations_stay_in_its_scope() -> No
         asyncio.run(runs_store.written_keys(ch, "o", "n", "r", scope=scope))
         asyncio.run(runs_store.observation_count(ch, "o", "n", "r", scope=scope))
         assert all(("scope_uid" in s) is bounded for s in ch.sql), ch.sql
+
+
+def test_mcp_offers_the_time_budget_but_not_the_cost_one() -> None:
+    # MCP hides session_id, so a model could never satisfy budget_usd's session rule.
+    from server.transport import mcp_schemas
+
+    schema = mcp_schemas._strip_blob_fields_from_knowledge(
+        "run.begin", mcp_schemas.model_schema(RunBeginInput)
+    )
+    assert "budget_seconds" in schema["properties"]
+    assert "budget_usd" not in schema["properties"]
