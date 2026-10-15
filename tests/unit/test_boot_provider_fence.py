@@ -18,7 +18,8 @@ def setup(monkeypatch):
     owned = []
 
     @asynccontextmanager
-    async def lock():
+    async def lock(**kwargs):
+        assert kwargs["wait_s"] == boot.BOOT_LOCK_WAIT_S
         owned.append(True)
         try:
             yield
@@ -163,55 +164,20 @@ async def test_failed_boot_migrations_keep_the_cache(setup):
 
 
 @pytest.mark.asyncio
-async def test_a_worker_waits_for_a_sibling_applying_the_migrations(setup, monkeypatch):
-    """The lock's wait is shorter than a slow migration; a worker that misses
-    it must not fail its start while the sibling is still migrating."""
+async def test_a_lock_still_missed_after_the_wait_fails_the_start(setup, monkeypatch):
+    """Never read a pending list that came back empty as "a sibling finished":
+    the ledger read fails open, and a sibling may be mid-migration."""
     client, migrate, pending, _, execute, _ = setup
-    attempts = []
 
     @asynccontextmanager
-    async def busy():
-        attempts.append(True)
+    async def missed(**kwargs):
+        pending.return_value = []
         raise provider_lock.ConfigurationLockUnavailable("provider_configuration_lock_unavailable")
         yield
 
-    monkeypatch.setattr(provider_lock, "configuration_lock", busy)
-    # Pending at the first check and after the first miss; the sibling then finishes.
-    pending.side_effect = [["027_x.sql"], ["027_x.sql"], []]
-    assert (
+    monkeypatch.setattr(provider_lock, "configuration_lock", missed)
+    with pytest.raises(provider_lock.ConfigurationLockUnavailable):
         await boot.run_fenced_boot_migrations(
             client, migrate, "lock", enabled=True, pending=pending
         )
-        == 0
-    )
-    assert len(attempts) == 2
     execute.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_a_worker_applies_what_is_still_pending_once_it_gets_the_lock(setup, monkeypatch):
-    client, migrate, pending, _, execute, owned = setup
-    misses = [True]
-
-    @asynccontextmanager
-    async def lock():
-        if misses:
-            misses.pop()
-            raise provider_lock.ConfigurationLockUnavailable(
-                "provider_configuration_lock_unavailable"
-            )
-        owned.append(True)
-        try:
-            yield
-        finally:
-            owned.pop()
-
-    monkeypatch.setattr(provider_lock, "configuration_lock", lock)
-    assert (
-        await boot.run_fenced_boot_migrations(
-            client, migrate, "lock", enabled=True, pending=pending
-        )
-        == 0
-    )
-    execute.assert_called_once()
-    assert not owned

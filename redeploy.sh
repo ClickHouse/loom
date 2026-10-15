@@ -108,7 +108,11 @@ ensure_proxy() {
 }
 
 reload_proxy() {
-  docker exec loom-proxy nginx -t 2>&1 | sed 's/^/    /'
+  # Callers run as `swap_to … || exit 1`, where `set -e` does not apply, so a
+  # failed config test must stop the reload explicitly.
+  local tested=0
+  docker exec loom-proxy nginx -t 2>&1 | sed 's/^/    /' || tested=$?
+  ((tested == 0)) || return 1
   docker exec loom-proxy nginx -s reload
 }
 
@@ -139,7 +143,7 @@ swap_to() {
   local colour=$1
   echo "==> swapping the proxy to loom-$colour"
   write_upstream "$colour"
-  reload_proxy
+  reload_proxy || return 1
   # The reload is asynchronous for in-flight requests but immediate for new
   # ones; confirm through the proxy that the new build answers.
   local got

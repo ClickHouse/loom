@@ -216,6 +216,11 @@ async def register_tracker_namespaces(ch: Any) -> None:
         query_tag_var.reset(tag)
 
 
+# How long a booting process waits for the provider configuration lock, which
+# a sibling holds while its migrations run: the lock's TTL.
+BOOT_LOCK_WAIT_S = 300
+
+
 async def run_fenced_boot_migrations(
     ch: Any,
     migrate: Callable[[list[str]], int],
@@ -266,30 +271,15 @@ async def _fenced_boot_migrations(
         return run_boot_migrations_if_enabled(migrate, lock_path, enabled=True, pending=pending)
     from server.insights.domain.provider_setup import pending_configuration
     from server.insights.store.provider_configuration import configurations
-    from server.insights.store.provider_lock import (
-        ConfigurationLockUnavailable,
-        configuration_lock,
-    )
+    from server.insights.store.provider_lock import configuration_lock
 
-    while True:
-        try:
-            async with configuration_lock():
-                if pending_configuration(await configurations(ch=ch)) is not None:
-                    raise RuntimeError(
-                        "Finish the provider rebuild before applying schema migrations"
-                    )
-                return run_boot_migrations_if_enabled(
-                    migrate, lock_path, enabled=True, pending=pending
-                )
-        except ConfigurationLockUnavailable:
-            # Most often a sibling process applying these same migrations, which
-            # can outlast the lock's wait. Failing here would stop the whole
-            # server (uvicorn exits when one worker fails to start).
-            if not pending():
-                return 0
-            logging.getLogger(__name__).info(
-                "boot migrations: another process holds the provider configuration lock; waiting"
-            )
+    # Failing to start while a sibling migrates would stop the whole server:
+    # uvicorn exits when one worker fails to start.
+    log = logging.getLogger(__name__)
+    async with configuration_lock(wait_s=BOOT_LOCK_WAIT_S, out=log.info):
+        if pending_configuration(await configurations(ch=ch)) is not None:
+            raise RuntimeError("Finish the provider rebuild before applying schema migrations")
+        return run_boot_migrations_if_enabled(migrate, lock_path, enabled=True, pending=pending)
 
 
 # One-shot boot tasks nobody awaits. The loop holds only a weak reference to

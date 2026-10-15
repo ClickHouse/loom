@@ -109,3 +109,17 @@ def test_nginx_replaces_client_sent_address_headers() -> None:
     assert "$proxy_add_x_forwarded_for" not in text
     assert "proxy_set_header X-Forwarded-For $remote_addr;" in text
     assert "proxy_set_header X-Real-IP $remote_addr;" in text
+
+
+@pytest.mark.parametrize(("tested", "reloaded"), [(0, True), (1, False)])
+def test_a_failed_config_test_stops_the_swap(tested: int, reloaded: bool) -> None:
+    """`swap_to … || exit 1` turns `set -e` off inside it, so the check is explicit."""
+    script = f"""
+set -euo pipefail
+docker() {{ if [ "$4" = -t ]; then return {tested}; fi; echo reloaded; }}
+eval "$(sed -n '/^reload_proxy() {{/,/^}}/p' {SCRIPT})"
+swap() {{ reload_proxy || return 1; echo swapped; }}
+swap || echo stopped
+"""
+    out = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True).stdout
+    assert out.split() == (["reloaded", "swapped"] if reloaded else ["stopped"])
