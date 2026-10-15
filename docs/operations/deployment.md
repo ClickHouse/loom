@@ -124,7 +124,8 @@ The bundled ClickHouse starts with the files in `deploy/clickhouse-config/`:
   (`DROP USER loom_reader; DROP SETTINGS PROFILE loom_reader`) and re-run `ch-setup`: it
   replaces only a reader that logs in with the current password. The server probes the
   user at boot; `/v1/health` and `loom doctor` report `ch_reader_user_failing` when
-  ClickHouse refuses it. Unset, the reads run as `LOOM_CH_USER`.
+  ClickHouse refuses it. Set empty (`LOOM_CH_READER_USER=` in `.env`), the reads run as
+  `LOOM_CH_USER`.
 - **Ports.** If `8123` or `9000` is taken, set `LOOM_CH_HOST_PORT` or
   `LOOM_CH_NATIVE_HOST_PORT` in `.env`. These are compose variables for the host side
   only; containers always talk to `clickhouse:8123`.

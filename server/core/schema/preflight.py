@@ -18,7 +18,6 @@ from server.core.paths import MIGRATIONS_DIR
 if TYPE_CHECKING:
     from clickhouse_connect.driver.client import Client
 
-log = logging.getLogger(__name__)
 
 DATABASE = "loom"
 # The oldest server that applies every migration: 26.3 still gates stem() and
@@ -181,8 +180,7 @@ def _migrations_pending(ch: Client, journal: Path) -> bool:
         return True
     try:
         applied = applied_migrations(ch)
-    except Exception as e:  # noqa: BLE001 — unknown means pending, the strict side
-        log.warning("migration ledger unreadable, checking as if migrating: %s", str(e)[:160])
+    except Exception:  # noqa: BLE001 — unknown means pending, the strict side
         return True
     return bool(ledger_report(applied, files).pending)
 
@@ -209,7 +207,6 @@ def oldest_version(ch: Client, *, strict: bool = True) -> str:
             if strict:
                 reason = str(e).splitlines()[0].split(" (for url")[0][:200]
                 raise PreflightError(f"cannot read every replica's version: {reason}") from None
-            log.warning("replica versions unknown; checking the connected server: %s", str(e)[:160])
         versions = [str(ch.command("SELECT version()"))]
     return min(versions, key=version_key)
 
@@ -330,7 +327,7 @@ def warnings(server: Server) -> str:
     parts = []
     if server.next_migration:
         reasons = "; ".join(gap.reason for gap in server.next_migration)
-        parts.append(f"the next boot with a migration to apply will refuse: {reasons}")
+        parts.append(f"the next migration will refuse: {reasons}")
     if server.unreadable:
         tables = ", ".join(f"system.{t}" for t in server.unreadable)
         parts.append(f"may not read {tables}, so the telemetry from these tables stays empty")

@@ -20,7 +20,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
-from typing import Any
+from typing import Any, Literal
 
 from server.core.ch_errors import error_code
 from server.core.schema import preflight
@@ -135,7 +135,7 @@ def reader_status(reader: str) -> tuple[bool | None, str]:
             ch.close()
     except Exception as e:  # noqa: BLE001 — every failure is a reason the reader is not ready
         if error_code(e) in preflight.AUTH_FAILED:
-            return False, "it does not accept LOOM_CH_PASSWORD"
+            return False, "it does not exist or does not accept LOOM_CH_PASSWORD"
         return None, str(e).splitlines()[0][:160]
     actual = {row[0]: _setting(*row[1:]) for row in rows}
     # `readonly` cannot be changed under readonly anyway, so only its value counts.
@@ -147,7 +147,10 @@ def reader_status(reader: str) -> tuple[bool | None, str]:
     return True, ""
 
 
-def reader_objects(ch: Any, reader: str) -> str:
+Found = Literal["", "config", "user", "foreign", "profile", "unknown"]
+
+
+def reader_objects(ch: Any, reader: str) -> Found:
     """What already carries the reader's name: "" (nothing), "config" (the
     server's users.xml, as on the bundled server), "user" (an SQL user in the
     shape ch-setup gives it: a password and the settings profile of its own
@@ -200,6 +203,7 @@ def _print_admin_sql(user: str, reader: str) -> None:
     """The SQL for an admin, on stderr after the reason it follows, so the two
     never interleave when a container relays the streams apart."""
     err = sys.stderr
+    sys.stdout.flush()
     print(
         f"\nHave an admin run this, with the password of {user} in place of the placeholder:\n",
         file=err,
@@ -214,6 +218,7 @@ def _print_admin_sql(user: str, reader: str) -> None:
 
 
 def _refuse(message: str) -> bool:
+    sys.stdout.flush()  # the progress so far comes first, even through a pipe
     print(f"✗ {message}", file=sys.stderr)
     return False
 
@@ -268,7 +273,7 @@ def _ensure_reader(ch: Any, user: str, reader: str) -> bool:
         _print_admin_sql(user, reader)
         return False
     if not logged_in:
-        return _refuse(f"{reader} exists: {problem}. {drop_hint}")
+        return _refuse(f"{reader} exists but does not accept LOOM_CH_PASSWORD. {drop_hint}")
     print(f"· {reader}: {problem}; rebuilding it")
     return _create_reader(ch, user, reader, fresh=False)
 
@@ -304,8 +309,12 @@ def _set_up(ch: Any, user: str, reader: str) -> int:
             _print_admin_sql(user, reader)
         return 1
     print(f"✓ ClickHouse {server.version}; database {preflight.DATABASE} ready for {user!r}")
-    if warning := preflight.warnings(server):
-        print(f"· {warning}")
+    # Strict, so only the telemetry tables can be left: name the grant itself.
+    for table in server.unreadable:
+        print(
+            f"· may not read system.{table}, so its telemetry stays empty; "
+            f"an admin can run GRANT SELECT ON system.{table} TO `{user}`"
+        )
 
     if not _ensure_reader(ch, user, reader):
         return 1

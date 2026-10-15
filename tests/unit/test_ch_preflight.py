@@ -365,7 +365,12 @@ def test_the_reader_must_not_be_the_loom_user(monkeypatch: pytest.MonkeyPatch) -
     ("found", "logged_in", "problem", "refusal"),
     [
         # A same-named user that does not log in with Loom's password: an analyst's account.
-        ("user", False, "it does not accept LOOM_CH_PASSWORD", "DROP USER IF EXISTS"),
+        (
+            "user",
+            False,
+            "it does not exist or does not accept LOOM_CH_PASSWORD",
+            "DROP USER IF EXISTS",
+        ),
         # A probe that failed for another reason proves nothing: no advice to drop it.
         ("user", None, "Read timed out", "could not check analyst: Read timed out"),
         # No password, not on its own profile, or a shared profile.
@@ -594,3 +599,41 @@ def test_the_doctor_warns_that_boot_will_create_the_database(
     name, grade, detail = doctor._doctor_preflight_check()
     assert (name, grade) == ("clickhouse_preflight", doctor.WARN)
     assert "boot will create it" in detail
+
+
+_TELEMETRY_GAP = preflight.Server(
+    "26.5.1.882", keeper=True, lightweight_updates=True, unreadable=("query_log",)
+)
+
+
+async def test_boot_logs_what_a_passing_preflight_warns_of_once(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from server import boot
+
+    monkeypatch.setattr(preflight, "require_ready", lambda **_: _TELEMETRY_GAP)
+    with caplog.at_level("WARNING"):
+        await boot.require_clickhouse_ready()
+    lines = [r.getMessage() for r in caplog.records if "system.query_log" in r.getMessage()]
+    assert len(lines) == 1 and lines[0].startswith("ClickHouse preflight: ")
+
+
+def test_migrate_prints_what_a_passing_preflight_warns_of(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from server.core.schema import migrate
+
+    monkeypatch.setattr(preflight, "require_ready", lambda **_: _TELEMETRY_GAP)
+    migrate._check_server(argparse.Namespace(status=False, dry_run=False, migrations_dir="."))
+    assert "! may not read system.query_log" in capsys.readouterr().err
+
+
+def test_ch_setup_names_the_grant_for_an_unreadable_telemetry_table(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(ch_setup, "reader_objects", lambda ch, reader: "config")
+    monkeypatch.setattr(ch_setup, "reader_status", lambda reader: (True, ""))
+    ch = FakeCH(denied=("SELECT * FROM system.query_log",))
+    assert ch_setup._set_up(ch, "loom_app", "loom_reader") == 0
+    out = capsys.readouterr().out
+    assert "GRANT SELECT ON system.query_log TO `loom_app`" in out and "--print-sql" not in out
