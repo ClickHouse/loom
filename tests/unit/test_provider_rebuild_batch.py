@@ -174,12 +174,28 @@ async def test_cancellation_is_not_swallowed_as_provider_failure(target):
 
 
 @pytest.mark.asyncio
-async def test_empty_unindexed_text_stays_unindexed_in_target_space(target):
-    row = {**row_for("chunks"), "content": "", "embedding": [], "embedding_dim": 0}
+@pytest.mark.parametrize("stored", [[], [0.0, 0.0, 0.0]], ids=["empty", "placeholder"])
+async def test_empty_unindexed_text_stays_unindexed_in_target_space(target, stored):
+    row = {**row_for("chunks"), "content": "", "embedding": stored, "embedding_dim": 0}
     result = (await rebuild_batch("chunks", [row], target))[0]
     assert result["embedding_model"] == "target-model"
     assert result["embedding"] == []
     assert result["embedding_dim"] == 0
+    target.embed_many.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_structural_summary_card_without_text_rebuilds_as_a_placeholder(target):
+    """A file the summary worker gave no card keeps the graph pass's row: no summary,
+    and the zero vector the insert path pads a coded column with."""
+    from server.code.store.index import build_row
+    from server.core.vectors.placeholders import pad_rows
+
+    row = build_row("code_summaries", org="o", namespace="n", embedding_model="old-model")
+    row.update(scope_path="tests/__init__.py", pagerank=0.1)
+    assert pad_rows("code_summaries", [row]) == 1 and not any(row["embedding"])
+    result = (await rebuild_batch("code_summaries", [row], target))[0]
+    assert (result["embedding"], result["embedding_dim"], result["pagerank"]) == ([], 0, 0.1)
     target.embed_many.assert_not_awaited()
 
 

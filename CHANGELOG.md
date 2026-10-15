@@ -71,6 +71,11 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
 
 ### Fixed
 
+- Choosing a new embedding model in **Settings → Models & keys** failed with
+  `source_text_missing` on a freshly indexed repository: the rebuild took the zero vector
+  that pads a text-less row (a file's structural summary card before its summary is
+  written) for a real one. Such rows now rebuild as placeholders.
+
 - The quickstart told released-stack users to add repositories from the dashboard, which
   that stack refuses with `SANDBOX_UNAVAILABLE`, since it runs without the repository-job
   sandbox. It now shows how to index one through `LOOM_CODE_REPOS_JSON`, `loom code init`

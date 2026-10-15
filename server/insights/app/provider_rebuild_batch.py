@@ -77,8 +77,9 @@ def _inputs(
             if value.strip():
                 texts.append(value)
                 slots.append((index, column))
-            elif row[column]:
-                # An existing nonempty vector cannot be rebuilt without text.
+            elif any(row[column]):
+                # A real vector cannot be rebuilt without text; an all-zero one is
+                # the insert path's placeholder for none (vectors/placeholders.py).
                 raise RebuildBatchError("source_text_missing")
     return texts, slots
 
