@@ -1318,7 +1318,11 @@ async def test_undo_makes_the_restored_value_current_and_retires_nothing(
     # A replay of the Undo finds its observations and weighs London no more.
     scope = SimpleNamespace(org=org, namespace=NS, agent="bot")
     await entity_projections.reopen_held_facts(
-        scope, [str(london["memory_id"])], ch=ch, restored_at=restored_at
+        scope,
+        [str(london["memory_id"])],
+        ch=ch,
+        restored_at=restored_at,
+        restore_id=await _restore_id(ch, org),
     )
     assert await _open_weights(ch, org, "london") == {"triples": 1, "edges": 1}
     (row,) = await ch.query_all(
@@ -1761,6 +1765,151 @@ async def test_an_undo_of_a_row_holding_two_values_keeps_the_later_one_current(c
     assert await _open_cities(ch, org, {"berlin"}) == {"berlin"}
 
 
+async def test_an_undo_weighs_a_fact_whose_row_a_close_ends_ahead(ch, org) -> None:
+    # A close dated December ends London's row ahead and stamps it now: that row is
+    # not current for the readers, so the Undo's own London row carries the weight.
+    from types import SimpleNamespace
+
+    from server.memory.app import entity_projections
+    from server.memory.app.projections import close_triples
+
+    live = ("user", "live_in")
+    london = await _stated(ch, org, "s1", "I live in London", (*live, "london"))
+    now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+    december = now + timedelta(days=60)
+    await close_triples(ch, org=org, namespace=NS, closes=[(*live, "london", december, now)])
+    await _mutations_done(ch, org)
+    scope = SimpleNamespace(org=org, namespace=NS, agent="bot")
+    await entity_projections.reopen_held_facts(scope, [str(london["memory_id"])], ch=ch)
+    await _mutations_done(ch, org)
+    (marker,) = await ch.query_all(
+        "SELECT co_occur FROM loom.entity_triples WHERE org = {org:String}"
+        " AND adapter_name = 'row-restore' SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert marker["co_occur"] == 1
+
+
+async def _support(ch: Any, org: str, city: str, ends: datetime) -> None:
+    """An older weighted row of `city` that ends at `ends`, not closed by any repair."""
+    from server.memory.app.projections import entity_triple_row
+
+    hour_ago = datetime.now(UTC).replace(tzinfo=None, microsecond=0) - timedelta(hours=1)
+    row = entity_triple_row(
+        org, NS, "user", "live_in", city, provenance="t", confidence=1.0, adapter_name="t",
+        last_seen=hour_ago, seen_at=hour_ago, valid_to=ends,
+    )  # fmt: skip
+    await ch.insert("loom.entity_triples", [row], settings={"wait_for_async_insert": 1})
+
+
+async def _london_edges(ch: Any, org: str) -> list[tuple]:
+    got = await ch.query_all(
+        "SELECT co_occur, valid_from, valid_to, last_seen FROM loom.entity_edges"
+        " WHERE org = {org:String} AND entity_a = 'london'"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    return sorted((tuple(g.values()) for g in got), key=str)
+
+
+async def _marker_weights(ch: Any, org: str, edges_before: list[tuple]) -> dict[str, list[int]]:
+    """The weights of the Undo's own London rows: its `row-restore` triples, and the
+    London edges not there before it."""
+    triples = await ch.query_all(
+        "SELECT co_occur FROM loom.entity_triples WHERE org = {org:String}"
+        " AND object = 'london' AND adapter_name = 'row-restore'"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    edges = await _london_edges(ch, org)
+    for e in edges_before:
+        edges.remove(e)
+    return {"triples": [int(t["co_occur"]) for t in triples], "edges": [e[0] for e in edges]}
+
+
+async def test_an_undo_keeps_its_weight_past_the_end_of_a_row_weighed_now(ch, org) -> None:
+    # An older London row carries weight until next month; the Undo's London has no
+    # end. Past that month London is still current, so the Undo's rows weigh 1.
+    from server.memory.api.models_facts import FactsTraverseInput
+    from server.memory.app.facts import handle_facts_traverse
+    from server.memory.app.restore import handle_memory_restore
+
+    live = ("user", "live_in")
+    london = await _stated(ch, org, "s1", "I live in London", (*live, "london"))
+    paris = await _stated(ch, org, "s2", "I live in Paris", (*live, "paris"))
+    await _follow_retirement(ch, org, london, paris)
+    next_month = datetime.now(UTC).replace(tzinfo=None, microsecond=0) + timedelta(days=17)
+    await _support(ch, org, "london", next_month)
+    await _edges_like_triples(ch, org)
+    before = await _london_edges(ch, org)
+    assert (await handle_memory_restore(_undo_of(paris))).restored
+    await _mutations_done(ch, org)
+    assert await _marker_weights(ch, org, before) == {"triples": [1], "edges": [1]}
+    for labeled in (True, False):
+        walk = FactsTraverseInput(
+            org=org, namespace=NS, seed_entity="user", max_hops=1, labeled=labeled,
+            as_of=next_month + timedelta(days=13),
+        )  # fmt: skip
+        nodes = {n.entity: n.via_co_occur for n in (await handle_facts_traverse(walk)).nodes}
+        assert nodes.get("london", 0) >= 1, (labeled, nodes)
+
+
+async def test_an_undo_dated_ahead_keeps_its_weight_past_a_row_that_ends_first(ch, org) -> None:
+    # London from Dec 1 retires behind Paris and is Undone: its rows start on Dec 1.
+    # An older London row weighs until next month only, so it never covers them.
+    from server.memory.app.restore import handle_memory_restore
+
+    live = ("user", "live_in")
+    now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+    december = now + timedelta(days=47)
+    london = await _stated(
+        ch, org, "s1", "I move to London on Dec 1", (*live, "london"), valid_at=december
+    )
+    paris = await _stated(ch, org, "s2", "I live in Paris", (*live, "paris"))
+    await _follow_retirement(ch, org, london, paris)
+    await _support(ch, org, "london", now + timedelta(days=17))
+    await _edges_like_triples(ch, org)
+    before = await _london_edges(ch, org)
+    assert (await handle_memory_restore(_undo_of(paris))).restored
+    await _mutations_done(ch, org)
+    (start,) = await ch.query_all(
+        "SELECT valid_from FROM loom.entity_triples WHERE org = {org:String}"
+        " AND adapter_name = 'row-restore' SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert start["valid_from"] == december
+    assert await _marker_weights(ch, org, before) == {"triples": [1], "edges": [1]}
+
+
+async def test_two_undos_a_microsecond_apart_each_keep_their_own_markers(
+    ch, org, monkeypatch
+) -> None:
+    # Two rows say "I lived in Rome. I now live in Berlin." and retire behind Paris.
+    # Undone a microsecond apart, the second must not take the first's Berlin marker
+    # for its own: Berlin, stated after Rome, stays current.
+    from server.memory.app import entity_projections
+    from server.memory.app.restore import handle_memory_restore
+
+    live = ("user", "live_in")
+    value = "I lived in Rome. I now live in Berlin."
+    first = await _stated(ch, org, "s1", value, (*live, "rome"), also=((*live, "berlin"),))
+    second = await _stated(
+        ch, org, "s3", value, (*live, "rome"), also=((*live, "berlin"),), memory_key="k3"
+    )
+    await _mutations_done(ch, org)
+    paris = await _stated(ch, org, "s2", "I live in Paris", (*live, "paris"))
+    await _follow_retirement(ch, org, first, paris)
+    await _follow_retirement(ch, org, second, paris)
+    assert await _open_cities(ch, org, {"paris"}) == {"paris"}
+    at = datetime.now(UTC).replace(tzinfo=None)
+    undo_second = _undo_of(paris).model_copy(update={"session_id": "s3", "memory_key": "k3"})
+    for undo, instant in ((_undo_of(paris), at), (undo_second, at + timedelta(microseconds=1))):
+        monkeypatch.setattr(entity_projections, "naive_utc_now", lambda t=instant: t)
+        assert (await handle_memory_restore(undo)).restored
+    await _mutations_done(ch, org)
+    assert await _open_cities(ch, org, {"berlin"}) == {"berlin"}
+
+
 async def test_an_undo_takes_no_end_from_an_older_row_of_its_fact(ch, org) -> None:
     # An older row said London until December; a later row said London with no end,
     # and a supersession closed it. The latest row's end was the close's: the Undo
@@ -1798,6 +1947,16 @@ async def test_an_undo_takes_no_end_from_an_older_row_of_its_fact(ch, org) -> No
         ("edges", None),
         ("triples", None),
     ]
+
+
+async def _restore_id(ch: Any, org: str) -> str:
+    """The id of the org's one Undo, from the markers it wrote."""
+    (row,) = await ch.query_all(
+        "SELECT DISTINCT restore_id FROM loom.entity_triples WHERE org = {org:String}"
+        " AND restore_id != '' SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    return str(row["restore_id"])
 
 
 async def test_undo_of_an_open_fact_keeps_its_date_for_later_writes(ch, org, monkeypatch) -> None:
@@ -1838,9 +1997,14 @@ async def test_undo_of_an_open_fact_keeps_its_date_for_later_writes(ch, org, mon
         )
     )
     assert out.restored
+    # A replay, as the repair runs it: the Undo's instant and id.
     scope = SimpleNamespace(org=org, namespace=NS, agent="bot")
     await entity_projections.reopen_held_facts(
-        scope, [str(london["memory_id"])], ch=ch, restored_at=restored_at
+        scope,
+        [str(london["memory_id"])],
+        ch=ch,
+        restored_at=restored_at,
+        restore_id=await _restore_id(ch, org),
     )
     (counted,) = await ch.query_all(
         "SELECT count() AS n FROM loom.entity_triples WHERE org = {org:String}"
@@ -2439,6 +2603,32 @@ async def test_a_bulk_revision_to_high_closes_what_its_row_held(ch, org) -> None
     assert await _open_cities(ch, org, set()) == set()
 
 
+async def test_a_stored_row_revised_into_a_superseded_value_closes_what_it_held(
+    ch, org, judge
+) -> None:
+    # s1's row is revised in place by a late bulk and lands superseded behind s2's
+    # later row: the facts it held close, as they would for any revision.
+    from server.memory import store as M
+    from server.memory.api.models_bulk import MemoryBulkSetInput
+    from server.memory.app.bulk_set import handle_memory_bulk_set
+
+    jazz = await _stated(ch, org, "s1", "I like jazz", triple=("user", "likes", "jazz"))
+    rock = _row(org, "s2", "I like rock", datetime(2026, 6, 1))
+    await M.insert_memory_versions([rock], ch=ch)
+    assert await _open_cities(ch, org, {"jazz"}) == {"jazz"}
+    entry = {"memory_key": KEY, "value": "I like blues", "valid_at": datetime(2026, 5, 1)}
+    out = await handle_memory_bulk_set(
+        MemoryBulkSetInput(
+            org=org, namespace=NS, agent="bot", user_id=USER, session_id="s1", entries=[entry]
+        )
+    )
+    (written,) = out.written
+    assert written.memory_id == str(jazz["memory_id"])
+    assert written.superseded_by == str(rock["memory_id"])
+    await _mutations_done(ch, org)
+    assert await _open_cities(ch, org, set()) == set()
+
+
 async def test_an_undo_stays_newer_than_a_value_dated_before_it(ch, org) -> None:
     # London (May) retires behind Paris (June); an Undo brings London back now. Rome,
     # dated July and imported after the Undo, is older than the Undo's assertion.
@@ -2559,6 +2749,8 @@ async def test_two_undated_writers_racing_in_one_second_leave_one_current_value(
 
 async def _edges_like_triples(ch: Any, org: str) -> None:
     """One edge per triple row, with its interval, as a row naming both would write."""
+    # A triple whose close is still pending would be copied open, as a live edge.
+    await _mutations_done(ch, org)
     triples = await ch.query_all(
         "SELECT subject, object, valid_from, valid_to, invalid_at, last_seen"
         " FROM loom.entity_triples"

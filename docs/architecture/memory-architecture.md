@@ -347,11 +347,13 @@ the value it was written or stated for (`carried`):
   when that end is still to come ("London until December" is undone until December, not
   for ever); when that row's end was set by a supersession close (it stamps
   `invalid_at`), the fact stated none, so the marker has none, even when an older row
-  stated one. These observations state nothing new: one carries `co_occur` 1 only when
-  its fact (or edge) has no weighted row the readers count as current after the restore
-  (started by then, and open or ending later), the usual Undo of a closed value, so the
-  graph's readers still count it, and 0 otherwise, so Undoing back and forth adds no
-  weight. A marker the interval repair closes as it starts is never current, so it
+  stated one. These observations state nothing new: one carries `co_occur` 0 only when
+  a single weighted row of its fact (or edge), not stamped `invalid_at`, spans the
+  marker's whole interval (starting by the marker's start and ending no earlier than its
+  end, or open when the marker is), so Undoing back and forth adds no weight; and 1
+  otherwise (the usual Undo of a closed value), so the graph's readers still count it
+  after a shorter row ends. Rows that only together span the marker do not count: at
+  worst one weight too many, never a fact lost. A marker the interval repair closes as it starts is never current, so it
   weighs 0 too: another marker of the same Undo (same subject, same single-valued
   relation) starts no later and is newer than the value's newest row, the marker or its
   fact's newest open row by start day. Rome's total stays the same however often that
@@ -369,15 +371,14 @@ the value it was written or stated for (`carried`):
   asserted after the Undo, or starting on a later day, stays current. An Undo never
   retires a row. A replayed Undo reuses the restore's instant from the failure, not the
   replay's clock, so it keeps its place in the order: a value asserted after the Undo,
-  even in its second, stays current. A marker is this Undo's when it is a `row-restore`
-  row seen in its microseconds (from the instant, as many as the restored rows link
-  facts), open or closed since, so a replay adds none and restates each as stored, from
-  its own start ("Berlin on Dec 1" still closes Rome on Dec 1), while a fact held only
-  since gets its marker after those stored, and another Undo in the same second, with
-  its own instant, is told apart. Edges carry no microseconds: an edge marker is written
-  only beside a missing triple marker, before it, and an edge row seen in the Undo's
-  second, starting where the marker starts, that no repair closed stands for it, so a
-  replay after a failed triple insert does not repeat it. The failure records each
+  even in its second, stays current. Each Undo has an id (`restore_id`, migration 031),
+  stored on every triple and edge marker it writes and recorded in its failure: a marker
+  is this Undo's when it carries that id, open or closed since, so a replay adds none
+  and restates each as stored, from its own start ("Berlin on Dec 1" still closes Rome
+  on Dec 1), while a fact held only since gets its marker after those stored, and
+  another Undo, even a microsecond apart, never takes them for its own. An edge marker
+  is written before its triple marker, so a replay after a failed triple insert finds
+  the edge by the id and does not repeat it. The failure records each
   restored row's `content_sha256`; a replay skips a row revised since, whose revision
   reconciles its facts, so the revised value is never dated at the Undo.
   A failed interval repair records the triple write for replay too; when the triples

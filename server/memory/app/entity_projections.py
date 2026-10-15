@@ -477,12 +477,16 @@ async def reconcile_row_facts(
 ) -> None:
     """Fail-open `reopen_held_facts` (`reopen`) or `close_dropped_facts` for the rows
     `ids` of `input`'s namespace; a failure is recorded for the projection repair, with
-    the time of the restore its replay is dated at and the `content_sha256` each
-    restored row had (`hashes`), so the replay skips a row revised since."""
+    the time of the restore its replay is dated at, the Undo's id its replay finds its
+    rows by, and the `content_sha256` each restored row had (`hashes`), so the replay
+    skips a row revised since."""
     restored_at = naive_utc_now()
+    restore_id = uuid.uuid4().hex
     try:
         if reopen:
-            await reopen_held_facts(input, ids, ch=ch, restored_at=restored_at)
+            await reopen_held_facts(
+                input, ids, ch=ch, restored_at=restored_at, restore_id=restore_id
+            )
         else:
             await close_dropped_facts(input, ids, ch=ch)
     except Exception as e:  # noqa: BLE001 — a projection; the write stands
@@ -490,6 +494,7 @@ async def reconcile_row_facts(
         payload: dict[str, Any] = {"memory_ids": ids, "reopen": reopen}
         if reopen:
             payload["restored_at"] = restored_at.isoformat()
+            payload["restore_id"] = restore_id
             payload["content_sha256"] = dict(hashes or {})
         await record_input_projection_failure(
             input,
@@ -529,27 +534,18 @@ async def close_dropped_facts(input: Any, ids: list[str], *, ch: Any) -> None:
 
 
 async def reopen_held_facts(
-    input: Any, ids: list[str], *, ch: Any, restored_at: datetime | None = None
+    input: Any,
+    ids: list[str],
+    *,
+    ch: Any,
+    restored_at: datetime | None = None,
+    restore_id: str = "",
 ) -> None:
-    """Open again the facts the rows `ids` hold now (by the rule a revision keeps
-    them by): an Undo brings a retired row's facts back with it.
-    An Undo is an assertion made at the restore (`restored_at`, now by default, to the
-    microsecond): each fact the rows hold, open or not, gets a new observation of its
-    latest row starting at the restore (or at a closed fact's own later start), ending
-    where that row's own stated end (not one a close set) is still to come, and its edge
-    one from the same start, so later writes read the Undo's date back from storage.
-    The observations are a microsecond apart in the facts' stored order, so of two
-    values the rows hold the later stays the later. It weighs 1 only when the fact (or
-    edge) has no weighted row the readers count as current after the Undo, the usual
-    Undo of a closed value, so readers still count it; otherwise 0, so Undoing back and
-    forth adds no weight, and 0 when another of the Undo's observations closes it as it
-    starts. While another tenant's mutation blocks the weight read, it raises and writes
-    nothing: the caller records the failure for the replay. Every one then
-    goes through the interval repair as a value seen at its observation, by the usual
-    rule: it beats the retirement it undoes, which arrived earlier, and loses to a
-    value asserted after it or starting on a later day. No row retires.
-    A replay passes the restore's time: it finds the observations written, by that
-    instant, restates them as stored, and repairs again as of the Undo."""
+    """Open again the facts the rows `ids` hold now: an Undo brings a retired row's
+    facts back. An Undo is an assertion made at the restore, so each fact gets a new
+    observation starting then, repaired like any other value; no row retires. A replay
+    passes `restored_at` and `restore_id`, finds the observations that Undo wrote and
+    restates them."""
     from server.identity.app.namespace_ontology import load_relation_cardinality
 
     # Only what the restored rows' values hold now: another row's claim keeps a fact
@@ -560,17 +556,12 @@ async def reopen_held_facts(
         return
     restored = restored_at or naive_utc_now()
     now = restored.replace(microsecond=0)  # as the DateTime columns store it
-    # The Undo restates its facts in their stored order, a microsecond apart from the
-    # restore, as one write stores its triples: the markers fall in [restored, until).
-    # The bound counts every fact the rows link, so it holds what an earlier attempt
-    # wrote however many of them are held now.
-    until = restored + timedelta(microseconds=len(linked))
+    restore_id = restore_id or uuid.uuid4().hex
     # On the fly: a retirement's closes are mutations, and a row they will close is
     # weighed as closed already (the close expressions are deterministic).
     latest = await ch.query_all(
         """
-        WITH adapter_name = 'row-restore' AND seen_at >= {seen:DateTime64(6)}
-             AND seen_at < {until:DateTime64(6)} AS ours
+        WITH restore_id = {rid:String} AS ours
         SELECT subject, relation, object, argMax(confidence, seen_at) AS confidence,
                argMax(provenance, seen_at) AS provenance,
                -- The latest row's place in the order of its relation.
@@ -587,9 +578,9 @@ async def reopen_held_facts(
                countIf(ours) AS restored,
                -- This Undo's own marker, found by a replay: its start and when seen.
                minIf(valid_from, ours) AS marker_start, minIf(seen_at, ours) AS marker_seen,
-               -- What the readers count as current after the Undo's second.
-               countIf(co_occur > 0 AND (valid_from IS NULL OR valid_from <= {at:DateTime})
-                       AND (valid_to IS NULL OR valid_to > {at:DateTime})) AS weighted
+               -- The intervals of the rows the readers count, weighed against the marker's.
+               groupArrayIf(tuple(valid_from, valid_to),
+                            co_occur > 0 AND invalid_at IS NULL) AS support
         FROM loom.entity_triples
         WHERE org = {org:String} AND namespace = {ns:String}
           AND (subject, relation, object) IN {triples:Array(Tuple(String, String, String))}
@@ -600,9 +591,7 @@ async def reopen_held_facts(
             "org": input.org,
             "ns": input.namespace,
             "triples": sorted(held),
-            "at": now,
-            "seen": restored,
-            "until": until,
+            "rid": restore_id,
         },
     )
     # Marker i is seen i microseconds after the restore, in the facts' stored order, so
@@ -624,13 +613,15 @@ async def reopen_held_facts(
             if n is not m
         )
     }
-    # This Undo's markers are its 'row-restore' rows seen in its range: a replay finds
-    # them and adds none, while another Undo in the same second is told apart.
+    # This Undo's markers are the rows carrying its id: a replay finds them and adds
+    # none, and no other Undo takes them for its own.
     fresh = [m for m in markers if not m.row["restored"]]
     settings = {"async_insert": 1, "wait_for_async_insert": 1}
     # Edges first: if the triple markers then fail to land, a replay finds these edges
     # and adds none.
-    await _insert_edge_markers(input, fresh, beaten, now, settings=settings, ch=ch)
+    await _insert_edge_markers(
+        input, fresh, beaten, now, restore_id=restore_id, settings=settings, ch=ch
+    )
     rows = [
         entity_triple_row(
             input.org,
@@ -646,8 +637,13 @@ async def reopen_held_facts(
             # Dated at the Undo; a closed interval before it stays as history.
             valid_from=m.start,
             valid_to=_still_ahead(m.row["ends"], m.start),
-            # The Undo states nothing new: it only gives a closed fact its weight back.
-            co_occur=0 if m.row["weighted"] or _triple(m) in beaten else 1,
+            # The Undo states nothing new: it only gives a closed fact its weight back,
+            # so Undoing back and forth adds none, and a value it closes as it starts
+            # gets none.
+            co_occur=0
+            if _covered(m.row["support"], m.start, m.row["ends"]) or _triple(m) in beaten
+            else 1,
+            restore_id=restore_id,
         )
         for m in fresh
     ]
@@ -717,13 +713,13 @@ async def _insert_edge_markers(
     beaten: set[tuple[str, str, str]],
     now: datetime,
     *,
+    restore_id: str,
     settings: dict[str, Any],
     ch: Any,
 ) -> None:
     """Give each fresh marker's edge an observation from the Undo, from its earliest
-    marker's start: only an edge the graph has, weighed like its triples. Edges carry no
-    microseconds, so an edge row seen in the Undo's second and starting there, not
-    closed since, stands for an earlier attempt's."""
+    marker's start: only an edge the graph has, weighed like its triples. An edge row
+    carrying the Undo's id is an earlier attempt's, and none is added."""
     edge_markers: dict[tuple[str, str], list[_Marker]] = {}
     for m in fresh:
         pair = canonical_edge_pair(m.row["subject"], m.row["object"])
@@ -736,13 +732,9 @@ async def _insert_edge_markers(
             SELECT entity_a, entity_b,
                    argMax(tuple(if(invalid_at IS NULL, valid_to, NULL)), last_seen).1
                        AS ends,
-                   countIf(valid_from = arrayElement({starts:Array(DateTime)},
-                               indexOf({pairs:Array(Tuple(String, String))}, (entity_a, entity_b)))
-                           AND last_seen = {at:DateTime} AND invalid_at IS NULL) AS restored,
-                   countIf(co_occur > 0
-                           AND (valid_from IS NULL OR valid_from <= {at:DateTime})
-                           AND (valid_to IS NULL OR valid_to > {at:DateTime})
-                           AND invalid_at IS NULL) AS weighted
+                   countIf(restore_id = {rid:String}) AS restored,
+                   groupArrayIf(tuple(valid_from, valid_to),
+                                co_occur > 0 AND invalid_at IS NULL) AS support
             FROM loom.entity_edges
             WHERE org = {org:String} AND namespace = {ns:String}
               AND (entity_a, entity_b) IN {pairs:Array(Tuple(String, String))}
@@ -753,8 +745,7 @@ async def _insert_edge_markers(
                 "org": input.org,
                 "ns": input.namespace,
                 "pairs": pairs,
-                "starts": [starts[p] for p in pairs],
-                "at": now,
+                "rid": restore_id,
             },
         )
         if pairs
@@ -776,7 +767,8 @@ async def _insert_edge_markers(
                 last_seen=now,
                 valid_from=start,
                 valid_to=_still_ahead(e["ends"], start),
-                co_occur=0 if e["weighted"] or lost else 1,
+                co_occur=0 if _covered(e["support"], start, e["ends"]) or lost else 1,
+                restore_id=restore_id,
             )
         )
     if edge_rows:
@@ -788,6 +780,18 @@ def _newest(m: _Marker) -> tuple[date, datetime, str]:
     open row when that is newer."""
     start, seen = m.row["newest_open"]
     return max(_key(m), observation_key(start, seen, m.row["object"]))
+
+
+def _covered(support: list[tuple[Any, Any]], start: datetime, ends: datetime | None) -> bool:
+    """Whether one weighted row (`support`: their intervals) spans the whole of a marker
+    from `start` to the end it keeps (none: open), so the marker needs no weight of its
+    own. Rows that only together span it do not count: one weight too many at worst,
+    never a fact lost."""
+    end = _still_ahead(ends, start)
+    return any(
+        (vf is None or vf <= start) and (vt is None or (end is not None and vt >= end))
+        for vf, vt in support
+    )
 
 
 def _still_ahead(end: datetime | None, now: datetime) -> datetime | None:

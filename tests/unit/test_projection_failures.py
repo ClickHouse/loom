@@ -136,6 +136,23 @@ async def test_a_replay_writes_nothing_for_a_row_that_no_longer_holds_its_value(
     assert ch.asked == [(_ROW_ID, sha256_value(failure.payload["entries"][0]["value"]))]
 
 
+@pytest.mark.parametrize(
+    ("projection", "table"),
+    [("entity_edges", "loom.entity_edges"), ("entity_triples", "loom.entity_triples")],
+)
+async def test_a_failure_recorded_before_results_named_their_row_replays_as_it_did(
+    projection, table
+) -> None:
+    # Queued before results carried a row id: nothing to check it against, so the
+    # replay writes what it wrote then instead of resolving with nothing done.
+    ch = _GraphCH(held=False)
+    failure = _graph_failure(projection)
+    failure.payload["results"] = [{"memory_key": "k1", "version": 1}]
+    result = await retry_projection_failure(failure, ch=ch)
+    assert result.resolved and not result.abandoned
+    assert table in {t for t, _ in ch.inserts}
+
+
 def test_the_write_path_keeps_its_async_inserts() -> None:
     from server.memory.app.projections import graph_insert_settings
 

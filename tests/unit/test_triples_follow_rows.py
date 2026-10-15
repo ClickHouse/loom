@@ -566,6 +566,9 @@ _JNJ = ("johnson and johnson", "headquarter_in", "new brunswick")
         ("I live in Zu\u0308rich", "I live in Z\u00fcrich.", ("user", "live_in", "zürich")),
         # A lead-in is not part of the statement.
         ("User stated that I live in London", _LIVE, _LIVES),
+        # A dot inside a name or a number ends no sentence.
+        ("I use next.js", "I use next.js", ("user", "use", "next.js")),
+        ("I use python 3.12", "I use python 3.12.", ("user", "use", "python 3.12")),
     ],
 )
 def test_a_revision_that_restates_the_statement_keeps_its_successor(old, new, triple) -> None:

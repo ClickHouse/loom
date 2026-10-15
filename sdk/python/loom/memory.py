@@ -1184,9 +1184,16 @@ class MemoryClient:
         *,
         user_id: str | None = None,
         session_id: str | None = None,
+        if_superseded_by: str | None = None,
+        only_if_superseded: bool = False,
     ) -> dict[str, Any]:
         """Bring back a deleted memory (within the 14-day grace window) or one
         Loom retired on its own (status `superseded`).
+
+        `if_superseded_by` restores the row only while it is still retired
+        behind that memory id (as a `memory.auto_supersede` record names it);
+        `only_if_superseded` restores it only while it is retired at all, never
+        undoing a delete.
 
         Returns the full memory.restore response:
           - `restored: bool` — True if a live row was written.
@@ -1195,6 +1202,8 @@ class MemoryClient:
           - `expired: bool` — True when the tombstone aged past the 14d
             grace window. The data is being GC'd; restoration is no longer
             possible.
+          - `from_status: str` — `"tombstoned"` (a delete undone) or
+            `"superseded"` (a retirement reversed); empty on a no-op.
 
         Preserves the original char_limit, pinned, tags, and entities
         across the restore. Expires_at is intentionally cleared so the
@@ -1203,6 +1212,10 @@ class MemoryClient:
         """
         payload = self._identity(user_id, session_id)
         payload["memory_key"] = memory_key
+        if if_superseded_by:
+            payload["if_superseded_by"] = if_superseded_by
+        if only_if_superseded:
+            payload["only_if_superseded"] = True
         return await self._agent.transport.post("/v1/memory.restore", payload)
 
     async def clear(

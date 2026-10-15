@@ -82,10 +82,7 @@ async def write_versions_by_ids(
     try:
         found = await asyncio.gather(*reads)
     except BaseException:
-        # No read keeps running once the caller moves on. A read already cancelled
-        # (the caller's cancel reached it through the gather) is not cancelled again,
-        # so its cleanup finishes; a second cancel of the caller during this wait is
-        # not held off.
+        # Stop the other reads, letting any already cancelled finish their cleanup.
         for r in reads:
             if not r.cancelling():
                 r.cancel()

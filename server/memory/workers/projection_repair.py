@@ -30,7 +30,7 @@ class ProjectionRepairResult:
     retried: int = 0
     resolved: int = 0
     unsupported: int = 0
-    # Given up on: a follow whose chain no retry can read.
+    # Given up on: a failure no retry can do its work for (its reason says why).
     abandoned: int = 0
     failed: list[dict[str, str]] = field(default_factory=list)
 

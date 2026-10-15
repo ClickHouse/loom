@@ -242,11 +242,13 @@ def entity_edge_row(
     valid_from: datetime | None = None,
     valid_to: datetime | None = None,
     co_occur: int = 1,
+    restore_id: str = "",
 ) -> dict[str, Any]:
     """One `loom.entity_edges` row for the canonical pair (entity_a <= entity_b). A
     fresh observation is never born superseded (`invalid_at` NULL):
     _repair_contradictory_edges stamps the OLDER pair. `co_occur` is the weight the
-    readers sum; an Undo's observation carries 0 when the edge is open with weight."""
+    readers sum; an Undo's observation carries 0 when the edge is open with weight,
+    and the Undo's id (`restore_id`)."""
     return {
         "org": org,
         "namespace": namespace,
@@ -257,6 +259,7 @@ def entity_edge_row(
         "valid_from": valid_from,
         "valid_to": valid_to,
         "invalid_at": None,
+        "restore_id": restore_id,
     }
 
 
@@ -275,13 +278,14 @@ def entity_triple_row(
     valid_from: Any = None,
     valid_to: Any = None,
     co_occur: int = 1,
+    restore_id: str = "",
 ) -> dict[str, Any]:
     """One `loom.entity_triples` row as every triple writer inserts it. A fresh
     triple is never born superseded (`invalid_at` NULL): the contradiction
     repair stamps the older row. `seen_at` is the write's arrival to the
     microsecond, which orders values (`observation_key`); `last_seen` is its
     second. `co_occur` is the weight the readers sum; an Undo's observation
-    carries 0 when the fact is open with weight."""
+    carries 0 when the fact is open with weight, and the Undo's id (`restore_id`)."""
     return {
         "org": org,
         "namespace": namespace,
@@ -297,6 +301,7 @@ def entity_triple_row(
         "valid_from": valid_from,
         "valid_to": valid_to,
         "invalid_at": None,
+        "restore_id": restore_id,
     }
 
 
