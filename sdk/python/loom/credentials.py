@@ -43,8 +43,10 @@ _DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
 # Refresh this long before the access token expires, so a call never leaves
 # with a token that dies in flight.
 _REFRESH_MARGIN_S = 60
-# Well inside the server's 30-second grace for a retried refresh.
-_REFRESH_TIMEOUT_S = 10.0
+# Longer than a refresh can take on the server, which asks the identity
+# provider first (discovery and token calls, 10 s each): giving up sooner
+# would resend a token the server has already spent, which ends the session.
+_REFRESH_TIMEOUT_S = 45.0
 
 
 def _path() -> Path:
@@ -212,7 +214,10 @@ def login(
         tokens = _poll(client, meta["token_endpoint"], grant)
     with _locked():  # another process may be rotating a profile in the same file
         _save(profile, server, tokens)
-    return whoami(profile=profile)
+    info = whoami(profile=profile)
+    # Said every time: a code someone else approved signs you in as them.
+    echo(f"Signed in to {server} as {info.get('subject')} ({info.get('org')}).")
+    return info
 
 
 def _poll(client: httpx.Client, token_endpoint: str, grant: dict[str, Any]) -> dict[str, Any]:
@@ -278,9 +283,8 @@ def _refresh(profile: str, refused: str) -> dict[str, Any]:
         endpoint = _endpoints(client)["token_endpoint"]
         try:
             r = client.post(endpoint, data=form, timeout=_REFRESH_TIMEOUT_S)
-        except httpx.TransportError:
-            # The server may have spent the token and lost the answer: ask
-            # again at once, inside its retry grace, or it takes us for a thief.
+        except (httpx.ConnectError, httpx.ConnectTimeout):
+            # Nothing reached the server, so nothing was spent: try once more.
             r = client.post(endpoint, data=form, timeout=_REFRESH_TIMEOUT_S)
     if r.status_code == 400 and _oauth_error(r) == "invalid_grant":
         _drop(profile)

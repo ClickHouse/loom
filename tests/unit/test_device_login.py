@@ -552,7 +552,7 @@ def test_password_login_is_closed_under_sso(monkeypatch) -> None:
     assert r.status_code == 404 and r.json()["detail"]["code"] == "PASSWORD_LOGIN_SSO"
 
 
-# ── round trips that must not be finished, forged or left hanging ─────────
+# ── IdP round trips: one browser, never left hanging ────────────────────────
 
 
 def test_a_callback_from_another_browser_is_refused(sso) -> None:
@@ -681,7 +681,7 @@ async def test_logout_survives_an_unreachable_identity_provider(monkeypatch) -> 
     await oidc.revoke("idp-refresh")  # logged, not raised
 
 
-# ── round 2: revocation that lasts, parallel sign-ins, tokens left at the IdP ─
+# ── revocation that lasts, parallel sign-ins, IdP tokens ────────────────────
 
 
 def test_revoking_a_long_lived_token_lasts_as_long_as_the_token(_world) -> None:
@@ -751,7 +751,7 @@ def test_user_codes_are_keyed_with_the_server_secret(_world) -> None:
     assert stored != plain and len(stored) == 64
 
 
-# ── round 3: a session is a person, not an hour ───────────────────────────
+# ── sessions and the tokens they mint ───────────────────────────────────────
 
 
 def test_ending_a_session_refuses_its_access_tokens() -> None:
@@ -834,7 +834,7 @@ def test_a_refused_sso_sign_in_revokes_the_idp_token_it_got(sso, monkeypatch) ->
     assert revoked == ["idp-r1"]
 
 
-# ── round 5: theft ends the stolen session, never the person ──────────────
+# ── theft ends the stolen session, never the person ─────────────────────────
 
 
 def test_a_revoked_subject_cannot_sign_in_again(_world) -> None:
@@ -908,7 +908,7 @@ def test_session_children_carry_the_sessions_minted_key() -> None:
         verify_token(child)
 
 
-# ── round 6: a retry is not a theft, a leaked code proves nothing ─────────
+# ── retries are not thefts, a leaked code proves nothing ────────────────────
 
 
 def test_a_quick_retry_ends_the_session_but_keeps_what_it_minted(_world) -> None:
@@ -991,7 +991,7 @@ def test_a_leaked_spent_code_alone_ends_nothing(_world, monkeypatch) -> None:
     assert len(_world["revoked"]) == 2
 
 
-# ── round 8 ───────────────────────────────────────────────────────────────
+# ── failures put credentials back ───────────────────────────────────────────
 
 
 def test_a_failed_code_exchange_leaves_the_code_unspent(_world, monkeypatch) -> None:

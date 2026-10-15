@@ -112,10 +112,7 @@ def run(args: argparse.Namespace) -> int:
     """Run one parsed command: prints the answer, returns the exit code."""
     try:
         if args.cmd == "login":
-            info = credentials.login(
-                args.server, profile=args.profile, open_browser=not args.no_browser
-            )
-            print(f"Signed in to {info['server']} as {info.get('subject')} ({info.get('org')}).")
+            credentials.login(args.server, profile=args.profile, open_browser=not args.no_browser)
         elif args.cmd == "logout":
             confirmed = credentials.logout(args.profile)
             print("Signed out." if confirmed else "Signed out here; the server did not confirm.")

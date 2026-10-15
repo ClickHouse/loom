@@ -80,7 +80,7 @@ class _Server:
         if path == "/v1/whoami":
             auth = request.headers.get("authorization", "")
             return httpx.Response(
-                200, json={"authenticated": True, "subject": "alice", "bearer": auth}
+                200, json={"authenticated": True, "subject": "alice", "org": "acme", "bearer": auth}
             )
         return httpx.Response(404)
 
@@ -290,17 +290,45 @@ def test_an_explicit_profile_wins_and_keeps_to_its_server(server, monkeypatch) -
         Agent("acme", "a", "n", profile="never-signed-in")
 
 
-def test_a_refresh_whose_answer_is_lost_is_asked_again_at_once(server, monkeypatch) -> None:
+def test_a_refresh_that_never_reached_the_server_is_tried_again(server, monkeypatch) -> None:
     credentials.login(_SERVER, open_browser=False, echo=lambda _: None)
     real = server.__class__.__call__
-    lost = {"n": 0}
+    refused = {"n": 0}
 
-    def drop_first_refresh(self: Any, request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/oauth/token" and lost["n"] == 0:
-            lost["n"] += 1
-            raise httpx.ReadTimeout("answer lost", request=request)
+    def no_connection_once(self: Any, request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/oauth/token" and refused["n"] == 0:
+            refused["n"] += 1
+            raise httpx.ConnectError("connection refused", request=request)
         return real(self, request)
 
-    monkeypatch.setattr(server.__class__, "__call__", drop_first_refresh)
+    monkeypatch.setattr(server.__class__, "__call__", no_connection_once)
     assert credentials.access_token(refused="a1") == "a2"
-    assert lost["n"] == 1
+
+
+def test_a_refresh_whose_answer_is_lost_is_not_resent(server, monkeypatch) -> None:
+    """The server may have spent the token: sending it again would end the
+    session, so the SDK reports a retryable failure and keeps what it has."""
+    from loom.errors import BackendUnavailable
+
+    credentials.login(_SERVER, open_browser=False, echo=lambda _: None)
+    real = server.__class__.__call__
+    sent: list[str] = []
+
+    def answer_lost(self: Any, request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/oauth/token":
+            sent.append(dict(httpx.QueryParams(request.content.decode()))["refresh_token"])
+            real(self, request)  # the server rotates the token...
+            raise httpx.ReadTimeout("answer lost", request=request)  # ...and the answer is lost
+        return real(self, request)
+
+    monkeypatch.setattr(server.__class__, "__call__", answer_lost)
+    with pytest.raises(BackendUnavailable):
+        credentials.access_token(refused="a1")
+    assert sent == ["r1"]  # once, never resent
+    assert _stored()["profiles"]["default"]["refresh_token"] == "r1"
+
+
+def test_login_says_who_it_signed_in(server) -> None:
+    printed: list[str] = []
+    credentials.login(_SERVER, open_browser=False, echo=printed.append)
+    assert printed[-1] == f"Signed in to {_SERVER} as alice (acme)."

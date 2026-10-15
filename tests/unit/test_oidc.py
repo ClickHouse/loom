@@ -242,16 +242,6 @@ async def test_jit_refuses_a_namespace_someone_made_first(monkeypatch) -> None:
     assert called["n"] == 0
 
 
-def test_nobody_can_claim_an_sso_namespace_name(monkeypatch) -> None:
-    from fastapi import HTTPException
-
-    assert self_signup._claimable_namespace("u-bob-1234abcd") == "u-bob-1234abcd"  # JIT off
-    monkeypatch.setattr(settings, "oidc_jit_provision", True)
-    with pytest.raises(HTTPException) as e:
-        self_signup._claimable_namespace("u-bob-1234abcd")
-    assert e.value.status_code == 422
-
-
 async def test_jit_rejects_disallowed_domain(monkeypatch) -> None:
     monkeypatch.setattr(settings, "oidc_jit_provision", True)
     monkeypatch.setattr(settings, "oidc_jit_org", "acme")

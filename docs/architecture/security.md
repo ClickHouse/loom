@@ -218,9 +218,9 @@ a copy, so it also revokes the session's `<sid>/minted` key, which every token d
 the session carries in `parents`: the service accounts and MCP tokens a thief could have
 minted end with it. A replay sooner than that is taken for a client retrying a request whose
 answer it lost; a thief who lands inside that window keeps what they minted, but loses the
-session. No path revokes more than the one session; a person's other sessions and tokens are never
-collateral, and nothing automatic writes a subject-wide revocation (which could replace an
-operator's outright ban). A subject revoked outright is issued nothing.
+session. No path revokes more than the one session; a person's other sessions and tokens
+are never collateral, and nothing automatic writes a subject-wide revocation (which could
+replace an operator's outright ban). A subject revoked outright is issued nothing.
 
 Tokens delegated from a session are not clipped to the session's hour but to its horizon,
 30 days (the refresh tokens' lifetime), and they outlive logout. Under OIDC each refresh
