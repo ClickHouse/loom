@@ -37,6 +37,14 @@ Commands fall into two kinds:
 
 `loom mint-token` needs only `LOOM_JWT_SECRET`: it signs a token locally.
 
+**Session commands** (`login`, `logout`, `whoami`, `call`) are the Python SDK's
+own (`loom.cli`; `python -m loom …` with only the SDK installed), so `loom`
+needs `pip install clickhouse-loom` for them. `loom login [--server URL]
+[--profile NAME] [--no-browser]` signs in with a one-time code;
+`loom call <op|/path> [key=value …] [--data JSON] [--org] [--namespace]` reaches
+any operation or route with that session. See
+[use Loom without the dashboard](../guides/without-the-dashboard.md).
+
 ## Conventions
 
 **Dry run by default for rewrites.** A command that rewrites stored rows
@@ -276,9 +284,10 @@ python scripts/codegen/docs_reference.py
 | `loom ingest-transcript` | Pipe a chat-history file (markdown / JSON) into Loom's conversation table as one thread. | `--server-url`, `--token`, `--org`, `--namespace`, `--agent`, `--thread-id`, `--file`, `--dry-run` |
 | `loom memory-search` | Run a memory.search from the shell. | `--server-url`, `--token`, `--org`, `--namespace`, `--agent`, `--user-id`, `--query`, `--top-k`, `--search-mode`, `--json-agent` |
 | `loom set-host` | Designate the Loom host(s) for this deployment. | `<emails>`, `--env-file`, `--append`, `--dry-run` |
-| `loom login` | Sign in to a Loom server on any browser with a one-time code. | `--profile`, `--server`, `--no-browser` |
-| `loom logout` | End the stored session on the server and forget it here. | `--profile` |
-| `loom whoami` | Show who the stored session signs you in as. | `--profile` |
+| `loom login` | Sign in to a Loom server on any browser with a one-time code. |  |
+| `loom logout` | End the stored session on the server and forget it here. |  |
+| `loom whoami` | Show who the stored session signs you in as. |  |
+| `loom call` | Call any operation or API route with the stored session (`loom call --help`). |  |
 
 <!-- prettier-ignore-end -->
 <!-- END GENERATED: cli -->

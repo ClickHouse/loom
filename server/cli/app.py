@@ -17,7 +17,7 @@ from server.cli.import_brain import _add_brain_import_parser
 from server.cli.import_clickgap import _add_clickgap_import_parser
 from server.cli.import_recall import _add_recall_import_parser
 from server.cli.install import _INSTALL_HELP, _add_install_flags, _cmd_install
-from server.cli.login import add_login_parsers
+from server.cli.login import SDK_COMMANDS, add_login_parsers, run_sdk_command
 from server.cli.maintenance import (
     _add_activity_trivia_parser,
     _add_memory_repair_parsers,
@@ -298,6 +298,9 @@ _SUBCOMMAND_BUILDERS: tuple[Any, ...] = (
 
 def main(argv: list[str] | None = None) -> int:
     _load_dotenv_like_the_container()
+    raw = sys.argv[1:] if argv is None else argv
+    if raw and raw[0] in SDK_COMMANDS:
+        return run_sdk_command(raw)
     parser = argparse.ArgumentParser(
         prog="loom",
         description="Loom — vendor-neutral agent memory plane on ClickHouse.",

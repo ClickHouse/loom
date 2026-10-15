@@ -16,6 +16,8 @@ from types import TracebackType
 from typing import Any
 
 from loom._logging import logger
+from loom.account import AccountClient
+from loom.admin import AdminClient
 from loom.audit import AuditClient
 from loom.blacklist import BlacklistClient
 from loom.briefs import BriefsClient
@@ -166,6 +168,8 @@ class Agent:
         # the same surface as the TypeScript `LoomClient`; the clients below are
         # the hand-written high-level layer.
         self.client = OpsClient(self)
+        self.account = AccountClient(self)
+        self.admin = AdminClient(self)
         self.memory = MemoryClient(self)
         self.working_memory = WorkingMemoryClient(self)
         # Session briefs: a.briefs.save / get / list / delete.

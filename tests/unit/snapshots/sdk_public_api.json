@@ -112,6 +112,57 @@
     "mentor_brief"
   ],
   "clients": {
+    "account": {
+      "class": "AccountClient",
+      "methods": {
+        "create_service_account": [
+          "name",
+          "namespaces",
+          "role",
+          "ttl_days"
+        ],
+        "mcp_config": [
+          "client",
+          "namespace",
+          "restricted_namespaces",
+          "ttl_days",
+          "persist"
+        ],
+        "revoke_service_account": [
+          "name"
+        ],
+        "service_accounts": [],
+        "set_default_namespace": [
+          "namespace"
+        ],
+        "sharing_summary": []
+      }
+    },
+    "admin": {
+      "class": "AdminClient",
+      "methods": {
+        "health": [],
+        "models": [],
+        "release_claim": [
+          "org",
+          "namespace",
+          "reason"
+        ],
+        "reset_models": [
+          "expected_version"
+        ],
+        "retry_models": [
+          "config_id"
+        ],
+        "save_models": [
+          "setup"
+        ],
+        "validate_models": [
+          "setup"
+        ],
+        "workers_status": []
+      }
+    },
     "audit": {
       "class": "AuditClient",
       "methods": {
@@ -2125,6 +2176,9 @@
           "confirm_duplicate_uri"
         ],
         "delete": [
+          "source_uri"
+        ],
+        "download": [
           "source_uri"
         ],
         "get": [

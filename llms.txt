@@ -97,6 +97,7 @@ Start with docs/index.md (the map) and docs/getting-started/connect-a-coding-age
 - [Tune Loom's performance](docs/guides/performance-tuning.md): Every lever on this page is a setting or a request field.
 - [Tokens and grants](docs/guides/tokens-and-grants.md): Every call carries one JWT.
 - [Trace and resume long agent runs](docs/guides/trace-and-resume.md): A long run (process 300 files, crawl a repository, work through a plan) can stop part way: a crash, a full context window, a deploy, a pause.
+- [Use Loom without the dashboard](docs/guides/without-the-dashboard.md): Everything the `/me` dashboard does can be done from a terminal, a script or an agent's shell.
 
 ## Architecture
 

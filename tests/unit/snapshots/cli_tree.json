@@ -10225,11 +10225,9 @@
      "description": null,
      "epilog": null,
      "formatter_class": "argparse:HelpFormatter",
-     "add_help": true,
+     "add_help": false,
      "allow_abbrev": true,
-     "defaults": {
-      "func": "server.cli.login:_cmd_login"
-     },
+     "defaults": {},
      "groups": [
       {
        "title": "positional arguments",
@@ -10239,78 +10237,11 @@
       {
        "title": "options",
        "description": null,
-       "dests": [
-        "help",
-        "profile",
-        "server",
-        "no_browser"
-       ]
+       "dests": []
       }
      ],
      "mutually_exclusive": [],
-     "arguments": [
-      {
-       "option_strings": [
-        "-h",
-        "--help"
-       ],
-       "dest": "help",
-       "action": "_HelpAction",
-       "default": "==SUPPRESS==",
-       "const": null,
-       "choices": null,
-       "nargs": 0,
-       "type": null,
-       "required": false,
-       "help": "show this help message and exit",
-       "metavar": null
-      },
-      {
-       "option_strings": [
-        "--profile"
-       ],
-       "dest": "profile",
-       "action": "_StoreAction",
-       "default": null,
-       "const": null,
-       "choices": null,
-       "nargs": null,
-       "type": null,
-       "required": false,
-       "help": "Credentials profile (default: LOOM_PROFILE or 'default').",
-       "metavar": null
-      },
-      {
-       "option_strings": [
-        "--server"
-       ],
-       "dest": "server",
-       "action": "_StoreAction",
-       "default": null,
-       "const": null,
-       "choices": null,
-       "nargs": null,
-       "type": null,
-       "required": false,
-       "help": "Server URL (default: LOOM_BASE_URL or localhost).",
-       "metavar": null
-      },
-      {
-       "option_strings": [
-        "--no-browser"
-       ],
-       "dest": "no_browser",
-       "action": "_StoreTrueAction",
-       "default": false,
-       "const": true,
-       "choices": null,
-       "nargs": 0,
-       "type": null,
-       "required": false,
-       "help": "Only print the URL.",
-       "metavar": null
-      }
-     ]
+     "arguments": []
     },
     "logout": {
      "prog": "loom logout",
@@ -10318,11 +10249,9 @@
      "description": null,
      "epilog": null,
      "formatter_class": "argparse:HelpFormatter",
-     "add_help": true,
+     "add_help": false,
      "allow_abbrev": true,
-     "defaults": {
-      "func": "server.cli.login:_cmd_login"
-     },
+     "defaults": {},
      "groups": [
       {
        "title": "positional arguments",
@@ -10332,46 +10261,11 @@
       {
        "title": "options",
        "description": null,
-       "dests": [
-        "help",
-        "profile"
-       ]
+       "dests": []
       }
      ],
      "mutually_exclusive": [],
-     "arguments": [
-      {
-       "option_strings": [
-        "-h",
-        "--help"
-       ],
-       "dest": "help",
-       "action": "_HelpAction",
-       "default": "==SUPPRESS==",
-       "const": null,
-       "choices": null,
-       "nargs": 0,
-       "type": null,
-       "required": false,
-       "help": "show this help message and exit",
-       "metavar": null
-      },
-      {
-       "option_strings": [
-        "--profile"
-       ],
-       "dest": "profile",
-       "action": "_StoreAction",
-       "default": null,
-       "const": null,
-       "choices": null,
-       "nargs": null,
-       "type": null,
-       "required": false,
-       "help": "Credentials profile (default: LOOM_PROFILE or 'default').",
-       "metavar": null
-      }
-     ]
+     "arguments": []
     },
     "whoami": {
      "prog": "loom whoami",
@@ -10379,11 +10273,9 @@
      "description": null,
      "epilog": null,
      "formatter_class": "argparse:HelpFormatter",
-     "add_help": true,
+     "add_help": false,
      "allow_abbrev": true,
-     "defaults": {
-      "func": "server.cli.login:_cmd_login"
-     },
+     "defaults": {},
      "groups": [
       {
        "title": "positional arguments",
@@ -10393,46 +10285,35 @@
       {
        "title": "options",
        "description": null,
-       "dests": [
-        "help",
-        "profile"
-       ]
+       "dests": []
       }
      ],
      "mutually_exclusive": [],
-     "arguments": [
+     "arguments": []
+    },
+    "call": {
+     "prog": "loom call",
+     "usage": null,
+     "description": null,
+     "epilog": null,
+     "formatter_class": "argparse:HelpFormatter",
+     "add_help": false,
+     "allow_abbrev": true,
+     "defaults": {},
+     "groups": [
       {
-       "option_strings": [
-        "-h",
-        "--help"
-       ],
-       "dest": "help",
-       "action": "_HelpAction",
-       "default": "==SUPPRESS==",
-       "const": null,
-       "choices": null,
-       "nargs": 0,
-       "type": null,
-       "required": false,
-       "help": "show this help message and exit",
-       "metavar": null
+       "title": "positional arguments",
+       "description": null,
+       "dests": []
       },
       {
-       "option_strings": [
-        "--profile"
-       ],
-       "dest": "profile",
-       "action": "_StoreAction",
-       "default": null,
-       "const": null,
-       "choices": null,
-       "nargs": null,
-       "type": null,
-       "required": false,
-       "help": "Credentials profile (default: LOOM_PROFILE or 'default').",
-       "metavar": null
+       "title": "options",
+       "description": null,
+       "dests": []
       }
-     ]
+     ],
+     "mutually_exclusive": [],
+     "arguments": []
     }
    },
    "aliases_of": {
@@ -10486,7 +10367,8 @@
     "set-host": "loom set-host",
     "login": "loom login",
     "logout": "loom logout",
-    "whoami": "loom whoami"
+    "whoami": "loom whoami",
+    "call": "loom call"
    },
    "choices_help": [
     {
@@ -10743,6 +10625,11 @@
      "dest": "whoami",
      "help": "Show who the stored session signs you in as.",
      "metavar": "whoami"
+    },
+    {
+     "dest": "call",
+     "help": "Call any operation or API route with the stored session (`loom call --help`).",
+     "metavar": "call"
     }
    ]
   }

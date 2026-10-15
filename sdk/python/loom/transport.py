@@ -378,6 +378,30 @@ class Transport:
         )
         return result.data
 
+    async def request(
+        self,
+        method: str,
+        path: str,
+        *,
+        json: Mapping[str, Any] | None = None,
+        params: Mapping[str, Any] | None = None,
+    ) -> httpx.Response:
+        """One request to a route outside the op registry (`/v1/me/...`,
+        `/v1/admin/...`, `/v1/health`): the body goes as given, with no
+        identity or consumer added, and is not retried. Raises the typed
+        error for a 4xx/5xx; returns the response for the caller to read."""
+        request_id = str(uuid.uuid4())
+        headers = {**self._ident_headers, "X-Request-Id": request_id}
+        try:
+            resp = await self._client.request(
+                method, path, json=json, params=params, headers=headers
+            )
+        except httpx.RequestError as e:
+            raise unreachable_error(self.base_url, e, request_id=request_id) from e
+        if resp.status_code >= 400:
+            raise self._error_for(path, resp, resp.headers.get("X-Request-Id") or request_id)
+        return resp
+
     async def post_with_meta(
         self,
         op_path: str,

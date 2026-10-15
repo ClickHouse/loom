@@ -340,48 +340,7 @@ class StoredLogin(httpx.Auth):
             yield request
 
 
-def run(
-    cmd: str, *, profile: str | None = None, server: str | None = None, open_browser: bool = True
-) -> int:
-    """`loom login | logout | whoami` as a command: prints, returns the exit code."""
-    try:
-        if cmd == "login":
-            info = login(server, profile=profile, open_browser=open_browser)
-            print(f"Signed in to {info['server']} as {info.get('subject')} ({info.get('org')}).")
-        elif cmd == "logout":
-            confirmed = logout(profile)
-            print("Signed out." if confirmed else "Signed out here; the server did not confirm.")
-        else:
-            print(json.dumps(whoami(profile), indent=2))
-    except (LoomError, httpx.HTTPError) as e:
-        print(f"loom {cmd}: {e}", file=sys.stderr)
-        return 1
-    return 0
-
-
-def add_parsers(sub: Any) -> None:
-    """The three subcommands, for `python -m loom` and the `loom` CLI alike."""
-    for name, help_text in (
-        ("login", "sign in on any browser with a one-time code"),
-        ("logout", "end the session on the server and forget it here"),
-        ("whoami", "show who the stored session signs you in as"),
-    ):
-        p = sub.add_parser(name, help=help_text)
-        p.add_argument("--profile", help="credentials profile (default: LOOM_PROFILE or 'default')")
-        if name == "login":
-            p.add_argument("--server", help="server URL (default: LOOM_BASE_URL or localhost)")
-            p.add_argument("--no-browser", action="store_true", help="only print the URL")
-
-
-def main(argv: list[str] | None = None) -> int:
-    import argparse
-
-    parser = argparse.ArgumentParser(prog="python -m loom", description="Sign in to a Loom server.")
-    add_parsers(parser.add_subparsers(dest="cmd", required=True))
-    args = parser.parse_args(argv)
-    return run(
-        args.cmd,
-        profile=args.profile,
-        server=getattr(args, "server", None),
-        open_browser=not getattr(args, "no_browser", False),
-    )
+def signed_in_server(profile: str | None = None) -> str | None:
+    """The server the profile signed in to, or None when it has not."""
+    entry = _read()["profiles"].get(profile or default_profile())
+    return str(entry["server"]) if entry else None

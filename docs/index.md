@@ -33,6 +33,8 @@ TypeScript SDKs, and the `/me` dashboard. This page lists every page in reading 
   proxy, images, production checklist.
 - [Single sign-on](operations/sso.md): Okta or another OIDC provider for the dashboard,
   `loom login` and MCP clients.
+- [Use Loom without the dashboard](guides/without-the-dashboard.md): `loom login`, `loom call`
+  and the SDK call for every dashboard view.
 - [Upgrades](operations/upgrades.md) · [Backup and recovery](operations/backup-and-recovery.md) ·
   [Monitoring](operations/monitoring.md) · [Maintenance](operations/maintenance.md) ·
   [Troubleshooting](operations/troubleshooting.md) ·

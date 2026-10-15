@@ -20,6 +20,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
@@ -67,6 +68,21 @@ def _seed(ch_client: Any, org: str, email: str, password_hash: str) -> str:
     now = _dt.datetime.now(_dt.UTC).replace(tzinfo=None, microsecond=0)
     row = [org, ns, email, email, password_hash, "login e2e", [], True, False, None, 0, 0]
     ch_client.insert("loom.namespaces", [[*row, "private", now, now]], column_names=_COLUMNS)
+    # The owner's admin grant, as account creation writes it.
+    ch_client.insert(
+        "loom.namespace_grants",
+        [[org, ns, email, "admin", now, email, None, time.time_ns()]],
+        column_names=[
+            "org",
+            "namespace",
+            "subject",
+            "role",
+            "granted_at",
+            "granted_by",
+            "revoked_at",
+            "version",
+        ],
+    )
     return ns
 
 
@@ -351,3 +367,99 @@ def test_sso_logout_also_revokes_the_identity_provider_token(sso_server) -> None
     login.wait()
     assert credentials.logout() is True
     assert idp.revoked, "loom did not revoke the identity provider's refresh token"
+
+
+# ── an agent that never opens the dashboard ───────────────────────────────
+
+
+def _session_for(base: str, home: Path, email: str, password: str, monkeypatch: Any) -> None:
+    """Sign `email` in with `loom.login()`; its session lands in `home`'s ~/.loom."""
+    monkeypatch.setattr(credentials, "CREDENTIALS_FILE", home / ".loom" / "credentials")
+    login = _Login(base)
+    _approve_with_password(base, login.user_code(), email, password)
+    login.wait()
+
+
+def _loom(home: Path, *args: str) -> Any:
+    """`loom …` in a shell whose HOME holds one user's session; its JSON answer."""
+    env = {**os.environ, "HOME": str(home), "LOOM_ENV_FILE": ""}
+    env.pop("LOOM_API_KEY", None)
+    done = subprocess.run(
+        [sys.executable, "-m", "server.cli", *args],
+        env=env,
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr
+    return json.loads(done.stdout) if done.stdout.strip() else None
+
+
+def test_joining_a_namespace_is_requested_and_approved_from_the_cli(
+    password_server, ch_client, tmp_path, monkeypatch
+) -> None:
+    from server.auth.passwords import hash_password
+
+    base, org, owner_ns, owner, owner_password = password_server
+    member = f"member-{uuid.uuid4().hex[:6]}@test.com"
+    _seed(ch_client, org, member, hash_password("member-pw"))
+    owner_home, member_home = tmp_path / "owner", tmp_path / "member"
+    _session_for(base, owner_home, owner, owner_password, monkeypatch)
+    _session_for(base, member_home, member, "member-pw", monkeypatch)
+
+    _loom(member_home, "call", "namespace.join", f"namespace={owner_ns}", "role=writer")
+    pending = _loom(owner_home, "call", "grants.pending_for_me")
+    assert member in json.dumps(pending)
+    _loom(
+        owner_home,
+        "call",
+        "grants.approve",
+        f"namespace={owner_ns}",
+        f"subject={member}",
+        "decision=approve",
+    )
+    _loom(
+        member_home,
+        "call",
+        "memory.set",
+        "memory_key=joined/fact/1",
+        "value=written after approval",
+        "--namespace",
+        owner_ns,
+    )
+    got = _loom(owner_home, "call", "memory.get", "memory_key=joined/fact/1")
+    assert got["value"] == "written after approval"
+
+
+def test_service_accounts_and_account_views_need_no_dashboard(
+    password_server, tmp_path, monkeypatch
+) -> None:
+    base, org, ns, email, password = password_server
+    home = tmp_path / "owner"
+    _session_for(base, home, email, password, monkeypatch)
+    created = _loom(
+        home,
+        "call",
+        "/v1/me/service_accounts.create",
+        "--data",
+        json.dumps({"name": "ci-bot", "namespaces": [ns], "role": "viewer"}),
+    )
+    assert _whoami(base, created["token"])["is_service_account"] is True
+    listed = _loom(home, "call", "/v1/me/service_accounts")
+    assert [r["name"] for r in listed["rows"]] == ["ci-bot"]
+    _loom(home, "call", "/v1/me/service_accounts.revoke", "name=ci-bot")
+    assert _whoami(base, created["token"])["authenticated"] is False
+    assert "totals" in _loom(home, "call", "/v1/me/sharing-summary")
+    assert _loom(home, "call", "/v1/health")["status"]
+
+    async def through_the_sdk() -> list[dict[str, Any]]:
+        agent = Agent(org, ns, "account-e2e", base_url=base)
+        try:
+            await agent.account.create_service_account("sdk-bot", [ns])
+            return await agent.account.service_accounts()
+        finally:
+            await agent.close()
+
+    rows = asyncio.run(through_the_sdk())
+    assert "sdk-bot" in [r["name"] for r in rows]

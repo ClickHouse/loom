@@ -41,6 +41,8 @@ from loom.run import _ACTIVE_RUN, RunClient, RunScope
 _CLIENT_ATTRS: tuple[str, ...] = (
     # Every op as a generated method; its groups are nested clients.
     "client",
+    "account",
+    "admin",
     "memory",
     "working_memory",
     "briefs",
@@ -206,6 +208,8 @@ class SyncAgent:
     # The blocking client proxies `__init__` attaches, one per `_CLIENT_ATTRS`
     # name, declared so a type checker sees `sa.memory.set(...)`.
     client: _SyncClientProxy
+    account: _SyncClientProxy
+    admin: _SyncClientProxy
     memory: _SyncClientProxy
     working_memory: _SyncClientProxy
     briefs: _SyncClientProxy
