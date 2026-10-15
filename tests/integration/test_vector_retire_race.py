@@ -1725,8 +1725,11 @@ async def test_a_slow_writes_embedding_is_still_counted_in_the_bm25_stats(ch: An
 
     try:
         # A row drawn 15 s ago, so the next pass moves the watermarks past it (and past
-        # the late rows below, drawn 30 s ago).
-        await M.insert_embedding_rows([late_row("marker", ago_s=15)], ch=ch)
+        # the late rows below, drawn 30 s ago). An earlier test's pass may already be
+        # past it, so it indexes itself too; a repeat is harmless.
+        marker = late_row("marker", ago_s=15)
+        await M.insert_embedding_rows([marker], ch=ch)
+        await M.index_late_rows([marker], ch=ch)
         await refresh()
         indexed, control = late_row("slow_write"), late_row("slow_write_unindexed")
         await M.insert_embedding_rows([indexed, control], ch=ch)
