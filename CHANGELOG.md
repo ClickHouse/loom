@@ -134,7 +134,6 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   that pads a text-less row (a file's structural summary card before its summary is
   written) for a real one, and its verification did too. Such rows now rebuild as
   placeholders.
-
 - The quickstart told released-stack users to add repositories from the dashboard, which
   that stack refuses with `SANDBOX_UNAVAILABLE`, since it runs without the repository-job
   sandbox. It now shows how to index one through `LOOM_CODE_REPOS_JSON`, `loom code init`
@@ -142,7 +141,6 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   names that route where it works, the `repo_jobs_unsandboxed` fix in `loom doctor` and
   `/v1/health` matches it, and the sandbox docs say which hosts can load the AppArmor
   profile: AppArmor 4.0 or later, tested on Ubuntu 24.04.
-
 - On a host whose time zone is not UTC, a timestamp written through the driver's insert path
   was shifted by the host's offset (seven or eight hours on the US west coast): the driver
   reads a naive datetime as local time. Those writes now carry the UTC instant. Conversation
