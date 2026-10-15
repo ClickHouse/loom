@@ -185,6 +185,7 @@ def _run_step(tmp_path: Path, script: str, **env: str):
     """Run a release step's script in a checkout whose `gh` is STUB_GH."""
     import os
     import subprocess
+    import sys
 
     work = tmp_path / "work"
     work.mkdir(exist_ok=True)
@@ -201,7 +202,8 @@ def _run_step(tmp_path: Path, script: str, **env: str):
         cwd=work,
         env={
             **os.environ,
-            "PATH": f"{gh.parent}:{os.environ['PATH']}",
+            # The step's `python` is setup-python's on the runner.
+            "PATH": f"{gh.parent}:{Path(sys.executable).parent}:{os.environ['PATH']}",
             "GITHUB_REPOSITORY": "o/r",
             "VERSION": "1.1.0",
             "STUB_BUNDLE": str(other),
@@ -213,23 +215,26 @@ def _run_step(tmp_path: Path, script: str, **env: str):
 
 
 @DOWNGRADES
+@pytest.mark.parametrize("dispatched", [False, True])
 def test_the_release_refuses_a_downgrade_before_it_builds(
-    tmp_path: Path, own: str, allow: str, passes: bool
+    tmp_path: Path, own: str, allow: str, passes: bool, dispatched: bool
 ) -> None:
-    """A refusal here stops the run before it builds and pushes any image."""
+    """A refusal here stops the run before it builds and pushes any image,
+    whether the release came from `latest` or a dispatch's clickhouse_image."""
     (resolve,) = [
         s for s in _release_workflow()["jobs"]["clickhouse"]["steps"] if s.get("id") == "resolve"
     ]
     assert resolve["env"]["ALLOW_DOWNGRADE"] == "${{ inputs.allow_clickhouse_downgrade }}"
     latest = tmp_path / "work" / "dev" / "clickhouse_release.sh"
     latest.parent.mkdir(parents=True)
-    latest.write_text(f"echo {own}\n")
+    newest = "clickhouse/clickhouse-server:26.9.19.1"
+    latest.write_text(f"echo {newest if dispatched else own}\n")
     output = tmp_path / "github_output"
     output.touch()
     run = _run_step(
         tmp_path,
         resolve["run"],
-        CLICKHOUSE_IMAGE="",
+        CLICKHOUSE_IMAGE=own if dispatched else "",
         ALLOW_DOWNGRADE=allow,
         GITHUB_OUTPUT=str(output),
     )

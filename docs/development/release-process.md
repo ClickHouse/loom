@@ -126,9 +126,10 @@ A tag containing `-` (`vX.Y.Z-rc.1`) makes a GitHub pre-release and does not mov
    then be re-run by hand (Re-run failed jobs). A refusal here comes after `docker` pushed
    the tag's image tags (and `:latest` for a final release). A re-run keeps the run's
    inputs and fails again, so dispatch the tag instead, which also publishes the SDKs:
-   with `-f clickhouse_image=` the newer release the error names (if it dumps the tag's
-   `schemas/schema.sql`), or with `-f allow_clickhouse_downgrade=true`. Otherwise move
-   `:latest` back to the previous release by hand.
+   `gh workflow run release.yml --ref vX.Y.Z -f clickhouse_image=<the newer release the error names>`
+   (if that release dumps the tag's `schemas/schema.sql`), or
+   `gh workflow run release.yml --ref vX.Y.Z -f allow_clickhouse_downgrade=true`.
+   Otherwise move `:latest` back to the previous release by hand.
 
 The server image is published before the GitHub Release, so an installer shown on the
 release page never points at a missing image.
