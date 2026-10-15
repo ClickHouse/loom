@@ -21,8 +21,10 @@ _EXPECTED_MUTATIONS = Counter(
     {
         ("server/memory/app/projections.py", "entity_edges", "UPDATE"): 1,
         # One folded UPDATE per table per write (close_triples serves
-        # both the deterministic repair and the LLM judgement).
-        ("server/memory/app/projections.py", "entity_triples", "UPDATE"): 1,
+        # both the deterministic repair and the LLM judgement), and
+        # reopen_triples, which undoes a follow's close for a triple a row
+        # written meanwhile holds (rare: only in that race).
+        ("server/memory/app/projections.py", "entity_triples", "UPDATE"): 2,
         ("server/memory/store/blacklist.py", "blacklist", "UPDATE"): 1,
         ("server/memory/store/conflicts.py", "conflict_allowlist", "UPDATE"): 1,
         ("server/knowledge/store/conversations.py", "conversation_embeddings", "UPDATE"): 1,
@@ -55,7 +57,9 @@ _EXPECTED_MUTATIONS = Counter(
         # memory.apply label / demote: tags or confidence
         # mirrored onto the key's embedding rows; the memory-table side is a
         # version row. One helper, one UPDATE statement, ALTER fallback inline.
-        ("server/memory/app/projection_failures.py", "memory_projection_failures", "UPDATE"): 1,
+        # The repair's operator queue, narrow by failure id: one UPDATE resolves, one
+        # abandons a failure no retry can repair, one carries a failed replay's closes.
+        ("server/memory/app/projection_failures.py", "memory_projection_failures", "UPDATE"): 3,
     }
 )
 

@@ -1,7 +1,9 @@
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AllowlistRow, ConflictRow, LearningEntry } from "../../api";
+import type { AllowlistRow, AutoResolvedRow, ConflictRow, LearningEntry, MyNamespaceEntry, WhoAmI } from "../../api";
+import { ApiError } from "../../lib/errors";
+import { resetNamespaceRoleCache } from "../../lib/namespaceRole";
 import { useStore } from "../../lib/state";
 import { ReviewQueue } from "./ReviewQueue";
 
@@ -19,9 +21,20 @@ vi.mock("../../api", async (importOriginal) => {
     removeAllowlist: vi.fn(async () => ({ removed: true })),
     listLearnings: vi.fn(),
     reviewLearning: vi.fn(),
+    listAutoResolved: vi.fn(),
+    listUnsuperseded: vi.fn(),
+    restoreMemory: vi.fn(),
   };
 });
-import { listAllowlist, listConflicts, listLearnings, resolveConflict } from "../../api";
+import {
+  listAllowlist,
+  listAutoResolved,
+  listConflicts,
+  listLearnings,
+  listUnsuperseded,
+  resolveConflict,
+  restoreMemory,
+} from "../../api";
 
 const ORG = "dev";
 const WAIT = { timeout: 5000 };
@@ -62,11 +75,48 @@ const exception = (a: string, b: string): AllowlistRow => ({
   reason: "",
 });
 
-function seed(namespace: string) {
+const retired = (key: string, extra: Partial<AutoResolvedRow> = {}): AutoResolvedRow => ({
+  memory_id: `id-${key}`,
+  memory_key: key,
+  agent: "claude",
+  user_id: "u1",
+  session_id: "s1",
+  superseded_by: `id-${key}-new`,
+  reason: "same_key_judge",
+  ts: "2026-10-01T10:00:00Z",
+  ...extra,
+});
+
+const person: WhoAmI = {
+  authenticated: true,
+  subject: "o@example.com",
+  org: ORG,
+  roles: ["USER"],
+  namespaces: ["ns-a", "ns-b"],
+};
+
+const member = (namespace: string, role: MyNamespaceEntry["role"]): MyNamespaceEntry => ({
+  namespace,
+  role,
+  status: "active",
+  visibility: "private",
+  description: "",
+  joined_at: null,
+  is_new: false,
+});
+
+/** `role`: the viewer's role on ns-a and ns-b; unset, the role is unknown. */
+function seed(namespace: string, role?: MyNamespaceEntry["role"]) {
   act(() => {
-    useStore.setState({ identity: { org: ORG, namespace, agent: "loom-ui" } });
+    useStore.setState({
+      identity: { org: ORG, namespace, agent: "loom-ui" },
+      whoami: role ? person : null,
+      myNamespaces: role ? [member("ns-a", role), member("ns-b", role)] : null,
+    });
   });
 }
+
+const page = (rows: AutoResolvedRow[], next_cursor: string | null = null) => ({ rows, next_cursor });
 
 describe("ReviewQueue", () => {
   beforeEach(() => {
@@ -75,9 +125,16 @@ describe("ReviewQueue", () => {
     vi.mocked(listLearnings).mockReset();
     vi.mocked(listAllowlist).mockResolvedValue({ rows: [] });
     vi.mocked(listLearnings).mockResolvedValue({ rows: [] });
+    vi.mocked(listAutoResolved).mockReset();
+    vi.mocked(listUnsuperseded).mockReset();
+    vi.mocked(restoreMemory).mockReset();
+    vi.mocked(listAutoResolved).mockResolvedValue(page([]));
+    resetNamespaceRoleCache();
+    vi.mocked(listUnsuperseded).mockResolvedValue(new Map());
   });
   afterEach(() => {
     cleanup();
+    useStore.setState({ whoami: null, myNamespaces: null });
   });
 
   it("drops a post-decision reload that lands after a namespace switch", async () => {
@@ -134,5 +191,313 @@ describe("ReviewQueue", () => {
     render(<ReviewQueue />);
     await userEvent.click(await screen.findByRole("tab", { name: /Exceptions/ }, WAIT));
     expect(await screen.findByRole("button", { name: "Remove exception k/a ↔ k/b" }, WAIT)).toBeTruthy();
+  });
+
+  it("lists what Loom retired on its own, why and behind what, with an Undo", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    vi.mocked(listAutoResolved).mockResolvedValue(
+      page([
+        retired("user_city", {
+          superseded_by_key: "user_city_current",
+          label: "contradiction",
+        }),
+        retired("user_job", {
+          reason: "refines",
+          superseded_by: "abc123",
+          ts: "2026-09-30T10:00:00Z",
+          unconfirmed: true,
+        }),
+      ]),
+    );
+    vi.mocked(restoreMemory).mockResolvedValue({ restored: true, from_status: "superseded" });
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Auto-resolved/ }, WAIT));
+
+    expect(await screen.findByText("user_city", {}, WAIT)).toBeTruthy();
+    expect(screen.getByText("Replaced by a later statement of the same attribute")).toBeTruthy();
+    expect(screen.getByText("user_city_current")).toBeTruthy();
+    expect(screen.getByText("Replaced by a newer memory with more detail")).toBeTruthy();
+    // No key for the row it retired behind: its id.
+    expect(screen.getByText("abc123")).toBeTruthy();
+    // A retirement the re-read could not confirm says so.
+    expect(screen.getAllByText(/may not have taken effect/)).toHaveLength(1);
+    // Restores are read back to the oldest retirement on show, not further.
+    await waitFor(
+      () =>
+        expect(listUnsuperseded).toHaveBeenCalledWith(
+          { org: ORG, namespace: "ns-a" },
+          expect.objectContaining({ since: "2026-09-30T10:00:00Z" }),
+        ),
+      WAIT,
+    );
+
+    await userEvent.click(await screen.findByRole("button", { name: "Undo retirement of user_city" }, WAIT));
+    await waitFor(() =>
+      expect(restoreMemory).toHaveBeenCalledWith({ org: ORG, namespace: "ns-a", agent: "claude" }, "user_city", {
+        user_id: "u1",
+        session_id: "s1",
+        if_superseded_by: "id-user_city-new",
+      }),
+    );
+    expect(await screen.findByText("Restored", {}, WAIT)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Undo retirement of user_city" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Undo retirement of user_job" })).toBeTruthy();
+  });
+
+  it("shows a retirement already undone as Restored, unless it was retired again since", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    vi.mocked(listAutoResolved).mockResolvedValue(
+      page([retired("undone"), retired("again", { ts: "2026-10-03T10:00:00Z" })]),
+    );
+    vi.mocked(listUnsuperseded).mockResolvedValue(
+      new Map([
+        ["id-undone", "2026-10-02T10:00:00Z"],
+        ["id-again", "2026-10-02T10:00:00Z"],
+      ]),
+    );
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Auto-resolved/ }, WAIT));
+    expect(await screen.findByText("Restored", {}, WAIT)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Undo retirement of undone" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Undo retirement of again" })).toBeTruthy();
+  });
+
+  it("keeps each record of one memory apart", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    vi.mocked(listAutoResolved).mockResolvedValue(
+      page([
+        retired("user_city", { superseded_by: "id-third", ts: "2026-10-05T10:00:00Z" }),
+        retired("user_city", { superseded_by: "id-second", ts: "2026-10-03T10:00:00Z" }),
+        retired("user_city", { superseded_by: "id-first" }),
+      ]),
+    );
+    // Restored once, between the first and second retirement.
+    vi.mocked(listUnsuperseded).mockResolvedValue(new Map([["id-user_city", "2026-10-02T10:00:00Z"]]));
+    vi.mocked(restoreMemory).mockImplementation(async (_id, _key, opts) =>
+      opts?.if_superseded_by === "id-third"
+        ? { restored: true, from_status: "superseded" }
+        : { restored: false, from_status: "" },
+    );
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Auto-resolved/ }, WAIT));
+    const undos = await screen.findAllByRole("button", { name: "Undo retirement of user_city" }, WAIT);
+    expect(undos).toHaveLength(2);
+    expect(screen.getAllByText("Restored")).toHaveLength(1);
+
+    await userEvent.click(undos[0]);
+    await waitFor(() => expect(screen.getAllByText("Restored")).toHaveLength(2), WAIT);
+    expect(restoreMemory).toHaveBeenLastCalledWith(
+      expect.anything(),
+      "user_city",
+      expect.objectContaining({ if_superseded_by: "id-third" }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Undo retirement of user_city" }));
+    expect(await screen.findByText("No longer retired", {}, WAIT)).toBeTruthy();
+    expect(restoreMemory).toHaveBeenLastCalledWith(
+      expect.anything(),
+      "user_city",
+      expect.objectContaining({ if_superseded_by: "id-second" }),
+    );
+    expect(screen.getAllByText("Restored")).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: "Undo retirement of user_city" })).toBeNull();
+  });
+
+  it("offers no Undo before the restores are read", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    vi.mocked(listAutoResolved).mockResolvedValue(page([retired("user_city")]));
+    let finish: (m: Map<string, string>) => void = () => {};
+    vi.mocked(listUnsuperseded).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Auto-resolved/ }, WAIT));
+    await screen.findByText("user_city", {}, WAIT);
+    expect(screen.queryByRole("button", { name: /Undo retirement/ })).toBeNull();
+    await act(async () => {
+      finish(new Map());
+    });
+    expect(await screen.findByRole("button", { name: "Undo retirement of user_city" }, WAIT)).toBeTruthy();
+  });
+
+  it("says a row is no longer retired when the restore finds nothing to undo", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    vi.mocked(listAutoResolved).mockResolvedValue(page([retired("user_city")]));
+    vi.mocked(restoreMemory).mockResolvedValue({ restored: false, from_status: "" });
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Auto-resolved/ }, WAIT));
+    await userEvent.click(await screen.findByRole("button", { name: "Undo retirement of user_city" }, WAIT));
+    expect(await screen.findByText("No longer retired", {}, WAIT)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Undo retirement of user_city" })).toBeNull();
+  });
+
+  it("keeps the Undo after a refused restore", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    vi.mocked(listAutoResolved).mockResolvedValue(page([retired("user_city")]));
+    vi.mocked(restoreMemory).mockRejectedValue(
+      new ApiError({ status: 403, code: "AUTH_INSUFFICIENT", message: "writer role required" }),
+    );
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Auto-resolved/ }, WAIT));
+    const undo = await screen.findByRole("button", { name: "Undo retirement of user_city" }, WAIT);
+    await userEvent.click(undo);
+    await waitFor(() => expect(restoreMemory).toHaveBeenCalledTimes(1), WAIT);
+    await waitFor(() => expect(undo).not.toBeDisabled(), WAIT);
+    expect(screen.queryByText("Restored")).toBeNull();
+    expect(screen.queryByText("No longer retired")).toBeNull();
+  });
+
+  it("offers Undo only for a record that names the row it retired behind", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    vi.mocked(listAutoResolved).mockResolvedValue(
+      page([retired("user_city"), retired("user_job", { superseded_by: "" })]),
+    );
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Auto-resolved/ }, WAIT));
+    await screen.findByRole("button", { name: "Undo retirement of user_city" }, WAIT);
+    expect(screen.getAllByRole("button", { name: /Undo retirement/ })).toHaveLength(1);
+    expect(screen.queryByText("No longer retired")).toBeNull();
+  });
+
+  it("shows a viewer the retirements without an Undo", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    vi.mocked(listAutoResolved).mockResolvedValue(page([retired("user_city")]));
+    seed("ns-a", "viewer");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Auto-resolved/ }, WAIT));
+    await screen.findByText("user_city", {}, WAIT);
+    await waitFor(() => expect(listUnsuperseded).toHaveBeenCalled(), WAIT);
+    expect(screen.queryByRole("button", { name: /Undo retirement/ })).toBeNull();
+  });
+
+  it("pages older retirements with Load more", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    vi.mocked(listAutoResolved).mockImplementation(async (_id, opts) =>
+      opts?.cursor === "c1" ? page([retired("older", { ts: "2026-09-01T10:00:00Z" })]) : page([retired("newer")], "c1"),
+    );
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Auto-resolved/ }, WAIT));
+    await userEvent.click(await screen.findByRole("button", { name: "Load more" }, WAIT));
+    expect(await screen.findByText("older", {}, WAIT)).toBeTruthy();
+    expect(screen.getByText("newer")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+    await waitFor(
+      () =>
+        expect(listUnsuperseded).toHaveBeenLastCalledWith(
+          { org: ORG, namespace: "ns-a" },
+          expect.objectContaining({ since: "2026-09-01T10:00:00Z" }),
+        ),
+      WAIT,
+    );
+  });
+
+  it("loads one older page however often Load more is pressed, and keeps what it knows meanwhile", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    let finishPage: (p: ReturnType<typeof page>) => void = () => {};
+    vi.mocked(listAutoResolved).mockImplementation((_id, opts) =>
+      opts?.cursor
+        ? new Promise((resolve) => {
+            finishPage = resolve;
+          })
+        : Promise.resolve(page([retired("newer")], "c1")),
+    );
+    let finishOlderRestores: (m: Map<string, string>) => void = () => {};
+    vi.mocked(listUnsuperseded).mockImplementation((_id, opts) =>
+      opts.since === "2026-09-01T10:00:00Z"
+        ? new Promise((resolve) => {
+            finishOlderRestores = resolve;
+          })
+        : Promise.resolve(new Map()),
+    );
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Auto-resolved/ }, WAIT));
+    await screen.findByRole("button", { name: "Undo retirement of newer" }, WAIT);
+    const more = screen.getByRole("button", { name: "Load more" });
+    await userEvent.click(more);
+    await userEvent.click(more);
+    expect(vi.mocked(listAutoResolved).mock.calls.filter(([, o]) => o?.cursor === "c1")).toHaveLength(1);
+    await act(async () => {
+      finishPage(page([retired("older", { ts: "2026-09-01T10:00:00Z" })]));
+    });
+    expect(await screen.findByText("older", {}, WAIT)).toBeTruthy();
+    // The newer row's Undo stays while the older stretch's restores are read; the older
+    // row waits for them.
+    expect(screen.getByRole("button", { name: "Undo retirement of newer" })).toBeTruthy();
+    expect(screen.getByLabelText("Checking")).toBeTruthy();
+    expect(screen.getByText("Nothing older within 30 days.")).toBeTruthy();
+    await act(async () => {
+      finishOlderRestores(new Map([["id-older", "2026-09-02T10:00:00Z"]]));
+    });
+    expect(await screen.findByText("Restored", {}, WAIT)).toBeTruthy();
+    expect(screen.queryByLabelText("Checking")).toBeNull();
+  });
+
+  it("drops an older page that lands after a namespace switch", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    let finishPage: (p: ReturnType<typeof page>) => void = () => {};
+    vi.mocked(listAutoResolved).mockImplementation((id, opts) => {
+      if (opts?.cursor)
+        return new Promise((resolve) => {
+          finishPage = resolve;
+        });
+      return Promise.resolve(page([retired(`${id.namespace}-row`)], "c1"));
+    });
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Auto-resolved/ }, WAIT));
+    await userEvent.click(await screen.findByRole("button", { name: "Load more" }, WAIT));
+    seed("ns-b", "writer");
+    await act(async () => {
+      finishPage(page([retired("a-stale")]));
+    });
+    await userEvent.click(await screen.findByRole("tab", { name: /Auto-resolved/ }, WAIT));
+    expect(await screen.findByText("ns-b-row", {}, WAIT)).toBeTruthy();
+    expect(screen.queryByText("a-stale")).toBeNull();
+    expect(screen.queryByText("ns-a-row")).toBeNull();
+  });
+
+  it("keeps an Undo's outcome across a tab switch", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    vi.mocked(listAutoResolved).mockResolvedValue(page([retired("user_city")]));
+    vi.mocked(restoreMemory).mockResolvedValue({ restored: false, from_status: "" });
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Auto-resolved/ }, WAIT));
+    await userEvent.click(await screen.findByRole("button", { name: "Undo retirement of user_city" }, WAIT));
+    await screen.findByText("No longer retired", {}, WAIT);
+    await userEvent.click(screen.getByRole("tab", { name: /Conflicts/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /Auto-resolved/ }));
+    expect(screen.getByText("No longer retired")).toBeTruthy();
+    expect(listAutoResolved).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not read the audit log while the role is unknown", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    vi.mocked(listAutoResolved).mockResolvedValue(page([retired("user_city")]));
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await screen.findByText("No conflicts", {}, WAIT);
+    expect(listAutoResolved).not.toHaveBeenCalled();
+    expect(screen.queryByRole("tab", { name: /Auto-resolved/ })).toBeNull();
+  });
+
+  it("hides the Auto-resolved tab when Loom retired nothing", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    await screen.findByText("No conflicts", {}, WAIT);
+    await waitFor(() => expect(listAutoResolved).toHaveBeenCalled(), WAIT);
+    expect(screen.queryByRole("tab", { name: /Auto-resolved/ })).toBeNull();
   });
 });

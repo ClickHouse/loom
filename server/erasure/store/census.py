@@ -129,6 +129,13 @@ _CENSUS: tuple[Substrate, ...] = (
         "graph_links.delete",
     ),
     Substrate(
+        "loom.entity_triple_rows",
+        "1",
+        UID,
+        "graph_links.delete",
+        "graph_links.delete",
+    ),
+    Substrate(
         "loom.entity_edge_memories",
         "1",
         USER_PARENT_KEYS,

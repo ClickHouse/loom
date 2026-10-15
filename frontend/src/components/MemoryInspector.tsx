@@ -47,6 +47,7 @@ import {
   conflictKeys,
   getProvenance,
   moveMemory,
+  restoreMemory,
 } from "../api";
 import { useStore } from "../lib/state";
 import { Waypoints } from "lucide-react";
@@ -155,7 +156,8 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
   );
   const [done, setDone] = useState<Set<SectionId>>(() => new Set());
   const requested = useRef<Set<SectionId>>(new Set());
-  const keyRef = useRef(memoryKey);
+  // Bumped whenever the drawer moves to another memory or identity.
+  const inspection = useRef(0);
   const toggleSection = (id: SectionId) =>
     setSections((cur) => {
       const next = { ...cur, [id]: !cur[id] };
@@ -250,7 +252,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
     setRelated(null);
     setLineage(null);
     setProvenance(null);
-    keyRef.current = memoryKey;
+    inspection.current += 1;
     requested.current = new Set();
     setDone(new Set());
     // A read for a key the drawer has moved off must not land: its value under the new
@@ -277,8 +279,10 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
 
   useEffect(() => {
     const k = memoryKey;
+    const mine = inspection.current;
+    const fresh = () => inspection.current === mine;
     const finish = (id: SectionId) => {
-      if (keyRef.current === k) setDone((d) => new Set(d).add(id));
+      if (fresh()) setDone((d) => new Set(d).add(id));
     };
     const want = (id: SectionId, run: () => Promise<void>) => {
       if (!sections[id] || requested.current.has(id)) return;
@@ -289,7 +293,6 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
         })
         .finally(() => finish(id));
     };
-    const fresh = () => keyRef.current === k;
     want("history", () =>
       memoryHistory(identity, k, 8)
         .then((r) => {
@@ -339,6 +342,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
   // viewer never sees a button the server would refuse.
   const canMove = canCall("memory.move", role, whoami);
   const canTogglePin = canCall(detail?.pinned ? "memory.unpin" : "memory.pin", role, whoami);
+  const canRestore = canCall("memory.restore", role, whoami);
   useEffect(() => {
     setConflictCount(0);
     if (!conflictsReadable) return;
@@ -538,6 +542,39 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
     }
   };
 
+  // A superseded row (Loom retired it, or a later write replaced it) comes back live.
+  const [restoring, setRestoring] = useState(false);
+  const onRestore = async () => {
+    if (!detail || restoring) return;
+    const mine = inspection.current;
+    const stale = () => inspection.current !== mine;
+    setRestoring(true);
+    try {
+      const r = await restoreMemory({ ...identity, agent: detail.agent || identity.agent }, memoryKey, {
+        user_id: detail.user_id || undefined,
+        session_id: detail.session_id || undefined,
+        // Only the retirement on screen, never a delete since. A row retired behind one
+        // outside the reader's scope shows no successor, so it is guarded by status.
+        if_superseded_by: detail.superseded_by,
+        only_if_superseded: true,
+      });
+      if (stale()) return;
+      if (!r.restored) {
+        toast("Nothing to restore", "info");
+        return;
+      }
+      const fresh = await getMemory(identity, memoryKey, { include_recall_breakdown: true });
+      if (stale()) return;
+      toast("Restored", "ok");
+      setDetail(fresh);
+      onChanged();
+    } catch (e) {
+      if (!stale()) toast(`Restore failed: ${humanizeError(e)}`, "error");
+    } finally {
+      setRestoring(false);
+    }
+  };
+
   const onDelete = async () => {
     if (
       !(await confirmAction({
@@ -694,7 +731,23 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                         </dd>
                       </>
                     )}
-                    <Row label="Status" value={statusLabel(detail.status)} />
+                    {detail.status === "superseded" && canRestore ? (
+                      <>
+                        <dt className="text-[var(--color-text-muted)]">Status</dt>
+                        <dd className="text-[var(--color-text)] flex items-center gap-2 flex-wrap">
+                          {statusLabel(detail.status)}
+                          <button
+                            onClick={onRestore}
+                            disabled={restoring}
+                            className="px-2 py-0.5 text-xs font-medium border border-[var(--color-border-strong)] rounded-md hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+                          >
+                            Restore
+                          </button>
+                        </dd>
+                      </>
+                    ) : (
+                      <Row label="Status" value={statusLabel(detail.status)} />
+                    )}
                     <Row label="Created" value={detail.created_at ? relativeTime(detail.created_at) : "—"} />
                     {detail.updated_at && detail.updated_at !== detail.created_at && (
                       <Row label="Updated" value={relativeTime(detail.updated_at)} />

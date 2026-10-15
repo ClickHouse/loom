@@ -269,6 +269,7 @@ async def test_an_older_high_set_paused_after_its_insert_does_not_retire_a_newer
 
     monkeypatch.setattr(set_commit, "insert_memory_versions", insert_then_writer_b_lands)
     monkeypatch.setattr(set_commit, "_project_set_entities_fail_open", no_projection)
+    monkeypatch.setattr(set_commit, "project_stated_relations", no_projection)
     existing = SimpleNamespace(
         **{
             k: _LIVE[k]

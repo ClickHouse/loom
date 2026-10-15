@@ -19,6 +19,7 @@ from pydantic import (
 
 from server.memory.api.models_common import MemorySetPeer, MemoryType, _Identity
 from server.memory.domain.code_change import CodeState
+from server.memory.domain.graph_quality import MAX_TRIPLES_PER_ROW
 from server.operations.base import MCP_HIDDEN
 from server.operations.read_projection import ProjectedRow
 from server.operations.read_projection import project as _project_fields
@@ -210,6 +211,15 @@ class MemoryGetOutput(ProjectedRow):
     sensitivity: str = ""
 
 
+# A (subject, relation, object) fact a point write names: at most MAX_TRIPLES_PER_ROW a
+# row, names of two characters or more as the triple writer keeps them, each part
+# capped at 256. A bulk entry's `relations` stay unchecked: an extractor's surplus is
+# cut, not refused.
+_FactName = Annotated[str, Field(min_length=2, max_length=256)]
+_FactObject = Annotated[str, Field(min_length=1, max_length=256)]
+Fact = tuple[_FactName, _FactName, _FactObject]
+
+
 class MemorySetInput(_Identity):
     # The key to write; a write to a key that already holds a row adds a new version.
     memory_key: str
@@ -225,6 +235,15 @@ class MemorySetInput(_Identity):
     # row so memory.timeline / entity_filter can find it without waiting on LLM
     # extraction — which never tags a point write under a fake/keyless provider.
     entities: list[str] = Field(default_factory=list)
+    # The (subject, relation, object) facts the value states, written to the fact
+    # graph and linked to the row as a `memory.bulk_set` entry's are: a single-valued
+    # fact closes the older one it replaces and, under `newest_wins`, retires the rows
+    # behind it. A revision that names a fact keeps it however it is worded; one naming
+    # none keeps a fact only while it repeats the old words. A 'high' row's facts are
+    # not graphed. Not in the MCP listing.
+    relations: list[Fact] = Field(
+        default_factory=list, max_length=MAX_TRIPLES_PER_ROW, json_schema_extra=MCP_HIDDEN
+    )
     # The repo files this memory is about (repo-relative path
     # or bare filename); memory.for_file serves it before an edit of them.
     # Unset = detected from the value; a rewrite that detects none keeps the
@@ -409,10 +428,18 @@ class MemoryDeleteOutput(BaseModel):
 
 
 class MemoryRestoreInput(_Identity):
-    """Restore a tombstoned memory within its 14-day grace window."""
+    """Bring back a deleted memory (within 14 days) or one Loom retired on its own."""
 
     # The key to restore, under this exact identity (no namespace-wide fallback).
     memory_key: str
+    # Precondition: restore only a row still retired behind this memory, as a
+    # `memory.auto_supersede` record names it; a row deleted, revived or retired
+    # behind another memory since is left as it is.
+    if_superseded_by: str = ""
+    # Precondition: restore only a row still retired (`superseded`), never undo a
+    # delete. For a caller that cannot see which memory the row retired behind;
+    # `if_superseded_by` implies it, so either is enough and both are harmless.
+    only_if_superseded: bool = False
 
 
 class MemoryRestoreOutput(BaseModel):
@@ -425,8 +452,7 @@ class MemoryRestoreOutput(BaseModel):
     # Surfaces "you missed the window" cleanly rather than 404-ing.
     expired: bool = False
     # What the row was restored FROM: "tombstoned" (a delete undone) or
-    # "superseded" (an automatic dedup/maintenance retirement reversed — the
-    # undo the dedup fuse counts). Empty on a no-op.
+    # "superseded" (an automatic retirement reversed). Empty on a no-op.
     from_status: str = ""
 
 
@@ -742,6 +768,10 @@ class MemoryUpdateByIdInput(BaseModel):
     # An expired row answers 409 EXPIRED unless the caller says revive=True,
     # which also clears the expiry.
     revive: bool = False
+    # The facts the new value states, as MemorySetInput.relations; [] states none.
+    relations: list[Fact] = Field(
+        default_factory=list, max_length=MAX_TRIPLES_PER_ROW, json_schema_extra=MCP_HIDDEN
+    )
 
 
 class MemoryUpdateByIdOutput(BaseModel):
@@ -805,6 +835,10 @@ class MemoryUpdateInput(BaseModel):
     char_limit: int | None = None
     # Allow updating an expired row (else 409 EXPIRED); the update clears its expiry.
     revive: bool = False
+    # The facts the new value states, as MemorySetInput.relations; [] states none.
+    relations: list[Fact] = Field(
+        default_factory=list, max_length=MAX_TRIPLES_PER_ROW, json_schema_extra=MCP_HIDDEN
+    )
 
 
 class MemoryUpdateCandidate(BaseModel):

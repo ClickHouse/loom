@@ -13,27 +13,40 @@ import pytest
 from server.memory.app import entity_projections as proj
 from server.memory.app.projections import entity_triple_row
 
+A, B = "00000000-0000-0000-0000-00000000000a", "00000000-0000-0000-0000-00000000000b"
+
 
 class _CH:
     def __init__(self) -> None:
         self.inserts: list[tuple[str, list[dict[str, Any]]]] = []
 
     async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[dict]:
+        if "FROM loom.entity_triple_rows" in sql:
+            return []  # rows written before rows were linked: matched by their text
         if "FROM loom.memory FINAL" in sql:
             return [
                 {
-                    "id": "a",
+                    "id": A,
                     "memory_key": "old",
                     "value": "The chairperson of Fatah is Mahmoud Abbas.",
                     "valid_at": None,
+                    "status": "superseded",
+                    "superseded_by": B,
+                    "tombstoned_at": None,
                 },
                 {
-                    "id": "b",
+                    "id": B,
                     "memory_key": "new",
                     "value": "The chairperson of Fatah is Moshe Kahlon.",
                     "valid_at": None,
+                    "status": "active",
+                    "superseded_by": "",
+                    "tombstoned_at": None,
+                    "holds_facts": 1,
                 },
             ]
+        if "triples" in (params or {}):
+            return []  # no successor is open yet
         assert "provenance" in sql, "the open-triple read must fetch provenance"
         return [
             {
@@ -61,8 +74,8 @@ async def test_the_successor_triple_carries_the_predecessor_provenance(
 
     monkeypatch.setattr(proj, "close_triples", _no_close)
     ch = _CH()
-    closed, inserted = await proj.follow_row_supersessions(
-        SimpleNamespace(org="o", namespace="n", agent="a"), [("a", "b")], ch=ch
+    closed, inserted, _ = await proj.follow_row_supersessions(
+        SimpleNamespace(org="o", namespace="n", agent="a"), [(A, B)], ch=ch
     )
     assert (closed, inserted) == (1, 1)
     [row] = next(rows for table, rows in ch.inserts if table == "loom.entity_triples")

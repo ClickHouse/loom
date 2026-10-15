@@ -272,7 +272,7 @@ from a contradiction, which is why the optional LLM conflict judge exists.
 | Feature                                       | LLM?          | Switch (default)                                                                                                                              |
 | --------------------------------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | `memory.set`, `memory.search` core            | No            | —                                                                                                                                             |
-| Conflict and duplicate verdicts               | No, cosine    | `LOOM_CONFLICT_THRESHOLD`; optional judge `LOOM_MEMORY_CONFLICT_JUDGE` (off)                                                                  |
+| Conflict and duplicate verdicts               | No, cosine    | `LOOM_CONFLICT_THRESHOLD`; judge `LOOM_MEMORY_CONFLICT_JUDGE` (on with a real LLM provider and its key)                                       |
 | `memory.set_from_messages` extraction         | Yes           | Always; deferred runs through the `extraction_queue` worker                                                                                   |
 | Extraction verifier (coding captures)         | Yes           | `LOOM_MEMORY_EXTRACT_VERIFY_MODELS` (`claude-opus-5-5`; `""` turns it off); fails open                                                        |
 | `memory.ask` synthesis                        | Yes           | `LOOM_MEMORY_ASK_SYNTH_MODEL`, `LOOM_MEMORY_ASK_SYNTH_MODEL_CHEAP`, `LOOM_MEMORY_ASK_MID_MODEL`                                               |

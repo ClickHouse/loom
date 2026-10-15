@@ -694,7 +694,9 @@ class MemoryClient:
         with `if_match_sha256` is never coalesced).
 
         The response also carries the write-time conflict verdict
-        (`conflict_verdict`: clear | merge | duplicate | conflict | refines),
+        (`conflict_verdict`: clear | merge | duplicate | conflict | refines,
+        or `superseded` on a coalesced set when a later stored row of the same
+        key contradicts it, `superseded_by` naming that row),
         the `peers` it was reached against (`memory_id`, `memory_key`,
         `excerpt`, `valid_at`, `similarity`), a `next` hint naming the op to
         reach for (`memory.update(key)` on a conflict, `memory.pin` on a
@@ -1183,7 +1185,8 @@ class MemoryClient:
         user_id: str | None = None,
         session_id: str | None = None,
     ) -> dict[str, Any]:
-        """Undo a tombstone within the 14-day grace window.
+        """Bring back a deleted memory (within the 14-day grace window) or one
+        Loom retired on its own (status `superseded`).
 
         Returns the full memory.restore response:
           - `restored: bool` — True if a live row was written.

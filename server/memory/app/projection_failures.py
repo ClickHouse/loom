@@ -3,14 +3,31 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
 from server.core.ch import get_client
-from server.core.datetimes import naive_utc_now
+from server.core.datetimes import naive_utc_now, parse_iso_dt
+from server.identity.domain.read_scope import (
+    READ_SCOPE_KEY,
+    WHOLE_NAMESPACE,
+    RefusedReadScope,
+    read_filters_bound,
+    replayed_read_scope,
+)
 from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry, _BulkSetResult
+from server.memory.app.projection_errors import (
+    TRIPLES_INSERTED_AT,
+    TRIPLES_REPAIRS,
+    TriplesRepairFailed,
+    repair_failure_payload,
+)
+from server.memory.domain.graph_quality import IntervalRepair
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -38,7 +55,41 @@ class ProjectionFailureRetryResult:
     retried: bool
     resolved: bool
     reason: str = ""
+    # Given up on: no retry can do the work (`reason` says why).
+    abandoned: bool = False
     error: str = ""
+
+
+# The projections whose failures name supersession work rather than a derived table:
+# the triple follow of retired rows, and the mirror of a retirement the re-read after
+# the write could not confirm.
+FOLLOW_ROWS = "triples_follow_rows"
+STATUS_MIRROR = "memory_status_mirror"
+# Triples a follow closed but could not re-check for a live row holding them.
+TRIPLES_REOPEN = "triples_reopen"
+# The facts of rows a revision or an Undo changed, not yet reconciled with them.
+TRIPLES_RECONCILE = "triples_reconcile"
+
+
+async def queue_status_mirror(rows: list[dict[str, Any]]) -> None:
+    """Queue the reconcile of retirements the re-read could not confirm: recall was
+    left as it was, and the repair mirrors each row's head once it can read it. If
+    even this insert fails, `loom reconcile-status` finds the divergence."""
+    by_ns: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for r in rows:
+        by_ns.setdefault((str(r["org"]), str(r["namespace"])), []).append(r)
+    for (org, namespace), group in by_ns.items():
+        try:
+            await record_projection_failure(
+                org=org,
+                namespace=namespace,
+                projection=STATUS_MIRROR,
+                memory_keys=sorted({str(r.get("memory_key") or "") for r in group}),
+                error="retirement unconfirmed by the re-read",
+                payload={"memory_ids": sorted({str(r["memory_id"]) for r in group})},
+            )
+        except Exception as e:  # noqa: BLE001 — the write stands; reconcile-status backs it
+            log.warning("status mirror for %d row(s) not queued: %s", len(group), e)
 
 
 async def record_projection_failure(
@@ -199,6 +250,25 @@ async def mark_projection_failures_resolved(
     return len(ids)
 
 
+async def mark_projection_failure_abandoned(
+    *, org: str, failure_id: str, reason: str, ch: Any | None = None
+) -> None:
+    """Take a failure no retry can repair out of the active queue as `abandoned`,
+    its `reason` added to what the write recorded, for an operator to look at."""
+    ch = ch or get_client()
+    await ch.execute(
+        """
+        ALTER TABLE loom.memory_projection_failures
+        UPDATE status = 'abandoned',
+               error_message = concat(error_message, '; abandoned: ', {reason:String})
+        WHERE org = {org:String}
+          AND toString(failure_id) = {failure_id:String}
+          AND status = 'active'
+        """,
+        params={"org": org, "failure_id": failure_id, "reason": reason},
+    )
+
+
 async def retry_projection_failure(
     failure: ProjectionFailureRow,
     *,
@@ -207,6 +277,7 @@ async def retry_projection_failure(
     """Retry one supported projection failure and resolve it on success."""
 
     ch = ch or get_client()
+    reason = ""
     try:
         if failure.projection == "memory_belief_sources":
             await _retry_belief_sources(failure, ch=ch)
@@ -219,7 +290,15 @@ async def retry_projection_failure(
             "entity_edges",
             "entity_triples",
         }:
-            await _retry_graph_projection(failure, ch=ch)
+            reason = await _retry_graph_projection(failure, ch=ch)
+        elif failure.projection == FOLLOW_ROWS:
+            reason = await _retry_follow_rows(failure, ch=ch)
+        elif failure.projection == STATUS_MIRROR:
+            await _retry_status_mirror(failure, ch=ch)
+        elif failure.projection == TRIPLES_REOPEN:
+            reason = await _retry_triples_reopen(failure, ch=ch)
+        elif failure.projection == TRIPLES_RECONCILE:
+            reason = await _retry_triples_reconcile(failure, ch=ch)
         else:
             return ProjectionFailureRetryResult(
                 failure_id=failure.failure_id,
@@ -228,16 +307,21 @@ async def retry_projection_failure(
                 resolved=False,
                 reason="unsupported_projection",
             )
-        await mark_projection_failures_resolved(
-            org=failure.org,
-            failure_ids=[failure.failure_id],
-            ch=ch,
-        )
+        if reason:
+            await mark_projection_failure_abandoned(
+                org=failure.org, failure_id=failure.failure_id, reason=reason, ch=ch
+            )
+        else:
+            await mark_projection_failures_resolved(
+                org=failure.org, failure_ids=[failure.failure_id], ch=ch
+            )
         return ProjectionFailureRetryResult(
             failure_id=failure.failure_id,
             projection=failure.projection,
             retried=True,
-            resolved=True,
+            resolved=not reason,
+            reason=reason,
+            abandoned=bool(reason),
         )
     except Exception as e:  # noqa: BLE001 — reported on the result; the row stays open
         return ProjectionFailureRetryResult(
@@ -349,6 +433,142 @@ async def _retry_belief_sources(
         support_type="extracted_from",
         ch=ch,
     )
+
+
+async def _retry_status_mirror(failure: ProjectionFailureRow, *, ch: Any) -> None:
+    """Mirror each row's current head onto recall, whatever it turned out to be: a
+    retirement that landed hides the row, one that did not leaves it live, and a
+    delete since tombstones it. A row no longer stored at all was erased, and the
+    erasure removed its embeddings with it: nothing is left to mirror."""
+    import server.memory.store as memory_repo
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+
+    ids = [str(i) for i in failure.payload.get("memory_ids") or []]
+    if not ids:
+        raise ValueError("memory_status_mirror retry has no memory_ids")
+    heads = []
+    for mid in ids:
+        row = await memory_repo.get_by_id(
+            mid,
+            org=failure.org,
+            ch=ch,
+            scope=WHOLE_NAMESPACE,
+            fresh=True,
+            strong=True,
+            include_tombstoned=True,
+        )
+        if row is not None:
+            heads.append(row.model_dump())
+    # Strict: a mirror that failed must leave the failure open for the next pass.
+    await memory_repo.mirror_status_to_embeddings(heads, ch=ch, strict=True)
+
+
+async def _retry_follow_rows(failure: ProjectionFailureRow, *, ch: Any) -> str:
+    """Follow the supersession pairs a write left for later, reading each chain to
+    its end. A pair still unread is a cycle or a chain past `REPAIR_CHAIN_HOPS`,
+    which no retry reads: the reason returned abandons the failure."""
+    from types import SimpleNamespace
+
+    from server.memory.app.entity_projections import REPAIR_CHAIN_HOPS, follow_row_supersessions
+
+    pairs = [(str(o), str(n)) for o, n in failure.payload.get("pairs") or []]
+    if not pairs:
+        raise ValueError("triples_follow_rows retry has no pairs")
+    scope = SimpleNamespace(org=failure.org, namespace=failure.namespace, agent=failure.agent)
+    outcome = await follow_row_supersessions(scope, pairs, ch=ch, hops=REPAIR_CHAIN_HOPS)
+    if not outcome.unfollowed:
+        return ""
+    log.warning(
+        "projection repair: %d supersession pair(s) left unfollowed in %s/%s",
+        len(outcome.unfollowed),
+        failure.org,
+        failure.namespace,
+    )
+    return f"unfollowable_chain: {len(outcome.unfollowed)} pair(s)"
+
+
+async def _retry_triples_reopen(failure: ProjectionFailureRow, *, ch: Any) -> str:
+    """Undo a follow's close for the triples a live row holds, as the follow would
+    have. A payload no retry can read returns the reason that abandons it."""
+    from server.memory.app.entity_projections import reopen_held
+
+    try:
+        closes = [
+            (str(s), str(r), str(o), datetime.fromisoformat(at))
+            for s, r, o, at in failure.payload["closes"]
+        ]
+        closed_at = datetime.fromisoformat(failure.payload["closed_at"])
+    except (KeyError, TypeError, ValueError):
+        return "malformed_payload"
+    held = await reopen_held(
+        org=failure.org, namespace=failure.namespace, closes=closes, closed_at=closed_at, ch=ch
+    )
+    if held:
+        log.info(
+            "projection repair: opened again %d triple(s) a live row holds in %s/%s",
+            len(held),
+            failure.org,
+            failure.namespace,
+        )
+    return ""
+
+
+def _recorded_repairs(payload: dict[str, Any]) -> list[IntervalRepair]:
+    """The closes a failed interval repair had made, as `repair_failure_payload` stored them."""
+    return [
+        IntervalRepair(
+            subject=r["subject"],
+            relation=r["relation"],
+            old_object=r["old_object"],
+            new_object=r["new_object"],
+            valid_to=datetime.fromisoformat(r["valid_to"]),
+            valid_from=parse_iso_dt(r["valid_from"]),
+            invalid_at=parse_iso_dt(r["invalid_at"]),
+            new_valid_from=parse_iso_dt(r["new_valid_from"]),
+        )
+        for r in payload.get(TRIPLES_REPAIRS) or []
+    ]
+
+
+async def _rows_still_holding(
+    failure: ProjectionFailureRow, hashes: dict[str, str], *, ch: Any
+) -> list[str]:
+    """The rows of `hashes` (id to `content_sha256`) whose value is still that one."""
+    rows = await ch.query_all(
+        """
+        SELECT toString(memory_id) AS id, toString(content_sha256) AS sha
+        FROM loom.memory FINAL
+        WHERE org = {org:String} AND namespace = {ns:String} AND memory_id IN {ids:Array(UUID)}
+        SETTINGS select_sequential_consistency = 1
+        """,
+        params={"org": failure.org, "ns": failure.namespace, "ids": sorted(hashes)},
+    )
+    return sorted(str(r["id"]) for r in rows if hashes.get(str(r["id"])) == str(r["sha"]))
+
+
+async def _retry_triples_reconcile(failure: ProjectionFailureRow, *, ch: Any) -> str:
+    """Reconcile the facts of the rows a revision or an Undo changed, as it would have."""
+    from types import SimpleNamespace
+
+    from server.memory.app.entity_projections import close_dropped_facts, reopen_held_facts
+
+    ids = [str(i) for i in failure.payload.get("memory_ids") or []]
+    if not ids:
+        return "malformed_payload"
+    scope = SimpleNamespace(org=failure.org, namespace=failure.namespace, agent=failure.agent)
+    if failure.payload.get("reopen"):
+        # A row revised since the Undo is its revision's to reconcile, not the Undo's.
+        hashes = failure.payload.get("content_sha256") or {}
+        if hashes:
+            ids = await _rows_still_holding(failure, hashes, ch=ch)
+            if not ids:
+                return ""
+        # As of the Undo: a value stated since stays the newer one.
+        restored_at = parse_iso_dt(failure.payload.get("restored_at") or "")
+        await reopen_held_facts(scope, ids, ch=ch, restored_at=restored_at)
+    else:
+        await close_dropped_facts(scope, ids, ch=ch)
+    return ""
 
 
 async def _retry_memory_chunks(
@@ -517,7 +737,13 @@ async def _retry_graph_projection(
     failure: ProjectionFailureRow,
     *,
     ch: Any,
-) -> None:
+) -> str:
+    """Replay a bulk write's graph projection. Only a triples replay retires rows,
+    so only it needs the writer's read scope and runs within it; one recorded
+    refused or incomplete returns the reason (`refused_read_scope`,
+    `incomplete_read_scope`) that abandons the failure, as no retry can replay it.
+    A replay that inserts does so only for entries whose row still holds the value
+    they wrote; with none left, the failure resolves with nothing to do."""
     entries = failure.payload.get("entries")
     results = failure.payload.get("results")
     if not isinstance(entries, list) or not isinstance(results, list):
@@ -525,6 +751,7 @@ async def _retry_graph_projection(
 
     from server.embedding import get_embedder
     from server.memory.app.projections import (
+        value_sha256,
         write_entity_edges,
         write_entity_triples,
         write_entity_vectors,
@@ -550,16 +777,84 @@ async def _retry_graph_projection(
     ]
     if not bulk_input.entries or not bulk_results:
         raise ValueError("graph projection retry has no valid entries/results")
-    if failure.projection == "entity_vectors":
-        await write_entity_vectors(bulk_input, bulk_results, get_embedder(), ch=ch)
-    # entity_edges / entity_triples are plain MergeTree, one row per
-    # observation: a replay that inserted and then failed to resolve would
-    # count its rows again next pass. The failure's id is the dedup token.
-    elif failure.projection == "entity_edges":
-        await write_entity_edges(
-            bulk_input, bulk_results, ch=ch, dedup_token=f"projection-repair:{failure.failure_id}"
+    dedup_token = f"projection-repair:{failure.failure_id}"
+    scope = WHOLE_NAMESPACE
+    if failure.projection == "entity_triples":
+        try:
+            scope = replayed_read_scope(failure.payload.get(READ_SCOPE_KEY))
+        except RefusedReadScope:
+            return "refused_read_scope"
+        except ValueError:
+            return "incomplete_read_scope"
+    # A replay that writes rows writes them only for rows that still hold the value:
+    # one revised, retired or made 'high' since keeps what it holds now. A repair of
+    # triples that already landed is dated at their write and runs as it would have.
+    kept: dict[str, Any] = {}
+    if not failure.payload.get(TRIPLES_INSERTED_AT):
+        from server.memory.app.entity_projections import rows_holding
+
+        pairs = list(zip(bulk_input.entries, bulk_results, strict=True))
+        held = await rows_holding(
+            failure.org,
+            failure.namespace,
+            [(r.memory_id, value_sha256(e)) for e, r in pairs if r.memory_id],
+            ch=ch,
         )
-    elif failure.projection == "entity_triples":
-        await write_entity_triples(
-            bulk_input, bulk_results, ch=ch, dedup_token=f"projection-repair:{failure.failure_id}"
-        )
+        pairs = [(e, r) for e, r in pairs if r.memory_id in held]
+        if not pairs:
+            return ""
+        bulk_input = bulk_input.model_copy(update={"entries": [e for e, _r in pairs]})
+        bulk_results = [r for _e, r in pairs]
+        kept = {
+            "entries": [e.model_dump(mode="json") for e in bulk_input.entries],
+            "results": [r.model_dump(mode="json") for r in bulk_results],
+        }
+    with read_filters_bound(None, scope):
+        if failure.projection == "entity_vectors":
+            await write_entity_vectors(bulk_input, bulk_results, get_embedder(), ch=ch)
+        # entity_edges / entity_triples are plain MergeTree, one row per
+        # observation: a replay that inserted and then failed to resolve would
+        # count its rows again next pass. The failure's id is the dedup token.
+        elif failure.projection == "entity_edges":
+            await write_entity_edges(bulk_input, bulk_results, ch=ch, dedup_token=dedup_token)
+        elif failure.projection == "entity_triples":
+            try:
+                await write_entity_triples(
+                    bulk_input,
+                    bulk_results,
+                    ch=ch,
+                    dedup_token=dedup_token,
+                    inserted_at=parse_iso_dt(failure.payload.get(TRIPLES_INSERTED_AT) or ""),
+                    repaired=_recorded_repairs(failure.payload),
+                )
+            except TriplesRepairFailed as e:
+                # What this replay wrote rides the failure, for the next to finish: the
+                # entries it kept and the closes it made. The payload is stored as JSON:
+                # compare it as the next retry reads it.
+                changes = json.loads(json.dumps({**repair_failure_payload(e), **kept}))
+                if any(changes[k] != failure.payload.get(k) for k in changes):
+                    await _update_payload(failure, changes, ch=ch)
+                raise
+    return ""
+
+
+async def _update_payload(
+    failure: ProjectionFailureRow, changes: dict[str, Any], *, ch: Any
+) -> None:
+    payload = {**failure.payload, **changes}
+    # Synchronous: the next retry reads the payload this one leaves.
+    await ch.execute(
+        """
+        ALTER TABLE loom.memory_projection_failures
+        UPDATE payload = {payload:String}
+        WHERE org = {org:String}
+          AND toString(failure_id) = {failure_id:String}
+          AND status = 'active'
+        SETTINGS mutations_sync = 2
+        """,
+        params={
+            "org": failure.org,
+            "failure_id": failure.failure_id,
+            "payload": json.dumps(payload, sort_keys=True, default=str),
+        },
+    )

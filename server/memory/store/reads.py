@@ -166,6 +166,7 @@ async def get_by_id(
     include_usage_totals: bool = False,
     fresh: bool = False,
     strong: bool = False,
+    include_tombstoned: bool = False,
 ) -> MemoryRow | None:
     """Lookup by surrogate ID. Used by ops that address memories by their
     UUID rather than the (identity, key) tuple — `memory.update_by_id`,
@@ -182,6 +183,7 @@ async def get_by_id(
     consistency (see `_point_lookup`).
 
     `scope`: a row outside the read scope is not found (None), never refused.
+    `include_tombstoned`: a deleted row is returned too, as get_by_key's.
     """
     ch = ch or _default_client()
     params: dict[str, Any] = {"mid": memory_id}
@@ -221,11 +223,9 @@ async def get_by_id(
         "namespace = {ns:String}",
         "memory_key = {k:String}",
     ]
-    where = [
-        "created_at = {ca:DateTime}",
-        "memory_id = {mid:UUID}",
-        "tombstoned_at IS NULL",
-    ]
+    where = ["created_at = {ca:DateTime}", "memory_id = {mid:UUID}"]
+    if not include_tombstoned:
+        where.append("tombstoned_at IS NULL")
     params = {
         **params,
         "org": str(key["org"]),

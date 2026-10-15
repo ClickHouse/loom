@@ -252,6 +252,13 @@ def apply(s: Settings, published: dict[str, Any], explicit: frozenset[str]) -> l
     return changed
 
 
+def explicit_fields(s: Settings) -> frozenset[str]:
+    """The settings a read-replica's env chose, which it keeps over the main Loom's.
+    An empty or "auto" conflict judge leaves the choice to the main Loom."""
+    unset = {"memory_conflict_judge"} if s.memory_conflict_judge is None else set()
+    return s.env_fields_set() - unset
+
+
 # The read-replica's own env, captured before the first overlay.
 _EXPLICIT: frozenset[str] | None = None
 
@@ -262,7 +269,7 @@ async def load(ch: Any, *, boot: bool) -> list[str]:
     keeps what was applied."""
     global _EXPLICIT
     if _EXPLICIT is None:
-        _EXPLICIT = settings.env_fields_set()
+        _EXPLICIT = explicit_fields(settings)
     try:
         published = await _read(ch)
         if published is None:

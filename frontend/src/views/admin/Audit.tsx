@@ -1,7 +1,7 @@
 import { startTransition, useEffect, useState } from "react";
 import { History, User, ChevronRight, Trash2 } from "lucide-react";
 import * as Tabs from "@radix-ui/react-tabs";
-import { listAuditLog, listErasures, type AuditEntry, type ErasureListRow } from "../../api";
+import { autoResolveReasonText, listAuditLog, listErasures, type AuditEntry, type ErasureListRow } from "../../api";
 import { useStore, useIdentity } from "../../lib/state";
 import { hasOrgAdminClaim } from "../../lib/role";
 import { Skeleton } from "../../components/Skeleton";
@@ -101,6 +101,20 @@ function summarize(event_type: string, subject: Record<string, unknown>): string
       return `Recorded outcome for "${s("memory_key")}": ${s("outcome") || s("result")}`;
     case "memory.touch":
       return `Touched "${s("memory_key")}"`;
+    case "memory.auto_supersede": {
+      // A retirement the re-read after the write could not confirm is not counted as done.
+      const entries = Array.isArray(subject["retired"]) ? (subject["retired"] as unknown[]) : [];
+      const unsure = entries.filter((e) => isRecord(e) && e["unconfirmed"] === "true").length;
+      const done = Number(subject["count"] ?? 0) - unsure;
+      const many = (k: number) => (k === 1 ? "1 memory" : `${k} memories`);
+      const text = autoResolveReasonText(s("reason"));
+      const why = text ? ` (${text.charAt(0).toLowerCase() + text.slice(1)})` : "";
+      if (done <= 0) return `Loom may have retired ${many(unsure)} automatically${why}`;
+      const more = unsure ? `, and may have retired ${unsure} more` : "";
+      return `Loom retired ${many(done)} automatically${why}${more}`;
+    }
+    case "memory.unsupersede":
+      return `Restored "${s("memory_key")}" after it was retired`;
     case "knowledge.upsert":
       return `Uploaded document ${s("source_uri") || s("title")}`;
     case "knowledge.add":

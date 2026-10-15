@@ -4,7 +4,7 @@ memory.unsupersede."""
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -118,4 +118,73 @@ async def test_restore_reverses_an_automatic_supersession_and_writes_the_ledger_
     assert unsup == ["k"], "embeddings re-emitted active"
     assert emitted and emitted[0][0] == "memory.unsupersede"
     subj = emitted[0][1]["subject"]
-    assert subj["superseded_by"] == "keeper-id" and subj["retired_by"] == "dedup_sweep"
+    assert subj["superseded_by"] == "keeper-id" and "retired_by" not in subj
+
+
+@pytest.mark.parametrize("deleted_since", [True, False])
+async def test_an_undo_after_a_later_delete_leaves_the_delete(monkeypatch, deleted_since):
+    # The first read still shows the retirement; the read-your-writes head shows the
+    # delete that landed since, or no row at all. The delete stands, and the answer
+    # comes from that head.
+    from server.memory.api.models_crud import MemoryRestoreInput
+    from server.memory.app import restore as restore_mod
+
+    ch = _CH({"memory_id": "stale", "version": 100, "status": "superseded", "tombstoned_at": None})
+    deleted = _superseded_row().model_copy(
+        update={"version": 101, "tombstoned_at": datetime(2026, 9, 11)}
+    )
+
+    async def _get_by_key(*_: Any, **__: Any) -> MemoryRow | None:
+        return deleted if deleted_since else None
+
+    monkeypatch.setattr(restore_mod, "get_client", lambda: ch)
+    monkeypatch.setattr("server.memory.store.get_by_key", _get_by_key)
+    out = await restore_mod.handle_memory_restore(
+        MemoryRestoreInput(
+            org="o",
+            namespace="n",
+            agent="a",
+            session_id="s1",
+            memory_key="k",
+            if_superseded_by="keeper-id",
+        )
+    )
+    assert out.restored is False and ch.inserts == []
+    if deleted_since:
+        assert (out.memory_id, out.version) == ("mid", 101)
+    else:
+        assert out.memory_id is None
+
+
+async def test_a_guarded_restore_never_undoes_a_delete(monkeypatch):
+    # The inspector showed the row retired; another client deleted it since.
+    from server.memory.api.models_crud import MemoryRestoreInput
+    from server.memory.app import restore as restore_mod
+
+    yesterday = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1)
+    deleted = _superseded_row().model_copy(update={"version": 101, "tombstoned_at": yesterday})
+    ch = _CH(
+        {
+            "memory_id": "mid",
+            "version": 101,
+            "status": "superseded",
+            "tombstoned_at": deleted.tombstoned_at,
+        }
+    )
+
+    async def _get_by_key(*_: Any, **__: Any) -> MemoryRow:
+        return deleted
+
+    monkeypatch.setattr(restore_mod, "get_client", lambda: ch)
+    monkeypatch.setattr("server.memory.store.get_by_key", _get_by_key)
+    out = await restore_mod.handle_memory_restore(
+        MemoryRestoreInput(
+            org="o",
+            namespace="n",
+            agent="a",
+            session_id="s1",
+            memory_key="k",
+            only_if_superseded=True,
+        )
+    )
+    assert out.restored is False and out.from_status == "" and ch.inserts == []

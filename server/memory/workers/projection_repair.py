@@ -30,6 +30,8 @@ class ProjectionRepairResult:
     retried: int = 0
     resolved: int = 0
     unsupported: int = 0
+    # Given up on: a follow whose chain no retry can read.
+    abandoned: int = 0
     failed: list[dict[str, str]] = field(default_factory=list)
 
 
@@ -56,6 +58,8 @@ async def run_pass(
                 result.resolved += 1
             if retry.reason == "unsupported_projection":
                 result.unsupported += 1
+            if retry.abandoned:
+                result.abandoned += 1
             if retry.error:
                 result.failed.append(
                     {
@@ -69,15 +73,18 @@ async def run_pass(
             "retried": result.retried,
             "resolved": result.resolved,
             "unsupported": result.unsupported,
+            "abandoned": result.abandoned,
             "failed": len(result.failed),
         }
 
     log.info(
-        "projection repair pass: scanned=%d retried=%d resolved=%d unsupported=%d failed=%d",
+        "projection repair pass: scanned=%d retried=%d resolved=%d unsupported=%d"
+        " abandoned=%d failed=%d",
         result.scanned,
         result.retried,
         result.resolved,
         result.unsupported,
+        result.abandoned,
         len(result.failed),
     )
     return result

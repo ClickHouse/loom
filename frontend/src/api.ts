@@ -300,25 +300,37 @@ export async function listMemories(
   return out;
 }
 
-/** Undo a tombstone within the 14-day grace window. Returns
- *  restored=true on success, expired=true if the window has closed,
- *  restored=false (no-op) if the row was already live or doesn't exist.
- *  user_id / session_id complete the row's identity tuple. */
+/** Bring a row back live: undo a tombstone within the 14-day grace window, or undo a
+ *  supersession (a row Loom retired on its own, or a later write replaced). Returns
+ *  restored=true on success, expired=true if the delete window has closed, restored=false
+ *  (no-op) if the row was already live or doesn't exist. `from_status` says what it was
+ *  restored from ("tombstoned" or "superseded"; empty on a no-op). user_id / session_id
+ *  complete the row's identity tuple. */
 export async function restoreMemory(
   id: Identity,
   key: string,
-  opts: { user_id?: string; session_id?: string } = {},
+  opts: {
+    user_id?: string;
+    session_id?: string;
+    /** Restore only a row still retired behind this memory id; otherwise restored=false. */
+    if_superseded_by?: string;
+    /** Restore only a row still retired, whatever it retired behind; never undo a delete. */
+    only_if_superseded?: boolean;
+  } = {},
 ): Promise<{
   restored: boolean;
   memory_id?: string | null;
   version?: number | null;
   expired?: boolean;
+  from_status?: "tombstoned" | "superseded" | "";
 }> {
   return post("/v1/memory.restore", {
     ...id,
     user_id: opts.user_id ?? "-",
     session_id: opts.session_id ?? "-",
     memory_key: key,
+    ...(opts.if_superseded_by ? { if_superseded_by: opts.if_superseded_by } : {}),
+    ...(opts.only_if_superseded ? { only_if_superseded: true } : {}),
   });
 }
 
@@ -326,6 +338,7 @@ export async function restoreMemory(
  *  doesn't exist; gate on it before reading the other fields. */
 export interface MemoryDetail {
   found: boolean;
+  memory_id?: string;
   value: unknown;
   memory_type: string | null;
   confidence: number | null;
@@ -346,6 +359,8 @@ export interface MemoryDetail {
    *  starts from one). */
   entities?: string[];
   status?: string;
+  /** For a `status='superseded'` row, the memory_id of the row it retired behind. */
+  superseded_by?: string;
   /** Server-enforced cap on the stringified value; NULL = no cap. The
    *  Inspector reads this to preserve the cap when editing the value,
    *  since the write path is write-through. */

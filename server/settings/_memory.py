@@ -4,9 +4,17 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, BeforeValidator, Field
 
 from server.settings._env import CaseFolded
+
+
+def _unset_is_none(v: object) -> object:
+    """An empty value or "auto" means unset (follow the provider), so a template
+    that writes the variable empty does not fail boot."""
+    if isinstance(v, str) and v.strip().lower() in ("", "auto"):
+        return None
+    return v
 
 
 class MemorySettings(BaseModel):
@@ -80,11 +88,14 @@ class MemorySettings(BaseModel):
     # for text-embedding-3-*; 1.0 disables. Per-namespace override:
     # loom.namespaces.conflict_threshold.
     conflict_threshold: float = 0.85
-    # When the cosine check would flag a write, one cheap LLM call labels the
-    # closest peers (contradiction / elaboration / restatement / unrelated) and
-    # the verdict follows: conflict / refines (supersedes with a `refines`
-    # edge) / merge / clear. One call per flagged write.
-    memory_conflict_judge: bool = False
+    # LLM labelling of the peers a write is checked against (contradiction /
+    # elaboration / restatement / related / unrelated), which decides the verdict.
+    # Unset, empty or "auto" = on while a real LLM can run it (the judge's model has
+    # its key, or a replica forwards to the main Loom); false = off; true = on.
+    # Read it through conflict_judge_switch.conflict_judge_on(). Costs and rules:
+    # docs/features/memory/conflicts-and-refusal.md.
+    memory_conflict_judge: Annotated[bool | None, BeforeValidator(_unset_is_none)] = None
+
     # Closest peers the conflict judge labels in its one call per flagged write.
     memory_conflict_judge_max_peers: int = Field(default=3, ge=1)
     # With the judge on, peers down to this cosine are judged too (never

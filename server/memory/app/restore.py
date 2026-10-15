@@ -24,9 +24,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-async def _restore_superseded(
-    input: MemoryRestoreInput, row: dict[str, Any], ch: Any
-) -> MemoryRestoreOutput:
+async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryRestoreOutput:
     import server.memory.store as memory_repo
     from server.observability import audit
 
@@ -45,11 +43,16 @@ async def _restore_superseded(
         strong=True,
         scope=WHOLE_NAMESPACE,
     )
-    if existing is None or str(getattr(existing, "status", "")) != "superseded":
+    if (
+        existing is None
+        or existing.tombstoned_at is not None
+        or str(existing.status) != "superseded"
+        or (input.if_superseded_by and existing.superseded_by != input.if_superseded_by)
+    ):
+        if existing is None:
+            return MemoryRestoreOutput(restored=False)
         return MemoryRestoreOutput(
-            restored=False,
-            memory_id=str(row.get("memory_id") or ""),
-            version=int(row.get("version") or 0),
+            restored=False, memory_id=str(existing.memory_id), version=int(existing.version)
         )
     new_version = next_version()
     restore_row = memory_repo.build_memory_version_row(
@@ -77,6 +80,17 @@ async def _restore_superseded(
             input.memory_key,
             exc_info=True,
         )
+    # The facts the retirement closed and the restored value still holds come back.
+    from server.memory.app.entity_projections import reconcile_row_facts
+
+    await reconcile_row_facts(
+        input,
+        [str(existing.memory_id)],
+        reopen=True,
+        op="memory.restore",
+        ch=ch,
+        hashes={str(existing.memory_id): str(existing.content_sha256)},
+    )
     await audit.emit(
         "memory.unsupersede",
         org=input.org,
@@ -84,16 +98,13 @@ async def _restore_superseded(
         actor=getattr(input, "actor", "") or "-",
         subject={
             "memory_key": input.memory_key,
-            "memory_id": str(row.get("memory_id") or ""),
-            "superseded_by": str(row.get("superseded_by") or ""),
-            # who retired it: a back-pointer means the dedup sweep; any other
-            # retirement carries the audit label "memory_maintenance"
-            "retired_by": "dedup_sweep" if row.get("superseded_by") else "memory_maintenance",
+            "memory_id": str(existing.memory_id),
+            "superseded_by": str(existing.superseded_by or ""),
         },
     )
     return MemoryRestoreOutput(
         restored=True,
-        memory_id=str(row.get("memory_id") or ""),
+        memory_id=str(existing.memory_id),
         version=new_version,
         from_status="superseded",
     )
@@ -246,14 +257,13 @@ async def handle_memory_restore(input: MemoryRestoreInput) -> MemoryRestoreOutpu
     )
     if row is None:
         return MemoryRestoreOutput(restored=False)
-    if row.get("tombstoned_at") is None and str(row.get("status") or "") == "superseded":
-        # Not deleted but RETIRED by an automatic supersession (dedup sweep /
-        # maintenance). The undo: a version with status back to active and the
-        # retirement stamp cleared, mirrored onto the embeddings so recall sees
-        # it again. Recorded as audit event `memory.unsupersede` — the ledger
-        # row the dedup fuse counts before it supersedes in this namespace
-        # again (an automatic merge is gated by what it can undo).
-        return await _restore_superseded(input, row, ch)
+    if (
+        input.if_superseded_by
+        or input.only_if_superseded
+        or (row.get("tombstoned_at") is None and str(row.get("status") or "") == "superseded")
+    ):
+        # Undo of an automatic retirement; `_restore_superseded` rechecks on the strong head.
+        return await _restore_superseded(input, ch)
     if row.get("tombstoned_at") is None:
         # Already live — idempotent no-op.
         return MemoryRestoreOutput(

@@ -697,8 +697,8 @@ export interface AuditEntry {
 
 export async function listAuditLog(
   id: Pick<Identity, "org"> & { namespace?: string },
-  opts: { limit?: number; event_type?: string; since?: string; fields?: string[] } & RequestOpts = {},
-): Promise<{ rows: AuditEntry[] }> {
+  opts: { limit?: number; event_type?: string; since?: string; fields?: string[]; cursor?: string } & RequestOpts = {},
+): Promise<{ rows: AuditEntry[]; next_cursor?: string | null }> {
   const body: Record<string, unknown> = {
     org: id.org,
     limit: opts.limit ?? 100,
@@ -712,7 +712,149 @@ export async function listAuditLog(
   // all, regular users to their accessible namespaces).
   if (id.namespace) body["namespace"] = id.namespace;
   if (opts.event_type) body["event_type"] = opts.event_type;
+  // The previous page's `next_cursor`: the next, older page.
+  if (opts.cursor) body["cursor"] = opts.cursor;
   return post("/v1/audit.list", body, opts.signal);
+}
+
+// ===== automatic retirements =====
+
+/** Why Loom retired a memory on its own (`server/memory/app/auto_resolution.py`). */
+export type AutoResolveReason =
+  | "same_key_judge"
+  | "same_key_newest_wins"
+  | "refines"
+  | "newest_wins_contradiction"
+  | "value_update";
+
+/** Why Loom retired a memory, in plain words. No pronoun, so it reads for one row in the
+ *  Review queue and for "Loom retired N memories automatically (…)" in Activity. */
+export const AUTO_RESOLVE_REASON_TEXT: Record<AutoResolveReason, string> = {
+  same_key_judge: "Replaced by a later statement of the same attribute",
+  same_key_newest_wins: "Replaced by a newer write (namespace policy)",
+  newest_wins_contradiction: "Replaced by a newer write (namespace policy)",
+  refines: "Replaced by a newer memory with more detail",
+  value_update: "Replaced by an updated value",
+};
+
+/** The reason's wording, with the judge's `elaboration` label told apart; null for an
+ *  unknown reason. */
+export function autoResolveReasonText(reason: string, label?: string): string | null {
+  if (reason === "same_key_judge" && label === "elaboration") {
+    return "Replaced by a later, fuller statement of the same attribute";
+  }
+  return Object.hasOwn(AUTO_RESOLVE_REASON_TEXT, reason) ? AUTO_RESOLVE_REASON_TEXT[reason as AutoResolveReason] : null;
+}
+
+/** One retired row of a `memory.auto_supersede` audit row: ids, keys and identity, no value. */
+export interface AutoResolvedRow {
+  memory_id: string;
+  memory_key: string;
+  agent: string;
+  user_id: string;
+  session_id: string;
+  superseded_by: string;
+  superseded_by_key?: string;
+  /** The judge's label (`contradiction` / `elaboration`) on a same-key judgement. */
+  label?: string;
+  /** The re-read after the write could not confirm the retirement took effect. */
+  unconfirmed?: boolean;
+  reason: AutoResolveReason | string;
+  /** When the retirement was recorded (the audit row's `ts`). */
+  ts: string;
+}
+
+/** How far back the Auto-resolved tab looks by default. */
+export const AUTO_RESOLVED_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+
+function parseSubject(raw: string): Record<string, unknown> {
+  try {
+    const v: unknown = JSON.parse(raw);
+    return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+const str = (v: unknown): string => (v == null ? "" : String(v));
+
+/** One page of the memories Loom retired on its own in a namespace, newest first: one row
+ *  per retired memory, flattened out of the `memory.auto_supersede` audit records. A page
+ *  is `limit` records (default 20), each listing up to 200 retired memories. `since`
+ *  defaults to 30 days back; pass the returned `next_cursor` as `cursor` for the next,
+ *  older page. */
+export async function listAutoResolved(
+  id: Pick<Identity, "org" | "namespace">,
+  opts: { limit?: number; since?: string; cursor?: string } & RequestOpts = {},
+): Promise<{ rows: AutoResolvedRow[]; next_cursor: string | null }> {
+  const page = await listAuditLog(id, {
+    event_type: "memory.auto_supersede",
+    limit: opts.limit ?? 20,
+    since: opts.since ?? new Date(Date.now() - AUTO_RESOLVED_WINDOW_MS).toISOString(),
+    cursor: opts.cursor,
+    fields: ["ts", "subject"],
+    signal: opts.signal,
+  });
+  const out: AutoResolvedRow[] = [];
+  for (const r of page.rows || []) {
+    const subject = parseSubject(r.subject);
+    const retired = Array.isArray(subject["retired"]) ? (subject["retired"] as unknown[]) : [];
+    for (const e of retired) {
+      if (!e || typeof e !== "object" || Array.isArray(e)) continue;
+      const m = e as Record<string, unknown>;
+      if (!m["memory_id"] || !m["memory_key"]) continue;
+      out.push({
+        memory_id: str(m["memory_id"]),
+        memory_key: str(m["memory_key"]),
+        agent: str(m["agent"]) || "-",
+        user_id: str(m["user_id"]) || "-",
+        session_id: str(m["session_id"]) || "-",
+        superseded_by: str(m["superseded_by"]),
+        superseded_by_key: m["superseded_by_key"] ? str(m["superseded_by_key"]) : undefined,
+        label: m["label"] ? str(m["label"]) : undefined,
+        unconfirmed: m["unconfirmed"] === "true" || undefined,
+        reason: str(subject["reason"]),
+        ts: r.ts,
+      });
+    }
+  }
+  return { rows: out, next_cursor: page.next_cursor ?? null };
+}
+
+/** Pages of `memory.unsupersede` records `listUnsuperseded` reads at most. A restore is
+ *  one record, made by a person clicking Undo or Restore, so 5 pages of 500 cover far more
+ *  restores than a 30-day window holds; past that, an older retirement shows Undo, and
+ *  undoing a row already live answers `restored=false` ("No longer retired"). */
+export const UNSUPERSEDED_MAX_PAGES = 5;
+
+/** memory_id -> when it was last restored from `superseded` (`memory.unsupersede` audit
+ *  records since `since`, the oldest retirement on show), so a retirement already undone
+ *  reads as such. Follows `next_cursor` for at most `UNSUPERSEDED_MAX_PAGES` pages. */
+export async function listUnsuperseded(
+  id: Pick<Identity, "org" | "namespace">,
+  opts: { since: string; limit?: number; maxPages?: number } & RequestOpts,
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  let cursor: string | undefined;
+  for (let page = 0; page < (opts.maxPages ?? UNSUPERSEDED_MAX_PAGES); page++) {
+    const { rows, next_cursor } = await listAuditLog(id, {
+      event_type: "memory.unsupersede",
+      limit: opts.limit ?? 500,
+      since: opts.since,
+      cursor,
+      fields: ["ts", "subject"],
+      signal: opts.signal,
+    });
+    for (const r of rows || []) {
+      const mid = str(parseSubject(r.subject)["memory_id"]);
+      if (!mid) continue;
+      const prev = out.get(mid);
+      if (!prev || r.ts > prev) out.set(mid, r.ts);
+    }
+    if (!next_cursor) break;
+    cursor = next_cursor;
+  }
+  return out;
 }
 
 // ===== cost rollup =====

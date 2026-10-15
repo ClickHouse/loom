@@ -221,6 +221,7 @@ async def test_pipeline_records_key_collision(monkeypatch: pytest.MonkeyPatch) -
     async def _bulk(bulk_input):
         class _Out:
             written: list = []
+            skipped_blacklisted: list = []
 
         return _Out()
 
@@ -322,6 +323,7 @@ async def test_schema_mode_records_stubbed_fields(monkeypatch: pytest.MonkeyPatc
     async def _fake_bulk(bulk_input):
         class _Out:
             written: list = []
+            skipped_blacklisted: list = []
 
         return _Out()
 

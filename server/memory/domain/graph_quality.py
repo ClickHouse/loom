@@ -9,9 +9,9 @@ invalidation rule used by graph repair/reconciliation code.
 from __future__ import annotations
 
 import re
-from collections.abc import Collection, Iterable, Mapping
+from collections.abc import Collection, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 
 _SPACE_RE = re.compile(r"\s+")
 _VOWELS = frozenset("aeiouy")
@@ -215,6 +215,8 @@ class IntervalRepair:
     # does not populate it — the writer only sets
     # entity_triples/entity_edges.invalid_at when this is populated.
     invalid_at: datetime | None = None
+    # The closing (new_object) value's own valid_from; None when it is undated.
+    new_valid_from: datetime | None = None
 
 
 # First-person collapse for the SINGLE canonical entity normalizer — read
@@ -228,6 +230,10 @@ class IntervalRepair:
 _FIRST_PERSON_FORMS = frozenset(
     {"i", "me", "myself", "user", "the user", "the customer", "customer", "my self"}
 )
+# What every first-person form canonicalises to.
+SELF_SUBJECT = "user"
+# The most triples one memory row states; the triple writer keeps the first ones.
+MAX_TRIPLES_PER_ROW = 8
 
 # Singularize the head noun so distinct-thing COUNTs don't split on
 # plural/singular surface forms ("data breach" vs "data breaches", "kit" vs
@@ -390,7 +396,7 @@ def _normalise(lowered: str) -> str:
     text = lowered.replace("'s", "").replace("’s", "")
     text = _PUNCT_RE.sub(" ", text)
     text = _settle(_lead(_SPACE_RE.sub(" ", text)))
-    return "user" if text in _FIRST_PERSON_FORMS else text
+    return SELF_SUBJECT if text in _FIRST_PERSON_FORMS else text
 
 
 def canonical_entity(raw: str) -> CanonicalEntity:
@@ -441,26 +447,16 @@ def should_invalidate_interval(
     existing_valid_at: datetime | None,
     existing_valid_to: datetime | None,
     new_valid_at: datetime | None,
-    tie_closes: bool = False,
 ) -> bool:
     """True when a newer fact should close an older open interval.
 
     If the existing edge is already closed, or the new fact has no real-world
     start time, there is nothing deterministic to invalidate.
-
-    `tie_closes` — when both facts start at the same instant, the existing
-    one (which arrived first) closes. The default keeps both; the
-    single-valued triple writer passes True because the
-    extractor stamps the session date on every fact it cannot date more
-    precisely, so "same day, different value" is the common shape of a
-    state change, not a coincidence.
     """
 
     if new_valid_at is None or existing_valid_to is not None:
         return False
     if existing_valid_at is None:
-        return True
-    if tie_closes and existing_valid_at == new_valid_at:
         return True
     return existing_valid_at < new_valid_at
 
@@ -542,6 +538,12 @@ def canonical_edge_pair(entity_a: str, entity_b: str) -> tuple[str, str]:
     return (a, b) if a <= b else (b, a)
 
 
+# How many days a fact's stated date may sit before the moment its statement was
+# seen and still be that session's own day (a session crossing midnight, a date
+# rounded to the day). The bulk write keeps a restatement's first date within it too.
+SESSION_DATE_TOLERANCE_DAYS = 2
+
+
 def triple_interval_repairs(
     *,
     existing: list[dict[str, object]],
@@ -553,6 +555,8 @@ def triple_interval_repairs(
     declared: Mapping[str, str] | None = None,
     arrival_at: datetime | None = None,
     later_batch_objects: Collection[str] = (),
+    earlier_batch_objects: Collection[str] = (),
+    new_seen_at: datetime | None = None,
 ) -> list[IntervalRepair]:
     """Return deterministic triple closures for contradictory single-valued facts.
 
@@ -561,18 +565,31 @@ def triple_interval_repairs(
     the seed list treats as) single-valued. This captures current-state facts
     such as employer/location/status without asking an LLM to decide freshness.
 
-    Ordering:
+    Ordering: of the new fact and an open existing value, the newer one stays
+    current and the older one closes when the newer one starts.
 
-    * The new fact is ordered by `new_valid_at`; when it carries no real-world
-      date, by `arrival_at` — the transaction time of this write. An undated
-      "status = live" is an observation about now, so it closes the dated
-      "status = in progress" from last week. With neither, nothing happens.
-    * An existing fact that starts STRICTLY EARLIER, or at the SAME instant
-      (the extractor stamps the session date on everything it cannot date
-      more precisely), is closed at the new fact's start.
-    * An existing fact that starts LATER means the NEW fact is the stale one
-      — a late-arriving older value. The repair then closes the new row at
-      the existing fact's start, so the graph never shows two current values.
+    * A fact starts at its `valid_from`. The new fact, undated, starts at
+      `arrival_at`, the transaction time of this write: an undated "status =
+      live" is an observation about now. With neither, nothing happens.
+    * Two facts with different starts order by start, so a late-arriving older
+      value closes the new row, not the value the graph holds.
+    * Of two facts with the same start, the later arrival is newer, by
+      `last_seen` second, then by object text, so two writers racing on one date
+      agree on the value that stays current. The new fact arrived at
+      `new_seen_at` (its row's `last_seen`); a value earlier in this write
+      (`earlier_batch_objects`) arrived before it.
+    * An undated existing row starts when it was seen. It is newer when it was
+      seen after both this write and the new fact's start (a replay dated at its
+      write meets the writes since), or seen more than
+      `SESSION_DATE_TOLERANCE_DAYS` after the new fact's date and not earlier in
+      this write (a past fact told late: Rome from July, imported after London was
+      stated in October). Seen at the new fact's start, it ties as above, so two
+      undated writers racing in one second agree on one current value.
+    * A dated and an undated value, either of them the new one, with the undated
+      one seen within `SESSION_DATE_TOLERANCE_DAYS` after the dated one's start,
+      are one session's statements: they order by arrival, as a tie does, so a
+      dated and an undated writer racing each other agree too. Outside that
+      window they order by start.
     * `later_batch_objects` — objects that a LATER triple in the same write
       asserts for this subject + relation. Those rows are skipped here (the
       later write's own repair closes this one), so within one batch the
@@ -593,29 +610,78 @@ def triple_interval_repairs(
         return []
     obj = canonical_entity_text(new_object)
     skip = {canonical_entity_text(o) for o in later_batch_objects}
-    repairs: list[IntervalRepair] = []
+    earlier = {canonical_entity_text(o) for o in earlier_batch_objects}
+    open_rows: list[tuple[dict[str, object], str]] = []
     for row in existing:
         old_subject = canonical_entity_text(str(row.get("subject") or ""))
         old_relation = canonical_relation(str(row.get("relation") or "")).verb
         old_object = canonical_entity_text(str(row.get("object") or ""))
         if old_subject != subject or old_relation != relation or old_object == obj:
             continue
-        if old_object in skip:
+        if old_object in skip or isinstance(row.get("valid_to"), datetime):
             continue
-        existing_valid_at = row.get("valid_from")
-        existing_valid_to = row.get("valid_to")
-        if not isinstance(existing_valid_at, datetime):
-            existing_valid_at = None
-        if not isinstance(existing_valid_to, datetime):
-            existing_valid_to = None
-        if existing_valid_to is not None:
+        open_rows.append((row, old_object))
+    # Plain MergeTree keeps one open row per observation, and an edge is keyed by its
+    # row's start. Each object gets one verdict from all its rows, so the new value is
+    # never both closed and closing: it is the newer when any of its rows is, from the
+    # earliest such takeover; otherwise every start of it closes when the new one starts.
+    # Each row is judged by its own (valid_from, last_seen): when another row of the
+    # value was seen says nothing about when this one was stated.
+    observed: dict[str, list[tuple[datetime | None, datetime | None]]] = {}
+    for row, old_object in open_rows:
+        start, seen = row.get("valid_from"), row.get("last_seen")
+        observed.setdefault(old_object, []).append(
+            (
+                start if isinstance(start, datetime) else None,
+                seen if isinstance(seen, datetime) else None,
+            )
+        )
+    repairs: list[IntervalRepair] = []
+    for old_object, rows in observed.items():
+        # When this object took over from the new one, and the start of the row that did.
+        takeovers: list[tuple[datetime, datetime | None]] = []
+        for valid_from, seen in dict.fromkeys(rows):
+            # An undated row starts when seen. Two values with one start order by
+            # arrival (this row's own: the tie is between two statements of that
+            # start), and so do a dated and an undated one stated in one session.
+            start = valid_from if valid_from is not None else seen
+            by_arrival = start == effective_new or _one_session(
+                valid_from, seen, new_valid_at, effective_new
+            )
+            arrived_later = (
+                by_arrival
+                and old_object not in earlier
+                and _arrived_later(seen, old_object, new_seen_at, obj)
+            )
+            if valid_from is None:
+                seen_since = bool(seen and arrival_at and seen > max(arrival_at, effective_new))
+                told_late = bool(
+                    seen
+                    and new_valid_at is not None
+                    and old_object not in earlier
+                    and seen - new_valid_at > timedelta(days=SESSION_DATE_TOLERANCE_DAYS)
+                )
+                if seen and (seen_since or told_late or arrived_later):
+                    takeovers.append((seen, valid_from))
+            elif valid_from > effective_new or arrived_later:
+                takeovers.append((valid_from, valid_from))
+        if takeovers:
+            # The row being written is already superseded: close the NEW row.
+            newer_from, from_start = min(takeovers, key=lambda t: t[0])
+            repairs.append(
+                IntervalRepair(
+                    subject=subject,
+                    relation=relation,
+                    old_object=obj,
+                    new_object=old_object,
+                    valid_to=newer_from,
+                    valid_from=new_valid_at,
+                    invalid_at=superseded_at,
+                    new_valid_from=from_start,
+                )
+            )
             continue
-        if should_invalidate_interval(
-            existing_valid_at=existing_valid_at,
-            existing_valid_to=existing_valid_to,
-            new_valid_at=effective_new,
-            tie_closes=True,
-        ):
+        for valid_from in dict.fromkeys(start for start, _ in rows):
             repairs.append(
                 IntervalRepair(
                     subject=subject,
@@ -623,22 +689,90 @@ def triple_interval_repairs(
                     old_object=old_object,
                     new_object=obj,
                     valid_to=effective_new,
-                    valid_from=existing_valid_at,
+                    valid_from=valid_from,
                     invalid_at=superseded_at,
-                )
-            )
-        elif existing_valid_at is not None and existing_valid_at > effective_new:
-            # Late-arriving older value: the row being written is already
-            # superseded by a fact the graph holds. Close the NEW row.
-            repairs.append(
-                IntervalRepair(
-                    subject=subject,
-                    relation=relation,
-                    old_object=obj,
-                    new_object=old_object,
-                    valid_to=existing_valid_at,
-                    valid_from=new_valid_at,
-                    invalid_at=superseded_at,
+                    new_valid_from=new_valid_at,
                 )
             )
     return repairs
+
+
+def _one_session(
+    row_from: datetime | None, row_seen: object, new_from: datetime | None, new_start: datetime
+) -> bool:
+    """Whether, of a stored row and the new fact, one is dated and the other undated and
+    the undated one was seen within `SESSION_DATE_TOLERANCE_DAYS` after the dated one's
+    start: one session's two statements, which order by arrival, whichever is new."""
+    if (row_from is None) == (new_from is None):
+        return False
+    dated, seen = (new_from, row_seen) if row_from is None else (row_from, new_start)
+    if dated is None or not isinstance(seen, datetime):
+        return False
+    return dated <= seen <= dated + timedelta(days=SESSION_DATE_TOLERANCE_DAYS)
+
+
+def _arrived_later(seen: object, obj: str, than_seen: datetime | None, than_obj: str) -> bool:
+    # `last_seen` is in whole seconds, as the writers stamp it; two rows in one second
+    # order by object.
+    if not isinstance(seen, datetime) or than_seen is None:
+        return False
+    return (seen, obj) > (than_seen, than_obj)
+
+
+def restates_current(
+    repair: IntervalRepair,
+    valid_from: datetime | None,
+    seen: datetime,
+    *,
+    closed_at: datetime,
+    declared: Mapping[str, str],
+) -> bool:
+    """Whether a row of the value `repair` closed, stated again with `valid_from` and
+    seen at `seen`, is newer than the value that closed it. The interval repair
+    decides, as if that row were written now against the closing value. The closing
+    value was seen at the close, or, undated, when the repair dated it (`valid_to`)."""
+    closer: dict[str, object] = {
+        "subject": repair.subject,
+        "relation": repair.relation,
+        "object": repair.new_object,
+        "valid_from": repair.new_valid_from,
+        "valid_to": None,
+        "last_seen": closed_at if repair.new_valid_from is not None else repair.valid_to,
+    }
+    verdict = triple_interval_repairs(
+        existing=[closer],
+        new_subject=repair.subject,
+        new_relation=repair.relation,
+        new_object=repair.old_object,
+        new_valid_at=valid_from,
+        declared=declared,
+        arrival_at=seen,
+        new_seen_at=seen,
+    )
+    # The row is current when the verdict closes the closing value.
+    return [r.old_object for r in verdict] == [repair.new_object]
+
+
+def facet_triples(
+    agent: str, fact_verbs: list[str], files: list[str], concepts: list[str], topics: list[str]
+) -> Iterator[tuple[str, str, str]]:
+    """The facet triples Loom mints for one entry, about its actor (the agent).
+    Files and concepts become code nodes, so facts.traverse answers "what touches
+    this file"; topics hang off `about`, so a topic never passes for a library."""
+    subject = canonical_entity_text(agent or "user") or "user"
+    for path in files:
+        yield (
+            subject,
+            code_facet_relation("file", fact_verbs),
+            canonical_entity_text(path) or path.lower(),
+        )
+    for concept in concepts:
+        lowered = concept.lower()
+        node = (
+            lowered
+            if lowered.startswith(("commit:", "error:"))
+            else (canonical_entity_text(concept) or lowered)
+        )
+        yield subject, code_facet_relation(classify_code_concept(concept), fact_verbs), node
+    for topic in topics:
+        yield subject, "about", canonical_entity_text(topic) or topic.lower()

@@ -95,6 +95,7 @@ async def test_pipeline_entry_carries_the_grade(monkeypatch: pytest.MonkeyPatch)
 
         class _Out:
             written: list = []
+            skipped_blacklisted: list = []
 
         return _Out()
 

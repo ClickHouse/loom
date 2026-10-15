@@ -62,6 +62,8 @@ export const OP_MIN_ROLE = {
   "mentor.brief": { min: "viewer", by: "namespace" },
   "memory.move": { min: "writer", by: "namespace" },
   "memory.pin": { min: "writer", by: "namespace" },
+  // The inspector's Restore on a superseded row and the Review queue's Auto-resolved Undo.
+  "memory.restore": { min: "writer", by: "namespace" },
   "memory.unpin": { min: "admin", by: "namespace" },
   // Conversations' recording toggle: a namespace setting, ADMIN on the namespace.
   "conversation.set_logging": { min: "admin", by: "namespace" },

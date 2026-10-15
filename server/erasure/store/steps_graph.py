@@ -10,6 +10,7 @@ from server.core.repo_base import _CHClient, _default_client
 from server.erasure.store.mutations import count_then_mutate, delete_scoped, tombstone_scoped
 from server.erasure.store.predicates import (
     NS_EQ,
+    UID,
     USER_COMMUNITY_ROWS,
     USER_CONFLICT_RECORD_IDS,
     USER_KEYS_SUBQ,
@@ -33,7 +34,13 @@ _LINK_TABLES_TOMBSTONE = (
 )
 
 # Entity-graph link tables: no soft-delete column → ALTER DELETE.
-_LINK_TABLES_DELETE = ("loom.entity_triple_memories", "loom.entity_edge_memories")
+# Each with how a user's links are found: a key link by the user's keys, a row
+# link by the writer it carries, which outlives the row.
+_LINK_TABLES_DELETE = (
+    ("loom.entity_triple_memories", USER_PARENT_KEYS),
+    ("loom.entity_triple_rows", UID),
+    ("loom.entity_edge_memories", USER_PARENT_KEYS),
+)
 # The entity graph itself: edges and triples carry the namespace's subjects,
 # relations and objects verbatim and have no soft-delete column (invalidation
 # is valid_to/invalid_at). MergeTree → ALTER DELETE. No user_id column: the
@@ -76,7 +83,7 @@ async def delete_graph_links_by_namespace(
     org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
 ) -> int:
     total = 0
-    for t in _LINK_TABLES_DELETE:
+    for t, _ in _LINK_TABLES_DELETE:
         total += await delete_scoped(
             t, org=org, scope_where="namespace = {ns:String}", params={"ns": namespace}, ch=ch
         )
@@ -173,9 +180,9 @@ async def delete_entity_graph_by_user(
 
 async def delete_graph_links_by_user(org: str, user_id: str, *, ch: _CHClient | None = None) -> int:
     total = 0
-    for t in _LINK_TABLES_DELETE:
+    for t, user_scope in _LINK_TABLES_DELETE:
         total += await delete_scoped(
-            t, org=org, scope_where=USER_PARENT_KEYS, params={"uid": user_id}, ch=ch
+            t, org=org, scope_where=user_scope, params={"uid": user_id}, ch=ch
         )
     return total
 

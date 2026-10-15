@@ -79,6 +79,18 @@ def served_status_sql(
     return f"{_c(alias, 'status')} IN ({', '.join(repr(x) for x in statuses)})"
 
 
+# A `loom.memory` row whose current value may hold graph facts: live, not deleted, not
+# expired, its validity not ended, and not 'high' (a 'high' row's content stays out of
+# the shared graph). Every path that keeps or reopens a row's facts asks this; a point
+# write applies the same rule in Python to the row it just wrote, which is live.
+GRAPH_HOLDER_SQL = (
+    f"tombstoned_at IS NULL AND status IN ({', '.join(repr(s) for s in LIVE_STATUSES)})"
+    " AND (expires_at IS NULL OR expires_at > now())"
+    " AND (valid_to IS NULL OR valid_to > now())"
+    " AND sensitivity != 'high'"
+)
+
+
 def _c(alias: str, col: str) -> str:
     return f"{alias}.{col}" if alias else col
 

@@ -14,15 +14,20 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from server.core.datetimes import naive_utc_now, parse_iso_dt
+from server.core.hashing import sha256_value
 from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetResult
 from server.memory.app import conflicts as _conflicts
+from server.memory.app.projection_errors import TriplesRepairFailed
+from server.memory.domain.graph_quality import MAX_TRIPLES_PER_ROW, restates_current
 
 log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from server.memory.domain.graph_quality import IntervalRepair
 
 
@@ -171,20 +176,15 @@ async def write_entity_edges(
                     break
                 a, b = ents[i], ents[i + offset]  # sorted, so a <= b
                 edges.append(
-                    {
-                        "org": input.org,
-                        "namespace": input.namespace,
-                        "entity_a": a,
-                        "entity_b": b,
-                        "co_occur": 1,
-                        "last_seen": now,
-                        "valid_from": entry_valid_from,
-                        "valid_to": entry_valid_to,
-                        # Supersession axis: a fresh observation
-                        # is never born superseded; _repair_contradictory_edges
-                        # stamps it on the OLDER pair. NULL = current.
-                        "invalid_at": None,
-                    }
+                    entity_edge_row(
+                        input.org,
+                        input.namespace,
+                        a,
+                        b,
+                        last_seen=now,
+                        valid_from=entry_valid_from,
+                        valid_to=entry_valid_to,
+                    )
                 )
                 edge_memories.append(
                     {
@@ -227,6 +227,34 @@ async def write_entity_edges(
         )
 
 
+def entity_edge_row(
+    org: str,
+    namespace: str,
+    entity_a: str,
+    entity_b: str,
+    *,
+    last_seen: datetime,
+    valid_from: datetime | None = None,
+    valid_to: datetime | None = None,
+    co_occur: int = 1,
+) -> dict[str, Any]:
+    """One `loom.entity_edges` row for the canonical pair (entity_a <= entity_b). A
+    fresh observation is never born superseded (`invalid_at` NULL):
+    _repair_contradictory_edges stamps the OLDER pair. `co_occur` is the weight the
+    readers sum; an observation that states nothing new (an Undo) carries 0."""
+    return {
+        "org": org,
+        "namespace": namespace,
+        "entity_a": entity_a,
+        "entity_b": entity_b,
+        "co_occur": co_occur,
+        "last_seen": last_seen,
+        "valid_from": valid_from,
+        "valid_to": valid_to,
+        "invalid_at": None,
+    }
+
+
 def entity_triple_row(
     org: str,
     namespace: str,
@@ -240,10 +268,12 @@ def entity_triple_row(
     last_seen: datetime,
     valid_from: Any = None,
     valid_to: Any = None,
+    co_occur: int = 1,
 ) -> dict[str, Any]:
     """One `loom.entity_triples` row as every triple writer inserts it. A fresh
     triple is never born superseded (`invalid_at` NULL): the contradiction
-    repair stamps the older row."""
+    repair stamps the older row. `co_occur` is the weight the readers sum; an
+    observation that states nothing new (an Undo) carries 0."""
     return {
         "org": org,
         "namespace": namespace,
@@ -251,13 +281,46 @@ def entity_triple_row(
         "relation": relation,
         "object": obj,
         "provenance": provenance,
-        "co_occur": 1,
+        "co_occur": co_occur,
         "last_seen": last_seen,
         "confidence": confidence,
         "adapter_name": adapter_name,
         "valid_from": valid_from,
         "valid_to": valid_to,
         "invalid_at": None,
+    }
+
+
+def value_sha256(entry: Any) -> str:
+    """The content version a projection of `entry` belongs to: the `content_sha256`
+    of the row its value wrote, which the row's triple links carry."""
+    return sha256_value(entry.value)
+
+
+def triple_row_link(
+    org: str,
+    namespace: str,
+    memory_id: str,
+    content_sha256: str,
+    triple: tuple[str, str, str],
+    *,
+    user_id: str,
+    inferred: bool = False,
+) -> dict[str, Any]:
+    """The `entity_triple_rows` row saying the row `memory_id`, written by `user_id`
+    and holding the value `content_sha256` hashes, stated `triple` (or, `inferred`,
+    that the triple plane wrote it for that row)."""
+    subject, relation, obj = triple
+    return {
+        "org": org,
+        "namespace": namespace,
+        "memory_id": memory_id,
+        "user_id": user_id,
+        "content_sha256": content_sha256,
+        "subject": subject,
+        "relation": relation,
+        "object": obj,
+        "inferred": inferred,
     }
 
 
@@ -268,15 +331,21 @@ async def write_entity_triples(
     ch: Any,
     entity_map: dict[str, str] | None = None,
     dedup_token: str = "",
+    inserted_at: datetime | None = None,
+    repaired: list[IntervalRepair] | None = None,
 ) -> None:
     """Emit typed (subject, relation, object) triples.
 
-    Mirrors write_entity_edges: shared canonicalizer, fail-open, async
-    insert. Empty `relations` produce zero rows. Subject + object canonicalize;
-    relation is lowercased + space→underscore.
+    Mirrors write_entity_edges: shared canonicalizer, async insert. A failure
+    raises: every caller records it for the projection repair. One after the
+    insert raises `TriplesRepairFailed`, and its replay passes `inserted_at` and the
+    closes the write had `repaired`: the triples that landed then are not inserted
+    twice, and their repair is finished as of that write (`_repair_triples`). Empty
+    `relations` produce zero rows. Subject + object canonicalize; relation is
+    lowercased + space→underscore.
     """
     from server.memory.app.entity_resolution import apply_entity_resolution
-    from server.memory.domain.graph_quality import canonical_relation
+    from server.memory.domain.graph_quality import canonical_relation, facet_triples
     from server.memory.domain.search_text import canonicalize_verb
     from server.settings import settings as _settings
 
@@ -285,10 +354,12 @@ async def write_entity_triples(
     # parent memory's through.
     _adapter = _settings.llm_model
 
-    now = naive_utc_now()
+    # Whole seconds, as `last_seen` and `invalid_at` store it: the replay and the
+    # re-check after a close find this write's rows by it.
+    now = (inserted_at or naive_utc_now()).replace(microsecond=0)
     triples: list[dict[str, Any]] = []
     triple_memories: list[dict[str, Any]] = []
-    _MAX_TRIPLES_PER_MEMORY = 8
+    triple_rows: list[dict[str, Any]] = []
     if entity_map is None:
         relation_entities: list[str] = []
         for entry in input.entries:
@@ -302,11 +373,6 @@ async def write_entity_triples(
         )
 
     from server.memory.domain import triple_provenance as _tp
-    from server.memory.domain.graph_quality import (
-        canonical_entity_text,
-        classify_code_concept,
-        code_facet_relation,
-    )
 
     for entry, result in zip(input.entries, results, strict=True):
         rels = list(entry.relations or [])
@@ -346,9 +412,11 @@ async def write_entity_triples(
             _vf: Any = _entry_valid_from,
             _vt: Any = _entry_valid_to,
             _mk: Any = result.memory_key,
+            _mid: str = result.memory_id,
+            _sha: str = value_sha256(entry) if result.memory_id else "",
         ) -> None:
             nonlocal kept
-            if kept >= _MAX_TRIPLES_PER_MEMORY:
+            if kept >= MAX_TRIPLES_PER_ROW:
                 return
             if len(s) < 2 or len(v) < 2 or len(o) < 1:
                 return
@@ -382,10 +450,17 @@ async def write_entity_triples(
                     "adapter_name": _adapter,
                 }
             )
+            # A facet edge is the agent's, shared by every row that names it: no row's.
+            if _mid and provenance != _tp.FACET:
+                triple_rows.append(
+                    triple_row_link(
+                        input.org, input.namespace, _mid, _sha, (s, v, o), user_id=input.user_id
+                    )
+                )
             kept += 1
 
         for rel in rels:
-            if kept >= _MAX_TRIPLES_PER_MEMORY:
+            if kept >= MAX_TRIPLES_PER_ROW:
                 break
             if not isinstance(rel, (list, tuple)) or len(rel) != 3:
                 continue
@@ -394,34 +469,10 @@ async def write_entity_triples(
             o = apply_entity_resolution(str(rel[2]), entity_map)
             _append_triple(s, relation.verb, o, min(_conf, relation.confidence))
 
-        # Code-native facet edges: files + concepts become typed
-        # (subject -> code-node) triples on entity_triples so facts.traverse
-        # answers "what touches this file". Subject is the fact's actor.
-        if entry_files or entry_concepts:
-            fact_verbs = [str(r[1]) for r in rels if isinstance(r, (list, tuple)) and len(r) == 3]
-            subject = canonical_entity_text(input.agent or "user") or "user"
-            for path in entry_files:
-                node = canonical_entity_text(path) or path.lower()
-                verb = code_facet_relation("file", fact_verbs)
-                _append_triple(subject, verb, node, _conf, provenance=_tp.FACET)
-            for concept in entry_concepts:
-                kind = classify_code_concept(concept)
-                node = (
-                    concept.lower()
-                    if concept.lower().startswith(("commit:", "error:"))
-                    else (canonical_entity_text(concept) or concept.lower())
-                )
-                verb = code_facet_relation(kind, fact_verbs)
-                _append_triple(subject, verb, node, _conf, provenance=_tp.FACET)
-
-        # Topic nodes: `<actor> about <topic>`, so
-        # facts.traverse from a topic finds who/what is about it, and a
-        # topic never masquerades as a code library or function.
-        if entry_topics:
-            subject = canonical_entity_text(input.agent or "user") or "user"
-            for topic in entry_topics:
-                node = canonical_entity_text(topic) or topic.lower()
-                _append_triple(subject, "about", node, _conf, provenance=_tp.FACET)
+        fact_verbs = [str(r[1]) for r in rels if isinstance(r, (list, tuple)) and len(r) == 3]
+        facets = facet_triples(input.agent, fact_verbs, entry_files, entry_concepts, entry_topics)
+        for subject, verb, node in facets:
+            _append_triple(subject, verb, node, _conf, provenance=_tp.FACET)
 
     if not triples:
         return
@@ -433,30 +484,254 @@ async def write_entity_triples(
     # fire-and-forget insert was still invisible to this write's repair.
     # wait_for_async_insert=1 keeps server-side batching but acks only
     # once rows are queryable (the read-your-writes the repair contract
-    # needs). Ordering safety: should_invalidate_interval only closes
-    # intervals STRICTLY OLDER than the new fact, and same-object rows —
-    # including the row just inserted for this very triple — are skipped,
-    # so repairing against a set that contains this batch is sound.
-    await asyncio.gather(
-        *(
-            ch.insert(
-                f"loom.{t}",
-                r,
-                settings=graph_insert_settings(t, wait=True, dedup_token=dedup_token),
-            )
-            for t, r in (("entity_triples", triples), ("entity_triple_memories", triple_memories))
-        ),
+    # needs). Ordering safety: same-object rows — including the row just
+    # inserted for this very triple — are skipped, and the batch's other
+    # values are ordered by their place in it, so repairing against a set
+    # that contains this batch is sound.
+    # The row links land before the triples: a follow that closes a triple
+    # this write states looks for its link once the close is queued, and
+    # opens the triple again when it finds one (`reopen_held`).
+    if inserted_at is None:
+        if triple_rows:
+            # Synchronous; a replay's repeat collapses in the ReplacingMergeTree.
+            await ch.insert("loom.entity_triple_rows", triple_rows)
+        await asyncio.gather(
+            *(
+                ch.insert(
+                    f"loom.{t}",
+                    r,
+                    settings=graph_insert_settings(t, wait=True, dedup_token=dedup_token),
+                )
+                for t, r in (
+                    ("entity_triples", triples),
+                    ("entity_triple_memories", triple_memories),
+                )
+                if r
+            ),
+        )
+
+    await _repair_triples(
+        input,
+        triples,
+        triple_memories,
+        at=now,
+        replay=inserted_at is not None,
+        repaired=repaired or [],
+        ch=ch,
     )
 
+
+async def _repair_triples(
+    input: MemoryBulkSetInput,
+    triples: list[dict[str, Any]],
+    triple_memories: list[dict[str, Any]],
+    *,
+    at: datetime,
+    replay: bool,
+    repaired: list[IntervalRepair],
+    ch: Any,
+) -> None:
+    """Close what the write's `triples` contradict, as of the write at `at`; under the
+    namespace's `newest_wins` policy the memory rows that carried the closed triples
+    retire with them.
+
+    A replay never re-derives from the clock. When the write had `repaired`, it issues
+    and finishes those closes again, but for a value stated since. When it had made
+    none, it repairs only the triples no newer write has closed since (that write's
+    repair handled them). A failure raises `TriplesRepairFailed` with the closes made,
+    for the replay to finish."""
+    repairs = repaired
     try:
-        repairs = await _repair_contradictory_triples(input, triples, ch=ch)
+        if repairs:
+            # A value stated since is that write's to repair; a close that never
+            # landed is issued again; one that took a value stated since is undone, and
+            # that value meets the values written after it.
+            from server.identity.app.namespace_ontology import load_relation_cardinality
+
+            declared = await load_relation_cardinality(input.org, input.namespace)
+            states = await _recorded_close_states(input, repairs, at=at, ch=ch)
+            skip: set[tuple[str, str, str]] = set()
+            unlanded: set[tuple[str, str, str]] = set()
+            for r in repairs:
+                value = (r.subject, r.relation, r.old_object)
+                state = states.get(value)
+                if state is None:
+                    continue
+                if state.restated:
+                    # Restated wins over raced: a newer write already handled the value.
+                    skip.add(value)
+                    continue
+                # As on the write: only a restatement newer than the closing value reopens.
+                current = [
+                    x
+                    for x in state.raced
+                    if restates_current(r, x.valid_from, x.seen, closed_at=at, declared=declared)
+                ]
+                if current:
+                    # The newest by the interval rule: an undated row starts on arrival.
+                    latest = max(current, key=lambda x: (x.valid_from or x.seen, x.seen))
+                    await _reopen_restated(
+                        input,
+                        r,
+                        valid_from=latest.valid_from,
+                        seen=latest.seen,
+                        closed_at=at,
+                        triple_memories=triple_memories,
+                        ch=ch,
+                    )
+                    skip.add(value)
+                elif state.unlanded:
+                    unlanded.add(value)
+            repairs = [r for r in repairs if (r.subject, r.relation, r.old_object) not in skip]
+            await close_triples(
+                ch,
+                org=input.org,
+                namespace=input.namespace,
+                closes=[
+                    (r.subject, r.relation, r.old_object, r.valid_to, r.invalid_at)
+                    for r in repairs
+                    if (r.subject, r.relation, r.old_object) in unlanded
+                ],
+            )
+        else:
+            if replay:
+                still_open = await open_triples_among(
+                    ch,
+                    org=input.org,
+                    namespace=input.namespace,
+                    triples=sorted({(t["subject"], t["relation"], t["object"]) for t in triples}),
+                )
+                triples = [
+                    t for t in triples if (t["subject"], t["relation"], t["object"]) in still_open
+                ]
+            repairs = await _repair_contradictory_triples(input, triples, at=at, ch=ch)
         if repairs:
             await _repair_contradictory_edges(input, repairs, ch=ch)
-            # Under the namespace's `newest_wins` policy the
-            # memory rows that carried the closed triples retire with them.
             await _retire_memories_behind_repairs(input, repairs, triple_memories, ch=ch)
-    except Exception as e:  # noqa: BLE001 — a failed interval repair must not fail the write
-        log.warning("entity graph interval repair failed (non-fatal): %s", e)
+    except TriplesRepairFailed:
+        raise
+    except Exception as e:
+        raise TriplesRepairFailed(at, e, list(repairs)) from e
+
+
+async def _reopen_restated(
+    input: MemoryBulkSetInput,
+    repair: IntervalRepair,
+    *,
+    valid_from: datetime | None,
+    seen: datetime,
+    closed_at: datetime,
+    triple_memories: list[dict[str, Any]],
+    ch: Any,
+) -> None:
+    """Undo the write's close of a value stated again while it landed, and give that
+    value the repair its restatement (stated `valid_from`, seen at `seen`) would have
+    had against the values written since: they found it closed. A newer one closes it
+    again and, as that one's write would have, retires the rows behind it."""
+    restated = {
+        "subject": repair.subject,
+        "relation": repair.relation,
+        "object": repair.old_object,
+        "valid_from": valid_from,
+        "last_seen": seen,
+    }
+    try:
+        # Judged first, while the value is still closed: nothing of its own reopens
+        # under the judgment, and a failure here leaves the next replay the same start.
+        closed = await repair_intervals(input, [restated], ch=ch, at=seen)
+    except TriplesRepairFailed as e:
+        # This write's failure, dated at this write, not at the restatement.
+        raise RuntimeError("repairing a restated value failed") from e
+    value = (repair.subject, repair.relation, repair.old_object)
+    lost = [c for c in closed if (c.subject, c.relation, c.old_object) == value]
+    await reopen_triples(
+        ch,
+        org=input.org,
+        namespace=input.namespace,
+        closes=[(*value, repair.valid_to)],
+        closed_at=closed_at,
+    )
+    # Mutations run in order: this close lands after the reopen.
+    await close_triples(
+        ch,
+        org=input.org,
+        namespace=input.namespace,
+        closes=[(*value, c.valid_to, c.invalid_at) for c in lost],
+    )
+    await _retire_memories_behind_repairs(input, lost, triple_memories, ch=ch)
+
+
+class Restatement(NamedTuple):
+    """A row of a closed value stated again: its valid_from and when it was seen."""
+
+    valid_from: datetime | None
+    seen: datetime
+
+
+class RecordedClose(NamedTuple):
+    """What became of one value the write recorded closing."""
+
+    restated: bool  # open again since: that write's repair decided
+    unlanded: bool  # open, and the close never landed: the replay issues it again
+    raced: list[Restatement]  # rows stated while the close landed, which it took
+
+
+async def _recorded_close_states(
+    input: MemoryBulkSetInput, repairs: list[IntervalRepair], *, at: datetime, ch: Any
+) -> dict[tuple[str, str, str], RecordedClose]:
+    """What became of each value the write at `at` recorded closing. The write's close
+    stamped its rows `invalid_at = at`. A value open beside such a row, or open in a
+    row seen after the write, was stated since: that write's repair decides. A value
+    open with neither is one whose close never landed. A row seen after the write and
+    stamped by its close was stated while the close landed ("back to London"): each
+    such row is a `Restatement` the replay judges. A restatement in the same second as
+    the write is not told apart from the write's own rows."""
+    rows = await ch.query_all(
+        """
+        SELECT subject, relation, object,
+               countIf(valid_to IS NULL) > 0 AS open,
+               countIf(invalid_at = {at:DateTime}) > 0 AS landed,
+               countIf(valid_to IS NULL AND last_seen > {at:DateTime}) > 0 AS seen_since,
+               -- A tuple keeps a NULL valid_from, which an aggregate would skip.
+               groupArrayIf(tuple(valid_from, last_seen),
+                            invalid_at = {at:DateTime} AND last_seen > {at:DateTime}) AS raced
+        FROM loom.entity_triples
+        WHERE org = {org:String}
+          AND namespace = {ns:String}
+          AND (subject, relation, object) IN {triples:Array(Tuple(String, String, String))}
+          AND ((valid_to IS NULL AND invalid_at IS NULL) OR invalid_at = {at:DateTime})
+        GROUP BY subject, relation, object
+        SETTINGS select_sequential_consistency = 1
+        """,
+        params={
+            "org": input.org,
+            "ns": input.namespace,
+            "triples": sorted({(r.subject, r.relation, r.old_object) for r in repairs}),
+            "at": at,
+        },
+    )
+    states: dict[tuple[str, str, str], RecordedClose] = {}
+    for row in rows:
+        key = (str(row["subject"]), str(row["relation"]), str(row["object"]))
+        restated = bool(row["open"] and (row["landed"] or row["seen_since"]))
+        states[key] = RecordedClose(
+            restated=restated,
+            unlanded=bool(row["open"]) and not restated,
+            raced=[Restatement(*t) for t in row["raced"]],
+        )
+    return states
+
+
+async def repair_intervals(
+    input: Any, triples: list[dict[str, Any]], *, ch: Any, at: datetime, newest: bool = False
+) -> list[IntervalRepair]:
+    """Close the triples and edges the new `triples` contradict on a single-valued
+    relation, as of `at` (in whole seconds); no memory row retires. `newest` (an Undo)
+    takes every stored value as stated before them. Returns the repairs made."""
+    repairs = await _repair_contradictory_triples(input, triples, at=at, ch=ch, newest=newest)
+    if repairs:
+        await _repair_contradictory_edges(input, repairs, ch=ch)
+    return repairs
 
 
 # ---------------------------------------------------------------------------
@@ -467,7 +742,6 @@ async def write_entity_triples(
 # arrayElement/indexOf.
 # ---------------------------------------------------------------------------
 _GRAPH_KEY_SEP = "\x1f"
-_TRIPLE_KEY_EXPR = "concat(subject, char(31), relation, char(31), object)"
 _EDGE_KEY_EXPR = (
     "concat(entity_a, char(31), entity_b, char(31), "
     "ifNull(toString(toUnixTimestamp(valid_from)), ''))"
@@ -479,6 +753,13 @@ def _edge_key(entity_a: str, entity_b: str, valid_from: datetime | None) -> str:
 
     vf = "" if valid_from is None else str(calendar.timegm(valid_from.timetuple()))
     return _GRAPH_KEY_SEP.join((entity_a, entity_b, vf))
+
+
+# Each row's own entry in the parallel arrays a triple close passes, and the valid_to
+# it writes: never before the interval starts (a future-dated fact).
+_TRIPLE_AT = "indexOf({triples:Array(Tuple(String, String, String))}, (subject, relation, object))"
+_CLOSED_UNTIL = f"arrayElement({{valid_tos:Array(DateTime)}}, {_TRIPLE_AT})"
+_CLOSED_VALID_TO = f"greatest({_CLOSED_UNTIL}, ifNull(valid_from, {_CLOSED_UNTIL}))"
 
 
 async def close_triples(
@@ -496,17 +777,17 @@ async def close_triples(
         group = [c for c in closes if (c[4] is not None) is with_invalid_at]
         if not group:
             continue
-        keys = [_GRAPH_KEY_SEP.join((s, r, o)) for s, r, o, _, _ in group]
-        idx = f"indexOf({{keys:Array(String)}}, {_TRIPLE_KEY_EXPR})"
-        set_cols = f"valid_to = arrayElement({{valid_tos:Array(DateTime)}}, {idx})"
+        set_cols = f"valid_to = {_CLOSED_VALID_TO}"
         params: dict[str, Any] = {
             "org": org,
             "ns": namespace,
-            "keys": keys,
+            "triples": [(s, r, o) for s, r, o, _, _ in group],
             "valid_tos": [c[3] for c in group],
         }
         if with_invalid_at:
-            set_cols += f", invalid_at = arrayElement({{invalid_ats:Array(DateTime)}}, {idx})"
+            set_cols += (
+                f", invalid_at = arrayElement({{invalid_ats:Array(DateTime)}}, {_TRIPLE_AT})"
+            )
             params["invalid_ats"] = [c[4] for c in group]
         await ch.execute(
             f"""
@@ -514,7 +795,7 @@ async def close_triples(
             UPDATE {set_cols}
             WHERE org = {{org:String}}
               AND namespace = {{ns:String}}
-              AND {_TRIPLE_KEY_EXPR} IN {{keys:Array(String)}}
+              AND (subject, relation, object) IN {{triples:Array(Tuple(String, String, String))}}
               AND valid_to IS NULL
             """,
             params=params,
@@ -528,19 +809,84 @@ async def close_triples(
     return issued
 
 
+async def reopen_triples(
+    ch: Any,
+    *,
+    org: str,
+    namespace: str,
+    closes: list[tuple[str, str, str, datetime]],
+    closed_at: datetime,
+) -> None:
+    """Undo a `close_triples` call for `closes`, each (subject, relation, object,
+    valid_to) as it was passed: the rows it stamped carry its `invalid_at` and that
+    valid_to as it clamped it. Mutations run in the order they were made, so this one
+    lands after that close, and the close takes only rows still open. The interval
+    repair stamps `invalid_at` too: a repair close of the same triple in the same second
+    at the same valid_to is undone with it."""
+    if not closes:
+        return
+    await ch.execute(
+        f"""
+        ALTER TABLE loom.entity_triples
+        UPDATE valid_to = NULL, invalid_at = NULL
+        WHERE org = {{org:String}}
+          AND namespace = {{ns:String}}
+          AND (subject, relation, object) IN {{triples:Array(Tuple(String, String, String))}}
+          AND invalid_at = {{closed_at:DateTime}}
+          AND valid_to = {_CLOSED_VALID_TO}
+        """,
+        params={
+            "org": org,
+            "ns": namespace,
+            "triples": [(s, r, o) for s, r, o, _ in closes],
+            "valid_tos": [c[3] for c in closes],
+            "closed_at": closed_at,
+        },
+    )
+    from server.memory.app.graph_write_marks import marks as _graph_marks
+
+    _graph_marks().note_write(org, namespace)
+
+
+async def open_triples_among(
+    ch: Any, *, org: str, namespace: str, triples: list[tuple[str, str, str]]
+) -> set[tuple[str, str, str]]:
+    """Which of `triples` are open."""
+    if not triples:
+        return set()
+    rows = await ch.query_all(
+        """
+        SELECT subject, relation, object
+        FROM loom.entity_triples
+        WHERE org = {org:String}
+          AND namespace = {ns:String}
+          AND (subject, relation, object) IN {triples:Array(Tuple(String, String, String))}
+          AND valid_to IS NULL AND invalid_at IS NULL
+        SETTINGS select_sequential_consistency = 1
+        """,
+        params={"org": org, "ns": namespace, "triples": triples},
+    )
+    return {(r["subject"], r["relation"], r["object"]) for r in rows}
+
+
 async def _repair_contradictory_triples(
     input: MemoryBulkSetInput,
     new_triples: list[dict[str, Any]],
     *,
     ch: Any,
+    at: datetime,
+    newest: bool = False,
 ) -> list[IntervalRepair]:
     """Close open intervals contradicted by new single-valued triples.
 
     The namespace's declared relation cardinalities are
     consulted first (seed list second); an undated new fact orders by this
-    write's transaction time; an equal-date tie closes the existing row; a
-    late-arriving older value closes the new row; and every close stamps
-    `invalid_at` so the supersession axis records when loom learned it.
+    write's transaction time `at` (in whole seconds); an equal-date tie closes the
+    row that arrived first; a late-arriving older value closes the new row; and
+    every close stamps `invalid_at` so the supersession axis records when loom
+    learned it. With `newest` (an Undo), every stored value not seen since the Undo
+    counts as stated before the new triples: one with the same start closes, one
+    starting later stays; a value seen since is ordered by the usual rule.
     """
 
     from server.identity.app.namespace_ontology import load_relation_cardinality
@@ -561,22 +907,23 @@ async def _repair_contradictory_triples(
     ]
     if not dated:
         return []
-    now = naive_utc_now()
     subjects = sorted({str(t["subject"]) for t in dated})
     relations = sorted({str(t["relation"]) for t in dated})
     # select_sequential_consistency: on CH Cloud (SharedMergeTree) this
     # forces a fresh metadata snapshot so the rows this request just
     # inserted (wait_for_async_insert=1) are guaranteed visible even when
     # the SELECT lands on a different replica. No-op on plain MergeTree.
+    # The rows another repair closed in this second are read too, so the re-check
+    # after the close does not take them for a racing write; only open rows repair.
     existing = await ch.query_all(
         """
-        SELECT subject, relation, object, valid_from, valid_to
+        SELECT subject, relation, object, valid_from, valid_to, last_seen
         FROM loom.entity_triples
         WHERE org = {org:String}
           AND namespace = {ns:String}
           AND subject IN {subjects:Array(String)}
           AND relation IN {relations:Array(String)}
-          AND valid_to IS NULL
+          AND (valid_to IS NULL OR invalid_at = {at:DateTime})
         SETTINGS select_sequential_consistency = 1
         """,
         params={
@@ -584,53 +931,130 @@ async def _repair_contradictory_triples(
             "ns": input.namespace,
             "subjects": subjects,
             "relations": relations,
+            "at": at,
         },
     )
-    all_repairs: list[IntervalRepair] = []
-    for i, triple in enumerate(dated):
-        # A later triple in this same write for the same subject + relation
-        # is the value that should survive; leave its row to its own repair.
-        later_objects = {
+
+    def other_values(triple: dict[str, Any], others: list[dict[str, Any]]) -> set[str]:
+        return {
             str(t["object"])
-            for t in dated[i + 1 :]
+            for t in others
             if str(t["subject"]) == str(triple["subject"])
             and str(t["relation"]) == str(triple["relation"])
             and str(t["object"]) != str(triple["object"])
         }
+
+    # An Undo counts a stored value as stated before it, unless a row of that value
+    # was seen after the Undo: a later assertion, which the usual rule orders.
+    def value_of(row: dict[str, Any]) -> tuple[str, str, str]:
+        return str(row["subject"]), str(row["relation"]), str(row["object"])
+
+    asserted_since = {value_of(r) for r in existing if r["last_seen"] > at} if newest else set()
+    undone = [r for r in existing if value_of(r) not in asserted_since]
+    all_repairs: list[IntervalRepair] = []
+    for i, triple in enumerate(dated):
+        # A later triple in this same write for the same subject + relation
+        # is the value that should survive; leave its row to its own repair.
+        # An earlier one was written before this triple, though in its second.
         repairs = triple_interval_repairs(
             existing=existing,
             new_subject=str(triple["subject"]),
             new_relation=str(triple["relation"]),
             new_object=str(triple["object"]),
             new_valid_at=triple.get("valid_from"),
-            superseded_at=now,
+            superseded_at=at,
             declared=declared,
-            arrival_at=now,
-            later_batch_objects=later_objects,
+            arrival_at=at,
+            later_batch_objects=other_values(triple, dated[i + 1 :]),
+            # What an Undo undid was stated before it, so only a later start stays
+            # current over it (no tie, session or late telling applies).
+            earlier_batch_objects=other_values(triple, undone if newest else dated[:i]),
+            new_seen_at=triple.get("last_seen"),
         )
         all_repairs.extend(repairs)
-    # One close per row, at its EARLIEST end: a batch carrying the whole
-    # history of a single-valued relation would otherwise close the oldest
-    # value once per newer value (the later ALTERs would no-op on
-    # `valid_to IS NULL`, but they are still mutations).
-    earliest: dict[tuple[str, str, str], IntervalRepair] = {}
+    # One close per start of a value, at its EARLIEST end: a batch carrying the
+    # whole history of a single-valued relation would otherwise close the oldest
+    # value once per newer value. Each start keeps its own repair, because each
+    # start is its own edge.
+    earliest: dict[tuple[str, str, str, datetime | None], IntervalRepair] = {}
     for repair in all_repairs:
-        key = (repair.subject, repair.relation, repair.old_object)
+        key = (repair.subject, repair.relation, repair.old_object, repair.valid_from)
         prior = earliest.get(key)
         if prior is None or repair.valid_to < prior.valid_to:
             earliest[key] = repair
     all_repairs = list(earliest.values())
     # valid_to is the older fact's stated end; invalid_at (when the repair
-    # carries it) is the transaction time loom learned the fact was stale.
-    await close_triples(
+    # carries it) is the transaction time loom learned the fact was stale. The
+    # triple close is per value, so the starts of one value share one close.
+    closes = [(r.subject, r.relation, r.old_object, r.valid_to, r.invalid_at) for r in all_repairs]
+    try:
+        await close_triples(
+            ch, org=input.org, namespace=input.namespace, closes=list(dict.fromkeys(closes))
+        )
+        return await _undo_raced_closes(
+            input, all_repairs, existing, closed_at=at, declared=declared, ch=ch
+        )
+    except Exception as e:
+        # The closes may have landed: a replay finishes them.
+        raise TriplesRepairFailed(at, e, list(all_repairs)) from e
+
+
+async def _undo_raced_closes(
+    input: MemoryBulkSetInput,
+    repairs: list[IntervalRepair],
+    read: list[dict[str, Any]],
+    *,
+    closed_at: datetime,
+    declared: Mapping[str, str],
+    ch: Any,
+) -> list[IntervalRepair]:
+    """Undo the closes of a value that a write stated again while the repair ran ("back
+    to London"): the value has more current restatements (`restates_current`) than the
+    repair `read`, and that write's own repair closes this one's value instead. A
+    restatement older than the value that closed it undoes nothing. Returns the
+    repairs that stand."""
+    if not repairs:
+        return repairs
+    rows = await ch.query_all(
+        """
+        SELECT subject, relation, object, valid_from, last_seen
+        FROM loom.entity_triples
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND (subject, relation, object) IN {triples:Array(Tuple(String, String, String))}
+          AND (valid_to IS NULL OR invalid_at = {closed_at:DateTime})
+        SETTINGS select_sequential_consistency = 1
+        """,
+        params={
+            "org": input.org,
+            "ns": input.namespace,
+            "triples": sorted({(r.subject, r.relation, r.old_object) for r in repairs}),
+            "closed_at": closed_at,
+        },
+    )
+
+    def current(found: list[dict[str, Any]], repair: IntervalRepair) -> int:
+        # The rows of the closed value that are newer than the value closing it.
+        return sum(
+            1
+            for r in found
+            if (str(r["subject"]), str(r["relation"]), str(r["object"]))
+            == (repair.subject, repair.relation, repair.old_object)
+            and restates_current(
+                repair, r["valid_from"], r["last_seen"], closed_at=closed_at, declared=declared
+            )
+        )
+
+    undone = [r for r in repairs if current(rows, r) > current(read, r)]
+    if not undone:
+        return repairs
+    await reopen_triples(
         ch,
         org=input.org,
         namespace=input.namespace,
-        closes=[
-            (r.subject, r.relation, r.old_object, r.valid_to, r.invalid_at) for r in all_repairs
-        ],
+        closes=[(r.subject, r.relation, r.old_object, r.valid_to) for r in undone],
+        closed_at=closed_at,
     )
-    return all_repairs
+    return [r for r in repairs if r not in undone]
 
 
 def retirement_victims(
@@ -682,6 +1106,7 @@ def retirement_victims(
                 "session_id": str(m["session_id"]),
                 "memory_key": key,
                 "superseded_by": str(by["memory_id"]) if by else "",
+                "superseded_by_key": sk if by else "",
             }
         )
     return out
@@ -730,17 +1155,23 @@ async def _retire_memories_behind_repairs(
     keys = sorted({str(ln["memory_key"]) for ln in links if ln.get("memory_key")})
     if not keys:
         return 0
+    from server.identity.app.request_scope import request_scope
+    from server.identity.domain.read_scope import scope_and
+
+    params: dict[str, Any] = {"org": input.org, "ns": input.namespace, "keys": keys}
+    # A write retires only rows inside the writer's read scope, as the same-key judge does.
+    in_scope = scope_and(request_scope(), params)
     memories = await ch.query_all(
-        """
+        f"""
         SELECT toString(memory_id) AS memory_id, namespace, agent, user_id, session_id,
                memory_key, pinned
         FROM loom.memory FINAL
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND memory_key IN {keys:Array(String)} AND tombstoned_at IS NULL
-          AND status IN ('active', 'duplicate', 'conflicted')
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND memory_key IN {{keys:Array(String)}} AND tombstoned_at IS NULL
+          AND status IN ('active', 'duplicate', 'conflicted'){in_scope}
         SETTINGS select_sequential_consistency = 1
         """,
-        params={"org": input.org, "ns": input.namespace, "keys": keys},
+        params=params,
     )
     new_keys = {str(tm.get("memory_key") or "") for tm in triple_memories}
     victims = retirement_victims(repairs, links, memories, new_keys=new_keys)
@@ -752,9 +1183,32 @@ async def _retire_memories_behind_repairs(
             len(memories),
         )
         return 0
+    from server.memory.app.auto_resolution import (
+        NEWEST_WINS_CONTRADICTION,
+        RetirementTracker,
+        record_auto_supersessions,
+    )
     from server.memory.domain.lock import refuses_retirement
 
-    n = await supersede_duplicates(input.org, victims, ch=ch, skip=refuses_retirement)
+    # The tracker also refuses a row retired since the read (it is not re-pointed).
+    tracker = RetirementTracker(refuses_retirement)
+    try:
+        n = await supersede_duplicates(
+            input.org,
+            victims,
+            ch=ch,
+            skip=tracker.skip,
+            on_written=tracker.written,
+            on_unconfirmed=tracker.unconfirmed,
+        )
+    finally:
+        # What reached loom.memory, even when the embeddings mirror then failed.
+        await record_auto_supersessions(
+            org=input.org,
+            namespace=input.namespace,
+            retired=tracker.retired(victims),
+            reason=NEWEST_WINS_CONTRADICTION,
+        )
     log.info("newest_wins retired %d memories behind %d repaired triples", n, len(repairs))
     return n
 

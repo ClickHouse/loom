@@ -16,12 +16,12 @@
 -- Do NOT hand-edit. Edit schemas/migrations/*.sql and re-dump.
 -- CI verifies this file matches what migrations would produce.
 --
--- Counts: 139 tables + 17 materialized views.
+-- Counts: 140 tables + 17 materialized views.
 
 CREATE DATABASE IF NOT EXISTS `loom`;
 
 -- ======================================================================
--- Tables (139)
+-- Tables (140)
 -- ======================================================================
 
 -- loom.agent_cost_rollup_daily
@@ -1456,6 +1456,24 @@ PARTITION BY toYYYYMM(seen_at)
 ORDER BY (org, namespace, subject, relation, object, memory_key)
 SETTINGS index_granularity = 8192;
 
+-- loom.entity_triple_rows
+CREATE TABLE IF NOT EXISTS loom.entity_triple_rows
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `memory_id` UUID,
+    `user_id` String,
+    `content_sha256` FixedString(64),
+    `subject` LowCardinality(String),
+    `relation` LowCardinality(String),
+    `object` LowCardinality(String),
+    `inferred` Bool,
+    INDEX triple_skip (subject, relation, object) TYPE bloom_filter(0.01) GRANULARITY 4
+)
+ENGINE = ReplacingMergeTree
+ORDER BY (org, namespace, memory_id, user_id, content_sha256, subject, relation, object, inferred)
+SETTINGS index_granularity = 8192;
+
 -- loom.entity_triples
 CREATE TABLE IF NOT EXISTS loom.entity_triples
 (
@@ -2115,7 +2133,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_projection_failures
     `error_type` LowCardinality(String) DEFAULT '',
     `error_message` String DEFAULT '',
     `payload` String DEFAULT '{}',
-    `status` Enum8('active' = 1, 'resolved' = 2) DEFAULT 'active',
+    `status` Enum8('active' = 1, 'resolved' = 2, 'abandoned' = 3) DEFAULT 'active',
     `created_at` DateTime DEFAULT now(),
     `resolved_at` Nullable(DateTime) DEFAULT NULL
 )

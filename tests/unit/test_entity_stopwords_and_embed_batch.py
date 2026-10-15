@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT))
 from server.memory.app.entity_projections import (  # noqa: E402
     _candidate_entities_from_value,
 )
+from server.memory.domain.graph_quality import canonical_entity_text  # noqa: E402
 
 
 # --- entity candidate stoplist -------------------------------------------------
@@ -81,6 +82,55 @@ def test_measured_sentence_loses_only_the_function_word() -> None:
         "peak",
     ):
         assert kept in ents, f"{kept!r} must remain reachable as a seed"
+
+
+@pytest.mark.parametrize(
+    ("text", "words"),
+    [
+        ("next.js, socket.io and config.yaml", ["next.js", "socket.io", "and", "config.yaml"]),
+        ("x.ai, t.co, ASP.NET and Node.JS", ["x.ai", "t.co", "ASP.NET", "and", "Node.JS"]),
+        # A run of single letters is an abbreviation, not a name.
+        ("the U.S. office", ["the", "U", "S", "office"]),
+        ("tools, e.g. a linter", ["tools", "e", "g", "a", "linter"]),
+        # Digits are no letters: a version stays whole.
+        ("Python 3.9 and 3.11", ["Python", "3.9", "and", "3.11"]),
+    ],
+)
+def test_a_dot_is_inside_a_word_unless_every_part_is_one_letter(
+    text: str, words: list[str]
+) -> None:
+    from server.memory.domain import triples_follow_rows as tfr
+
+    assert tfr.split_words(text, dots=True) == words
+
+
+@pytest.mark.parametrize(
+    ("text", "names"),
+    [
+        ("Иван lives in Москва", ["иван", "москва"]),
+        ("محمد lives in القاهرة", ["محمد", "القاهرة"]),
+        ("田中 lives in 東京", ["田中", "東京"]),
+        ("김민준 lives in 서울", ["김민준", "서울"]),
+        ("I live in Zürich", ["zürich"]),
+        # Each word reaches the normaliser whole, vowel signs and all.
+        ("मैं नई दिल्ली में रहता हूँ", [canonical_entity_text("दिल्ली")]),
+        # A run of unspaced text is not a name.
+        ("東京に住んでいます", []),
+        ("Lives in Αθήνας", ["αθήνας"]),
+        # A dot between letters or digits is inside the name.
+        (
+            "we deploy with next.js and socket.io on k8s, see config.yaml",
+            ["next.js", "socket.io", "k8s", "config.yaml"],
+        ),
+    ],
+)
+def test_a_name_in_any_script_is_an_entity(text: str, names: list[str]) -> None:
+    ents = _candidate_entities_from_value(text)
+    assert all(n in ents for n in names), ents
+    assert "rich" not in ents
+    assert "東京に住んでいます" not in ents
+    assert canonical_entity_text("दिल") not in ents  # the start of दिल्ली
+    assert not {"next", "socket", "config", "yaml"} & set(ents)
 
 
 # --- batched embedding order --------------------------------------------------

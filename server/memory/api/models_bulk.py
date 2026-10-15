@@ -295,15 +295,34 @@ class MemorySetFromMessagesOutput(BaseModel):
     llm_cache_misses: int = 0
 
 
+# The verdict of an entry the blacklist refused (memory.set answers 422 BLACKLISTED).
+BLACKLISTED = "blacklisted"
+# The verdict of an entry that landed retired behind a later stored row.
+SUPERSEDED = "superseded"
+
+
 class _BulkSetResult(BaseModel):
     memory_key: str
     version: int
+    # The id of the row this entry wrote; empty when nothing was inserted.
+    memory_id: str = ""
     # The per-row verdict memory.set returns, so a caller of
-    # bulk_set can act on one entry without decoding the aggregate lists.
+    # bulk_set can act on one entry without decoding the aggregate lists, plus
+    # `superseded` (see `superseded_by`) and `blacklisted` (refused, version 0).
     # Empty when the entry was not checked (non-searchable, past the cap).
     conflict_verdict: str = ""
     peers: list[MemorySetPeer] = Field(default_factory=list)
     next: str = ""
+    # Set when the entry landed superseded: under `auto_reinforce` with the conflict judge
+    # on, a stored row of the same key and subject (the user; for the anonymous user `-`,
+    # the agent) is the later statement it contradicts, such as an old session ingested
+    # late. The id of that row; the entry's row is kept for history, recall serves the
+    # later one, and `conflict_verdict` is then `superseded` with no peers. Empty otherwise.
+    superseded_by: str = ""
+    # The ids of the stored rows of this key that the same-key judge retired behind
+    # this entry's row (auto_reinforce with the judge on). Other retirements are in
+    # the `memory.auto_supersede` audit record, not here.
+    retired: list[str] = Field(default_factory=list)
 
 
 class MemoryBulkSetOutput(BaseModel):
@@ -315,6 +334,9 @@ class MemoryBulkSetOutput(BaseModel):
     # Keys whose live row is locked read_only: skipped (result version=0), where memory.set
     # would answer 423 LOCKED. Unlocking is the owner's act (memory.unlock).
     skipped_locked: list[str] = Field(default_factory=list)
+    # Keys whose entry the blacklist refused: not written (result version=0), where
+    # memory.set would answer 422 BLACKLISTED.
+    skipped_blacklisted: list[str] = Field(default_factory=list)
     # Conflict verdicts, the same four memory.set produces:
     # canonical restatement of an existing row → not inserted, existing row
     # reinforced; close to a pinned peer → not inserted; same fact in other
@@ -340,7 +362,7 @@ class MemoryBulkSetOutput(BaseModel):
     # The keeper was reinforced instead.
     identity_duplicates: dict[str, str] = Field(default_factory=dict)
     # Wall time per phase of the write (existing_lookup, entity_resolution,
-    # prepare, embed, verdicts, insert, value_updates, projections, total) —
+    # prepare, embed, verdicts, same_key_judge, insert, value_updates, projections, total) —
     # Diagnostic; readers tolerate unknown keys.
     stage_ms: dict[str, float] = Field(default_factory=dict)
 

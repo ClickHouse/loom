@@ -77,6 +77,7 @@ async def mirror_status_to_embeddings(
     ch: _CHClient | None = None,
     dry_run: bool = False,
     batch: int = 500,
+    strict: bool = False,
 ) -> int:
     """Re-emit each identity's live memory_embeddings rows with the memory
     row's `status` (and `invalid_at`, and `tombstoned_at` when the memory row is
@@ -91,7 +92,8 @@ async def mirror_status_to_embeddings(
     with its own status, so a read by key would paint every identity's
     mirror row with one identity's status. One keyed read per `batch`
     identities and one insert. Never raises past a logged warning: the
-    memory write already landed, the mirror is a projection."""
+    memory write already landed, the mirror is a projection. `strict` raises
+    instead, for a caller (the repair) that must not count a failed mirror done."""
     ch = ch or _default_client()
     wanted: dict[EmbeddingKey, dict[str, Any]] = {}
     for m in memory_rows:
@@ -118,7 +120,9 @@ async def mirror_status_to_embeddings(
         chunk = keys[start : start + step]
         try:
             rows = await _live_rows_for_keys(ch, chunk)
-        except Exception as e:  # noqa: BLE001 — projection, never the write
+        except Exception as e:
+            if strict:
+                raise
             _log.warning("status mirror: embeddings read failed for %d keys: %s", len(chunk), e)
             continue
         for r in rows:
@@ -136,7 +140,9 @@ async def mirror_status_to_embeddings(
         try:
             await insert_embedding_rows(out, ch=ch)
             await retire_copies_under_unembedded_heads(out, ch=ch)
-        except Exception as e:  # noqa: BLE001 — projection, never the write; reconcile-status repairs
+        except Exception as e:
+            if strict:
+                raise
             _log.warning("status mirror: embeddings re-emit failed (%d rows): %s", len(out), e)
             return 0
     return len(out)

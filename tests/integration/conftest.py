@@ -96,7 +96,7 @@ def control_plane_url() -> str:
     return url
 
 
-# Set once a test reached the server; a run of server-free tests has nothing to purge.
+# Set once a test reached the server: an unpurgeable run then warns.
 _server_used: list[str] = []
 
 
@@ -208,16 +208,17 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]) ->
 def _purge_minted_orgs() -> Iterator[None]:
     yield
     orgs = minted_orgs()
-    if not orgs or not _server_used or os.environ.get("LOOM_IT_KEEP_ROWS") == "1":
+    if not orgs or os.environ.get("LOOM_IT_KEEP_ROWS") == "1":
         return
     if not ch_target_configured():
         # HTTP-only tests may run against a remote server without a store to
         # purge from; say so rather than fail a run that wrote nothing here.
-        warnings.warn(
-            f"{len(orgs)} minted test orgs were not purged from the server's store. "
-            + NO_CH_TARGET,
-            stacklevel=1,
-        )
+        if _server_used:
+            warnings.warn(
+                f"{len(orgs)} minted test orgs were not purged from the server's store. "
+                + NO_CH_TARGET,
+                stacklevel=1,
+            )
         return
     try:
         client = ch_client_from_env()

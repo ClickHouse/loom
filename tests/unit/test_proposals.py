@@ -187,12 +187,16 @@ def test_mark_peers_keeps_a_proposal_on_trial(monkeypatch: pytest.MonkeyPatch) -
 
     writes: list[tuple[list[str], dict[str, Any]]] = []
 
-    async def _write(org: str, ids: list[str], update: Any, *, ch: Any = None) -> int:
+    async def _write(org: str, ids: list[str], update: Any, *, ch: Any = None, **kw: Any) -> int:
         row = _Row("new", "proposed") if ids == ["new"] else _Row("peer", "active")
         writes.append((ids, update(row)))
         return 1
 
+    async def _get(mid: str, **kw: Any) -> Any:
+        return _Row(mid, "active")
+
     monkeypatch.setattr(memory_repo, "write_versions_by_ids", _write)
+    monkeypatch.setattr(memory_repo, "get_by_id", _get)
     asyncio.run(conflicts.mark_peers_conflicted(org="o", new_memory_id="new", peer_ids=["peer"]))
     assert writes == [
         (["new"], {"status": "proposed", "conflict_with": ["peer"]})

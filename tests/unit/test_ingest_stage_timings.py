@@ -201,7 +201,11 @@ async def test_bulk_write_step_carries_bulk_phases_onto_the_state(
         org="o", namespace="n", extracted_facts=[{"key": "home", "value": "Lisbon"}]
     )
     state = await pipe._step_bulk_write(state, {})
-    assert state.written == [{"memory_key": "home", "version": 1}]
+    assert [(w["memory_key"], w["version"], w["superseded_by"]) for w in state.written] == [
+        ("home", 1, "")
+    ]
+    # The whole result rides along, so set_from_messages reports the verdict too.
+    assert {"conflict_verdict", "peers", "next"} <= set(state.written[0])
     assert state.stage_ms["bulk.embed"] == 12.5 and state.stage_ms["bulk.total"] == 40.0
 
 
@@ -258,3 +262,30 @@ async def test_entity_texts_ride_the_value_embedding_batch(monkeypatch: pytest.M
     ev = [rows for table, rows in ch.inserts if table == "loom.entity_vectors"]
     assert ev and ev[0][0]["entity_embedding"] == [0.1, 0.2, 0.3]
     assert {r["entity_text"].lower() for r in ev[0]} >= {"lisbon"}
+
+
+@pytest.mark.asyncio
+async def test_a_refused_entry_is_not_written_but_its_keys_written_twin_is(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # One key twice: refused first, then written. Only the refusal is dropped.
+    import server.memory.app.pipeline as pipe
+    from server.memory.api.models_bulk import BLACKLISTED, MemoryBulkSetOutput, _BulkSetResult
+    from server.memory.app import bulk_set as bulk_set_mod
+    from server.memory.app import pipeline_state as pipeline_state
+
+    async def _fake_bulk(bulk_input: Any) -> MemoryBulkSetOutput:
+        return MemoryBulkSetOutput(
+            written=[
+                _BulkSetResult(memory_key="home", version=0, conflict_verdict=BLACKLISTED),
+                _BulkSetResult(memory_key="home", version=7),
+            ],
+            skipped_blacklisted=["home"],
+        )
+
+    monkeypatch.setattr(bulk_set_mod, "handle_memory_bulk_set", _fake_bulk)
+    state = pipeline_state.WorkflowState(
+        org="o", namespace="n", extracted_facts=[{"key": "home", "value": "Lisbon"}]
+    )
+    state = await pipe._step_bulk_write(state, {})
+    assert [(w["memory_key"], w["version"]) for w in state.written] == [("home", 7)]

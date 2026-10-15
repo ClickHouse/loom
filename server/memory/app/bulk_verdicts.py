@@ -8,6 +8,7 @@ from typing import Any
 
 from server.core.datetimes import parse_iso_dt
 from server.memory.app.set_commit import _set_next, _set_peers
+from server.memory.domain.graph_quality import SESSION_DATE_TOLERANCE_DAYS
 
 # ---------------------------------------------------------------------------
 # Bulk conflict surfacing
@@ -39,9 +40,6 @@ class BulkVerdictPlan:
         )
 
 
-_FIRST_DATE_MAX_GAP_DAYS = 2
-
-
 def _keep_first_event_date(
     row: dict[str, Any],
     embedding_rows: list[dict[str, Any]],
@@ -66,7 +64,7 @@ def _keep_first_event_date(
         return False
     earliest = min(dates)
     current = parse_iso_dt(str(row.get("valid_at") or "")) if row.get("valid_at") else None
-    if current is not None and (current - earliest).days <= _FIRST_DATE_MAX_GAP_DAYS:
+    if current is not None and (current - earliest).days <= SESSION_DATE_TOLERANCE_DAYS:
         return False
     # The insert writes these columns as DateTime: keep the value's type (a datetime stays a
     # datetime; only a row that already carried an ISO string gets a string). A string here
@@ -180,6 +178,7 @@ def apply_bulk_verdicts(
     for idx in drop:
         if idx < len(results):
             results[idx].version = 0
+            results[idx].memory_id = ""
     # ch.insert derives the column list from rows[0]: a `duplicate` verdict stamping
     # status/duplicate_of on SOME rows would make the key sets uneven and fail the whole batch
     # with KeyError('status'). Every row carries both keys; the defaults are the columns' own

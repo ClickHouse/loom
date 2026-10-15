@@ -612,7 +612,7 @@ Source: `server/settings/_memory.py`
 | Variable | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `LOOM_CONFLICT_THRESHOLD` | `float` | `0.85` | memory.set flags a write `conflicted` when an active peer in the same (org, namespace, memory_type) sits at cosine ≥ this. Tuned for text-embedding-3-*; 1.0 disables. Per-namespace override: loom.namespaces.conflict_threshold. |
-| `LOOM_MEMORY_CONFLICT_JUDGE` | `bool` | `False` | When the cosine check would flag a write, one cheap LLM call labels the closest peers (contradiction / elaboration / restatement / unrelated) and the verdict follows: conflict / refines (supersedes with a `refines` edge) / merge / clear. One call per flagged write. |
+| `LOOM_MEMORY_CONFLICT_JUDGE` | `bool \| None` | `None` | LLM labelling of the peers a write is checked against (contradiction / elaboration / restatement / related / unrelated), which decides the verdict. Unset, empty or "auto" = on while a real LLM can run it (the judge's model has its key, or a replica forwards to the main Loom); false = off; true = on. Read it through conflict_judge_switch.conflict_judge_on(). Costs and rules: docs/features/memory/conflicts-and-refusal.md. |
 | `LOOM_MEMORY_CONFLICT_JUDGE_MAX_PEERS` | `int` | `3` | Closest peers the conflict judge labels in its one call per flagged write. |
 | `LOOM_MEMORY_CONFLICT_JUDGE_MIN_SIMILARITY` | `float` | `0.7` | With the judge on, peers down to this cosine are judged too (never flagged on cosine alone), catching knowledge updates filed under a different key. |
 | `LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES` | `int` | `200` | Entries per bulk call that get the conflict check; later entries are written unchecked and counted. 0 = none are checked. |

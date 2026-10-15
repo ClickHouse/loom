@@ -9806,6 +9806,7 @@ class MemoryBulkSetOutput(TypedDict, total=False):
     written: Required[list["BulkSetResult"]]
     skipped_pinned: NotRequired[list[str]]
     skipped_locked: NotRequired[list[str]]
+    skipped_blacklisted: NotRequired[list[str]]
     merged: NotRequired[list[str]]
     value_updates_linked: NotRequired[int]
     rejected_pinned: NotRequired[list[str]]
@@ -9820,9 +9821,12 @@ class MemoryBulkSetOutput(TypedDict, total=False):
 class BulkSetResult(TypedDict, total=False):
     memory_key: Required[str]
     version: Required[int]
+    memory_id: NotRequired[str]
     conflict_verdict: NotRequired[str]
     peers: NotRequired[list["MemorySetPeer"]]
     next: NotRequired[str]
+    superseded_by: NotRequired[str]
+    retired: NotRequired[list[str]]
 
 
 class MemorySetPeer(TypedDict, total=False):
@@ -11246,6 +11250,7 @@ class MemorySetInput(TypedDict, total=False):
     value: Required[Union[dict[str, Any], list[Any], str, int, float, bool]]
     tags: NotRequired[list[str]]
     entities: NotRequired[list[str]]
+    relations: NotRequired[list[tuple[str, str, str]]]
     files: NotRequired[Optional[list[str]]]
     confidence: NotRequired[float]
     source_trace: NotRequired[str]
@@ -11279,6 +11284,7 @@ class MemorySetBody(TypedDict, total=False):
     value: Required[Union[dict[str, Any], list[Any], str, int, float, bool]]
     tags: NotRequired[list[str]]
     entities: NotRequired[list[str]]
+    relations: NotRequired[list[tuple[str, str, str]]]
     files: NotRequired[Optional[list[str]]]
     confidence: NotRequired[float]
     source_trace: NotRequired[str]
@@ -11860,7 +11866,7 @@ class MemoryResolveOrphanDuplicatesOutput(TypedDict, total=False):
 
 
 class MemoryRestoreInput(TypedDict, total=False):
-    "Restore a tombstoned memory within its 14-day grace window."
+    "Bring back a deleted memory (within 14 days) or one Loom retired on its own."
 
     org: Required[str]
     namespace: Required[str]
@@ -11869,10 +11875,12 @@ class MemoryRestoreInput(TypedDict, total=False):
     session_id: NotRequired[str]
     run_id: NotRequired[str]
     memory_key: Required[str]
+    if_superseded_by: NotRequired[str]
+    only_if_superseded: NotRequired[bool]
 
 
 class MemoryRestoreBody(TypedDict, total=False):
-    "Restore a tombstoned memory within its 14-day grace window."
+    "Bring back a deleted memory (within 14 days) or one Loom retired on its own."
 
     org: NotRequired[str]
     namespace: NotRequired[str]
@@ -11881,6 +11889,8 @@ class MemoryRestoreBody(TypedDict, total=False):
     session_id: NotRequired[str]
     run_id: NotRequired[str]
     memory_key: Required[str]
+    if_superseded_by: NotRequired[str]
+    only_if_superseded: NotRequired[bool]
 
 
 class MemoryRestoreOutput(TypedDict, total=False):
@@ -12719,6 +12729,7 @@ class MemoryUpdateInput(TypedDict, total=False):
     if_match_sha256: NotRequired[str]
     char_limit: NotRequired[Optional[int]]
     revive: NotRequired[bool]
+    relations: NotRequired[list[tuple[str, str, str]]]
 
 
 class MemoryUpdateBody(TypedDict, total=False):
@@ -12739,6 +12750,7 @@ class MemoryUpdateBody(TypedDict, total=False):
     if_match_sha256: NotRequired[str]
     char_limit: NotRequired[Optional[int]]
     revive: NotRequired[bool]
+    relations: NotRequired[list[tuple[str, str, str]]]
 
 
 class MemoryUpdateOutput(TypedDict, total=False):
@@ -12772,6 +12784,7 @@ class MemoryUpdateByIdInput(TypedDict, total=False):
     if_match_sha256: NotRequired[str]
     char_limit: NotRequired[Optional[int]]
     revive: NotRequired[bool]
+    relations: NotRequired[list[tuple[str, str, str]]]
 
 
 class MemoryUpdateByIdBody(TypedDict, total=False):
@@ -12783,6 +12796,7 @@ class MemoryUpdateByIdBody(TypedDict, total=False):
     if_match_sha256: NotRequired[str]
     char_limit: NotRequired[Optional[int]]
     revive: NotRequired[bool]
+    relations: NotRequired[list[tuple[str, str, str]]]
 
 
 class MemoryUpdateByIdOutput(TypedDict, total=False):
@@ -13983,7 +13997,7 @@ class OpsProjectionFailuresListInput(TypedDict, total=False):
     org: Required[str]
     namespace: NotRequired[Optional[str]]
     projection: NotRequired[str]
-    status: NotRequired[Literal["active", "resolved", ""]]
+    status: NotRequired[Literal["active", "resolved", "abandoned", ""]]
     limit: NotRequired[int]
 
 
@@ -13991,7 +14005,7 @@ class OpsProjectionFailuresListBody(TypedDict, total=False):
     org: NotRequired[str]
     namespace: NotRequired[Optional[str]]
     projection: NotRequired[str]
-    status: NotRequired[Literal["active", "resolved", ""]]
+    status: NotRequired[Literal["active", "resolved", "abandoned", ""]]
     limit: NotRequired[int]
 
 
@@ -14049,6 +14063,7 @@ class OpsProjectionFailuresRetryOutput(TypedDict, total=False):
     results: NotRequired[list["ProjectionFailureRetryRow"]]
     retried: Required[int]
     resolved: Required[int]
+    abandoned: NotRequired[int]
 
 
 class ProjectionFailureRetryRow(TypedDict, total=False):
@@ -14056,6 +14071,7 @@ class ProjectionFailureRetryRow(TypedDict, total=False):
     projection: Required[str]
     retried: Required[bool]
     resolved: Required[bool]
+    abandoned: NotRequired[bool]
     reason: NotRequired[str]
     error: NotRequired[str]
 

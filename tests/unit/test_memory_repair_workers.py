@@ -98,7 +98,14 @@ async def test_a_repair_pass_counts_each_outcome_and_survives_a_poison_row(
     (failed,) = result.failed
     assert failed["failure_id"] == "f3" and len(failed["error"]) == 512
     outcome = _own_registry.snapshot()["projection_repair"]["last_outcome"]
-    assert outcome == {"scanned": 4, "retried": 3, "resolved": 2, "unsupported": 1, "failed": 1}
+    assert outcome == {
+        "scanned": 4,
+        "retried": 3,
+        "resolved": 2,
+        "unsupported": 1,
+        "abandoned": 0,
+        "failed": 1,
+    }
 
 
 async def test_a_repair_pass_whose_scan_fails_records_a_failure(

@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 from fastapi import HTTPException
 
-from server.memory.api.models_bulk import MemorySetFromMessagesInput
+from server.memory.api.models_bulk import MemorySetFromMessagesInput, _BulkSetResult
 
 
 def _stub_projections(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -121,7 +121,7 @@ async def test_schema_mode_surfaces_stubbed_fields(
 
     async def _fake_bulk(bulk_input):
         class _Out:
-            written: list = []
+            written = [_BulkSetResult(memory_key="rec1", version=1)]
 
         return _Out()
 
@@ -201,7 +201,7 @@ async def test_schema_mode_reports_the_fallbacks_noted_during_the_call(
         degradations.note("embed", "fake_vector_kept", "timeout")
 
         class _Out:
-            written: list = []
+            written = [_BulkSetResult(memory_key="rec1", version=1)]
 
         return _Out()
 
@@ -248,7 +248,7 @@ async def test_a_scope_skipped_record_projection_leaves_provider_health_alone(
 
     async def _fake_bulk(bulk_input):
         class _Out:
-            written: list = []
+            written = [_BulkSetResult(memory_key="rec1", version=1)]
 
         return _Out()
 
@@ -279,3 +279,56 @@ async def test_a_scope_skipped_record_projection_leaves_provider_health_alone(
         assert provider_health.status()["degraded"] is False
     finally:
         provider_health.reset()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "result",
+    [
+        _BulkSetResult(memory_key="rec1", version=0, conflict_verdict="blacklisted"),
+        _BulkSetResult(memory_key="rec1", version=0),  # a locked or pinned key, kept as it was
+        _BulkSetResult(memory_key="rec1", version=7, conflict_verdict="superseded"),
+    ],
+)
+async def test_a_record_the_write_kept_out_projects_no_typed_record(
+    monkeypatch: pytest.MonkeyPatch, result: _BulkSetResult
+) -> None:
+    import server.memory.app.extract.handler as mx
+    from server.llm.client import LLMResult
+    from server.memory.app.extract import ExtractedRecord
+
+    _stub_projections(monkeypatch)
+    projected: list[object] = []
+
+    async def _fake_bulk(bulk_input):
+        class _Out:
+            written = [result]
+
+        return _Out()
+
+    async def _fake_inline(*args, **kwargs):
+        projected.append(args)
+        return True
+
+    async def _fake_typed(msgs, schema, *, max_tokens=1024, observation_date=None):
+        return (
+            ExtractedRecord(record={"note": "blocked-marker"}),
+            LLMResult(text="", tokens_in=0, tokens_out=0, provider="p", model="m"),
+        )
+
+    monkeypatch.setattr(mx, "handle_memory_bulk_set", _fake_bulk)
+    monkeypatch.setattr(mx, "_write_inline_record_projection", _fake_inline)
+    monkeypatch.setattr("server.memory.app.extract.extract_typed_record_iterative", _fake_typed)
+    out = await mx.handle_memory_set_from_messages(
+        MemorySetFromMessagesInput(
+            org="dev",
+            namespace="ns",
+            agent="a",
+            messages=[{"role": "user", "content": "blocked-marker"}],
+            memory_key="rec1",
+            record_schema={"note": "string"},
+        )
+    )
+    assert projected == []
+    # A refused record is not among what was written, either.
+    assert (out.written == []) == (result.conflict_verdict == "blacklisted")

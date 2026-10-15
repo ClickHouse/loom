@@ -14,7 +14,7 @@ def _rows(n: int):
     ]
     embedding_rows = [{"memory_key": f"k{i}", "status": "active"} for i in range(n)]
     emb_idx_of = list(range(n))
-    results = [NS(memory_key=f"k{i}", version=100 + i) for i in range(n)]
+    results = [NS(memory_key=f"k{i}", version=100 + i, memory_id=f"id{i}") for i in range(n)]
     return memory_rows, embedding_rows, emb_idx_of, results
 
 
@@ -37,6 +37,8 @@ def test_merge_and_rejected_drop_the_row_and_zero_its_result() -> None:
     assert plan.merged == ["k0"] and plan.rejected_pinned == ["k2"]
     assert plan.reinforce_ids == ["old0"]
     assert r[0].version == 0 and r[2].version == 0 and r[1].version == 101
+    # A dropped entry wrote no row, so its result names none.
+    assert [x.memory_id for x in r] == ["", "id1", "", "id3"]
 
 
 def test_duplicate_stamps_both_rows_and_conflict_records_peers() -> None:

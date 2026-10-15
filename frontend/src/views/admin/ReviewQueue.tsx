@@ -1,6 +1,6 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as Tabs from "@radix-ui/react-tabs";
-import { ShieldCheck, AlertTriangle, Sparkles, Check, X, SkipForward, ShieldOff } from "lucide-react";
+import { ShieldCheck, AlertTriangle, Sparkles, Check, X, SkipForward, ShieldOff, Undo2, Wand } from "lucide-react";
 import {
   listConflicts,
   resolveConflict,
@@ -8,13 +8,18 @@ import {
   removeAllowlist,
   listLearnings,
   reviewLearning,
+  listAutoResolved,
+  listUnsuperseded,
+  restoreMemory,
+  autoResolveReasonText,
+  type AutoResolvedRow,
   type ConflictRow,
   type AllowlistRow,
   type ResolveDecision,
   type LearningEntry,
   type LearningStatus,
 } from "../../api";
-import { useIdentity } from "../../lib/state";
+import { useIdentity, useStore } from "../../lib/state";
 import { Skeleton } from "../../components/Skeleton";
 import { EmptyState } from "../../components/EmptyState";
 import { ScopeBadge } from "../../components/ScopeBadge";
@@ -22,6 +27,8 @@ import { toast } from "../../components/Toast";
 import { confirmAction } from "../../components/ConfirmDialog";
 import { relativeTime, formatValue, truncate, humanizeError } from "../../lib/format";
 import { useAbortableEffect } from "../../lib/hooks";
+import { useNamespaceRole } from "../../lib/namespaceRole";
+import { canCall } from "../../lib/canCall";
 import { PageContainer } from "../../layout/PageContainer";
 
 /**
@@ -35,6 +42,8 @@ import { PageContainer } from "../../layout/PageContainer";
  * Sub-tabs:
  *   - Conflicts:   pairs of memories that disagree on a value
  *   - Learnings:   facts the extractor proposed for promotion
+ *   - Auto-resolved: memories Loom retired on its own (`memory.auto_supersede`), each
+ *                    with an Undo (`memory.restore`)
  *   - Exceptions:  allowlist of pairs we've explicitly said may coexist
  */
 export function ReviewQueue() {
@@ -50,6 +59,17 @@ export function ReviewQueue() {
   const [probedExceptions, setProbedExceptions] = useState<AllowlistRow[] | null>(null);
   const hasLearnings = (probedLearnings?.length ?? 0) > 0;
   const hasExceptions = (probedExceptions?.length ?? 0) > 0;
+  // The probe's page, tagged with the namespace it read: the reset after a namespace
+  // switch runs a tick after the first render of the new namespace, which must not show
+  // (or seed a panel with) the previous namespace's page.
+  const scopeKey = `${identity.org}/${identity.namespace}`;
+  const [probedAuto, setProbedAuto] = useState<(AutoResolvedPage & { scope: string }) | null>(null);
+  const autoPage = probedAuto?.scope === scopeKey ? probedAuto : null;
+  const hasAuto = (autoPage?.rows.length ?? 0) > 0;
+  // audit.list is asked only by a role known to reach it.
+  const whoami = useStore((s) => s.whoami);
+  const role = useNamespaceRole(identity.namespace);
+  const auditReadable = canCall("audit.list", role, whoami);
   // A namespace switch starts from Conflicts: the previous namespace's probes (and a tab
   // they revealed) must not outlive it, or a namespace with neither sub-tab strands the
   // viewer on a hidden panel.
@@ -58,6 +78,7 @@ export function ReviewQueue() {
     (signal, live) => {
       setProbedLearnings(null);
       setProbedExceptions(null);
+      setProbedAuto(null);
       setTab("conflicts");
       listLearnings({ org: identity.org, namespace: identity.namespace }, "pending", 50, { signal })
         .then((r) => {
@@ -71,6 +92,18 @@ export function ReviewQueue() {
         .catch(() => {});
     },
     [identity.org, identity.namespace],
+  );
+  useAbortableEffect(
+    (signal, live) => {
+      setProbedAuto(null);
+      if (!auditReadable) return;
+      listAutoResolved({ org: identity.org, namespace: identity.namespace }, { signal })
+        .then((r) => {
+          if (live()) setProbedAuto({ rows: r.rows || [], next_cursor: r.next_cursor, scope: scopeKey });
+        })
+        .catch(() => {});
+    },
+    [identity.org, identity.namespace, auditReadable],
   );
 
   return (
@@ -86,7 +119,7 @@ export function ReviewQueue() {
         one. Most users never see anything here; that's a feature.
       </p>
       <Tabs.Root value={tab} onValueChange={setTab}>
-        {(hasLearnings || hasExceptions) && (
+        {(hasLearnings || hasExceptions || hasAuto) && (
           <Tabs.List className="flex border-b border-[var(--color-border)] mb-5">
             <TabTrigger value="conflicts" icon={AlertTriangle}>
               Conflicts
@@ -94,6 +127,11 @@ export function ReviewQueue() {
             {hasLearnings && (
               <TabTrigger value="learnings" icon={Sparkles}>
                 Learnings
+              </TabTrigger>
+            )}
+            {hasAuto && (
+              <TabTrigger value="auto" icon={Wand}>
+                Auto-resolved
               </TabTrigger>
             )}
             {hasExceptions && (
@@ -109,6 +147,14 @@ export function ReviewQueue() {
         {hasLearnings && (
           <Tabs.Content value="learnings" className="outline-none">
             <LearningsPanel initialPending={probedLearnings} />
+          </Tabs.Content>
+        )}
+        {hasAuto && autoPage && (
+          // Kept mounted while another tab is open, so its loaded pages and Undo outcomes
+          // survive a tab switch; a namespace switch drops it with the probe.
+          <Tabs.Content value="auto" forceMount className="outline-none data-[state=inactive]:hidden">
+            {/* Keyed by the namespace it read: another namespace's page is a new panel. */}
+            <AutoResolvedPanel key={autoPage.scope} initial={autoPage} />
           </Tabs.Content>
         )}
         {hasExceptions && (
@@ -387,6 +433,206 @@ function LearningsPanel({ initialPending }: { initialPending?: LearningEntry[] |
             </div>
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Auto-resolved panel ───────────────────────────────────────────────
+
+interface AutoResolvedPage {
+  rows: AutoResolvedRow[];
+  next_cursor: string | null;
+}
+
+/** What became of a row after the Undo: restored, or `memory.restore` found it no longer
+ *  retired behind that memory (restored, deleted or retired behind another since). */
+type UndoOutcome = "restored" | "gone";
+
+// One retirement record: a memory retired twice shows up once per record.
+const entryKey = (r: AutoResolvedRow) => `${r.memory_id}@${r.ts}`;
+
+/** Newest restore per id across two reads. */
+function mergeUndone(a: Map<string, string>, b: Map<string, string>): Map<string, string> {
+  const out = new Map(a);
+  for (const [id, ts] of b) {
+    const prev = out.get(id);
+    if (!prev || ts > prev) out.set(id, ts);
+  }
+  return out;
+}
+
+function AutoResolvedPanel({ initial }: { initial: AutoResolvedPage }) {
+  const identity = useIdentity();
+  const whoami = useStore((s) => s.whoami);
+  const role = useNamespaceRole(identity.namespace);
+  const canRestore = canCall("memory.restore", role, whoami);
+  const [rows, setRows] = useState<AutoResolvedRow[]>(initial.rows);
+  const [cursor, setCursor] = useState<string | null>(initial.next_cursor);
+  const [loadingMore, setLoadingMore] = useState(false);
+  // Restores read so far (memory_id -> newest restore), and how far back that read
+  // reaches: a row older than `undoneSince` is not known yet and offers no Undo.
+  const [undone, setUndone] = useState<Map<string, string>>(new Map());
+  const [undoneSince, setUndoneSince] = useState<string | null>(null);
+  const [outcome, setOutcome] = useState<Map<string, UndoOutcome>>(new Map());
+  const [busy, setBusy] = useState<Set<string>>(new Set());
+  // Bumped when the namespace changes or the panel goes: a reply for the old scope is dropped.
+  const scope = useRef(0);
+  const loadingRef = useRef(false);
+  const oldest = rows.reduce((m, r) => (m === "" || r.ts < m ? r.ts : m), "");
+
+  useEffect(() => {
+    scope.current += 1;
+    const mine = scope.current;
+    return () => {
+      if (scope.current === mine) scope.current += 1;
+    };
+  }, [identity.org, identity.namespace]);
+
+  useAbortableEffect(
+    (signal, live) => {
+      if (!oldest) return;
+      // Re-reads from the oldest row on show up to now (audit.list has no upper bound);
+      // capped at UNSUPERSEDED_MAX_PAGES, and what is known stays on screen meanwhile.
+      listUnsuperseded({ org: identity.org, namespace: identity.namespace }, { since: oldest, signal })
+        .then((m) => {
+          if (!live()) return;
+          setUndone((prev) => mergeUndone(prev, m));
+          setUndoneSince(oldest);
+        })
+        .catch(() => {
+          // Unknown: offer Undo; restoring a live row answers restored=false.
+          if (live()) setUndoneSince(oldest);
+        });
+    },
+    [identity.org, identity.namespace, oldest],
+  );
+
+  // A row retired again after an undo is retired, so the undo must be the later event.
+  const undoneBefore = (r: AutoResolvedRow) => {
+    const at = undone.get(r.memory_id);
+    return at != null && at >= r.ts;
+  };
+  const known = (r: AutoResolvedRow) => undoneSince != null && r.ts >= undoneSince;
+
+  const loadMore = async () => {
+    if (!cursor || loadingRef.current) return;
+    loadingRef.current = true;
+    const mine = scope.current;
+    setLoadingMore(true);
+    try {
+      const page = await listAutoResolved({ org: identity.org, namespace: identity.namespace }, { cursor });
+      if (scope.current !== mine) return;
+      setRows((rs) => [...rs, ...page.rows]);
+      setCursor(page.next_cursor);
+    } catch (e) {
+      if (scope.current === mine) toast(`Failed: ${humanizeError(e)}`, "error");
+    } finally {
+      loadingRef.current = false;
+      if (scope.current === mine) setLoadingMore(false);
+    }
+  };
+
+  const setBusyFor = (id: string, on: boolean) =>
+    setBusy((s) => {
+      const next = new Set(s);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+
+  const undo = async (r: AutoResolvedRow) => {
+    const k = entryKey(r);
+    if (busy.has(k)) return;
+    const mine = scope.current;
+    setBusyFor(k, true);
+    try {
+      const out = await restoreMemory(
+        { org: identity.org, namespace: identity.namespace, agent: r.agent || "-" },
+        r.memory_key,
+        { user_id: r.user_id, session_id: r.session_id, if_superseded_by: r.superseded_by },
+      );
+      if (scope.current !== mine) return;
+      setOutcome((m) => new Map(m).set(k, out.restored ? "restored" : "gone"));
+      if (out.restored) toast("Restored", "ok");
+    } catch (e) {
+      if (scope.current === mine) toast(`Failed: ${humanizeError(e)}`, "error");
+    } finally {
+      setBusyFor(k, false);
+    }
+  };
+
+  const status = (r: AutoResolvedRow) => {
+    const o = outcome.get(entryKey(r));
+    if (o === "gone") {
+      return <span className="text-sm text-[var(--color-text-muted)] px-2 py-1.5">No longer retired</span>;
+    }
+    if (o === "restored" || undoneBefore(r)) {
+      return (
+        <span className="inline-flex items-center gap-1 text-sm text-[var(--color-success)] px-2 py-1.5">
+          <Check size={13} aria-hidden="true" /> Restored
+        </span>
+      );
+    }
+    // Without the row it retired behind, an Undo could only be an unguarded restore.
+    if (!canRestore || !r.superseded_by) return null;
+    if (!known(r)) {
+      return (
+        <span className="text-sm text-[var(--color-text-muted)] px-2 py-1.5" role="status" aria-label="Checking">
+          …
+        </span>
+      );
+    }
+    return (
+      <button
+        onClick={() => undo(r)}
+        disabled={busy.has(entryKey(r))}
+        aria-label={`Undo retirement of ${r.memory_key}`}
+        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border border-[var(--color-border-strong)] rounded-md hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+      >
+        <Undo2 size={13} /> Undo
+      </button>
+    );
+  };
+
+  return (
+    <div>
+      <p className="text-sm text-[var(--color-text-muted)] mb-3 max-w-2xl">
+        Memories Loom retired on its own in the last 30 days. They no longer come back in recall, but history keeps
+        them. Undo brings one back.
+      </p>
+      <div className="space-y-1.5">
+        {rows.map((r) => (
+          <div
+            key={entryKey(r)}
+            className="p-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] flex items-start gap-3"
+          >
+            <div className="flex-1 min-w-0">
+              <div className="font-mono text-base text-[var(--color-text)] truncate">{r.memory_key}</div>
+              <div className="text-sm text-[var(--color-text)] mt-0.5">
+                {autoResolveReasonText(r.reason, r.label) ?? "Retired automatically"}
+              </div>
+              <div className="text-xs text-[var(--color-text-muted)] tabular mt-1">
+                Behind <span className="font-mono">{r.superseded_by_key || r.superseded_by || "—"}</span> ·{" "}
+                {relativeTime(r.ts)}
+                {r.unconfirmed ? " · may not have taken effect" : null}
+              </div>
+            </div>
+            {/* Announces Restored / No longer retired when an Undo lands. */}
+            <div aria-live="polite">{status(r)}</div>
+          </div>
+        ))}
+      </div>
+      {cursor ? (
+        <button
+          onClick={loadMore}
+          disabled={loadingMore}
+          className="mt-3 px-3 py-1.5 text-sm font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] rounded-md disabled:opacity-50"
+        >
+          {loadingMore ? "Loading…" : "Load more"}
+        </button>
+      ) : (
+        <p className="mt-3 text-sm text-[var(--color-text-muted)]">Nothing older within 30 days.</p>
       )}
     </div>
   );

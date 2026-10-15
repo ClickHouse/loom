@@ -59,6 +59,7 @@ class _BulkCapture:
 
         class _Out:
             written: list = []
+            skipped_blacklisted: list = []
 
         return _Out()
 

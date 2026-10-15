@@ -40,7 +40,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -86,12 +86,14 @@ class Judgement:
     the judge did not run or could not be parsed (caller keeps the cosine
     verdict). `keep` lists the peers that keep the verdict's meaning: the
     contradicted peers for `conflict`, the elaborated peers for `refines`,
-    the restated peer for `merge`."""
+    the restated peer for `merge`. `labels` counts a peer the model left
+    unlabelled as a contradiction; `stated` holds only the labels it gave."""
 
     verdict: str = "conflict"
     labels: dict[str, str] = field(default_factory=dict)
     keep: list[str] = field(default_factory=list)
     ran: bool = False
+    stated: dict[str, str] = field(default_factory=dict)
 
 
 _JSON_RE = re.compile(r"\{.*\}", re.S)
@@ -172,4 +174,4 @@ async def judge(llm: Any, new_value: str, peers: list[Any]) -> Judgement:
         return Judgement()
     if not labels:
         return Judgement()
-    return fold(labels, peer_ids)
+    return replace(fold(labels, peer_ids), stated=labels)

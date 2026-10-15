@@ -3859,9 +3859,12 @@ export interface MemoryBulkSetInput {
 export interface BulkSetResult {
   memory_key: string;
   version: number;
+  memory_id?: string;
   conflict_verdict?: string;
   peers?: MemorySetPeer[];
   next?: string;
+  superseded_by?: string;
+  retired?: string[];
 }
 
 export interface MemorySetPeer {
@@ -3876,6 +3879,7 @@ export interface MemoryBulkSetOutput {
   written: BulkSetResult[];
   skipped_pinned?: string[];
   skipped_locked?: string[];
+  skipped_blacklisted?: string[];
   merged?: string[];
   value_updates_linked?: number;
   rejected_pinned?: string[];
@@ -4870,6 +4874,7 @@ export interface MemorySetInput {
   value: Record<string, unknown> | unknown[] | string | number | boolean;
   tags?: string[];
   entities?: string[];
+  relations?: Array<[string, string, string]>;
   files?: string[] | null;
   confidence?: number;
   source_trace?: string;
@@ -5274,6 +5279,8 @@ export interface MemoryRestoreInput {
   session_id?: string;
   run_id?: string;
   memory_key: string;
+  if_superseded_by?: string;
+  only_if_superseded?: boolean;
 }
 
 export interface MemoryRestoreOutput {
@@ -5773,6 +5780,7 @@ export interface MemoryUpdateInput {
   if_match_sha256?: string;
   char_limit?: number | null;
   revive?: boolean;
+  relations?: Array<[string, string, string]>;
 }
 
 export interface MemoryUpdateCandidate {
@@ -5806,6 +5814,7 @@ export interface MemoryUpdateByIdInput {
   if_match_sha256?: string;
   char_limit?: number | null;
   revive?: boolean;
+  relations?: Array<[string, string, string]>;
 }
 
 export interface MemoryUpdateByIdOutput {
@@ -6665,7 +6674,7 @@ export interface OpsProjectionFailuresListInput {
   org: string;
   namespace?: string | null;
   projection?: string;
-  status?: "active" | "resolved" | "";
+  status?: "active" | "resolved" | "abandoned" | "";
   limit?: number;
 }
 
@@ -6712,6 +6721,7 @@ export interface ProjectionFailureRetryRow {
   projection: string;
   retried: boolean;
   resolved: boolean;
+  abandoned?: boolean;
   reason?: string;
   error?: string;
 }
@@ -6720,6 +6730,7 @@ export interface OpsProjectionFailuresRetryOutput {
   results?: ProjectionFailureRetryRow[];
   retried: number;
   resolved: number;
+  abandoned?: number;
 }
 
 export interface PolicyCheckInput {

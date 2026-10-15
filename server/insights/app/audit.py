@@ -3,6 +3,8 @@ audit trace other domains read (`audit_rows_for_request`)."""
 
 from __future__ import annotations
 
+import re
+from datetime import datetime
 from typing import Any
 
 from server.core.ch import get_client
@@ -16,6 +18,20 @@ from server.operations.read_projection import project_rows
 async def audit_rows_for_request(request_id: str, *, limit: int = 100) -> list[audit_repo.AuditRow]:
     """Every audit event tagged with `request_id`, oldest first (at most `limit`)."""
     return await audit_repo.list_by_request_id(request_id, limit=limit)
+
+
+_ROW_HASH = re.compile(r"[0-9a-f]{64}")
+
+
+def _decode_page_cursor(cursor: str) -> tuple[datetime, str, str | None]:
+    """A page cursor's keyset: (ts, request_id, row_hash). The request id is the
+    client's (`X-Request-Id`) and may hold `|`, so the hash is the last part, and only
+    if it is one; a cursor issued before the hash was added has none."""
+    ts, extra = _decode_cursor(cursor)
+    request_id, _, row_hash = extra.rpartition("|")
+    if _ROW_HASH.fullmatch(row_hash):
+        return ts, request_id, row_hash
+    return ts, extra, None
 
 
 async def handle_audit_list(input: AuditListInput) -> AuditListOutput:
@@ -71,13 +87,17 @@ async def handle_audit_list(input: AuditListInput) -> AuditListOutput:
         scope_params=params,
         event_type=input.event_type,
         since=input.since,
-        before=_decode_cursor(input.cursor) if input.cursor else None,
+        before=_decode_page_cursor(input.cursor) if input.cursor else None,
         limit=input.limit + 1,  # +1 to detect "more"
         ch=ch,
     )
     has_more = len(page) > input.limit
     page = page[: input.limit]
     rows = [AuditListRow(**r.model_dump()) for r in page]
-    next_cursor = _encode_cursor(page[-1].ts, page[-1].request_id) if rows and has_more else None
+    next_cursor = (
+        _encode_cursor(page[-1].ts, page[-1].request_id, page[-1].row_hash)
+        if rows and has_more
+        else None
+    )
     project_rows(rows, AuditListRow, input.fields, always=frozenset({"ts"}))
     return AuditListOutput(rows=rows, next_cursor=next_cursor)

@@ -159,7 +159,14 @@ USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("entity_graph.delete", ((D, "loom.entity_triples"), (D, "loom.entity_edges"))),
     ("entity_communities.delete", ((D, "loom.entity_communities"),)),
     ("entity_vectors.delete", ((L, "loom.entity_vectors"),)),
-    ("graph_links.delete", ((D, "loom.entity_triple_memories"), (D, "loom.entity_edge_memories"))),
+    (
+        "graph_links.delete",
+        (
+            (D, "loom.entity_triple_memories"),
+            (D, "loom.entity_triple_rows"),
+            (D, "loom.entity_edge_memories"),
+        ),
+    ),
     ("llm_response_cache.delete", ((D, "loom.llm_response_cache"),)),
     ("ask_precedents.delete", ((D, "loom.memory_ask_precedents"),)),
     (
@@ -210,7 +217,14 @@ NS_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
         "source_links.tombstone",
         ((U, "loom.memory_belief_sources"), (U, "loom.memory_chunk_sources")),
     ),
-    ("graph_links.delete", ((D, "loom.entity_triple_memories"), (D, "loom.entity_edge_memories"))),
+    (
+        "graph_links.delete",
+        (
+            (D, "loom.entity_triple_memories"),
+            (D, "loom.entity_triple_rows"),
+            (D, "loom.entity_edge_memories"),
+        ),
+    ),
     (
         "entity_graph.delete",
         (
@@ -288,7 +302,14 @@ NS_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
         "source_links.tombstone",
         ((D, "loom.memory_belief_sources"), (D, "loom.memory_chunk_sources")),
     ),
-    ("graph_links.delete", ((D, "loom.entity_triple_memories"), (D, "loom.entity_edge_memories"))),
+    (
+        "graph_links.delete",
+        (
+            (D, "loom.entity_triple_memories"),
+            (D, "loom.entity_triple_rows"),
+            (D, "loom.entity_edge_memories"),
+        ),
+    ),
     (
         "entity_graph.delete",
         (

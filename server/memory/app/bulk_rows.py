@@ -16,6 +16,7 @@ from fastapi import HTTPException
 from server.core.datetimes import parse_iso_dt
 from server.core.hashing import sha256_value as _content_sha256
 from server.memory.api.models_bulk import (
+    BLACKLISTED,
     MemoryBulkSetInput,
     _BulkSetResult,
 )
@@ -102,9 +103,17 @@ class _BulkWriteState:
     # A byte-identical restatement of the SAME key is the frequency signal: it reinforces the
     # live row instead of vanishing.
     restated_ids: list[str] = field(default_factory=list)
+    # (retired id, the row it retired behind) per same-key retirement the judge decided
+    # (`key_supersession.judge_same_key_rows`), for the triple plane's follow step.
+    judged_follow_pairs: list[tuple[str, str]] = field(default_factory=list)
+    # Keys whose row FINAL keeps landed superseded by the judge: no version of them links.
+    judged_retired_keys: set[str] = field(default_factory=set)
     memory_rows: list[dict[str, Any]] = field(default_factory=list)
     embedding_rows: list[dict[str, Any]] = field(default_factory=list)
+    # One per entry, in order; version 0 for an entry that wrote nothing.
     results: list[_BulkSetResult] = field(default_factory=list)
+    # Row i's result is results[row_results[i]], as built (before the verdicts drop rows).
+    row_results: list[int] = field(default_factory=list)
     # (row_idx, embed_text, excerpt, key_text) per searchable kept entry.
     pending: list[tuple[int, str, str, str]] = field(default_factory=list)
     # (entry, serialized_value, tags, entities, expires_at) per kept entry.
@@ -112,7 +121,8 @@ class _BulkWriteState:
         default_factory=list
     )
     skipped_unchanged: int = 0
-    skipped_blacklisted: int = 0
+    # Keys of the entries the blacklist refused.
+    skipped_blacklisted: list[str] = field(default_factory=list)
     retyped: list[str] = field(default_factory=list)
     skipped_pinned: list[str] = field(default_factory=list)
     skipped_locked: list[str] = field(default_factory=list)
@@ -329,7 +339,10 @@ async def _bulk_build_rows(
         bl_hit = await find_match(org=input.org, namespace=input.namespace, value=serialized_value)
         if bl_hit is not None:
             await note_hit(bl_hit.pattern_id)
-            state.skipped_blacklisted += 1
+            state.skipped_blacklisted.append(entry.memory_key)
+            state.results.append(
+                _BulkSetResult(memory_key=entry.memory_key, version=0, conflict_verdict=BLACKLISTED)
+            )
             log.warning(
                 "bulk_set dropped blacklisted entry key=%r pattern=%s scope=%s",
                 entry.memory_key,
@@ -456,7 +469,12 @@ async def _bulk_build_rows(
         else:
             state.n_created += 1
         _seen_keys.add(entry.memory_key)
-        state.results.append(_BulkSetResult(memory_key=entry.memory_key, version=version))
+        state.row_results.append(len(state.results))
+        state.results.append(
+            _BulkSetResult(
+                memory_key=entry.memory_key, version=version, memory_id=str(memory_row["memory_id"])
+            )
+        )
 
         if is_embedded(entry.memory_type, entry_sensitivity):
             _bulk_append_pending(state, entry, serialized_value)

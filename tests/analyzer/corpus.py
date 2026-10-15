@@ -378,7 +378,7 @@ def shape_of(sql: str) -> str:
 
 def masked_head(sql: str) -> str:
     flat = _DIGEST_WS.sub(" ", str(sql or "")).strip()
-    return _DIGEST_LITERALS.sub("?", flat)[:HEAD_CHARS]
+    return _DIGEST_LITERALS.sub("?", flat)[:HEAD_CHARS].rstrip()
 
 
 def collect(runs: Sequence[CaseRun]) -> dict[str, Shape]:

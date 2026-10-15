@@ -79,14 +79,17 @@ async def list_page(
     scope_params: dict[str, Any],
     event_type: str | None = None,
     since: datetime | None = None,
-    before: tuple[datetime, str] | None = None,
+    before: tuple[datetime, str, str | None] | None = None,
     limit: int,
     ch: _CHClient | None = None,
 ) -> list[AuditRow]:
     """One page of an org's events, newest first: at most `limit` rows
     inside the caller-visible `scope_where` (built by the handler's
     visibility decision), strictly older than the keyset `before` =
-    (ts, request_id) of the previous page's last row."""
+    (ts, request_id, row_hash) of the previous page's last row. Two rows can share
+    a millisecond and a request id (one write's several audit rows), so the per-row
+    hash breaks the tie; a cursor issued before the hash was in it (row_hash None)
+    keysets on (ts, request_id) as it did."""
     ch = ch or _default_client()
     where = scope_where
     params: dict[str, Any] = {**scope_params, "org": org, "lim": int(limit)}
@@ -98,15 +101,21 @@ async def list_page(
         where += " AND ts >= {since:DateTime64(3)}"
         params["since"] = since if since.tzinfo is not None else since.replace(tzinfo=UTC)
     if before is not None:
-        cur_ts, cur_rid = before
+        cur_ts, cur_rid, cur_hash = before
         # Keyset via tuple comparison. ts is an explicit UTC literal rather than
         # a bound param to dodge clickhouse-connect's naive-datetime TZ binding.
         if cur_ts.tzinfo is not None:
             cur_ts = cur_ts.astimezone(UTC).replace(tzinfo=None)
         ts_literal = cur_ts.strftime("%Y-%m-%d %H:%M:%S.") + f"{cur_ts.microsecond // 1000:03d}"
-        where += (
-            f" AND (ts, request_id) < (toDateTime64('{ts_literal}', 3, 'UTC'), {{c_rid:String}})"
-        )
+        ts_sql = f"toDateTime64('{ts_literal}', 3, 'UTC')"
+        if cur_hash is not None:
+            where += (
+                f" AND (ts, request_id, row_hash) < "
+                f"({ts_sql}, {{c_rid:String}}, {{c_hash:FixedString(64)}})"
+            )
+            params["c_hash"] = cur_hash
+        else:
+            where += f" AND (ts, request_id) < ({ts_sql}, {{c_rid:String}})"
         params["c_rid"] = cur_rid
     rows = await ch.query_all(
         f"""
@@ -115,7 +124,7 @@ async def list_page(
         FROM loom.audit_log
         WHERE org = {{org:String}}
               {where}
-        ORDER BY ts DESC, request_id DESC
+        ORDER BY ts DESC, request_id DESC, row_hash DESC
         LIMIT {{lim:UInt32}}
         """,
         params=params,

@@ -149,7 +149,7 @@ async def test_retire_behind_repairs_honours_the_policy_and_writes_through_super
     # newest_wins: links → memories → supersede
     captured: list[Any] = []
 
-    async def fake_supersede(org, victims, *, ch=None, skip=None):
+    async def fake_supersede(org, victims, *, ch=None, skip=None, **_kw):
         captured.append((org, victims))
         return len(victims)
 
@@ -278,3 +278,32 @@ def test_bench_retry_delay_and_dead_arm_guard(monkeypatch, tmp_path) -> None:
         "sys.argv", ["mab", "--data", str(data), "--memorize", "knowledge", "--answer", "ask"]
     )
     assert mod.main() == 2
+
+
+@pytest.mark.asyncio
+async def test_retire_behind_repairs_reads_only_rows_in_the_writers_scope() -> None:
+    from server.auth.context import set_current_auth
+    from server.auth.jwt import AuthInfo
+    from server.identity.domain.read_scope import (
+        WHOLE_NAMESPACE,
+        ReadFilters,
+        bind_request_read_filters,
+    )
+
+    auth = AuthInfo(subject="sa:bot", org="o", namespaces=("n",), roles=(), is_service_account=True)
+    set_current_auth(auth)
+    bind_request_read_filters(auth, ReadFilters(scope="own_user", user_id="u1", session_id=None))
+    try:
+        ch = StubCH()
+        ch.one.append({"default_conflict_policy": "newest_wins"})
+        ch.all.append([{"subject": "g", "relation": "r", "object": "old", "memory_key": "k"}])
+        inp = SimpleNamespace(org="o", namespace="n")
+        await proj._retire_memories_behind_repairs(
+            inp, [_repair("g", "r", "old", "new")], [], ch=ch
+        )
+    finally:
+        set_current_auth(None)
+        bind_request_read_filters(None, WHOLE_NAMESPACE)
+    _, mem_sql, params = ch.calls[2]
+    # Another user's row of the same fact is never read, so it never retires.
+    assert "user_id = {scope_uid:String}" in mem_sql and params["scope_uid"] == "u1"

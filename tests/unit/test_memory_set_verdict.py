@@ -359,6 +359,14 @@ def test_next_hint_is_empty_on_the_common_cases() -> None:
     assert set_next_hint("conflict", []) == ""
     assert "memory.update(memory_key='k'" in set_next_hint("conflict", [peer])
     assert "memory.pin(memory_key='k'" in set_next_hint("merge", [peer], repeated_merge=True)
+    unlinked = set_next_hint("merge", [peer], relations_unlinked=True)
+    # Restating them would merge again: no call is suggested.
+    assert (
+        unlinked == "verdict=merge: relations not linked: this merged into a row that is not yours."
+    )
+    both = set_next_hint("merge", [peer], repeated_merge=True, relations_unlinked=True)
+    assert both.startswith(unlinked) and "memory.pin(memory_key='k'" in both
+    assert both.count("verdict=merge") == 1
 
 
 def test_the_noop_lands_on_the_agent_events_row() -> None:

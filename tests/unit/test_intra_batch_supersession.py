@@ -108,3 +108,20 @@ def test_sweep_lead_in_is_stripped_from_values() -> None:
         == "Thomas Arne was born in Bengaluru."
     )
     assert strip_statement_lead_in("User stated that no.") == "User stated that no."
+
+
+def test_two_facts_of_a_many_valued_attribute_never_pair() -> None:
+    import json
+
+    assert intra_batch_supersessions(["I have a dog.", "I have a cat."]) == []
+    # The rule knows English function words only, so it reads English sentences only.
+    russian = ["У меня есть собака.", "У меня есть кошка."]
+    assert intra_batch_supersessions(russian) == []
+    assert intra_batch_supersessions([json.dumps(v) for v in russian]) == []
+    french = ["Wang Xiaoming est âgé de 28 ans.", "Wang Xiaoming est ingénieur logiciel."]
+    assert intra_batch_supersessions(french) == []
+
+
+def test_two_predicates_of_one_object_never_pair() -> None:
+    lives_and_works = ["The user currently lives in London.", "The user currently works in London."]
+    assert intra_batch_supersessions(lives_and_works) == []

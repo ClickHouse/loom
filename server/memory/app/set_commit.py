@@ -34,6 +34,7 @@ from server.memory.api.models_crud import (
 )
 from server.memory.app import conflict_deferred as _cd
 from server.memory.app.drops import record_drop
+from server.memory.app.entity_projections import project_stated_relations
 from server.memory.app.high_fence import fence_high
 from server.memory.domain.embed_text import embedding_texts
 from server.memory.domain.trust import attests
@@ -141,8 +142,16 @@ def _set_peers(conflict_result: Any) -> list[Any]:
     return out
 
 
-def _set_next(verdict: str, peers: list[Any], *, repeated_merge: bool = False) -> str:
-    return set_next_hint(verdict, peers, repeated_merge=repeated_merge)
+def _set_next(
+    verdict: str,
+    peers: list[Any],
+    *,
+    repeated_merge: bool = False,
+    relations_unlinked: bool = False,
+) -> str:
+    return set_next_hint(
+        verdict, peers, repeated_merge=repeated_merge, relations_unlinked=relations_unlinked
+    )
 
 
 async def _project_set_entities_fail_open(
@@ -251,7 +260,16 @@ async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
             await fence_high(
                 [(memory_repo.embedding_key(memory_row), int(memory_row["version"]))], ch=ch
             )
-    await _project_set_entities_fail_open(input)
+    if memory_row.get("sensitivity") != "high":  # a high row's text stays out of the graph
+        await _project_set_entities_fail_open(input)
+    await project_stated_relations(
+        memory_row,
+        input.value,
+        input.relations,
+        revised=had_existing_row,
+        op="memory.set",
+        ch=ch,
+    )
     # Non-searchable types skip the conflict check entirely, so there is no
     # verdict to map: the insert always happened.
     _count_write(input.namespace, "updated" if had_existing_row else "created")
@@ -397,6 +415,11 @@ async def _set_conflict_verdict(
     return _cfg, conflict_result, peers_out, None
 
 
+def _writers_own(row: Any, input: MemorySetInput) -> bool:
+    """The same agent and user: another session of theirs is still theirs."""
+    return (row.agent, row.user_id) == (input.agent, input.user_id)
+
+
 async def _set_merge(
     w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any, peers_out: list[Any]
 ) -> MemorySetOutput:
@@ -465,6 +488,15 @@ async def _set_merge(
                 similarity=1.0,
             )
         ]
+    # The facts named are the merged row's only when it is the writer's own: another's
+    # row would hold them open for as long as it lives.
+    own_row = existing if existing is not None and _writers_own(existing, input) else None
+    hint = _set_next(
+        "merge",
+        merge_peers,
+        repeated_merge=repeated_merge,
+        relations_unlinked=bool(input.relations) and own_row is None,
+    )
     if input.dry_run:
         # The verdict without the side effects: no evidence event, no
         # drop counter, no write tick.
@@ -480,7 +512,7 @@ async def _set_merge(
             degraded=_degradations.current(),
             conflict_verdict="merge",
             peers=merge_peers,
-            next=_set_next("merge", merge_peers, repeated_merge=repeated_merge),
+            next=hint,
             noop=True,
             dry_run=True,
         )
@@ -488,6 +520,15 @@ async def _set_merge(
     # namespace policy is "auto_reinforce". Fire-and-forget.
     if merged_into_id:  # never a row outside the read scope
         await _cf.auto_reinforce_peer(input, merged_into_id, ch=ch, cfg=_cfg)
+    if input.relations and own_row is not None:
+        await project_stated_relations(
+            own_row.model_dump(),
+            own_row.value,
+            input.relations,
+            revised=True,
+            op="memory.set",
+            ch=ch,
+        )
     # Canonical-form match: the caller restated a memory Loom already had.
     # No row was inserted, so this is the outcome that separates "still
     # ingesting" from "only ever hearing the same things again".
@@ -504,7 +545,7 @@ async def _set_merge(
         degraded=_degradations.current(),
         conflict_verdict="merge",
         peers=merge_peers,
-        next=_set_next("merge", merge_peers, repeated_merge=repeated_merge),
+        next=hint,
         # The first-class noop: the store already held the fact; the row above was reinforced
         # and nothing was written.
         noop=True,
@@ -680,6 +721,14 @@ async def _set_after_write(
         source_class=source_class,
         verdict="duplicate" if duplicate_of_id else conflict_result.verdict,
         actor=writer_actor or "-",
+    )
+    await project_stated_relations(
+        w.memory_row,
+        input.value,
+        input.relations,
+        revised=had_existing_row,
+        op="memory.set",
+        ch=ch,
     )
 
     # A long value is also written as verbatim chunks under the key, after the row is in and

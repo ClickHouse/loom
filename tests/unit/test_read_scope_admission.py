@@ -628,6 +628,7 @@ async def test_a_merge_into_another_users_row_does_not_name_it(monkeypatch, dry_
         memory_id="theirs",
         memory_key="v/secret",
         value="vault 1234",
+        agent="a",
         user_id="u2",
         session_id="-",
         evidence_count=3,

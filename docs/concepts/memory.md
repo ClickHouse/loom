@@ -98,11 +98,15 @@ user/preferences/editor
 - **Facets go in `tags` and `entities`,** not in the key.
 
 The storage identity is `(org, namespace, agent, user_id, session_id, memory_key)`: the
-same key written by two agents or in two sessions is two rows. Under the namespace policy
-`newest_wins`, the newest write for a key retires every older live row with that key in
-the namespace, whoever wrote it. Extraction mints keys from the subject and attribute,
-never from the value, so a later session that states the same attribute lands on the
-same key.
+same key written by two agents or in two sessions is two rows. Under the namespace
+policy `newest_wins`, the newest write for a key retires every older live row with that
+key in the namespace, whoever wrote it. Extraction mints keys from the subject and
+attribute, never from the value, so a later session that states the same attribute lands
+on the same key. Under the default `auto_reinforce`, with the conflict judge on, a bulk
+write (extraction writes through one) asks the judge about the newest stored rows of
+each key it writes for the same user (for the anonymous user `-`, the same agent). A
+contradiction retires whichever row is older, and an elaboration by the newer row
+retires the older. Two different facts under a reused key stay live.
 
 ## Memory types
 
@@ -196,8 +200,8 @@ carries `conflict_verdict`, up to five `peers`, and a `next` hint.
   (0.85) and `LOOM_DUPLICATE_THRESHOLD` (0.97) are the fallback. A namespace or memory
   type can pin its own; `calibration.get` reports which is in force.
 - **The judge.** Cosine says two statements are about the same thing, not whether they
-  agree. With `LOOM_MEMORY_CONFLICT_JUDGE=true`, one LLM call labels the closest peers
-  (`contradiction`, `elaboration`, `restatement`, `unrelated`), giving `conflict`,
+  agree. With the conflict judge on (`LOOM_MEMORY_CONFLICT_JUDGE`, the default while a real LLM provider and its key are configured), one LLM call labels the closest peers
+  (`contradiction`, `elaboration`, `restatement`, `related`, `unrelated`), giving `conflict`,
   `refines` (the refined peer is superseded), `merge` or `clear`. It runs after the
   write by default (verdict `pending`) unless the caller passes `await_verdict=true`.
 - **Run scope.** A write under a `run_id` whose canonical match belongs to another run is

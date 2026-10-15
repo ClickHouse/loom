@@ -7,18 +7,36 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
+import uuid
+from collections.abc import Mapping
 from datetime import datetime
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, NamedTuple
 
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now, parse_iso_dt
 from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry, _BulkSetResult
+from server.memory.app.projection_errors import (
+    bulk_projection_payload,
+    record_input_projection_failure,
+)
+from server.memory.app.projection_failures import TRIPLES_RECONCILE, TRIPLES_REOPEN
 from server.memory.app.projections import (
     close_triples,
+    entity_edge_row,
     entity_triple_row,
+    open_triples_among,
+    reopen_triples,
+    repair_intervals,
     resolve_projection_entity_map,
+    triple_row_link,
     write_entity_edges,
+    write_entity_triples,
 )
+from server.memory.domain import triples_follow_rows as tfr
+from server.memory.domain.graph_quality import canonical_edge_pair
+from server.memory.domain.temporal_sql import GRAPH_HOLDER_SQL
 
 log = logging.getLogger(__name__)
 
@@ -251,7 +269,18 @@ _SET_ENTITY_STOPWORDS = frozenset(
 # Runs of TitleCase words are strong proper-noun candidates. Applied to the
 # RAW value text before lowercasing so casing survives.
 _SET_ENTITY_PROPER_RE = re.compile(r"\b[A-Z][\w'’.-]*(?:\s+[A-Z][\w'’.-]*)*")
-_SET_ENTITY_WORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9'’.-]*")
+# Longer than a name in wide characters: a run of unspaced text ("東京に住んでいます").
+_SET_ENTITY_MAX_WIDE_LEN = 6
+
+
+def _not_a_name(word: str) -> bool:
+    """Shorter than a thing's name: "is", "at", "of", "3pm". Wide characters (CJK,
+    Hangul) write a name in two: "東京", "서울"."""
+    if not word[0].isalpha():
+        return True
+    if all(unicodedata.east_asian_width(c) in ("W", "F") for c in word):
+        return len(word) < 2 or len(word) > _SET_ENTITY_MAX_WIDE_LEN
+    return len(word) < _SET_ENTITY_MIN_LEN
 
 
 def _candidate_entities_from_value(value: Any) -> list[str]:
@@ -290,9 +319,8 @@ def _candidate_entities_from_value(value: Any) -> list[str]:
         phrase = m.group(0).strip()
         if len(phrase) >= _SET_ENTITY_MIN_LEN:
             raw_candidates.append(phrase)
-    for m in _SET_ENTITY_WORD_RE.finditer(text):
-        tok = m.group(0)
-        if len(tok) < _SET_ENTITY_MIN_LEN:
+    for tok in tfr.split_words(text, dots=True):
+        if _not_a_name(tok):
             continue
         if tok.lower() in _SET_ENTITY_STOPWORDS:
             continue
@@ -382,6 +410,247 @@ async def project_memory_set_entities(
             bulk_like, [result], ch=ch or get_client(), wait_visible=wait_visible
         )
     return len(ents)
+
+
+async def project_stated_relations(
+    row: Mapping[str, Any],
+    value: Any,
+    relations: list[tfr.Triple],
+    *,
+    revised: bool,
+    op: str,
+    ch: Any,
+) -> None:
+    """Write the `relations` a point write states, as a `memory.bulk_set` entry's are:
+    linked to `row` (the `loom.memory` row holding `value`), and through the interval
+    repair, which may close an older single-valued fact and, under `newest_wins`,
+    retire the rows behind it. A row that may not hold graph facts (`GRAPH_HOLDER_SQL`:
+    'high', expired, or past its `valid_to`) states none. Then, for a row `revised`
+    (it held a value before this write), the facts it held are reconciled with its
+    new value (`close_dropped_facts`). It runs after the same-key supersession, which
+    reads no triples: point writes run no row follow. Fail-open: a failed write is
+    recorded for the projection repair to replay."""
+    ends = [parse_iso_dt(row.get(c)) for c in ("expires_at", "valid_to")]
+    ended = any(end is not None and end <= naive_utc_now() for end in ends)
+    if relations and row.get("sensitivity") != "high" and not ended:
+        await _write_stated_relations(row, value, relations, op=op, ch=ch)
+    if revised:
+        scope = SimpleNamespace(org=row["org"], namespace=row["namespace"], agent=row["agent"])
+        await reconcile_row_facts(scope, [str(row["memory_id"])], reopen=False, op=op, ch=ch)
+
+
+async def _write_stated_relations(
+    row: Mapping[str, Any], value: Any, relations: list[tfr.Triple], *, op: str, ch: Any
+) -> None:
+    try:
+        write, results = _as_bulk_write(row, value, relations)
+    except Exception as e:  # noqa: BLE001 — a projection; the write stands
+        log.warning("%s: relations not projected: %s", op, e)
+        return
+    try:
+        await write_entity_triples(write, results, ch=ch)
+    except Exception as e:  # noqa: BLE001 — a projection; the write stands
+        log.warning("%s: relations projection failed (recorded for repair): %s", op, e)
+        await record_input_projection_failure(
+            write,
+            projection="entity_triples",
+            error=e,
+            memory_keys=[results[0].memory_key],
+            payload=bulk_projection_payload(write, results, error=e),
+            source_operation=op,
+            source_resource_id=f"{op}:{results[0].memory_id}",
+        )
+
+
+async def reconcile_row_facts(
+    input: Any,
+    ids: list[str],
+    *,
+    reopen: bool,
+    op: str,
+    ch: Any,
+    hashes: Mapping[str, str] | None = None,
+) -> None:
+    """Fail-open `reopen_held_facts` (`reopen`) or `close_dropped_facts` for the rows
+    `ids` of `input`'s namespace; a failure is recorded for the projection repair, with
+    the time of the restore its replay is dated at and the `content_sha256` each
+    restored row had (`hashes`), so the replay skips a row revised since."""
+    restored_at = naive_utc_now()
+    try:
+        if reopen:
+            await reopen_held_facts(input, ids, ch=ch, restored_at=restored_at)
+        else:
+            await close_dropped_facts(input, ids, ch=ch)
+    except Exception as e:  # noqa: BLE001 — a projection; the write stands
+        log.warning("%s: facts not reconciled (recorded for repair): %s", op, e)
+        payload: dict[str, Any] = {"memory_ids": ids, "reopen": reopen}
+        if reopen:
+            payload["restored_at"] = restored_at.isoformat()
+            payload["content_sha256"] = dict(hashes or {})
+        await record_input_projection_failure(
+            input,
+            projection=TRIPLES_RECONCILE,
+            error=e,
+            payload=payload,
+            source_operation=op,
+            source_resource_id=f"{op}:{ids[0]}",
+        )
+
+
+async def _linked_triples(input: Any, ids: list[str], *, ch: Any) -> list[tfr.Triple]:
+    rows = await ch.query_all(
+        """
+        SELECT DISTINCT subject, relation, object
+        FROM loom.entity_triple_rows
+        WHERE org = {org:String} AND namespace = {ns:String} AND memory_id IN {ids:Array(UUID)}
+        SETTINGS select_sequential_consistency = 1
+        """,
+        params={"org": input.org, "ns": input.namespace, "ids": ids},
+    )
+    return sorted((str(r["subject"]), str(r["relation"]), str(r["object"])) for r in rows)
+
+
+async def close_dropped_facts(input: Any, ids: list[str], *, ch: Any) -> None:
+    """Close the open facts linked to the rows `ids` that no row holds any longer: a
+    revision that no longer states them (`tfr.carried`), or that made its row one
+    that holds none."""
+    linked = await _linked_triples(input, ids, ch=ch)
+    opened = await open_triples_among(ch, org=input.org, namespace=input.namespace, triples=linked)
+    if not opened:
+        return
+    held = await _stated_by_live_rows(input.org, input.namespace, sorted(opened), ch=ch)
+    dropped = sorted(opened - held)
+    if dropped:
+        await _write_follow_plan(input, tfr.FollowPlan(closes=dropped, inserts=[]), ch=ch)
+
+
+async def reopen_held_facts(
+    input: Any, ids: list[str], *, ch: Any, restored_at: datetime | None = None
+) -> None:
+    """Open again the facts the rows `ids` hold now (by the rule a revision keeps
+    them by): an Undo brings a retired row's facts back with it.
+    An Undo is the newest assertion: each fact the rows hold, open or not, gets a new
+    observation of its latest row starting at the restore (`restored_at`, now by
+    default), and its edge one from the restore too, so later writes read the Undo's
+    date back from storage; neither adds weight (`co_occur` 0). Every one then
+    goes through the interval repair dated at it as the newest value: another value
+    of a single-valued relation closes, even one seen in the same second, unless it
+    starts later. No row retires. A replay passes the restore's time: it finds the
+    observations written and repairs again as of the Undo, so a value stated since
+    stays the newer one."""
+    # Only what the restored rows' values hold now: another row's claim keeps a fact
+    # from closing, but never reopens one.
+    linked = await _linked_triples(input, ids, ch=ch)
+    held = await _stated_by_live_rows(input.org, input.namespace, linked, ch=ch, rows=ids)
+    if not held:
+        return
+    now = (restored_at or naive_utc_now()).replace(microsecond=0)
+    latest = await ch.query_all(
+        """
+        SELECT subject, relation, object, argMax(confidence, last_seen) AS confidence,
+               argMax(provenance, last_seen) AS provenance,
+               countIf(adapter_name = 'row-restore' AND valid_from = {at:DateTime}
+                       AND valid_to IS NULL) AS restored
+        FROM loom.entity_triples
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND (subject, relation, object) IN {triples:Array(Tuple(String, String, String))}
+        GROUP BY subject, relation, object
+        SETTINGS select_sequential_consistency = 1
+        """,
+        params={"org": input.org, "ns": input.namespace, "triples": sorted(held), "at": now},
+    )
+    rows = [
+        entity_triple_row(
+            input.org,
+            input.namespace,
+            r["subject"],
+            r["relation"],
+            r["object"],
+            provenance=r["provenance"],
+            confidence=float(r["confidence"]),
+            adapter_name="row-restore",
+            last_seen=now,
+            # Dated at the Undo, so every later repair reads it as the newest
+            # assertion; a closed interval before it stays as history.
+            valid_from=now,
+            # The Undo states nothing new: the fact weighs what it did.
+            co_occur=0,
+        )
+        for r in latest
+        # A replay finds this Undo's observation open and adds none. One closed since
+        # was closed by a later write, which meets the new one again and closes it, or
+        # by another Undo in this second, whose value this Undo now restores.
+        if not r["restored"]
+    ]
+    settings = {"async_insert": 1, "wait_for_async_insert": 1}
+    if rows:
+        await ch.insert("loom.entity_triples", rows, settings=settings)
+    # The edge plane agrees: each restored fact's edge gets an observation from the
+    # Undo too, which the repair below leaves open. Only a pair the graph has an edge
+    # for: the Undo invents none. Weight 0 at the Undo's second, still open, marks it
+    # for a replay, as above.
+    pairs = sorted({canonical_edge_pair(s, o) for s, _, o in held})
+    edges = await ch.query_all(
+        """
+        SELECT entity_a, entity_b,
+               countIf(co_occur = 0 AND valid_from = {at:DateTime} AND valid_to IS NULL)
+                   AS restored
+        FROM loom.entity_edges
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND (entity_a, entity_b) IN {pairs:Array(Tuple(String, String))}
+        GROUP BY entity_a, entity_b
+        SETTINGS select_sequential_consistency = 1
+        """,
+        params={"org": input.org, "ns": input.namespace, "pairs": pairs, "at": now},
+    )
+    edge_rows = [
+        entity_edge_row(
+            input.org,
+            input.namespace,
+            e["entity_a"],
+            e["entity_b"],
+            last_seen=now,
+            valid_from=now,
+            co_occur=0,
+        )
+        for e in edges
+        if not e["restored"]
+    ]
+    if edge_rows:
+        await ch.insert("loom.entity_edges", edge_rows, settings=settings)
+    restored = [
+        {"subject": s, "relation": r, "object": o, "valid_from": now, "last_seen": now}
+        for s, r, o in sorted(held)
+    ]
+    await repair_intervals(input, restored, ch=ch, at=now, newest=True)
+
+
+def _as_bulk_write(
+    row: Mapping[str, Any], value: Any, relations: list[tfr.Triple]
+) -> tuple[MemoryBulkSetInput, list[_BulkSetResult]]:
+    """A point write's row as the one-entry bulk write the triple writer reads."""
+    anchor = row.get("temporal_anchor")
+    entry = _BulkSetEntry(
+        memory_key=row["memory_key"],
+        value=value,
+        relations=relations,
+        confidence=row["confidence"],
+        temporal_anchor=anchor.isoformat() if isinstance(anchor, datetime) else anchor,
+        valid_at=row.get("valid_at"),
+        valid_to=row.get("valid_to"),
+    )
+    write = MemoryBulkSetInput(
+        org=row["org"],
+        namespace=row["namespace"],
+        agent=row["agent"],
+        user_id=row["user_id"],
+        session_id=row["session_id"],
+        entries=[entry],
+    )
+    result = _BulkSetResult(
+        memory_key=entry.memory_key, version=int(row["version"]), memory_id=str(row["memory_id"])
+    )
+    return write, [result]
 
 
 async def _write_derived_facts(
@@ -476,136 +745,582 @@ async def _write_derived_facts(
     )
 
 
-async def follow_row_supersessions(
-    input: Any, pairs: list[tuple[str, str]], *, ch: Any
-) -> tuple[int, int]:
-    """Triples follow rows: for every (superseded
-    row, successor row) pair this write produced, close the open triples the
-    superseded row attests and the successor does not, and write the
-    successor triple under the predecessor's subject and relation when the
-    two rows differ by one substituted span. One SELECT for the rows, one for
-    the candidate open triples (bounded to the namespace and to triples whose
-    subject and object both occur in the pair texts), one UPDATE for the
-    closes, one INSERT for the successors. Returns (closed, inserted)."""
-    from server.memory.domain import triples_follow_rows as tfr
+def _next_link(row: dict[str, Any]) -> str:
+    """The id a retired, undeleted row's chain continues at; "" for any other row,
+    and for one retired behind no UUID."""
+    if str(row.get("status")) != "superseded" or row.get("tombstoned_at") is not None:
+        return ""
+    return _canonical_id(str(row.get("superseded_by") or "")) or ""
 
-    ids = sorted({i for pair in pairs for i in pair if i})
-    if not ids:
-        return (0, 0)
-    rows = await ch.query_all(
-        """
-        SELECT toString(memory_id) AS id, memory_key, value, valid_at
-        FROM loom.memory FINAL
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND toString(memory_id) IN {ids:Array(String)}
-        SETTINGS select_sequential_consistency = 1
-        """,
-        params={"org": input.org, "ns": input.namespace, "ids": ids},
-    )
-    by_id = {str(r["id"]): r for r in rows}
-    sups: list[tfr.RowSupersession] = []
-    for loser_id, winner_id in pairs:
-        lo, wi = by_id.get(str(loser_id)), by_id.get(str(winner_id))
-        if not lo or not wi:
-            continue
-        sups.append(
-            tfr.RowSupersession(
-                loser_text=str(lo.get("value") or ""),
-                winner_text=str(wi.get("value") or ""),
-                winner_key=str(wi.get("memory_key") or ""),
-                winner_valid_from=wi.get("valid_at"),
-            )
+
+_UUID_RE = re.compile(r"[0-9a-fA-F]{32}|[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")
+
+
+def _canonical_id(value: str) -> str | None:
+    """`value` as `toString(memory_id)` spells it, or None when it is not a UUID in
+    the dashed or bare hex form ClickHouse parses."""
+    return str(uuid.UUID(value)) if _UUID_RE.fullmatch(value) else None
+
+
+# Supersession pairs one read of the rows and their open triples covers.
+_FOLLOW_CHUNK = 64
+# Links followed past a pair's winner toward the live end of its chain; the repair,
+# off the write's path, reads to the end of any chain that ends.
+_CHAIN_HOPS = 8
+REPAIR_CHAIN_HOPS = 1024
+
+
+async def _rows_along_chains(
+    input: Any, ids: list[str], *, ch: Any, hops: int = _CHAIN_HOPS
+) -> dict[str, dict[str, Any]]:
+    """The rows `ids` name, and those their `superseded_by` chains lead to, by id. An
+    id no row answers (erased) maps to `{}`: it states nothing."""
+    by_id: dict[str, dict[str, Any]] = {}
+    for _ in range(hops + 1):
+        rows = await ch.query_all(
+            f"""
+            SELECT toString(memory_id) AS id, memory_key, value, user_id,
+                   toString(content_sha256) AS content_sha256, valid_at, updated_at,
+                   status, superseded_by, tombstoned_at, {GRAPH_HOLDER_SQL} AS holds_facts
+            FROM loom.memory FINAL
+            WHERE org = {{org:String}} AND namespace = {{ns:String}}
+              AND memory_id IN {{ids:Array(UUID)}}
+            SETTINGS select_sequential_consistency = 1
+            """,
+            params={"org": input.org, "ns": input.namespace, "ids": ids},
         )
-    if not sups:
-        return (0, 0)
+        by_id.update({str(r["id"]): r for r in rows})
+        for i in ids:
+            by_id.setdefault(i, {})
+        ids = sorted({_next_link(r) for r in by_id.values()} - {""} - by_id.keys())
+        if not ids:
+            break
+    return by_id
+
+
+def _chain_head(row: dict[str, Any], by_id: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
+    """Where a chain of retirements starting at `row` ends: a row not retired, a
+    deleted one, one retired behind no UUID, or `{}` for one no longer stored. None
+    for a cycle, or a chain longer than was read."""
+    seen: set[str] = set()
+    while link := _next_link(row):
+        seen.add(str(row["id"]))
+        if link in seen:
+            log.warning("triples follow rows: a cycle of retirements through %s", link)
+            return None
+        if link not in by_id:
+            log.warning("triples follow rows: chain longer than was read, at %s", link)
+            return None
+        row = by_id[link]
+    return row
+
+
+class FollowOutcome(NamedTuple):
+    closed: int
+    inserted: int
+    # Pairs whose winner's chain could not be read to its end (a cycle, or longer
+    # than the hops read): not followed.
+    unfollowed: list[tuple[str, str]]
+
+
+async def follow_row_supersessions(
+    input: Any, pairs: list[tuple[str, str]], *, ch: Any, hops: int = _CHAIN_HOPS
+) -> FollowOutcome:
+    """Triples follow rows: for every (superseded row, successor row) pair, close
+    the open triples the superseded row attests and the successor does not, and
+    write the successor triple under the predecessor's subject and relation when
+    the two rows differ by one substituted span. The successor is the live end of
+    the winner's chain, so a value retired since never comes back as current and a
+    value a live row restates never closes. A pair is followed only while the
+    loser is still retired behind that winner (an Undo or a delete may come in
+    between when the repair replays it). The rows and open triples are read
+    `_FOLLOW_CHUNK` pairs at a time; the successors are then inserted and the
+    closes are one UPDATE for the lot. Following a pair again is harmless: a closed
+    triple is no longer open, and a successor already open is not repeated."""
+    canonical_pairs = [(_canonical_id(lo), _canonical_id(wi)) for lo, wi in pairs]
+    followed = [(lo, wi) for lo, wi in canonical_pairs if lo and wi]
+    plans: list[tfr.FollowPlan] = []
+    unfollowed: list[tuple[str, str]] = []
+    for i in range(0, len(followed), _FOLLOW_CHUNK):
+        chunk = followed[i : i + _FOLLOW_CHUNK]
+        plan, unread = await _plan_chunk(input, chunk, ch=ch, hops=hops)
+        plans.append(plan)
+        unfollowed += unread
+    closing = sorted({t for plan in plans for t in plan.closes})
+    plan = tfr.merge_plans(
+        plans, kept=await _stated_by_live_rows(input.org, input.namespace, closing, ch=ch)
+    )
+    closed, inserted = await _write_follow_plan(input, plan, ch=ch)
+    if closed or inserted:
+        log.info(
+            "triples follow rows: of %d pair(s), closed %d and wrote %d successor triple(s)",
+            len(followed),
+            closed,
+            inserted,
+        )
+    return FollowOutcome(closed, inserted, unfollowed)
+
+
+class _Held(NamedTuple):
+    """A pair still retired behind its winner; `head` is the live end of the
+    winner's chain, None when that end is deleted or erased."""
+
+    loser: dict[str, Any]
+    winner: dict[str, Any]
+    head: dict[str, Any] | None
+
+
+async def _plan_chunk(
+    input: Any, pairs: list[tuple[str, str]], *, ch: Any, hops: int = _CHAIN_HOPS
+) -> tuple[tfr.FollowPlan, list[tuple[str, str]]]:
+    """The `FollowPlan` for `pairs`, and the pairs whose chain could not be read to
+    its end: one SELECT per chain link for the rows, one for the rows' links, one
+    for the candidate open triples (bounded to the namespace and to the triples
+    the rows link or whose subject and object both occur in the pair texts)."""
+    ids = sorted({i for pair in pairs for i in pair})
+    by_id = await _rows_along_chains(input, ids, ch=ch, hops=hops)
+    held: list[_Held] = []
+    unread: list[tuple[str, str]] = []
+    for loser_id, winner_id in pairs:
+        # Still retired behind that winner: not undone, deleted or re-pointed since.
+        lo = by_id[loser_id]
+        if not lo or _next_link(lo) != winner_id:
+            continue
+        winner = by_id[winner_id]  # `{}` when erased: nothing holds in the loser's place
+        head = _chain_head(winner, by_id)
+        if head is None:
+            unread.append((loser_id, winner_id))
+            continue
+        # The loser is judged against what holds now: the live end of its chain. An
+        # end that may hold no graph facts (deleted, erased, ended or 'high') attests
+        # nothing, so the loser's triples close and none follow.
+        held.append(_Held(lo, winner, head if head.get("holds_facts") else None))
+    if not held:
+        return tfr.FollowPlan(closes=[], inserts=[]), unread
+    rows = [r for h in held for r in (h.loser, h.head) if r]
+    stated, hashes = await _triples_stated(input, rows, ch=ch)
+    holds = await _carried_by(
+        input.org, input.namespace, [h.head for h in held if h.head], stated, hashes, ch=ch
+    )
+    sups = [_supersession(h, stated, hashes, holds) for h in held]
     text = " ".join(f"{s.loser_text} {s.winner_text}" for s in sups)
+    linked = sorted(
+        {
+            t
+            for s in sups
+            for t in s.loser_triples | s.winner_triples | s.loser_inferred | s.winner_inferred
+        }
+    )
     open_triples = await ch.query_all(
         """
         SELECT subject, relation, object, confidence, provenance
         FROM loom.entity_triples
         WHERE org = {org:String} AND namespace = {ns:String}
           AND valid_to IS NULL AND invalid_at IS NULL
-          AND positionCaseInsensitive({txt:String}, subject) > 0
-          AND positionCaseInsensitive({txt:String}, object) > 0
+          -- Lowercase matching, not casefolding: "STRASSE" misses "straße" here
+          -- unless a row links it.
+          AND ((positionCaseInsensitiveUTF8({txt:String}, subject) > 0
+                AND positionCaseInsensitiveUTF8({txt:String}, object) > 0)
+               OR (subject, relation, object)
+                  IN {linked:Array(Tuple(String, String, String))})
         SETTINGS select_sequential_consistency = 1
         """,
-        params={"org": input.org, "ns": input.namespace, "txt": text},
+        params={"org": input.org, "ns": input.namespace, "txt": text, "linked": linked},
     )
-    plan = tfr.plan_follow(list(open_triples or []), sups)
-    if not plan.closes and not plan.inserts:
-        return (0, 0)
-    now = naive_utc_now()
-    closed = 0
-    if plan.closes:
-        # valid_to = when the successor holds from, else now; invalid_at = now.
-        pair_clock = next((s.winner_valid_from for s in sups if s.winner_valid_from), None)
-        vt = pair_clock if isinstance(pair_clock, datetime) else now
-        closes: list[tuple[str, str, str, datetime, datetime | None]] = [
-            (s, r, o, vt, now) for s, r, o in plan.closes
-        ]
-        await close_triples(ch, org=input.org, namespace=input.namespace, closes=closes)
-        closed = len(closes)
-        try:
-            from server.observability import audit as _audit
+    return tfr.plan_follow(list(open_triples or []), sups), unread
 
-            for s, r, o in plan.closes[:16]:
-                await _audit.emit(
-                    event_type="triple.follows_row_supersession",
-                    org=input.org,
-                    namespace=input.namespace,
-                    actor=str(getattr(input, "agent", "-") or "-"),
-                    subject={"closed": f"{s} {r} {o}"},
-                )
-        except Exception as e:  # noqa: BLE001 — the closes are in; the trail is best effort
-            log.debug("triples follow rows: audit skipped: %s", e)
-    inserted = 0
-    if plan.inserts:
-        adapter = "row-supersession"
-        t_rows: list[dict[str, Any]] = []
-        m_rows: list[dict[str, Any]] = []
-        for s, r, o, key, vf, conf, prov in plan.inserts:
-            t_rows.append(
-                entity_triple_row(
-                    input.org,
-                    input.namespace,
-                    s,
-                    r,
-                    o,
-                    provenance=prov,
-                    confidence=conf,
-                    adapter_name=adapter,
-                    last_seen=now,
-                    valid_from=vf if isinstance(vf, datetime) else None,
-                )
-            )
-            if key:
-                m_rows.append(
-                    {
-                        "org": input.org,
-                        "namespace": input.namespace,
-                        "subject": s,
-                        "relation": r,
-                        "object": o,
-                        "memory_key": key,
-                        "seen_at": now,
-                        "confidence": conf,
-                        "adapter_name": adapter,
-                    }
-                )
-        await ch.insert(
-            "loom.entity_triples", t_rows, settings={"async_insert": 1, "wait_for_async_insert": 1}
-        )
-        if m_rows:
-            await ch.insert(
-                "loom.entity_triple_memories",
-                m_rows,
-                settings={"async_insert": 1, "wait_for_async_insert": 1},
-            )
-        inserted = len(t_rows)
-    log.info(
-        "triples follow rows: %d pair(s) → closed %d, wrote %d successor triple(s)",
-        len(sups),
-        closed,
-        inserted,
+
+def _supersession(
+    held: _Held,
+    stated: dict[str, frozenset[tfr.Triple]],
+    hashes: dict[str, dict[tfr.Triple, set[str]]],
+    holds: dict[str, frozenset[tfr.Triple]],
+) -> tfr.RowSupersession:
+    """The pair as the domain planner reads it: the loser attests every successor
+    written for it, the winner those it still holds (`holds`)."""
+    lo, head = held.loser, held.head or {}
+    head_id = str(head.get("id") or "")
+    return tfr.RowSupersession(
+        loser_text=_text(lo.get("value")),
+        winner_text=_text(head.get("value")),
+        winner_key=str(head.get("memory_key") or ""),
+        winner_valid_from=head.get("valid_at"),
+        # Undated: when the winner was written. A replay reads its latest
+        # write, so a lock or revision since moves the date.
+        loser_valid_to=held.winner.get("valid_at") or held.winner.get("updated_at"),
+        winner_id=head_id,
+        winner_sha256=str(head.get("content_sha256") or ""),
+        winner_user_id=str(head.get("user_id") or ""),
+        loser_triples=stated.get(str(lo["id"]), frozenset()),
+        winner_triples=stated.get(head_id, frozenset()),
+        loser_inferred=frozenset(hashes.get(str(lo["id"]), {})),
+        winner_inferred=holds.get(head_id, frozenset()),
     )
-    return (closed, inserted)
+
+
+async def _triples_stated(
+    input: Any, rows: list[dict[str, Any]], *, ch: Any
+) -> tuple[dict[str, frozenset[tfr.Triple]], dict[str, dict[tfr.Triple, set[str]]]]:
+    """By row id: what the extractor stated for its current value, and the
+    successors written for it with the hashes of the values each was written for
+    (a revision keeps the id, so they are read whatever value it holds now). A row
+    written before rows were linked has neither."""
+    keys = sorted({(str(r["id"]), str(r.get("content_sha256") or "")) for r in rows})
+    if not keys:
+        return {}, {}
+    found = await ch.query_all(
+        """
+        SELECT toString(memory_id) AS id, toString(content_sha256) AS sha, inferred,
+               subject, relation, object
+        FROM loom.entity_triple_rows
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND ((NOT inferred AND (memory_id, content_sha256) IN {keys:Array(Tuple(UUID, String))})
+               OR (inferred AND memory_id IN {ids:Array(UUID)}))
+        SETTINGS select_sequential_consistency = 1
+        """,
+        params={
+            "org": input.org,
+            "ns": input.namespace,
+            "keys": keys,
+            "ids": sorted({k[0] for k in keys}),
+        },
+    )
+    stated: dict[str, set[tfr.Triple]] = {}
+    hashes: dict[str, dict[tfr.Triple, set[str]]] = {}
+    for f in found:
+        mid, triple = str(f["id"]), (str(f["subject"]), str(f["relation"]), str(f["object"]))
+        if f["inferred"]:
+            hashes.setdefault(mid, {}).setdefault(triple, set()).add(str(f["sha"]))
+        else:
+            stated.setdefault(mid, set()).add(triple)
+    return {i: frozenset(t) for i, t in stated.items()}, hashes
+
+
+def _text(raw: Any) -> str:
+    """The prose a stored `value` carries, decoded: names are matched in it."""
+    from server.memory.domain.triple_provenance import carrier_text
+    from server.memory.store.rows import parse_memory_value
+
+    return carrier_text(parse_memory_value(raw))
+
+
+async def _carried_by(
+    org: str,
+    namespace: str,
+    heads: list[dict[str, Any]],
+    stated_now: dict[str, frozenset[tfr.Triple]],
+    hashes: dict[str, dict[tfr.Triple, set[str]]],
+    *,
+    ch: Any,
+) -> dict[str, frozenset[tfr.Triple]]:
+    """The successors each live row holds now (`tfr.carried`), by row id.
+    `stated_now`: what the extractor stated for each row's current value; `hashes`:
+    the hashes of the values each successor was written for. Those values are read
+    from `loom.memory_versions`, the latest unredacted version with that hash;
+    a hash none still holds (erased or redacted) holds nothing."""
+    from server.identity.app.namespace_ontology import load_relation_cardinality
+
+    current = {str(h["id"]): str(h.get("content_sha256") or "") for h in heads}
+    old = sorted(
+        {
+            (mid, sha)
+            for mid in current
+            for shas in hashes.get(mid, {}).values()
+            for sha in shas
+            if sha != current[mid]
+        }
+    )
+    old_text: dict[tuple[str, str], str] = {}
+    if old:
+        versions = await ch.query_all(
+            """
+            SELECT toString(memory_id) AS id, toString(content_sha256) AS sha,
+                   argMax(value, version) AS value
+            FROM loom.memory_versions
+            WHERE org = {org:String} AND namespace = {ns:String}
+              AND (memory_id, content_sha256) IN {keys:Array(Tuple(UUID, String))}
+              AND redacted_at IS NULL
+            GROUP BY id, sha
+            """,
+            params={"org": org, "ns": namespace, "keys": old},
+        )
+        old_text = {(str(v["id"]), str(v["sha"])): _text(v["value"]) for v in versions}
+    declared = await load_relation_cardinality(org, namespace) if old else {}
+    return {
+        mid: tfr.carried(
+            _text(h.get("value")),
+            current[mid],
+            stated_now.get(mid, frozenset()),
+            {
+                t: {sha: old_text.get((mid, sha), "") for sha in shas}
+                for t, shas in hashes.get(mid, {}).items()
+            },
+            declared,
+        )
+        for h in heads
+        if (mid := str(h["id"])) in hashes
+    }
+
+
+async def rows_holding(
+    org: str, namespace: str, versions: list[tuple[str, str]], *, ch: Any
+) -> set[str]:
+    """Of `versions`, (memory_id, content_sha256) pairs, the ids of the rows whose
+    current value is still that version and may hold graph facts (`GRAPH_HOLDER_SQL`)."""
+    if not versions:
+        return set()
+    found = await ch.query_all(
+        f"""
+        SELECT DISTINCT toString(memory_id) AS id
+        FROM loom.memory FINAL
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND (memory_id, content_sha256) IN {{versions:Array(Tuple(UUID, String))}}
+          AND {GRAPH_HOLDER_SQL}
+        SETTINGS select_sequential_consistency = 1
+        """,
+        params={"org": org, "ns": namespace, "versions": sorted(set(versions))},
+    )
+    return {str(r["id"]) for r in found}
+
+
+async def _stated_by_live_rows(
+    org: str,
+    namespace: str,
+    triples: list[tfr.Triple],
+    *,
+    ch: Any,
+    rows: list[str] | None = None,
+) -> frozenset[tfr.Triple]:
+    """Of `triples`, those a row that may hold graph facts (`GRAPH_HOLDER_SQL`) holds:
+    its current value's extractor stated it, or it was stated or written for a value
+    the row was revised from and the row still carries it (`tfr.carried`). Another
+    session's or user's row of the same fact keeps it open; `rows` (ids) limits the
+    rows asked to those. A retired loser is not live, so it never keeps its own
+    triples."""
+    if not triples:
+        return frozenset()
+    only_rows = "AND memory_id IN {rows:Array(UUID)}" if rows is not None else ""
+    found = await ch.query_all(
+        f"""
+        WITH links AS (
+            SELECT memory_id, content_sha256, subject, relation, object
+            FROM loom.entity_triple_rows
+            WHERE org = {{org:String}} AND namespace = {{ns:String}}
+              AND (subject, relation, object) IN {{triples:Array(Tuple(String, String, String))}}
+              {only_rows}
+        )
+        SELECT toString(l.memory_id) AS id, toString(m.content_sha256) AS current,
+               toString(l.content_sha256) AS sha, m.value AS value,
+               l.subject AS subject, l.relation AS relation, l.object AS object
+        FROM links AS l
+        INNER JOIN (
+            SELECT memory_id, content_sha256, value
+            FROM loom.memory FINAL
+            WHERE org = {{org:String}} AND namespace = {{ns:String}}
+              AND memory_id IN (SELECT memory_id FROM links)
+              AND {GRAPH_HOLDER_SQL}
+        ) AS m ON l.memory_id = m.memory_id
+        SETTINGS select_sequential_consistency = 1
+        """,
+        params={"org": org, "ns": namespace, "triples": triples, "rows": rows or []},
+    )
+    # A link to the row's current value holds; one to a value the row was revised
+    # from is judged against the value it has now.
+    held = set()
+    heads: dict[str, dict[str, Any]] = {}
+    hashes: dict[str, dict[tfr.Triple, set[str]]] = {}
+    for f in found:
+        triple = (str(f["subject"]), str(f["relation"]), str(f["object"]))
+        if f["sha"] == f["current"]:
+            held.add(triple)
+        else:
+            mid = str(f["id"])
+            heads[mid] = {"id": mid, "content_sha256": f["current"], "value": f["value"]}
+            hashes.setdefault(mid, {}).setdefault(triple, set()).add(str(f["sha"]))
+    held_triples = frozenset(held)
+    if not heads:
+        return held_triples
+    stated_now = await _stated_links(org, namespace, list(heads.values()), ch=ch)
+    holds = await _carried_by(org, namespace, list(heads.values()), stated_now, hashes, ch=ch)
+    return held_triples.union(*holds.values())
+
+
+async def _stated_links(
+    org: str, namespace: str, rows: list[dict[str, Any]], *, ch: Any
+) -> dict[str, frozenset[tfr.Triple]]:
+    """What the extractor stated for each row's current value, by row id."""
+    found = await ch.query_all(
+        """
+        SELECT toString(memory_id) AS id, subject, relation, object
+        FROM loom.entity_triple_rows
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND NOT inferred AND (memory_id, content_sha256) IN {keys:Array(Tuple(UUID, String))}
+        SETTINGS select_sequential_consistency = 1
+        """,
+        params={
+            "org": org,
+            "ns": namespace,
+            "keys": sorted({(str(r["id"]), str(r["content_sha256"])) for r in rows}),
+        },
+    )
+    stated: dict[str, set[tfr.Triple]] = {}
+    for f in found:
+        stated.setdefault(str(f["id"]), set()).add(
+            (str(f["subject"]), str(f["relation"]), str(f["object"]))
+        )
+    return {i: frozenset(t) for i, t in stated.items()}
+
+
+async def _write_follow_plan(input: Any, plan: tfr.FollowPlan, *, ch: Any) -> tuple[int, int]:
+    """Write the plan's successors, then close its triples: a close that lands after
+    a failed insert would leave a replay nothing open to follow. Returns (closed,
+    inserted), not counting a triple opened again after its close."""
+    # Whole seconds, as `invalid_at` stores it: a reopen finds this close by it.
+    now = naive_utc_now().replace(microsecond=0)
+    # The plan read open triples by their raw text and so can miss a successor a
+    # failed close left open ("Berlin, Germany" is `berlin germany`): look it up.
+    already = await open_triples_among(
+        ch, org=input.org, namespace=input.namespace, triples=[s.triple for s in plan.inserts]
+    )
+    inserted = await _insert_successors(input, plan.inserts, already, now=now, ch=ch)
+    if not plan.closes:
+        return 0, inserted
+
+    # valid_to = when its own row was replaced (an erased winner's: now);
+    # invalid_at = now.
+    def _until(t: tfr.Triple) -> datetime:
+        at = plan.closed_at.get(t)
+        return at if isinstance(at, datetime) else now
+
+    until = [(s, r, o, _until((s, r, o))) for s, r, o in plan.closes]
+    closes: list[tuple[str, str, str, datetime, datetime | None]] = [(*c, now) for c in until]
+    await close_triples(ch, org=input.org, namespace=input.namespace, closes=closes)
+    try:
+        held = await reopen_held(
+            org=input.org, namespace=input.namespace, closes=until, closed_at=now, ch=ch
+        )
+    except Exception as e:  # noqa: BLE001 — the closes are in; the repair re-checks them
+        log.warning("triples follow rows: re-check after the close failed (recorded): %s", e)
+        await record_input_projection_failure(
+            input,
+            projection=TRIPLES_REOPEN,
+            error=e,
+            payload={
+                "closes": [[s, r, o, at.isoformat()] for s, r, o, at in until],
+                "closed_at": now.isoformat(),
+            },
+            source_operation="triples.follow_rows",
+            source_resource_id=f"triples.follow_rows:{input.namespace}",
+        )
+        # Audited as closed; the repair logs what it opens again.
+        held = frozenset()
+    closed = [t for t in plan.closes if t not in held]
+    try:
+        from server.observability import audit as _audit
+
+        for s, r, o in closed[:16]:
+            await _audit.emit(
+                event_type="triple.follows_row_supersession",
+                org=input.org,
+                namespace=input.namespace,
+                actor=str(getattr(input, "agent", "-") or "-"),
+                subject={"closed": f"{s} {r} {o}"},
+            )
+    except Exception as e:  # noqa: BLE001 — the closes are in; the trail is best effort
+        log.debug("triples follow rows: audit skipped: %s", e)
+    return len(closed), inserted
+
+
+async def reopen_held(
+    *,
+    org: str,
+    namespace: str,
+    closes: list[tuple[str, str, str, datetime]],
+    closed_at: datetime,
+    ch: Any,
+) -> frozenset[tfr.Triple]:
+    """Undo the close at `closed_at` (`closes` as `reopen_triples` takes them) for the
+    triples a live row holds, and return those. A row written while a follow ran may
+    state a triple it closed ("back to London"): the close also ends the open row that
+    write inserted. Every writer lands a triple's row links first, so once the close is
+    queued they are found here."""
+    held = await _stated_by_live_rows(org, namespace, [c[:3] for c in closes], ch=ch)
+    await reopen_triples(
+        ch,
+        org=org,
+        namespace=namespace,
+        closes=[c for c in closes if c[:3] in held],
+        closed_at=closed_at,
+    )
+    return held
+
+
+async def _insert_successors(
+    input: Any,
+    successors: list[tfr.Successor],
+    already: set[tfr.Triple],
+    *,
+    now: datetime,
+    ch: Any,
+) -> int:
+    """Insert the successor triples not `already` open, after every successor's key
+    and row links: a triple that landed without them would never get them, as a
+    replay sees it open and skips it. Each triple is written once, though several
+    winners may be linked to it; a repeated link is the same row. Returns how many
+    triples were written."""
+    new: dict[tfr.Triple, tfr.Successor] = {}
+    for ins in successors:
+        if ins.triple not in already:
+            new.setdefault(ins.triple, ins)
+    keyed = {(ins.triple, ins.memory_key): ins for ins in successors if ins.memory_key}
+    adapter = "row-supersession"
+    triples = [
+        entity_triple_row(
+            input.org,
+            input.namespace,
+            ins.subject,
+            ins.relation,
+            ins.object,
+            provenance=ins.provenance,
+            confidence=ins.confidence,
+            adapter_name=adapter,
+            last_seen=now,
+            valid_from=ins.valid_from if isinstance(ins.valid_from, datetime) else None,
+        )
+        for ins in new.values()
+    ]
+    provenance = [
+        {
+            "org": input.org,
+            "namespace": input.namespace,
+            "subject": ins.subject,
+            "relation": ins.relation,
+            "object": ins.object,
+            "memory_key": ins.memory_key,
+            "seen_at": now,
+            "confidence": ins.confidence,
+            "adapter_name": adapter,
+        }
+        for ins in keyed.values()
+    ]
+    links = [
+        triple_row_link(
+            input.org,
+            input.namespace,
+            ins.memory_id,
+            ins.content_sha256,
+            ins.triple,
+            user_id=ins.user_id,
+            inferred=True,
+        )
+        for ins in successors
+        if ins.memory_id
+    ]
+    settings = {"async_insert": 1, "wait_for_async_insert": 1}
+    if provenance:
+        await ch.insert("loom.entity_triple_memories", provenance, settings=settings)
+    if links:
+        await ch.insert("loom.entity_triple_rows", links, settings=settings)
+    if triples:
+        await ch.insert("loom.entity_triples", triples, settings=settings)
+    return len(triples)
