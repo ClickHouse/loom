@@ -92,9 +92,10 @@ class WriteIntent:
     # sensitivity). The rest is the journal's when the write is planned, not a copy
     # of what the writer read. None: a writer that states none of them.
     stated: frozenset[str] | None = None
-    # The content hash a conditional write (if_match_sha256) expects of the claim
-    # that holds now: checked against the journal when it is planned.
-    expected_sha256: str = ""
+    # A conditional write's (if_match_sha256): the loom.memory version of the row its
+    # handler checked the hash against. Planned, the claim that holds now must be
+    # the one that row shows, or the precondition named a value since replaced.
+    expected_version: int = 0
     # Whether the caller itself asked to pin (memory.set's request, before a handler
     # keeps a restated pin): only that authorizes replacing a pinned value.
     pin_requested: bool = False
@@ -119,6 +120,14 @@ def state_also(*columns: str) -> None:
     cur = _intent.get()
     if cur is not None and cur.stated is not None:
         _intent.set(replace(cur, stated=cur.stated | frozenset(columns)))
+
+
+def expect_version(version: int) -> None:
+    """The write in progress checked its precondition against the row at `version`.
+    Lasts until its intent's block ends."""
+    cur = _intent.get()
+    if cur is not None:
+        _intent.set(replace(cur, expected_version=version))
 
 
 def current_intent() -> WriteIntent:

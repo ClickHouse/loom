@@ -810,7 +810,7 @@ async def _write_revision(
                     memory_key=existing.memory_key,
                     existing=True,
                     stated=stated,
-                    expected_sha256=str(getattr(input, "if_match_sha256", "") or ""),
+                    expected_version=int(existing.version) if input.if_match_sha256 else 0,
                 )
             ),
             declare_fields(declared),

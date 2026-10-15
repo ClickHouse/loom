@@ -71,6 +71,15 @@ async def _load_source(input: MemoryMoveInput) -> MemoryRow:
         user_id=input.user_id,
         session_id=input.session_id,
     )
+    # The source's current row may lag the journal (a plan come due): bring it in
+    # line first, so the move copies what holds now.
+    from server.memory.app.temporal_projection import reconcile_identities
+
+    await reconcile_identities(
+        input.org,
+        input.namespace,
+        [(input.agent, input.user_id, input.session_id, input.from_key)],
+    )
     # fresh: a move right after the set that wrote the key must see it.
     source = await memory_repo.get_by_key(
         identity, input.from_key, fresh=True, strong=True, scope=WHOLE_NAMESPACE

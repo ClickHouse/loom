@@ -46,6 +46,7 @@ from server.memory.domain.procedural_contract import retype_for as _procedural_r
 from server.memory.domain.temporal_capture import (
     WriteIntent,
     current_intent,
+    expect_version,
     intent_for,
     state_also,
     write_intent,
@@ -212,7 +213,6 @@ async def handle_memory_set(input: MemorySetInput) -> MemorySetOutput:
         pin_guard=True,
         stated=_stated(input),
         pin_requested=bool(input.pinned),
-        expected_sha256=input.if_match_sha256 or "",
     )
     try:
         with write_intent(intent):
@@ -559,6 +559,8 @@ async def _set_check_if_match(w: _SetWrite) -> None:
                     "current_sha256": current_sha,
                 },
             )
+        if existing is not None:
+            expect_version(int(existing.version))  # the journal holds it to that row
     w.existing = existing
 
 

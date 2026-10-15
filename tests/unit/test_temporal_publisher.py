@@ -107,6 +107,20 @@ class Journal:
     async def alone(self, *_a, **_k):
         return False
 
+    async def restated(self, org, ns, heads, **_):
+        out: dict = {}
+        for h in heads:
+            ident = (h["agent"], h["user_id"], h["session_id"], h["memory_key"])
+            for c in self.commits:
+                ci = (c["agent"], c["user_id"], c["session_id"], c["memory_key"])
+                if (
+                    ci == ident
+                    and c.get("restated_assertion_id")
+                    and c["row_version"] == h.get("version")
+                ):
+                    out[ident] = str(c["restated_assertion_id"])
+        return out
+
     async def none(self, *_a, **_k):
         return [] if not _k.get("one") else None
 
@@ -162,6 +176,7 @@ def journal(monkeypatch: pytest.MonkeyPatch) -> Journal:
         "repair_namespace": j.repair,
         "mark_published": j.publish_mark,
         "foreign_publisher": j.alone,
+        "restated_claims": j.restated,
     }.items():
         monkeypatch.setattr(store, name, fn)
 
@@ -235,16 +250,16 @@ def test_commits_get_the_next_sequence_and_a_rising_recording_time(journal: Jour
     assert journal.watermark == 2
 
 
-def test_a_restatement_re_records_its_claim_at_its_version(journal: Journal) -> None:
-    # Its row's version orders the key's next write, and names the claim it shows.
+def test_a_restatement_names_its_claim_at_its_version(journal: Journal) -> None:
+    # Empty, so the claim keeps its id and birth; the commit names the claim its row
+    # shows, and its version orders the key's next write.
     run(pub.publish_rows([mrow('"A"')]))
     (first,) = json.loads(journal.commits[0]["assertions"])
     (row,) = run(pub.publish_rows([mrow('"A"', recall_count=4)]))
     restate = journal.commits[-1]
     assert [c["change_kind"] for c in journal.commits] == ["assert", "restate"]
-    (again,) = json.loads(restate["assertions"])
-    assert list(map(str, restate["retired_assertion_ids"])) == [first["assertion_id"]]
-    assert (again["value"], again["source_version"]) == ('"A"', row["version"])
+    assert json.loads(restate["assertions"]) == [] and list(restate["retired_assertion_ids"]) == []
+    assert str(restate["restated_assertion_id"]) == first["assertion_id"]
     assert restate["row_version"] == row["version"]
 
 
@@ -1314,11 +1329,9 @@ def test_an_update_precondition_is_checked_against_the_journal(journal: Journal)
     run(pub.publish_rows([base]))
     run(pub.publish_rows([_copy(base, value='"york"', content_sha256=sha256_value_json('"york"'))]))
     hull = _copy(base, value='"hull"', content_sha256=sha256_value_json('"hull"'))
+    # The handler checked the caller's hash against the Leeds row it read.
     intent = WriteIntent(
-        memory_key="k",
-        existing=True,
-        stated=frozenset(),
-        expected_sha256=sha256_value_json('"leeds"'),
+        memory_key="k", existing=True, stated=frozenset(), expected_version=base["version"]
     )
     with write_intent(intent), pytest.raises(PreconditionFailedError):
         run(pub.publish_rows([hull]))

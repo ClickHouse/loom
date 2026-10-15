@@ -267,6 +267,11 @@ async def publish_rows(
     for (org, ns), batch in groups.items():
         try:
             receipts = await publish(org, ns, [_RowChange(r) for r in batch], intent, ch=ch)
+        except PreconditionFailedError:
+            # The key's current row may lag the journal (a due plan): bring it in line,
+            # so the re-read the refusal asks for sees what the journal holds.
+            await _refresh_current(org, ns, sorted({ident_of(r) for r in batch}))
+            raise
         except LoomServerError:
             raise
         except Exception as e:  # re-raised as one named 503
@@ -520,6 +525,8 @@ class _Planned:
     past_only: bool = False
     # The journal's first record of a key written before it (`_seed`).
     seed: bool = False
+    # A restatement's: the claim its row shows.
+    restated: str = ""
 
 
 @dataclass
@@ -582,6 +589,10 @@ async def _plan(
         erased=gone,
     )
     head_rows = {ident_of(h): h for h in heads}
+    # The claim each current row shows, when a restatement wrote it (its commit names it).
+    for ident, aid in (await store.restated_claims(org, ns, heads, ch=ch)).items():
+        if ident in head_rows:
+            head_rows[ident] = {**head_rows[ident], _SHOWS: aid}
     # Per key, the newest loom.memory version the journal or the current row knows:
     # a row is stamped above it, so the merge and the journal agree on the latest.
     floor = {
@@ -620,6 +631,10 @@ async def _plan(
             amendment = change.build(active)
         else:
             row_intent = intent_for(change.row, intent)
+            if row_intent.expected_version and _committed_here(ns, ident, b):
+                # A precondition holds for the request's first write of the key; the
+                # rows after it (a conflict mark, a status settle) build on that write.
+                row_intent = replace(row_intent, expected_version=0)
             planned = _plan_row(
                 change.row, row_intent, current, head_rows.get(ident), floor, ident, planned_at
             )
@@ -640,8 +655,21 @@ async def _plan(
         past = change.build is None and _past_only(amendment, change.row, active, planned_at)
         if past and _reshapes_current(active, amendment, planned_at):
             b.refresh.append(ident)
+        restated = ""
+        if change.build is None and amendment.change_kind == "restate":
+            shown = _restated(change.row, active, planned_at, intent_for(change.row, intent))
+            restated = shown.assertion_id if shown is not None else ""
         b.planned.append(
-            _Planned(ident, memory_id, amendment, payload_sha, change.row, retired, past)
+            _Planned(
+                ident,
+                memory_id,
+                amendment,
+                payload_sha,
+                change.row,
+                retired,
+                past,
+                restated=restated,
+            )
         )
     return b
 
@@ -659,6 +687,13 @@ def _past_only(
     # journal (valid_as_of, memory.intervals), never shown as the present again.
     after = tm.apply({a.assertion_id: a for a in active}, amendment).values()
     return bool(tm.valid_now(after, now))
+
+
+def _committed_here(ns: str, ident: Ident, b: _Batch) -> bool:
+    """Has this request already committed to the key (this batch or an earlier one)?"""
+    if any(p.ident == ident and not p.seed for p in b.planned):
+        return True
+    return any(r.namespace == ns and r.ident == ident and r.commit_seq for r in _bag() or [])
 
 
 def _plan_row(
@@ -681,15 +716,12 @@ def _plan_row(
         fields = fields - {"content_sha256"}  # a hash follows its value: the journal's
     claims = tm.current_claims(active, now)
     shown = _claim_shown(claims, head) if claims else None
-    if (
-        shown is not None
-        and intent.expected_sha256
-        and shown.content_sha256 != intent.expected_sha256
-    ):
-        # Any write conditioned on a hash, against what the journal holds now.
+    if intent.expected_version and not _shows(shown, head, intent.expected_version):
+        # Any write conditioned on a hash, against what the journal holds now (a hash
+        # names nothing when nothing holds).
         raise PreconditionFailedError(
             f"{ident[3]!r} no longer holds the content its precondition names; re-read and retry",
-            current_sha256=shown.content_sha256,
+            current_sha256=shown.content_sha256 if shown is not None else "",
         )
     if fields is None and intent.existing and not removes(row):
         if shown is not None and not intent.qualifiers:
@@ -727,14 +759,15 @@ def _plan_row(
         return amendment
     if not _restates_now(row, active, now):
         return "restated"
-    # The claim it restates is re-recorded at the row's version: the row names its
-    # claim unambiguously (the same text may hold under other qualifiers), and its
-    # version orders the key's next write like any other.
+    # Committed with nothing in it: its row's version orders the key's next write,
+    # and the commit names the claim the row shows (`restated_assertion_id`), as
+    # the same text may hold under other qualifiers.
     restated = _restated(row, active, now, intent)
-    if restated is None:
-        return tm.Amendment("restate")
-    again = tm.fresh(restated, source_version=int(row.get("version") or 0))
-    return tm.Amendment("restate", (restated.assertion_id,), (again,))
+    if restated is not None:
+        # The row shows the claim it restates, with that claim's validity.
+        r = cast(dict[str, Any], row)
+        r["valid_at"], r["valid_to"] = tm.row_start(restated), restated.valid_to
+    return tm.Amendment("restate")
 
 
 def _reshapes_current(
@@ -896,10 +929,33 @@ def _revises_shown(
         r["valid_at"], r["valid_to"] = tm.row_start(shown), shown.valid_to
 
 
+# A planner-only key on a head row: the assertion its restatement commit names.
+_SHOWS = "__restated_assertion_id"
+
+
+def _shows(shown: tm.Assertion | None, head: Mapping[str, Any] | None, version: int) -> bool:
+    """Is the claim that holds now the one the row at `version` shows (the row a
+    conditional write checked its hash against)?"""
+    if shown is None:
+        return False
+    if shown.source_version == version:
+        return True
+    return (
+        head is not None
+        and int(head.get("version") or 0) == version
+        and str(head.get(_SHOWS) or "") == shown.assertion_id
+    )
+
+
 def _claim_shown(claims: Sequence[tm.Assertion], head: Mapping[str, Any] | None) -> tm.Assertion:
-    """The current claim the current row shows: the one it was written from, else the
-    one with its content and validity, else (a row behind the journal) the newest."""
+    """The current claim the current row shows: the one its restatement named, else
+    the one it was written from, else the one with its content and validity, else
+    (a row behind the journal) the newest."""
     if head is not None:
+        named = str(head.get(_SHOWS) or "")
+        for a in claims:
+            if a.assertion_id == named:
+                return a
         version = int(head.get("version") or 0)
         for a in claims:
             if a.source_version == version:
@@ -937,8 +993,10 @@ def _as_value_write(
         _revises_shown(r, claims, head)
     sha = str(row.get("content_sha256") or "")
     # Against the claim it changes (under its qualifiers), not every claim's text.
-    target = [a for a in claims if a.qualifiers == dict(intent.qualifiers)] or claims
-    new_value = bool(target) and all(a.content_sha256 != sha for a in target)
+    # A write naming qualifiers no claim holds under is a new value there.
+    under = [a for a in claims if a.qualifiers == dict(intent.qualifiers)]
+    target = under if intent.qualifiers else (under or claims)
+    new_value = bool(claims) and all(a.content_sha256 != sha for a in target)
     if new_value and _locked_against(served, "value", now):
         return "locked"
     # Against what the caller asked for, before anything is inherited: a pin the row
@@ -980,7 +1038,10 @@ def _carry(
             ahead = (
                 replaced.expires_at if replaced.expires_at and replaced.expires_at > now else None
             )
-            peers = [a for a in claims if a.qualifiers == dict(intent.qualifiers)]
+            # Under the qualifiers the write takes (its own, else the one set the key's
+            # claims share, as `inherit_shape` gives it).
+            quals = dict(intent.qualifiers) or _shared_qualifiers(claims)
+            peers = [a for a in claims if a.qualifiers == quals]
             r["expires_at"] = tm.utc(ahead) if _holds_now(r, peers, now) else None
     if same is not None:
         for c in ("verified_by", "verified_at", "verified_sha256"):
@@ -1013,6 +1074,11 @@ def _sensitive_window(r: dict[str, Any], now: datetime) -> None:
     r["expires_at"] = expires_at
     if "on_expire" in r:
         r["on_expire"] = on_expire
+
+
+def _shared_qualifiers(claims: Sequence[tm.Assertion]) -> dict[str, str]:
+    sets = {tuple(sorted(a.qualifiers.items())) for a in claims}
+    return dict(next(iter(sets))) if len(sets) == 1 else {}
 
 
 def _holds_now(r: Mapping[str, Any], claims: Sequence[tm.Assertion], now: datetime) -> bool:
@@ -1512,6 +1578,7 @@ def _commit_row(b: _Batch, p: _Planned, seq: int, at: datetime) -> dict[str, Any
         ),
         # The loom.memory version its row carries (an amendment's row comes later).
         "row_version": int(p.row.get("version") or 0),
+        "restated_assertion_id": p.restated or None,
     }
 
 

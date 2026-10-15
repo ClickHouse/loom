@@ -178,6 +178,7 @@ async def _rmw_procedure(
 
     from fastapi import HTTPException
 
+    from server.core.errors import PreconditionFailedError
     from server.memory.app.write import handle_memory_set
 
     last: Exception | None = None
@@ -207,6 +208,9 @@ async def _rmw_procedure(
                 )
             )
             return int(result.version), new_value
+        except PreconditionFailedError as e:  # the journal's: a newer value holds now
+            last = e
+            await asyncio.sleep(0.25 * (attempt + 1))
         except HTTPException as e:
             code = ""
             if isinstance(e.detail, dict):

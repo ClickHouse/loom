@@ -2384,6 +2384,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_temporal_commits
     `inserted_at` DateTime64(6, 'UTC') DEFAULT now64(6),
     `retain_until` Nullable(DateTime64(6, 'UTC')),
     `row_version` UInt64 DEFAULT 0,
+    `restated_assertion_id` Nullable(UUID) DEFAULT NULL,
     INDEX key_bf memory_key TYPE bloom_filter(0.01) GRANULARITY 4,
     INDEX idem_bf idempotency_key TYPE bloom_filter(0.01) GRANULARITY 4,
     INDEX memory_id_bf memory_id TYPE bloom_filter(0.01) GRANULARITY 4,

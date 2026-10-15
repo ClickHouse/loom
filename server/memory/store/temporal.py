@@ -113,6 +113,7 @@ COMMIT_COLS: tuple[str, ...] = (
     "assertions",
     "retain_until",
     "row_version",
+    "restated_assertion_id",
 )
 
 ASSERTION_COLS: tuple[str, ...] = (
@@ -900,6 +901,45 @@ async def version_row(
             "v": version,
         },
     )
+
+
+async def restated_claims(
+    org: str,
+    namespace: str,
+    heads: Sequence[Mapping[str, Any]],
+    *,
+    ch: _CHClient | None = None,
+) -> dict[tuple[str, str, str, str], str]:
+    """Per identity, the assertion its current row shows when a restatement wrote
+    that row (the commit at the row's version names it)."""
+    pairs = [
+        (
+            str(h["agent"]),
+            str(h["user_id"]),
+            str(h["session_id"]),
+            str(h["memory_key"]),
+            int(h["version"]),
+        )
+        for h in heads
+        if h.get("version")
+    ]
+    if not pairs:
+        return {}
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        f"SELECT agent, user_id, session_id, memory_key, toString(restated_assertion_id) AS aid "
+        f"FROM {COMMITS} WHERE org = {{org:String}} AND namespace = {{ns:String}} "
+        "AND memory_key IN {mk:Array(String)} AND restated_assertion_id IS NOT NULL "
+        "AND (agent, user_id, session_id, memory_key, row_version) IN "
+        "{pairs:Array(Tuple(String, String, String, String, UInt64))}",
+        params={"org": org, "ns": namespace, "mk": sorted({p[3] for p in pairs}), "pairs": pairs},
+    )
+    return {
+        (str(r["agent"]), str(r["user_id"]), str(r["session_id"]), str(r["memory_key"])): str(
+            r["aid"]
+        )
+        for r in rows
+    }
 
 
 async def newest_row_versions(
