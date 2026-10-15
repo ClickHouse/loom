@@ -19,7 +19,7 @@ def setup(monkeypatch):
 
     @asynccontextmanager
     async def lock(**kwargs):
-        assert kwargs["wait_s"] == boot.BOOT_LOCK_WAIT_S
+        assert kwargs["wait_s"] == boot.settings.boot_migrate_lease_wait_s
         owned.append(True)
         try:
             yield
@@ -165,8 +165,8 @@ async def test_failed_boot_migrations_keep_the_cache(setup):
 
 @pytest.mark.asyncio
 async def test_a_lock_still_missed_after_the_wait_fails_the_start(setup, monkeypatch):
-    """Never read a pending list that came back empty as "a sibling finished":
-    the ledger read fails open, and a sibling may be mid-migration."""
+    """The pending list is read once, before the lock: an empty read after a
+    miss is no proof a sibling finished (the ledger read fails open)."""
     client, migrate, pending, _, execute, _ = setup
 
     @asynccontextmanager
@@ -180,4 +180,5 @@ async def test_a_lock_still_missed_after_the_wait_fails_the_start(setup, monkeyp
         await boot.run_fenced_boot_migrations(
             client, migrate, "lock", enabled=True, pending=pending
         )
+    pending.assert_called_once()
     execute.assert_not_called()

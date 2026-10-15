@@ -123,3 +123,23 @@ swap || echo stopped
 """
     out = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True).stdout
     assert out.split() == (["reloaded", "swapped"] if reloaded else ["stopped"])
+
+
+def test_a_failed_swap_puts_back_the_upstream_nginx_loaded(tmp_path: Path) -> None:
+    """Left in place, a file nginx refused would stop the proxy's next restart."""
+    upstream = tmp_path / "upstream.conf"
+    upstream.write_text("upstream loom {\n  server loom-blue:7781;\n}\n")
+    script = f"""
+set -euo pipefail
+declare -A PORT_OF=([blue]=7781 [green]=7782)
+UPSTREAM_DIR={tmp_path}; UPSTREAM={upstream}
+docker() {{ return 1; }}
+for f in write_upstream reload_proxy swap_to; do
+  eval "$(sed -n "/^$f() {{/,/^}}/p" {SCRIPT})"
+done
+swap_to green || echo stopped
+"""
+    out = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True).stdout
+    assert out.split()[-1] == "stopped"
+    assert upstream.read_text() == "upstream loom {\n  server loom-blue:7781;\n}\n"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["upstream.conf"]
