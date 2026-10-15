@@ -220,13 +220,16 @@ async def _link(
         }
     )
     found = await code.candidates(org, cns, names=names) if names else []
+    by_name: dict[str, list[Definition]] = defaultdict(list)
+    for d in found:
+        by_name[d.name].append(d)
     refs = sorted({str(f) for r in memories for f in r.get("files") or []})
     paths = await code.live_paths(org, cns, refs) if refs else {}
     rows: list[LinkRow] = []
     gone: list[LinkRow] = []
     for r in memories:
         files_named = [str(f) for f in r.get("files") or []]
-        links, waiting, complete = _plan(named[r["mid"]], found, files_named, paths)
+        links, waiting, complete = _plan(named[r["mid"]], by_name, files_named, paths)
         keep = set()
         for d in links:
             here = await at_head(files, head, d)
@@ -264,16 +267,20 @@ async def at_head(files: link_pass.RepoReads, head: str, d: Definition) -> Defin
 
 
 def _plan(
-    names: list[Mention], defs: list[Definition], files: list[str], paths: dict[str, str]
+    names: list[Mention],
+    by_name: dict[str, list[Definition]],
+    files: list[str],
+    paths: dict[str, str],
 ) -> tuple[list[Definition], list[str], bool]:
-    """(links, pending names, complete) for one memory: each name that resolves to one
-    target, each named file that holds none of them, the qualified names trunk does not
-    define yet; `complete` is False when the caps cut any of them."""
+    """(links, pending names, complete) for one memory, from the candidates `by_name`
+    holds under their bare names: each name that resolves to one target, each named file
+    that holds none of them, the qualified names trunk does not define yet; `complete`
+    is False when the caps cut any of them."""
     found: dict[tuple[str, str], Definition] = {}
     waiting: list[str] = []
     cut = len(names) > _MAX_MENTIONS
     for m in names[:_MAX_MENTIONS]:
-        same = [x for x in defs if x.name == bare_name(m.name)]
+        same = by_name.get(bare_name(m.name), [])
         d = resolve(m.name, same, files, in_prose=m.in_prose)
         if d is not None:
             found.setdefault((d.path, d.qualified_name), d)

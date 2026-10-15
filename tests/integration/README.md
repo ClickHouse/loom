@@ -16,7 +16,7 @@ python -m server.core.schema.migrate
 LOOM_AUTH_REQUIRED=false LOOM_BACKGROUND_WORKERS=off \
 LOOM_EMBEDDING_MODEL=fake-ngram-1024 LOOM_LLM_PROVIDER=fake \
 LOOM_INSTANCE_LABEL=local:integration \
-  uvicorn server.main:app --port 7777 &
+  uvicorn server.main:app --port 7777 --loop asyncio &
 LOOM_BASE_URL=http://localhost:7777 pytest tests/integration -q
 ```
 

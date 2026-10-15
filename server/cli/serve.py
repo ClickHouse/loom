@@ -26,6 +26,8 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         "server.main:app",
         host=host,
         port=args.port,
+        # the stdlib loop: uvloop forks the whole process for each git spawn
+        loop=os.environ.get("LOOM_UVICORN_LOOP") or "asyncio",
         proxy_headers=True,
         forwarded_allow_ips=settings.trusted_proxies,
         log_level=args.log_level,

@@ -89,11 +89,12 @@ services:
     <<: *colour-common
     container_name: "loom-${LOOM_COLOUR}-workers"
     # Listens on loopback only: nothing outside this container calls it.
+    # scripts/serve.sh says why the loop defaults to asyncio.
     command:
       [
         "sh",
         "-c",
-        "exec uvicorn server.main:app --host 127.0.0.1 --port $$PORT --loop $${LOOM_UVICORN_LOOP:-auto} --timeout-graceful-shutdown $${LOOM_GRACEFUL_SHUTDOWN_S:-10}",
+        "exec uvicorn server.main:app --host 127.0.0.1 --port $$PORT --loop $${LOOM_UVICORN_LOOP:-asyncio} --timeout-graceful-shutdown $${LOOM_GRACEFUL_SHUTDOWN_S:-10}",
       ]
     # One process; no `ports:` — /v1/health answers inside the container for
     # the healthcheck and `docker exec loom-<colour>-workers ... ?include=workers`.

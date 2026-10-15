@@ -117,11 +117,12 @@ services:
     <<: *loom-common
     container_name: loom-workers
     # Listens on loopback only: nothing outside this container calls it.
+    # scripts/serve.sh says why the loop defaults to asyncio.
     command:
       [
         "sh",
         "-c",
-        "exec uvicorn server.main:app --host 127.0.0.1 --port $$PORT --loop $${LOOM_UVICORN_LOOP:-auto} --timeout-graceful-shutdown $${LOOM_GRACEFUL_SHUTDOWN_S:-10}",
+        "exec uvicorn server.main:app --host 127.0.0.1 --port $$PORT --loop $${LOOM_UVICORN_LOOP:-asyncio} --timeout-graceful-shutdown $${LOOM_GRACEFUL_SHUTDOWN_S:-10}",
       ]
     # The workers' process boots the same lifespan (migrations under the same
     # ledger — whichever container applies them first, the other finds
