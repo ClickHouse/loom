@@ -14,7 +14,7 @@ import asyncio
 import json
 import time
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 
 from server.core.ch import get_client, own_write_reads, statement_timeout
 from server.core.errors import BackendUnavailableError, GrantBusyError
@@ -59,13 +59,18 @@ async def grant_change(org: str, namespace: str, subject: str) -> AsyncIterator[
         if outcome is not Claim.TAKEN:
             break
         if time.monotonic() > deadline:
-            raise GrantBusyError(
-                f"another change to {subject!r} on {org}/{namespace} is running; retry shortly"
-            )
+            raise _busy(org, namespace, subject)
         await asyncio.sleep(poll)
         poll = min(poll * 2, _POLL_MAX_S)
     if outcome is Claim.UNCLAIMED:
-        async with _local.hold(key), _bounded():
+        async with AsyncExitStack() as held:
+            try:
+                await held.enter_async_context(
+                    _local.hold(key, wait_s=max(0.0, deadline - time.monotonic()))
+                )
+            except TimeoutError as e:
+                raise _busy(org, namespace, subject) from e
+            await held.enter_async_context(_bounded())
             yield
         return
     try:
@@ -73,6 +78,12 @@ async def grant_change(org: str, namespace: str, subject: str) -> AsyncIterator[
             yield
     finally:
         await CLAIMS.release_shielded(ch, key, holder)
+
+
+def _busy(org: str, namespace: str, subject: str) -> GrantBusyError:
+    return GrantBusyError(
+        f"another change to {subject!r} on {org}/{namespace} is running; retry shortly"
+    )
 
 
 @asynccontextmanager

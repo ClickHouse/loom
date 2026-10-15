@@ -180,3 +180,41 @@ def test_a_promotion_during_an_approval_waits_for_it_instead_of_being_written_ov
 
     asyncio.run(_both())
     assert [r["role"] for r in rows] == ["writer", "admin"]
+
+
+def test_without_a_keeper_a_change_waits_no_longer_than_with_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(grant_claims, "WAIT_S", 0.05)
+    log: list[str] = []
+
+    async def _both() -> None:
+        key = ("acme", "team", "alice")
+        holder = asyncio.ensure_future(_change(log, "a", key, 0.3))
+        await asyncio.sleep(0)
+        with pytest.raises(GrantBusyError):
+            await _change(log, "b", key, 0)
+        await holder
+
+    asyncio.run(_both())
+    assert log == ["a in", "a out"]
+    assert len(grant_claims._local) == 0, "the waiter that gave up left no lock behind"
+
+
+def test_a_cancelled_wait_for_a_local_lock_leaves_nothing_behind() -> None:
+    from server.core.keyed_locks import KeyedLocks
+
+    locks = KeyedLocks()
+
+    async def _run() -> None:
+        async with locks.hold("k"):
+            waiter = asyncio.ensure_future(locks.hold("k", wait_s=5).__aenter__())
+            await asyncio.sleep(0)
+            waiter.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await waiter
+        async with locks.hold("k", wait_s=0.1):
+            pass  # the lock is free again
+
+    asyncio.run(_run())
+    assert len(locks) == 0

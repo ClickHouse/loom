@@ -13,12 +13,17 @@ class KeyedLocks:
         self._locks: dict[Hashable, tuple[asyncio.Lock, int]] = {}
 
     @asynccontextmanager
-    async def hold(self, key: Hashable) -> AsyncIterator[None]:
+    async def hold(self, key: Hashable, *, wait_s: float | None = None) -> AsyncIterator[None]:
+        """Hold `key`'s lock; past `wait_s` waiting for it, raise TimeoutError."""
         lock, users = self._locks.get(key) or (asyncio.Lock(), 0)
         self._locks[key] = (lock, users + 1)
         try:
-            async with lock:
+            async with asyncio.timeout(wait_s):
+                await lock.acquire()
+            try:
                 yield
+            finally:
+                lock.release()
         finally:
             lock, users = self._locks[key]
             if users == 1:

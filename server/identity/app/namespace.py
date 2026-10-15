@@ -31,6 +31,7 @@ from server.identity.api.models import (
     _NamespaceEntry,
 )
 from server.identity.domain import join_policy as _jp
+from server.identity.domain.account_ties import kept_aliases
 from server.identity.store import grants as grants_repo
 from server.identity.store import namespaces as namespaces_repo
 from server.memory.app import namespace_retrieval_defaults as _rd
@@ -225,7 +226,10 @@ def registry_row(
         # settings-only update wipes the user's login silently.
         "contact_email": ((existing or {}).get("contact_email") or ""),
         "password_hash": ((existing or {}).get("password_hash") or ""),
-        "released_aliases": list((existing or {}).get("released_aliases") or []),
+        # A changed owner no longer ties the old handle to the email; keep the pair.
+        "released_aliases": kept_aliases(
+            existing or {}, input.owner_email, (existing or {}).get("contact_email") or ""
+        ),
         # Not on the form: a re-register keeps the namespace's own override and birth date.
         "duplicate_threshold": (existing or {}).get("duplicate_threshold"),
         "created_at": (existing or {}).get("created_at") or now,

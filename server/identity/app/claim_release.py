@@ -23,6 +23,7 @@ from server.auth.authz import Role
 from server.auth.jwt import AuthInfo
 from server.core import grant_cache
 from server.core.ch import CHClient, get_client
+from server.identity.domain.account_ties import kept_aliases
 from server.identity.store import grants as grants_repo
 
 log = logging.getLogger(__name__)
@@ -143,12 +144,7 @@ async def release_claim(
     # The contact email and password are cleared with the owner, so the old
     # credential dies with the claim.
     row = dict(existing)
-    if existing.get("contact_email"):
-        # A person's account ties its login handle to its email, the binding that
-        # caps a token's claims at the grants held under either; it is kept here.
-        spellings = {(existing.get("owner_email") or "").lower(), existing["contact_email"].lower()}
-        spellings.discard("")
-        row["released_aliases"] = sorted(set(existing.get("released_aliases") or []) | spellings)
+    row["released_aliases"] = kept_aliases(existing, "", "")
     row["owner_email"] = ""
     row["contact_email"] = ""
     row["password_hash"] = ""

@@ -137,3 +137,10 @@ async def test_the_handler_writes_the_whole_stored_row_forward(
     carried = {k: v for k, v in stored.items() if k != "warm_days"}
     assert {k: row[k] for k in carried} == carried
     assert out.visibility == "public", "the answer names the stored visibility"
+
+
+def test_a_new_owner_keeps_the_old_handle_tied_to_the_email_for_the_cap() -> None:
+    existing = _existing(owner_email="bob", contact_email="bob@x.io")
+    row = _row(existing)  # registered again with owner o@x
+    assert row["contact_email"] == "bob@x.io"
+    assert row["released_aliases"] == ["bob", "bob@x.io", "mal", "victim@corp"]
