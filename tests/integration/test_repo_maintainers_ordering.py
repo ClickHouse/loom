@@ -43,13 +43,15 @@ async def ch(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[tuple[Any, str]]:
         await client.disconnect()
 
 
-async def _grant(client: Any, org: str, namespace: str, role: str, at: datetime) -> None:
+async def _grant(
+    client: Any, org: str, namespace: str, role: str, at: datetime, status: str = "active"
+) -> None:
     row = {
         "org": org,
         "namespace": namespace,
         "subject": "alice",
         "role": role,
-        "status": "active",
+        "status": status,
         "granted_at": at,
         "granted_by": "it",
         "revoked_at": None,
@@ -62,7 +64,7 @@ async def _grant(client: Any, org: str, namespace: str, role: str, at: datetime)
 
 async def _role(client: Any, org: str, namespace: str) -> str:
     row = await client.query_one(
-        "SELECT role FROM loom.namespace_grants FINAL"
+        "SELECT concat(role, '/', toString(status)) AS role FROM loom.namespace_grants FINAL"
         " WHERE org = {org:String} AND namespace = {ns:String} AND subject = 'alice'",
         params={"org": org, "ns": namespace},
     )
@@ -77,9 +79,9 @@ async def test_a_promotion_in_the_same_second_as_a_lowering_reaches_that_branch(
     await _grant(client, org, "code-ord-26-5", "viewer", second)  # lowered here first
     await _grant(client, org, "code-ord", "admin", second)  # then promoted there
     await maintainers.sync_repo_maintainers(org, "code-ord", ch=client)
-    assert await _role(client, org, "code-ord-26-5") == "admin"
+    assert await _role(client, org, "code-ord-26-5") == "admin/active"
     await maintainers.sync_repo_maintainers(org, "code-ord", ch=client)
-    assert await _role(client, org, "code-ord-26-5") == "admin", "a second sync keeps it"
+    assert await _role(client, org, "code-ord-26-5") == "admin/active", "a second sync keeps it"
 
 
 async def test_a_lowering_in_the_same_second_after_a_promotion_stands(
@@ -90,4 +92,15 @@ async def test_a_lowering_in_the_same_second_after_a_promotion_stands(
     await _grant(client, org, "code-ord", "admin", second)  # promoted there first
     await _grant(client, org, "code-ord-26-5", "viewer", second)  # then lowered here
     await maintainers.sync_repo_maintainers(org, "code-ord", ch=client)
-    assert await _role(client, org, "code-ord-26-5") == "viewer"
+    assert await _role(client, org, "code-ord-26-5") == "viewer/active"
+
+
+async def test_a_newer_join_request_on_a_branch_is_left_for_its_approval(
+    ch: tuple[Any, str],
+) -> None:
+    client, org = ch
+    second = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
+    await _grant(client, org, "code-ord", "admin", second)
+    await _grant(client, org, "code-ord-26-5", "writer", second, status="pending")
+    assert await maintainers.sync_repo_maintainers(org, "code-ord", ch=client) == 0
+    assert await _role(client, org, "code-ord-26-5") == "writer/pending"

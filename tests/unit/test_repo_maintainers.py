@@ -77,7 +77,9 @@ def _admin(
         "revoked_at": revoked_at,
         "granted_at": at,
         "granted_by": "ops",
-        "version": version or int(event.timestamp()) * 10**9 + next(_VERSIONS),
+        "version": version
+        if version is not None
+        else int(event.timestamp()) * 10**9 + next(_VERSIONS),
     }
 
 

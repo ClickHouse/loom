@@ -84,7 +84,7 @@ def _row(
         "granted_at": granted_at or now,
         "granted_by": granted_by,
         "revoked_at": now if revoked else None,
-        "version": version or time.time_ns(),
+        "version": version if version is not None else time.time_ns(),
     }
 
 
@@ -244,8 +244,9 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
     # Grant changes are ordered by row version: `granted_at` keeps whole seconds,
     # so a lowering and a promotion within one would compare equal.
     active: dict[str, dict[str, tuple[int, datetime]]] = {ns: {} for ns in branches}
-    # When a subject's admin ended on a branch: revoked, or set to a lower role.
-    ended: dict[tuple[str, str], int] = {}
+    # The newest change of a subject's grant on a branch that is not a live admin
+    # grant: a revoke, a lower role, or a request. A mirror only replaces an older row.
+    newest: dict[tuple[str, str], int] = {}
     for r in rows:
         ns, subject = str(r["namespace"]), str(r["subject"])
         if ns not in active:
@@ -253,9 +254,9 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
         live = r.get("revoked_at") is None and str(r.get("status") or "active") in _ACTIVE
         if live and r.get("role") == "admin":
             active[ns][subject] = (int(r["version"]), r["granted_at"])
-        elif r.get("revoked_at") is not None or live:
+        else:
             key = (ns, subject)
-            ended[key] = max(ended.get(key, 0), int(r["version"]))
+            newest[key] = max(newest.get(key, 0), int(r["version"]))
     # newest sibling grant per subject, and the branch it came from
     union: dict[str, tuple[int, datetime, str]] = {}
     for ns, subs in active.items():
@@ -268,8 +269,8 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
         for subject, (version, at, src) in union.items():
             if subject in active[ns]:
                 continue
-            if ended.get((ns, subject), 0) > version:
-                continue  # removed or lowered on this branch after their newest sibling grant
+            if newest.get((ns, subject), 0) >= version:
+                continue  # removed, lowered or a request on this branch since that grant
             # A mirror keeps its source's time and version: it is no newer a promotion
             # than that grant. The version still replaces the branch's row, which is older.
             inserts.append(
