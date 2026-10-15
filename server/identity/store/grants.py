@@ -185,13 +185,14 @@ async def admin_revoked_at(
     org: str, namespace: str, subject: str, *, ch: _CHClient | None = None
 ) -> datetime | None:
     """When the subject's admin grant here was revoked; None when its grant
-    row is not a revoked admin grant."""
+    row is not a revoked admin grant (a rejected request is not one)."""
     ch = ch or _default_client()
     row = await ch.query_one(
         """
         SELECT revoked_at FROM loom.namespace_grants FINAL
         WHERE org = {org:String} AND namespace = {ns:String}
           AND subject = {sub:String} AND role = 'admin' AND revoked_at IS NOT NULL
+          AND ifNull(toString(status), 'active') = 'active'
         LIMIT 1
         """,
         params={"org": org, "ns": namespace, "sub": subject},

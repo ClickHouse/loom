@@ -308,8 +308,8 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
 
 async def _finish_revoke_fan_out(input: GrantsRevokeInput) -> None:
     """A revoke that finds nothing to revoke finishes the branch fan-out of an
-    earlier one (a retry after a fan-out failed): under whichever spelling the
-    subject's revoked admin row is stored, it revokes their sibling admin
+    earlier one (a retry after a fan-out failed): for each spelling of the
+    subject with a revoked admin row here, it revokes their sibling admin
     grants no newer than that revocation. A removed maintainer revoked again
     on any branch is so removed from every branch."""
     from server.auth.aliases import subject_aliases
@@ -323,7 +323,6 @@ async def _finish_revoke_fan_out(input: GrantsRevokeInput) -> None:
             await maintainers.revoke_repo_maintainer(
                 input.org, input.namespace, subject, granted_before=revoked_at
             )
-            return
 
 
 async def _write_revoke(input: GrantsRevokeInput, subject: str, row: GrantState) -> datetime:

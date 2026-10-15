@@ -406,3 +406,27 @@ async def test_a_revoke_leaves_a_grant_given_again_after_it_planned() -> None:
     )
     assert await maintainers.revoke_repo_maintainer("clickhouse", "code-x", "alice", ch=ch) == 1
     assert [r["namespace"] for r in ch.inserted] == ["code-x-26-5"]
+
+
+async def test_a_retry_finishes_every_spelling_with_a_revoked_admin_row(
+    _handler_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _none(*_a: Any, **_k: Any) -> None:
+        return None
+
+    async def _both(org: str, subject: str, **_k: Any) -> list[str]:
+        return ["alice@x.io", "alice"]
+
+    revoked = {"alice@x.io": T0, "alice": T0 + timedelta(hours=2)}
+
+    async def _revoked_at(org: str, ns: str, subject: str, **_k: Any) -> datetime | None:
+        return revoked.get(subject)
+
+    monkeypatch.setattr(grants_repo, "find_any_grant", _none)
+    monkeypatch.setattr(grants_repo, "admin_revoked_at", _revoked_at)
+    monkeypatch.setattr("server.auth.aliases.subject_aliases", _both)
+    await grants_mod.handle_grants_revoke(
+        GrantsRevokeInput(org="clickhouse", namespace="code-x", subject="alice@x.io")
+    )
+    assert [s for _o, _n, s in _handler_env["revoke"]] == ["alice@x.io", "alice"]
+    assert _handler_env["revoke_bound"] == [T0, T0 + timedelta(hours=2)]

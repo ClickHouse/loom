@@ -13,8 +13,10 @@ from tests.analyzer.corpus import Case, RecordingCH
 async def _auth(ch: RecordingCH, c: dict[str, Any]) -> None:
     from server.auth import grant_claims, jit, oauth_claims, revocation
     from server.core import grant_cache
+    from server.identity.store import grants as grants_repo
 
     await grant_cache._read(ORG, "alice@x.io")
+    await grants_repo.admin_revoked_at(ORG, NS, "alice")
     await revocation._read_revocations(["alice"])
     await revocation.list_active()
     await jit._registry_row(ORG, NS)
