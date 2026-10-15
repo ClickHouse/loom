@@ -117,7 +117,9 @@ runs, but without its repository.
 
 An AX change that probes `/healthz` instead, reports a failed clone as not
 ready, and keeps `ax resume` inside its deadline while the workspace is not
-ready fixes this. Tested on a kind cluster with Substrate `f6a1dc72` (the
+ready fixes this. It is proposed in
+[google/ax#482](https://github.com/google/ax/issues/482), since AX does not
+take external pull requests yet. Tested on a kind cluster with Substrate `f6a1dc72` (the
 commit AX pins): the repository cloned on the first try, the run, budget and
 memories reached Loom through the injected token, and a suspend and resume
 did it again. On an AX without that change, leave `spec.git` empty and have
