@@ -176,7 +176,9 @@ have taken effect". The memory inspector's **Restore** on a superseded row sends
 `only_if_superseded`, and `if_superseded_by` when it can see the successor: a read
 narrowed below the namespace shows none for a successor outside its scope, and either
 way a delete since is never undone. When it finds nothing to restore, the inspector re-reads the
-row and shows it as it is now.
+row and shows it as it is now. Either way the list behind the drawer is refreshed, even if
+the drawer has moved to another memory; a failed re-read shows "Reload failed" and leaves
+the restore's own message standing.
 
 ## Duplicates
 

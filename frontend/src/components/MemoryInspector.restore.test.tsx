@@ -173,7 +173,21 @@ describe("MemoryInspector restore of a superseded row", () => {
     expect(screen.queryByText("lives in Lisbon")).toBeNull();
     expect(getMemory).not.toHaveBeenCalled();
     expect(toast).not.toHaveBeenCalled();
-    expect(onChanged).not.toHaveBeenCalled();
+    // The restore did land, so the list behind the drawer is refreshed.
+    expect(onChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports a landed restore even when the re-read fails", async () => {
+    seed("writer");
+    const onChanged = vi.fn();
+    await open(onChanged);
+    vi.mocked(restoreMemory).mockResolvedValue({ restored: true, from_status: "superseded" });
+    vi.mocked(getMemory).mockRejectedValue(new Error("network down"));
+    await userEvent.click(await screen.findByRole("button", { name: "Restore" }));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Restored", "ok"));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Reload failed: network down", "error"));
+    expect(onChanged).toHaveBeenCalled();
+    expect(toast).not.toHaveBeenCalledWith(expect.stringContaining("Restore failed"), "error");
   });
 
   it("re-reads the row and the list when the restore finds nothing, so Restore is not offered again", async () => {

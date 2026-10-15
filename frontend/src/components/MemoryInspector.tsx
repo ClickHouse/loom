@@ -560,15 +560,18 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
         if_superseded_by: detail.superseded_by,
         only_if_superseded: true,
       });
+      // Either way the row changed, so the list behind the drawer is stale too,
+      // even if the drawer has moved on to another memory.
+      onChanged();
       if (stale()) return;
       // Nothing to restore means the row changed since it was read: show it as it is now.
-      if (!r.restored) toast("Nothing to restore", "info");
-      const fresh = await getMemory(identity, memoryKey, { include_recall_breakdown: true });
-      if (stale()) return;
-      setDetail(fresh);
-      if (r.restored) toast("Restored", "ok");
-      // Either way the row changed, so the list behind the drawer is stale too.
-      onChanged();
+      toast(r.restored ? "Restored" : "Nothing to restore", r.restored ? "ok" : "info");
+      try {
+        const fresh = await getMemory(identity, memoryKey, { include_recall_breakdown: true });
+        if (!stale()) setDetail(fresh);
+      } catch (e) {
+        if (!stale()) toast(`Reload failed: ${humanizeError(e)}`, "error");
+      }
     } catch (e) {
       if (!stale()) toast(`Restore failed: ${humanizeError(e)}`, "error");
     } finally {
