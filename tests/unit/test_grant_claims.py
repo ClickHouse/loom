@@ -381,3 +381,49 @@ def test_a_leave_whose_grant_became_admin_meanwhile_counts_the_admins(
         )
     )
     assert out == "left" and claims == ["admins"]
+
+
+@pytest.mark.parametrize(("roles", "admins"), [(["viewer"], 0), (["viewer", "admin"], 1)])
+def test_a_revoke_counts_the_admins_only_for_an_admin(
+    monkeypatch: pytest.MonkeyPatch, roles: list[str], admins: int
+) -> None:
+    # A reader's revoke takes only its grant's claim; one promoted between the read
+    # and the claim moves under the admins claims.
+    from contextlib import asynccontextmanager
+
+    from server.identity.api.models_grants import GrantsRevokeInput
+
+    reads = iter(roles + roles[-1:] * 4)
+    claims: list[str] = []
+
+    async def _find(*_a: Any, **_k: Any) -> GrantState:
+        return GrantState.from_row({"role": next(reads), "status": "active", "granted_by": "x"})
+
+    @asynccontextmanager
+    async def _admins(org: str, ns: str) -> Any:
+        claims.append("admins")
+        yield
+
+    async def _two(*_a: Any, **_k: Any) -> int:
+        return 2
+
+    async def _same(org: str, subject: str, **_k: Any) -> str:
+        return subject
+
+    async def _nothing(*_a: Any, **_k: Any) -> None:
+        return None
+
+    monkeypatch.setattr(grants_repo, "find_any_grant", _find)
+    monkeypatch.setattr(grants_repo, "count_active_admins", _two)
+    monkeypatch.setattr(grants_repo, "insert_row", _nothing)
+    monkeypatch.setattr(grants_app, "admins_change", _admins)
+    monkeypatch.setattr("server.auth.aliases.canonical_subject", _same)
+    monkeypatch.setattr(
+        "server.identity.app.token_grants.cascade_revoke_to_created_tokens", _nothing
+    )
+    out = asyncio.run(
+        grants_app.handle_grants_revoke(
+            GrantsRevokeInput(org="acme", namespace="team", subject="alice")
+        )
+    )
+    assert out.revoked and claims.count("admins") == admins

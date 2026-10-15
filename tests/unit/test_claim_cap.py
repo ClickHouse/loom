@@ -463,3 +463,36 @@ def test_this_process_s_own_write_keeps_its_other_entries_with_siblings(
     grant_cache.invalidate(ORG, ["alice"])
     asyncio.run(grant_cache.grant_map(ORG, "bob"))
     assert ch.grant_reads == reads, "bob's entry is kept"
+
+
+def test_a_failed_re_read_after_another_process_s_write_does_not_serve_the_old_grant(
+    ch: _CH, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    sibling_writes = _sibling_processes(monkeypatch, tmp_path)
+    ch.grants["team"] = ("writer", "active", False)
+    assert _admits(_flat("team"), "team", Role.WRITER)
+    sibling_writes(ORG)  # the other process revoked it
+
+    async def _down(*_a: Any, **_k: Any) -> dict | None:
+        raise RuntimeError("replica away")
+
+    monkeypatch.setattr(ch, "query_one", _down)
+    with pytest.raises(BackendUnavailableError):
+        asyncio.run(grant_cache.grant_map(ORG, "alice"))
+
+
+def test_an_unreadable_write_count_still_shares_one_read(
+    ch: _CH, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    _sibling_processes(monkeypatch, tmp_path)
+
+    def _unreadable(path: str) -> Any:
+        raise PermissionError(path)
+
+    monkeypatch.setattr(grant_cache.os, "stat", _unreadable)
+
+    async def _many() -> None:
+        await asyncio.gather(*(grant_cache.grant_map(ORG, "alice") for _ in range(5)))
+
+    asyncio.run(_many())
+    assert ch.grant_reads == 1

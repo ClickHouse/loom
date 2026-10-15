@@ -76,11 +76,14 @@ async def grant_map(org: str, subject: str) -> GrantMap:
         _entries.move_to_end(key)
         return hit[2]
     loading = _loading.get(key)
-    if loading is not None and loading[1] == writes:
+    # An unreadable count (negative) serves nothing cached, but still joins a read.
+    if loading is not None and (loading[1] == writes or (writes is not None and writes < 0)):
         task = loading[0]
     else:
-        # A task of its own, so a cancelled request does not fail the ones waiting with it.
-        task = asyncio.ensure_future(_load(key, hit, writes))
+        # Only an entry the TTL aged may stand in for a failed read, not one a write
+        # superseded. A task of its own, so a cancelled request does not fail the others.
+        current = hit if hit is not None and hit[1] == writes else None
+        task = asyncio.ensure_future(_load(key, current, writes))
         _loading[key] = (task, writes)
         _running.add(task)
         task.add_done_callback(lambda t: _loaded(key, t))
