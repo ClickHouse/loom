@@ -7,6 +7,8 @@ from __future__ import annotations
 import asyncio
 import os
 import signal
+import sys
+from typing import Literal
 
 from loom import Agent
 
@@ -23,7 +25,7 @@ async def step(agent: Agent, run_id: str, n: int) -> bool:
     return n >= 3
 
 
-async def work(agent: Agent, run_id: str) -> str:
+async def work(agent: Agent, run_id: str) -> Literal["completed", "cancelled"]:
     """Run steps until the task is done or over budget; return the run's status."""
     n = 0
     while True:
@@ -41,8 +43,8 @@ async def work(agent: Agent, run_id: str) -> str:
 async def main() -> None:
     # AX stops a task with SIGTERM; cancelling lets the run close as cancelled.
     task = asyncio.current_task()
-    assert task is not None
-    asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, task.cancel)
+    if task is not None:
+        asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, task.cancel)
 
     org = os.environ["LOOM_ORG"]
     namespace = os.environ["LOOM_NAMESPACE"]
@@ -58,4 +60,7 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except asyncio.CancelledError:
+        sys.exit(128 + signal.SIGTERM)

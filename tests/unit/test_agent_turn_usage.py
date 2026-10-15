@@ -89,6 +89,30 @@ def test_handler_prices_rows_and_reports_unpriced_models() -> None:
     assert by2["priced"] is False and by2["cost_usd"] == 0.0
 
 
+def test_a_turn_dated_in_the_future_is_clamped_to_the_servers_clock() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from server.insights.api.models_cost import CostRecordTurnsInput
+    from server.insights.app import cost as h
+
+    fake = _FakeCH()
+
+    class _Client:
+        client = fake
+
+    ahead = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+    inp = CostRecordTurnsInput(
+        org="o",
+        namespace="n",
+        session_id="s1",
+        turns=[{"message_id": "m1", "model": "claude-opus-5-5", "turn_at": ahead}],
+    )
+    with patch.object(h, "get_client", return_value=_Client()):
+        asyncio.run(h.handle_cost_record_turns(inp))
+    by = dict(zip(fake.cols, fake.rows[0], strict=True))
+    assert by["turn_at"] <= datetime.now(UTC) + h.TURN_AT_SLACK
+
+
 def test_handler_write_failure_records_nothing() -> None:
     from server.insights.api.models_cost import CostRecordTurnsInput
     from server.insights.app import cost as h

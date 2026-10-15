@@ -35,14 +35,18 @@ session (the SDK, plain HTTP) shares one per namespace and web process, so read 
 decide.
 
 A run's spend is its session's turns made while the run was open, by each turn's own time (`turn_at`, from the
-transcript), so `budget_usd` needs a `session_id` (a 422 otherwise). Runs open at once in one session would see the
-same turns, so a second cost budget is refused (a 422 naming the open run) while one is open there: give each
-concurrent worker its own session. Two runs in one session each count their own
-turns, and a run nested in another counts toward both. The Stop hook posts a prompt's turns when the prompt ends,
-after any `run.complete` the agent called during it; those turns still count, and a re-sent turn keeps its time.
-The window compares the client's turn times with the server's run times, so it relies on the client's clock being
-roughly right: one running minutes off misplaces the turns at a run's edges. A closed run is timed from its start
-to its close on the server's clock, whatever `duration_ms` the client reported.
+transcript), so `budget_usd` needs a `session_id` (a 422 otherwise). The Stop hook posts a prompt's turns when the
+prompt ends, after any `run.complete` the agent called during it; those turns still count, and a re-sent turn
+keeps its time. Runs open at once in one session see the same turns: a run nested in another counts toward both,
+and concurrent workers that each want their own cost budget need their own sessions. The window compares the
+client's turn times with the server's run times, so it relies on the client's clock being roughly right; one
+running minutes off misplaces the turns at a run's edges. A closed run is timed from its start to its close on the
+server's clock, whatever `duration_ms` the client reported.
+
+Because the plugins post turns only when a prompt ends, a cost budget is checked between prompts, not inside one:
+a single headless prompt (`claude -p`) shows its spend only after it finishes. A turn whose model the price table
+does not know costs 0; `run.get` counts those in `unpriced_turns`, and they do not count toward `budget_usd`. The
+MCP tools offer only `budget_seconds`, since the model does not know the session id its turns are recorded under.
 
 Loom does not run the agent, so a budget is a signal for whoever does, never a stop. The cost side is only as fresh
 as the turns the plugin's Stop hook has recorded, and a call's cost is known only after it returns, so a run can go

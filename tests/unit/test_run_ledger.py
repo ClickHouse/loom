@@ -380,30 +380,6 @@ def test_begin_stores_the_budget_and_complete_carries_it(env) -> None:
     assert closed["budget_usd"] == 1.5 and closed["budget_seconds"] == 600
 
 
-def test_a_second_cost_budget_in_an_open_session_is_refused(env) -> None:
-    fake, _, h = env
-    fake.one[:] = [{"run_id": "r-open"}]  # a budgeted run still open in s1
-    with pytest.raises(CoreValidationError, match="r-open"):
-        asyncio.run(
-            h.handle_run_begin(
-                RunBeginInput(
-                    org="o", namespace="n", agent="b", session_id="s1", goal="g", budget_usd=1
-                )
-            )
-        )
-    assert not fake.inserted
-    # A time budget alone overlaps freely: it counts nothing of the session's.
-    fake.one[:] = []
-    asyncio.run(
-        h.handle_run_begin(
-            RunBeginInput(
-                org="o", namespace="n", agent="b", session_id="s1", goal="g", budget_seconds=60
-            )
-        )
-    )
-    assert fake.inserted
-
-
 def test_a_resent_begin_without_a_budget_keeps_the_runs_budget(env) -> None:
     fake, _, h = env
     fake.one.append(_run_row(budget_usd=1.5, budget_seconds=600))
@@ -449,14 +425,44 @@ def test_a_closed_run_is_timed_on_the_servers_clock(env) -> None:
     assert out.elapsed_seconds == 90 and out.over_budget == ["time"]
 
 
-def test_a_cost_budget_needs_a_session() -> None:
+def test_a_cost_budget_needs_a_session(env) -> None:
+    fake, _, h = env
     for blank in ("-", "", " "):
-        with pytest.raises(ValidationError, match="session_id"):
-            RunBeginInput(
-                org="o", namespace="n", agent="a", goal="g", session_id=blank, budget_usd=1.0
+        fake.one[:] = []
+        with pytest.raises(CoreValidationError, match="session_id"):
+            asyncio.run(
+                h.handle_run_begin(
+                    RunBeginInput(
+                        org="o",
+                        namespace="n",
+                        agent="a",
+                        goal="g",
+                        session_id=blank,
+                        budget_usd=1.0,
+                    )
+                )
             )
-    RunBeginInput(org="o", namespace="n", agent="a", goal="g", session_id="s1", budget_usd=1.0)
-    RunBeginInput(org="o", namespace="n", agent="a", goal="g", budget_seconds=60)
+    assert not fake.inserted
+    asyncio.run(
+        h.handle_run_begin(
+            RunBeginInput(org="o", namespace="n", agent="a", goal="g", budget_seconds=60)
+        )
+    )
+    assert fake.inserted
+
+
+def test_a_resent_begin_restating_the_budget_keeps_the_runs_session(env) -> None:
+    fake, _, h = env
+    fake.one[:] = [_run_row(budget_usd=1.5)]
+    asyncio.run(
+        h.handle_run_begin(
+            RunBeginInput(
+                org="o", namespace="n", agent="claude", run_id="r1", goal="retry", budget_usd=2.0
+            )
+        )
+    )
+    row = next(rows[0] for table, rows in fake.inserted if table == "loom.agent_runs")
+    assert row["session_id"] == "s1" and row["budget_usd"] == 2.0
 
 
 def _cost_query(fake: Any) -> tuple[str, dict[str, Any]]:
@@ -475,6 +481,17 @@ def test_cost_counts_the_turns_made_while_the_run_was_open(env) -> None:
     _get_with(env, _run_row(), 0.1)  # active: up to now
     _, params = _cost_query(fake)
     assert (params["since"], params["until"]) == (T0, datetime(2026, 9, 11, 12, 0, 42, 500000))
+
+
+def test_get_reports_the_turns_it_could_not_price(env) -> None:
+    fake, _, h = env
+    fake.one.append(_run_row(budget_usd=0.01))
+    fake.all.append([])
+    fake.one.append({"n": 0})
+    fake.one.append({"turns": 2, "unpriced": 1, "cost": 0.0})
+    out = asyncio.run(h.handle_run_get(RunGetInput(org="o", namespace="n", run_id="r1")))
+    # An unpriced turn costs 0, so it cannot trip the cost budget.
+    assert out.turns == 2 and out.unpriced_turns == 1 and out.over_budget == []
 
 
 def test_a_run_without_a_session_reads_no_cost(env) -> None:

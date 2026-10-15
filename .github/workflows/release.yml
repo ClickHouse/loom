@@ -522,11 +522,15 @@ jobs:
         id: existing
         env:
           GH_TOKEN: ${{ github.token }}
+        # Only a 404 means there is none: any other failure would regenerate the notes.
         run: |
-          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+          if out=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" 2>&1); then
             echo "release=true" >>"$GITHUB_OUTPUT"
-          else
+          elif grep -q 'HTTP 404' <<<"$out"; then
             echo "release=false" >>"$GITHUB_OUTPUT"
+          else
+            echo "::error::could not tell whether $GITHUB_REF_NAME has a release: $out"
+            exit 1
           fi
       - name: Create or update the release with notes and files
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3

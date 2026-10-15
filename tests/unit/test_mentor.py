@@ -656,7 +656,7 @@ def test_run_over_budget_names_only_the_budgets_it_went_past() -> None:
         "elapsed_seconds": 90,
     }
     hint = _call("run.get", {"run_id": "r1"}, both, session="s-both")
-    assert hint is not None and "cost and time budgets ($0.0042 spent, 90 s elapsed)" in hint[1]
+    assert hint is not None and "cost and time budgets ($0.00 spent, 90 s elapsed)" in hint[1]
 
 
 def test_run_over_budget_spells_a_large_spend_in_dollars() -> None:

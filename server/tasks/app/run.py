@@ -31,6 +31,7 @@ from server.core.errors import (
     NotFoundError,
     ValidationError,
 )
+from server.core.naming import SENTINEL
 from server.identity.app.request_scope import request_narrowed, request_scope
 from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters, row_in_read_scope
 from server.memory.app import run_feedback, run_retention
@@ -105,11 +106,6 @@ def _parse_metadata(raw: Any) -> dict[str, Any]:
         return v if isinstance(v, dict) else {}
     except (TypeError, ValueError):
         return {}
-
-
-def _named(value: str) -> str:
-    """`value`, or "" when it is the wire's "-" for not given."""
-    return "" if value.strip() in ("", "-") else value
 
 
 def _grade_columns(existing: RunLedgerRow | None) -> RunLedgerRow:
@@ -407,17 +403,15 @@ async def _open_run(
 ) -> RunBeginOutput:
     """Write the run's active row and answer with its id. A new row starts at
     `started_at` (default: now); `version` replaces the server's (a session run's first begin)."""
-    if input.budget_usd > 0:
-        # Runs open at once in one session see the same turns, so a second cost
-        # budget there would be charged the first one's spend.
-        other = await runs_store.open_cost_budgeted_run(
-            ch, input.org, input.namespace, input.session_id, run_id
-        )
-        if other:
-            raise ValidationError(
-                f"run {other} with a cost budget is still open in session "
-                f"{input.session_id!r}; give each budgeted run its own session_id"
-            )
+    # A re-sent begin that names no session or budget keeps the run's.
+    prior = existing or {}
+    session_id = input.session_id.strip()
+    if session_id in ("", SENTINEL):
+        session_id = str(prior.get("session_id") or SENTINEL)
+    budget_usd = input.budget_usd or float(prior.get("budget_usd") or 0.0)
+    if budget_usd > 0 and session_id == SENTINEL:
+        # A run's spend is read from its session's recorded turns.
+        raise ValidationError("budget_usd needs a session_id: a run's spend is its session's turns")
     # The begin row in the ledger carries the run it opened, so begin and complete join
     # on `run_id` (the body names none; the transport's fallback is the header run, empty
     # for a bare client).
@@ -434,8 +428,7 @@ async def _open_run(
         "namespace": input.namespace,
         "agent": input.agent,
         "user_id": input.user_id or "-",
-        # A re-sent begin that names no session keeps the run's, as it keeps its budget.
-        "session_id": _named(input.session_id) or str((existing or {}).get("session_id") or "-"),
+        "session_id": session_id,
         "run_id": run_id,
         "goal": input.goal,
         "user_request": input.user_request,
@@ -458,8 +451,8 @@ async def _open_run(
             if input.role.strip()
             else input.metadata
         ),
-        "budget_usd": input.budget_usd or float((existing or {}).get("budget_usd") or 0.0),
-        "budget_seconds": input.budget_seconds or int((existing or {}).get("budget_seconds") or 0),
+        "budget_usd": budget_usd,
+        "budget_seconds": input.budget_seconds or int(prior.get("budget_seconds") or 0),
     }
     if version is not None:
         row["version"] = version
@@ -968,8 +961,15 @@ async def handle_run_get(input: RunGetInput) -> RunGetOutput:
     stashed = run.metadata.get("recalled_keys") if isinstance(run.metadata, dict) else None
     if stashed:
         recalled = _merge_recalled(recalled, stashed)
-    turns, cost = await _run_cost(ch, existing)
-    elapsed = _elapsed_seconds(existing)
+    turns, unpriced, cost, elapsed = 0, 0, 0.0, 0
+    window = _run_window(existing)
+    if window is not None:
+        since, until = window
+        elapsed = int((until - since).total_seconds())
+        if run.session_id != SENTINEL:
+            turns, unpriced, cost = await runs_store.run_cost(
+                ch, input.org, input.namespace, run.session_id, since, until
+            )
     return RunGetOutput(
         found=True,
         run=run,
@@ -978,36 +978,19 @@ async def handle_run_get(input: RunGetInput) -> RunGetOutput:
         memories_written=written,
         observations=observations,
         turns=turns,
+        unpriced_turns=unpriced,
         cost_usd=cost,
         elapsed_seconds=elapsed,
-        over_budget=budgets_exceeded(
-            float(existing.get("budget_usd") or 0.0),
-            int(existing.get("budget_seconds") or 0),
-            cost,
-            elapsed,
-        ),
+        over_budget=budgets_exceeded(run.budget_usd, run.budget_seconds, cost, elapsed),
     )
 
 
-async def _run_cost(ch: Any, row: RunLedgerRow) -> tuple[int, float]:
-    """The turns the run's session made while the run was open, and their cost."""
-    session_id = str(row.get("session_id") or "-")
-    started = row.get("started_at")
-    if session_id == "-" or not isinstance(started, datetime):
-        return 0, 0.0
-    until = row.get("completed_at") or _now()
-    return await runs_store.run_cost(
-        ch, str(row["org"]), str(row["namespace"]), session_id, started, until
-    )
-
-
-def _elapsed_seconds(row: RunLedgerRow) -> int:
-    """How long the run has taken, on the server's clock: to its close, or to now."""
+def _run_window(row: RunLedgerRow) -> tuple[datetime, datetime] | None:
+    """When the run was open, on the server's clock: from its start to its close, or to now."""
     started = row.get("started_at")
     if not isinstance(started, datetime):
-        return 0
-    end = row.get("completed_at") or _now()
-    return max(0, int((end.replace(tzinfo=None) - started.replace(tzinfo=None)).total_seconds()))
+        return None
+    return started, row.get("completed_at") or _now()
 
 
 async def handle_run_list(input: RunListInput) -> RunListOutput:

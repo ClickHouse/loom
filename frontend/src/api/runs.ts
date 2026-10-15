@@ -42,6 +42,7 @@ export interface RunGetResponse {
   observations: number;
   turns: number;
   cost_usd: number;
+  unpriced_turns?: number;
   elapsed_seconds?: number;
   over_budget?: ("cost" | "time")[];
 }

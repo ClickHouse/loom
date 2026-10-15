@@ -7273,6 +7273,7 @@ export interface RunGetOutput {
   memories_written?: string[];
   observations?: number;
   turns?: number;
+  unpriced_turns?: number;
   cost_usd?: number;
   elapsed_seconds?: number;
   over_budget?: Array<"cost" | "time">;

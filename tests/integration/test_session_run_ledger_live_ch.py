@@ -776,5 +776,5 @@ async def test_the_run_cost_window_keeps_milliseconds(ch: Any) -> None:
     )
     since = datetime(2026, 1, 1, 12, 0, 0, 100000)
     until = datetime(2026, 1, 1, 12, 0, 0, 900000)
-    turns, cost = await run_handlers.runs_store.run_cost(ch, ORG, namespace, "s", since, until)
+    turns, _, cost = await run_handlers.runs_store.run_cost(ch, ORG, namespace, "s", since, until)
     assert (turns, cost) == (1, 2.0)

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from server.core.naming import SENTINEL
 from server.operations.read_projection import ProjectedRow
@@ -59,14 +59,6 @@ class RunBeginInput(BaseModel):
     budget_usd: float = Field(default=0.0, ge=0.0, le=100_000.0)
     # Seconds the run may take; 0 = none, kept on a re-sent begin like budget_usd.
     budget_seconds: int = Field(default=0, ge=0, le=30 * 86400)
-
-    @field_validator("budget_usd")
-    @classmethod
-    def _cost_budget_has_a_session(cls, value: float, info: ValidationInfo) -> float:
-        # A run's spend is read from its session's recorded turns.
-        if value > 0 and str(info.data.get("session_id") or "").strip() in ("", SENTINEL):
-            raise ValueError("budget_usd needs a session_id: a run's spend is its session's turns")
-        return value
 
 
 class RunBeginOutput(BaseModel):
@@ -323,6 +315,9 @@ class RunGetOutput(BaseModel):
     # them) made while the run was open; 0 when the run has no session or the
     # hook is not installed.
     turns: int = 0
+    # Those turns whose model the price table does not know: each costs 0, so
+    # `cost_usd` and a cost budget leave them out.
+    unpriced_turns: int = 0
     # Summed model cost in USD of those turns; 0 as for `turns`.
     cost_usd: float = 0.0
     # Seconds the run has taken: until now while active, its duration once closed.

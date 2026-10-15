@@ -343,6 +343,7 @@
 3d5ff23ff854	ALTER TABLE loom.memory_code_links DELETE WHERE (org = {org:String} AND namespace IN {ns:Array(String)}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
 3db4fecd9fa4	ALTER TABLE loom.memory_exposures DELETE WHERE (org = {org:String} AND namespace IN {ns:Array(String)}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
 3dc8663088a1	SELECT source AS consumer_key, count() AS outcome_rows, countIf(action IN (?, ?)) AS outcome_positive, countIf(action IN (?, ?)) AS outcome_negative, countIf(action IN (?, ?)) AS shunt_rows, sum(token
+3dd0aee92803	SELECT count() AS turns, countIf(NOT priced) AS unpriced, sum(cost_usd) AS cost FROM loom.agent_turn_usage FINAL WHERE org = {org:String} AND namespace = {ns:String} AND session_id = {sid:String} AND 
 3de627934fdd	SELECT pi, path, count() AS chunks, min(start_line) AS first_line FROM loom.code_chunks FINAL ARRAY JOIN arrayFilter( i -> position(content, {pats:Array(String)}[i]) > ?, arrayEnumerate({pats:Array(St
 3e00482285b2	SELECT count() AS n FROM loom.entity_vectors WHERE org = {org:String} AND namespace = {ns:String}
 3e18758b5b32	ALTER TABLE loom.session_outcomes_by_user DELETE WHERE (org = {org:String} AND namespace IN {ns:Array(String)}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_s
@@ -547,7 +548,6 @@
 5f3aeec5033e	SELECT count() AS n FROM loom.context_blobs FINAL WHERE org = {org:String} AND tombstoned_at IS NULL AND namespace = {ns:String}
 5f473a0fe68c	SELECT count() AS n FROM loom.memory_records FINAL WHERE org = {org:String} AND namespace IN {ns:Array(String)}
 5f67a086d108	SELECT count() AS n FROM loom.entity_communities WHERE org = {org:String} AND ((namespace, entity) IN (SELECT namespace, entity FROM (SELECT namespace, entity_a AS entity, memory_key FROM loom.entity_
-5f74e51a0a20	SELECT run_id FROM loom.agent_runs FINAL WHERE org = {org:String} AND namespace = {ns:String} AND session_id = {sid:String} AND status = ? AND budget_usd > ? AND run_id != {rid:String} LIMIT ?
 5f7dbd385b48	SELECT count() AS n FROM loom.entity_edges WHERE org = {org:String} AND namespace = {ns:String}
 5f8abb21c668	SELECT count() AS n FROM loom.memory_embeddings FINAL WHERE org = {org:String} AND namespace IN {ns:Array(String)}
 5f8b57965a78	SELECT f AS path, uniqExact(pr_number) AS prs FROM loom.code_pr_history FINAL ARRAY JOIN files AS f WHERE org = {org:String} AND namespace = {ns:String} AND f IN {paths:Array(String)} AND merged_at > 
@@ -1184,7 +1184,6 @@ bee252fc856c	SELECT count() AS n FROM loom.session_briefs WHERE org = {org:Strin
 bee758c06f29	SELECT neighbor, role, sum(co_occur) AS co_occur FROM ( SELECT object AS neighbor, ? AS role, sum(co_occur) AS co_occur FROM loom.entity_triples WHERE org = {org:String} AND namespace = {ns:String} AN
 bef8fe4e58b7	SELECT tier, edge_kind, to_symbol_id, from_symbol_id, path, line, argMax(from_qualified_name, version) AS from_qualified_name, argMax(to_qualified_name, version) AS to_qualified_name, argMax(confidenc
 bf193ac927b4	SELECT count() AS n FROM loom.memory_record_conflicts FINAL WHERE org = {org:String} AND namespace = {ns:String}
-bf41b2c7bb12	SELECT count() AS turns, sum(cost_usd) AS cost FROM loom.agent_turn_usage FINAL WHERE org = {org:String} AND namespace = {ns:String} AND session_id = {sid:String} AND turn_at >= {since:DateTime64(?)} 
 bf9632cf0b8c	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 bfbdb1dc9399	SELECT namespace, count() AS turns, uniqExact(session_id) AS sessions, sum(toUInt64(input_tokens)) AS input_tokens, sum(toUInt64(cache_read_tokens)) AS cache_read_tokens, sum(toUInt64(cache_creation_5
 bfd5743c4304	SELECT count() AS n FROM loom.conflict_allowlist FINAL WHERE org = {org:String} AND tombstoned_at IS NULL AND namespace IN {ns:Array(String)}

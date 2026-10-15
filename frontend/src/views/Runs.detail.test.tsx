@@ -165,12 +165,12 @@ describe("Runs page", () => {
   it("shows the run's budget and which part of it the run went past", async () => {
     const budgeted = { ...full, budget_usd: 1, budget_seconds: 1800 };
     listRuns.mockResolvedValue([budgeted]);
-    getRun.mockResolvedValue(detail({ run: budgeted, cost_usd: 1.25, over_budget: ["cost"] }));
+    getRun.mockResolvedValue(detail({ run: budgeted, cost_usd: 1.25, elapsed_seconds: 42, over_budget: ["cost"] }));
     render(<Runs />);
     fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
     const dialog = await screen.findByRole("dialog");
     const budget = await within(dialog).findByTitle(EMPTY_WHY.budget);
-    expect(budget).toHaveTextContent("$1.00 · 30m 0s · over cost");
+    expect(budget).toHaveTextContent("$1.00 · 30m 0s · 42s elapsed · over cost");
   });
 
   it("a run without a budget shows a dash", async () => {

@@ -605,6 +605,9 @@ export function Runs() {
                           <div className="text-2xs text-[var(--color-text-muted)]">budget</div>
                           <div className="tabular-nums" title={EMPTY_WHY.budget}>
                             {budgetText(detail.run)}
+                            {detail.run?.budget_seconds
+                              ? ` · ${fmtDuration((detail.elapsed_seconds ?? 0) * 1000)} elapsed`
+                              : ""}
                             {(detail.over_budget ?? []).length > 0 && (
                               <span className="text-[var(--color-danger)]">
                                 {" "}

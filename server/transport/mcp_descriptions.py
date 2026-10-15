@@ -840,8 +840,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "relies on and writes joins one ledger row. Close it with "
         "run.complete. This is how loom learns which memories were USED, "
         "not only returned, and how a later agent can replay what you did. "
-        "Optionally set budget_usd (it needs your session_id) and "
-        "budget_seconds; run.get then says when the run goes past them."
+        "Optionally set budget_seconds; run.get then says when the run has "
+        "gone past it."
     ),
     "run.complete": (
         "Close a run opened with run.begin — call EXACTLY ONCE when the task "
@@ -2046,7 +2046,7 @@ ATOMIC_TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "run.begin": (
         "WHAT: Open the run ledger entry for this task (goal, request, optional "
-        "budget_seconds, and budget_usd with your session_id). Returns run_id; "
+        "budget_seconds). Returns run_id; "
         "pass it on every memory call so notes and credit attach to this run.\n"
         "WHEN: Once, at the start of a task."
     ),

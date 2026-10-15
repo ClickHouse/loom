@@ -14864,6 +14864,7 @@ class RunGetOutput(TypedDict, total=False):
     memories_written: NotRequired[list[str]]
     observations: NotRequired[int]
     turns: NotRequired[int]
+    unpriced_turns: NotRequired[int]
     cost_usd: NotRequired[float]
     elapsed_seconds: NotRequired[int]
     over_budget: NotRequired[list[Literal["cost", "time"]]]
