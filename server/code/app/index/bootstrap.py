@@ -108,7 +108,7 @@ async def set_stage(repo: Any, org: str, ns: str, stage: str, **detail: Any) -> 
 async def clone_if_missing(cfg: Any, repo: Any) -> bool:
     """True when the mirror exists after the call. A failed clone records
     stage=error with the reason and returns False; the next pass retries."""
-    from server.code.app.index.gitrepo import auth_env, remote_access
+    from server.code.app.index.gitrepo import auth_env, remote_access, upload_pack_args
     from server.code.app.index.sandbox import SandboxRequiredError, run_job
 
     git_dir = cfg.git_dir
@@ -123,7 +123,7 @@ async def clone_if_missing(cfg: Any, repo: Any) -> bool:
     try:
         done = await run_job(
             ["git", "clone", "-c", "gc.auto=0", "-c", "maintenance.auto=false"]
-            + ["--bare", "--quiet", cfg.git_remote, tmp],
+            + ["--bare", "--quiet", *upload_pack_args(cfg.git_remote), cfg.git_remote, tmp],
             env=auth_env(cfg.github_token, cfg.git_remote),
             timeout_s=settings.code_bootstrap_clone_timeout_s,
             writable=[Path(tmp)],
