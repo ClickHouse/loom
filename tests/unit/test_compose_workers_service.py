@@ -81,6 +81,13 @@ def test_a_workers_container_listens_where_it_says_it_binds(path: Path, service:
     assert "--host 127.0.0.1 " in workers["command"][-1]
 
 
+@pytest.mark.parametrize(("path", "service"), [(CLOUD, "loom-workers"), (COLOUR, "workers")])
+def test_a_workers_container_runs_the_stdlib_loop(path: Path, service: str) -> None:
+    # uvloop forks the whole process for each git or indexer spawn
+    workers = _load(path)["services"][service]
+    assert "--loop $${LOOM_UVICORN_LOOP:-asyncio} " in workers["command"][-1]
+
+
 def test_both_services_share_the_flock_volume_and_the_data_mounts() -> None:
     d = _load(CLOUD)
     web, workers = d["services"]["loom"], d["services"]["loom-workers"]

@@ -45,8 +45,21 @@ if [ -n "$pinned" ] || [ "$LOOM_WEB_WORKERS" -gt 1 ]; then
 fi
 export LOOM_WEB_WORKERS
 
-# LOOM_UVICORN_LOOP is uvicorn's --loop: `asyncio` switches back from uvloop
-# without a rebuild. LOOM_GRACEFUL_SHUTDOWN_S bounds the wait for in-flight
+# LOOM_UVICORN_LOOP is uvicorn's --loop. Unset, processes that may run the
+# background workers take the stdlib loop: the workers spawn git and the
+# indexers, and uvloop forks the whole process for each spawn, which holds its
+# loop for tens of milliseconds once the heap is a few GB. A web tier that runs
+# no workers keeps uvloop.
+loop=${LOOM_UVICORN_LOOP:-}
+if [ -z "$loop" ]; then
+  background=${LOOM_BACKGROUND_WORKERS:-$(python -m server.core.env_file LOOM_BACKGROUND_WORKERS)}
+  if [ "$background" = off ]; then
+    loop=auto
+  else
+    loop=asyncio
+  fi
+fi
+# LOOM_GRACEFUL_SHUTDOWN_S bounds the wait for in-flight
 # requests on SIGTERM, so one slow request cannot hold the container until
 # docker's SIGKILL skips the lifespan drains. LOOM_TRUSTED_PROXIES names the
 # peers whose X-Forwarded-For/Proto uvicorn applies. LOOM_LISTEN_HOST is the
@@ -54,6 +67,6 @@ export LOOM_WEB_WORKERS
 # exec: uvicorn must be PID 1 to receive docker's SIGTERM (a POSIX shell does
 # not forward it to its child).
 exec uvicorn server.main:app --host "${LOOM_LISTEN_HOST:-127.0.0.1}" --port "${PORT:-7777}" \
-  --workers "$LOOM_WEB_WORKERS" --loop "${LOOM_UVICORN_LOOP:-auto}" \
+  --workers "$LOOM_WEB_WORKERS" --loop "$loop" \
   --timeout-graceful-shutdown "${LOOM_GRACEFUL_SHUTDOWN_S:-10}" \
   --proxy-headers --forwarded-allow-ips="${LOOM_TRUSTED_PROXIES:-127.0.0.1}"

@@ -116,12 +116,13 @@ services:
       - /run/loom:uid=999,gid=999,mode=0700
     <<: *loom-common
     container_name: loom-workers
-    # Listens on loopback only: nothing outside this container calls it.
+    # Listens on loopback only: nothing outside this container calls it. The
+    # stdlib loop, as scripts/serve.sh picks for a process running the workers.
     command:
       [
         "sh",
         "-c",
-        "exec uvicorn server.main:app --host 127.0.0.1 --port $$PORT --loop $${LOOM_UVICORN_LOOP:-auto} --timeout-graceful-shutdown $${LOOM_GRACEFUL_SHUTDOWN_S:-10}",
+        "exec uvicorn server.main:app --host 127.0.0.1 --port $$PORT --loop $${LOOM_UVICORN_LOOP:-asyncio} --timeout-graceful-shutdown $${LOOM_GRACEFUL_SHUTDOWN_S:-10}",
       ]
     # The workers' process boots the same lifespan (migrations under the same
     # ledger — whichever container applies them first, the other finds

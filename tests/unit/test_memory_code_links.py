@@ -642,9 +642,10 @@ def test_a_memory_naming_more_than_the_cap_is_marked_incomplete() -> None:
 
     defs = [Definition("a.py", f"a::fn_{i:02d}_x", f"fn_{i:02d}_x") for i in range(40)]
     names = [Mention(d.name, in_prose=False) for d in defs]
-    links, _, complete = code_links._plan(names, defs, [], {})
+    by_name = {d.name: [d] for d in defs}
+    links, _, complete = code_links._plan(names, by_name, [], {})
     assert len(links) == code_links._MAX_LINKS and not complete
-    links, _, complete = code_links._plan(names[:3], defs, [], {})
+    links, _, complete = code_links._plan(names[:3], by_name, [], {})
     assert len(links) == 3 and complete
 
 
@@ -653,8 +654,8 @@ def test_exactly_the_cap_of_mentions_is_not_cut() -> None:
 
     cap = code_links._MAX_MENTIONS
     names = [Mention(f"fn_{i:03d}_x", in_prose=False) for i in range(cap + 1)]
-    assert code_links._plan(names[:cap], [], [], {})[2]
-    assert not code_links._plan(names, [], [], {})[2]
+    assert code_links._plan(names[:cap], {}, [], {})[2]
+    assert not code_links._plan(names, {}, [], {})[2]
 
 
 def test_definitions_come_from_the_file_with_every_overload_in_one_fingerprint() -> None:

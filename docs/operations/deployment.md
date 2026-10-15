@@ -541,7 +541,9 @@ The runtime exposes 7777, has a built-in `/v1/health` healthcheck (30 s interval
 runs `scripts/serve.sh`, which starts `uvicorn server.main:app` with `LOOM_WEB_WORKERS`
 processes (unset: one per CPU the container may use, at most one per GiB of memory and at most 8). `LOOM_UVICORN_LOOP`
 (`auto`, `asyncio`, `uvloop`) and `LOOM_GRACEFUL_SHUTDOWN_S` (default 10) are read by
-that script. `LOOM_BUILD_COMMIT`, stamped at build time, is what `/v1/health`
+that script. Unset, the loop is `asyncio` unless `LOOM_BACKGROUND_WORKERS=off`: the
+workers spawn git and the indexers, and uvloop forks the whole process for each spawn,
+holding its event loop for tens of milliseconds once the heap is a few GB. `LOOM_BUILD_COMMIT`, stamped at build time, is what `/v1/health`
 reports as `build_commit`.
 
 The web processes share small files (rate-limit table, runtime overrides, graph marks) in
