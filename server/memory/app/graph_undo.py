@@ -57,8 +57,9 @@ async def reopen_held_facts(
     linked = await linked_triples(input, ids, ch=ch)
     held = await stated_by_live_rows(input.org, input.namespace, linked, ch=ch, rows=ids)
     # A row written before rows were linked has no links: what its value names of
-    # its key's facts, which the follow closed by the same rule.
-    if not linked:
+    # its key's facts, which the follow closed by the same rule. One row with links is
+    # no such row, and an Undo restores one row.
+    if not (linked and len(ids) == 1):
         held |= await held_by_unlinked_rows(input.org, input.namespace, None, ch=ch, rows=ids)
     if not held:
         return
