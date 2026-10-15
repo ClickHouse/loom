@@ -41,3 +41,14 @@ def unseal(purpose: str, enc: str) -> str:
     except Exception:  # noqa: BLE001 — a rotated secret: the credential is unusable, say so
         log.warning("a stored %s no longer decrypts (secret rotated?)", purpose)
         return ""
+
+
+def open_sealed(purpose: str, enc: str) -> str | None:
+    """`unseal` for a value from outside (a cookie): None, and no log line,
+    when it was not sealed here for `purpose`."""
+    if not enc:
+        return None
+    try:
+        return str(_fernet(purpose).decrypt(enc.encode()).decode())
+    except Exception:  # noqa: BLE001 — forged or foreign: the caller refuses it
+        return None

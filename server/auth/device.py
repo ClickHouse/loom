@@ -21,7 +21,6 @@ from server.auth import claims, oauth, oidc
 from server.auth.attempts import Attempts, address_key, client_address
 from server.auth.jwt import new_jti
 from server.auth.oauth_store import CodeReplayed, Device, token_id
-from server.core.secrets_at_rest import seal, unseal
 from server.observability import audit
 from server.settings import settings
 
@@ -31,7 +30,6 @@ DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
 # The CLI and the SDK are one public client; there is nothing to register.
 DEVICE_CLIENT_ID = "loom-cli"
 
-_USER_CODE_PURPOSE = "device user code"
 _DEVICE_TTL = 600
 _INTERVAL = 5
 # Consonants only: no vowels to spell words, no 0/O or 1/I to misread.
@@ -153,7 +151,9 @@ async def device_sign_in(request: Request) -> Response:
     if settings.oauth_login_provider == "oidc":
         # Sealed: the pending row must not hold a usable user code.
         return await oauth.start_oidc_login(
-            "device", address, user_code=seal(_USER_CODE_PURPOSE, user_code)
+            "device",
+            address,
+            user_code=user_code,  # the cookie is sealed whole
         )
     try:
         identity = await resolve_user_credentials(
@@ -281,11 +281,6 @@ async def _sign_in(
         }
     )
     return "confirm", [previous] if previous != upstream_refresh else []
-
-
-def unseal_user_code(sealed: str) -> str:
-    """The user code an IdP round trip carried in its pending row."""
-    return unseal(_USER_CODE_PURPOSE, sealed)
 
 
 async def deny(user_code: str) -> None:

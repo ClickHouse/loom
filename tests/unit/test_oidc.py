@@ -568,6 +568,7 @@ async def test_signing_in_finishes_a_jit_account_whose_owner_grant_never_landed(
         return {"email": "bob@acme.com", "email_verified": True}
 
     class _Req:
+        client = None
         query_params = {"code": "c", "state": "s"}
         cookies = {oauth._state_cookie("s"): oauth.seal_pending(pending | {"exp": 2**31 - 1})}
 

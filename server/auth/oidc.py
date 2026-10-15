@@ -162,6 +162,8 @@ def _error_code(response: httpx.Response) -> str:
 async def revoke(refresh_token: str) -> None:
     """Revoke the IdP refresh token at the IdP's revocation endpoint (RFC 7009)
     when it has one. Best effort: logout has already ended the Loom session."""
+    if not refresh_token:
+        return
     try:
         endpoint = (await _discover()).get("revocation_endpoint")
         if not endpoint:

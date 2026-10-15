@@ -40,7 +40,7 @@ from server.auth.oauth_store import (
     OAuthStore,
     token_id,
 )
-from server.core.secrets_at_rest import seal, unseal
+from server.core.secrets_at_rest import open_sealed, seal, unseal
 from server.observability import audit
 from server.settings import settings
 
@@ -447,6 +447,8 @@ def _state_cookie(state: str) -> str:
 _PENDING_PURPOSE = "oidc sign-in in flight"
 _COOKIE_MAX = 3800  # browsers drop a cookie past 4 KB
 _starts_by_address = Attempts(300, 900)
+# Callbacks whose code the IdP would not exchange: each costs a call to it.
+_failed_callbacks_by_address = Attempts(30, 900)
 
 
 def seal_pending(record: dict[str, Any]) -> str:
@@ -456,7 +458,7 @@ def seal_pending(record: dict[str, Any]) -> str:
 def _pending_from(request: Request, state: str) -> dict[str, Any] | None:
     """The sign-in this browser started under `state`: sealed in its cookie,
     so a callback URL without the starting browser finishes nothing."""
-    raw = unseal(_PENDING_PURPOSE, request.cookies.get(_state_cookie(state), ""))
+    raw = open_sealed(_PENDING_PURPOSE, request.cookies.get(_state_cookie(state), ""))
     record: dict[str, Any] | None = json.loads(raw) if raw else None
     if record is None or record.get("state") != state or record["exp"] < int(time.time()):
         return None
@@ -566,11 +568,50 @@ def _sign_in_unavailable() -> Response:
 
 @router.get("/oauth/callback")
 async def oidc_callback(request: Request) -> Response:
-    response = await _finish_oidc_login(request)
+    try:
+        response: Response = await _finish_oidc_login(request)
+    except OAuthError as e:  # answered here, so its cookie goes too
+        response = oauth_error_response(request, e)
     state = request.query_params.get("state", "")
     if state:
         response.delete_cookie(_state_cookie(state), path="/oauth/callback")
     return response
+
+
+async def _exchange_at_idp(
+    request: Request, code: str, pending: dict[str, Any], address: str
+) -> tuple[dict[str, Any], dict[str, Any]] | Response:
+    """The IdP's tokens and verified id_token claims for `code`, or the page
+    to answer. A code it refuses counts against `address`."""
+    from server.auth import oidc
+
+    try:
+        if not await oidc.check_callback_issuer(request.query_params.get("iss", "")):
+            raise OAuthError("invalid_issuer")
+        tokens = await oidc.exchange_code(
+            code=code,
+            redirect_uri=_oidc_callback_url(),
+            code_verifier=pending["code_verifier"],
+        )
+        id_claims = await oidc.verify_id_token(tokens.get("id_token", ""), nonce=pending["nonce"])
+    except OAuthError:
+        _failed_callbacks_by_address.record(address)
+        raise
+    except httpx.HTTPStatusError as e:
+        # Its response body stays in the log, not the browser.
+        log.warning("oidc callback: the identity provider answered %s", e.response.status_code)
+        if e.response.is_server_error:
+            raise OAuthError("temporarily_unavailable", 502) from e
+        _failed_callbacks_by_address.record(address)
+        return _expired_sign_in()  # a stale or made-up code: start again
+    except httpx.TransportError as e:  # the IdP is unreachable: not the user's fault
+        log.warning("oidc callback: identity provider exchange failed: %s", type(e).__name__)
+        raise OAuthError("temporarily_unavailable", 502) from e
+    except Exception as e:  # any other verify failure refuses the login (re-raised)
+        _failed_callbacks_by_address.record(address)
+        log.warning("oidc callback: id_token refused: %s", type(e).__name__)
+        raise OAuthError("oidc_error") from e
+    return tokens, id_claims
 
 
 async def _finish_oidc_login(request: Request) -> Response:
@@ -584,14 +625,7 @@ async def _finish_oidc_login(request: Request) -> Response:
     pending = _pending_from(request, state)
     if pending is None:
         return _expired_sign_in()
-    try:
-        first = await store.use_once(f"pending:{state}", pending["exp"])  # single-use
-    except claims.Busy:  # Keeper cannot answer right now
-        return _sign_in_unavailable()
-    if not first:
-        return _expired_sign_in()
-    kind = pending["kind"]
-    user_code = device.unseal_user_code(pending["user_code"]) if kind == "device" else ""
+    kind, user_code = pending["kind"], pending.get("user_code", "")
     if request.query_params.get("error"):
         # Cancelled at the IdP, or refused there. A device grant stays pending:
         # who cancelled is unknown, so it is no reason to end anyone's sign-in.
@@ -600,25 +634,29 @@ async def _finish_oidc_login(request: Request) -> Response:
     code = request.query_params.get("code", "")
     if not code:
         raise OAuthError("invalid_request")
-    try:
-        if not await oidc.check_callback_issuer(request.query_params.get("iss", "")):
-            raise OAuthError("invalid_issuer")
-        tokens = await oidc.exchange_code(
-            code=code,
-            redirect_uri=_oidc_callback_url(),
-            code_verifier=pending["code_verifier"],
+    address = address_key(client_address(request))
+    if _failed_callbacks_by_address.blocked(address):
+        return html_page(
+            "Sign in to Loom",
+            "<h2>Too many failed sign-ins from here</h2><p>Try again in 15 minutes.</p>",
+            429,
+            headers={"Retry-After": "900"},
         )
-        id_claims = await oidc.verify_id_token(tokens.get("id_token", ""), nonce=pending["nonce"])
-    except OAuthError:
-        raise
-    except (httpx.TransportError, httpx.HTTPStatusError) as e:
-        # The IdP is unreachable or refused the exchange: not the user's fault,
-        # and its response body stays in the log, not the browser.
-        log.warning("oidc callback: identity provider exchange failed: %s", type(e).__name__)
-        raise OAuthError("temporarily_unavailable", 502) from e
-    except Exception as e:  # any other verify failure refuses the login (re-raised)
-        log.warning("oidc callback: id_token refused: %s", type(e).__name__)
-        raise OAuthError("oidc_error") from e
+    asked = await _exchange_at_idp(request, code, pending, address)
+    if isinstance(asked, Response):
+        return asked
+    tokens, id_claims = asked
+    upstream = str(tokens.get("refresh_token") or "")
+    # The IdP vouched for this person: only now is the round trip marked used,
+    # so a callback nobody signed in for writes nothing.
+    try:
+        first = await store.use_once(f"pending:{state}", pending["exp"])
+    except claims.Busy:  # Keeper cannot answer right now
+        await oidc.revoke(upstream)
+        return _sign_in_unavailable()
+    if not first:
+        await oidc.revoke(upstream)
+        return _expired_sign_in()
     email = oidc.verified_email(id_claims)
     resolved = None
     if email:
@@ -630,8 +668,8 @@ async def _finish_oidc_login(request: Request) -> Response:
             )
         except SignInUnavailable as e:
             log.warning("oidc callback: the account could not be read: %s", e)
+            await oidc.revoke(upstream)
             return _sign_in_unavailable()
-    upstream = str(tokens.get("refresh_token") or "")
     if resolved is None:
         reason = "no loom account for this email" if email else "verified email required"
         await _signin_denied(str(id_claims.get("email") or ""), reason)

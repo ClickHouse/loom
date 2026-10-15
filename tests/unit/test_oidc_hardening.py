@@ -7,12 +7,13 @@ failed callback never echoes the IdP's response to the browser.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import httpx
 import pytest
 
-from server.auth import oauth, oidc
+from server.auth import login, oauth, oidc
 from server.settings import settings
 from tests.unit.oauth_store_fake import MemoryOAuthStore
 
@@ -95,6 +96,8 @@ _PENDING = {
 class _Req:
     """A callback from the browser that started the sign-in (its cookie set)."""
 
+    client = None  # no peer address
+
     def __init__(self) -> None:
         self.query_params = {"code": "c", "state": "s"}
         self.cookies = {oauth._state_cookie("s"): oauth.seal_pending(_PENDING)}
@@ -117,10 +120,9 @@ async def test_a_failed_callback_does_not_echo_the_idp(
         raise exc
 
     monkeypatch.setattr(oidc, "exchange_code", boom)
-    with pytest.raises(oauth.OAuthError) as ei:
-        await oauth.oidc_callback(_Req())  # type: ignore[arg-type]
-    assert ei.value.status_code == status
-    assert (ei.value.error, ei.value.description) == (error, "")
+    page = await oauth.oidc_callback(_Req())  # type: ignore[arg-type]
+    assert page.status_code == status
+    assert json.loads(page.body) == {"error": error}
 
 
 async def test_an_unverified_email_is_refused_at_the_callback(
@@ -194,8 +196,8 @@ async def test_a_malformed_refresh_answer_is_the_idps_fault_not_a_success(
 async def test_a_callback_url_alone_does_not_finish_the_sign_in(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The cookie's value is a secret the starting browser was given, not
-    something the state in the callback URL lets anyone else compute."""
+    """The round trip rides the starting browser's sealed cookie: the state in
+    the callback URL lets nobody else make one."""
     store = MemoryOAuthStore()
     monkeypatch.setattr(oauth, "store", store)
     forged = _Req()
@@ -205,7 +207,7 @@ async def test_a_callback_url_alone_does_not_finish_the_sign_in(
     assert store.keeper == {}  # nothing spent, nothing written
 
 
-async def test_a_sign_in_start_writes_nothing_and_its_callback_works_once(
+async def test_only_a_callback_the_idp_vouched_for_writes_and_only_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = MemoryOAuthStore()
@@ -218,14 +220,47 @@ async def test_a_sign_in_start_writes_nothing_and_its_callback_works_once(
     await oauth.start_oidc_login("dashboard", "203.0.113.5")
     assert store.keeper == {}  # an unauthenticated start costs the server nothing
 
-    async def boom(**kw: Any) -> Any:
-        raise ValueError("stop after the single-use check")
+    async def refused(**kw: Any) -> Any:
+        raise ValueError("a made-up code")
 
-    monkeypatch.setattr(oidc, "exchange_code", boom)
-    with pytest.raises(oauth.OAuthError):
-        await oauth.oidc_callback(_Req())  # type: ignore[arg-type]
+    monkeypatch.setattr(oidc, "exchange_code", refused)
+    assert (await oauth.oidc_callback(_Req())).status_code == 400  # type: ignore[arg-type]
+    assert store.keeper == {}  # nor does a callback nobody signed in for
+
+    async def exchanged(**kw: Any) -> dict[str, str]:
+        return {"id_token": "t"}
+
+    async def verified(token: str, *, nonce: str) -> dict[str, Any]:
+        return {"email": "nobody@x.io", "email_verified": True}
+
+    async def emit(event_type: str, **kw: Any) -> str:
+        return ""
+
+    async def no_account(email: str) -> None:
+        return None
+
+    monkeypatch.setattr(oidc, "exchange_code", exchanged)
+    monkeypatch.setattr(oidc, "verify_id_token", verified)
+    monkeypatch.setattr(oauth.audit, "emit", emit)
+    monkeypatch.setattr(login, "resolve_identity_for_email", no_account)
+    assert (await oauth.oidc_callback(_Req())).status_code == 403  # type: ignore[arg-type]
+    assert list(store.keeper) == ["pending:s"]
     replayed = await oauth.oidc_callback(_Req())  # type: ignore[arg-type]
     assert replayed.status_code == 400
+
+
+async def test_callbacks_the_idp_refuses_are_limited_per_address(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def refused(**kw: Any) -> Any:
+        raise ValueError("a made-up code")
+
+    monkeypatch.setattr(oauth, "store", MemoryOAuthStore())
+    monkeypatch.setattr(oidc, "exchange_code", refused)
+    monkeypatch.setattr(oauth, "_failed_callbacks_by_address", oauth.Attempts(2, 900))
+    for _ in range(2):
+        assert (await oauth.oidc_callback(_Req())).status_code == 400  # type: ignore[arg-type]
+    assert (await oauth.oidc_callback(_Req())).status_code == 429  # type: ignore[arg-type]
 
 
 async def test_sign_in_starts_are_limited_per_address_and_ipv6_net(
@@ -249,3 +284,20 @@ def test_an_ipv4_client_of_a_dual_stack_socket_counts_as_itself() -> None:
     assert address_key("::ffff:203.0.113.5") == "203.0.113.5"
     assert address_key("::ffff:203.0.113.5") != address_key("::ffff:198.51.100.7")
     assert address_key("2001:db8::1") == address_key("2001:db8::2") == "2001:db8::/64"
+
+
+@pytest.mark.parametrize(("idp_status", "status"), [(400, 400), (503, 502)])
+async def test_a_code_the_idp_refuses_starts_again_and_its_outage_retries(
+    monkeypatch: pytest.MonkeyPatch, idp_status: int, status: int
+) -> None:
+    request = httpx.Request("POST", "https://idp/token")
+
+    async def answered(**kw: Any) -> Any:
+        response = httpx.Response(idp_status, request=request)
+        raise httpx.HTTPStatusError("refused", request=request, response=response)
+
+    monkeypatch.setattr(oauth, "store", MemoryOAuthStore())
+    monkeypatch.setattr(oidc, "exchange_code", answered)
+    page = await oauth.oidc_callback(_Req())  # type: ignore[arg-type]
+    assert page.status_code == status
+    assert (b"has expired" in page.body) is (idp_status == 400)

@@ -640,7 +640,7 @@ def _oauth_claim_problems(state: HealthState) -> list[Problem]:
                 "codes, device sign-ins and sessions answer 503 until keys expire; they are "
                 "swept every five minutes.",
                 "Rate-limit /oauth/device_authorization, /oauth/device and /oauth/callback by "
-                "network at the proxy; the server log names addresses it refused.",
+                "network at the proxy; the server log names an address it refused each minute.",
                 source="runtime",
             )
         ]
