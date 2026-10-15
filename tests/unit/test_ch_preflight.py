@@ -255,3 +255,22 @@ def test_a_user_who_may_not_create_the_reader_gets_the_admin_sql(
     assert "may not create users or settings profiles" in captured.err
     assert "CREATE USER OR REPLACE `loom_reader`" in captured.out
     assert "s3cret-value" not in captured.out + captured.err
+
+
+def test_a_check_that_may_not_create_the_database_only_reports_it_missing() -> None:
+    ch = FakeCH(database=False)
+    server = preflight.check(ch, need="migrate", create_database=False)
+    assert not server.database
+    assert not any(sql.startswith("CREATE DATABASE") for sql in ch.ran)
+
+
+def test_the_doctor_warns_that_boot_will_create_the_database(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.cli import doctor
+
+    missing = preflight.Server("26.9.19.9", keeper=True, lightweight_updates=True, database=False)
+    monkeypatch.setattr(preflight, "require_ready", lambda **_: missing)
+    name, grade, detail = doctor._doctor_preflight_check()
+    assert (name, grade) == ("clickhouse_preflight", doctor.WARN)
+    assert "boot will create it" in detail

@@ -74,6 +74,8 @@ class Server:
     version: str
     keeper: bool
     lightweight_updates: bool
+    # False only when a check that may not create it found no `loom` database.
+    database: bool = True
 
 
 def version_key(version: str) -> tuple[int, ...]:
@@ -146,11 +148,11 @@ def needed_at_boot() -> Need:
     return "migrate" if settings.boot_migrate and not settings.read_replica else "serve"
 
 
-def check(ch: Client, *, need: Need) -> Server:
+def check(ch: Client, *, need: Need, create_database: bool = True) -> Server:
     """Raise PreflightError unless the server is new enough and `loom` exists
-    with the grants `need` names. A process that will migrate also creates a
-    missing database where its user may. Returns what the doctor reports
-    besides."""
+    with the grants `need` names. A process that will migrate creates a missing
+    database where its user may; with `create_database` off (the doctor) it
+    only reports it missing. Returns what the doctor reports besides."""
     from server.settings import settings
 
     version = oldest_version(ch)
@@ -159,9 +161,10 @@ def check(ch: Client, *, need: Need) -> Server:
         raise PreflightError(f"ClickHouse {version} is older than {floor}: upgrade the server")
 
     user = settings.ch_user
-    if not ch.command(f"SELECT count() FROM system.databases WHERE name = '{DATABASE}'"):
-        if need != "migrate":
-            raise PreflightError(f"database {DATABASE} does not exist: run `loom ch-setup`")
+    database = bool(ch.command(f"SELECT count() FROM system.databases WHERE name = '{DATABASE}'"))
+    if not database and need != "migrate":
+        raise PreflightError(f"database {DATABASE} does not exist: run `loom ch-setup`")
+    if not database and create_database:
         try:
             ch.command(f"CREATE DATABASE IF NOT EXISTS {DATABASE}")
         except Exception as e:
@@ -202,13 +205,18 @@ def check(ch: Client, *, need: Need) -> Server:
     lightweight = str(
         ch.command("SELECT value FROM system.settings WHERE name = 'enable_lightweight_update'")
     ) in ("1", "true")
-    return Server(version=version, keeper=keeper, lightweight_updates=lightweight)
+    return Server(
+        version=version,
+        keeper=keeper,
+        lightweight_updates=lightweight,
+        database=database or create_database,
+    )
 
 
-def require_ready(*, need: Need) -> Server:
+def require_ready(*, need: Need, create_database: bool = True) -> Server:
     """`check` on a fresh connection, closed afterwards."""
     ch = connect()
     try:
-        return check(ch, need=need)
+        return check(ch, need=need, create_database=create_database)
     finally:
         ch.close()

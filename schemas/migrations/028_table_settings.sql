@@ -12,7 +12,8 @@
 -- to an ALTER UPDATE mutation per call.
 --
 -- A table a later migration creates carries the window in its own SETTINGS
--- (tests/unit/test_table_settings.py).
+-- (tests/unit/test_table_settings.py, which also covers the `_`-prefixed tables
+-- the schema dump leaves out).
 
 ALTER TABLE loom.memory MODIFY SETTING enable_block_number_column = 1, enable_block_offset_column = 1;
 ALTER TABLE loom.memory_embeddings MODIFY SETTING enable_block_number_column = 1, enable_block_offset_column = 1;
@@ -154,3 +155,6 @@ ALTER TABLE loom.tasks MODIFY SETTING non_replicated_deduplication_window = 1000
 ALTER TABLE loom.user_state MODIFY SETTING non_replicated_deduplication_window = 1000;
 ALTER TABLE loom.worker_status MODIFY SETTING non_replicated_deduplication_window = 1000;
 ALTER TABLE loom.working_memory MODIFY SETTING non_replicated_deduplication_window = 1000;
+ALTER TABLE loom._migration_lease MODIFY SETTING non_replicated_deduplication_window = 1000;
+ALTER TABLE loom._migrations MODIFY SETTING non_replicated_deduplication_window = 1000;
+ALTER TABLE loom._provider_participants MODIFY SETTING non_replicated_deduplication_window = 1000;

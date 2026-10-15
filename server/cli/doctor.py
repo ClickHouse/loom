@@ -166,15 +166,23 @@ def _doctor_otel_erasure_index_check(settings: Any) -> tuple[str, str, str]:
 
 def _doctor_preflight_check() -> tuple[str, str, str]:
     """The `clickhouse_preflight` line: FAIL with the fix where boot would
-    refuse this ClickHouse (a missing Keeper has its own problem line)."""
+    refuse this ClickHouse, WARN when boot will create the database (the
+    doctor never does), PASS otherwise. A missing Keeper has its own line."""
     from server.core.schema import preflight
 
     try:
-        server = preflight.require_ready(need=preflight.needed_at_boot())
+        server = preflight.require_ready(need=preflight.needed_at_boot(), create_database=False)
     except preflight.PreflightError as e:
         return ("clickhouse_preflight", FAIL, str(e))
     except Exception as e:  # noqa: BLE001 — a doctor line must never crash the doctor
         return ("clickhouse_preflight", FAIL, f"{type(e).__name__}: {e}")
+    if not server.database:
+        return (
+            "clickhouse_preflight",
+            WARN,
+            f"ClickHouse {server.version}: database {preflight.DATABASE} does not exist yet; "
+            "boot will create it",
+        )
     return (
         "clickhouse_preflight",
         PASS,

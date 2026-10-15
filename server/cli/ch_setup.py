@@ -72,8 +72,9 @@ def admin_sql(user: str, reader: str) -> list[str]:
         f"CREATE DATABASE IF NOT EXISTS {preflight.DATABASE}",
         f"GRANT CURRENT GRANTS ON {preflight.DATABASE}.* TO `{user}`",
         f"GRANT {', '.join(f'SELECT ON system.{t}' for t in preflight.SYSTEM_TABLES)} TO `{user}`",
-        # clusterAllReplicas, which asks every replica for its version.
-        f"GRANT REMOTE ON *.* TO `{user}`",
+        # clusterAllReplicas, which asks every replica for its version. READ only:
+        # on Cloud plain REMOTE also grants writes to any host through remote().
+        f"GRANT READ ON REMOTE TO `{user}`",
         *reader_sql(reader, _PASSWORD_PLACEHOLDER),
     ]
 

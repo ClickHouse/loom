@@ -3,7 +3,12 @@ themselves rather than by server config (028_table_settings.sql)."""
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 from tests.unit.schema_ddl import ddl, tables
+
+MIGRATIONS = Path(__file__).resolve().parents[2] / "schemas" / "migrations"
 
 
 def _settings(name: str) -> str:
@@ -24,3 +29,16 @@ def test_the_lightweight_update_tables_carry_block_columns() -> None:
         line = _settings(name)
         assert "enable_block_number_column = 1" in line
         assert "enable_block_offset_column = 1" in line
+
+
+def test_the_tables_the_dump_leaves_out_keep_insert_dedup_tokens_too() -> None:
+    # The schema dump skips `_`-prefixed tables (the migrator's own, the provider
+    # participants); read their CREATEs from the migrations instead.
+    sql = "\n".join(p.read_text() for p in sorted(MIGRATIONS.glob("*.sql")))
+    hidden = re.findall(
+        r"CREATE TABLE IF NOT EXISTS loom\.(_\w+)\s*\(.*?\)\s*ENGINE\s*=\s*\w*MergeTree", sql, re.S
+    )
+    assert hidden
+    window = "MODIFY SETTING non_replicated_deduplication_window = 1000"
+    missing = [t for t in hidden if f"ALTER TABLE loom.{t} {window}" not in sql]
+    assert not missing, f"set the window on {missing}"

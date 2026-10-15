@@ -46,16 +46,20 @@ def _make_ch_client_for_otel() -> Any:
     )
 
 
-def _is_unknown_table_error(exc: BaseException) -> bool:
-    """Detect ClickHouse code-60 (UNKNOWN_TABLE) on the OTel target tables.
+def _unwritable(exc: BaseException) -> str:
+    """Why a `default.otel_*` target can never take a write, or '' for an error
+    worth retrying. The tables are created by ClickStack/HyperDX, not by Loom's
+    migrations: on a ClickHouse-only deployment they are absent (code 60), and
+    a Loom user scoped to `loom.*` may not write them (code 497). Either way the
+    exporter disables itself after one line instead of failing every flush."""
+    from server.core.ch_errors import error_code
 
-    The `default.otel_*` tables are created by ClickStack/HyperDX, not by
-    Loom's migrations. On a CH-only deployment they're absent, so the
-    exporter self-disables after one log line instead of spamming WARN on
-    every flush.
-    """
-    s = str(exc)
-    return "Code: 60" in s or "UNKNOWN_TABLE" in s
+    code = error_code(exc)
+    if code == 60 or "UNKNOWN_TABLE" in str(exc):
+        return "it does not exist (ClickStack/HyperDX is not deployed against this cluster)"
+    if code == 497:
+        return "this ClickHouse user may not write it"
+    return ""
 
 
 def _traces_backend_available(exporter_mode: str, endpoint: str | None) -> bool:
@@ -101,14 +105,13 @@ def _make_clickhouse_span_exporter(service_name: str) -> Any:
                 )
                 return SpanExportResult.SUCCESS
             except Exception as e:  # export fails soft: FAILURE to the SDK, never a raise
-                if _is_unknown_table_error(e):
+                if why := _unwritable(e):
                     log.warning(
-                        "OTel span exporter: default.otel_traces does not "
-                        "exist — ClickStack/HyperDX is not deployed against "
-                        "this cluster. Self-disabling span export. To enable, "
-                        "deploy ClickStack or set LOOM_OTEL_EXPORTER=otlp + "
-                        "LOOM_OTEL_EXPORTER_OTLP_ENDPOINT to ship spans "
-                        "elsewhere.",
+                        "OTel span exporter: cannot write default.otel_traces: %s. "
+                        "Self-disabling span export. To enable, deploy ClickStack "
+                        "(or grant the user INSERT there) or set LOOM_OTEL_EXPORTER=otlp "
+                        "+ LOOM_OTEL_EXPORTER_OTLP_ENDPOINT to ship spans elsewhere.",
+                        why,
                     )
                     self._disabled = True
                     return SpanExportResult.SUCCESS
@@ -371,11 +374,11 @@ def _make_clickhouse_metric_exporter(service_name: str) -> Any:
                     )
                 return MetricExportResult.SUCCESS
             except Exception as e:  # export fails soft: FAILURE to the SDK, never a raise
-                if _is_unknown_table_error(e):
+                if why := _unwritable(e):
                     log.warning(
-                        "OTel metric exporter: default.otel_metrics_* tables "
-                        "do not exist — ClickStack/HyperDX is not deployed "
-                        "against this cluster. Self-disabling metric export.",
+                        "OTel metric exporter: cannot write default.otel_metrics_*: %s. "
+                        "Self-disabling metric export.",
+                        why,
                     )
                     self._disabled = True
                     return MetricExportResult.SUCCESS
@@ -421,11 +424,11 @@ def _make_clickhouse_log_exporter(service_name: str) -> Any:
                 )
                 return LogRecordExportResult.SUCCESS
             except Exception as e:  # export fails soft: FAILURE to the SDK, never a raise
-                if _is_unknown_table_error(e):
+                if why := _unwritable(e):
                     log.warning(
-                        "OTel log exporter: default.otel_logs does not exist — "
-                        "ClickStack/HyperDX is not deployed against this "
-                        "cluster. Self-disabling log export.",
+                        "OTel log exporter: cannot write default.otel_logs: %s. "
+                        "Self-disabling log export.",
+                        why,
                     )
                     self._disabled = True
                     return LogRecordExportResult.SUCCESS
