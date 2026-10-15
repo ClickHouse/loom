@@ -1,4 +1,4 @@
-"""`loom code entries`: the host crons read one line per configured repository
+"""`loom code entries`: scripts read one line per configured repository
 (org namespace checkout lock-file) and split it on whitespace."""
 
 from __future__ import annotations

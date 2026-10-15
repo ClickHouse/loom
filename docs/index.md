@@ -35,7 +35,8 @@ TypeScript SDKs, and the dashboard. This page lists every page in reading order.
   [Monitoring](operations/monitoring.md) · [Maintenance](operations/maintenance.md) ·
   [Troubleshooting](operations/troubleshooting.md) ·
   [Code-index operations](operations/code-index-operations.md) ·
-  [Running N replicas](operations/replicas.md): identical Looms behind one URL
+  [Running N replicas](operations/replicas.md): identical Looms behind one URL ·
+  [Kubernetes](operations/kubernetes.md): the Helm chart, with EKS and kind overlays
 
 ## 3. Connect agents
 

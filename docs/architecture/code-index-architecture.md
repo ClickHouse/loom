@@ -4,18 +4,18 @@ This page is the inside view of the code index: how files become chunks, symbols
 edges, and how the two tiers stay current. What each op answers, the languages and their
 depth, and how to read `as_of` are in the
 [code index overview](../features/code-index/overview.md) and
-[freshness](../features/code-index/freshness.md). Running it (clones, backfills, crons)
+[freshness](../features/code-index/freshness.md). Running it (clones, backfills, the compiler tiers)
 is in [code index operations](../operations/code-index-operations.md).
 
 ## Goals and non-goals
 
-| Goals                                                                                                    | Non-goals                                                                                    |
-| -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| Per-merge freshness of the fast tier from a poll of a local bare mirror; no inbound webhook.             | Indexing a working tree. Uncommitted and unpushed changes are never in the index.            |
-| Exact call, override and inheritance edges where a compiler indexer exists; graded heuristics elsewhere. | Running a compiler in the server process. SCIP producers run in subprocesses or a host cron. |
-| Idempotent ingest: unchanged bytes yield the same rows and cost no embedding.                            | A general-purpose code host. The index is read-only reference data keyed by namespace.       |
-| Every answer names the commit and tier it read, and says why an empty answer is empty.                   | Hiding staleness. A lagging tier is reported.                                                |
-| A new language lands without re-indexing the others.                                                     | Equal depth for every language ([languages](../features/code-index/overview.md)).            |
+| Goals                                                                                                    | Non-goals                                                                                            |
+| -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Per-merge freshness of the fast tier from a poll of a local bare mirror; no inbound webhook.             | Indexing a working tree. Uncommitted and unpushed changes are never in the index.                    |
+| Exact call, override and inheritance edges where a compiler indexer exists; graded heuristics elsewhere. | Running a compiler in the server process. SCIP producers run in subprocesses of the workers process. |
+| Idempotent ingest: unchanged bytes yield the same rows and cost no embedding.                            | A general-purpose code host. The index is read-only reference data keyed by namespace.               |
+| Every answer names the commit and tier it read, and says why an empty answer is empty.                   | Hiding staleness. A lagging tier is reported.                                                        |
+| A new language lands without re-indexing the others.                                                     | Equal depth for every language ([languages](../features/code-index/overview.md)).                    |
 
 ## One namespace, one branch
 
@@ -267,12 +267,12 @@ applies it. Per touched file the apply upserts what the delta emits and tombston
 file's `scip` rows it no longer emits; a deleted file is tombstoned whole. Re-applying a
 delta gives the same live set.
 
-| Producer          | Language                | Watermark        | Workers                                 | How it runs                                                                                                                                                   |
-| ----------------- | ----------------------- | ---------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `scip-clang`      | C++                     | `scip_commit`    | `code_scip_delta`, `code_scip_apply`    | Changed TUs (and TUs including changed headers, capped) via `run_delta.sh`; host cron for full runs, on a dedicated host (the toolchain is not in the image). |
-| `scip-typescript` | TypeScript / JavaScript | `scip_commit_ts` | `code_scip_ts_delta`                    | Whole-workspace index per pass, bounded to the window's files by the converter.                                                                               |
-| `scip-go`         | Go                      | `scip_commit_go` | `code_scip_go_delta`                    | One build per module (`run_go_monorepo_delta.sh`).                                                                                                            |
-| `scip-python`     | Python                  | `scip_commit_py` | `code_scip_py_delta`, `code_scip_apply` | Per-merge delta (`run_python_delta.sh`); the host cron covers the rest.                                                                                       |
+| Producer          | Language                | Watermark        | Workers                                                | How it runs                                                                                                                           |
+| ----------------- | ----------------------- | ---------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `scip-clang`      | C++                     | `scip_commit`    | `code_scip_full`, `code_scip_delta`, `code_scip_apply` | Changed TUs (and TUs including changed headers, capped) via `run_delta.sh`; `code_scip_full` seeds the tier and re-indexes it weekly. |
+| `scip-typescript` | TypeScript / JavaScript | `scip_commit_ts` | `code_scip_ts_delta`                                   | Whole-workspace index per pass, bounded to the window's files by the converter.                                                       |
+| `scip-go`         | Go                      | `scip_commit_go` | `code_scip_go_delta`                                   | One build per module (`run_go_monorepo_delta.sh`).                                                                                    |
+| `scip-python`     | Python                  | `scip_commit_py` | `code_scip_py_delta`, `code_scip_apply`                | Per-merge delta (`run_python_delta.sh`); a first run indexes the tree.                                                                |
 
 `code/domain/index/compiler_tiers.py` (`TIERS`) is the one table of watermark, label
 and workers per producer; status handlers and the dashboard read it. A delta worker
@@ -284,8 +284,8 @@ watermark.
 An external producer such as a CI job can upload a delta in parts with
 `code.scip_ingest`; parts are staged in `code_scip_batches` / `code_scip_parts` and
 applied by `code_scip_apply`. Every compiler-tier pass takes a per-entry lock file in
-`LOOM_CODE_SCIP_LOCK_DIR`, which the host cron scripts also take with `flock(1)`, so a
-full re-index and a delta never run on one entry at once. `loom code scip-full` rebuilds
+`LOOM_CODE_SCIP_LOCK_DIR` and a ClickHouse lease, so a full re-index and a delta never
+run on one entry at once. `loom code scip-full` rebuilds
 the C++ tier; `loom code scip-delta` runs one delta pass.
 
 Where both tiers hold the same row, reads prefer the compiler row, and every answer

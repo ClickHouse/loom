@@ -112,9 +112,9 @@ A compiler tier pays off when fast-tier edges are ambiguous (overloads, dynamic 
    `scip_go_delta.py` are the models): its `run_pass` hands its `_run_repo` to
    `run_tier` in `server/code/app/index/compiler_tier.py`, which owns the entry loop, failure
    isolation and the full-run reset. It comes with its `LOOM_CODE_SCIP_<LANG>_DELTA_ENABLED` /
-   `_INTERVAL_SECONDS` / `_TIMEOUT_SECONDS` settings, or a host cron
-   (`deploy/cron/`) that uploads through `code.scip_ingest`; the `code_scip_apply` worker
-   applies complete batches ([adding a worker](adding-a-worker.md)).
+   `_INTERVAL_SECONDS` / `_TIMEOUT_SECONDS` settings
+   ([adding a worker](adding-a-worker.md)). An external producer uploads through
+   `code.scip_ingest` instead, and the `code_scip_apply` worker applies complete batches.
 3. A watermark key in `code_scip_apply`'s `watermark_key_for` and a `TierSpec` row, so
    `code.index_status` and the dashboard report the tier.
 

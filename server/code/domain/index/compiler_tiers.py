@@ -32,8 +32,8 @@ TIERS: tuple[TierSpec, ...] = (
         "scip-clang",
         "C++",
         "scip_commit",
-        ("code_scip_delta", "code_scip_apply"),
-        "Precise cross-TU call graph. Delta runs host-side on a cron; apply is in-process.",
+        ("code_scip_full", "code_scip_delta", "code_scip_apply"),
+        "Precise cross-TU call graph. A full index seeds it and runs weekly; deltas per merge.",
     ),
     TierSpec(
         "typescript",
@@ -57,7 +57,7 @@ TIERS: tuple[TierSpec, ...] = (
         "Python",
         "scip_commit_py",
         ("code_scip_py_delta", "code_scip_apply"),
-        "Per-merge delta in the tier's working tree; the host cron covers the rest.",
+        "Per-merge delta in the tier's working tree; a first run indexes the tree.",
     ),
 )
 WATERMARK_KEYS: tuple[str, ...] = tuple(t.watermark_key for t in TIERS)

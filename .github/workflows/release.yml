@@ -406,19 +406,48 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
-      - name: Build + push (amd64 + arm64)
+      - name: Build + push by digest (amd64 + arm64)
+        id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: Dockerfile
           platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          # By digest only: the version tags go on after the scan below.
+          outputs: type=image,name=ghcr.io/clickhouse/loom,push-by-digest=true,name-canonical=true,push=true
           labels: ${{ steps.meta.outputs.labels }}
           provenance: mode=max
           sbom: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      # Fails the release on a critical CVE that has a fixed package, in either image.
+      - name: Scan the pushed image (amd64)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_PLATFORM: linux/amd64
+        with:
+          image-ref: ghcr.io/clickhouse/loom@${{ steps.build.outputs.digest }}
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Scan the pushed image (arm64)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_PLATFORM: linux/arm64
+        with:
+          image-ref: ghcr.io/clickhouse/loom@${{ steps.build.outputs.digest }}
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Tag the scanned image
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          args=()
+          while read -r tag; do [ -n "$tag" ] && args+=(-t "$tag"); done <<<"$TAGS"
+          docker buildx imagetools create "${args[@]}" "ghcr.io/clickhouse/loom@$DIGEST"
+          echo "Pin with \`image.digest: $DIGEST\`" >> "$GITHUB_STEP_SUMMARY"
 
   docker-smoke:
     name: Released quickstart (${{ matrix.arch }})

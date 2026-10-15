@@ -1,0 +1,104 @@
+# EKS: an ALB from the AWS Load Balancer Controller sending to pod IPs,
+# ClickHouse Cloud over TLS, secrets from AWS Secrets Manager through the
+# External Secrets Operator, the cache on gp3 per-pod volumes. Label the
+# namespace elbv2.k8s.aws/pod-readiness-gate-inject=enabled first, so a rollout
+# waits for the ALB to register each new pod (docs/operations/kubernetes.md).
+#   helm install loom deploy/helm/loom -f deploy/helm/loom/values-eks.yaml \
+#     --set publicBaseUrl=https://loom.example.com --set clickhouse.host=...
+
+publicBaseUrl: https://loom.example.com
+
+clickhouse:
+  host: abc123.us-east-1.aws.clickhouse.cloud
+  port: 8443
+  secure: true
+
+# With target-type ip the ALB connects from its own subnets: name those, not the
+# VPC, or any pod in the cluster could set X-Forwarded-For.
+trustedProxies: "10.0.0.0/24,10.0.1.0/24,10.0.2.0/24"
+
+# Past the ALB's 300 s idle timeout below.
+keepAliveSeconds: 310
+
+embedding:
+  model: text-embedding-3-large
+  dim: 3072
+
+env:
+  LOOM_IDENTITY_PROVIDER: trust-network
+  LOOM_PLATFORM_ADMINS: alice
+  LOOM_REQUIRE_REAL_PROVIDERS: "true"
+
+secrets:
+  # An ExternalSecret (below in docs/operations/kubernetes.md) creates it with
+  # LOOM_JWT_SECRET, LOOM_CH_PASSWORD and OPENAI_API_KEY.
+  existingSecret: loom-secrets
+
+serviceAccount:
+  annotations:
+    # IRSA, for Bedrock or S3 backups. With EKS Pod Identity bind the role to
+    # this service account instead and drop the annotation.
+    eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/loom
+
+ingress:
+  enabled: true
+  className: alb
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:123456789012:certificate/example
+    alb.ingress.kubernetes.io/healthcheck-path: /v1/health/ready
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: "5"
+    # Shorter than the interval, as the ALB requires.
+    alb.ingress.kubernetes.io/healthcheck-timeout-seconds: "3"
+    alb.ingress.kubernetes.io/healthy-threshold-count: "2"
+    alb.ingress.kubernetes.io/unhealthy-threshold-count: "2"
+    # MCP streams and long code.* calls.
+    alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=300
+    # readyDelaySeconds + gracefulSeconds: the ALB lets a stopping pod finish
+    # every request it still holds.
+    alb.ingress.kubernetes.io/target-group-attributes: deregistration_delay.timeout_seconds=50
+  hosts:
+    - host: loom.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+
+shutdown:
+  # The controller's deregistration plus the ALB's propagation, before the port closes.
+  readyDelaySeconds: 20
+
+topologySpread:
+  # Three replicas, one per zone; schedule anyway if a zone is down.
+  zoneSkew: 1
+  whenUnsatisfiable: ScheduleAnyway
+
+cache:
+  volume: ephemeral
+  ephemeral:
+    storageClassName: gp3
+    # A gp3 class with volumeBindingMode WaitForFirstConsumer, so each volume is
+    # made in its pod's zone. Full bare clones of every indexed repository plus
+    # the Go module cache.
+    size: 50Gi
+
+workers:
+  enabled: true
+  cache:
+    ephemeral:
+      # Mirrors, a checkout and build tree per compiler tier, the Go module
+      # cache: about 30 GiB per ClickHouse-sized C++ entry on top of its mirror.
+      size: 200Gi
+
+networkPolicy:
+  enabled: true
+  # The ALB's subnets.
+  ingressFrom:
+    - ipBlock: { cidr: 10.0.0.0/24 }
+    - ipBlock: { cidr: 10.0.1.0/24 }
+    - ipBlock: { cidr: 10.0.2.0/24 }
+
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1

@@ -55,7 +55,10 @@ itself with that snapshot at boot and on every heartbeat. A different root
 secret (its tokens and stored credentials would not open elsewhere) or a
 different MUST_MATCH value (its vectors would be in another space) is drift:
 the process is not ready, so the load balancer sends it nothing, and
-`/v1/health` reports the `config_drift` problem with what differs. The values
+`/v1/health` reports the `config_drift` problem with what differs. Not-ready
+only stops new connections, so the process also answers every API, MCP and
+sign-in call with `503 CONFIG_DRIFT` and closes the connection: a client's
+retry lands on a replica that agrees. The values
 compared are the env's: a model switch from the dashboard is the deployment's
 (every replica reads it from ClickHouse), so it is no drift, and a replica
 started with the same env after it is ready.

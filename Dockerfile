@@ -104,6 +104,31 @@ COPY scripts/install-code-toolchains.sh /tmp/install-code-toolchains.sh
 RUN LOOM_CODE_TOOLCHAIN_PREFIX=/usr/local/node sh /tmp/install-code-toolchains.sh \
     && npm cache clean --force
 
+# The C++ compiler tier (code_scip_delta, code_scip_full). scip-clang ships an
+# x86_64 Linux binary only, so the image carries it on amd64; elsewhere point
+# LOOM_CODE_SCIP_CLANG_PATH at your own build. The keyring holds the pinned LLVM
+# signing key alone: the runtime stage installs clang, lld and the llvm tools a
+# repository's CMake configure looks for (it writes the compile_commands.json
+# scip-clang reads).
+FROM python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1 AS cpp-builder
+ARG TARGETARCH
+ARG SCIP_CLANG_VERSION=v0.4.0
+ARG SCIP_CLANG_SHA256_AMD64=06fd18c576f979a726c651594644ec4a35db4f471f2160b3f72eb89fa6001784
+ARG LLVM_SIGNER_FPR=6084F3CF814B57C1CF12EFD515CF4D18AF4F7421
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /out/bin \
+    && export GNUPGHOME="$(mktemp -d)" \
+    && curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --batch --import \
+    && gpg --batch --export "${LLVM_SIGNER_FPR}" >/out/llvm.gpg \
+    && [ "$(gpg --show-keys --with-colons /out/llvm.gpg | grep -c '^pub:')" = 1 ] \
+    && gpg --show-keys --with-colons /out/llvm.gpg | grep -q "^fpr:::::::::${LLVM_SIGNER_FPR}:" \
+    && if [ "${TARGETARCH:-amd64}" = amd64 ]; then \
+         curl -fsSL "https://github.com/sourcegraph/scip-clang/releases/download/${SCIP_CLANG_VERSION}/scip-clang-x86_64-linux" -o /out/bin/scip-clang \
+         && printf '%s  /out/bin/scip-clang\n' "${SCIP_CLANG_SHA256_AMD64}" | sha256sum -c \
+         && chmod 0755 /out/bin/scip-clang; \
+       fi
+
 FROM python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
 # git: the code_ingest worker and async code.refresh maintain the bare
 # repo mirror (fetch + cat-file) by shelling out to git. Mounted repos are
@@ -113,12 +138,24 @@ FROM python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0
 # the compiler tiers run inside it). It needs user namespaces, which Docker's
 # default seccomp profile blocks: see "Repository-job sandbox" in
 # docs/operations/code-index-operations.md for the container options.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# clang 21, lld, the llvm tools, cmake and ninja: the C++ tier's CMake configure
+# (plain http: apt checks the signature against the pinned key).
+COPY --from=cpp-builder /out/llvm.gpg /usr/share/keyrings/llvm.gpg
+RUN echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] http://apt.llvm.org/trixie/ llvm-toolchain-trixie-21 main" \
+      >/etc/apt/sources.list.d/llvm.list \
+    && apt-get update && apt-get install -y --no-install-recommends \
     bubblewrap \
     ca-certificates \
+    clang-21 \
+    cmake \
     git \
+    lld-21 \
+    llvm-21 \
+    ninja-build \
+    xz-utils \
     && rm -rf /var/lib/apt/lists/* \
     && git config --system safe.directory '*'
+COPY --from=cpp-builder /out/bin/ /usr/local/bin/
 WORKDIR /app
 # Deployed commit, stamped in at build time and surfaced in /v1/health. Placed
 # after the dependency layers so re-stamping a new commit doesn't bust the

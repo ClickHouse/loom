@@ -1,0 +1,23 @@
+Loom {{ .Chart.AppVersion }}: {{ if .Values.autoscaling.enabled }}{{ .Values.autoscaling.minReplicas }}-{{ .Values.autoscaling.maxReplicas }}{{ else }}{{ .Values.replicaCount }}{{ end }} replicas over {{ include "loom.chHost" . }}.
+
+The first pod runs the migrations; the others wait on its lease, so the first
+install can take a few minutes. Watch:
+
+  kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "loom.fullname" . }}
+
+Then open {{ .Values.publicBaseUrl }} or, without an ingress:
+
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "loom.fullname" . }} 7777:{{ .Values.service.port }}
+
+One pod at a time runs the background workers; the holder logs one of:
+
+  kubectl -n {{ .Release.Namespace }} logs -l app.kubernetes.io/instance={{ .Release.Name }} --tail=-1 | grep -E "WorkerSupervisor: starting|supervisor lease: acquired"
+{{- if .Values.devClickhouse.enabled }}
+
+devClickhouse is on: one ClickHouse pod and one volume. Not for production.
+{{- end }}
+{{- if not .Values.sandbox.required }}
+
+sandbox.required is off: the operator's repositories' build code runs unsandboxed
+in the pod, and repositories added from the dashboard are refused.
+{{- end }}

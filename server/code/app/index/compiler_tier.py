@@ -62,6 +62,7 @@ async def run_tier[R: TierResult](
     *,
     entry_locked: bool = False,
     runs_repo_code: bool = False,
+    gc_checkout: bool = False,
     extras: Callable[[R], dict[str, Any]] | None = None,
 ) -> R:
     """One pass of a compiler tier over every configured entry it owns.
@@ -73,7 +74,10 @@ async def run_tier[R: TierResult](
     the checkout makes the entry a skip, not an error. `runs_repo_code` marks a tier
     that executes the repository's own build (C++ CMake configure): a self-registered
     entry gets it only inside the sandbox. Without the sandbox a self-registered
-    entry with a network remote gets no tier at all (`unsandboxed_skip`)."""
+    entry with a network remote gets no tier at all (`unsandboxed_skip`). With
+    `gc_checkout` each entry's checkout is repacked when due (`gc_if_due`) after its
+    work, under the entry lock where the tier takes it; only this tier's worker moves
+    that tree."""
     from server.code.domain.index.repos import configured_repos
     from server.code.store.index import CodeRepo
 
@@ -83,9 +87,11 @@ async def run_tier[R: TierResult](
             await run_repo(repo, cfg, result)
         except BaseUnknown as e:
             await restart_full(repo, cfg, watermark, e, result.errors)
+        if gc_checkout:
+            await _gc_checkout(cfg, producer)
 
     # Recorded so /v1/admin/workers.status shows last_run_at / outcome and a
-    # stalled tier is diagnosable without the cron log.
+    # stalled tier is diagnosable.
     with record_pass(worker) as rec:
         repo = CodeRepo()
         for cfg in configured_repos():
@@ -114,6 +120,16 @@ async def run_tier[R: TierResult](
         log_pass_errors(logger, worker, result.errors)
         rec.outcome = tier_outcome(result, **(extras(result) if extras else {}))
     return result
+
+
+async def _gc_checkout(cfg: RepoConfig, producer: str) -> None:
+    import asyncio
+
+    from server.code.app.index.mirrors import gc_if_due
+
+    git_dir = Path(checkout_for(cfg, producer)) / ".git"
+    if await asyncio.to_thread(git_dir.is_dir):
+        await gc_if_due(str(git_dir))
 
 
 UNSANDBOXED_SKIP = "self-registered repository, no build tier without the sandbox"
@@ -185,11 +201,10 @@ def resolve_checkout(cfg: RepoConfig, producer: str) -> tuple[Path, Path, str | 
     bare = Path(cfg.git_dir)
     if not bare.exists():
         return checkout, bare, f"bare clone missing at {bare}"
-    if not checkout.exists() and (cfg.source == "registry" or producer != "clang"):
-        # The checkout follows the lease: a new leader (or a Repositories-page entry)
-        # starts from an empty repository, and the tier fetches the target from the mirror.
-        # An operator's scip-clang entry needs its configured build tree, so a missing
-        # one is reported instead.
+    if not checkout.exists():
+        # The checkout follows the lease: a new leader (or a new pod) starts from an
+        # empty repository, and the tier fetches the target from the mirror. The C++
+        # harness configures its build tree on the first run.
         from server.code.app.index.gitrepo import auth_env
 
         init = subprocess.run(
@@ -319,7 +334,8 @@ async def git(
     while True:
         try:
             done = await run_job(
-                ["git", "-C", str(cwd), *args],
+                # never a repack inside a fetch: the tier's own gc does it (`gc_checkout`)
+                ["git", "-C", str(cwd), "-c", "gc.auto=0", "-c", "maintenance.auto=false", *args],
                 env=auth_env(remote=str(local_remote or "")),
                 timeout_s=timeout_s,
                 writable=[cwd],

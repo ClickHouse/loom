@@ -206,16 +206,16 @@ Open pull requests are not indexed; the working tree stays the client's own.
 The parser tier answers from tree-sitter. Where a compiler-grade (SCIP) index exists, its
 symbols and references win. Each language has a worker that indexes the commits between
 its own watermark and the branch head in the entry's mirror (fetched by `code_ingest`)
-and applies the delta in-process; the C/C++ tier can instead run from the
-[host cron](#host-cron). A compiler tier does not wait for the parser tier's `git_head`;
-only an entry's first index does.
+and applies the delta in-process, on whichever process holds the workers lease. A
+compiler tier does not wait for the parser tier's `git_head`; only an entry's first
+index does.
 
-| Language   | `scip_producer` | Worker flag                       | Host needs                                                                                                           |
-| ---------- | --------------- | --------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| C / C++    | `clang`         | `LOOM_CODE_SCIP_DELTA_ENABLED`    | a configured build tree at `LOOM_CODE_SCIP_CHECKOUT_DIR` (CMake configure done once) and `LOOM_CODE_SCIP_CLANG_PATH` |
-| TypeScript | `typescript`    | `LOOM_CODE_SCIP_TS_DELTA_ENABLED` | Node and the pinned indexer/package managers (included in the image); dependencies are prepared automatically        |
-| Python     | `python`        | `LOOM_CODE_SCIP_PY_DELTA_ENABLED` | scip-python (in the image)                                                                                           |
-| Go         | `go`            | `LOOM_CODE_SCIP_GO_DELTA_ENABLED` | Go and scip-go (in the image)                                                                                        |
+| Language   | `scip_producer` | Worker flag                                                   | Host needs                                                                                                          |
+| ---------- | --------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| C / C++    | `clang`         | `LOOM_CODE_SCIP_DELTA_ENABLED`, `LOOM_CODE_SCIP_FULL_ENABLED` | clang 21, CMake and ninja (in the image) and scip-clang (in the amd64 image; elsewhere `LOOM_CODE_SCIP_CLANG_PATH`) |
+| TypeScript | `typescript`    | `LOOM_CODE_SCIP_TS_DELTA_ENABLED`                             | Node and the pinned indexer/package managers (included in the image); dependencies are prepared automatically       |
+| Python     | `python`        | `LOOM_CODE_SCIP_PY_DELTA_ENABLED`                             | scip-python (in the image)                                                                                          |
+| Go         | `go`            | `LOOM_CODE_SCIP_GO_DELTA_ENABLED`                             | Go and scip-go (in the image)                                                                                       |
 
 An entry that names no `scip_producer` gets every tier whose build file its tree
 carries: `go.mod` (at any depth) for Go; `tsconfig.json`, `jsconfig.json` or
@@ -227,28 +227,46 @@ tooling; `scip_extra_producers` adds tiers beside a named one. Each tier works i
 tree: the named producer (C/C++ when the entry names none) in `scip_checkout_dir`, every
 other one in `<scip_checkout_dir>.<producer>`.
 
-All four workers are enabled by default. The Docker image includes the Python,
-TypeScript, and Go indexers. Their workers create a missing working tree as an empty
-repository and fetch each commit into it from the entry's mirror; the C/C++ tier of an
-operator's entry needs the configured build tree instead, and Loom never creates it. A worker whose project
-prerequisites are absent records a skip in `workers.status`; the Tree-sitter tier
-remains available. TypeScript projects have their dependencies installed automatically
-in their checkout. C/C++ projects need a compilation database and scip-clang (upstream
-publishes Linux binaries only for x86_64).
-The C/C++ tier is a dedicated-host option: scip-clang, clang, CMake and ninja
-are not in the image (about 0.5 GB more per replica, for a tier whose full index of a
-large project needs its full build tree and tens of GB of memory). Run it from the
-[host cron](#host-cron) on one host with the toolchain and the configured build tree.
-The other tiers' working trees are created on whichever host holds the worker lease.
+All the workers are enabled by default, and the Docker image carries every indexer:
+scip-python, scip-typescript, scip-go, and for C/C++ clang 21, lld, CMake, ninja and
+scip-clang. Upstream builds scip-clang for x86_64 Linux only, so the arm64 image has
+the rest of the C/C++ toolchain but no scip-clang: point `LOOM_CODE_SCIP_CLANG_PATH` at
+your own build, or the C/C++ tier records `scip-clang missing` as a skip. Each worker
+creates a missing working tree as an empty repository and fetches each commit into it
+from the entry's mirror, so a new leader starts from nothing. The C/C++ harness runs
+the repository's CMake configure (compile database only, no build) on the first run in
+a tree. A worker whose project prerequisites are absent records a skip in
+`workers.status`; the Tree-sitter tier remains available. TypeScript projects have
+their dependencies installed automatically in their checkout.
+
+A large C++ tree is the heavy case: a ClickHouse-sized checkout with its submodules
+and build tree is about 30 GB beside the mirror, and scip-clang holds a translation
+unit's AST per job (a few GB each), so `LOOM_CODE_SCIP_CLANG_JOBS` should fit the
+memory the workers process has. The full index of such a tree takes about an hour.
 
 - **C/C++ delta cap.** The worker indexes changed translation units, including those
   that include a changed header, up to `LOOM_CODE_SCIP_DELTA_MAX_TUS` (200); above the
-  cap it indexes only the changed `.cpp` files. `loom code scip-full` re-indexes
-  everything and applies it (`--keep-delta` saves the delta so an interrupted apply can
-  be re-run with `--apply-delta`); schedule it weekly to heal capped passes and seed
-  entries the delta reports as "watermarks not seeded". It runs in the CLI process, not
-  the server. `loom code scip-delta` runs one delta pass for a host cron instead of the
-  worker and prints a `RESULT:` line.
+  cap it indexes only the changed `.cpp` files.
+- **C/C++ full index.** `code_scip_full` re-indexes one entry per pass: an entry whose
+  `scip_commit` is not seeded yet (the delta skips it with "watermarks not seeded"), and
+  every entry once its last applied full run is `LOOM_CODE_SCIP_FULL_EVERY_HOURS` (168)
+  old, which heals capped deltas. A run that fails is retried 6 hours after it failed,
+  and one killed with its pod (a rollout) 6 hours after it started. A
+  base-unknown delta clears `scip_commit`, so the entry gets a full index next. The pass
+  runs under the entry lock with `LOOM_CODE_SCIP_FULL_TIMEOUT_SECONDS` (8 hours) for
+  the harness and six more for the checkout move, the apply and the repack.
+  `loom code scip-full` runs the same index by hand (`--keep-delta` saves the delta so an
+  interrupted apply can be re-run with `--apply-delta`), and `loom code scip-delta` one
+  delta pass, which prints a `RESULT:` line.
+- **SQL ↔ C++ crossref.** `code_crossref` rebuilds `code_test_map`'s content-reference
+  rows (test queries to the files that register the functions and settings they use)
+  for each C/C++ entry whose `git_head` moved since its last run. It reads the parser
+  tier's chunks only.
+- **Checkout housekeeping.** The full C/C++ pass (under the entry lock) and the
+  Python, TypeScript and Go passes repack their entry's checkout with
+  `git gc --no-prune` every `LOOM_CODE_MIRROR_GC_INTERVAL_H`, under the same rules as
+  the mirrors (below). Every git command a tier runs in a checkout has auto-gc and
+  background maintenance off, so no fetch starts a repack.
 - **Entry locks.** A full pass and a delta never work on the same entry at once: each
   takes the entry's lock file in `LOOM_CODE_SCIP_LOCK_DIR` (`var/cron/locks`),
   `scip.<org>.<namespace>.lock` with both names percent-encoded
@@ -262,7 +280,7 @@ The other tiers' working trees are created on whichever host holds the worker le
   running on the host's file alone. A holder counts its key lost after 60 s without a
   renewal (a pause included), before another host can take it, and writes no further
   index row or watermark: every such write checks the key first, and the pass ends with
-  `EntryLockLost`. The cron's crossref and Python steps run under
+  `EntryLockLost`. A manual harness run goes under
   `loom code entry-lock --org ORG --namespace NS -- <command>`, which takes both locks,
   exits 75 when another pass holds the entry, and kills the command (exit 3) if the key
   is lost. It hands the command the key's holder (`LOOM_ENTRY_LEASE_HOLDER`), which the
@@ -525,55 +543,14 @@ Each Go entry has its own module cache under `LOOM_CODE_SCIP_GO_MODCACHE`
 (`<root>/<org>/<namespace>`): `go` does not re-check the sums of modules already in its
 cache, so a cache one repository's job wrote is never another's.
 
-### Host cron
-
-`deploy/cron/scip-delta.sh` and `deploy/cron/scip-full.sh` are the host-side schedules.
-They run on the Loom host from the loom root with its `.venv`
-(`.venv/bin/python -m server.cli code …`), not in a container.
-
-| Script          | Schedule             | Runs                                                                                           | Step timeouts (env)                                                                       |
-| --------------- | -------------------- | ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `scip-delta.sh` | every 30 minutes     | the C++ delta for every entry, then per entry the SQL/shell → C++ crossref and the Python tier | `SCIP_DELTA_CPP_TIMEOUT` 3h, `SCIP_DELTA_CROSSREF_TIMEOUT` 1h, `SCIP_DELTA_PY_TIMEOUT` 2h |
-| `scip-full.sh`  | weekly, under `nice` | `loom code scip-full` for every entry, one at a time                                           | `SCIP_FULL_ENTRY_TIMEOUT` 8h                                                              |
-
-- Each script holds its own pass lock (`scip-delta.lock`, `scip-full.lock`); the entry
-  locks keep the two apart, so a long full pass holds back only its current entry.
-- `scip-delta.sh` reads a writer token for the Python step from
-  `var/cron/loom_writer_token.json`; without it that step logs `reason=no-writer-token`.
-  `scip-full.sh` needs no token.
-- Logs go to `var/cron/scip-delta.log` and `var/cron/scip-full.log`. A timed-out step
-  exits 124 and frees its lock. Every step ends with one line:
-
-```text
-STEP <step> ns=<namespace> exit=<code> seconds=<n> [reason=<why>]
-```
-
-`<step>` is `scip-delta`, `crossref`, `python-scip`, `entry-lock` or `scip-full`;
-`grep '^STEP' var/cron/scip-delta.log` lists the outcomes. Both scripts list their
-entries with `loom code entries` (org, namespace, checkout, lock file), so they name no
-server module. Install from the loom root:
-
-```bash
-install -m 755 deploy/cron/scip-delta.sh deploy/cron/scip-full.sh deploy/cron/repo-gc.sh var/cron/
-# crontab -e
-*/30 * * * * <loom root>/var/cron/scip-delta.sh
-0 3 * * 0    <loom root>/var/cron/scip-full.sh
-0 4 * * 6    <loom root>/var/cron/repo-gc.sh
-```
+### Mirror housekeeping
 
 Each serving process runs `git gc --no-prune` on its host's mirrors every
 `LOOM_CODE_MIRROR_GC_INTERVAL_H` (low CPU and IO priority, only with room for a second
 copy plus `LOOM_CODE_MIRROR_GC_MARGIN_GB`, 5 GB by default; without it the gc waits
 another interval and logs a warning), and sweeps `LOOM_CODE_REPOS_ROOT` of the mirrors,
 `checkout-*` trees and mirror lock files no active entry names, so a removed repository leaves
-every host, not only the one `code.repo.remove` reached. `repo-gc.sh` remains for a
-host with operator checkouts the scip passes use.
-
-`repo-gc.sh` owns git housekeeping for `var/code_repos`: it turns git's auto-gc off in every
-repository (a repack of a large checkout writes a temporary pack as big as the repository,
-which can fill the host disk), then repacks each one at idle priority when the disk has room
-for it (its git directory's size plus a 50 GB margin), under the entry lock for a scip
-checkout. `grep '^STEP' var/cron/repo-gc.log` lists what it did; `reason=low-disk` means a repository was left unpacked this week. The
+every host, not only the one `code.repo.remove` reached. The
 `loom.host.disk.free_bytes` / `loom.host.disk.total_bytes` gauges are the disk alarm's input.
 
 ## Measured coverage
@@ -703,18 +680,18 @@ has a gold question set; it is never run in CI, whose embedder is fake
 
 ## Failure model
 
-| Failure                                                              | Behaviour                                                                                                                          | Recovery                                                                                                                                         |
-| -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `git fetch` fails                                                    | watermark unmoved                                                                                                                  | the next pass (supervisor backoff)                                                                                                               |
-| crash mid-commit                                                     | the commit is re-run                                                                                                               | idempotent upserts                                                                                                                               |
-| a file fails to parse                                                | file skipped, `code_files.index_error` set                                                                                         | `code.index_errors` lists them; fixed by the next change or a repair                                                                             |
-| embedding provider down                                              | chunks stored without vectors; lexical search still serves                                                                         | `code_embed_recovery`                                                                                                                            |
-| compiler-tier apply fails                                            | batch `failed` with the error                                                                                                      | `loom code scip-retry <batch_id>`                                                                                                                |
-| a compiler-tier step hangs on the host                               | the step's timeout ends it (exit 124) and frees its lock                                                                           | the next cron pass; read the `STEP` lines                                                                                                        |
-| compiler-tier window base unknown (history rewritten, pruned mirror) | every `scripts/scip_harness/` tier exits 3, never an empty delta; the Python, TypeScript and Go workers clear the tier's watermark | the next run is a full index for that tier; the C/C++ tier fails the window loudly and its full index is the host cron's (`loom code scip-full`) |
-| GitHub rate limit                                                    | the pass ends, cursor unmoved                                                                                                      | the next pass                                                                                                                                    |
-| branch force-pushed (watermark no longer an ancestor)                | watermark reset to the new head, logged                                                                                            | `loom code backfill` to re-derive                                                                                                                |
-| weekly graph stats fail                                              | last week's ranks keep serving                                                                                                     | the next weekly pass                                                                                                                             |
+| Failure                                                              | Behaviour                                                                                                                                                        | Recovery                                                                |
+| -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `git fetch` fails                                                    | watermark unmoved                                                                                                                                                | the next pass (supervisor backoff)                                      |
+| crash mid-commit                                                     | the commit is re-run                                                                                                                                             | idempotent upserts                                                      |
+| a file fails to parse                                                | file skipped, `code_files.index_error` set                                                                                                                       | `code.index_errors` lists them; fixed by the next change or a repair    |
+| embedding provider down                                              | chunks stored without vectors; lexical search still serves                                                                                                       | `code_embed_recovery`                                                   |
+| compiler-tier apply fails                                            | batch `failed` with the error                                                                                                                                    | `loom code scip-retry <batch_id>`                                       |
+| a compiler-tier pass hangs                                           | the harness's timeout ends it, and the pass deadline (that timeout plus headroom for the git steps and the apply) cancels anything else; the entry lock is freed | the next pass; `workers.status` names the timeout                       |
+| compiler-tier window base unknown (history rewritten, pruned mirror) | every `scripts/scip_harness/` tier exits 3, never an empty delta; the Python, TypeScript and Go workers clear the tier's watermark                               | the next run is a full index for that tier (`code_scip_full` for C/C++) |
+| GitHub rate limit                                                    | the pass ends, cursor unmoved                                                                                                                                    | the next pass                                                           |
+| branch force-pushed (watermark no longer an ancestor)                | watermark reset to the new head, logged                                                                                                                          | `loom code backfill` to re-derive                                       |
+| weekly graph stats fail                                              | last week's ranks keep serving                                                                                                                                   | the next weekly pass                                                    |
 
 The code index's gauges (`loom.code.index_lag_commits`, `loom.code.stale_files`,
 `loom.code.tier_lag_seconds`, `loom.code.embed_backlog`, `loom.code.files_errored`) are
