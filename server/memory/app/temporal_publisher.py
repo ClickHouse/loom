@@ -645,33 +645,48 @@ async def _plan(
             amendment = planned
             head_rows[ident] = change.row
             floor[ident] = max(floor.get(ident, 0), int(change.row.get("version") or 0))
-        payload_sha = amendment.payload_sha256()
         if amendment.empty and amendment.change_kind != "restate":
             continue
         retired = [current.pop(aid) for aid in amendment.retired]
         memory_id = str(change.row.get("memory_id") or uuid.uuid4())
         for a in amendment.added:
             current[a.assertion_id] = Served(a, memory_id, 0, _EPOCH)
-        past = change.build is None and _past_only(amendment, change.row, active, planned_at)
-        if past and _reshapes_current(active, amendment, planned_at):
-            b.refresh.append(ident)
-        restated = ""
-        if change.build is None and amendment.change_kind == "restate":
-            shown = _restated(change.row, active, planned_at, intent_for(change.row, intent))
-            restated = shown.assertion_id if shown is not None else ""
         b.planned.append(
-            _Planned(
-                ident,
-                memory_id,
-                amendment,
-                payload_sha,
-                change.row,
-                retired,
-                past,
-                restated=restated,
-            )
+            _planned(b, change, intent, amendment, active, memory_id, retired, planned_at)
         )
     return b
+
+
+def _planned(
+    b: _Batch,
+    change: _RowChange,
+    intent: WriteIntent,
+    amendment: tm.Amendment,
+    active: Sequence[tm.Assertion],
+    memory_id: str,
+    retired: list[Served],
+    now: datetime,
+) -> _Planned:
+    """One change as planned: whether it is past-only (and re-cuts the current claim,
+    so the key is refreshed after), and for a restatement the claim it names."""
+    ident = change.ident
+    past = change.build is None and _past_only(amendment, change.row, active, now)
+    if past and _reshapes_current(active, amendment, now):
+        b.refresh.append(ident)
+    restated = ""
+    if change.build is None and amendment.change_kind == "restate":
+        shown = _restated(change.row, active, now, intent_for(change.row, intent))
+        restated = shown.assertion_id if shown is not None else ""
+    return _Planned(
+        ident,
+        memory_id,
+        amendment,
+        amendment.payload_sha256(),
+        change.row,
+        retired,
+        past,
+        restated=restated,
+    )
 
 
 def _past_only(
