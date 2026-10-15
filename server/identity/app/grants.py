@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import logging
 import time
+from contextlib import nullcontext
 from datetime import UTC, datetime
 
-from server.auth.grant_claims import grant_change
+from server.auth.grant_claims import admins_change, grant_change
 from server.core.errors import GrantBusyError
 from server.identity.api.models_grants import (
     GrantsApproveInput,
@@ -143,7 +144,9 @@ async def handle_grants_create(input: GrantsCreateInput) -> GrantsCreateOutput:
     from server.auth.aliases import canonical_subject
 
     subject = await canonical_subject(input.org, input.subject)
-    async with grant_change(input.org, input.namespace, subject):
+    # Any role but admin may lower one, so it is counted against the admins.
+    admins = admins_change(input.org, input.namespace) if input.role != "admin" else nullcontext()
+    async with admins, grant_change(input.org, input.namespace, subject):
         now = await _write_grant(input, subject)
     if input.role == "admin":
         # A maintainer maintains every branch of the repository.
@@ -163,6 +166,8 @@ async def _write_grant(input: GrantsCreateInput, subject: str) -> datetime:
     """`grants.create`'s read of the current grant and its write, under the
     grant's claim."""
     existing = await _refuse_accidental_downgrade(input, subject)
+    if existing is not None and _active_admin(existing) and input.role != "admin":
+        await _refuse_last_admin(input)
     pending_role = existing.pending_role if existing is not None else None
     pending_since = existing.pending_since if existing is not None else None
     if pending_role is not None and grant_rank(input.role) >= grant_rank(str(pending_role)):
@@ -321,7 +326,10 @@ async def _revoke(input: GrantsRevokeInput, subject: str) -> tuple[GrantState, d
             await _refuse_last_admin(input)
             await maintainers.revoke_repo_maintainer(input.org, input.namespace, subject)
             fanned_out = True
-        async with grant_change(input.org, input.namespace, subject):
+        async with (
+            admins_change(input.org, input.namespace),
+            grant_change(input.org, input.namespace, subject),
+        ):
             # Read again under the claim: what was read before it may have changed.
             row = await grants_repo.find_any_grant(input.org, input.namespace, subject)
             if row is None:
@@ -339,7 +347,9 @@ def _active_admin(row: GrantState) -> bool:
     return row.role == "admin" and (row.status or "active") == "active"
 
 
-async def _refuse_last_admin(input: GrantsRevokeInput) -> None:
+async def _refuse_last_admin(input: GrantsRevokeInput | GrantsCreateInput) -> None:
+    """Refuse a change that would leave the namespace without an admin; it is
+    counted under `admins_change`."""
     if await grants_repo.count_active_admins(input.org, input.namespace) <= 1:
         from server.core.errors import PreconditionFailedError
 

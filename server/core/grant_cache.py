@@ -6,13 +6,12 @@ row there; where it holds one, the claim is capped at that grant
 read per (org, subject), every spelling of the person included, is kept for
 `grant_cache_ttl_seconds`.
 
-A grant write in this process, or a write to the accounts that tie a
-person's spellings, drops its org's entries at once (a writer knows
-the spelling it wrote, not the ones a token may carry); another process sees it
-within the TTL. A miss reads the org's grant rows, so a busy org pays one such
-read per active subject per TTL. A failed re-read serves the old entry while it is
-younger than `jwt_revocation_max_stale_seconds`, the bound a token check already
-lives with, and refuses (503) past it.
+A grant write in this process drops the entries whose read covered the
+spelling it wrote, at once; a write to the accounts that tie a person's
+spellings drops its org's. Another process sees either within the TTL. A failed
+re-read serves the old entry while it is younger than
+`jwt_revocation_max_stale_seconds`, the bound a token check already lives with,
+and refuses (503) past it.
 """
 
 from __future__ import annotations
@@ -20,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections import OrderedDict, defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from server.core.errors import BackendUnavailableError
@@ -32,9 +32,11 @@ _MAX_ENTRIES = 10_000
 @dataclass(frozen=True, slots=True)
 class GrantMap:
     """One subject's grants on one org: every namespace it has a row on, of
-    any status, and the highest live grant rank there (0 when none is live)."""
+    any status, and the highest live grant rank there (0 when none is live);
+    and the spellings the read covered."""
 
     ranks: dict[str, int]
+    spellings: frozenset[str] = frozenset()
 
     def rank(self, namespace: str) -> int | None:
         return self.ranks.get(namespace)
@@ -66,11 +68,14 @@ async def grant_map(org: str, subject: str) -> GrantMap:
     return await asyncio.shield(task)
 
 
-def invalidate(org: str) -> None:
-    """Drop every cached grant of `org`, and any read of it in flight."""
+def invalidate(org: str, subjects: Iterable[str] | None = None) -> None:
+    """Drop the cached grants of `org` whose read covered one of `subjects`
+    (every one with None), and any read of the org in flight."""
     _generation[org] += 1
-    for key in [k for k in _entries if k[0] == org]:
-        del _entries[key]
+    lowered = None if subjects is None else {s.lower() for s in subjects}
+    for key, (_at, grants) in list(_entries.items()):
+        if key[0] == org and (lowered is None or lowered & (grants.spellings | {key[1]})):
+            del _entries[key]
     for key in [k for k in _loading if k[0] == org]:
         del _loading[key]
 
@@ -116,12 +121,13 @@ async def _read(org: str, subject: str) -> GrantMap:
     and its active account's pair (`held`) set the rank there. Its deactivated
     account's pair, and the spellings a release kept (`released_aliases`, never
     the row's current owner), still tie it at rank 0 (`capping`): their rows
-    may be the revocations that cap, never a grant that admits."""
+    may be the revocations that cap, never a grant that admits. One row: the
+    namespaces' ranks, and every spelling read, for `invalidate`."""
     from server.core.ch import get_client, own_write_reads
 
     human = bool(subject) and subject != "*" and not subject.startswith("sa:")
     with own_write_reads():
-        rows = await get_client().query_all(
+        row = await get_client().query_one(
             """
             WITH (
                 SELECT (
@@ -146,13 +152,21 @@ async def _read(org: str, subject: str) -> GrantMap:
             ) AS ties,
             arrayPushFront(ties.1, {sub:String}) AS held,
             ties.2 AS capping
-            SELECT namespace,
-                   max(if({live} AND has(held, lower(subject)), {rank}, 0)) AS rank
-            FROM loom.namespace_grants FINAL
-            WHERE org = {org:String}
-              AND (has(held, lower(subject)) OR has(capping, lower(subject)))
-            GROUP BY namespace
+            SELECT groupArray((namespace, rank)) AS grants,
+                   arrayConcat(held, capping) AS spellings
+            FROM (
+                SELECT namespace,
+                       max(if({live} AND has(held, lower(subject)), {rank}, 0)) AS rank
+                FROM loom.namespace_grants FINAL
+                WHERE org = {org:String}
+                  AND (has(held, lower(subject)) OR has(capping, lower(subject)))
+                GROUP BY namespace
+            )
             """.replace("{live}", LIVE_GRANT).replace("{rank}", GRANT_RANK_SQL),
             params={"org": org, "sub": subject, "human": human},
         )
-    return GrantMap(ranks={str(r["namespace"]): int(r["rank"]) for r in rows})
+    row = row or {}
+    return GrantMap(
+        ranks={str(ns): int(rank) for ns, rank in row.get("grants") or []},
+        spellings=frozenset(str(s) for s in row.get("spellings") or [subject]),
+    )

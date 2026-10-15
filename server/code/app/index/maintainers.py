@@ -35,6 +35,7 @@ from typing import Any
 
 from server.core.datetimes import naive_utc_now
 from server.core.errors import GrantBusyError
+from server.core.grant_sql import LIVE_GRANT
 
 log = logging.getLogger(__name__)
 
@@ -114,6 +115,12 @@ _GRANT_ROW_SQL = """
 """
 
 
+_ADMINS_SQL = (
+    "SELECT count() AS n FROM loom.namespace_grants FINAL WHERE org = {org:String}"
+    " AND namespace = {ns:String} AND role = 'admin' AND " + LIVE_GRANT
+)
+
+
 def _version(row: dict[str, Any] | None) -> int | None:
     """The grant row's version: a new one on every change, where `granted_at`
     keeps whole seconds and two changes within one compare equal."""
@@ -153,9 +160,13 @@ async def _still_admin(
     client: Any, org: str, row: dict[str, Any], now: dict[str, Any] | None, seen: _Seen
 ) -> bool:
     """A revocation stands while the subject still holds the admin grant it
-    was planned against; one granted again since is newer and stays."""
+    was planned against (one granted again since is newer and stays) and is
+    not the branch's only admin, counted under its admins claim."""
     read = seen.get((row["namespace"], row["subject"]))
-    return read is not None and _live_admin(now) and _version(now) == _version(read)
+    if read is None or not _live_admin(now) or _version(now) != _version(read):
+        return False
+    admins = await client.query_one(_ADMINS_SQL, params={"org": org, "ns": row["namespace"]})
+    return int((admins or {}).get("n") or 0) > 1
 
 
 # (client, org, planned row, current row, the plan's rows) -> write it?
@@ -204,8 +215,9 @@ async def _write_subject(
     seen: _Seen,
     hold_repo: bool,
 ) -> int:
-    """`_write_under_claims` for one subject's rows."""
-    from server.auth.grant_claims import grant_change
+    """`_write_under_claims` for one subject's rows. A revocation also holds its
+    branch's admins claim, so the branch's last admin is never revoked."""
+    from server.auth.grant_claims import admins_change, grant_change
     from server.core import grant_cache
 
     rows.sort(key=lambda r: r["namespace"])
@@ -213,6 +225,8 @@ async def _write_subject(
         if hold_repo:
             await held.enter_async_context(repo_change(org, rows[0]["namespace"], subject))
         for row in rows:
+            if row.get("revoked_at") is not None:
+                await held.enter_async_context(admins_change(org, row["namespace"]))
             await held.enter_async_context(grant_change(org, row["namespace"], subject))
         wanted = []
         for row in rows:
@@ -230,7 +244,7 @@ async def _write_subject(
                     settings={"async_insert": 0, "wait_for_async_insert": 1},
                 )
             finally:
-                grant_cache.invalidate(org)
+                grant_cache.invalidate(org, [subject])
     return len(wanted)
 
 

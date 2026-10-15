@@ -508,7 +508,7 @@ async def _provision_agent(
         ],
         settings={"async_insert": 0, "wait_for_async_insert": 1},
     )
-    grant_cache.invalidate(org)
+    grant_cache.invalidate(org, [sa_subject])
     await ch.insert(
         "loom.service_accounts",
         [

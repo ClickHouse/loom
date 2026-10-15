@@ -8,7 +8,7 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
-from server.auth.grant_claims import grant_change
+from server.auth.grant_claims import admins_change, grant_change
 from server.core.ch import get_client
 from server.core.grant_sql import LIVE_GRANT
 from server.identity.api.models import (
@@ -240,7 +240,10 @@ async def handle_namespace_leave(
     member, then re-leave).
     """
     caller = _registry.resolve_subject(input.subject)
-    async with grant_change(input.org, input.namespace, caller):
+    async with (
+        admins_change(input.org, input.namespace),
+        grant_change(input.org, input.namespace, caller),
+    ):
         return await _leave(input, caller)
 
 

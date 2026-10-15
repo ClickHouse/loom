@@ -91,6 +91,10 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   of an account with a login (an email, or an agent's claim code): the login signs in as the
   owner, so it would sign the new owner in with the old person's credential. Release the
   account (`loom claim-release`) to hand it on.
+- **Security:** two changes that each remove an admin of one namespace (a revoke, a lowering,
+  `namespace.leave`, a maintainer's branch fan-out) no longer run at once: each takes the
+  namespace's admins claim and counts the admins under it, so the namespace always keeps
+  one. `grants.create` with `replace=true` now refuses (409) to lower the last admin too.
 - `grants.approve` refuses (409 `GRANT_WOULD_DOWNGRADE`) to approve a request below the
   subject's current grant; lower a grant with `grants.create replace=true`.
 - **Security:** two changes of one grant no longer interleave. An op that reads a grant

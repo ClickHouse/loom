@@ -86,9 +86,10 @@ forgotten.
 
 - The subject's rows, under every spelling the directory ties to it, are read in one
   statement per (org, subject) into a per-process cache (`server/core/grant_cache.py`) kept
-  for `grant_cache_ttl_seconds` (10 s). Every grant write drops its org's entries in this
-  process at once, a read in flight across it included; another process sees it within the
-  TTL.
+  for `grant_cache_ttl_seconds` (10 s). A grant write in this process drops at once the
+  entries whose read covered the spelling it wrote, and any read in flight; a write to the
+  accounts that tie a person's spellings drops the org's. Another process sees either within
+  the TTL.
 - A failed re-read serves the cached entry while it is younger than
   `jwt_revocation_max_stale_seconds`, the bound a token check already lives with, and
   answers a retryable 503 past it.

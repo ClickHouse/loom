@@ -458,7 +458,6 @@
 516accd07254	ALTER TABLE loom.oauth_claims DELETE WHERE claim_key = {k:String} AND holder = {me:String} SETTINGS keeper_map_strict_mode = ?
 516db52eddcc	SELECT count() AS n FROM loom.session_brief_revisions WHERE org = {org:String} AND namespace = {ns:String} AND ?
 51af520b7286	SELECT DISTINCT tier, qualified_name, symbol_id FROM loom.code_symbol_names WHERE org = {org:String} AND namespace = {ns:String} AND name IN {names:Array(String)} AND (qualified_name = {full:String} O
-52041a1cd6f0	WITH ( SELECT ( arrayFlatten(groupArrayIf(pair, own AND live)), arrayFlatten(groupArray( arrayConcat(if(own AND NOT live, pair, []), if(own, [], released_aliases)) )) ) FROM ( -- `own`: the row is the
 52448e9cfd6b	ALTER TABLE loom.memory_record_conflicts UPDATE tombstoned_at = {now:DateTime} WHERE (org = {org:String} AND tombstoned_at IS NULL AND namespace = {ns:String}) AND ({erasure_mutation_tag:String} = {er
 525d9e3b3774	SELECT count() AS n FROM loom.working_memory FINAL WHERE org = {org:String} AND user_id = {uid:String} AND tombstoned_at IS NULL
 52633b03cc41	SELECT namespace, memory_key, countIf(status IN (?, ?)) AS served_rows, countIf(status = ?) AS duplicate_rows, argMaxIf(duplicate_of, version, status = ?) AS canonical_id FROM loom.memory FINAL WHERE 
@@ -481,6 +480,7 @@
 54e9937abaf0	SELECT count() AS n FROM loom.conversations WHERE org = {org:String} AND namespace = {ns:String}
 54eaff0a1970	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, cosineDistance(e.embedding, {q:Array(Float32)}) AS dist
 55833cd394e4	SELECT text, tokens_in, tokens_out FROM loom.llm_response_cache WHERE model = {model:String} AND key = {key:String} ORDER BY created_at DESC LIMIT ?
+55a62331cd18	WITH ( SELECT ( arrayFlatten(groupArrayIf(pair, own AND live)), arrayFlatten(groupArray( arrayConcat(if(own AND NOT live, pair, []), if(own, [], released_aliases)) )) ) FROM ( -- `own`: the row is the
 55b4e25fe476	ALTER TABLE loom.memory DELETE WHERE (org = {org:String} AND user_id = {uid:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
 5600bfc98f52	ALTER TABLE loom.session_briefs DELETE WHERE (org = {org:String} AND namespace = {ns:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
 56154dfb939e	SELECT count() AS n FROM loom.memory_records FINAL WHERE org = {org:String} AND tombstoned_at IS NULL AND namespace IN {ns:Array(String)}

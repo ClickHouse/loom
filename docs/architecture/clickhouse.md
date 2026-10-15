@@ -419,7 +419,9 @@ with `purge=true` and runner state.
   well before its claim may be taken over at 60 s. A repository maintainer's change across
   branches (a revoke's fan-out, a sync's mirrors) first holds one claim per (repository,
   subject), `repo:<owner/name>`, then its branches' claims in namespace order, and writes
-  the branches in one insert inside that bound.
+  the branches in one insert inside that bound. A change that may remove an admin first
+  holds the namespace's admins claim (the key with an empty subject) and counts the
+  admins under it.
 
 **Classification for erasure.** `server/erasure/store/census.py` puts every table in
 `schemas/schema.sql` in exactly one list, and `tests/unit/test_every_table_is_classified.py`

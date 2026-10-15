@@ -218,3 +218,54 @@ def test_a_cancelled_wait_for_a_local_lock_leaves_nothing_behind() -> None:
 
     asyncio.run(_run())
     assert len(locks) == 0
+
+
+def test_two_admins_revoked_at_once_leave_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Two admins, each revoked by a concurrent call: the admins claim makes the
+    # second count the first's revoke, so the namespace keeps an admin.
+    from server.core.errors import PreconditionFailedError
+    from server.identity.api.models_grants import GrantsRevokeInput
+
+    revoked: set[str] = set()
+
+    async def _find(org: str, ns: str, subject: str, **_k: Any) -> GrantState | None:
+        if subject in revoked:
+            return None
+        return GrantState.from_row({"role": "admin", "status": "active", "granted_by": "x"})
+
+    async def _count(*_a: Any, **_k: Any) -> int:
+        n = 2 - len(revoked)  # what the read saw; its reply comes later
+        await asyncio.sleep(0.01)
+        return n
+
+    async def _insert(row: dict[str, Any], **_k: Any) -> None:
+        revoked.add(row["subject"])
+
+    async def _same(org: str, subject: str, **_k: Any) -> str:
+        return subject
+
+    async def _nothing(*_a: Any, **_k: Any) -> None:
+        return None
+
+    monkeypatch.setattr(grants_repo, "find_any_grant", _find)
+    monkeypatch.setattr(grants_repo, "count_active_admins", _count)
+    monkeypatch.setattr(grants_repo, "insert_row", _insert)
+    monkeypatch.setattr("server.auth.aliases.canonical_subject", _same)
+    monkeypatch.setattr(
+        "server.identity.app.token_grants.cascade_revoke_to_created_tokens", _nothing
+    )
+
+    async def _revoke(subject: str) -> str:
+        try:
+            await grants_app.handle_grants_revoke(
+                GrantsRevokeInput(org="acme", namespace="team", subject=subject)
+            )
+            return "revoked"
+        except PreconditionFailedError:
+            return "refused"
+
+    async def _both() -> list[str]:
+        return list(await asyncio.gather(_revoke("alice"), _revoke("bob")))
+
+    assert sorted(asyncio.run(_both())) == ["refused", "revoked"]
+    assert len(revoked) == 1

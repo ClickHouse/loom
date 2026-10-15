@@ -35,6 +35,7 @@ class _CH:
     def __init__(self) -> None:
         self.grants: dict[str, tuple[str, str, bool]] = {}
         self.revoked: dict[str, dict[str, Any]] = {}
+        self.spellings: list[str] = []
         self.grant_reads = 0
         self.exact_reads = 0
 
@@ -46,12 +47,13 @@ class _CH:
         if "revoked_tokens" in sql:
             keys = (params or {}).get("keys")
             return [r for k, r in self.revoked.items() if keys is None or k in keys]
-        if "GROUP BY namespace" in sql:
-            self.grant_reads += 1
-            return [{"namespace": ns, "rank": grant_rank(self._live(ns))} for ns in self.grants]
         return []
 
     async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> dict | None:
+        if "groupArray((namespace, rank))" in sql:  # the cap's grant read
+            self.grant_reads += 1
+            grants = [(ns, grant_rank(self._live(ns))) for ns in self.grants]
+            return {"grants": grants, "spellings": self.spellings or [(params or {})["sub"]]}
         # The exact-subject grant read, which misses a grant held under another case.
         self.exact_reads += 1
         return None
@@ -166,13 +168,13 @@ def test_the_grant_read_folds_every_spelling_of_the_subject(
     ch: _CH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     seen: list[tuple[str, dict[str, Any]]] = []
-    read = ch.query_all
+    read = ch.query_one
 
-    async def _recording(sql: str, params: dict[str, Any] | None = None) -> list[dict]:
+    async def _recording(sql: str, params: dict[str, Any] | None = None) -> dict | None:
         seen.append((sql, params or {}))
         return await read(sql, params)
 
-    monkeypatch.setattr(ch, "query_all", _recording)
+    monkeypatch.setattr(ch, "query_one", _recording)
     asyncio.run(grant_cache.grant_map(ORG, "Alice@X.io"))
     ((sql, params),) = seen
     assert "loom.namespaces" in sql and "LIMIT" not in sql, "every spelling, none cut off"
@@ -208,7 +210,7 @@ def test_a_failed_grant_read_serves_the_last_answer_then_refuses(
     async def _down(*_a: Any, **_k: Any) -> list[dict]:
         raise RuntimeError("replica away")
 
-    monkeypatch.setattr(ch, "query_all", _down)
+    monkeypatch.setattr(ch, "query_one", _down)
     assert asyncio.run(grant_cache.grant_map(ORG, "alice")).rank("team") == 1, "stale, kept"
     monkeypatch.setattr(settings, "jwt_revocation_max_stale_seconds", 0.0)
     with pytest.raises(BackendUnavailableError):
@@ -227,15 +229,15 @@ def _slow_reads(ch: _CH, monkeypatch: pytest.MonkeyPatch) -> tuple[asyncio.Event
     """Grant reads that set the first event once they have read, and answer
     what they read only once the second is set."""
     read_done, go = asyncio.Event(), asyncio.Event()
-    read = ch.query_all
+    read = ch.query_one
 
-    async def _slow(sql: str, params: dict[str, Any] | None = None) -> list[dict]:
-        rows = await read(sql, params)
+    async def _slow(sql: str, params: dict[str, Any] | None = None) -> dict | None:
+        row = await read(sql, params)
         read_done.set()
         await go.wait()
-        return rows
+        return row
 
-    monkeypatch.setattr(ch, "query_all", _slow)
+    monkeypatch.setattr(ch, "query_one", _slow)
     return read_done, go
 
 
@@ -338,7 +340,11 @@ def test_a_stale_exact_grant_read_does_not_loosen_the_cap(
 ) -> None:
     ch.grants["team"] = ("writer", "active", True)  # revoked, as the cap reads it
 
+    read = ch.query_one
+
     async def _stale(sql: str, params: dict[str, Any] | None = None) -> dict | None:
+        if "groupArray((namespace, rank))" in sql:
+            return await read(sql, params)
         return {"role": "writer"}  # a replica that has not seen the revoke
 
     monkeypatch.setattr(ch, "query_one", _stale)
@@ -382,3 +388,17 @@ def test_a_grant_write_whose_reply_is_lost_still_drops_the_cache(ch: _CH) -> Non
     with pytest.raises(TimeoutError):
         asyncio.run(grants_repo.insert_row(revoke))
     assert not _admits(_flat("team"), "team")
+
+
+def test_a_grant_write_drops_only_the_entries_that_read_its_subject(ch: _CH) -> None:
+    ch.grants["team"] = ("writer", "active", False)
+    ch.spellings = ["alice", "alice@x.io"]
+    asyncio.run(grant_cache.grant_map(ORG, "alice"))
+    ch.spellings = ["bob"]
+    asyncio.run(grant_cache.grant_map(ORG, "bob"))
+    reads = ch.grant_reads
+    grant_cache.invalidate(ORG, ["Alice@X.io"])  # written under alice's email
+    asyncio.run(grant_cache.grant_map(ORG, "bob"))
+    assert ch.grant_reads == reads, "bob's entry is kept"
+    asyncio.run(grant_cache.grant_map(ORG, "alice"))
+    assert ch.grant_reads == reads + 1, "alice's entry covered that spelling"

@@ -14,7 +14,7 @@ import asyncio
 import json
 import time
 from collections.abc import AsyncIterator
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 
 from server.core.ch import get_client, own_write_reads, statement_timeout
 from server.core.errors import BackendUnavailableError, GrantBusyError
@@ -33,6 +33,8 @@ _STATEMENT_S = 10
 # The first wait for a claim held elsewhere, doubled up to `_POLL_MAX_S`.
 _POLL_S = 0.05
 _POLL_MAX_S = 0.8
+# The subject `admins_change` claims under: no grant row has an empty subject.
+ADMINS = ""
 # Without a Keeper: changes of one key are kept apart within this process.
 _local = KeyedLocks()
 
@@ -78,6 +80,13 @@ async def grant_change(org: str, namespace: str, subject: str) -> AsyncIterator[
             yield
     finally:
         await CLAIMS.release_shielded(ch, key, holder)
+
+
+def admins_change(org: str, namespace: str) -> AbstractAsyncContextManager[None]:
+    """Hold the namespace's set of admins. A change that may remove an admin
+    takes it before the subject's own claim and counts the admins under it, so
+    two removals at once cannot both see another admin left."""
+    return grant_change(org, namespace, ADMINS)
 
 
 def _busy(org: str, namespace: str, subject: str) -> GrantBusyError:

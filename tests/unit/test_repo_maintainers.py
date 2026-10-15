@@ -45,6 +45,9 @@ class _FakeCH:
         return [r for r in self.rows if r["namespace"] in wanted]
 
     async def query_one(self, sql: str, params: Any = None) -> dict[str, Any] | None:
+        if "count()" in sql:  # a branch's live admins
+            live = [r for r in self.rows if r["namespace"] == params["ns"] and r["role"] == "admin"]
+            return {"n": sum(r["revoked_at"] is None and r["status"] == "active" for r in live)}
         key = (params["ns"], params["sub"])
         return next((r for r in self.rows if (r["namespace"], r["subject"]) == key), None)
 
@@ -459,9 +462,9 @@ def _recording_claims(monkeypatch: pytest.MonkeyPatch, log: list[str]) -> None:
     @asynccontextmanager
     async def _recorded(org: str, ns: str, subject: str) -> Any:
         async with held(org, ns, subject):
-            log.append(f"+{ns}")
+            log.append(f"+{ns}" + ("/admins" if subject == "" else ""))
             yield
-            log.append(f"-{ns}")
+            log.append(f"-{ns}" + ("/admins" if subject == "" else ""))
 
     monkeypatch.setattr(grant_claims, "grant_change", _recorded)
     monkeypatch.setattr(grants_mod, "grant_change", _recorded)
@@ -518,7 +521,16 @@ async def test_a_revoke_holds_the_repository_claim_across_its_fan_out_and_write(
     await grants_mod.handle_grants_revoke(
         GrantsRevokeInput(org="clickhouse", namespace="code-x", subject="alice")
     )
-    assert log == ["+repo:Org/x", "fan-out", "+code-x", "write", "-code-x", "-repo:Org/x"]
+    assert log == [
+        "+repo:Org/x",
+        "fan-out",
+        "+code-x/admins",
+        "+code-x",
+        "write",
+        "-code-x",
+        "-code-x/admins",
+        "-repo:Org/x",
+    ]
 
 
 async def test_a_subject_that_cannot_be_claimed_does_not_stop_a_sync_for_the_others(
@@ -633,3 +645,21 @@ async def test_a_mirror_only_maintainer_skips_just_the_branches_with_a_row_of_th
     ch = _FakeCH([mirror, _admin("code-x-26-6", "alice", role="viewer", at=T0 - timedelta(days=1))])
     await maintainers.sync_repo_maintainers("clickhouse", "code-x", ch=ch)
     assert [r["namespace"] for r in ch.inserted] == ["code-x-26-5"]
+
+
+async def test_a_fan_out_keeps_a_branch_whose_other_admin_went_meanwhile() -> None:
+    class _BobGoes(_FakeCH):
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            planned = await super().query_all(sql, params)
+            # bob is revoked on 26-5 after the fan-out planned, before its claim.
+            self.rows = [
+                r for r in self.rows if (r["namespace"], r["subject"]) != ("code-x-26-5", "bob")
+            ]
+            self.rows.append(_admin("code-x-26-5", "bob", revoked_at=T0 + timedelta(hours=1)))
+            return planned
+
+    ch = _BobGoes(
+        [_admin(ns, s) for ns in ("code-x-26-5", "code-x-26-6") for s in ("alice", "bob")]
+    )
+    assert await maintainers.revoke_repo_maintainer("clickhouse", "code-x", "alice", ch=ch) == 1
+    assert [r["namespace"] for r in ch.inserted] == ["code-x-26-6"]
