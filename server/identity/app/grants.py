@@ -272,23 +272,23 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
     ownerless; promote a replacement first.
     """
 
-    subject, row = await _live_grant_row(input.org, input.namespace, input.subject)
-    if row is None:
-        return GrantsRevokeOutput(revoked=False)
-    async with grant_change(input.org, input.namespace, subject):
-        # Read again under the claim: what was read before it may have changed.
-        row = await grants_repo.find_any_grant(input.org, input.namespace, subject)
-        if row is None:
-            return GrantsRevokeOutput(revoked=False)
-        now = await _write_revoke(input, subject, row)
-    if row.role == "admin" and (row.status or "active") == "active":
-        # A revoked maintainer leaves every branch of the repository.
-        from server.code.app.index import maintainers
+    from server.code.app.index import maintainers
 
-        await maintainers.revoke_quietly(input.org, input.namespace, subject)
-    # The tokens this person minted lose their own grants here. Best-effort like the
-    # maintainer fan-out above: the person's revoke has landed; a failed cascade is logged,
-    # never a 500.
+    subject, row = await _live_grant_row(input.org, input.namespace, input.subject)
+    now: datetime | None = None
+    if row is not None:
+        async with grant_change(input.org, input.namespace, subject):
+            # Read again under the claim: what was read before it may have changed.
+            row = await grants_repo.find_any_grant(input.org, input.namespace, subject)
+            if row is not None:
+                now = await _write_revoke(input, subject, row)
+    if row is None or now is None:
+        # A retry of a revoke whose branch fan-out failed finishes it.
+        if await grants_repo.is_revoked_admin(input.org, input.namespace, subject):
+            await maintainers.revoke_repo_maintainer(input.org, input.namespace, subject)
+        return GrantsRevokeOutput(revoked=False)
+    # The tokens this person minted lose their own grants here. Best-effort: the
+    # person's revoke has landed; a failed cascade is logged, never a 500.
     from server.identity.app import token_grants
 
     try:
@@ -301,6 +301,10 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
             subject,
             e,
         )
+    if row.role == "admin" and (row.status or "active") == "active":
+        # A revoked maintainer leaves every branch of the repository; a failure here
+        # answers an error, and a retry of the revoke finishes the fan-out.
+        await maintainers.revoke_repo_maintainer(input.org, input.namespace, subject)
     return GrantsRevokeOutput(revoked=True, revoked_at=now)
 
 

@@ -176,6 +176,7 @@ def test_the_grant_read_folds_every_spelling_of_the_subject(
     asyncio.run(grant_cache.grant_map(ORG, "Alice@X.io"))
     ((sql, params),) = seen
     assert "loom.namespaces" in sql and "LIMIT" not in sql, "every spelling, none cut off"
+    assert "ifNull(active" not in sql, "a deactivated account still ties its spellings"
     assert params["sub"] == "alice@x.io" and params["human"] is True
 
 

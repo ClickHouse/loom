@@ -11,10 +11,11 @@ import uuid
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, cast
 
-from server.auth.authz import live_claims
+from server.auth.authz import claim_cap, live_claims
 from server.auth.personal_namespace import derive_personal_slug
 from server.core.naming import slugify
 from server.identity.app import caller_defaults
+from server.operations.base import grant_rank
 from server.transport.mcp_config import _DEFAULT_MCP_AGENT, _MCP_SESSION_AGENT_CAP
 
 if TYPE_CHECKING:
@@ -280,8 +281,13 @@ async def _claimed_home_default(auth_info: Any, org: str, claimed: list[str], ch
             sa = await sa_creator(org, owner, ch=ch)
             owner = sa.subject if sa is not None else owner
         owner_default = await caller_defaults.saved_default(org, owner, ch=ch)
+        # A claim capped below writer there is not a write home.
+        caps = {ns: await claim_cap(auth_info, org, ns) for ns in claimed}
 
         def _can_write(ns: str) -> bool:
+            cap = caps.get(ns)
+            if cap is not None and cap < grant_rank("writer"):
+                return False
             if _scoped(auth_info):  # a scoped viewer claim is not writable
                 return token_can_write(auth_info, org, ns)
             try:

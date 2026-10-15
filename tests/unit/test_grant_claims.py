@@ -37,6 +37,36 @@ def test_without_a_keeper_two_changes_of_one_grant_run_one_after_the_other() -> 
     assert len(grant_claims._local) == 0, "the last change out drops the key's lock"
 
 
+def test_reads_under_a_claim_see_the_last_holder_s_write() -> None:
+    from server.core.ch import sequential_reads_active
+
+    async def _read() -> bool:
+        async with grant_claims.grant_change("acme", "team", "alice"):
+            return sequential_reads_active()
+
+    assert asyncio.run(_read())
+
+
+def test_a_change_that_outruns_its_bound_is_cut_off_and_released(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    released: list[str] = []
+
+    async def _held(ch: Any, key: str) -> tuple[Claim, str]:
+        return Claim.HELD, "me"
+
+    async def _release(ch: Any, key: str, holder: str) -> None:
+        released.append(holder)
+
+    monkeypatch.setattr(grant_claims.CLAIMS, "claim", _held)
+    monkeypatch.setattr(grant_claims.CLAIMS, "release_shielded", _release)
+    monkeypatch.setattr(grant_claims, "CHANGE_S", 0.05)
+    log: list[str] = []
+    with pytest.raises(BackendUnavailableError):
+        asyncio.run(_change(log, "slow", ("acme", "team", "alice"), 1.0))
+    assert log == ["slow in"] and released == ["me"], "no write after the bound"
+
+
 def test_changes_of_different_grants_do_not_wait_on_each_other() -> None:
     log: list[str] = []
 

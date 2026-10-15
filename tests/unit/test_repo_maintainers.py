@@ -185,7 +185,7 @@ def _handler_env(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(grants_repo, "insert_row", _insert)
     monkeypatch.setattr(grants_mod, "_enforce_code_ceiling", _no_ceiling)
     monkeypatch.setattr(maintainers, "sync_quietly", _sync)
-    monkeypatch.setattr(maintainers, "revoke_quietly", _revoke)
+    monkeypatch.setattr(maintainers, "revoke_repo_maintainer", _revoke)
     return calls
 
 
@@ -293,3 +293,61 @@ async def test_a_lowering_that_lands_while_a_sync_plans_is_not_written_over() ->
     ch = _Lowered([_admin("code-x", "alice")])
     assert await maintainers.sync_repo_maintainers("clickhouse", "code-x", ch=ch) == 1
     assert [r["namespace"] for r in ch.inserted] == ["code-x-26-5"]
+
+
+async def test_a_sibling_that_fails_does_not_stop_the_revoke_of_the_others(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.auth import grant_claims
+    from server.core.errors import GrantBusyError
+
+    ch = _FakeCH([_admin(ns, s) for ns in ("code-x-26-5", "code-x-26-6") for s in ("alice", "bob")])
+    held = grant_claims.grant_change
+
+    def _busy_on_26_5(org: str, ns: str, subject: str) -> Any:
+        if ns == "code-x-26-5":
+            raise GrantBusyError("busy")
+        return held(org, ns, subject)
+
+    monkeypatch.setattr(grant_claims, "grant_change", _busy_on_26_5)
+    with pytest.raises(GrantBusyError):
+        await maintainers.revoke_repo_maintainer("clickhouse", "code-x", "alice", ch=ch)
+    assert [r["namespace"] for r in ch.inserted] == ["code-x-26-6"]
+
+
+async def test_a_retried_revoke_finishes_the_fan_out(
+    _handler_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _none(*_a: Any, **_k: Any) -> None:
+        return None
+
+    async def _revoked_admin(*_a: Any, **_k: Any) -> bool:
+        return True
+
+    monkeypatch.setattr(grants_repo, "find_any_grant", _none)
+    monkeypatch.setattr(grants_repo, "is_revoked_admin", _revoked_admin)
+    out = await grants_mod.handle_grants_revoke(
+        GrantsRevokeInput(org="clickhouse", namespace="code-x", subject="alice")
+    )
+    assert not out.revoked and _handler_env["revoke"] == [("clickhouse", "code-x", "alice")]
+
+
+async def test_a_mirror_onto_a_new_branch_does_not_override_a_lowering_on_another() -> None:
+    class _Applied(_FakeCH):
+        async def insert(self, table: str, rows: list[dict[str, Any]], **k: Any) -> None:
+            await super().insert(table, rows, **k)
+            keys = {(r["namespace"], r["subject"]) for r in rows}
+            self.rows = [r for r in self.rows if (r["namespace"], r["subject"]) not in keys]
+            self.rows += rows
+
+    # alice is admin on code-x; lowered to viewer on 26-5 after that; 26-6 is new.
+    ch = _Applied(
+        [
+            _admin("code-x", "alice"),
+            _admin("code-x-26-5", "alice", role="viewer", at=T0 + timedelta(hours=1)),
+        ]
+    )
+    await maintainers.sync_repo_maintainers("clickhouse", "code-x", ch=ch)
+    await maintainers.sync_repo_maintainers("clickhouse", "code-x", ch=ch)
+    assert [r["namespace"] for r in ch.inserted] == ["code-x-26-6"]
+    assert ch.inserted[0]["granted_at"] == T0, "the mirror keeps its source's time"

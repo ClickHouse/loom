@@ -414,7 +414,9 @@ with `purge=true` and runner state.
   `ALTER … DELETE`. The drop and the sweep are Keeper key drops, not MergeTree mutations.
 - **Grant change claims** (`loom.grant_claims`, KeeperMap) work the same way, around one
   grant change: an op that reads a grant and then writes it holds the grant's key from
-  the read to the write, so a concurrent change to the same grant waits for it.
+  the read to the write, so a concurrent change to the same grant waits for it. Its reads
+  are sequentially consistent, and it is cut off after 20 s (each statement after 10 s),
+  well before its claim may be taken over at 60 s.
 
 **Classification for erasure.** `server/erasure/store/census.py` puts every table in
 `schemas/schema.sql` in exactly one list, and `tests/unit/test_every_table_is_classified.py`

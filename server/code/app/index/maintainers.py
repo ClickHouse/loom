@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
@@ -49,7 +50,14 @@ def branch_namespaces(org: str, namespace: str) -> list[str]:
 
 
 def _row(
-    org: str, ns: str, subject: str, *, granted_by: str, now: datetime, revoked: bool = False
+    org: str,
+    ns: str,
+    subject: str,
+    *,
+    granted_by: str,
+    now: datetime,
+    revoked: bool = False,
+    granted_at: datetime | None = None,
 ) -> dict[str, Any]:
     return {
         "org": org,
@@ -59,7 +67,7 @@ def _row(
         "status": "active",
         "pending_role": None,
         "pending_since": None,
-        "granted_at": now,
+        "granted_at": granted_at or now,
         "granted_by": granted_by,
         "revoked_at": now if revoked else None,
         "version": time.time_ns(),
@@ -95,31 +103,59 @@ def _state(row: dict[str, Any] | None) -> tuple[Any, ...] | None:
     return row.get("role"), row.get("status"), row.get("revoked_at"), row.get("granted_at")
 
 
-async def _write_unchanged(
-    client: Any, org: str, planned: list[dict[str, Any]], read: list[dict[str, Any]]
+def _unchanged(now: dict[str, Any] | None, read: dict[str, Any] | None) -> bool:
+    """A mirror is written only over the grant it was planned from: one changed
+    since (an admin's lowering, say) is left to the next sync."""
+    return _state(now) == _state(read)
+
+
+def _still_admin(now: dict[str, Any] | None, _read: dict[str, Any] | None) -> bool:
+    """A revocation stands while the subject is still an admin there."""
+    return (
+        now is not None
+        and now.get("role") == "admin"
+        and now.get("revoked_at") is None
+        and str(now.get("status") or "active") in _ACTIVE
+    )
+
+
+async def _write_under_claims(
+    client: Any,
+    org: str,
+    planned: list[dict[str, Any]],
+    still_wanted: Callable[[dict[str, Any] | None, dict[str, Any] | None], bool],
+    read: list[dict[str, Any]],
 ) -> int:
-    """Write each planned row under its grant's claim, unless the grant changed
-    since `read` (an admin's lowering, say): the next sync decides that one."""
+    """Write each planned row under its grant's claim, if `still_wanted(current
+    row, row as read)` says so. A row that fails does not stop the others; the
+    first failure is raised once all were tried."""
     from server.auth.grant_claims import grant_change
     from server.core import grant_cache
 
     seen = {(str(r["namespace"]), str(r["subject"])): r for r in read}
-    written = 0
+    written, failed = 0, []
     for row in planned:
         ns, subject = row["namespace"], row["subject"]
-        async with grant_change(org, ns, subject):
-            now = await client.query_one(
-                _GRANT_ROW_SQL, params={"org": org, "ns": ns, "sub": subject}
-            )
-            if _state(now) != _state(seen.get((ns, subject))):
-                continue
-            await client.insert(
-                "loom.namespace_grants",
-                [row],
-                settings={"async_insert": 0, "wait_for_async_insert": 1},
-            )
-        grant_cache.invalidate(org)
+        try:
+            async with grant_change(org, ns, subject):
+                now = await client.query_one(
+                    _GRANT_ROW_SQL, params={"org": org, "ns": ns, "sub": subject}
+                )
+                if not still_wanted(now, seen.get((ns, subject))):
+                    continue
+                await client.insert(
+                    "loom.namespace_grants",
+                    [row],
+                    settings={"async_insert": 0, "wait_for_async_insert": 1},
+                )
+        except Exception as e:  # noqa: BLE001 — the other branches are still written
+            failed.append(e)
+            continue
+        finally:
+            grant_cache.invalidate(org)
         written += 1
+    if failed:
+        raise failed[0]
     return written
 
 
@@ -162,8 +198,18 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
             rv = revoked.get((ns, subject))
             if rv is not None and rv >= at:
                 continue  # removed or lowered on this branch after their newest sibling grant
-            inserts.append(_row(org, ns, subject, granted_by=f"{GRANTED_BY_PREFIX}{src}", now=now))
-    written = await _write_unchanged(client, org, inserts, rows) if inserts else 0
+            # A mirror keeps its source's time: it is no newer a promotion than that grant.
+            inserts.append(
+                _row(
+                    org,
+                    ns,
+                    subject,
+                    granted_by=f"{GRANTED_BY_PREFIX}{src}",
+                    now=now,
+                    granted_at=at,
+                )
+            )
+    written = await _write_under_claims(client, org, inserts, _unchanged, rows) if inserts else 0
     if written:
         log.info(
             "repo maintainers: %s/%s — %d admin grant(s) mirrored across %d branches",
@@ -217,7 +263,7 @@ async def revoke_repo_maintainer(
                 revoked=True,
             )
         )
-    written = await _write_unchanged(client, org, out, rows) if out else 0
+    written = await _write_under_claims(client, org, out, _still_admin, rows) if out else 0
     if written:
         log.info(
             "repo maintainers: %s/%s — %r revoked on %d sibling branch(es)",
@@ -235,16 +281,3 @@ async def sync_quietly(org: str, namespace: str, *, ch: Any | None = None) -> No
         await sync_repo_maintainers(org, namespace, ch=ch)
     except Exception:  # the fan-out never fails the op that caused it
         log.warning("repo maintainers: sync failed for %s/%s", org, namespace, exc_info=True)
-
-
-async def revoke_quietly(org: str, namespace: str, subject: str, *, ch: Any | None = None) -> None:
-    try:
-        await revoke_repo_maintainer(org, namespace, subject, ch=ch)
-    except Exception:  # the fan-out never fails the revoke that caused it
-        log.warning(
-            "repo maintainers: revoke fan-out failed for %s/%s/%s",
-            org,
-            namespace,
-            subject,
-            exc_info=True,
-        )

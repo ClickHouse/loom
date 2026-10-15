@@ -16,7 +16,7 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from server.core.ch import get_client
+from server.core.ch import get_client, own_write_reads, statement_timeout
 from server.core.errors import BackendUnavailableError, GrantBusyError
 from server.core.keeper_claims import Claim, KeeperClaims
 from server.core.keyed_locks import KeyedLocks
@@ -26,6 +26,10 @@ from server.core.keyed_locks import KeyedLocks
 CLAIMS = KeeperClaims("grant_claims", stale_s=60, claim_timeout_s=5, release_timeout_s=5)
 # How long a change waits for the one ahead of it before answering 503.
 WAIT_S = 10.0
+# How long a change may run, and each of its statements: well inside the 60 s
+# after which its claim is taken over.
+CHANGE_S = 20.0
+_STATEMENT_S = 10
 # The first wait for a claim held elsewhere, doubled up to `_POLL_MAX_S`.
 _POLL_S = 0.05
 _POLL_MAX_S = 0.8
@@ -61,10 +65,27 @@ async def grant_change(org: str, namespace: str, subject: str) -> AsyncIterator[
         await asyncio.sleep(poll)
         poll = min(poll * 2, _POLL_MAX_S)
     if outcome is Claim.UNCLAIMED:
-        async with _local.hold(key):
+        async with _local.hold(key), _bounded():
             yield
         return
     try:
-        yield
+        async with _bounded():
+            yield
     finally:
         await CLAIMS.release_shielded(ch, key, holder)
+
+
+@asynccontextmanager
+async def _bounded() -> AsyncIterator[None]:
+    """The change itself: cut off at `CHANGE_S`, each statement at `_STATEMENT_S`
+    server-side, so it ends well before its claim may be taken over. Its reads
+    are sequentially consistent: the last holder may have written on another
+    replica."""
+    try:
+        async with asyncio.timeout(CHANGE_S):
+            with own_write_reads(), statement_timeout(_STATEMENT_S):
+                yield
+    except TimeoutError as e:
+        raise BackendUnavailableError(
+            "the grant change did not finish in time; retry shortly", operation="grant_change"
+        ) from e
