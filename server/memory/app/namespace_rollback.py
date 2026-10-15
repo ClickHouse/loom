@@ -48,7 +48,8 @@ class KeyChange:
             "user_id": uid,
             "session_id": sid,
             "action": "left_out" if self.refused else self.action,
-            "then": [_shown(a) for a in self.then],
+            # A refused key's earlier value is one today's rules refuse to serve.
+            "then": ["[withheld]" if self.refused else _shown(a) for a in self.then],
             "now": [_shown(a) for a in self.now],
         }
 
@@ -92,6 +93,9 @@ async def plan(
         then, refused = await _served(org, then_cut, page)
         current, _ = await _served(org, now_cut, page)
         _refuse_gaps(then_cut, now_cut)
+        # A key the journal first saw after as_of, seeded from a row older than it:
+        # what it held at as_of was never recorded, so it is left as it is.
+        refused |= await journal.seeded_after(org, namespace, page, as_of)
         for ident in sorted(then.keys() | current.keys()):
             was, held = then.get(ident, []), current.get(ident, [])
             if _state(was) == _state(held):
@@ -110,11 +114,17 @@ async def plan(
     return Plan(changes, False, now_cut.first_at)
 
 
+# Rows older than the journal: a gap that never clears. The keys it concerns are the
+# seeded ones, which the plan leaves out.
+_PERMANENT = ("history_before_journal",)
+
+
 def _refuse_gaps(*cuts: reads.Cut) -> None:
-    gaps = [g for c in cuts for g in c.gaps]
+    gaps = sorted({g for c in cuts for g in c.gaps if not g.startswith(_PERMANENT)})
     if any(g.startswith("truncated") for g in gaps):
         raise ValidationError(
-            "a key holds more claims than one rollback read takes; name fewer memory_keys"
+            "the keys read together hold more claims than one rollback read takes; "
+            "name fewer memory_keys (a single key past that bound cannot be rolled back)"
         )
     if gaps:
         raise TemporalUnavailableError(

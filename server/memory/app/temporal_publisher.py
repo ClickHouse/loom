@@ -1620,8 +1620,9 @@ def _commit_row(b: _Batch, p: _Planned, seq: int, at: datetime) -> dict[str, Any
             (a.expires_at for a in (*p.amendment.added, *(r.a for r in p.retired)) if a.expires_at),
             default=None,
         ),
-        # The loom.memory version its row carries (an amendment's row comes later).
-        "row_version": int(p.row.get("version") or 0),
+        # The loom.memory version its row carries (an amendment's row comes later;
+        # late evidence writes none, so it names none).
+        "row_version": 0 if p.past_only else int(p.row.get("version") or 0),
         "restated_assertion_id": p.restated or None,
     }
 

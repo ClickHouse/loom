@@ -495,3 +495,36 @@ async def test_a_projected_row_is_stamped_at_the_keys_latest_commit(monkeypatch)
     rows["committed"] = {ident: to_epoch_ns(committed) + 99}
     committed = datetime.now(UTC)
     assert await tp._projection_version("o", "n", ident, None) is None
+
+
+@pytest.mark.asyncio
+async def test_a_cut_short_read_rewrites_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A partial read of an identity's claims would tombstone what it missed: that
+    identity is left to the reconciler, and the caller is told."""
+    from server.core.errors import TemporalUnavailableError
+    from server.memory.app import temporal_projection as tp
+    from server.memory.app import temporal_reads as reads
+    from server.memory.domain.temporal_reads import Axes
+
+    rewrote: list[Any] = []
+
+    async def _cutoff(org: str, ns: str, axes: Axes, **_: Any) -> reads.Cut:
+        return reads.Cut(namespace=ns, axes=axes)
+
+    async def _served(org: str, cut: reads.Cut, **k: Any) -> list[Any]:
+        if k["user_id"] == "u2":
+            cut.gaps.append("truncated:10000")
+        return []
+
+    async def _rewrite(org: str, ns: str, ident: Any, want: Any, **_: Any) -> bool:
+        rewrote.append(ident[1])
+        return True
+
+    monkeypatch.setattr(tp.reads, "cutoff", _cutoff)
+    monkeypatch.setattr(tp.reads, "served", _served)
+    monkeypatch.setattr(tp, "_rewrite_current", _rewrite)
+    with pytest.raises(TemporalUnavailableError, match="reconciler"):
+        await tp.project_keys(
+            "o", "n", [("a", "u1", "-", "k"), ("a", "u2", "-", "k")], read_token=""
+        )
+    assert rewrote == ["u1"]

@@ -1017,6 +1017,27 @@ async def journal_keys(org: str, namespace: str, *, ch: _CHClient | None = None)
     return [str(r["memory_key"]) for r in rows]
 
 
+async def seeded_after(
+    org: str, namespace: str, keys: Sequence[str], at: datetime, *, ch: _CHClient | None = None
+) -> set[tuple[str, str, str, str]]:
+    """Identities among `keys` whose journal began after `at` with a seed: a key
+    written before the journal existed, whose state at `at` the journal never had."""
+    if not keys:
+        return set()
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        "SELECT DISTINCT agent, user_id, session_id, memory_key "
+        f"FROM {COMMITS} WHERE org = {{org:String}} AND namespace = {{ns:String}} "
+        "AND memory_key IN {mk:Array(String)} AND operation = 'memory.journal_seed' "
+        "AND recorded_at > {at:DateTime64(6, 'UTC')}",
+        params={"org": org, "ns": namespace, "mk": list(keys), "at": at},
+    )
+    return {
+        (str(r["agent"]), str(r["user_id"]), str(r["session_id"]), str(r["memory_key"]))
+        for r in rows
+    }
+
+
 async def last_commit_at(
     org: str, namespace: str, ident: tuple[str, str, str, str], *, ch: _CHClient | None = None
 ) -> datetime | None:

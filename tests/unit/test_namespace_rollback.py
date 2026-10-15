@@ -74,7 +74,12 @@ async def test_the_plan_names_only_changed_keys_and_never_a_redacted_value(
     monkeypatch.setattr(reads, "cutoff", _cutoff)
     monkeypatch.setattr(reads, "_served_at", _served_at)
     monkeypatch.setattr(reads, "visible", _visible)
+
+    async def _seeded(*_a: Any, **_k: Any) -> set[Any]:
+        return set()
+
     monkeypatch.setattr(journal, "journal_keys", _keys)
+    monkeypatch.setattr(journal, "seeded_after", _seeded)
     plan = await rb.plan("o", "n", datetime(2026, 2, 1, tzinfo=UTC), memory_keys=None, limit=10)
     by_key = {c.ident[3]: c for c in plan.changes}
     assert sorted(by_key) == ["born", "secret"]
@@ -108,3 +113,9 @@ def test_the_lock_in_force_stays_and_one_lifted_since_is_not_taken_again() -> No
     assert (back.lock_mode, back.lock_reason, back.locked_by) == ("no_delete", "audit", "")
     (free,) = rb._build(_change([then], [tm.first('"Paris"')]))([tm.first('"Paris"')]).added
     assert free.lock_mode == ""
+
+
+def test_rows_older_than_the_journal_do_not_block_a_rollback() -> None:
+    cut = reads.Cut(namespace="n", axes=None)  # type: ignore[arg-type]
+    cut.gaps = ["history_before_journal"]
+    rb._refuse_gaps(cut, cut)  # the keys it concerns are the seeded ones, left out

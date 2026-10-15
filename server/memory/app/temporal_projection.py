@@ -358,19 +358,31 @@ async def project_keys(
     )
     if any(g.startswith("read_token") for g in cut.gaps):
         raise TemporalUnavailableError("the change's current rows are pending; they follow")
-    rows = await reads.served(
-        org,
-        cut,
-        scope=WHOLE_NAMESPACE,
-        memory_keys=sorted({i[3] for i in idents}),
-        include_high=True,
-    )
-    by: dict[Ident, list[reads.Held]] = {}
-    for h in rows:
-        by.setdefault((h.agent, h.user_id, h.session_id, h.memory_key), []).append(h)
-    out = {i: reads.applies_now(by.get(i, []), cut, i[3]) for i in idents}
-    for ident in idents:  # one at a time: the request's reads share one session
-        await _rewrite_current(org, ns, ident, out[ident], cut_seq=cut.seq, plans=by.get(ident, []))
+    out: dict[Ident, list[reads.Held]] = {}
+    cut_short = []
+    for ident in idents:  # one identity per read: a shared key name never cuts another's
+        agent, uid, sid, key = ident
+        seen = len(cut.gaps)
+        rows = await reads.served(
+            org,
+            cut,
+            scope=WHOLE_NAMESPACE,
+            memory_keys=[key],
+            agent=agent,
+            user_id=uid,
+            session_id=sid,
+            include_high=True,
+        )
+        if any(g.startswith("truncated") for g in cut.gaps[seen:]):
+            cut_short.append(key)  # a partial read would tombstone what it missed
+            continue
+        out[ident] = reads.applies_now(rows, cut, key)
+        await _rewrite_current(org, ns, ident, out[ident], cut_seq=cut.seq, plans=rows)
+    if cut_short:
+        raise TemporalUnavailableError(
+            f"current rows of {', '.join(sorted(cut_short))} hold more claims than one read "
+            "takes; the reconciler brings them in line"
+        )
     return out
 
 

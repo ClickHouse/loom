@@ -1474,3 +1474,19 @@ async def test_an_amended_credential_is_high_whatever_the_keys_tier(
         )
         got = await a.call("memory.get", {"memory_key": "c", "include_tags": True})
         assert got["sensitivity"] == "high"
+
+
+async def test_an_amendment_after_late_evidence_reaches_the_current_row(
+    control_plane_url, mint_test_token
+) -> None:
+    a, _ = await _agent(control_plane_url, mint_test_token, "late-then-amend")
+    async with a:
+        await a.call("memory.set", {"memory_key": "city", "value": "Paris", "valid_at": jan(10)})
+        await a.call(
+            "memory.set",
+            {"memory_key": "city", "value": "Lyon", "valid_at": jan(1), "valid_to": jan(5)},
+        )
+        await a.call(
+            "memory.amend", {"memory_key": "city", "change_kind": "correct", "value": "Berlin"}
+        )
+        assert (await a.call("memory.get", {"memory_key": "city"}))["value"] == "Berlin"

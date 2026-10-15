@@ -13,9 +13,10 @@ dry run (default) reports the plan without writing.
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from datetime import UTC, datetime
 
-from server.core.errors import LoomServerError, ValidationError
+from server.core.errors import ValidationError
 from server.identity.api.models import (
     NamespaceRollbackInput,
     NamespaceRollbackOutput,
@@ -70,7 +71,11 @@ async def handle_namespace_rollback(
     out.remove = sum(c.action == "remove" for c in done)
     # Refused, or a lock in force refused the change: the key keeps its claims.
     out.left_out = len(changes) - len(done)
-    out.sample = [c.sample() for c in done[:_SAMPLE]]
+    # The same keys as the dry run's sample, each as it ended.
+    out.sample = [
+        (c if c.ident in committed else replace(c, refused=True)).sample()
+        for c in changes[:_SAMPLE]
+    ]
     out.applied_at = datetime.now(UTC)
     out.read_token = publisher.read_token(receipts)
     # Audited as soon as it is committed: the rows that follow are a projection.
@@ -91,31 +96,8 @@ async def handle_namespace_rollback(
     )
     try:
         await memory_rollback.project(input.org, input.namespace, receipts)
-    except LoomServerError as e:
-        # Committed: the reconciler brings the current rows in line.
+    except Exception as e:  # noqa: BLE001 — committed and audited: the reconciler follows
+        # The current rows lag the commits; the reconciler brings them in line.
         out.current_rows_pending = True
         log.warning("namespace.rollback: current rows left to the reconciler: %s", e)
-    return out
-
-    # What committed: a key whose lock or a blacklist refuses the change keeps its claims.
-    done = await memory_rollback.apply(input.org, input.namespace, changes)
-    out.reinstate = sum(c.action == "reinstate" for c in done)
-    out.remove = sum(c.action == "remove" for c in done)
-    out.sample = [c.sample() for c in done[:_SAMPLE]]
-    out.left_out = len(changes) - len(done)
-    await _audit.emit(
-        event_type="namespace.rollback",
-        org=input.org,
-        namespace=input.namespace,
-        actor=resolve_subject(),
-        subject={
-            "as_of": as_of.isoformat(),
-            "reinstate": out.reinstate,
-            "remove": out.remove,
-            "left_out": out.left_out,
-            "truncated": plan.truncated,
-            "memory_keys": input.memory_keys or [],
-        },
-    )
-    out.applied_at = datetime.now(UTC)
     return out

@@ -165,7 +165,8 @@ rollback can undo this one.
 - Dry run by default, reporting `reinstate`, `remove` and `sample` (each key's values
   `then` and `now`); `dry_run=false` applies it.
 - A key whose lock in force refuses the change, or whose earlier value a blacklist now
-  refuses, is left as it is (`left_out`).
+  refuses, is left as it is (`left_out`). So is a key written before the journal existed
+  and first journaled after `as_of`: what it held then was never recorded.
 - `memory_keys` (up to 500) restricts it; `max_keys` (default 5,000) bounds one call and
   `truncated` says to call again.
 - An `as_of` older than the namespace's history, or in the future, is refused.

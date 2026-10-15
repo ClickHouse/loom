@@ -1432,3 +1432,15 @@ def test_a_redirect_never_lands_on_a_key_with_a_plan(
     marked = _copy(head, status="duplicate", duplicate_of="peer")
     with _meta(marked, "status", "duplicate_of"):
         assert run(pub.publish_rows([marked]))  # a duplicate mark is not a move
+
+
+def test_late_evidence_names_no_row_version(journal: Journal) -> None:
+    """It writes no loom.memory row, so its commit names none: a row version there
+    would read as a row still landing, and hold back every repair of the key."""
+    run(pub.publish_rows([mrow('"v"', valid_at=datetime(2026, 1, 1, tzinfo=UTC))]))
+    late = mrow(
+        '"w"', valid_at=datetime(2025, 1, 1, tzinfo=UTC), valid_to=datetime(2025, 6, 1, tzinfo=UTC)
+    )
+    assert run(pub.publish_rows([late])) == []
+    assert journal.commits[-1]["row_version"] == 0
+    assert journal.commits[0]["row_version"] > 0
