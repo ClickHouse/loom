@@ -161,8 +161,11 @@ a time, and its Undo calls `memory.restore` with `if_superseded_by`: the row com
 `active` and `memory.unsupersede` is recorded only while it is still retired behind the
 memory the record names; a row deleted, revived or retired again since shows "No longer
 retired". The Undo holds the key's write lock from its read of the row to its insert,
-as a conditional write (`if_match_sha256`) does: a revision made meanwhile lands first
-and the Undo shows "No longer retired", or waits for the Undo. An Undo opens again the
+as a conditional write (`if_match_sha256`) does: a conditional revision made meanwhile
+lands first and the Undo shows "No longer retired", or waits for the Undo. An
+unconditional write takes no lock, and the later of the two wins. When another
+conditional write holds the lock past its wait, the Undo answers 412 ("another
+conditional write to this key is still running; re-read and retry"). An Undo opens again the
 graph facts the restored row still holds (see the
 [entity graph](../entity-graph.md)). To mark rows
 already restored, the tab reads up to 2,500 `memory.unsupersede` records (5 pages of 500) back to the oldest retirement it shows. Past that, an older row still offers Undo,

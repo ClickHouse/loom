@@ -232,14 +232,17 @@ async def test_undo_restores_only_the_retirement_it_lists(ch, org, judge) -> Non
     assert (await handle_memory_restore(_undo(org, korean))).restored is True
 
 
-# The revision starts after the Undo's first read of the row, or after its read under
-# the key's write lock: the Undo sees it and refuses, or the revision waits for the Undo.
-@pytest.mark.parametrize("after_read", [1, 2])
+# The revision lands just before the Undo takes the key's write lock, or starts during
+# its read under the lock and waits for it: either way the revision is never written over.
+@pytest.mark.parametrize("revised", ["before_the_lock", "under_the_lock"])
 async def test_an_undo_never_overwrites_a_conditional_revision_made_while_it_ran(
-    ch, org, judge, monkeypatch, after_read
+    ch, org, judge, monkeypatch, revised
 ) -> None:
+    import contextlib
+
     from server.memory import store as M
     from server.memory.api.models_crud import MemoryGetByIdInput, MemoryUpdateByIdInput
+    from server.memory.app import restore
     from server.memory.app.handlers import handle_memory_get_by_id
     from server.memory.app.restore import handle_memory_restore
     from server.memory.app.update import handle_memory_update_by_id
@@ -257,24 +260,36 @@ async def test_an_undo_never_overwrites_a_conditional_revision_made_while_it_ran
         value="User is Brazilian",
         if_match_sha256=read_live.content_sha256,
     )
-    read, reads, revising = M.get_by_key, [], []
+    revising: list[asyncio.Task[Any]] = []
+    locks, read = restore.key_write_lock.key_write_locks, M.get_by_key
+    hold = locks.hold
+
+    @contextlib.asynccontextmanager
+    async def revise_then_hold(*args: Any) -> Any:
+        revising.append(asyncio.create_task(handle_memory_update_by_id(revision)))
+        await asyncio.wait(revising, timeout=5)
+        async with hold(*args):
+            yield
 
     async def read_then_revise(*args: Any, **kwargs: Any) -> Any:
         row = await read(*args, **kwargs)
-        reads.append(row)
-        if len(reads) == after_read:
+        if not revising:
             revising.append(asyncio.create_task(handle_memory_update_by_id(revision)))
             await asyncio.wait(revising, timeout=5)
         return row
 
-    monkeypatch.setattr(M, "get_by_key", read_then_revise)
+    if revised == "before_the_lock":
+        monkeypatch.setattr(locks, "hold", revise_then_hold)
+    else:
+        monkeypatch.setattr(M, "get_by_key", read_then_revise)
     undone = await handle_memory_restore(_undo(org, japanese))
     assert (await revising[0]).updated
     head = await M.get_by_id(
         str(irish["memory_id"]), org=org, ch=ch, strong=True, scope=WHOLE_NAMESPACE
     )
     assert "Brazilian" in str(head.value)
-    assert undone.restored is (after_read == 2)
+    if revised == "under_the_lock":
+        assert undone.restored and undone.version < head.version
     assert not undone.restored or undone.version < head.version
 
 
@@ -968,7 +983,9 @@ async def _legacy_stated(ch: Any, org: str, value: str, triple: tuple, key: str)
     from server.memory.app.projections import entity_triple_row
 
     now = naive_utc_now()
-    await M.insert_memory_versions([_row(org, "s0", value, now, memory_key=key)], ch=ch)
+    row = _row(org, "s0", value, now, memory_key=key)
+    row["created_at"] = row["updated_at"] = datetime(2020, 1, 1)  # before row links
+    await M.insert_memory_versions([row], ch=ch)
     s, r, o = triple
     await ch.insert(
         "loom.entity_triples",
@@ -1008,6 +1025,23 @@ async def test_a_fact_a_row_predating_row_links_states_survives_a_revision(
     await _revise("memory.update_by_id", org, linked, "I like rock", (rock,))
     await _mutations_done(ch, org)
     assert await _open_facts(ch, org, want) == want
+
+
+async def test_a_row_written_since_row_links_that_stated_nothing_keeps_nothing_open(
+    ch, org
+) -> None:
+    # "I no longer like jazz" produced no triples, so it has no row link; it is not a
+    # row from before links, and must not keep jazz open once the jazz row is revised.
+    from server.memory import store as M
+
+    jazz, rock = ("user", "like", "jazz"), ("user", "like", "rock")
+    await M.insert_memory_versions(
+        [_row(org, "s9", "I no longer like jazz", naive_utc_now(), memory_key="r1")], ch=ch
+    )
+    linked = await _stated(ch, org, "s1", "I like jazz", jazz, memory_key="r1")
+    await _revise("memory.update_by_id", org, linked, "I like rock", (rock,))
+    await _mutations_done(ch, org)
+    assert await _open_facts(ch, org, {("like", "rock")}) == {("like", "rock")}
 
 
 async def test_a_fact_a_row_predating_row_links_states_survives_a_follow(ch, org) -> None:

@@ -1060,12 +1060,18 @@ async def _stated_by_live_rows(
     return held_triples.union(*holds.values())
 
 
+# The migration that started linking rows to triples: a row last written before it was
+# applied has no links of its own.
+_ROW_LINKS_MIGRATION = "031_entity_triple_rows.sql"
+
+
 async def _held_by_unlinked_rows(
     org: str, namespace: str, triples: list[tfr.Triple], *, ch: Any
 ) -> frozenset[tfr.Triple]:
     """Of `triples`, those a row written before rows were linked to triples holds: a
-    live row with no `entity_triple_rows` link, of a key the triple is linked to
-    (`entity_triple_memories`), whose value still names it (`tfr.still_states`)."""
+    live row last written before the row-links migration, of a key the triple is linked
+    to (`entity_triple_memories`), whose value still names it (`tfr.still_states`). A
+    row written since with no link stated no fact, and holds none."""
     found = await ch.query_all(
         f"""
         WITH keyed AS (
@@ -1080,6 +1086,10 @@ async def _held_by_unlinked_rows(
             WHERE org = {{org:String}} AND namespace = {{ns:String}}
               AND memory_key IN (SELECT memory_key FROM keyed)
               AND {GRAPH_HOLDER_SQL}
+              AND updated_at < (
+                  SELECT min(applied_at) FROM loom._migrations
+                  WHERE filename = {{row_links:String}}
+              )
         )
         SELECT l.value AS value, k.subject AS subject, k.relation AS relation,
                k.object AS object
@@ -1092,7 +1102,12 @@ async def _held_by_unlinked_rows(
         )
         SETTINGS select_sequential_consistency = 1
         """,
-        params={"org": org, "ns": namespace, "triples": triples},
+        params={
+            "org": org,
+            "ns": namespace,
+            "triples": triples,
+            "row_links": _ROW_LINKS_MIGRATION,
+        },
     )
     held = set()
     for f in found:

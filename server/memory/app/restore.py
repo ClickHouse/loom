@@ -50,18 +50,15 @@ async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryResto
     import server.memory.store as memory_repo
     from server.observability import audit
 
-    existing = await _read_restorable(input)
-    if existing is None:
-        return MemoryRestoreOutput(restored=False)
     # A conditional revision holds the key's write lock from its read to its insert; the
     # Undo does too, or it could write the retired value back over that revision.
     async with key_write_lock.key_write_locks.hold(
         input.org,
-        existing.namespace,
-        existing.agent,
-        existing.user_id,
-        existing.session_id,
-        existing.memory_key,
+        input.namespace,
+        input.agent,
+        input.user_id,
+        input.session_id,
+        input.memory_key,
     ):
         existing = await _read_restorable(input)
         if existing is None:
