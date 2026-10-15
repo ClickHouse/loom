@@ -110,21 +110,13 @@ def test_shortfall_is_min_of_live_and_limit_minus_returned() -> None:
     assert shortfall(live_rows=0, limit=60, returned=0) == 0
 
 
-@pytest.mark.asyncio
-async def test_vector_floor_warning_only_below_26_8_with_cache_on() -> None:
-    from server.core.vectors import vector_floor as vip
+def test_the_condition_cache_is_unsafe_only_below_26_8() -> None:
+    from server.core.vectors.vector_floor import condition_cache_unsafe
 
-    class _CH:
-        def __init__(self, v: str, qcc: str) -> None:
-            self.v, self.qcc = v, qcc
-
-        async def query_all(self, sql: str, params=None):
-            return [{"v": self.v, "qcc": self.qcc}]
-
-    assert await vip.warn_below_vector_floor(_CH("26.6.1.10", "1")) is not None
-    assert await vip.warn_below_vector_floor(_CH("26.8.1.187", "1")) is None
-    assert await vip.warn_below_vector_floor(_CH("26.6.1.10", "0")) is None
-    assert await vip.warn_below_vector_floor(_CH("27.1.1.1", "1")) is None
+    assert condition_cache_unsafe("26.6.1.10")
+    assert condition_cache_unsafe("26.4.1.2509")
+    assert not condition_cache_unsafe("26.8.1.187")
+    assert not condition_cache_unsafe("26.10.1.1")
 
 
 @pytest.mark.asyncio
@@ -165,3 +157,34 @@ async def test_in_database_statement_runs_through_the_client_with_its_settings(
 
 async def _noop() -> None:
     return None
+
+
+@pytest.mark.parametrize(
+    ("replicas", "turned_off"),
+    [(["26.8.1.1", "26.4.1.2509"], True), (["26.10.1.1"], False), (None, True)],
+)
+@pytest.mark.asyncio
+async def test_a_session_turns_the_condition_cache_off_when_any_replica_is_old(
+    replicas: list[str] | None, turned_off: bool
+) -> None:
+    from types import SimpleNamespace
+
+    from server.core.ch import _turn_off_unsafe_condition_cache
+
+    class _Client:
+        def __init__(self) -> None:
+            self.settings: dict[str, object] = {}
+
+        async def query(self, sql: str) -> SimpleNamespace:
+            if "clusterAllReplicas" in sql:
+                if replicas is None:
+                    raise RuntimeError("Code: 701. Requested cluster 'default' not found")
+                return SimpleNamespace(result_rows=[(v,) for v in replicas])
+            return SimpleNamespace(result_rows=[("26.5.1.882",)])
+
+        def set_client_setting(self, key: str, value: object) -> None:
+            self.settings[key] = value
+
+    client = _Client()
+    await _turn_off_unsafe_condition_cache(client)  # type: ignore[arg-type]
+    assert (client.settings == {"use_query_condition_cache": 0}) is turned_off

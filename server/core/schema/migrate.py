@@ -861,8 +861,14 @@ def main(argv: list[str] | None = None) -> int:
         print("  ✗ no migration files found", file=sys.stderr)
         return 2
 
+    from server.core.schema import preflight
+
     try:
+        preflight.require_ready(need="read" if args.status or args.dry_run else "migrate")
         ch = client()
+    except preflight.PreflightError as e:
+        print(f"  ✗ {e}", file=sys.stderr)
+        return 1
     except Exception as e:  # noqa: BLE001 — any connect failure exits with a message
         print(f"  ✗ could not connect to ClickHouse: {e}", file=sys.stderr)
         return 1

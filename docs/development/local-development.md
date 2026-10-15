@@ -41,7 +41,7 @@ pip install -e ".[dev,code]"
 
 ## A local ClickHouse
 
-Loom needs ClickHouse with its server config mounted: MergeTree defaults for lightweight updates, the NLP settings, the Lemmagen3 dictionary and an embedded Keeper ([ClickHouse requirements](../operations/deployment.md#clickhouse-requirements)). A bare `clickhouse-server` container cannot evaluate the lemmatized columns: every insert into `loom.memory_embeddings` fails and search returns nothing. Use one of:
+Any ClickHouse 26.4 or later works ([ClickHouse requirements](../operations/deployment.md#clickhouse-requirements)); `loom ch-setup` prepares one Loom did not start. For a schema dump that matches CI, use the bundled config (the `loom_reader` user, the NLP flags, the Lemmagen3 dictionary and an embedded Keeper) through one of:
 
 ```bash
 # 1. the CI container: same image and config CI uses, on 8123 / 9000
@@ -49,7 +49,7 @@ bash dev/ci_start_clickhouse.sh
 
 # 2. only the ClickHouse service of the dev stack
 make bootstrap    # creates .env and named_collections.xml from their templates
-docker compose --env-file .env -f dev/docker-compose.dev.yml up -d clickhouse
+docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml --profile bundled up -d clickhouse
 ```
 
 Both listen on `localhost:8123` with user `loom`, password `loomdev` and database `loom`, matching `LOOM_CH_*` in `.env.example`. Both pin the same image, so a schema dump against either matches CI ([migrations](./migrations.md#schema-dump-and-check)).

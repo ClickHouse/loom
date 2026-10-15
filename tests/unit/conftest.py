@@ -656,3 +656,19 @@ def scalar_code_repo(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     for name, value in SCALAR_CODE_REPO.items():
         monkeypatch.setattr(settings, name, value)
     return dict(SCALAR_CODE_REPO)
+
+
+@pytest.fixture(autouse=True)
+def _clickhouse_preflight_passes() -> Iterator[None]:
+    """Boot and `loom migrate` check a real ClickHouse before they connect
+    (`server.core.schema.preflight`). Unit tests run against fakes, so the
+    check answers ready; tests/unit/test_ch_preflight.py covers it. Set by
+    hand, like the vector probe above, so it is undone after the settings
+    guard has looked."""
+    from server.core.schema import preflight
+
+    ready = preflight.Server(version="26.5.1.882", keeper=True, lightweight_updates=True)
+    before = preflight.require_ready
+    preflight.require_ready = lambda **_: ready  # type: ignore[assignment]
+    yield
+    preflight.require_ready = before  # type: ignore[assignment]

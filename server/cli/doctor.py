@@ -164,6 +164,24 @@ def _doctor_otel_erasure_index_check(settings: Any) -> tuple[str, str, str]:
     )
 
 
+def _doctor_preflight_check() -> tuple[str, str, str]:
+    """The `clickhouse_preflight` line: FAIL with the fix where boot would
+    refuse this ClickHouse (a missing Keeper has its own problem line)."""
+    from server.core.schema import preflight
+
+    try:
+        server = preflight.require_ready(need=preflight.needed_at_boot())
+    except preflight.PreflightError as e:
+        return ("clickhouse_preflight", FAIL, str(e))
+    except Exception as e:  # noqa: BLE001 — a doctor line must never crash the doctor
+        return ("clickhouse_preflight", FAIL, f"{type(e).__name__}: {e}")
+    return (
+        "clickhouse_preflight",
+        PASS,
+        f"ClickHouse {server.version}, database {preflight.DATABASE} and its grants in place",
+    )
+
+
 _GRADE_BY_SEVERITY = {"error": FAIL, "warn": WARN, "info": PASS}
 
 
@@ -342,6 +360,13 @@ def _run_live_checks() -> list[tuple[str, str, str]]:
             # timeout: it tells a wrong `.env` from a blocked path.
             ch_detail = f"{base} → {type(e).__name__}: {e}"
     checks.append(("clickhouse_reachable", _grade(ch_ok), ch_detail))
+
+    # 4a. The checks boot runs before it migrates: version, database, grants.
+    checks.append(
+        _doctor_preflight_check()
+        if settings_ok and ch_ok
+        else ("clickhouse_preflight", PASS, "skipped (ClickHouse not reachable)")
+    )
 
     # 4b. OTel erasure index: only once ClickHouse answered.
     if settings_ok and ch_ok:

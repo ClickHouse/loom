@@ -1,0 +1,115 @@
+# Loom, and by default its own ClickHouse.
+#
+#   COMPOSE_PROFILES=bundled   start the clickhouse service below (the default)
+#   COMPOSE_PROFILES=          use the ClickHouse that LOOM_CH_* in .env names:
+#                              a self-managed server or ClickHouse Cloud
+#
+# install.sh writes .env for either choice, and docs/operations/deployment.md
+# covers both. The release bundle ships this file with the repository's layout,
+# so the same file runs from a clone (dev/docker-compose.dev.yml adds the source
+# build) and from an install directory.
+
+services:
+  clickhouse:
+    profiles: [bundled]
+    # The latest release, as CI runs (dev/ci_start_clickhouse.sh); a release
+    # bundle names the one that was latest when it was built.
+    # LOOM_CLICKHOUSE_IMAGE pins another, e.g. clickhouse/clickhouse-server:head
+    # for a master build (unsupported).
+    image: ${LOOM_CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server:latest}
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_DB: loom
+      CLICKHOUSE_USER: loom
+      CLICKHOUSE_PASSWORD: loomdev
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    volumes:
+      - loom-ch-data:/var/lib/clickhouse
+      # The English lemmatizer for ad-hoc lemmatize('en', ...) queries.
+      - ./deploy/lemmagen3:/var/lib/clickhouse/lemmagen3:ro
+      - ./deploy/clickhouse-config/lemmatizers.xml:/etc/clickhouse-server/config.d/lemmatizers.xml:ro
+      # The loom_reader user and profile, the tenant quota, the NLP flags.
+      - ./deploy/clickhouse-config/nlp_user_settings.xml:/etc/clickhouse-server/users.d/nlp_user_settings.xml:ro
+      # An embedded single-node Keeper for the KeeperMap tables.
+      - ./deploy/clickhouse-config/keeper.xml:/etc/clickhouse-server/config.d/keeper.xml:ro
+      # Named collections for the SQL ai* functions; defines none as shipped.
+      # Git-ignored, so `make bootstrap` makes it: a missing file is an error,
+      # not a root-owned directory Docker creates in its place.
+      - type: bind
+        source: ./deploy/clickhouse-config/named_collections.xml
+        target: /etc/clickhouse-server/config.d/named_collections.xml
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8123/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  loom:
+    image: "${LOOM_IMAGE_REPOSITORY:-ghcr.io/clickhouse/loom}:${LOOM_VERSION:-latest}"
+    # The per-server runtime files (server/core/runtime_files.py), empty on every start.
+    tmpfs:
+      - /run/loom:uid=999,gid=999,mode=0700
+    restart: unless-stopped
+    # Uvicorn waits LOOM_GRACEFUL_SHUTDOWN_S (10 s) for in-flight requests, then
+    # the lifespan drains run; Docker's default 10 s would kill them mid-drain.
+    stop_grace_period: 45s
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+        # Skipped when the bundled profile is off.
+        required: false
+    ports:
+      - "${LOOM_BIND_HOST:-127.0.0.1}:${LOOM_PORT:-7777}:7777"
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    # A ClickHouse on the Docker host is host.docker.internal, on Linux too.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    env_file:
+      - .env
+    environment:
+      # Unset in .env means the bundled clickhouse service.
+      LOOM_CH_HOST: "${LOOM_CH_HOST:-clickhouse}"
+      LOOM_CH_PORT: "${LOOM_CH_PORT:-8123}"
+      LOOM_CH_USER: "${LOOM_CH_USER:-loom}"
+      # Only an unset password means the bundled one; an empty one stays empty.
+      LOOM_CH_PASSWORD: "${LOOM_CH_PASSWORD-loomdev}"
+      LOOM_CH_READER_USER: "${LOOM_CH_READER_USER:-loom_reader}"
+      LOOM_DEPLOYMENT: "1"
+      LOOM_INSTANCE_LABEL: "deploy:standalone"
+      # The address the port is published on; see docs/operations/deployment.md.
+      LOOM_BIND_HOST: "${LOOM_BIND_HOST:-127.0.0.1}"
+      LOOM_BLOB_DIR: /app/var/blobs
+      # Two processes unless .env names a count. The bundled ClickHouse may share
+      # this host and the container has no limits, so the image's own default
+      # (one per host CPU and GiB) could leave it no room.
+      LOOM_WEB_WORKERS: "${LOOM_WEB_WORKERS:-2}"
+    volumes:
+      - loom-blob-data:/app/var/blobs
+      - loom-code-repos:/app/var/code_repos
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:7777/v1/health',timeout=3).status==200 else 1)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 45s
+
+volumes:
+  loom-ch-data:
+  loom-blob-data:
+  loom-code-repos:

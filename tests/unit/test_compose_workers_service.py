@@ -15,10 +15,11 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 CLOUD = ROOT / "dev" / "docker-compose.cloud.yml"
 COLOUR = ROOT / "dev" / "docker-compose.colour.yml"
+# compose.yaml is the shipped stack; dev/docker-compose.dev.yml only overrides it.
 ALL_COMPOSE = (
     CLOUD,
     COLOUR,
-    ROOT / "dev" / "docker-compose.dev.yml",
+    ROOT / "compose.yaml",
 )
 
 

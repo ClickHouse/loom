@@ -121,28 +121,37 @@ def interpolate(template: str, env: dict[str, str]) -> str:
     return _INTERP.sub(sub, template)
 
 
-def dev_compose_file_from_makefile() -> tuple[Path, str]:
-    """The compose file the `dev:` target runs, and the command line itself."""
+def dev_compose_files_from_makefile() -> tuple[list[Path], str]:
+    """The compose files the `dev:` target stacks, and the command line itself."""
     text = MAKEFILE.read_text()
     m = re.search(r"^dev:.*?\n((?:\t.*\n)+)", text, re.M)
     assert m, "Makefile has no `dev:` target"
     recipe = m.group(1)
-    cmd = re.search(r"docker compose .*?-f (\S+) up[^\n]*", recipe)
+    cmd = re.search(r"docker compose (?:.*?-f \S+)+[^\n]* up[^\n]*", recipe)
     assert cmd, f"`dev:` recipe has no `docker compose … -f <file> up`:\n{recipe}"
-    return ROOT / cmd.group(1), cmd.group(0)
+    return [ROOT / f for f in re.findall(r"-f (\S+)", cmd.group(0))], cmd.group(0)
 
 
 def resolved_loom_service_env() -> dict[str, str]:
-    compose_path, _ = dev_compose_file_from_makefile()
-    compose = yaml.safe_load(compose_path.read_text())
-    service = compose["services"]["loom"]
+    """The `loom` service's environment over every stacked file, later files
+    winning, relative paths resolved from the first file's directory."""
+    paths, _ = dev_compose_files_from_makefile()
     dotenv = parse_env_file(ENV_EXAMPLE)
+    env_files: list[str] = []
+    environment: dict[str, str] = {}
+    for path in paths:
+        service = yaml.safe_load(path.read_text())["services"]["loom"]
+        for entry in service.get("env_file", []) or []:
+            env_files.append(entry["path"] if isinstance(entry, dict) else entry)
+        env = service.get("environment", {}) or {}
+        if isinstance(env, list):
+            env = dict(item.split("=", 1) for item in env)
+        environment.update(env)
 
-    # 1. env_file entries, in order (paths relative to the compose file).
+    # 1. env_file entries, in order.
     container: dict[str, str] = {}
-    for entry in service.get("env_file", []) or []:
-        rel = entry["path"] if isinstance(entry, dict) else entry
-        target = (compose_path.parent / rel).resolve()
+    for rel in env_files:
+        target = (paths[0].parent / rel).resolve()
         # `make bootstrap` copies .env.example to .env; the test reads the
         # template in its place.
         if target.name == ".env":
@@ -150,16 +159,13 @@ def resolved_loom_service_env() -> dict[str, str]:
         container.update(parse_env_file(target))
 
     # 2. `environment:` wins; its values are interpolated against `--env-file`.
-    environment = service.get("environment", {}) or {}
-    if isinstance(environment, list):
-        environment = dict(item.split("=", 1) for item in environment)
     for key, value in environment.items():
         container[key] = interpolate("" if value is None else str(value), dotenv)
     return container
 
 
 def test_make_dev_passes_env_file() -> None:
-    _, cmd = dev_compose_file_from_makefile()
+    _, cmd = dev_compose_files_from_makefile()
     assert "--env-file .env" in cmd, cmd
 
 
@@ -218,11 +224,11 @@ def test_sdk_side_vars_are_read_by_the_sdk() -> None:
 
 
 def test_docs_dev_compose_commands_carry_env_file() -> None:
-    compose_path, _ = dev_compose_file_from_makefile()
-    rel = compose_path.relative_to(ROOT).as_posix()
+    paths, _ = dev_compose_files_from_makefile()
+    rel = paths[-1].relative_to(ROOT).as_posix()
     offenders: list[str] = []
     for doc in DOCS_WITH_COMPOSE_COMMANDS:
         for n, line in enumerate(doc.read_text().splitlines(), 1):
-            if f"-f {rel} up" in line and "--env-file .env" not in line:
+            if f"-f {rel}" in line and " up" in line and "--env-file .env" not in line:
                 offenders.append(f"{doc.relative_to(ROOT)}:{n}: {line.strip()}")
     assert not offenders, "\n".join(offenders)

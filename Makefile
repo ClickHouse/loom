@@ -17,30 +17,29 @@ BENCH_PYTHON = PYTHONPATH=$(CURDIR)$(if $(PYTHONPATH),:$(PYTHONPATH)) $(PYTHON)
 bootstrap:
 	@PYTHONPATH="$(CURDIR)" python3 -c 'from pathlib import Path; from server.cli.up import bootstrap; [print("✓ " + line) for line in bootstrap(Path.cwd(), ".env")]'
 
-# Local evaluation stack — Loom + ClickHouse OSS. CH is Loom's only direct
-# dependency; Langfuse and HyperDX are optional integrations that
-# each have their own deployment story (see docs/operations/deployment.md).
+# Local evaluation stack — Loom built from this checkout + the bundled
+# ClickHouse (compose.yaml with the dev/docker-compose.dev.yml override). CH is
+# Loom's only direct dependency; Langfuse and HyperDX are optional integrations
+# that each have their own deployment story (see docs/operations/deployment.md).
 # --build so a code change is actually reflected: plain `up` reuses the cached
 # image and silently runs stale code. Docker layer caching keeps a no-change
 # `make dev` fast. (For a tight backend loop, `make server` runs from source
 # with --reload and skips the image entirely.)
-# --env-file: compose's own default .env lookup is relative to the *first*
-# -f file's directory (dev/), not the repo root, so ${VAR:-default}
-# substitutions in the compose file (ports, LOOM_AUTH_REQUIRED, embedding/LLM
-# knobs, ...) would silently ignore root .env without this. env_file: in the
-# compose file (a separate mechanism, used for OPENAI_API_KEY etc.) already
-# resolves relative to the compose file correctly and needs no such flag.
+# --env-file: compose's own default .env lookup is relative to the first -f
+# file's directory; passing it keeps the root .env in charge of the
+# ${VAR:-default} substitutions. --profile bundled starts the ClickHouse
+# container whatever COMPOSE_PROFILES an older .env says.
 dev: bootstrap
 	LOOM_BUILD_COMMIT="$$(git rev-parse --short HEAD 2>/dev/null || echo unknown)" \
-		docker compose --env-file .env -f dev/docker-compose.dev.yml up -d --build
+		docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml --profile bundled up -d --build
 	@echo "✓ Loom:        http://localhost:7777/me"
-	@ch_port=$$(docker compose --env-file .env -f dev/docker-compose.dev.yml port clickhouse 8123 2>/dev/null | cut -d: -f2); \
+	@ch_port=$$(docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml port clickhouse 8123 2>/dev/null | cut -d: -f2); \
 	echo "✓ ClickHouse:  http://localhost:$${ch_port:-8123} (user=loom, pwd=loomdev)"
 	@echo "  Migrations applied automatically by the Loom server on boot (FastAPI lifespan)."
 
-# Loom control plane only — all upstreams (CH, Langfuse, ClickStack)
-# come from .env (managed services, remote cluster, etc.). The production-style
-# operator path.
+# Loom built from this checkout against the ClickHouse in .env (LOOM_CH_*),
+# with the web tier and the background workers in two containers. Run
+# `loom ch-setup` against that ClickHouse once first.
 dev-cloud: bootstrap
 	LOOM_BUILD_COMMIT="$$(git rev-parse --short HEAD 2>/dev/null || echo unknown)" \
 		docker compose --env-file .env -f dev/docker-compose.cloud.yml up -d --build
@@ -50,11 +49,11 @@ dev-cloud: bootstrap
 # (unlike compose's own silent-if-absent default lookup), so these targets
 # need the same prerequisite as dev/dev-cloud.
 down: bootstrap
-	docker compose --env-file .env -f dev/docker-compose.dev.yml down
+	docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml --profile bundled down
 	docker compose --env-file .env -f dev/docker-compose.cloud.yml down 2>/dev/null || true
 
 down-all: bootstrap
-	docker compose --env-file .env -f dev/docker-compose.dev.yml down -v
+	docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml --profile bundled down -v
 	docker compose --env-file .env -f dev/docker-compose.cloud.yml down -v 2>/dev/null || true
 
 # Apply pending schema migrations idempotently.

@@ -378,7 +378,10 @@ def _cmd_set_host(args: argparse.Namespace) -> int:
     print(f"✓ wrote {key} → {env_path}")
     print(f"  hosts: {', '.join(final)}")
     print("  next: restart Loom so the new env is picked up:")
-    print("    docker compose -f dev/docker-compose.dev.yml up -d --force-recreate loom")
+    print(
+        "    docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml"
+        " up -d --force-recreate loom"
+    )
     print("  then have each host log out + back in at /me to mint a fresh platform_admin JWT.")
     return 0
 

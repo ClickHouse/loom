@@ -468,6 +468,30 @@ async def _probe_vector_state(client: CHClient) -> None:
     await ensure_probed(client)
 
 
+async def _turn_off_unsafe_condition_cache(client: AsyncClient) -> None:
+    """Run every Loom session with the query condition cache off when any
+    replica predates its vector-read fix (`vector_floor`). Each new connection
+    asks, so a reconnect keeps the setting."""
+    from server.core.schema.preflight import REPLICA_VERSIONS_SQL, version_key
+    from server.core.vectors import vector_floor
+
+    async def versions(sql: str) -> list[str]:
+        return [str(row[0]) for row in (await client.query(sql)).result_rows]
+
+    try:
+        try:
+            replicas = await versions(REPLICA_VERSIONS_SQL)
+        except Exception:  # noqa: BLE001 — no `default` cluster, or no REMOTE grant: one server answers
+            replicas = await versions("SELECT version()")
+    except Exception as e:  # noqa: BLE001 — the probe is advisory; the server default stands
+        log.info("condition cache probe skipped (%s)", str(e)[:120])
+        return
+    oldest = min(replicas, key=version_key)
+    if vector_floor.condition_cache_unsafe(oldest):
+        client.set_client_setting("use_query_condition_cache", 0)
+        log.info("ClickHouse %s: sessions run with use_query_condition_cache = 0", oldest)
+
+
 def _insert_data(
     rows: list[dict[str, Any]], columns: list[str], type_names: list[str] | None
 ) -> list[list[Any]]:
@@ -575,6 +599,7 @@ class CHClient:
         # tz_source="server" reads a bare DateTime in that zone, so reads come
         # back naive UTC, never in the host's zone.
         self._client.server_tz = UTC
+        await _turn_off_unsafe_condition_cache(self._client)
         await _probe_vector_state(self)
 
     async def disconnect(self) -> None:

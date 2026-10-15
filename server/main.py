@@ -70,6 +70,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         allow_insecure=settings.allow_insecure,
     )
 
+    await boot.require_clickhouse_ready()
     ch = get_client()
     await ch.connect()
 

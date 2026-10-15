@@ -58,11 +58,11 @@ image as `LOOM_BUILD_COMMIT`, reported as `build_commit`). The remaining
 
 ## Compose files
 
-| Variable                                        | Read by                                                                                      | Default                               | Meaning                                                                                                                                       |
-| ----------------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `LOOM_CH_HOST_PORT`, `LOOM_CH_NATIVE_HOST_PORT` | `dev/docker-compose.dev.yml`                                                                 | `8123`, `9000`                        | Host ports the local ClickHouse publishes (HTTP and native).                                                                                  |
-| `LOOM_COLOUR`, `LOOM_COLOUR_PORT`               | `dev/docker-compose.colour.yml`                                                              | required                              | Which colour (`blue` or `green`) and host port (`7781` or `7782`) a blue/green project runs.                                                  |
-| `LOOM_CLICKHOUSE_IMAGE`                         | `deploy/standalone/compose.yaml`, `dev/docker-compose.dev.yml`, `dev/ci_start_clickhouse.sh` | `clickhouse/clickhouse-server:latest` | The ClickHouse image the stack runs. A release bundle's compose file defaults it to the release the bundle was built and schema-checked with. |
+| Variable                                        | Read by                                      | Default                               | Meaning                                                                                                                                       |
+| ----------------------------------------------- | -------------------------------------------- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LOOM_CH_HOST_PORT`, `LOOM_CH_NATIVE_HOST_PORT` | `dev/docker-compose.dev.yml`                 | `8123`, `9000`                        | Host ports the local ClickHouse publishes (HTTP and native).                                                                                  |
+| `LOOM_COLOUR`, `LOOM_COLOUR_PORT`               | `dev/docker-compose.colour.yml`              | required                              | Which colour (`blue` or `green`) and host port (`7781` or `7782`) a blue/green project runs.                                                  |
+| `LOOM_CLICKHOUSE_IMAGE`                         | `compose.yaml`, `dev/ci_start_clickhouse.sh` | `clickhouse/clickhouse-server:latest` | The ClickHouse image the stack runs. A release bundle's compose file defaults it to the release the bundle was built and schema-checked with. |
 
 Other `${LOOM_*}` references in the compose files are settings fields given a
 compose-level default, the uvicorn variables above, and the standalone stack's

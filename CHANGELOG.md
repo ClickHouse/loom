@@ -10,6 +10,21 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
 
 ### Added
 
+- Loom installs against three ClickHouse targets: its own container (the default), a
+  self-managed server, or a ClickHouse Cloud service.
+  `install.sh --clickhouse <url>` (or `LOOM_CH_URL`) writes `LOOM_CH_*` to `.env` (mode
+  600; the password from the URL, `LOOM_CH_PASSWORD` or a silent prompt) and runs
+  `loom ch-setup` before starting. `compose.yaml`, now at the repository root and in the
+  release bundle with the same layout, runs the `clickhouse` service under the `bundled`
+  Compose profile (`COMPOSE_PROFILES=bundled` in `.env`). The installer needs Compose 2.20.
+- `loom ch-setup` creates the `loom` database and the read-only `loom_reader` user and
+  settings profile with SQL, or prints the SQL for an admin (`--print-sql`, password as a
+  placeholder). Boot, `loom migrate` and `loom doctor` (`clickhouse_preflight`) check the
+  server first: version 26.4 or later on its oldest replica, the database and the grants
+  the migrations need, each failure with its fix, before any DDL.
+- Every Loom session on a ClickHouse older than 26.8 runs with the query condition cache
+  off (the vector-read fix, ClickHouse #112086), on every target; boot used to warn only.
+
 - `CODED_WIDTH_MISMATCH` (503): a write whose vector is not the width its coded column was
   created at; `memory.set`, `bulk_set`, `update` and the `knowledge.*` writes are refused before
   any of their rows lands, and `/v1/health` reports `coded_width_mismatch` with the fix. A table
@@ -47,6 +62,15 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   clone stays a plain `git clone`.
 
 ### Changed
+
+- `028_table_settings.sql` sets `non_replicated_deduplication_window` on every MergeTree
+  table and the block-number columns on `loom.memory` and `loom.memory_embeddings`;
+  `deploy/clickhouse-config/merge_tree_settings.xml`, which set them server-wide, is gone.
+- `deploy/standalone/compose.yaml` is replaced by `compose.yaml`;
+  `dev/docker-compose.dev.yml` is now an override of it that builds from the checkout.
+  Releases before this one installed `clickhouse-config/` and `lemmagen3/` at the top of
+  `~/.loom`; the installer moves them under `deploy/` and keeps an existing install on
+  the bundled ClickHouse.
 
 - **Breaking:** `rerank` (`memory.search`, `memory.search_trace`, `code.search`, `code.ask`)
   and a namespace's `rerank_endpoint` take a name, not a URL: `none`, `builtin:openai[:model]`,

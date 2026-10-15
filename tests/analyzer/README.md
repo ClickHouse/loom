@@ -82,7 +82,6 @@ docker run -d --pull always --name corpus-ch -p 127.0.0.1:18160:8123 -e CLICKHOU
   -v $PWD/deploy/lemmagen3:/var/lib/clickhouse/lemmagen3:ro \
   -v $PWD/deploy/clickhouse-config/lemmatizers.xml:/etc/clickhouse-server/config.d/lemmatizers.xml:ro \
   -v $PWD/deploy/clickhouse-config/nlp_user_settings.xml:/etc/clickhouse-server/users.d/nlp_user_settings.xml:ro \
-  -v $PWD/deploy/clickhouse-config/merge_tree_settings.xml:/etc/clickhouse-server/config.d/merge_tree_settings.xml:ro \
   -v $PWD/deploy/clickhouse-config/keeper.xml:/etc/clickhouse-server/config.d/keeper.xml:ro \
   clickhouse/clickhouse-server:latest
 export LOOM_CH_HOST=127.0.0.1 LOOM_CH_PORT=18160 LOOM_CH_USER=loom LOOM_CH_PASSWORD=loomdev \

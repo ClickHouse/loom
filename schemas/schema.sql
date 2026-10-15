@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS loom.agent_cost_rollup_daily
 ENGINE = AggregatingMergeTree
 PARTITION BY toYYYYMM(day)
 ORDER BY (org, namespace, agent, day, operation)
-SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 8192;
+SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.agent_events
 CREATE TABLE IF NOT EXISTS loom.agent_events
@@ -85,7 +85,7 @@ CREATE TABLE IF NOT EXISTS loom.agent_events
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(ts)
 ORDER BY (org, namespace, agent, ts)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.agent_run_claims
 CREATE TABLE IF NOT EXISTS loom.agent_run_claims
@@ -135,7 +135,7 @@ CREATE TABLE IF NOT EXISTS loom.agent_runs
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, run_id)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.agent_turn_usage
 CREATE TABLE IF NOT EXISTS loom.agent_turn_usage
@@ -162,7 +162,7 @@ CREATE TABLE IF NOT EXISTS loom.agent_turn_usage
 ENGINE = ReplacingMergeTree(version)
 PARTITION BY toYYYYMM(turn_at)
 ORDER BY (org, namespace, session_id, message_id)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.audit_checkpoints
 CREATE TABLE IF NOT EXISTS loom.audit_checkpoints
@@ -177,7 +177,7 @@ CREATE TABLE IF NOT EXISTS loom.audit_checkpoints
 )
 ENGINE = MergeTree
 ORDER BY window_start
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.audit_log
 CREATE TABLE IF NOT EXISTS loom.audit_log
@@ -200,7 +200,7 @@ CREATE TABLE IF NOT EXISTS loom.audit_log
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(ts)
 ORDER BY (org, namespace, event_type, ts)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.blacklist
 CREATE TABLE IF NOT EXISTS loom.blacklist
@@ -220,7 +220,7 @@ CREATE TABLE IF NOT EXISTS loom.blacklist
 )
 ENGINE = ReplacingMergeTree(created_at)
 ORDER BY (org, namespace, pattern_id)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.blacklist_version
 CREATE TABLE IF NOT EXISTS loom.blacklist_version
@@ -232,7 +232,7 @@ CREATE TABLE IF NOT EXISTS loom.blacklist_version
 )
 ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY singleton
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.categories
 CREATE TABLE IF NOT EXISTS loom.categories
@@ -252,7 +252,7 @@ CREATE TABLE IF NOT EXISTS loom.categories
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, name)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.chunk_supersessions
 CREATE TABLE IF NOT EXISTS loom.chunk_supersessions
@@ -267,7 +267,7 @@ CREATE TABLE IF NOT EXISTS loom.chunk_supersessions
 )
 ENGINE = ReplacingMergeTree(created_at)
 ORDER BY (org, namespace, embedding_model, source_uri, doc_version)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.chunk_term_freq
 CREATE TABLE IF NOT EXISTS loom.chunk_term_freq
@@ -283,7 +283,7 @@ CREATE TABLE IF NOT EXISTS loom.chunk_term_freq
 ENGINE = AggregatingMergeTree
 PARTITION BY toYYYYMM(df_added_at)
 ORDER BY (org, namespace, term)
-SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 8192;
+SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.chunks
 CREATE TABLE IF NOT EXISTS loom.chunks
@@ -314,7 +314,7 @@ CREATE TABLE IF NOT EXISTS loom.chunks
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(created_at)
 ORDER BY (org, namespace, embedding_model, source_uri, chunk_idx)
-SETTINGS index_granularity = 8192, exclude_materialize_skip_indexes_on_merge = 'content_text';
+SETTINGS index_granularity = 8192, exclude_materialize_skip_indexes_on_merge = 'content_text', non_replicated_deduplication_window = 1000;
 
 -- loom.code_answers
 CREATE TABLE IF NOT EXISTS loom.code_answers
@@ -347,7 +347,7 @@ CREATE TABLE IF NOT EXISTS loom.code_answers
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, embedding_model, question_id)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.code_backport_gaps
 CREATE TABLE IF NOT EXISTS loom.code_backport_gaps
@@ -376,7 +376,7 @@ CREATE TABLE IF NOT EXISTS loom.code_backport_gaps
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, code_namespace, branch_namespace, pr_number)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.code_call_sites_unresolved
 CREATE TABLE IF NOT EXISTS loom.code_call_sites_unresolved
@@ -410,7 +410,7 @@ CREATE TABLE IF NOT EXISTS loom.code_call_sites_unresolved
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, callee_name, path, line, from_symbol_id)
-SETTINGS index_granularity = 8192, deduplicate_merge_projection_mode = 'rebuild', lightweight_mutation_projection_mode = 'rebuild';
+SETTINGS index_granularity = 8192, deduplicate_merge_projection_mode = 'rebuild', lightweight_mutation_projection_mode = 'rebuild', non_replicated_deduplication_window = 1000;
 
 -- loom.code_caller_guards
 CREATE TABLE IF NOT EXISTS loom.code_caller_guards
@@ -432,7 +432,7 @@ CREATE TABLE IF NOT EXISTS loom.code_caller_guards
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, from_symbol_id, path)
-SETTINGS index_granularity = 1024;
+SETTINGS index_granularity = 1024, non_replicated_deduplication_window = 1000;
 
 -- loom.code_chunks
 CREATE TABLE IF NOT EXISTS loom.code_chunks
@@ -470,7 +470,7 @@ CREATE TABLE IF NOT EXISTS loom.code_chunks
 ENGINE = ReplacingMergeTree(version)
 PARTITION BY (org, namespace)
 ORDER BY (org, namespace, embedding_model, path, chunk_id)
-SETTINGS index_granularity = 256, min_bytes_for_wide_part = 134217728;
+SETTINGS index_granularity = 256, min_bytes_for_wide_part = 134217728, non_replicated_deduplication_window = 1000;
 
 -- loom.code_chunks_prefix
 CREATE TABLE IF NOT EXISTS loom.code_chunks_prefix
@@ -493,7 +493,7 @@ CREATE TABLE IF NOT EXISTS loom.code_chunks_prefix
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, embedding_model, path, chunk_id)
-SETTINGS index_granularity = 8192, min_bytes_for_wide_part = 134217728;
+SETTINGS index_granularity = 8192, min_bytes_for_wide_part = 134217728, non_replicated_deduplication_window = 1000;
 
 -- loom.code_context_packs
 CREATE TABLE IF NOT EXISTS loom.code_context_packs
@@ -511,7 +511,7 @@ CREATE TABLE IF NOT EXISTS loom.code_context_packs
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, pr_number)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.code_coverage_files
 CREATE TABLE IF NOT EXISTS loom.code_coverage_files
@@ -529,7 +529,7 @@ CREATE TABLE IF NOT EXISTS loom.code_coverage_files
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, path)
-SETTINGS index_granularity = 1024;
+SETTINGS index_granularity = 1024, non_replicated_deduplication_window = 1000;
 
 -- loom.code_coverage_watches
 CREATE TABLE IF NOT EXISTS loom.code_coverage_watches
@@ -546,7 +546,7 @@ CREATE TABLE IF NOT EXISTS loom.code_coverage_watches
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, commit_sha, inbox)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.code_doc_stats
 CREATE TABLE IF NOT EXISTS loom.code_doc_stats
@@ -559,7 +559,7 @@ CREATE TABLE IF NOT EXISTS loom.code_doc_stats
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, chunk_id)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.code_edges
 CREATE TABLE IF NOT EXISTS loom.code_edges
@@ -607,7 +607,7 @@ CREATE TABLE IF NOT EXISTS loom.code_edges
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, tier, to_symbol_id, edge_kind, from_symbol_id, path, line)
-SETTINGS index_granularity = 1024, deduplicate_merge_projection_mode = 'rebuild', lightweight_mutation_projection_mode = 'rebuild';
+SETTINGS index_granularity = 1024, deduplicate_merge_projection_mode = 'rebuild', lightweight_mutation_projection_mode = 'rebuild', non_replicated_deduplication_window = 1000;
 
 -- loom.code_files
 CREATE TABLE IF NOT EXISTS loom.code_files
@@ -631,7 +631,7 @@ CREATE TABLE IF NOT EXISTS loom.code_files
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, path)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.code_gh_items
 CREATE TABLE IF NOT EXISTS loom.code_gh_items
@@ -658,7 +658,7 @@ CREATE TABLE IF NOT EXISTS loom.code_gh_items
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, number)
-SETTINGS index_granularity = 64;
+SETTINGS index_granularity = 64, non_replicated_deduplication_window = 1000;
 
 -- loom.code_index_state
 CREATE TABLE IF NOT EXISTS loom.code_index_state
@@ -673,7 +673,7 @@ CREATE TABLE IF NOT EXISTS loom.code_index_state
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, state_key)
-SETTINGS index_granularity = 64;
+SETTINGS index_granularity = 64, non_replicated_deduplication_window = 1000;
 
 -- loom.code_pr_history
 CREATE TABLE IF NOT EXISTS loom.code_pr_history
@@ -704,7 +704,7 @@ CREATE TABLE IF NOT EXISTS loom.code_pr_history
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, pr_number)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.code_pr_reviews
 CREATE TABLE IF NOT EXISTS loom.code_pr_reviews
@@ -726,7 +726,7 @@ CREATE TABLE IF NOT EXISTS loom.code_pr_reviews
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, path, pr_number, comment_id)
-SETTINGS index_granularity = 1024;
+SETTINGS index_granularity = 1024, non_replicated_deduplication_window = 1000;
 
 -- loom.code_repos
 CREATE TABLE IF NOT EXISTS loom.code_repos
@@ -751,7 +751,7 @@ CREATE TABLE IF NOT EXISTS loom.code_repos
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.code_review_briefs
 CREATE TABLE IF NOT EXISTS loom.code_review_briefs
@@ -772,7 +772,7 @@ CREATE TABLE IF NOT EXISTS loom.code_review_briefs
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, pr_number, merge_sha)
-SETTINGS index_granularity = 1024;
+SETTINGS index_granularity = 1024, non_replicated_deduplication_window = 1000;
 
 -- loom.code_scip_batches
 CREATE TABLE IF NOT EXISTS loom.code_scip_batches
@@ -794,7 +794,7 @@ ENGINE = ReplacingMergeTree(version)
 PARTITION BY toYYYYMM(created_at)
 ORDER BY (org, namespace, batch_id)
 TTL created_at + toIntervalDay(30)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.code_scip_parts
 CREATE TABLE IF NOT EXISTS loom.code_scip_parts
@@ -811,7 +811,7 @@ ENGINE = MergeTree
 PARTITION BY toYYYYMM(created_at)
 ORDER BY (org, namespace, batch_id, seq)
 TTL created_at + toIntervalDay(7)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.code_search_memo
 CREATE TABLE IF NOT EXISTS loom.code_search_memo
@@ -827,7 +827,7 @@ CREATE TABLE IF NOT EXISTS loom.code_search_memo
 ENGINE = ReplacingMergeTree(created_at)
 ORDER BY (org, namespace, key)
 TTL created_at + toIntervalMinute(60)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.code_search_outcome
 CREATE TABLE IF NOT EXISTS loom.code_search_outcome
@@ -846,7 +846,7 @@ ENGINE = MergeTree
 PARTITION BY toYYYYMM(ts)
 ORDER BY (org, namespace, trace_run_id, ts)
 TTL ts + toIntervalDay(180)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.code_search_trace
 CREATE TABLE IF NOT EXISTS loom.code_search_trace
@@ -892,7 +892,7 @@ ENGINE = MergeTree
 PARTITION BY toYYYYMM(ts)
 ORDER BY (org, namespace, ts)
 TTL ts + toIntervalDay(180)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.code_summaries
 CREATE TABLE IF NOT EXISTS loom.code_summaries
@@ -920,7 +920,7 @@ CREATE TABLE IF NOT EXISTS loom.code_summaries
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, embedding_model, scope_type, scope_path)
-SETTINGS index_granularity = 256;
+SETTINGS index_granularity = 256, non_replicated_deduplication_window = 1000;
 
 -- loom.code_symbol_ids
 CREATE TABLE IF NOT EXISTS loom.code_symbol_ids
@@ -933,7 +933,7 @@ CREATE TABLE IF NOT EXISTS loom.code_symbol_ids
 )
 ENGINE = ReplacingMergeTree
 ORDER BY (org, namespace, symbol_id, tier, qualified_name)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.code_symbol_names
 CREATE TABLE IF NOT EXISTS loom.code_symbol_names
@@ -950,7 +950,7 @@ CREATE TABLE IF NOT EXISTS loom.code_symbol_names
 )
 ENGINE = ReplacingMergeTree
 ORDER BY (org, namespace, name, tier, qualified_name, symbol_id)
-SETTINGS index_granularity = 1024;
+SETTINGS index_granularity = 1024, non_replicated_deduplication_window = 1000;
 
 -- loom.code_symbol_stats
 CREATE TABLE IF NOT EXISTS loom.code_symbol_stats
@@ -971,7 +971,7 @@ CREATE TABLE IF NOT EXISTS loom.code_symbol_stats
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, symbol_id)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.code_symbols
 CREATE TABLE IF NOT EXISTS loom.code_symbols
@@ -1002,7 +1002,7 @@ CREATE TABLE IF NOT EXISTS loom.code_symbols
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, tier, qualified_name, symbol_id)
-SETTINGS index_granularity = 1024;
+SETTINGS index_granularity = 1024, non_replicated_deduplication_window = 1000;
 
 -- loom.code_term_df
 CREATE TABLE IF NOT EXISTS loom.code_term_df
@@ -1016,7 +1016,7 @@ CREATE TABLE IF NOT EXISTS loom.code_term_df
 )
 ENGINE = MergeTree
 ORDER BY (org, namespace, term)
-SETTINGS index_granularity = 1024;
+SETTINGS index_granularity = 1024, non_replicated_deduplication_window = 1000;
 
 -- loom.code_term_freq
 CREATE TABLE IF NOT EXISTS loom.code_term_freq
@@ -1029,7 +1029,7 @@ CREATE TABLE IF NOT EXISTS loom.code_term_freq
 )
 ENGINE = AggregatingMergeTree
 ORDER BY (org, namespace, term)
-SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 256;
+SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 256, non_replicated_deduplication_window = 1000;
 
 -- loom.code_test_facets
 CREATE TABLE IF NOT EXISTS loom.code_test_facets
@@ -1051,7 +1051,7 @@ CREATE TABLE IF NOT EXISTS loom.code_test_facets
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, path, facet_kind, name, ordinal)
-SETTINGS index_granularity = 1024;
+SETTINGS index_granularity = 1024, non_replicated_deduplication_window = 1000;
 
 -- loom.code_test_map
 CREATE TABLE IF NOT EXISTS loom.code_test_map
@@ -1070,7 +1070,7 @@ CREATE TABLE IF NOT EXISTS loom.code_test_map
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, src_path, method, test_path)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.code_unit_risk
 CREATE TABLE IF NOT EXISTS loom.code_unit_risk
@@ -1088,7 +1088,7 @@ CREATE TABLE IF NOT EXISTS loom.code_unit_risk
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, unit_id)
-SETTINGS index_granularity = 1024;
+SETTINGS index_granularity = 1024, non_replicated_deduplication_window = 1000;
 
 -- loom.code_unit_signal
 CREATE TABLE IF NOT EXISTS loom.code_unit_signal
@@ -1102,7 +1102,7 @@ CREATE TABLE IF NOT EXISTS loom.code_unit_signal
 )
 ENGINE = SummingMergeTree((positive, negative))
 ORDER BY (org, namespace, unit_id)
-SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 8192;
+SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.conflict_allowlist
 CREATE TABLE IF NOT EXISTS loom.conflict_allowlist
@@ -1118,7 +1118,7 @@ CREATE TABLE IF NOT EXISTS loom.conflict_allowlist
 )
 ENGINE = ReplacingMergeTree(allowed_at)
 ORDER BY (org, namespace, memory_key_a, memory_key_b)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.consolidation_runs
 CREATE TABLE IF NOT EXISTS loom.consolidation_runs
@@ -1148,7 +1148,7 @@ ENGINE = MergeTree
 PARTITION BY toYYYYMM(ran_at)
 ORDER BY (org, namespace, ran_at, run_id)
 TTL ran_at + toIntervalDay(180)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.context_blobs
 CREATE TABLE IF NOT EXISTS loom.context_blobs
@@ -1174,7 +1174,7 @@ ENGINE = ReplacingMergeTree(version)
 PARTITION BY toYYYYMM(expires_at)
 ORDER BY (org, namespace, blob_key)
 TTL expires_at + toIntervalDay(1)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.conversation_embeddings
 CREATE TABLE IF NOT EXISTS loom.conversation_embeddings
@@ -1200,7 +1200,7 @@ CREATE TABLE IF NOT EXISTS loom.conversation_embeddings
 ENGINE = ReplacingMergeTree(ts)
 PARTITION BY toYYYYMM(ts)
 ORDER BY (org, namespace, embedding_model, thread_id, msg_id)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.conversation_threads
 CREATE TABLE IF NOT EXISTS loom.conversation_threads
@@ -1220,7 +1220,7 @@ CREATE TABLE IF NOT EXISTS loom.conversation_threads
 ENGINE = ReplacingMergeTree(updated_at)
 PARTITION BY toYYYYMM(created_at)
 ORDER BY (org, namespace, thread_id)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.conversations
 CREATE TABLE IF NOT EXISTS loom.conversations
@@ -1243,7 +1243,7 @@ CREATE TABLE IF NOT EXISTS loom.conversations
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(ts)
 ORDER BY (org, namespace, thread_id, ts, msg_id)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.deployment_config
 CREATE TABLE IF NOT EXISTS loom.deployment_config
@@ -1257,7 +1257,7 @@ CREATE TABLE IF NOT EXISTS loom.deployment_config
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY name
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.derived_facts
 CREATE TABLE IF NOT EXISTS loom.derived_facts
@@ -1281,7 +1281,7 @@ CREATE TABLE IF NOT EXISTS loom.derived_facts
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(created_at)
 ORDER BY (org, namespace, subject, predicate, category)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.documents
 CREATE TABLE IF NOT EXISTS loom.documents
@@ -1310,7 +1310,7 @@ CREATE TABLE IF NOT EXISTS loom.documents
 ENGINE = ReplacingMergeTree(version)
 PARTITION BY toYYYYMM(ingested_at)
 ORDER BY (org, namespace, source_uri)
-SETTINGS index_granularity = 64;
+SETTINGS index_granularity = 64, non_replicated_deduplication_window = 1000;
 
 -- loom.embedding_cache
 CREATE TABLE IF NOT EXISTS loom.embedding_cache
@@ -1324,7 +1324,7 @@ CREATE TABLE IF NOT EXISTS loom.embedding_cache
 ENGINE = ReplacingMergeTree(created_at)
 ORDER BY (model, key)
 TTL created_at + toIntervalDay(30)
-SETTINGS index_granularity = 32;
+SETTINGS index_granularity = 32, non_replicated_deduplication_window = 1000;
 
 -- loom.entity_canonical_map
 CREATE TABLE IF NOT EXISTS loom.entity_canonical_map
@@ -1345,7 +1345,7 @@ CREATE TABLE IF NOT EXISTS loom.entity_canonical_map
 ENGINE = ReplacingMergeTree(version)
 PARTITION BY org
 ORDER BY (org, namespace, mention_text)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.entity_communities
 CREATE TABLE IF NOT EXISTS loom.entity_communities
@@ -1363,7 +1363,7 @@ CREATE TABLE IF NOT EXISTS loom.entity_communities
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, level, entity)
-SETTINGS index_granularity = 256;
+SETTINGS index_granularity = 256, non_replicated_deduplication_window = 1000;
 
 -- loom.entity_degree
 CREATE TABLE IF NOT EXISTS loom.entity_degree
@@ -1375,7 +1375,7 @@ CREATE TABLE IF NOT EXISTS loom.entity_degree
 )
 ENGINE = SummingMergeTree
 ORDER BY (org, namespace, entity)
-SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 8192;
+SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.entity_edge_memories
 CREATE TABLE IF NOT EXISTS loom.entity_edge_memories
@@ -1390,7 +1390,7 @@ CREATE TABLE IF NOT EXISTS loom.entity_edge_memories
 ENGINE = ReplacingMergeTree(seen_at)
 PARTITION BY toYYYYMM(seen_at)
 ORDER BY (org, namespace, entity_a, entity_b, memory_key)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.entity_edges
 CREATE TABLE IF NOT EXISTS loom.entity_edges
@@ -1411,7 +1411,7 @@ CREATE TABLE IF NOT EXISTS loom.entity_edges
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(last_seen)
 ORDER BY (org, namespace, entity_a, entity_b)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.entity_summaries
 CREATE TABLE IF NOT EXISTS loom.entity_summaries
@@ -1436,7 +1436,7 @@ CREATE TABLE IF NOT EXISTS loom.entity_summaries
 ENGINE = ReplacingMergeTree(version)
 PARTITION BY toYYYYMM(created_at)
 ORDER BY (org, namespace, agent, user_id, entity, embedding_model)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.entity_triple_memories
 CREATE TABLE IF NOT EXISTS loom.entity_triple_memories
@@ -1454,7 +1454,7 @@ CREATE TABLE IF NOT EXISTS loom.entity_triple_memories
 ENGINE = ReplacingMergeTree(seen_at)
 PARTITION BY toYYYYMM(seen_at)
 ORDER BY (org, namespace, subject, relation, object, memory_key)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.entity_triples
 CREATE TABLE IF NOT EXISTS loom.entity_triples
@@ -1479,7 +1479,7 @@ CREATE TABLE IF NOT EXISTS loom.entity_triples
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(last_seen)
 ORDER BY (org, namespace, subject, relation, object)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.entity_vectors
 CREATE TABLE IF NOT EXISTS loom.entity_vectors
@@ -1499,7 +1499,7 @@ CREATE TABLE IF NOT EXISTS loom.entity_vectors
 ENGINE = ReplacingMergeTree(created_at)
 PARTITION BY toYYYYMM(created_at)
 ORDER BY (org, namespace, agent, user_id, entity_text, memory_key)
-SETTINGS index_granularity = 256, min_bytes_for_wide_part = 134217728;
+SETTINGS index_granularity = 256, min_bytes_for_wide_part = 134217728, non_replicated_deduplication_window = 1000;
 
 -- loom.erasure_requests
 CREATE TABLE IF NOT EXISTS loom.erasure_requests
@@ -1526,7 +1526,7 @@ CREATE TABLE IF NOT EXISTS loom.erasure_requests
 ENGINE = ReplacingMergeTree(version)
 ORDER BY id
 TTL requested_at + toIntervalDay(90)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.erasure_reversals
 CREATE TABLE IF NOT EXISTS loom.erasure_reversals
@@ -1544,7 +1544,7 @@ CREATE TABLE IF NOT EXISTS loom.erasure_reversals
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, erasure_id, memory_id)
 TTL restored_at + toIntervalYear(5)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.events
 CREATE TABLE IF NOT EXISTS loom.events
@@ -1572,7 +1572,7 @@ ENGINE = MergeTree
 PARTITION BY toYYYYMM(ts)
 ORDER BY (org, namespace, kind, ts)
 TTL toDateTime(ts) + toIntervalDay(30)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.idempotency
 CREATE TABLE IF NOT EXISTS loom.idempotency
@@ -1591,7 +1591,7 @@ CREATE TABLE IF NOT EXISTS loom.idempotency
 ENGINE = ReplacingMergeTree(created_at)
 ORDER BY idempotency_key
 TTL expires_at
-SETTINGS index_granularity = 64;
+SETTINGS index_granularity = 64, non_replicated_deduplication_window = 1000;
 
 -- loom.learnings_queue
 CREATE TABLE IF NOT EXISTS loom.learnings_queue
@@ -1619,7 +1619,7 @@ CREATE TABLE IF NOT EXISTS loom.learnings_queue
 ENGINE = ReplacingMergeTree(version)
 PARTITION BY toYYYYMM(proposed_at)
 ORDER BY (org, namespace, candidate_id)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.llm_response_cache
 CREATE TABLE IF NOT EXISTS loom.llm_response_cache
@@ -1638,7 +1638,7 @@ CREATE TABLE IF NOT EXISTS loom.llm_response_cache
 ENGINE = ReplacingMergeTree(created_at)
 ORDER BY (model, key)
 TTL created_at + toIntervalDay(7)
-SETTINGS index_granularity = 64;
+SETTINGS index_granularity = 64, non_replicated_deduplication_window = 1000;
 
 -- loom.memory
 CREATE TABLE IF NOT EXISTS loom.memory
@@ -1721,7 +1721,7 @@ CREATE TABLE IF NOT EXISTS loom.memory
 ENGINE = ReplacingMergeTree(version)
 PARTITION BY toYYYYMM(created_at)
 ORDER BY (org, namespace, agent, user_id, session_id, memory_key)
-SETTINGS index_granularity = 128, deduplicate_merge_projection_mode = 'rebuild';
+SETTINGS index_granularity = 128, deduplicate_merge_projection_mode = 'rebuild', enable_block_number_column = 1, enable_block_offset_column = 1, non_replicated_deduplication_window = 1000;
 
 -- loom.memory_ask_precedents
 CREATE TABLE IF NOT EXISTS loom.memory_ask_precedents
@@ -1746,7 +1746,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_ask_precedents
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, precedent_key)
 TTL created_at + toIntervalDay(30)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.memory_belief_sources
 CREATE TABLE IF NOT EXISTS loom.memory_belief_sources
@@ -1764,7 +1764,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_belief_sources
 )
 ENGINE = ReplacingMergeTree(created_at)
 ORDER BY (org, namespace, memory_key, evidence_id)
-SETTINGS index_granularity = 1024;
+SETTINGS index_granularity = 1024, non_replicated_deduplication_window = 1000;
 
 -- loom.memory_categories
 CREATE TABLE IF NOT EXISTS loom.memory_categories
@@ -1778,7 +1778,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_categories
 )
 ENGINE = ReplacingMergeTree(created_at)
 ORDER BY (org, namespace, memory_key, category_id)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.memory_chunk_sources
 CREATE TABLE IF NOT EXISTS loom.memory_chunk_sources
@@ -1799,7 +1799,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_chunk_sources
 ENGINE = ReplacingMergeTree(created_at)
 PARTITION BY toYYYYMM(created_at)
 ORDER BY (org, namespace, session_id, chunk_index, memory_key, evidence_id)
-SETTINGS index_granularity = 8192, allow_nullable_key = 1;
+SETTINGS index_granularity = 8192, allow_nullable_key = 1, non_replicated_deduplication_window = 1000;
 
 -- loom.memory_chunks
 CREATE TABLE IF NOT EXISTS loom.memory_chunks
@@ -1829,7 +1829,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_chunks
 ENGINE = ReplacingMergeTree(created_at)
 PARTITION BY toYYYYMM(created_at)
 ORDER BY (org, namespace, session_id, chunk_index, content_sha256)
-SETTINGS index_granularity = 256, min_bytes_for_wide_part = 134217728;
+SETTINGS index_granularity = 256, min_bytes_for_wide_part = 134217728, non_replicated_deduplication_window = 1000;
 
 -- loom.memory_code_link_queue
 CREATE TABLE IF NOT EXISTS loom.memory_code_link_queue
@@ -1847,7 +1847,7 @@ ENGINE = MergeTree
 PARTITION BY toDate(queued_at)
 ORDER BY queued_at
 TTL toDateTime(queued_at) + toIntervalDay(7)
-SETTINGS ttl_only_drop_parts = 1, index_granularity = 8192;
+SETTINGS ttl_only_drop_parts = 1, index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.memory_code_links
 CREATE TABLE IF NOT EXISTS loom.memory_code_links
@@ -1901,7 +1901,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_code_links
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, code_namespace, path, qualified_name, namespace, memory_id)
-SETTINGS index_granularity = 1024;
+SETTINGS index_granularity = 1024, non_replicated_deduplication_window = 1000;
 
 -- loom.memory_doc_stats
 CREATE TABLE IF NOT EXISTS loom.memory_doc_stats
@@ -1921,7 +1921,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_doc_stats
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, agent, user_id, session_id, scope, embedding_model, memory_key)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.memory_drops
 CREATE TABLE IF NOT EXISTS loom.memory_drops
@@ -1937,7 +1937,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_drops
 ENGINE = MergeTree
 ORDER BY (org, namespace, stage, reason, ts)
 TTL ts + toIntervalDay(30)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.memory_embeddings
 CREATE TABLE IF NOT EXISTS loom.memory_embeddings
@@ -2000,7 +2000,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_embeddings
 ENGINE = ReplacingMergeTree(version)
 PARTITION BY toYYYYMM(created_at)
 ORDER BY (org, namespace, agent, user_id, session_id, scope, embedding_model, memory_key)
-SETTINGS index_granularity = 256, min_bytes_for_wide_part = 134217728, exclude_materialize_skip_indexes_on_merge = 'embedding_hnsw_idx';
+SETTINGS index_granularity = 256, min_bytes_for_wide_part = 134217728, exclude_materialize_skip_indexes_on_merge = 'embedding_hnsw_idx', enable_block_number_column = 1, enable_block_offset_column = 1, non_replicated_deduplication_window = 1000;
 
 -- loom.memory_evidence
 CREATE TABLE IF NOT EXISTS loom.memory_evidence
@@ -2027,7 +2027,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_evidence
 ENGINE = ReplacingMergeTree(created_at)
 PARTITION BY toYYYYMM(created_at)
 ORDER BY (org, namespace, agent, user_id, session_id, observed_at, evidence_id)
-SETTINGS index_granularity = 256;
+SETTINGS index_granularity = 256, non_replicated_deduplication_window = 1000;
 
 -- loom.memory_exposure_breadth_hourly
 CREATE TABLE IF NOT EXISTS loom.memory_exposure_breadth_hourly
@@ -2045,7 +2045,7 @@ ENGINE = AggregatingMergeTree
 PARTITION BY toYYYYMM(hour)
 ORDER BY (org, namespace, actor, agent, hour)
 TTL hour + toIntervalDay(180)
-SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 8192;
+SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.memory_exposures
 CREATE TABLE IF NOT EXISTS loom.memory_exposures
@@ -2072,7 +2072,7 @@ ENGINE = MergeTree
 PARTITION BY toYYYYMM(ts)
 ORDER BY (org, namespace, actor, ts)
 TTL ts + toIntervalDay(180)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.memory_extraction_queue
 CREATE TABLE IF NOT EXISTS loom.memory_extraction_queue
@@ -2099,7 +2099,7 @@ ENGINE = ReplacingMergeTree(version)
 PARTITION BY toYYYYMM(enqueued_at)
 ORDER BY (org, namespace, agent, user_id, session_id, queue_id)
 TTL enqueued_at + toIntervalDay(30)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.memory_projection_failures
 CREATE TABLE IF NOT EXISTS loom.memory_projection_failures
@@ -2121,7 +2121,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_projection_failures
 )
 ENGINE = MergeTree
 ORDER BY (org, namespace, projection, created_at, failure_id)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.memory_record_conflicts
 CREATE TABLE IF NOT EXISTS loom.memory_record_conflicts
@@ -2144,7 +2144,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_record_conflicts
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, schema_name, memory_key, field_name, incoming_record_id)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.memory_record_fields
 CREATE TABLE IF NOT EXISTS loom.memory_record_fields
@@ -2167,7 +2167,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_record_fields
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, schema_name, field_name, record_id)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.memory_record_versions
 CREATE TABLE IF NOT EXISTS loom.memory_record_versions
@@ -2195,7 +2195,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_record_versions
 ENGINE = ReplacingMergeTree
 PARTITION BY toYYYYMM(created_at)
 ORDER BY (org, namespace, schema_name, memory_key, record_id, version)
-SETTINGS index_granularity = 128;
+SETTINGS index_granularity = 128, non_replicated_deduplication_window = 1000;
 
 -- loom.memory_records
 CREATE TABLE IF NOT EXISTS loom.memory_records
@@ -2222,7 +2222,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_records
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, schema_name, memory_key, record_id)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.memory_reinforcement
 CREATE TABLE IF NOT EXISTS loom.memory_reinforcement
@@ -2238,7 +2238,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_reinforcement
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, agent, user_id, memory_key)
-SETTINGS index_granularity = 64;
+SETTINGS index_granularity = 64, non_replicated_deduplication_window = 1000;
 
 -- loom.memory_schema_fields
 CREATE TABLE IF NOT EXISTS loom.memory_schema_fields
@@ -2259,7 +2259,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_schema_fields
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, schema_id, field_name)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.memory_schemas
 CREATE TABLE IF NOT EXISTS loom.memory_schemas
@@ -2277,7 +2277,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_schemas
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, name)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.memory_term_freq
 CREATE TABLE IF NOT EXISTS loom.memory_term_freq
@@ -2298,7 +2298,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_term_freq
 ENGINE = AggregatingMergeTree
 PARTITION BY toYYYYMM(df_added_at)
 ORDER BY (org, namespace, term)
-SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 256;
+SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 256, non_replicated_deduplication_window = 1000;
 
 -- loom.memory_usage_events
 CREATE TABLE IF NOT EXISTS loom.memory_usage_events
@@ -2315,7 +2315,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_usage_events
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(ts)
 ORDER BY (org, namespace, memory_id, ts)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.memory_usage_totals
 CREATE TABLE IF NOT EXISTS loom.memory_usage_totals
@@ -2332,7 +2332,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_usage_totals
 )
 ENGINE = SummingMergeTree
 ORDER BY (org, namespace, memory_id)
-SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 8192;
+SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.memory_versions
 CREATE TABLE IF NOT EXISTS loom.memory_versions
@@ -2405,7 +2405,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_versions
 ENGINE = ReplacingMergeTree
 PARTITION BY toYYYYMM(created_at)
 ORDER BY (org, namespace, agent, user_id, session_id, memory_key, version)
-SETTINGS index_granularity = 128;
+SETTINGS index_granularity = 128, non_replicated_deduplication_window = 1000;
 
 -- loom.namespace_calibration_result
 CREATE TABLE IF NOT EXISTS loom.namespace_calibration_result
@@ -2433,7 +2433,7 @@ CREATE TABLE IF NOT EXISTS loom.namespace_calibration_result
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.namespace_grants
 CREATE TABLE IF NOT EXISTS loom.namespace_grants
@@ -2453,7 +2453,7 @@ CREATE TABLE IF NOT EXISTS loom.namespace_grants
 ENGINE = ReplacingMergeTree(version)
 PARTITION BY org
 ORDER BY (org, namespace, subject)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.namespace_ontology
 CREATE TABLE IF NOT EXISTS loom.namespace_ontology
@@ -2473,7 +2473,7 @@ CREATE TABLE IF NOT EXISTS loom.namespace_ontology
 ENGINE = ReplacingMergeTree(version)
 PARTITION BY org
 ORDER BY (org, namespace, kind, name)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.namespace_policies
 CREATE TABLE IF NOT EXISTS loom.namespace_policies
@@ -2495,7 +2495,7 @@ CREATE TABLE IF NOT EXISTS loom.namespace_policies
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, policy_id)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.namespace_snapshots
 CREATE TABLE IF NOT EXISTS loom.namespace_snapshots
@@ -2514,7 +2514,7 @@ CREATE TABLE IF NOT EXISTS loom.namespace_snapshots
 ENGINE = MergeTree
 PARTITION BY org
 ORDER BY (org, source_namespace, created_at)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.namespace_types
 CREATE TABLE IF NOT EXISTS loom.namespace_types
@@ -2532,7 +2532,7 @@ CREATE TABLE IF NOT EXISTS loom.namespace_types
 ENGINE = ReplacingMergeTree(updated_at)
 PARTITION BY org
 ORDER BY (org, namespace, memory_type)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.namespace_visits
 CREATE TABLE IF NOT EXISTS loom.namespace_visits
@@ -2546,7 +2546,7 @@ CREATE TABLE IF NOT EXISTS loom.namespace_visits
 ENGINE = ReplacingMergeTree(version)
 PARTITION BY org
 ORDER BY (org, subject, namespace)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.namespace_write_marks
 CREATE TABLE IF NOT EXISTS loom.namespace_write_marks
@@ -2558,7 +2558,7 @@ CREATE TABLE IF NOT EXISTS loom.namespace_write_marks
 )
 ENGINE = AggregatingMergeTree
 ORDER BY (org, namespace, plane)
-SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 8192;
+SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.namespaces
 CREATE TABLE IF NOT EXISTS loom.namespaces
@@ -2604,7 +2604,7 @@ CREATE TABLE IF NOT EXISTS loom.namespaces
 ENGINE = ReplacingMergeTree(updated_at)
 PARTITION BY org
 ORDER BY (org, namespace)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.oauth_state
 CREATE TABLE IF NOT EXISTS loom.oauth_state
@@ -2629,7 +2629,7 @@ ENGINE = ReplacingMergeTree(version)
 PARTITION BY record_type
 ORDER BY (record_type, id)
 TTL created_at + toIntervalDay(90)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.operator_edges
 CREATE TABLE IF NOT EXISTS loom.operator_edges
@@ -2653,7 +2653,7 @@ CREATE TABLE IF NOT EXISTS loom.operator_edges
 ENGINE = ReplacingMergeTree(created_at)
 PARTITION BY toYYYYMM(created_at)
 ORDER BY (org, namespace, from_key, to_key, relation)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.policy_decisions
 CREATE TABLE IF NOT EXISTS loom.policy_decisions
@@ -2678,7 +2678,7 @@ ENGINE = MergeTree
 PARTITION BY toYYYYMM(ts)
 ORDER BY (org, namespace, ts)
 TTL toDateTime(ts) + toIntervalDay(90)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.procedure_runs
 CREATE TABLE IF NOT EXISTS loom.procedure_runs
@@ -2700,7 +2700,7 @@ CREATE TABLE IF NOT EXISTS loom.procedure_runs
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(ts)
 ORDER BY (org, namespace, memory_key, ts)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.provider_configuration
 CREATE TABLE IF NOT EXISTS loom.provider_configuration
@@ -2716,7 +2716,7 @@ CREATE TABLE IF NOT EXISTS loom.provider_configuration
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY config_id
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.qa_fail_hours
 CREATE TABLE IF NOT EXISTS loom.qa_fail_hours
@@ -2733,7 +2733,7 @@ CREATE TABLE IF NOT EXISTS loom.qa_fail_hours
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, qa_namespace, hour)
-SETTINGS index_granularity = 1024;
+SETTINGS index_granularity = 1024, non_replicated_deduplication_window = 1000;
 
 -- loom.qa_item_embeddings
 CREATE TABLE IF NOT EXISTS loom.qa_item_embeddings
@@ -2756,7 +2756,7 @@ CREATE TABLE IF NOT EXISTS loom.qa_item_embeddings
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, kind, number)
-SETTINGS index_granularity = 256;
+SETTINGS index_granularity = 256, non_replicated_deduplication_window = 1000;
 
 -- loom.qa_link_candidates
 CREATE TABLE IF NOT EXISTS loom.qa_link_candidates
@@ -2788,7 +2788,7 @@ CREATE TABLE IF NOT EXISTS loom.qa_link_candidates
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, qa_namespace, issue_number, pr_number)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.qa_rollup_days
 CREATE TABLE IF NOT EXISTS loom.qa_rollup_days
@@ -2810,7 +2810,7 @@ CREATE TABLE IF NOT EXISTS loom.qa_rollup_days
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, qa_namespace, day)
-SETTINGS index_granularity = 1024;
+SETTINGS index_granularity = 1024, non_replicated_deduplication_window = 1000;
 
 -- loom.qa_sources
 CREATE TABLE IF NOT EXISTS loom.qa_sources
@@ -2833,7 +2833,7 @@ CREATE TABLE IF NOT EXISTS loom.qa_sources
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, name)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.qa_test_daily
 CREATE TABLE IF NOT EXISTS loom.qa_test_daily
@@ -2870,7 +2870,7 @@ CREATE TABLE IF NOT EXISTS loom.qa_test_daily
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, qa_namespace, test_name, day)
-SETTINGS index_granularity = 1024;
+SETTINGS index_granularity = 1024, non_replicated_deduplication_window = 1000;
 
 -- loom.query_nodes
 CREATE TABLE IF NOT EXISTS loom.query_nodes
@@ -2891,7 +2891,7 @@ CREATE TABLE IF NOT EXISTS loom.query_nodes
 )
 ENGINE = AggregatingMergeTree
 ORDER BY (org, namespace, query_hash)
-SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 8192;
+SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.revoked_tokens
 CREATE TABLE IF NOT EXISTS loom.revoked_tokens
@@ -2907,7 +2907,7 @@ CREATE TABLE IF NOT EXISTS loom.revoked_tokens
 ENGINE = ReplacingMergeTree(version)
 ORDER BY jti
 TTL toDateTime(expires_at) + toIntervalDay(10)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.search_trace_log
 CREATE TABLE IF NOT EXISTS loom.search_trace_log
@@ -2936,7 +2936,7 @@ ENGINE = MergeTree
 PARTITION BY toYYYYMM(ts)
 ORDER BY (org, namespace, ts)
 TTL ts + toIntervalDay(180)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.service_accounts
 CREATE TABLE IF NOT EXISTS loom.service_accounts
@@ -2961,7 +2961,7 @@ CREATE TABLE IF NOT EXISTS loom.service_accounts
 ENGINE = ReplacingMergeTree(version)
 PARTITION BY org
 ORDER BY (org, name)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.session_brief_revisions
 CREATE TABLE IF NOT EXISTS loom.session_brief_revisions
@@ -2988,7 +2988,7 @@ CREATE TABLE IF NOT EXISTS loom.session_brief_revisions
 )
 ENGINE = MergeTree
 ORDER BY (org, namespace, brief_key, revision, version)
-SETTINGS index_granularity = 1024;
+SETTINGS index_granularity = 1024, non_replicated_deduplication_window = 1000;
 
 -- loom.session_briefs
 CREATE TABLE IF NOT EXISTS loom.session_briefs
@@ -3028,7 +3028,7 @@ CREATE TABLE IF NOT EXISTS loom.session_briefs
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, brief_key)
-SETTINGS index_granularity = 1024;
+SETTINGS index_granularity = 1024, non_replicated_deduplication_window = 1000;
 
 -- loom.session_outcomes_by_user
 CREATE TABLE IF NOT EXISTS loom.session_outcomes_by_user
@@ -3048,7 +3048,7 @@ CREATE TABLE IF NOT EXISTS loom.session_outcomes_by_user
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, agent, user_id, session_id)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.session_summaries
 CREATE TABLE IF NOT EXISTS loom.session_summaries
@@ -3073,7 +3073,7 @@ CREATE TABLE IF NOT EXISTS loom.session_summaries
 ENGINE = ReplacingMergeTree(version)
 PARTITION BY toYYYYMM(created_at)
 ORDER BY (org, namespace, agent, user_id, session_id, embedding_model)
-SETTINGS index_granularity = 128, min_bytes_for_wide_part = 134217728;
+SETTINGS index_granularity = 128, min_bytes_for_wide_part = 134217728, non_replicated_deduplication_window = 1000;
 
 -- loom.shared
 CREATE TABLE IF NOT EXISTS loom.shared
@@ -3098,7 +3098,7 @@ CREATE TABLE IF NOT EXISTS loom.shared
 ENGINE = ReplacingMergeTree(version)
 PARTITION BY (org, namespace)
 ORDER BY (org, namespace, memory_key)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.subject_last_seen
 CREATE TABLE IF NOT EXISTS loom.subject_last_seen
@@ -3110,7 +3110,7 @@ CREATE TABLE IF NOT EXISTS loom.subject_last_seen
 )
 ENGINE = AggregatingMergeTree
 ORDER BY (org, subject)
-SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 8192;
+SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.task_claims
 CREATE TABLE IF NOT EXISTS loom.task_claims
@@ -3123,7 +3123,7 @@ CREATE TABLE IF NOT EXISTS loom.task_claims
 )
 ENGINE = MergeTree
 ORDER BY (task_id, fence, claim_ts, claim_id)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.task_events
 CREATE TABLE IF NOT EXISTS loom.task_events
@@ -3150,7 +3150,7 @@ CREATE TABLE IF NOT EXISTS loom.task_events
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(ts)
 ORDER BY (org, inbox, seq)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.task_inboxes
 CREATE TABLE IF NOT EXISTS loom.task_inboxes
@@ -3176,7 +3176,7 @@ CREATE TABLE IF NOT EXISTS loom.task_inboxes
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, inbox)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.task_leases
 CREATE TABLE IF NOT EXISTS loom.task_leases
@@ -3213,7 +3213,7 @@ CREATE TABLE IF NOT EXISTS loom.task_poster_policies
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, inbox, poster, kind)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.task_webhook_cursor
 CREATE TABLE IF NOT EXISTS loom.task_webhook_cursor
@@ -3228,7 +3228,7 @@ CREATE TABLE IF NOT EXISTS loom.task_webhook_cursor
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, inbox)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.tasks
 CREATE TABLE IF NOT EXISTS loom.tasks
@@ -3267,7 +3267,7 @@ CREATE TABLE IF NOT EXISTS loom.tasks
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, inbox, task_id)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.user_state
 CREATE TABLE IF NOT EXISTS loom.user_state
@@ -3282,7 +3282,7 @@ CREATE TABLE IF NOT EXISTS loom.user_state
 ENGINE = ReplacingMergeTree(version)
 PARTITION BY org
 ORDER BY (org, subject)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.worker_status
 CREATE TABLE IF NOT EXISTS loom.worker_status
@@ -3318,7 +3318,7 @@ CREATE TABLE IF NOT EXISTS loom.worker_status
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (worker, instance_label, pass_started)
 TTL toDateTime(pass_started) + toIntervalDay(30)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.working_memory
 CREATE TABLE IF NOT EXISTS loom.working_memory
@@ -3340,7 +3340,7 @@ CREATE TABLE IF NOT EXISTS loom.working_memory
 ENGINE = ReplacingMergeTree(version)
 PARTITION BY (org, namespace)
 ORDER BY (org, namespace, agent, user_id, session_id, run_id, block_key)
-SETTINGS index_granularity = 8192;
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- ======================================================================
 -- Materialized views (17)

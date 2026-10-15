@@ -1,6 +1,14 @@
 #!/bin/sh
-# Install or update the source-free Loom evaluator stack.
-# Published as an asset on each GitHub Release.
+# Install or update the source-free Loom stack. Published as an asset on each
+# GitHub Release.
+#
+#   curl -fsSL …/install.sh | sh                      # with its own ClickHouse
+#   curl -fsSL …/install.sh | sh -s -- --clickhouse https://loom@host:8443
+#
+# --clickhouse (or LOOM_CH_URL) points Loom at a self-managed server or a
+# ClickHouse Cloud service instead. The password comes from LOOM_CH_PASSWORD,
+# a prompt, or the URL (where `ps` and shell history see it); it is written
+# only to .env (mode 600).
 
 set -eu
 
@@ -8,15 +16,116 @@ REPOSITORY=${LOOM_REPOSITORY:-ClickHouse/loom}
 INSTALL_DIR=${LOOM_INSTALL_DIR:-"$HOME/.loom"}
 REQUESTED_VERSION=${LOOM_VERSION:-latest}
 SKIP_START=${LOOM_SKIP_START:-0}
+CH_URL=${LOOM_CH_URL:-}
 
 fail() {
   printf 'Loom installer: %s\n' "$*" >&2
   exit 1
 }
 
+while [ $# -gt 0 ]; do
+  case $1 in
+    --clickhouse)
+      [ $# -ge 2 ] || fail "--clickhouse needs a URL"
+      CH_URL=$2
+      shift 2
+      ;;
+    --clickhouse=*)
+      CH_URL=${1#--clickhouse=}
+      shift
+      ;;
+    *) fail "unknown argument: $1 (the only option is --clickhouse URL)" ;;
+  esac
+done
+
 command -v docker >/dev/null 2>&1 || fail "Docker is required: https://docs.docker.com/get-docker/"
-docker compose version >/dev/null 2>&1 || fail "the Docker Compose v2 plugin is required"
+compose_version=$(docker compose version --short 2>/dev/null) || fail "the Docker Compose v2 plugin is required"
+compose_version=${compose_version#v}
+compose_minor=${compose_version#*.}
+compose_minor=${compose_minor%%.*}
+# depends_on.required (compose.yaml) needs Compose 2.20 or later.
+if [ "${compose_version%%.*}" -lt 2 ] || { [ "${compose_version%%.*}" -eq 2 ] && [ "$compose_minor" -lt 20 ]; }; then
+  fail "Docker Compose $compose_version is too old; 2.20 or later is required"
+fi
 command -v curl >/dev/null 2>&1 || fail "curl is required"
+
+# Percent-decoding for the user and password of a URL.
+urldecode() {
+  printf '%s' "$1" | LC_ALL=C awk '
+    BEGIN { for (i = 1; i < 256; i++) byte[sprintf("%02x", i)] = sprintf("%c", i) }
+    {
+      out = ""
+      rest = $0
+      while ((i = index(rest, "%")) > 0) {
+        code = tolower(substr(rest, i + 1, 2))
+        if (code in byte) { out = out substr(rest, 1, i - 1) byte[code]; rest = substr(rest, i + 3) }
+        else { out = out substr(rest, 1, i); rest = substr(rest, i + 1) }
+      }
+      printf "%s", out rest
+    }'
+}
+
+# Sets CH_HOST, CH_PORT, CH_SECURE, CH_USER and CH_PASSWORD from a URL such
+# as https://user:password@host:8443 (http:// defaults to 8123, https:// to
+# 8443; the user is required).
+parse_clickhouse_url() {
+  case $1 in
+    https://*) CH_SECURE=true CH_PORT=8443 rest=${1#https://} ;;
+    http://*) CH_SECURE=false CH_PORT=8123 rest=${1#http://} ;;
+    *) fail "--clickhouse takes an http:// or https:// URL, such as https://default@abc.clickhouse.cloud:8443" ;;
+  esac
+  rest=${rest%%/*}
+  CH_USER= CH_PASSWORD=
+  case $rest in
+    *@*)
+      userinfo=${rest%@*}
+      rest=${rest##*@}
+      case $userinfo in
+        *:*) CH_USER=$(urldecode "${userinfo%%:*}") CH_PASSWORD=$(urldecode "${userinfo#*:}") ;;
+        *) CH_USER=$(urldecode "$userinfo") ;;
+      esac
+      ;;
+  esac
+  case $rest in
+    *:*) CH_HOST=${rest%:*} CH_PORT=${rest##*:} ;;
+    *) CH_HOST=$rest ;;
+  esac
+  [ -n "$CH_HOST" ] || fail "the ClickHouse URL names no host"
+  [ -n "$CH_USER" ] || fail "the ClickHouse URL names no user: use one made for Loom, e.g. https://loom@$CH_HOST:$CH_PORT"
+  case $CH_HOST in
+    localhost | 127.* | ::1 | '[::1]')
+      fail "$CH_HOST inside the Loom container is the container itself: use host.docker.internal for a server on this host"
+      ;;
+  esac
+  case $CH_PORT in '' | *[!0-9]*) fail "the ClickHouse URL has an invalid port: $CH_PORT" ;; esac
+}
+
+read_password() {
+  # A subshell: a failed redirection on `:` would end the script itself.
+  (: </dev/tty) 2>/dev/null || fail "no ClickHouse password: set LOOM_CH_PASSWORD or put it in the URL"
+  printf 'ClickHouse password for %s@%s: ' "$CH_USER" "$CH_HOST" >/dev/tty
+  # Ctrl-C at the prompt stops the install, with the terminal echoing again.
+  trap 'stty echo </dev/tty; printf "\\n" >/dev/tty; exit 130' HUP INT TERM
+  stty -echo </dev/tty
+  IFS= read -r CH_PASSWORD </dev/tty || CH_PASSWORD=
+  stty echo </dev/tty
+  trap - HUP INT TERM
+  printf '\n' >/dev/tty
+}
+
+if [ -n "$CH_URL" ]; then
+  parse_clickhouse_url "$CH_URL"
+  [ -n "$CH_PASSWORD" ] || CH_PASSWORD=${LOOM_CH_PASSWORD:-}
+  [ -n "$CH_PASSWORD" ] || read_password
+  # .env holds it between single quotes, which take everything else literally.
+  case $CH_PASSWORD in
+    *"'"*) fail "the ClickHouse password contains a single quote, which .env cannot hold; choose another" ;;
+  esac
+fi
+
+# Compose prefers the shell's variables to .env; .env alone names the target.
+unset COMPOSE_PROFILES LOOM_CH_HOST LOOM_CH_PORT LOOM_CH_SECURE LOOM_CH_USER LOOM_CH_PASSWORD \
+  LOOM_CH_READER_USER
 
 tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/loom-install.XXXXXX")
 trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
@@ -58,12 +167,29 @@ version=$(sed -n '1p' "$bundle/VERSION")
 mkdir -p "$INSTALL_DIR"
 cp "$bundle/compose.yaml" "$INSTALL_DIR/compose.yaml"
 cp "$bundle/VERSION" "$INSTALL_DIR/VERSION"
-rm -rf "$INSTALL_DIR/clickhouse-config" "$INSTALL_DIR/lemmagen3"
-cp -R "$bundle/clickhouse-config" "$INSTALL_DIR/clickhouse-config"
-cp -R "$bundle/lemmagen3" "$INSTALL_DIR/lemmagen3"
+# Releases before the deploy/ layout kept these two at the top level.
+rm -rf "$INSTALL_DIR/clickhouse-config" "$INSTALL_DIR/lemmagen3" "$INSTALL_DIR/deploy"
+cp -R "$bundle/deploy" "$INSTALL_DIR/deploy"
 
-# .env holds the JWT secret, so it is never world-readable, not even
-# between the write and the chmod (kept as belt and braces).
+# set_env KEY VALUE: replace KEY's line in .env, or append it. The value goes
+# through the environment, so awk never interprets it.
+set_env() {
+  KEY=$1 VALUE=$2 awk '
+    BEGIN { key = ENVIRON["KEY"]; line = key "=" ENVIRON["VALUE"] }
+    index($0, key "=") == 1 { if (!done) print line; done = 1; next }
+    { print }
+    END { if (!done) print line }
+  ' "$INSTALL_DIR/.env" >"$tmp_dir/env.updated"
+  mv "$tmp_dir/env.updated" "$INSTALL_DIR/.env"
+}
+
+get_env() {
+  awk -F= -v key="$1" '$1 == key { value = substr($0, length(key) + 2) } END { print value }' \
+    "$INSTALL_DIR/.env"
+}
+
+# .env holds the JWT secret and any ClickHouse password, so it is never
+# world-readable, not even between a write and the chmod.
 saved_umask=$(umask)
 umask 077
 if [ ! -f "$INSTALL_DIR/.env" ]; then
@@ -74,19 +200,32 @@ if [ ! -f "$INSTALL_DIR/.env" ]; then
     -e "s/__LOOM_VERSION__/$version/" \
     -e "s/__LOOM_JWT_SECRET__/$secret/" \
     "$bundle/env.example" >"$INSTALL_DIR/.env"
-  chmod 600 "$INSTALL_DIR/.env"
   printf 'Created %s/.env\n' "$INSTALL_DIR"
 else
   printf 'Preserved existing %s/.env\n' "$INSTALL_DIR"
-  awk -v version="$version" '
-    BEGIN { found = 0 }
-    /^LOOM_VERSION=/ { print "LOOM_VERSION=" version; found = 1; next }
-    { print }
-    END { if (!found) print "LOOM_VERSION=" version }
-  ' "$INSTALL_DIR/.env" >"$tmp_dir/env.updated"
-  mv "$tmp_dir/env.updated" "$INSTALL_DIR/.env"
-  chmod 600 "$INSTALL_DIR/.env"
+  had_env=1
+  set_env LOOM_VERSION "$version"
+  # An install from before profiles always ran the bundled ClickHouse.
+  if ! grep -q '^COMPOSE_PROFILES=' "$INSTALL_DIR/.env"; then
+    set_env COMPOSE_PROFILES bundled
+  fi
 fi
+if [ -n "$CH_URL" ]; then
+  case "${had_env:-0},$(get_env COMPOSE_PROFILES)," in
+    1,*bundled,*)
+      printf 'The bundled ClickHouse keeps its data in its volume; stop it with:\n'
+      printf '  docker compose --project-directory %s --profile bundled stop clickhouse\n' "$INSTALL_DIR"
+      ;;
+  esac
+  set_env COMPOSE_PROFILES ""
+  set_env LOOM_CH_HOST "$CH_HOST"
+  set_env LOOM_CH_PORT "$CH_PORT"
+  set_env LOOM_CH_SECURE "$CH_SECURE"
+  set_env LOOM_CH_USER "$CH_USER"
+  set_env LOOM_CH_PASSWORD "'$CH_PASSWORD'"
+  printf 'Loom will use ClickHouse at %s:%s as %s\n' "$CH_HOST" "$CH_PORT" "$CH_USER"
+fi
+chmod 600 "$INSTALL_DIR/.env"
 umask "$saved_umask"
 
 if [ "$SKIP_START" = 1 ]; then
@@ -94,13 +233,26 @@ if [ "$SKIP_START" = 1 ]; then
   exit 0
 fi
 
-printf 'Starting Loom %s (the first pull can take a few minutes)…\n' "$version"
-docker compose --project-directory "$INSTALL_DIR" --env-file "$INSTALL_DIR/.env" \
-  -f "$INSTALL_DIR/compose.yaml" pull
-docker compose --project-directory "$INSTALL_DIR" --env-file "$INSTALL_DIR/.env" \
-  -f "$INSTALL_DIR/compose.yaml" up -d
+compose() {
+  docker compose --project-directory "$INSTALL_DIR" --env-file "$INSTALL_DIR/.env" \
+    -f "$INSTALL_DIR/compose.yaml" "$@"
+}
 
-port=$(awk -F= '$1 == "LOOM_PORT" {print $2}' "$INSTALL_DIR/.env" | tail -n 1)
+printf 'Starting Loom %s (the first pull can take a few minutes)…\n' "$version"
+compose pull
+case ",$(get_env COMPOSE_PROFILES)," in
+  *,bundled,*) ;;
+  *)
+    # Your own ClickHouse: create the database and the reader user, or stop
+    # here with the SQL an admin has to run.
+    compose run --rm --no-deps loom loom ch-setup \
+      || fail "ClickHouse is not ready for Loom (above); fix it and run the installer again"
+    ;;
+esac
+compose up -d
+
+# Compose takes LOOM_PORT from the environment before .env, and so does this.
+port=${LOOM_PORT:-$(get_env LOOM_PORT)}
 port=${port:-7777}
 health="http://127.0.0.1:$port/v1/health"
 attempt=0
@@ -117,6 +269,5 @@ while [ "$attempt" -lt 90 ]; do
   sleep 2
 done
 
-docker compose --project-directory "$INSTALL_DIR" --env-file "$INSTALL_DIR/.env" \
-  -f "$INSTALL_DIR/compose.yaml" logs --tail 60 loom >&2 || true
+compose logs --tail 60 loom >&2 || true
 fail "Loom did not become healthy at $health within 180 seconds"

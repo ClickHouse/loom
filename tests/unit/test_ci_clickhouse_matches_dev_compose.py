@@ -1,6 +1,6 @@
 """dev/ci_start_clickhouse.sh (the CI ClickHouse) runs the same image, the
-same credentials and the same config mounts as the `clickhouse` service of
-dev/docker-compose.dev.yml, so CI validates what `make dev` runs. The one
+same credentials and the same config mounts as the bundled `clickhouse`
+service of compose.yaml, so CI validates what `make dev` and the installer run. The one
 intended difference: CI omits named_collections.xml (gitignored, built from
 an operator secret, only used by SQL ai* functions)."""
 
@@ -13,8 +13,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = (ROOT / "dev" / "ci_start_clickhouse.sh").read_text(encoding="utf-8")
-DEV = yaml.safe_load((ROOT / "dev" / "docker-compose.dev.yml").read_text(encoding="utf-8"))
-CH = DEV["services"]["clickhouse"]
+CH = yaml.safe_load((ROOT / "compose.yaml").read_text(encoding="utf-8"))["services"]["clickhouse"]
 
 
 def _default_image(value: str) -> str:
@@ -30,16 +29,9 @@ def test_same_image_the_latest_release() -> None:
     assert _default_image(CH["image"]) == "clickhouse/clickhouse-server:latest"
     # A cached `latest` would hold an older release.
     assert "*:latest | *:head) PULL=always" in SCRIPT and '--pull "$PULL"' in SCRIPT
-    assert CH["pull_policy"] == "daily"
-
-
-def test_the_standalone_stack_runs_the_same_image() -> None:
-    standalone = yaml.safe_load(
-        (ROOT / "deploy" / "standalone" / "compose.yaml").read_text(encoding="utf-8")
-    )
-    assert _default_image(standalone["services"]["clickhouse"]["image"]) == _default_image(
-        CH["image"]
-    )
+    # A checkout's stack pulls it again once a day (dev/docker-compose.dev.yml).
+    dev = yaml.safe_load((ROOT / "dev" / "docker-compose.dev.yml").read_text(encoding="utf-8"))
+    assert dev["services"]["clickhouse"]["pull_policy"] == "daily"
 
 
 def test_same_credentials_and_database() -> None:
@@ -54,9 +46,9 @@ def test_same_config_mounts_except_named_collections() -> None:
         ci[dst] = src.replace("$ROOT/", "").replace("$CFG/", "deploy/clickhouse-config/")
     dev = {}
     for vol in CH["volumes"]:
-        src, dst, *_ = vol.split(":")
-        if src.startswith("../"):
-            dev[dst] = src.removeprefix("../")
+        src, dst = (vol["source"], vol["target"]) if isinstance(vol, dict) else vol.split(":")[:2]
+        if src.startswith("./"):
+            dev[dst] = src.removeprefix("./")
     named = "/etc/clickhouse-server/config.d/named_collections.xml"
     assert named in dev and named not in ci
     dev.pop(named)
