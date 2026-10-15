@@ -751,6 +751,9 @@ def test_a_revision_that_does_not_restate_it_closes_its_successor(old, new, trip
         'Do I live in London?"',
         "Do I live in London?)",
         'Bob asked: do I live in London?" I said yes.',
+        "Do I live in London?\u201d",
+        "Do I live in London?\u00bb",
+        'He asked "do I live in London?") I said yes.',
     ],
 )
 def test_a_question_closed_by_a_quote_or_bracket_states_nothing(text) -> None:

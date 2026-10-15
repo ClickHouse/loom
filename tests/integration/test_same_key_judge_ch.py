@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+from server.core.datetimes import naive_utc_now
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from tests.integration._resources import unique_org
 
@@ -1662,7 +1663,11 @@ async def test_an_undo_of_a_fact_open_until_later_adds_no_weight(ch, org) -> Non
     await _edges_like_triples(ch, org)
     scope = SimpleNamespace(org=org, namespace=NS, agent="bot")
     await entity_projections.reopen_held_facts(
-        scope, [str(london["memory_id"])], ch=ch, restore_id=uuid.uuid4().hex
+        scope,
+        [str(london["memory_id"])],
+        ch=ch,
+        restore_id=uuid.uuid4().hex,
+        restored_at=naive_utc_now(),
     )
     await _mutations_done(ch, org)
     assert await _open_weights(ch, org, "london") == {"triples": 1, "edges": 1}
@@ -1728,7 +1733,11 @@ async def test_an_undo_keeps_no_end_a_supersession_set(ch, org) -> None:
     await _mutations_done(ch, org)
     scope = SimpleNamespace(org=org, namespace=NS, agent="bot")
     await entity_projections.reopen_held_facts(
-        scope, [str(london["memory_id"])], ch=ch, restore_id=uuid.uuid4().hex
+        scope,
+        [str(london["memory_id"])],
+        ch=ch,
+        restore_id=uuid.uuid4().hex,
+        restored_at=naive_utc_now(),
     )
     await _mutations_done(ch, org)
     ends = await ch.query_all(
@@ -1786,7 +1795,11 @@ async def test_an_undo_weighs_a_fact_whose_row_a_close_ends_ahead(ch, org) -> No
     await _mutations_done(ch, org)
     scope = SimpleNamespace(org=org, namespace=NS, agent="bot")
     await entity_projections.reopen_held_facts(
-        scope, [str(london["memory_id"])], ch=ch, restore_id=uuid.uuid4().hex
+        scope,
+        [str(london["memory_id"])],
+        ch=ch,
+        restore_id=uuid.uuid4().hex,
+        restored_at=naive_utc_now(),
     )
     await _mutations_done(ch, org)
     (marker,) = await ch.query_all(
@@ -1941,7 +1954,11 @@ async def test_an_undo_takes_no_end_from_an_older_row_of_its_fact(ch, org) -> No
     await _edges_like_triples(ch, org)
     scope = SimpleNamespace(org=org, namespace=NS, agent="bot")
     await entity_projections.reopen_held_facts(
-        scope, [str(london["memory_id"])], ch=ch, restore_id=uuid.uuid4().hex
+        scope,
+        [str(london["memory_id"])],
+        ch=ch,
+        restore_id=uuid.uuid4().hex,
+        restored_at=naive_utc_now(),
     )
     await _mutations_done(ch, org)
     ends = await ch.query_all(

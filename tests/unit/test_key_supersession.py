@@ -1693,6 +1693,50 @@ async def test_a_reopen_no_retry_can_read_is_abandoned(monkeypatch) -> None:
     assert (out.resolved, abandoned) == (False, ["malformed_payload"])
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"restored_at": "2026-10-15T09:00:00"},
+        {"restore_id": "u1"},
+        {"restore_id": "u1", "restored_at": "not a date"},
+    ],
+)
+async def test_an_undo_replay_without_its_id_or_instant_is_abandoned_unread(
+    monkeypatch, payload
+) -> None:
+    # '' is every other row's restore id, and the clock would date the Undo at the replay.
+    from server.memory.app import entity_projections, projection_failures
+
+    abandoned: list[str] = []
+    called: list[str] = []
+
+    async def mark_abandoned(*, org, failure_id, reason, ch):
+        abandoned.append(reason)
+
+    async def never(*a, **k):
+        called.append("read")
+
+    monkeypatch.setattr(projection_failures, "mark_projection_failure_abandoned", mark_abandoned)
+    monkeypatch.setattr(projection_failures, "_rows_still_holding", never)
+    monkeypatch.setattr(entity_projections, "reopen_held_facts", never)
+    failure = projection_failures.ProjectionFailureRow(
+        failure_id="f1",
+        org="o",
+        namespace="ns",
+        agent="a",
+        projection=projection_failures.TRIPLES_RECONCILE,
+        source_operation="memory.restore",
+        source_resource_id="memory.restore:ns",
+        memory_keys=[],
+        error_type="RuntimeError",
+        error_message="reconcile",
+        payload={"memory_ids": ["m1"], "reopen": True, "content_sha256": {"m1": "0" * 64}}
+        | payload,
+    )
+    out = await projection_failures.retry_projection_failure(failure, ch=_Graph([], set()))
+    assert (out.resolved, abandoned, called) == (False, ["malformed_payload"], [])
+
+
 async def test_a_shared_successor_is_written_once_with_each_winners_key(monkeypatch) -> None:
     rows = [
         _pair_row("a0", "user lives in Paris", superseded_by="a1"),

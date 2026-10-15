@@ -538,13 +538,13 @@ async def reopen_held_facts(
     *,
     ch: Any,
     restore_id: str,
-    restored_at: datetime | None = None,
+    restored_at: datetime,
 ) -> None:
     """Open again the facts the rows `ids` hold now: an Undo brings a retired row's
     facts back. An Undo is an assertion made at the restore, so each fact gets a new
-    observation starting then, repaired like any other value; no row retires. A replay
-    passes `restored_at` and `restore_id`, finds the observations that Undo wrote and
-    restates them."""
+    observation starting then, repaired like any other value; no row retires.
+    `restore_id` names this Undo's markers, so a replay with the same id and
+    `restored_at` finds and restates them."""
     from server.identity.app.namespace_ontology import load_relation_cardinality
 
     # Only what the restored rows' values hold now: another row's claim keeps a fact
@@ -553,8 +553,7 @@ async def reopen_held_facts(
     held = await _stated_by_live_rows(input.org, input.namespace, linked, ch=ch, rows=ids)
     if not held:
         return
-    restored = restored_at or naive_utc_now()
-    now = restored.replace(microsecond=0)  # as the DateTime columns store it
+    now = restored_at.replace(microsecond=0)  # as the DateTime columns store it
     # On the fly: a retirement's closes are mutations, and a row they will close is
     # weighed as closed already (the close expressions are deterministic).
     latest = await ch.query_all(
@@ -595,7 +594,7 @@ async def reopen_held_facts(
     # Marker i is seen i microseconds after the restore, in the facts' stored order, so
     # the later of two values the rows hold stays the later one.
     latest = sorted(latest, key=lambda r: observation_key(r["start"], r["seen"], r["object"]))
-    markers = _markers(latest, restored, now)
+    markers = _markers(latest, restored_at, now)
     declared = await load_relation_cardinality(input.org, input.namespace)
     # A marker is never current when the repair closes its value as it starts: another
     # value's marker is newer than the value's newest row and starts no later.
@@ -657,7 +656,7 @@ async def reopen_held_facts(
         }
         for m in markers
     ]
-    await repair_intervals(input, restated, ch=ch, at=restored)
+    await repair_intervals(input, restated, ch=ch, at=restored_at)
 
 
 class _Marker(NamedTuple):

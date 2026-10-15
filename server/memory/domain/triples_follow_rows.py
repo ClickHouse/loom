@@ -324,8 +324,12 @@ def _still_named(words: Sequence[str], triple: Triple) -> bool:
 # states it, a wrongly open one never leaves.
 # A sentence ends at a mark, maybe closed by a quote or bracket, followed by a space or
 # the end: "next.js" and "3.12" go on.
-_SENTENCE_END_RE = re.compile(r"(?:(?<=[.;?!])|(?<=[.;?!][\"')\]]))(?=\s|$)")
-_CLOSERS = "\"')]"
+_CLOSERS = "\"')]\u2019\u201d\u00bb"
+_CLOSER = f"[{re.escape(_CLOSERS)}]"
+# Python's lookbehind is fixed-width: up to two closers ("?")") after the mark.
+_SENTENCE_END_RE = re.compile(
+    rf"(?:(?<=[.;?!])|(?<=[.;?!]{_CLOSER})|(?<=[.;?!]{_CLOSER}{_CLOSER}))(?=\s|$)"
+)
 _CLAUSE_BREAK_RE = re.compile(r"[,:]")
 _CONJUNCTIONS = frozenset({"and", "but"})
 
