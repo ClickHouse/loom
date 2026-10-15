@@ -213,7 +213,7 @@ async def test_an_undo_weighs_what_is_open_with_pending_closes_applied(monkeypat
                 return [{"subject": "user", "relation": "live_in", "object": city,
                          "confidence": 1.0, "provenance": "extracted", "ends": until,
                          "seen": stored + timedelta(microseconds=i), "start": None, "open": 0,
-                         "restored": 0, "weighted": 1}
+                         "any_open": 0, "restored": 0, "weighted": 1}
                         for city, i in (("berlin", 1), ("rome", 0))]  # fmt: skip
             return [{"entity_a": "berlin", "entity_b": "user", "ends": until,
                      "restored": 0, "weighted": 1}]  # fmt: skip
@@ -312,11 +312,14 @@ async def test_an_undo_refused_on_the_fly_writes_nothing_and_is_recorded(monkeyp
 
 
 async def _undo_of_rome_and(
-    monkeypatch, berlin: dict[str, Any], rome: dict[str, Any] | None = None
+    monkeypatch,
+    berlin: dict[str, Any],
+    rome: dict[str, Any] | None = None,
+    held: list[str] | None = None,
 ) -> tuple[_CH, list]:
     """An Undo of a row holding Rome (undated, stored first, or `rome`'s columns) and
-    Berlin (`berlin`'s columns), both closed by its retirement. Returns the CH and the
-    repaired triples."""
+    Berlin (`berlin`'s columns), both closed by its retirement, or only the `held` of
+    them. Returns the CH and the repaired triples."""
     from types import SimpleNamespace
 
     import server.identity.app.namespace_ontology as onto
@@ -330,13 +333,19 @@ async def _undo_of_rome_and(
                 base = {"subject": "user", "relation": "live_in", "confidence": 1.0,
                         "provenance": "extracted", "ends": None, "start": None, "open": 0,
                         "restored": 0, "weighted": 0}  # fmt: skip
-                return [{**base, "object": "rome", "seen": stored, **(rome or {})},
+                rows = [{**base, "object": "rome", "seen": stored, **(rome or {})},
                         {**base, "object": "berlin", "seen": stored, **berlin}]  # fmt: skip
+                return [_as_read(r, params) for r in rows if r["object"] in cities]
             return [{"entity_a": a, "entity_b": b, "ends": None, "restored": 0, "weighted": 0}
                     for a, b in params["pairs"]]  # fmt: skip
 
-    async def held(*a: Any, **k: Any) -> list:
+    cities = held or ["berlin", "rome"]
+
+    async def linked(*a: Any, **k: Any) -> list:
         return [("user", "live_in", "berlin"), ("user", "live_in", "rome")]
+
+    async def stated(*a: Any, **k: Any) -> list:
+        return [("user", "live_in", city) for city in cities]
 
     async def declared(*a: Any) -> dict:
         return {}
@@ -347,8 +356,8 @@ async def _undo_of_rome_and(
         repaired.extend(triples)
         return []
 
-    monkeypatch.setattr(ep, "_linked_triples", held)
-    monkeypatch.setattr(ep, "_stated_by_live_rows", held)
+    monkeypatch.setattr(ep, "_linked_triples", linked)
+    monkeypatch.setattr(ep, "_stated_by_live_rows", stated)
     monkeypatch.setattr(ep, "repair_intervals", repair)
     monkeypatch.setattr(onto, "load_relation_cardinality", declared)
     ch = _ClosedCH()
@@ -356,6 +365,15 @@ async def _undo_of_rome_and(
     await ep.reopen_held_facts(SimpleNamespace(org="o", namespace="ns"), ["m1"], ch=ch,
                                restored_at=restored)  # fmt: skip
     return ch, repaired
+
+
+def _as_read(row: dict[str, Any], params: Any) -> dict[str, Any]:
+    """`row` as the Undo's read returns it: a stored marker is its own only when seen in
+    the Undo's range, and a fact's newest open row is its latest one unless given."""
+    row = {"newest_open": (row["start"], row["seen"]), "any_open": row["open"], **row}
+    if "marker_seen" in row:
+        row["restored"] = int(params["seen"] <= row["marker_seen"] < params["until"])
+    return row
 
 
 def _weights(rows: list[dict[str, Any]], *keys: str) -> dict[str, tuple]:
@@ -449,3 +467,51 @@ async def test_a_replay_restates_the_markers_it_finds_as_they_are_stored(monkeyp
         ("rome", now, restored),
         ("berlin", dec, later),
     ]
+
+
+async def test_an_undo_weighs_a_value_by_its_newest_open_row(monkeypatch) -> None:
+    # Berlin's open row says "moving Dec 5" (seen Sep 7); an earlier Undo's undated,
+    # open marker of it was seen later, on Sep 15. The repair judges Berlin by its Dec 5
+    # row, which stays newer than Rome's marker, so Berlin's marker carries the weight.
+    berlin = {
+        "seen": datetime(2026, 9, 15),
+        "open": 1,
+        "newest_open": (datetime(2026, 12, 5), datetime(2026, 9, 7)),
+        "any_open": 1,
+    }
+    ch, _ = await _undo_of_rome_and(monkeypatch, berlin)
+    assert _weights(ch.inserts["loom.entity_triples"], "co_occur")["berlin"] == (1,)
+
+
+def _marker(start: datetime, seen: datetime) -> dict[str, Any]:
+    """A fact whose latest row is the first attempt's marker, open."""
+    return {"start": start, "seen": seen, "open": 1, "marker_start": start, "marker_seen": seen}
+
+
+async def test_a_replay_with_fewer_facts_held_writes_no_second_marker(monkeypatch) -> None:
+    # The first attempt held Rome and Berlin, so Berlin's marker is the second. Rome is
+    # no longer held at the replay: it still finds Berlin's marker and adds none.
+    restored = datetime(2026, 10, 15, 9, 0, 0, 5)
+    now = restored.replace(microsecond=0)
+    later = restored + timedelta(microseconds=1)
+    ch, repaired = await _undo_of_rome_and(
+        monkeypatch, _marker(now, later), rome=_marker(now, restored), held=["berlin"]
+    )
+    assert ch.inserts == {}
+    assert [(t["object"], t["seen_at"]) for t in repaired] == [("berlin", later)]
+
+
+async def test_a_replay_with_more_facts_held_gives_a_new_marker_its_own_verdict(
+    monkeypatch,
+) -> None:
+    # The first attempt held only Rome; its marker is stored. Berlin is held at the
+    # replay: its marker is seen after Rome's, never at it, so it is the newer value
+    # and keeps its weight.
+    restored = datetime(2026, 10, 15, 9, 0, 0, 5)
+    ch, repaired = await _undo_of_rome_and(
+        monkeypatch, {}, rome=_marker(restored.replace(microsecond=0), restored)
+    )
+    (berlin,) = ch.inserts["loom.entity_triples"]
+    assert berlin["object"] == "berlin" and berlin["seen_at"] > restored
+    assert berlin["co_occur"] == 1
+    assert len({t["seen_at"] for t in repaired}) == 2

@@ -1565,6 +1565,53 @@ async def test_an_undo_starts_a_fact_dated_ahead_on_its_date(ch, org) -> None:
     assert not [e for e in edges if e[0] == "berlin" and e[2] is None and e[1] < december]
 
 
+async def test_a_replayed_undo_restates_a_fact_dated_ahead_as_stored(ch, org, monkeypatch) -> None:
+    # As above, but the repair fails after the markers land. The replay reads them back
+    # as stored, Berlin from Dec 1 to the second, so Rome still closes on Dec 1.
+    from server.memory.app import entity_projections
+    from server.memory.app.projection_failures import retry_projection_failure
+    from server.memory.app.projections import write_entity_triples
+    from server.memory.app.restore import handle_memory_restore
+
+    live = ("user", "live_in")
+    december = datetime.now(UTC).replace(tzinfo=None, microsecond=0) + timedelta(days=47)
+    row, write, results = await _row_and_write(
+        ch, org, "s1", "I live in Rome. Moving to Berlin on Dec 1.", [(*live, "rome")]
+    )
+    await write_entity_triples(write, results, ch=ch, entity_map={})
+    entry = write.entries[0].model_copy(
+        update={"relations": [(*live, "berlin")], "valid_at": december}
+    )
+    dated = write.model_copy(update={"entries": [entry]})
+    await write_entity_triples(dated, results, ch=ch, entity_map={})
+    await _mutations_done(ch, org)
+    await _edges_like_triples(ch, org)
+    paris = await _stated(ch, org, "s2", "I live in Paris", (*live, "paris"))
+    await _follow_retirement(ch, org, row, paris)
+    repair = entity_projections.repair_intervals
+
+    async def _fails(*a: Any, **k: Any) -> Any:
+        raise RuntimeError("repair down")
+
+    monkeypatch.setattr(entity_projections, "repair_intervals", _fails)
+    assert (await handle_memory_restore(_undo_of(paris))).restored
+    monkeypatch.setattr(entity_projections, "repair_intervals", repair)
+    failure = await _recorded_reconcile(ch, org)
+    assert (await retry_projection_failure(failure, ch=ch)).resolved
+    await _mutations_done(ch, org)
+    markers = await ch.query_all(
+        "SELECT object, valid_from, valid_to FROM loom.entity_triples WHERE org = {org:String}"
+        " AND adapter_name = 'row-restore' ORDER BY object"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    berlin, rome = markers  # one each: the replay wrote none
+    assert (berlin["object"], berlin["valid_from"], berlin["valid_to"]) == (
+        "berlin", december, None
+    )  # fmt: skip
+    assert (rome["object"], rome["valid_to"]) == ("rome", december)
+
+
 async def test_a_bulk_write_keeps_the_value_with_the_newest_observation(ch, org) -> None:
     # One write: London from Oct 15, Paris from Oct 14, London from Oct 13. London has
     # the newest observation and stays current; Paris closes when it starts.

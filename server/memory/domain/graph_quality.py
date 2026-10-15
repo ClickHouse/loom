@@ -627,12 +627,14 @@ def triple_interval_repairs(
         old_key = max(observation_key(start, seen, old_object) for start, seen in rows)
         # The older value closes when the newer value's earliest row newer than it
         # starts. The value being written may be the older one.
-        values = {obj: (ours, new_key), old_object: (rows, old_key)}
-        closed, closer = (obj, old_object) if old_key > new_key else (old_object, obj)
-        closed_rows, beaten = values[closed]
-        closer_rows, _ = values[closer]
+        older, newer = (old_object, rows, old_key), (obj, ours, new_key)
+        if old_key > new_key:
+            older, newer = newer, older
+        closed, closed_rows, closed_key = older
+        closer, closer_rows, _ = newer
         winner = min(
-            (r for r in closer_rows if observation_key(r[0], r[1], closer) > beaten), key=_start
+            (r for r in closer_rows if observation_key(r[0], r[1], closer) > closed_key),
+            key=_start,
         )
         for valid_from in dict.fromkeys(start for start, _ in closed_rows):
             repairs.append(
