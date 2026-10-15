@@ -80,6 +80,7 @@ async def _load_source(input: MemoryMoveInput) -> MemoryRow:
         input.namespace,
         [(input.agent, input.user_id, input.session_id, input.from_key)],
     )
+    await _refuse_pending_plans(input)
     # fresh: a move right after the set that wrote the key must see it.
     source = await memory_repo.get_by_key(
         identity, input.from_key, fresh=True, strong=True, scope=WHOLE_NAMESPACE
@@ -136,6 +137,30 @@ def _destination_input(input: MemoryMoveInput, source: MemoryRow) -> Any:
         sensitivity=str(getattr(source, "sensitivity", "") or ""),  # type: ignore[arg-type]
         classify=False,
     )
+
+
+async def _refuse_pending_plans(input: Any) -> None:
+    """A key with a scheduled change (a plan not yet due) is not moved: the plan
+    would apply to the source after its redirect, reviving it, while the
+    destination kept the old value. Apply or amend the plan first."""
+    from datetime import UTC, datetime
+
+    from server.memory.app.temporal_rows import served_from_row
+    from server.memory.store import temporal as temporal_store
+
+    now = datetime.now(UTC)
+    rows = await temporal_store.served_for_keys(
+        input.org,
+        input.namespace,
+        [(input.agent, input.user_id, input.session_id, input.from_key)],
+    )
+    if any((a := served_from_row(r).a).valid_from is not None and a.valid_from > now for r in rows):
+        raise _refuse(
+            409,
+            "SCHEDULED_CHANGE",
+            f"{input.from_key!r} has a scheduled change; move it once that applies, "
+            "or amend it first",
+        )
 
 
 async def _redirect_source(source: MemoryRow, dest_id: str, ch: Any) -> None:

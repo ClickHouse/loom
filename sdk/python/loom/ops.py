@@ -7366,7 +7366,7 @@ class ConversationListOutput(TypedDict, total=False):
 
 
 class ConversationSearchInput(TypedDict, total=False):
-    "Vector search across a namespace's conversation history: messages ranked by"
+    "Vector search across a namespace's conversation history, with thread, run and role filters."
 
     org: Required[str]
     namespace: Required[str]
@@ -7380,7 +7380,7 @@ class ConversationSearchInput(TypedDict, total=False):
 
 
 class ConversationSearchBody(TypedDict, total=False):
-    "Vector search across a namespace's conversation history: messages ranked by"
+    "Vector search across a namespace's conversation history, with thread, run and role filters."
 
     org: NotRequired[str]
     namespace: NotRequired[str]

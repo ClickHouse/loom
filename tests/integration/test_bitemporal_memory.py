@@ -1310,3 +1310,25 @@ async def test_clear_expiry_on_a_set_clears_it(control_plane_url, mint_test_toke
         assert (await a.call("memory.get", {"memory_key": "e"}))["expires_at"]
         await a.call("memory.set", {"memory_key": "e", "value": "v", "clear_expiry": True})
         assert (await a.call("memory.get", {"memory_key": "e"}))["expires_at"] is None
+
+
+async def test_a_key_with_a_scheduled_change_is_not_moved(
+    control_plane_url, mint_test_token
+) -> None:
+    a, _ = await _agent(control_plane_url, mint_test_token, "move-plan")
+    async with a:
+        await a.call("memory.set", {"memory_key": "employer", "value": "Acme", "valid_at": jan(1)})
+        later = (datetime.now(UTC) + timedelta(days=30)).isoformat()
+        await a.call(
+            "memory.amend",
+            {
+                "memory_key": "employer",
+                "change_kind": "transition",
+                "value": "Globex",
+                "effective_at": later,
+            },
+        )
+        with pytest.raises(Exception, match="SCHEDULED_CHANGE"):
+            await a.call("memory.move", {"from_key": "employer", "to_key": "job"})
+        assert (await a.call("memory.get", {"memory_key": "employer"}))["value"] == "Acme"
+        assert not (await a.call("memory.get", {"memory_key": "job"}))["found"]

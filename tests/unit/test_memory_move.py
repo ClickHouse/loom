@@ -219,6 +219,11 @@ class _Harness:
         )
         monkeypatch.setattr(mem_handlers, "handle_memory_delete", _delete)
         monkeypatch.setattr(mv, "get_client", lambda: self.ch)
+        monkeypatch.setattr("server.memory.store.temporal.served_for_keys", _no_plans)
+
+
+async def _no_plans(*_: Any, **__: Any) -> list[Any]:
+    return []
 
 
 def _inp(**kw: Any) -> MemoryMoveInput:

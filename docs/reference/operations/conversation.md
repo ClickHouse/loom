@@ -157,7 +157,7 @@ Enumerate stored conversation threads for an agent / namespace.
 
 ## `conversation.search`
 
-Vector search across a namespace's conversation history: messages ranked by embedding similarity to `query`, optionally narrowed to one thread, run or speaker role (substring matching when the…
+Vector search across a namespace's conversation history, with thread, run and role filters.
 
 `POST /v1/conversation.search` · MCP `loom_conversation_search` · role `viewer` · read · not listed under the MCP `all` toolset
 

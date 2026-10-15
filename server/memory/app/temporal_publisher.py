@@ -955,10 +955,13 @@ def _shows(shown: tm.Assertion | None, head: Mapping[str, Any] | None, version: 
         return False
     if shown.source_version == version:
         return True
-    return (
-        head is not None
-        and int(head.get("version") or 0) == version
-        and str(head.get(_SHOWS) or "") == shown.assertion_id
+    if head is None or int(head.get("version") or 0) != version:
+        return False  # the row it checked is no longer the current one
+    # Still the current row: it shows the claim when its restatement named it, or it
+    # carries that claim's content (an assessment, a reconcile or an amend wrote it at
+    # another version; a row behind a due plan carries other content).
+    return str(head.get(_SHOWS) or "") == shown.assertion_id or (
+        str(head.get("content_sha256") or "") == shown.content_sha256
     )
 
 

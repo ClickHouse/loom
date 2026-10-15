@@ -1391,3 +1391,22 @@ def test_read_only_protects_the_claim_being_changed(journal: Journal) -> None:
     b = mrow('"B"', **_LOCKLESS)  # eu A → B: B is us's text, still a change to eu
     with write_intent(WriteIntent(memory_key="k", qualifiers={"region": "eu"}, stated=frozenset())):
         assert run(pub.publish_rows([b])) == []
+
+
+def test_a_precondition_holds_on_a_row_a_metadata_change_wrote(
+    journal: Journal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory.domain.temporal_capture import WriteIntent, write_intent
+
+    base = mrow('"A"', **_LOCKLESS)
+    run(pub.publish_rows([base]))
+    tagged = _copy(base, tags=["x"])  # an assessment: the claim keeps its source_version
+    with _meta(tagged, "tags"):
+        (head,) = run(pub.publish_rows([tagged]))
+    _over(journal, monkeypatch, head)
+    b = _copy(head, value='"B"', content_sha256=sha256_value_json('"B"'))
+    intent = WriteIntent(
+        memory_key="k", existing=True, stated=frozenset(), expected_version=head["version"]
+    )
+    with write_intent(intent):
+        assert run(pub.publish_rows([b]))  # the caller checked its hash against this row

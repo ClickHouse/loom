@@ -219,8 +219,8 @@ async def _rmw_procedure(
                 raise
             last = e
             await asyncio.sleep(0.25 * (attempt + 1))
-    raise RuntimeError(
-        f"procedure {memory_key!r} write lost to contention after {attempts} attempts"
+    raise PreconditionFailedError(
+        f"procedure {memory_key!r} write lost to contention after {attempts} attempts; retry"
     ) from last
 
 
