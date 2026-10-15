@@ -700,15 +700,12 @@ async def test_an_undo_reads_legacy_rows_unless_its_one_row_has_links(
     async def linked(*a: Any, **k: Any) -> list:
         return [("user", "live_in", "rome")]
 
-    async def none(*a: Any, **k: Any) -> frozenset:
-        return frozenset()
-
     async def legacy(org: str, namespace: str, triples: Any, *, ch: Any, rows: list) -> frozenset:
         read.append(rows)
         return frozenset()
 
     monkeypatch.setattr(graph_undo, "linked_triples", linked)
-    monkeypatch.setattr(graph_undo, "stated_by_live_rows", none)
+    monkeypatch.setattr(graph_undo, "stated_by_live_rows", _none_held)
     monkeypatch.setattr(graph_undo, "held_by_unlinked_rows", legacy)
     scope = SimpleNamespace(org="o", namespace="ns")
     await graph_undo.reopen_held_facts(
