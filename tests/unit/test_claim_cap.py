@@ -404,6 +404,18 @@ def test_a_grant_write_drops_only_the_entries_that_read_its_subject(ch: _CH) -> 
     assert ch.grant_reads == reads + 1, "alice's entry covered that spelling"
 
 
+def _unreadable_counts(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    """Make the write-count files under `tmp_path` unreadable, nothing else."""
+    real = grant_cache.os.stat
+
+    def _stat(path: Any, *a: Any, **k: Any) -> Any:
+        if str(path).startswith(str(tmp_path)):
+            raise PermissionError(path)
+        return real(path, *a, **k)
+
+    monkeypatch.setattr(grant_cache.os, "stat", _stat)
+
+
 def _sibling_processes(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> Any:
     """Two web processes; returns how the other one counts a write in `org`."""
     monkeypatch.setattr(settings, "web_workers", 2)
@@ -485,11 +497,7 @@ def test_an_unreadable_write_count_still_shares_one_read(
     ch: _CH, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
     _sibling_processes(monkeypatch, tmp_path)
-
-    def _unreadable(path: str) -> Any:
-        raise PermissionError(path)
-
-    monkeypatch.setattr(grant_cache.os, "stat", _unreadable)
+    _unreadable_counts(monkeypatch, tmp_path)
 
     async def _many() -> None:
         await asyncio.gather(*(grant_cache.grant_map(ORG, "alice") for _ in range(5)))
@@ -504,23 +512,17 @@ def test_an_unreadable_count_does_not_join_a_read_begun_before_a_sibling_s_write
     sibling_writes = _sibling_processes(monkeypatch, tmp_path)
     ch.grants["team"] = ("writer", "active", False)
     read_done, go = _slow_reads(ch, monkeypatch)
-    stat = grant_cache.os.stat
-
-    def _unreadable(path: str) -> Any:
-        raise PermissionError(path)
 
     async def _run() -> int | None:
         early = asyncio.ensure_future(grant_cache.grant_map(ORG, "alice"))
         await read_done.wait()
         ch.grants["team"] = ("writer", "active", True)
         sibling_writes(ORG)  # the revoke, on the other process
-        monkeypatch.setattr(grant_cache.os, "stat", _unreadable)
+        _unreadable_counts(monkeypatch, tmp_path)
         late = asyncio.ensure_future(grant_cache.grant_map(ORG, "alice"))
         await asyncio.sleep(0)
         go.set()
         await early
-        rank = (await late).rank("team")
-        monkeypatch.setattr(grant_cache.os, "stat", stat)
-        return rank
+        return (await late).rank("team")
 
     assert asyncio.run(_run()) == 0
