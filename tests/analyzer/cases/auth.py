@@ -14,7 +14,7 @@ async def _auth(ch: RecordingCH, c: dict[str, Any]) -> None:
     from server.auth import grant_claims, jit, oauth_claims, revocation
     from server.core import grant_cache
 
-    await grant_cache._read(ORG, ["alice", "alice@x.io"])
+    await grant_cache._read(ORG, "alice@x.io")
     await revocation._read_revocations(["alice"])
     await revocation.list_active()
     await jit._registry_row(ORG, NS)

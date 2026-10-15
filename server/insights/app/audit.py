@@ -31,7 +31,7 @@ async def handle_audit_list(input: AuditListInput) -> AuditListOutput:
         # tokens included (resolve_org_scope drops the same set); otherwise
         # admins (and auth-off) pass and a non-admin is held to their own
         # namespaces.
-        from server.auth.authz import claim_capped
+        from server.auth.authz import claim_cap
         from server.auth.context import (
             current_auth,
             resolve_my_namespaces,
@@ -53,7 +53,7 @@ async def handle_audit_list(input: AuditListInput) -> AuditListOutput:
                 # grant elevates the caller into it.
                 covered = (
                     auth.can_access(input.org, input.namespace)
-                    and not await claim_capped(auth, input.org, input.namespace)
+                    and await claim_cap(auth, input.org, input.namespace) != 0
                 ) or input.namespace in await resolve_my_namespaces(input.org)
                 if not covered:
                     return AuditListOutput(rows=[], next_cursor=None)

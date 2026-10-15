@@ -14,7 +14,7 @@ import pytest
 
 import server.auth.context as ctx
 import server.auth.revocation as rev
-from server.auth import aliases, authz
+from server.auth import authz
 from server.auth.authz import check_authorized
 from server.auth.jwt import AuthInfo
 from server.core import grant_cache
@@ -29,14 +29,14 @@ ORG = "acme"
 
 
 class _CH:
-    """The subject's grant rows (namespace -> (role, status, revoked)), the
-    directory's spellings, and `loom.revoked_tokens`."""
+    """The subject's grant rows (namespace -> (role, status, revoked)) under
+    any spelling, and `loom.revoked_tokens`."""
 
     def __init__(self) -> None:
         self.grants: dict[str, tuple[str, str, bool]] = {}
-        self.accounts: list[dict[str, str]] = []
         self.revoked: dict[str, dict[str, Any]] = {}
         self.grant_reads = 0
+        self.exact_reads = 0
 
     def _live(self, ns: str) -> str | None:
         role, status, revoked = self.grants.get(ns, ("", "", True))
@@ -49,14 +49,11 @@ class _CH:
         if "GROUP BY namespace" in sql:
             self.grant_reads += 1
             return [{"namespace": ns, "rank": grant_rank(self._live(ns))} for ns in self.grants]
-        if "owner_email, contact_email" in sql:
-            return self.accounts
         return []
 
     async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> dict | None:
-        if "namespace_grants" in sql:
-            live = self._live((params or {}).get("ns", ""))
-            return {"role": live} if live else None
+        # The exact-subject grant read, which misses a grant held under another case.
+        self.exact_reads += 1
         return None
 
     async def insert(self, table: str, rows: list[dict[str, Any]], **_k: Any) -> None:
@@ -71,9 +68,7 @@ def ch(monkeypatch: pytest.MonkeyPatch) -> Iterator[_CH]:
     monkeypatch.setattr("server.core.ch.get_client", lambda: client)
     monkeypatch.setattr(rev, "_revoked_jtis", frozenset())
     monkeypatch.setattr(rev, "_revoked_before", {})
-    aliases._CACHE.clear()
     yield client
-    aliases._CACHE.clear()
     ctx.set_current_auth(None)
 
 
@@ -159,7 +154,7 @@ def test_a_first_grant_written_here_caps_a_claim_at_once(ch: _CH) -> None:
 def test_another_process_sees_a_grant_change_within_the_ttl(
     ch: _CH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    ch.grants["team"] = ("writer", "active", False)
+    ch.grants["team"] = ("writer", "active", True)
     assert asyncio.run(authz.live_claims(_flat("team"), ORG, ["team"])) == []
     ch.grants.pop("team")  # another process's write; this cache has not seen it
     assert asyncio.run(authz.live_claims(_flat("team"), ORG, ["team"])) == []
@@ -167,58 +162,113 @@ def test_another_process_sees_a_grant_change_within_the_ttl(
     assert asyncio.run(authz.live_claims(_flat("team"), ORG, ["team"])) == ["team"]
 
 
-def test_an_unread_spelling_caps(ch: _CH, monkeypatch: pytest.MonkeyPatch) -> None:
-    async def _down(*_a: Any, **_k: Any) -> list[str]:
-        raise RuntimeError("replica away")
+def test_the_grant_read_folds_every_spelling_of_the_subject(
+    ch: _CH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[tuple[str, dict[str, Any]]] = []
+    read = ch.query_all
 
-    monkeypatch.setattr(aliases, "subject_aliases", _down)
-    assert not _admits(_flat("ops"), "ops", Role.WRITER)
+    async def _recording(sql: str, params: dict[str, Any] | None = None) -> list[dict]:
+        seen.append((sql, params or {}))
+        return await read(sql, params)
+
+    monkeypatch.setattr(ch, "query_all", _recording)
+    asyncio.run(grant_cache.grant_map(ORG, "Alice@X.io"))
+    ((sql, params),) = seen
+    assert "loom.namespaces" in sql and "LIMIT" not in sql, "every spelling, none cut off"
+    assert params["sub"] == "alice@x.io" and params["human"] is True
 
 
-def test_more_spellings_than_one_lookup_reads_cap(ch: _CH) -> None:
-    ch.accounts = [
-        {"owner_email": f"u-{i}", "contact_email": "alice"} for i in range(aliases.LOOKUP_ROWS)
-    ]
-    assert not _admits(_flat("ops"), "ops", Role.WRITER)
-    ch.accounts = ch.accounts[:-1]
-    aliases._CACHE.clear()
-    assert _admits(_flat("ops"), "ops", Role.WRITER)
+def test_a_grant_held_under_another_case_admits_up_to_it(ch: _CH) -> None:
+    # The cap folds case; the exact-subject grant read (query_one here) does not.
+    ch.grants["team"] = ("admin", "active", False)
+    assert _admits(_flat("team"), "team", Role.WRITER)
+    assert _admits(_scoped("team"), "team", Role.WRITER)
 
 
-def test_a_grant_on_another_spelling_caps(ch: _CH) -> None:
-    ch.accounts = [{"owner_email": "alice", "contact_email": "alice@x.io"}]
-    ch.grants["team"] = ("viewer", "active", False)  # the fake answers for every spelling
-    assert not _admits(_flat("team"), "team", Role.WRITER)
+def test_requests_and_listings_read_the_grants_once_per_ttl(ch: _CH) -> None:
+    ch.grants = {f"ns-{i}": ("writer", "active", False) for i in range(32)}
+    names = tuple(ch.grants)
+    for _ in range(3):
+        assert _admits(_flat(*names), "ns-0", Role.WRITER)
+    assert len(asyncio.run(authz.live_claims(_flat(*names), ORG, names))) == 32
+    assert (ch.grant_reads, ch.exact_reads) == (1, 0)
 
 
 def test_a_failed_grant_read_serves_the_last_answer_then_refuses(
     ch: _CH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     ch.grants["team"] = ("viewer", "active", False)
-    assert not asyncio.run(authz.live_claims(_flat("team"), ORG, ["team"]))
+    asyncio.run(grant_cache.grant_map(ORG, "alice"))
     monkeypatch.setattr(settings, "grant_cache_ttl_seconds", 0.0)
 
     async def _down(*_a: Any, **_k: Any) -> list[dict]:
         raise RuntimeError("replica away")
 
     monkeypatch.setattr(ch, "query_all", _down)
-    monkeypatch.setattr(aliases, "subject_aliases", _just_alice)
-    assert asyncio.run(grant_cache.grant_map(ORG, ["alice"])).has_row("team"), "stale, kept"
+    assert asyncio.run(grant_cache.grant_map(ORG, "alice")).rank("team") == 1, "stale, kept"
     monkeypatch.setattr(settings, "jwt_revocation_max_stale_seconds", 0.0)
     with pytest.raises(BackendUnavailableError):
-        asyncio.run(grant_cache.grant_map(ORG, ["alice"]))
-
-
-async def _just_alice(*_a: Any, **_k: Any) -> list[str]:
-    return ["alice"]
+        asyncio.run(grant_cache.grant_map(ORG, "alice"))
 
 
 def test_concurrent_misses_read_the_grants_once(ch: _CH) -> None:
     async def _many() -> None:
-        await asyncio.gather(*(grant_cache.grant_map(ORG, ["alice"]) for _ in range(5)))
+        await asyncio.gather(*(grant_cache.grant_map(ORG, "alice") for _ in range(5)))
 
     asyncio.run(_many())
     assert ch.grant_reads == 1
+
+
+def _slow_reads(ch: _CH, monkeypatch: pytest.MonkeyPatch) -> tuple[asyncio.Event, asyncio.Event]:
+    """Grant reads that set the first event once they have read, and answer
+    what they read only once the second is set."""
+    read_done, go = asyncio.Event(), asyncio.Event()
+    read = ch.query_all
+
+    async def _slow(sql: str, params: dict[str, Any] | None = None) -> list[dict]:
+        rows = await read(sql, params)
+        read_done.set()
+        await go.wait()
+        return rows
+
+    monkeypatch.setattr(ch, "query_all", _slow)
+    return read_done, go
+
+
+def test_a_read_in_flight_across_a_grant_change_is_not_kept(
+    ch: _CH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ch.grants["team"] = ("admin", "active", False)
+    read_done, go = _slow_reads(ch, monkeypatch)
+
+    async def _run() -> int | None:
+        before = asyncio.ensure_future(grant_cache.grant_map(ORG, "alice"))
+        await read_done.wait()
+        ch.grants["team"] = ("admin", "active", True)
+        grant_cache.invalidate(ORG)  # the revoke this process wrote
+        go.set()
+        await before
+        return (await grant_cache.grant_map(ORG, "alice")).rank("team")
+
+    assert asyncio.run(_run()) == 0
+
+
+def test_a_cancelled_request_does_not_fail_the_ones_sharing_its_read(
+    ch: _CH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ch.grants["team"] = ("viewer", "active", False)
+    _, go = _slow_reads(ch, monkeypatch)
+
+    async def _run() -> int | None:
+        leader = asyncio.ensure_future(grant_cache.grant_map(ORG, "alice"))
+        waiter = asyncio.ensure_future(grant_cache.grant_map(ORG, "alice"))
+        await asyncio.sleep(0)
+        leader.cancel()
+        go.set()
+        return (await waiter).rank("team")
+
+    assert asyncio.run(_run()) == 1
 
 
 def test_a_scoped_token_lists_a_capped_claim_while_its_grant_is_live(ch: _CH) -> None:
@@ -232,7 +282,7 @@ def test_a_scoped_token_lists_a_capped_claim_while_its_grant_is_live(ch: _CH) ->
         is_service_account=False,
         ns_roles=(("team", "writer"), ("gone", "writer"), ("ops", "writer")),
     )
-    assert asyncio.run(authz.scoped_claims(auth, ORG)) == ["team", "ops"]
+    assert asyncio.run(authz.live_claims(auth, ORG, auth.namespaces)) == ["team", "ops"]
 
 
 def test_a_subject_revocation_is_read_from_clickhouse(ch: _CH) -> None:

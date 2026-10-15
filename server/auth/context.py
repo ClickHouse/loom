@@ -81,15 +81,15 @@ async def resolve_my_namespaces(org: str, subject: str | None = None) -> list[st
       widen), returned sorted.
 
     Either way a claim on a namespace where the subject holds a grant row is
-    capped at that grant (`authz.claim_capped`): a flat token's goes, and a
-    scoped token's stays while that grant is live (`authz.scoped_claims`).
+    capped at that grant (`authz.claim_cap`), and stays while it is live
+    (`authz.live_claims`).
 
     A delegated token (a `creator` claim) is neither: its claim narrowed to
     the creator's live grants (`_delegated_namespaces`).
 
     `subject` lets dev mode pass an explicit identity when no JWT is present.
     """
-    from server.auth.authz import live_claims, may_act_in_org, scoped_claims
+    from server.auth.authz import live_claims, may_act_in_org
     from server.auth.service_accounts import inheriting_creator
 
     auth = current_auth()
@@ -108,7 +108,9 @@ async def resolve_my_namespaces(org: str, subject: str | None = None) -> list[st
     # Scoped token: the ordered namespace claim is authoritative. Preserve
     # order (= read priority); do not union other grants (= subset restrict).
     if auth is not None and auth.has_ns_roles():
-        return await _without_unreadable_restricted(org, await scoped_claims(auth, org))
+        return await _without_unreadable_restricted(
+            org, await live_claims(auth, org, auth.namespaces)
+        )
 
     jwt_namespaces: set[str] = set()
     resolved_subject: str | None = None

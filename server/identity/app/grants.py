@@ -45,8 +45,7 @@ async def adopt_namespace(
     if await grants_repo.count_active_admins(org, namespace, ch=ch) > 0:
         return None
     now = datetime.now(UTC).replace(tzinfo=None)
-    await ch.insert(
-        "loom.namespace_grants",
+    await grants_repo.insert_rows(
         [
             {
                 "org": org,
@@ -59,7 +58,7 @@ async def adopt_namespace(
                 "version": time.time_ns(),
             }
         ],
-        settings={"async_insert": 0, "wait_for_async_insert": 1},
+        ch=ch,
     )
     return now
 
@@ -338,7 +337,13 @@ async def _write_revoke(input: GrantsRevokeInput, subject: str, row: GrantState)
 async def handle_grants_approve(input: GrantsApproveInput) -> GrantsApproveOutput:
     """Approve or reject a pending grant. No-op if it doesn't exist."""
     async with grant_change(input.org, input.namespace, input.subject):
-        return await _decide_request(input)
+        out = await _decide_request(input)
+    if out.decision == "approve" and out.role == "admin":
+        # An approved maintainer maintains every branch.
+        from server.code.app.index import maintainers
+
+        await maintainers.sync_quietly(input.org, input.namespace)
+    return out
 
 
 async def _decide_request(input: GrantsApproveInput) -> GrantsApproveOutput:
@@ -398,11 +403,6 @@ async def _decide_request(input: GrantsApproveInput) -> GrantsApproveOutput:
                 "version": _version(),
             }
         )
-        if str(target_role) == "admin":
-            # An approved maintainer maintains every branch.
-            from server.code.app.index import maintainers
-
-            await maintainers.sync_quietly(input.org, input.namespace)
     else:
         if no_base_access:
             # No base access → reject tombstones the whole row.

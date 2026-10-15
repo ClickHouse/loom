@@ -43,6 +43,10 @@ class _FakeCH:
         wanted = set(params["ns"])
         return [r for r in self.rows if r["namespace"] in wanted]
 
+    async def query_one(self, sql: str, params: Any = None) -> dict[str, Any] | None:
+        key = (params["ns"], params["sub"])
+        return next((r for r in self.rows if (r["namespace"], r["subject"]) == key), None)
+
     async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
         assert table == "loom.namespace_grants"
         self.inserted.extend(rows)
@@ -276,3 +280,16 @@ async def test_a_maintainer_lowered_on_one_branch_is_not_made_admin_there_again(
     await maintainers.sync_repo_maintainers("clickhouse", "code-x", ch=ch)
     written = [(r["namespace"], r["subject"]) for r in ch.inserted]
     assert written == ([("code-x-26-5", "alice")] if mirrored else [])
+
+
+async def test_a_lowering_that_lands_while_a_sync_plans_is_not_written_over() -> None:
+    class _Lowered(_FakeCH):
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            planned = await super().query_all(sql, params)
+            # An admin lowers alice on 26-6 after the sync read the branches.
+            self.rows = [*self.rows, _admin("code-x-26-6", "alice", role="viewer", at=T0)]
+            return planned
+
+    ch = _Lowered([_admin("code-x", "alice")])
+    assert await maintainers.sync_repo_maintainers("clickhouse", "code-x", ch=ch) == 1
+    assert [r["namespace"] for r in ch.inserted] == ["code-x-26-5"]

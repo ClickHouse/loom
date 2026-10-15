@@ -288,27 +288,24 @@ def _no_copy_head_check(request: pytest.FixtureRequest) -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
-def _no_claim_cap(request: pytest.FixtureRequest) -> Iterator[None]:
+def _no_grant_rows(request: pytest.FixtureRequest) -> Iterator[None]:
     """The namespace gate caps a token's claim at the grant its subject holds
-    there (`authz.claim_capped`), read through the grant cache; unit fakes
-    answer statements by shape, so the cap is off unless a test is marked
-    `claim_cap`."""
+    there (`authz.claim_cap`), read through the grant cache. Unit fakes answer
+    statements by shape, so the cache reads no grant rows (every claim stands)
+    unless a test is marked `claim_cap`."""
     from server.core import grant_cache
 
     grant_cache.clear()
-    if request.node.get_closest_marker("claim_cap"):
-        yield
-        grant_cache.clear()
-        return
-    from server.auth import authz
+    before = grant_cache._read
+    if not request.node.get_closest_marker("claim_cap"):
 
-    async def _uncapped(*_a: object, **_k: object) -> bool:
-        return False
+        async def _none(org: str, subject: str) -> grant_cache.GrantMap:
+            return grant_cache.GrantMap(ranks={})
 
-    before = authz.claim_capped
-    authz.claim_capped = _uncapped  # type: ignore[assignment]
+        grant_cache._read = _none  # type: ignore[assignment]
     yield
-    authz.claim_capped = before  # type: ignore[assignment]
+    grant_cache._read = before  # type: ignore[assignment]
+    grant_cache.clear()
 
 
 @pytest.fixture

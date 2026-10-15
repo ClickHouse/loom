@@ -78,19 +78,20 @@ revoking a leaked token. The cost is a short 503 window at boot.
 **A claim goes no further than the grant.** A token names namespaces, and a flat token's
 claim on one would otherwise admit it with the token's own role. Where the subject holds a
 grant row on the namespace, of any status, the claim is capped at that grant instead
-(`authz.claim_capped`): a revoked or lowered grant ends every older token's claim there, a
+(`authz.claim_cap`): a revoked or lowered grant ends every older token's claim there, a
 pending or rejected request caps it at no access, and a scoped token keeps its own role
 there capped at the live grant. A namespace the subject never held a grant on (a `loom
 mint-token` claim) keeps the claim; grant rows are never deleted, so a revocation is never
 forgotten.
 
-- The subject's rows are read once per (org, spellings) into a per-process cache
-  (`server/core/grant_cache.py`) kept for `grant_cache_ttl_seconds` (10 s). A grant write
-  drops this process's entries at once; another process sees it within the TTL.
+- The subject's rows, under every spelling the directory ties to it, are read in one
+  statement per (org, subject) into a per-process cache (`server/core/grant_cache.py`) kept
+  for `grant_cache_ttl_seconds` (10 s). Every grant write drops its org's entries in this
+  process at once, a read in flight across it included; another process sees it within the
+  TTL.
 - A failed re-read serves the cached entry while it is younger than
   `jwt_revocation_max_stale_seconds`, the bound a token check already lives with, and
-  answers a retryable 503 past it. Spellings that cannot be read, or more of them than one
-  lookup returns, cap the claim.
+  answers a retryable 503 past it.
 
 **One exchange per credential** (`server/auth/oauth_claims.py`). The OAuth store marks a
 code or refresh token used by writing a new ReplacingMergeTree version, so reading and then

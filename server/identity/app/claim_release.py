@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 from server.auth.authz import Role
 from server.auth.jwt import AuthInfo
 from server.core.ch import CHClient, get_client
+from server.identity.store import grants as grants_repo
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -128,10 +129,9 @@ async def release_claim(
             }
             for i, g in enumerate(grants)
         ]
-        await ch.insert(
-            "loom.namespace_grants",
+        await grants_repo.insert_rows(
             tombstones,
-            settings={"async_insert": 0, "wait_for_async_insert": 1},
+            ch=ch,
         )
 
     # Clear owner and mark inactive. The row stays, so the name stays taken

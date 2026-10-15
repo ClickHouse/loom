@@ -30,6 +30,7 @@ from server.identity.api.models import (
     _NamespaceEntry,
 )
 from server.identity.domain import join_policy as _jp
+from server.identity.store import grants as grants_repo
 from server.identity.store import namespaces as namespaces_repo
 from server.memory.app import namespace_retrieval_defaults as _rd
 from server.memory.domain import code_change
@@ -85,8 +86,7 @@ async def insert_admin_grant(ch: CHClient, org: str, namespace: str, subject: st
     Idempotent — re-inserting replaces the prior row on RMT merge.
     """
     now = datetime.now(UTC).replace(tzinfo=None)
-    await ch.insert(
-        "loom.namespace_grants",
+    await grants_repo.insert_rows(
         [
             {
                 "org": org,
@@ -99,7 +99,7 @@ async def insert_admin_grant(ch: CHClient, org: str, namespace: str, subject: st
                 "version": time.time_ns(),
             }
         ],
-        settings={"async_insert": 0, "wait_for_async_insert": 1},
+        ch=ch,
     )
 
 

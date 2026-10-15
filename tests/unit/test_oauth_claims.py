@@ -22,12 +22,13 @@ class _Keeper:
         self.stale: set[str] = set()
         self.down = False
         self.lose_race = False
+        self.takeovers = 0
 
-    async def query_one(self, sql: str, params: Any = None) -> dict[str, str] | None:
+    async def query_one(self, sql: str, params: Any = None) -> dict[str, Any] | None:
         if "system.tables" in sql:
             return {"engine": "KeeperMap"} if self.table else None
         holder = self.rows.get(params["k"])
-        return {"holder": holder} if holder else None
+        return {"holder": holder, "stale": params["k"] in self.stale} if holder else None
 
     async def execute(self, sql: str, params: dict[str, Any]) -> None:
         if self.down:
@@ -45,6 +46,7 @@ class _Keeper:
                 raise RuntimeError("Code: 999. Coordination::Exception: Node exists")
             self.rows[key] = params["me"]
         elif " UPDATE " in sql:
+            self.takeovers += 1
             if self.lose_race:
                 raise RuntimeError("Code: 999. Coordination::Exception: Bad version")
             if key in self.stale:
@@ -70,6 +72,7 @@ def test_a_live_claim_keeps_a_second_exchange_out_until_released() -> None:
     first, holder = _claim(keeper)
     assert first is oc.Claim.HELD
     assert _claim(keeper)[0] is oc.Claim.TAKEN
+    assert keeper.takeovers == 0, "a live claim is not tried for takeover"
     asyncio.run(oc.release(keeper, "code:abc", holder))
     assert _claim(keeper)[0] is oc.Claim.HELD
 

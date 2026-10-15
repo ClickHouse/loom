@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from server.auth import grant_claims
-from server.core.errors import GrantBusyError
+from server.core.errors import BackendUnavailableError, GrantBusyError
 from server.core.keeper_claims import Claim
 from server.identity.api.models_grants import GrantsApproveInput, GrantsCreateInput
 from server.identity.app import grants as grants_app
@@ -34,6 +34,7 @@ def test_without_a_keeper_two_changes_of_one_grant_run_one_after_the_other() -> 
 
     asyncio.run(_both())
     assert log == ["a in", "a out", "b in", "b out"]
+    assert len(grant_claims._local) == 0, "the last change out drops the key's lock"
 
 
 def test_changes_of_different_grants_do_not_wait_on_each_other() -> None:
@@ -64,6 +65,15 @@ def test_a_change_waits_for_the_holder_then_gives_up_retryably(
         asyncio.run(_change([], "a", ("acme", "team", "alice"), 0))
     assert len(claims) > 1, "it retried before giving up"
     assert busy.value.status_code == 503 and busy.value.extra["retry_after_s"] == 1
+
+
+def test_a_keeper_that_cannot_answer_refuses_retryably(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _down(ch: Any, key: str) -> tuple[Claim, str]:
+        raise TimeoutError
+
+    monkeypatch.setattr(grant_claims.CLAIMS, "claim", _down)
+    with pytest.raises(BackendUnavailableError):
+        asyncio.run(_change([], "a", ("acme", "team", "alice"), 0))
 
 
 @pytest.mark.parametrize("fails", [False, True])

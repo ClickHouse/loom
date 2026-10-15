@@ -55,7 +55,7 @@ def _invalidate(rows: list[dict[str, Any]]) -> None:
     """This process's namespace gate sees a grant change at once; others
     within `grant_cache_ttl_seconds`."""
     for org in {r["org"] for r in rows}:
-        grant_cache.invalidate(org, [r["subject"] for r in rows if r["org"] == org])
+        grant_cache.invalidate(org)
 
 
 async def pending_for_admins(

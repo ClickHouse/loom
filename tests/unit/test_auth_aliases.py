@@ -36,20 +36,6 @@ async def test_aliases_pair_the_login_handle_with_its_contact_email() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_strict_read_skips_the_cache_and_raises() -> None:
-    ch = _ch([{"owner_email": "jdoe", "contact_email": "avery@example.com"}])
-    assert await al.subject_aliases("acme", "jdoe", ch=_ch([])) == ["jdoe"]
-    assert await al.subject_aliases("acme", "jdoe", ch=ch, strict=True) == [
-        "jdoe",
-        "avery@example.com",
-    ]
-    ch.query_all.side_effect = RuntimeError("replica away")
-    assert await al.subject_aliases("acme", "nobody", ch=ch) == ["nobody"]
-    with pytest.raises(RuntimeError):
-        await al.subject_aliases("acme", "nobody", ch=ch, strict=True)
-
-
-@pytest.mark.asyncio
 async def test_service_accounts_wildcards_and_untied_subjects_stand_alone() -> None:
     ch = _ch([])
     assert await al.subject_aliases("acme", "sa:clickgap-1", ch=ch) == ["sa:clickgap-1"]
@@ -163,9 +149,7 @@ async def test_mcp_default_namespace_validates_the_saved_pick_against_the_pair(m
     client = AsyncMock()
     client.query_one.side_effect = [{"namespace": "code-x"}, {"role": "writer"}]
     monkeypatch.setattr("server.core.ch.get_client", lambda: client)
-    auth = SimpleNamespace(
-        subject="jdoe", org="acme", namespaces=("personal-jdoe",), issued_at=None
-    )
+    auth = SimpleNamespace(subject="jdoe", org="acme", namespaces=("personal-jdoe",))
     out = await mi._caller_defaults(auth, "claude-code")
     assert out is not None and out["namespace"] == "code-x" and out["org"] == "acme"
     validation = client.query_one.await_args_list[1]

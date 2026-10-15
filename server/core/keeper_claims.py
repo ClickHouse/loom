@@ -61,7 +61,10 @@ class KeeperClaims:
             f"INSERT INTO {t} (claim_key, holder, claimed_at) {_STRICT} "
             "VALUES ({k:String}, {me:String}, now64(3))"
         )
-        self.holder_sql = f"SELECT holder FROM {t} WHERE claim_key = {{k:String}}"
+        self.holder_sql = (
+            "SELECT holder, claimed_at < now64(3) - toIntervalSecond({stale:UInt32}) AS stale "
+            f"FROM {t} WHERE claim_key = {{k:String}}"
+        )
         # The staleness test sits in the WHERE, so it is evaluated on the znode version
         # Keeper's compare-and-swap checks: of two takers one wins, the other loses the race.
         self.take_over_sql = (
@@ -140,13 +143,15 @@ class KeeperClaims:
                 raise
         # Held: by this call when a retried insert found its own first one, else
         # by a holder that is running, or by one that died and is taken over.
-        if await self._holder(ch, key) != me:
-            try:
-                await ch.execute(self.take_over_sql, params=params)
-            except Exception as e:
-                if not lost_race(e):
-                    raise
-        return await self._holder(ch, key) == me
+        holder, stale = await self._holder(ch, key)
+        if holder == me or not stale:
+            return holder == me
+        try:
+            await ch.execute(self.take_over_sql, params=params)
+        except Exception as e:
+            if not lost_race(e):
+                raise
+        return (await self._holder(ch, key))[0] == me
 
     async def release(self, ch: Any, key: str, holder: str) -> None:
         """Drop this holder's claim; one taken over since is the taker's and
@@ -161,9 +166,9 @@ class KeeperClaims:
     async def release_shielded(self, ch: Any, key: str, holder: str) -> None:
         await shielded(self.release(ch, key, holder), name=f"{self.table}.release")
 
-    async def _holder(self, ch: Any, key: str) -> str:
-        row = await ch.query_one(self.holder_sql, params={"k": key})
-        return str(row["holder"]) if row else ""
+    async def _holder(self, ch: Any, key: str) -> tuple[str, bool]:
+        row = await ch.query_one(self.holder_sql, params={"k": key, "stale": self.stale_s})
+        return (str(row["holder"]), bool(row["stale"])) if row else ("", False)
 
     async def available(self, ch: Any) -> bool:
         """Whether the table is here. A yes is kept; a no is asked again after

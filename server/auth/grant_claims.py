@@ -13,30 +13,24 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections import defaultdict
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from server.core.ch import get_client
-from server.core.errors import GrantBusyError
+from server.core.errors import BackendUnavailableError, GrantBusyError
 from server.core.keeper_claims import Claim, KeeperClaims
+from server.core.keyed_locks import KeyedLocks
 
 # A change reads and writes one grant row, so a live one is done in seconds; the
 # rest is margin for a slow insert and the replicas' clocks.
 CLAIMS = KeeperClaims("grant_claims", stale_s=60, claim_timeout_s=5, release_timeout_s=5)
 # How long a change waits for the one ahead of it before answering 503.
 WAIT_S = 10.0
+# The first wait for a claim held elsewhere, doubled up to `_POLL_MAX_S`.
 _POLL_S = 0.05
-# Without a Keeper: one lock per key, the idle ones dropped once many are tracked.
-_local: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
-_MAX_TRACKED = 10_000
-
-
-def _local_lock(key: str) -> asyncio.Lock:
-    if len(_local) >= _MAX_TRACKED:
-        for k in [k for k, lock in _local.items() if not lock.locked()]:
-            del _local[k]
-    return _local[key]
+_POLL_MAX_S = 0.8
+# Without a Keeper: changes of one key are kept apart within this process.
+_local = KeyedLocks()
 
 
 def claims_atomic() -> bool | None:
@@ -50,17 +44,24 @@ async def grant_change(org: str, namespace: str, subject: str) -> AsyncIterator[
     key = json.dumps([org, namespace, subject])
     ch = get_client()
     deadline = time.monotonic() + WAIT_S
+    poll = _POLL_S
     while True:
-        outcome, holder = await CLAIMS.claim(ch, key)
+        try:
+            outcome, holder = await CLAIMS.claim(ch, key)
+        except Exception as e:  # a Keeper that cannot answer refuses retryably
+            raise BackendUnavailableError(
+                "grant changes cannot be claimed; retry shortly", operation="grant_change"
+            ) from e
         if outcome is not Claim.TAKEN:
             break
         if time.monotonic() > deadline:
             raise GrantBusyError(
                 f"another change to {subject!r} on {org}/{namespace} is running; retry shortly"
             )
-        await asyncio.sleep(_POLL_S)
+        await asyncio.sleep(poll)
+        poll = min(poll * 2, _POLL_MAX_S)
     if outcome is Claim.UNCLAIMED:
-        async with _local_lock(key):
+        async with _local.hold(key):
             yield
         return
     try:

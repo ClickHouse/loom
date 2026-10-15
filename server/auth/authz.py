@@ -36,6 +36,9 @@ log = logging.getLogger(__name__)
 # The roles a namespace grant can hold. Org- and platform-wide roles are never
 # grantable per namespace: an unknown grant role maps to no role at all.
 _ROLE_NAME_TO_ENUM: dict[str, Role] = {name: Role[name.upper()] for name in GRANT_ROLES}
+_ROLE_BY_RANK: dict[int, Role] = {
+    grant_rank(name): role for name, role in _ROLE_NAME_TO_ENUM.items()
+}
 
 
 def grant_role(name: str | None) -> Role | None:
@@ -138,7 +141,8 @@ async def check_authorized(
 
     # A claim on a namespace where the subject holds a grant row is capped at
     # that grant, so a revoked or lowered grant ends every older token's claim.
-    capped = org is not None and namespace is not None and await claim_capped(auth, org, namespace)
+    cap = None if org is None or namespace is None else await claim_cap(auth, org, namespace)
+    capped = cap is not None
 
     # Scoped token (carries an `ns_roles` map): the per-namespace role is
     # AUTHORITATIVE and was capped to the minter's live grant at mint, so it
@@ -148,7 +152,7 @@ async def check_authorized(
     # (and possibly downgraded), so it is its own ceiling. Non-namespace
     # (org-level) ops fall through to the flat-role check below.
     if auth.has_ns_roles() and org is not None and namespace is not None:
-        role = await _scoped_role(auth, required_role, org, namespace, capped=capped)
+        role = _scoped_role(auth, required_role, org, namespace, cap=cap)
         if role is not None and role.value >= required_role.value:
             return
         if not _code_namespace_read(required_role, org, namespace):
@@ -162,8 +166,9 @@ async def check_authorized(
         ns_covered_by_jwt = (
             auth.can_write(org, namespace) if is_write else auth.can_access(org, namespace)
         )
-        if capped:
-            ns_covered_by_jwt = False
+        if cap is not None:
+            live = _rank_role(cap)
+            ns_covered_by_jwt = ns_covered_by_jwt and live is not None and live >= required_role
     else:
         ns_covered_by_jwt = False
 
@@ -316,8 +321,8 @@ def names_namespace(auth: AuthInfo, org: str, namespace: str) -> bool:
     return any(ns == namespace for ns, _role in auth.ns_roles)
 
 
-async def _scoped_role(
-    auth: AuthInfo, required_role: Role, org: str, namespace: str, *, capped: bool
+def _scoped_role(
+    auth: AuthInfo, required_role: Role, org: str, namespace: str, *, cap: int | None
 ) -> Role | None:
     """The role a scoped token holds on (org, namespace) for this op: its own,
     capped at the subject's live grant where it holds one. None for a write
@@ -329,8 +334,8 @@ async def _scoped_role(
     ):
         return None
     role = auth.effective_role(org, namespace)
-    if role is not None and capped:
-        live = await _lookup_grant(org, namespace, auth.subject)
+    if role is not None and cap is not None:
+        live = _rank_role(cap)
         role = None if live is None else min(role, live)
     return role
 
@@ -365,41 +370,26 @@ def _capped_message(org: str, namespace: str, required_role: Role) -> str:
     )
 
 
-async def claim_capped(auth: AuthInfo, org: str, namespace: str) -> bool:
-    """Whether this token names `namespace` and its subject holds a grant row
-    there, of any status: the claim then reaches no further than that grant.
-    A namespace the subject never held a grant on (an operator's `loom
-    mint-token`) keeps its claim. Spellings that cannot be read, or more of
-    them than one lookup returns, cap too."""
-    from server.auth.aliases import LOOKUP_ROWS, subject_aliases
+async def claim_cap(auth: AuthInfo, org: str, namespace: str) -> int | None:
+    """The live grant rank this token's claim on `namespace` is capped at (0:
+    none live), where the token names it and its subject holds a grant row
+    there of any status. None where the subject never held one (an operator's
+    `loom mint-token`): the claim stands as minted."""
     from server.core.grant_cache import grant_map
 
     if not names_namespace(auth, org, namespace):
-        return False
-    try:
-        spellings = await subject_aliases(org, auth.subject, strict=True)
-    except Exception:  # noqa: BLE001 — an unread spelling must not leave a claim standing
-        return True
-    # Each account the lookup read adds a spelling: past its row cap, some went unread.
-    if len(spellings) > LOOKUP_ROWS:
-        return True
-    return (await grant_map(org, spellings)).has_row(namespace)
+        return None
+    return (await grant_map(org, auth.subject)).rank(namespace)
 
 
-async def scoped_claims(auth: AuthInfo, org: str) -> list[str]:
-    """A scoped token's named namespaces, in order, that its gate admits: a
-    capped claim stays while its subject holds a live grant there, as
-    `_scoped_role` caps it at that grant."""
-    out = []
-    for ns in (ns for ns in auth.namespaces if ns and ns != "*"):
-        if not await claim_capped(auth, org, ns) or await _lookup_grant(org, ns, auth.subject):
-            out.append(ns)
-    return out
+def _rank_role(rank: int) -> Role | None:
+    return _ROLE_BY_RANK.get(rank)
 
 
 async def live_claims(auth: AuthInfo, org: str, namespaces: Iterable[str]) -> list[str]:
-    """The named `namespaces` (no `*`) whose claim is not capped, in order."""
-    return [ns for ns in namespaces if ns and ns != "*" and not await claim_capped(auth, org, ns)]
+    """The named `namespaces` (no `*`), in order, that the claim still reaches:
+    all but those capped at a grant that is no longer live."""
+    return [ns for ns in namespaces if ns and ns != "*" and await claim_cap(auth, org, ns) != 0]
 
 
 async def _check_restricted(auth: AuthInfo, required_role: Role, org: str, namespace: str) -> None:
@@ -568,14 +558,13 @@ __all__ = [
     "GRANT_ROLES",
     "Role",
     "check_authorized",
-    "claim_capped",
+    "claim_cap",
     "grant_rank",
     "grant_role",
     "grant_role_for",
     "live_claims",
     "names_namespace",
     "restricted_allows",
-    "scoped_claims",
     "row_in_scope",
     "scope_flags",
 ]

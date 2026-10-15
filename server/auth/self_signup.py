@@ -18,13 +18,12 @@ short-lived Loom JWTs from verified identity claims.
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import re
 import secrets
 import time
-from collections import defaultdict
+from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
@@ -35,8 +34,10 @@ from server.auth.attempts import Attempts, client_address
 from server.auth.jwt import mint_token
 from server.auth.login import platform_roles
 from server.auth.passwords import hash_password_off_loop
+from server.core import grant_cache
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now_seconds
+from server.core.keyed_locks import KeyedLocks
 from server.settings import settings
 
 router = APIRouter()
@@ -108,6 +109,7 @@ async def insert_owner_grant(org: str, namespace: str, subject: str, *, ch: Any 
         ],
         settings={"async_insert": 0, "wait_for_async_insert": 1},
     )
+    grant_cache.invalidate(org)
 
 
 class SelfSignupInput(BaseModel):
@@ -323,7 +325,6 @@ _AGENT_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,55}$")
 # hardened deployment fronts this with a gateway, as the module docstring says.
 _agent_signups = Attempts(AGENT_SIGNUPS_PER_HOUR, 3600)
 _human_signups = Attempts(HUMAN_SIGNUPS_PER_HOUR, 3600)
-_MAX_TRACKED = 10_000
 # Known limit: per-process locks per claimed name and per signup email — close
 # the first-claim and EMAIL_IN_USE check-then-insert races inside one server
 # process; replicas or `--workers N` still race (ClickHouse has no
@@ -333,7 +334,7 @@ _MAX_TRACKED = 10_000
 # cannot sign one account into the other. OIDC JIT sign-up takes the same
 # per-email key (`jit.jit_provision_for_email`); self-signup is closed when
 # OIDC is the login provider, so the two never race for a name.
-_claim_locks: dict[tuple[str, str], asyncio.Lock] = defaultdict(asyncio.Lock)
+_claim_locks = KeyedLocks()
 
 
 def agent_namespace(name: str) -> str | None:
@@ -346,14 +347,10 @@ def agent_namespace(name: str) -> str | None:
     return f"{AGENT_NAMESPACE_PREFIX}{slug}"
 
 
-def claim_lock(org: str, namespace: str) -> asyncio.Lock:
+def claim_lock(org: str, namespace: str) -> AbstractAsyncContextManager[None]:
     """The lock a claim of (org, namespace) holds from its existence check to
-    its insert. Idle locks are dropped once many names are tracked; a held or
-    awaited lock is never replaced, or a later caller would skip the queue."""
-    if len(_claim_locks) >= _MAX_TRACKED:
-        for key in [k for k, lock in _claim_locks.items() if not lock.locked()]:
-            del _claim_locks[key]
-    return _claim_locks[(org, namespace)]
+    its insert."""
+    return _claim_locks.hold((org, namespace))
 
 
 def _rate_limited(message: str) -> HTTPException:
@@ -511,6 +508,7 @@ async def _provision_agent(
         ],
         settings={"async_insert": 0, "wait_for_async_insert": 1},
     )
+    grant_cache.invalidate(org)
     await ch.insert(
         "loom.service_accounts",
         [

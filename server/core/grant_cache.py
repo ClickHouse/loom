@@ -2,10 +2,11 @@
 
 A token's claim on a namespace stands only where its subject holds no grant
 row there; where it holds one, the claim is capped at that grant
-(`authz.claim_capped`). That needs the subject's rows on every request, so they
-are read once per (org, spellings) and kept for `grant_cache_ttl_seconds`.
+(`authz.claim_cap`). That needs the subject's rows on every request, so one
+read per (org, subject), every spelling of the person included, is kept for
+`grant_cache_ttl_seconds`.
 
-A write in this process drops the entries it touches at once; another process
+A grant write in this process drops its org's entries at once; another process
 sees it within the TTL. A failed re-read serves the old entry while it is
 younger than `jwt_revocation_max_stale_seconds`, the bound a token check already
 lives with, and refuses (503) past it.
@@ -15,8 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections import OrderedDict
-from collections.abc import Iterable
+from collections import OrderedDict, defaultdict
 from dataclasses import dataclass
 
 from server.core.errors import BackendUnavailableError
@@ -29,83 +29,106 @@ _MAX_ENTRIES = 10_000
 @dataclass(frozen=True, slots=True)
 class GrantMap:
     """One subject's grants on one org: every namespace it has a row on, of
-    any status, and the highest live role on each (0 when none is live)."""
+    any status, and the highest live grant rank there (0 when none is live)."""
 
     ranks: dict[str, int]
 
-    def has_row(self, namespace: str) -> bool:
-        return namespace in self.ranks
+    def rank(self, namespace: str) -> int | None:
+        return self.ranks.get(namespace)
 
 
-_Key = tuple[str, frozenset[str]]
+_Key = tuple[str, str]
 _entries: OrderedDict[_Key, tuple[float, GrantMap]] = OrderedDict()
-_loading: dict[_Key, asyncio.Future[GrantMap]] = {}
+_loading: dict[_Key, asyncio.Task[GrantMap]] = {}
+# Every read until it ends: an invalidation drops it from `_loading`, not from here.
+_running: set[asyncio.Task[GrantMap]] = set()
+# Bumped by every invalidation, so a read that began before it is not stored.
+_generation: defaultdict[str, int] = defaultdict(int)
 
 
-async def grant_map(org: str, subjects: Iterable[str]) -> GrantMap:
-    """The grants `subjects` (one person's spellings) hold on `org`."""
-    key: _Key = (org, frozenset(s.lower() for s in subjects))
+async def grant_map(org: str, subject: str) -> GrantMap:
+    """The grants `subject`, under any of its spellings, holds on `org`."""
+    key: _Key = (org, subject.lower())
     hit = _entries.get(key)
-    now = time.monotonic()
-    if hit is not None and now - hit[0] < settings.grant_cache_ttl_seconds:
+    if hit is not None and time.monotonic() - hit[0] < settings.grant_cache_ttl_seconds:
         _entries.move_to_end(key)
         return hit[1]
-    pending = _loading.get(key)
-    if pending is not None:
-        return await asyncio.shield(pending)
-    future: asyncio.Future[GrantMap] = asyncio.get_running_loop().create_future()
-    _loading[key] = future
-    try:
-        try:
-            fresh = await _read(org, sorted(key[1]))
-        except Exception as e:
-            if hit is not None and now - hit[0] < settings.jwt_revocation_max_stale_seconds:
-                fresh = hit[1]
-            else:
-                raise BackendUnavailableError(
-                    "grants could not be read; retry shortly", operation="grant_map"
-                ) from e
-        else:
-            _store(key, fresh)
-        future.set_result(fresh)
-        return fresh
-    except BaseException as e:
-        future.set_exception(e)
-        future.exception()  # read here, so a waiter-less failure is not logged as lost
-        raise
-    finally:
-        del _loading[key]
+    task = _loading.get(key)
+    if task is None:
+        # A task of its own, so a cancelled request does not fail the ones waiting with it.
+        task = asyncio.ensure_future(_load(key, hit))
+        _loading[key] = task
+        _running.add(task)
+        task.add_done_callback(lambda t: _loaded(key, t))
+    return await asyncio.shield(task)
 
 
-def invalidate(org: str, subjects: Iterable[str]) -> None:
-    """Drop the cached grants of any spelling set holding one of `subjects`."""
-    lowered = {s.lower() for s in subjects}
-    for key in [k for k in _entries if k[0] == org and k[1] & lowered]:
+def invalidate(org: str) -> None:
+    """Drop every cached grant of `org`, and any read of it in flight."""
+    _generation[org] += 1
+    for key in [k for k in _entries if k[0] == org]:
         del _entries[key]
+    for key in [k for k in _loading if k[0] == org]:
+        del _loading[key]
 
 
 def clear() -> None:
     _entries.clear()
+    _loading.clear()
 
 
-def _store(key: _Key, value: GrantMap) -> None:
-    _entries[key] = (time.monotonic(), value)
-    _entries.move_to_end(key)
-    while len(_entries) > _MAX_ENTRIES:
-        _entries.popitem(last=False)
+async def _load(key: _Key, hit: tuple[float, GrantMap] | None) -> GrantMap:
+    org = key[0]
+    generation = _generation[org]
+    try:
+        fresh = await _read(org, key[1])
+    except Exception as e:
+        if (
+            hit is not None
+            and time.monotonic() - hit[0] < settings.jwt_revocation_max_stale_seconds
+        ):
+            return hit[1]
+        raise BackendUnavailableError(
+            "grants could not be read; retry shortly", operation="grant_map"
+        ) from e
+    if _generation[org] == generation:
+        _entries[key] = (time.monotonic(), fresh)
+        _entries.move_to_end(key)
+        while len(_entries) > _MAX_ENTRIES:
+            _entries.popitem(last=False)
+    return fresh
 
 
-async def _read(org: str, subjects: list[str]) -> GrantMap:
+def _loaded(key: _Key, task: asyncio.Task[GrantMap]) -> None:
+    _running.discard(task)
+    if _loading.get(key) is task:
+        del _loading[key]
+    if not task.cancelled():
+        task.exception()  # read here, so a failure nobody awaited is not logged as lost
+
+
+async def _read(org: str, subject: str) -> GrantMap:
+    """One read: the subject's rows under every spelling the directory ties to
+    it (`server.auth.aliases`), folded per namespace."""
     from server.core.ch import get_client, own_write_reads
 
+    human = bool(subject) and subject != "*" and not subject.startswith("sa:")
     with own_write_reads():
         rows = await get_client().query_all(
             """
             SELECT namespace, max(if({live}, {rank}, 0)) AS rank
             FROM loom.namespace_grants FINAL
-            WHERE org = {org:String} AND lower(subject) IN {subs:Array(String)}
+            WHERE org = {org:String} AND lower(subject) IN (
+                SELECT {sub:String}
+                UNION ALL
+                SELECT lower(arrayJoin([owner_email, contact_email]))
+                FROM loom.namespaces FINAL
+                WHERE {human:Bool} AND org = {org:String} AND ifNull(active, true) = true
+                  AND contact_email != ''
+                  AND (lower(owner_email) = {sub:String} OR lower(contact_email) = {sub:String})
+            )
             GROUP BY namespace
             """.replace("{live}", LIVE_GRANT).replace("{rank}", GRANT_RANK_SQL),
-            params={"org": org, "subs": subjects},
+            params={"org": org, "sub": subject, "human": human},
         )
     return GrantMap(ranks={str(r["namespace"]): int(r["rank"]) for r in rows})

@@ -81,12 +81,46 @@ async def _grant_rows(client: Any, org: str, branches: list[str]) -> list[dict[s
     return rows
 
 
-async def _insert(client: Any, rows: list[dict[str, Any]]) -> None:
-    await client.insert(
-        "loom.namespace_grants",
-        rows,
-        settings={"async_insert": 0, "wait_for_async_insert": 1},
-    )
+_GRANT_ROW_SQL = """
+    SELECT namespace, subject, role, ifNull(toString(status), 'active') AS status,
+           revoked_at, granted_at, granted_by
+    FROM loom.namespace_grants FINAL
+    WHERE org = {org:String} AND namespace = {ns:String} AND subject = {sub:String}
+"""
+
+
+def _state(row: dict[str, Any] | None) -> tuple[Any, ...] | None:
+    if row is None:
+        return None
+    return row.get("role"), row.get("status"), row.get("revoked_at"), row.get("granted_at")
+
+
+async def _write_unchanged(
+    client: Any, org: str, planned: list[dict[str, Any]], read: list[dict[str, Any]]
+) -> int:
+    """Write each planned row under its grant's claim, unless the grant changed
+    since `read` (an admin's lowering, say): the next sync decides that one."""
+    from server.auth.grant_claims import grant_change
+    from server.core import grant_cache
+
+    seen = {(str(r["namespace"]), str(r["subject"])): r for r in read}
+    written = 0
+    for row in planned:
+        ns, subject = row["namespace"], row["subject"]
+        async with grant_change(org, ns, subject):
+            now = await client.query_one(
+                _GRANT_ROW_SQL, params={"org": org, "ns": ns, "sub": subject}
+            )
+            if _state(now) != _state(seen.get((ns, subject))):
+                continue
+            await client.insert(
+                "loom.namespace_grants",
+                [row],
+                settings={"async_insert": 0, "wait_for_async_insert": 1},
+            )
+        grant_cache.invalidate(org)
+        written += 1
+    return written
 
 
 async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = None) -> int:
@@ -129,16 +163,16 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
             if rv is not None and rv >= at:
                 continue  # removed or lowered on this branch after their newest sibling grant
             inserts.append(_row(org, ns, subject, granted_by=f"{GRANTED_BY_PREFIX}{src}", now=now))
-    if inserts:
-        await _insert(client, inserts)
+    written = await _write_unchanged(client, org, inserts, rows) if inserts else 0
+    if written:
         log.info(
             "repo maintainers: %s/%s — %d admin grant(s) mirrored across %d branches",
             org,
             namespace,
-            len(inserts),
+            written,
             len(branches),
         )
-    return len(inserts)
+    return written
 
 
 async def revoke_repo_maintainer(
@@ -183,16 +217,16 @@ async def revoke_repo_maintainer(
                 revoked=True,
             )
         )
-    if out:
-        await _insert(client, out)
+    written = await _write_unchanged(client, org, out, rows) if out else 0
+    if written:
         log.info(
             "repo maintainers: %s/%s — %r revoked on %d sibling branch(es)",
             org,
             namespace,
             subject,
-            len(out),
+            written,
         )
-    return len(out)
+    return written
 
 
 async def sync_quietly(org: str, namespace: str, *, ch: Any | None = None) -> None:

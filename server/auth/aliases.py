@@ -32,28 +32,21 @@ log = logging.getLogger("loom.auth.aliases")
 TTL_S = 60.0
 _CACHE: dict[tuple[str, str], tuple[float, tuple[str, ...]]] = {}
 _CACHE_MAX = 10_000
-# Accounts one lookup reads per subject.
-LOOKUP_ROWS = 8
 
 
 def _is_human_subject(subject: str) -> bool:
     return bool(subject) and subject != "*" and not subject.startswith("sa:")
 
 
-async def subject_aliases(
-    org: str, subject: str, *, ch: object | None = None, strict: bool = False
-) -> list[str]:
+async def subject_aliases(org: str, subject: str, *, ch: object | None = None) -> list[str]:
     """`subject` first, then the other spelling(s) the directory ties to it;
-    the subject alone when the read fails or nothing is tied to it.
-
-    `strict` reads the directory now and raises when it cannot, for a caller
-    that must not take the subject alone for all of them."""
+    the subject alone when the read fails or nothing is tied to it."""
     if not _is_human_subject(subject):
         return [subject] if subject else []
     key = (org, subject)
     hit = _CACHE.get(key)
     now = time.monotonic()
-    if hit is not None and not strict and now - hit[0] < TTL_S:
+    if hit is not None and now - hit[0] < TTL_S:
         return list(hit[1])
     out = [subject]
     try:
@@ -67,17 +60,15 @@ async def subject_aliases(
             WHERE org = {org:String} AND ifNull(active, true) = true
               AND contact_email != ''
               AND (owner_email = {sub:String} OR lower(contact_email) = lower({sub:String}))
-            LIMIT {lim:UInt32}
+            LIMIT 8
             """,
-            params={"org": org, "sub": subject, "lim": LOOKUP_ROWS},
+            params={"org": org, "sub": subject},
         )
         for r in rows:
             for spelling in (str(r.get("owner_email") or ""), str(r.get("contact_email") or "")):
                 if spelling and spelling.lower() not in {s.lower() for s in out}:
                     out.append(spelling)
     except Exception:
-        if strict:
-            raise
         log.warning(
             "aliases: lookup failed for %r in %r; subject stands alone", subject, org, exc_info=True
         )
