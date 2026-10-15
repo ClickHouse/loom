@@ -3,8 +3,10 @@
 # The Workspace comes first: `ax apply` creates documents in order, and a Task
 # applied before its Workspace starts with an empty one.
 #
-# Replace the three <...> values, then:
-#   ax apply -f task.yaml && ax resume task fix-flaky-test
+# Replace the <...> values, then (README.md has the steps around these):
+#   ax apply -f task.yaml
+#   kubectl ate create egress-policy fix-flaky-test -a default -f egress-policy.yaml
+#   ax resume task fix-flaky-test
 apiVersion: ax.io/v1alpha1
 kind: Workspace
 metadata:
@@ -14,8 +16,8 @@ spec:
     - repo: "https://github.com/<org>/<repo>.git"
       branch: "main"
   files:
-    # Claude Code reads this MCP config and expands ${LOOM_API_KEY} from the
-    # environment, so the token never lands in a file.
+    # Claude Code reads this MCP config and expands ${LOOM_BASE_URL} and
+    # ${LOOM_API_KEY} from the environment.
     - path: ".mcp.json"
       content: |
         {
@@ -39,17 +41,20 @@ kind: Task
 metadata:
   name: fix-flaky-test
 spec:
-  # Your agent's entry point, run in the first workspace. agent.py here shows
-  # the Loom calls; the image needs `pip install clickhouse-loom` (README.md).
-  image: "<your image, built FROM the AX task-runner image>"
-  command: ["python", "agent.py"]
+  # The image README.md builds: AX's runner, the Loom SDK and agent.py.
+  # Substrate takes an image pinned by digest only, never by tag.
+  image: "<registry>/ax-loom-task@sha256:<digest>"
+  command: ["python", "/opt/loom-agent/agent.py"]
   env:
+    # Loom's in-cluster Service (README.md): the egress policy allows hosts by
+    # name, never by address, and injects the token on this hop.
     - name: LOOM_BASE_URL
-      value: "https://<loom>"
-    # A short-lived writer token for one namespace (see README.md): AX has no
-    # API authentication yet, and anyone who can read this Task can read it.
+      value: "http://loom.loom.svc.cluster.local"
+    # A placeholder, not the token: the egress gateway replaces the
+    # Authorization header with the token from a Kubernetes Secret
+    # (egress-policy.yaml), so the token is never in the Task or the sandbox.
     - name: LOOM_API_KEY
-      value: "<token from loom mint-token>"
+      value: "injected-by-egress-gateway"
     - name: LOOM_ORG
       value: "acme"
     - name: LOOM_NAMESPACE

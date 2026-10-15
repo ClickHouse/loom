@@ -1,58 +1,126 @@
 # Loom on AX
 
-[AX](https://github.com/google/ax) runs agents as sandboxed `Task`s that are
-cheap to create, suspend and throw away. Each sandbox starts empty, and
-AX has no memory layer. Loom adds one: what a task learns outlives the sandbox,
-the next task recalls it, and every task's run sits in Loom's run ledger with
-what it cost.
+[AX](https://github.com/google/ax) runs agents as sandboxed `Task`s on
+[Agent Substrate](https://github.com/agent-substrate/substrate). The tasks are
+cheap to create, suspend and throw away. Each sandbox starts empty, and AX has
+no memory layer. Loom adds one: what a task learns outlives the sandbox, the
+next task recalls it, and every task's run sits in Loom's run ledger with what
+it cost.
 
-| File        | What it is                                                                                                 |
-| ----------- | ---------------------------------------------------------------------------------------------------------- |
-| `task.yaml` | A `Workspace` that writes Loom's MCP config and an `AGENTS.md`, and a `Task` that binds it                 |
-| `agent.py`  | The Loom calls an agent makes with the Python SDK: a run with a budget, checked between steps, then closed |
+| File                 | What it is                                                                                                 |
+| -------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `task.yaml`          | A `Workspace` that writes Loom's MCP config and an `AGENTS.md`, and a `Task` that binds it                 |
+| `egress-policy.yaml` | The task's egress policy: Loom with the token injected by the gateway, and GitHub for the clone            |
+| `agent.py`           | The Loom calls an agent makes with the Python SDK: a run with a budget, checked between steps, then closed |
 
-## 1. Mint a token per task
+The token never enters the task. AX's API has no authentication yet, a Task's
+`env` is printed by `ax get task`, and code in the sandbox reads its own
+environment (AX's `SECURITY.md`). So the Task carries a placeholder, and
+Substrate's egress gateway replaces the `Authorization` header with the token
+from a Kubernetes Secret on the way out.
+
+## 1. Give Loom a name inside the cluster
+
+Egress rules name hosts by DNS name, never by address. Run Loom in the cluster,
+or point a selector-less Service at it:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata: { name: loom, namespace: loom }
+spec:
+  ports: [{ name: http, port: 80, targetPort: 7777 }]
+---
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: loom-1
+  namespace: loom
+  labels: { kubernetes.io/service-name: loom }
+addressType: IPv4
+ports: [{ name: http, port: 7777 }]
+endpoints: [{ addresses: ["<Loom's address>"] }]
+```
+
+The hop from the egress gateway to Loom is cleartext HTTP, because injection
+over HTTPS needs the actor to trust the gateway's CA (Substrate's egress trust
+bundle) and AX's actor templates do not mount it. Keep that hop inside the
+cluster.
+
+## 2. Store a token per task as a Secret
 
 ```bash
-loom mint-token --subject ax-fix-flaky-test --org acme \
-  --namespaces ax-fix-flaky-test --roles writer --ttl-days 1
+TOKEN=$(loom mint-token --subject ax-fix-flaky-test --org acme \
+  --namespaces ax-fix-flaky-test --roles writer --ttl-days 1)
+kubectl create namespace loom-creds
+kubectl -n loom-creds create secret generic loom-token --from-literal=token="$TOKEN"
 ```
 
-Treat the token as readable by anyone who can reach the AX server. As of AX
-`v1alpha1` its API has no authentication, a Task's `env` is part of the spec
-`ax get task` prints, and code in the sandbox reads its own environment (AX's
-`SECURITY.md`). So:
+One namespace per task or team, `writer` at most, and the shortest lifetime the
+task needs. Then let the task's atespace (`default` here) read that namespace's
+Secrets. The policy is the `k8s-credential-provider-namespace-policy` ConfigMap
+in `ate-system`, and the provider reads it only at startup:
 
-- one namespace per task or team, never a shared one;
-- `writer` at most, never `admin`;
-- the shortest lifetime the task needs (`--ttl-days 1`), and a new token for a
-  new Task (AX tasks are immutable once created).
+```bash
+kubectl -n ate-system edit configmap k8s-credential-provider-namespace-policy
+#   policies:
+#   - atespace: default
+#     allowedNamespaces: [loom-creds]
+kubectl -n ate-system rollout restart deployment/k8s-credential-provider
+```
 
-## 2. Build the image
+## 3. Build the image
 
-The default AX task-runner image has Python and git but not the Loom SDK. Extend
-it as AX's `docs/runner.md` describes and keep its entrypoint:
+AX's published task-runner image is not publicly pullable, so build the runner
+from AX's source (`CGO_ENABLED=0 go build ./cmd/ax-task-runner` for the
+cluster's architecture) and put it in an image with the Loom SDK and your agent:
 
 ```dockerfile
-FROM gcr.io/ax-substrate/ate-images/ax-task-runner@sha256:<the digest AX's examples pin>
+FROM python:3.12-slim
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 RUN pip install --no-cache-dir clickhouse-loom
+COPY ax-task-runner /usr/local/bin/ax-task-runner
+COPY agent.py /opt/loom-agent/agent.py
+ENTRYPOINT ["/usr/local/bin/ax-task-runner"]
 ```
 
-An agent that reaches Loom through MCP only (Claude Code reads the `.mcp.json` the
-Workspace writes) needs its own CLI in the image instead.
+Substrate accepts only an image pinned by digest, so `task.yaml` names it as
+`<registry>/ax-loom-task@sha256:<digest>`. A tag is refused, and AX then falls
+back to a default template that does not exist, so the task fails with "actor
+template not found".
 
-## 3. Apply
+## 4. Apply
 
-Fill in the `<...>` values in `task.yaml`, then:
+Fill in the `<...>` values in `task.yaml` and `egress-policy.yaml`, then:
 
 ```bash
 ax apply -f task.yaml
+kubectl ate create egress-policy fix-flaky-test -a default -f egress-policy.yaml
 ax resume task fix-flaky-test
-ax watch task fix-flaky-test
+ax describe task fix-flaky-test
 ```
 
-The Workspace comes first in the file: AX creates the documents in order, and
-a Task created before its Workspace starts with an empty one.
+The Workspace comes first in `task.yaml`: AX creates the documents in order,
+and a Task created before its Workspace starts with an empty one. The task is
+created suspended, so the policy is in place before it first runs. Substrate
+denies all egress from an actor with no policy, and AX creates none.
+
+## Known gaps
+
+Tested on a kind cluster with AX `22954f6` and Substrate `f6a1dc72` (the
+commit AX pins). The task ran in the sandbox and, through the gateway-injected
+token, wrote its run, budget and memories to Loom, before and after a
+suspend and resume. Two things did not work:
+
+- **The Workspace's git clone.** The connection to `github.com` was closed
+  during the TLS handshake despite the `tlsPassthrough` rule, while an ordinary
+  pod in the same cluster reached GitHub. This is a Substrate egress problem,
+  not Loom's; check `kubectl ate get egress-policy` and the `atenet-egress`
+  logs on your version.
+- **AX reports `WorkspaceReady=True` when a clone fails.** The runner logs
+  `setup completed with errors` and starts the command anyway, so read the
+  task's logs, not only its conditions.
 
 ## Budgets
 

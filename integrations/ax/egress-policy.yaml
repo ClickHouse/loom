@@ -1,0 +1,26 @@
+# The egress policy of the AX task's actor on Agent Substrate. Substrate denies
+# all egress from an actor that has no policy, and AX creates none, so a task
+# without this one reaches neither Loom nor GitHub.
+#
+#   kubectl ate create egress-policy fix-flaky-test -a default -f egress-policy.yaml
+#
+# The actor is named after the task and lives in the task's atespace.
+rules:
+  # Loom, by its in-cluster Service name. The gateway reads the request and
+  # replaces the Authorization header the SDK sends with the token from the
+  # Secret, so the token never enters the sandbox. This is cleartext HTTP:
+  # injection over HTTPS needs the actor to trust the gateway's CA through
+  # Substrate's egress trust bundle, and AX's actor templates do not mount it
+  # yet. Keep this hop inside the cluster.
+  - http:
+      hostnames: ["loom.loom.svc.cluster.local"]
+      ports: { numbers: [80] }
+      effects:
+        replaceHeaders:
+          - header: Authorization
+            prefix: "Bearer "
+            credentialUri: ate-secret://k8s.io/default/loom-creds/loom-token/token
+  # git clone of the Workspace repository, end to end TLS (not intercepted).
+  - tlsPassthrough:
+      hostnames: ["github.com"]
+      ports: { numbers: [443] }
