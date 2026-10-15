@@ -409,6 +409,7 @@ async def test_same_key_judge_records_new_rows_and_peers_that_retired(monkeypatc
         {**_live("n1"), "status": "active"},
         {**_live("n2", "user_job"), "status": "superseded", "superseded_by": "p9"},
     ]
+    _index(state)
 
     class Input:
         org, namespace, detect_updates = "o", "ns", False
@@ -456,6 +457,7 @@ async def test_intra_batch_newest_wins_records_the_earlier_row(emitted) -> None:
         {**_live("old", "capital_a"), "status": "superseded", "superseded_by": "new"},
         {**_live("new", "capital_b"), "status": "active"},
     ]
+    _index(state)
 
     await bulk_set._record_intra_batch_retirements(_Input(), state, [("old", "new")])
     (ev,) = emitted
@@ -476,6 +478,7 @@ async def test_intra_batch_records_only_the_kept_version_of_a_key_sent_twice(emi
         {**_live("b", "capital_b"), "version": 2, "status": "active"},
         {**_live("a2", "capital_a"), "version": 3, "status": "active"},
     ]
+    _index(state)
     # a1 lost to b, but a2 (the version FINAL keeps) is live: nothing retired.
     await bulk_set._record_intra_batch_retirements(_Input(), state, [("a1", "b")])
     assert emitted == []
@@ -498,6 +501,7 @@ async def test_intra_batch_records_nothing_when_an_existing_key_is_revised_twice
         {**_live("b", "capital_b"), "version": 2, "status": "active"},
         {**_live("a", "capital_a"), "version": 3, "status": "active"},
     ]
+    _index(state)
     await bulk_set._record_intra_batch_retirements(_Input(), state, [("a", "b")])
     assert emitted == []
 
@@ -515,6 +519,7 @@ async def test_intra_batch_records_the_row_its_kept_version_retired_behind(emitt
         {**_live("z", "capital_c"), "version": 3, "status": "active"},
         {**_live("y", "capital_b"), "version": 4, "status": "active"},
     ]
+    _index(state)
     await bulk_set._record_intra_batch_retirements(_Input(), state, [("x", "z"), ("x", "y")])
     (ev,) = emitted
     (entry,) = ev["subject"]["retired"]
@@ -822,6 +827,7 @@ def test_a_result_names_only_the_retirements_the_re_read_confirmed() -> None:
 
     state = _BulkWriteState()
     state.memory_rows = [{"memory_id": "n1", "memory_key": "k"}]
+    _index(state)
     state.results = [_BulkSetResult(memory_key="k", version=5, memory_id="n1")]
     retired = [
         {"memory_id": "o1", "superseded_by": "n1"},
@@ -948,6 +954,7 @@ def test_no_judged_retirement_keeps_a_conflict_mark() -> None:
 
     state = _BulkWriteState()
     state.memory_rows = [{"memory_id": "n1", "memory_key": "user_city"}]
+    _index(state)
     peers = [MemorySetPeer(memory_id=p, memory_key="user_city") for p in ("p", "q", "r")]
     state.results = [
         _BulkSetResult(memory_key="user_city", version=1, conflict_verdict="conflict", peers=peers)
@@ -976,6 +983,7 @@ def test_a_key_whose_only_peer_may_have_retired_answers_clear() -> None:
 
     state = _BulkWriteState()
     state.memory_rows = [{"memory_id": "n1", "memory_key": "user_city"}]
+    _index(state)
     peer = MemorySetPeer(memory_id="q", memory_key="user_city")
     state.results = [
         _BulkSetResult(memory_key="user_city", version=1, conflict_verdict="conflict", peers=[peer])
@@ -1052,3 +1060,8 @@ async def test_a_peer_retiring_after_the_read_is_not_marked(monkeypatch) -> None
 async def test_a_late_verdict_leaves_a_retired_source_and_its_peers(monkeypatch) -> None:
     # Paris was superseded by London before the deferred verdict came back.
     assert await _marks(monkeypatch, {"p": "active"}, source="superseded") == []
+
+
+def _index(state) -> None:
+    # The id -> key map `_bulk_verdicts` builds once the rows that land are known.
+    state.key_of = {r["memory_id"]: r.get("memory_key", "") for r in state.memory_rows}

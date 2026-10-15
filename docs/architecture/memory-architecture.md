@@ -270,8 +270,8 @@ the value it was written or stated for (`carried`):
   naming the object that does not ask, cut after the clause naming the object or the
   first with the relation's words, whichever comes later; a sentence without the
   relation's words counts only whole, and a question states nothing. Clauses end at a
-  comma or colon and at "and" or "but" (unless a name in the triple has the word);
-  sentences end at `.;?!`. So "I live in London, not Paris" is kept by "I live in
+  comma or colon and at "and" or "but", and sentences at `.;?!`, never inside a name
+  of the triple ("Marks and Spencer", "Austin, Texas"). So "I live in London, not Paris" is kept by "I live in
   London" and "I live in London, not Paris.", and closed by "I live in London, near the
   river", "I live in London and work at Acme", "Still, I live in London", "I live in
   London?", "I lived in London" and "I live in Rome and visited London".
@@ -298,10 +298,16 @@ the value it was written or stated for (`carried`):
   non-ASCII). Words are read in any script written with spaces, a vowel sign or virama
   staying in its word; a script written without spaces, such as Japanese, is one word
   per run. Any other mark (an emoji, a quote, a sign) counts as a word, and a curly
-  apostrophe is the straight one. The object is matched as it is elsewhere in the
-  follow, so one that spans a break ("1,000", "St. Louis") closes on any revision. The
+  apostrophe is the straight one. A comma or dot inside the triple's subject or object
+  ("Austin, Texas", "St. Louis", "1,000") is the name's, never a clause or sentence
+  break, so an unchanged value still states it. The
   templated-substitution rule behind `newest_wins` pairs two statements only when they
-  share their beginning and differ in the span that ends them. A shared ending of two
+  share their beginning and differ in the span that ends them. Two statements about
+  different subjects share their ending instead ("Basketball was created in the country
+  of Soviet Union" / "Club Nouveau was created in …"), or differ in a span that carries
+  the copula ("The capital of Soviet Union is Moscow" / "The capital of Italy is Rome"),
+  and never pair: a looser rule would retire the update row itself and close its triple,
+  and multi-hop questions would lose their chain. A shared ending of two
   words or more after a beginning that does not end in a preposition, copula or article
   is taken for a predicate's object in any language, and never pairs ("lives in London"
   / "works in London", "живёт в Москве" / "работает в Москве", "habite à Paris" /
@@ -382,8 +388,10 @@ the value it was written or stated for (`carried`):
   marker, so a replay after a failed triple insert finds the edge by the id and does not
   repeat it. The failure records each restored row's `content_sha256`; a replay skips a
   row revised since, whose revision reconciles its facts, so the revised value is never
-  dated at the Undo. A failed interval repair records the triple write for replay too;
-  when the triples landed before the repair failed, the replay does not insert them
+  dated at the Undo. A failed triple write records when it arrived: a replay of a failed
+  insert inserts the triples seen at that arrival, not at its own clock, so an older
+  value replayed after a newer one lands behind it instead of closing it. A failed
+  interval repair records the triple write for replay too; when the triples landed before the repair failed, the replay does not insert them
   again, never repairs as of the replay's own clock, and names their entities as the
   write resolved them (the failure records those resolutions), not as they resolve by
   the replay. When the repair had issued
@@ -623,6 +631,16 @@ tombstone, restore, lock, promote, demote, supersession (`status='superseded'`,
 is the one op that edits a stored version. Status flips over many rows (the usage fold,
 `memory.reject` quarantine) are batched lightweight updates; see
 [ClickHouse](clickhouse.md#deletes-and-mutations).
+
+A caller that must know whether its new version took effect (`write_versions_by_ids`
+with `on_written`) re-reads each key's head under FINAL after the insert. The version is
+confirmed when it is the head; a higher head (a write that raced in after the read)
+means it did not take effect, and its status is not mirrored onto
+`memory_embeddings`. A key the re-read cannot see or holds at an older version, or a
+re-read that fails twice, leaves it unconfirmed: `on_unconfirmed` hears it and the
+mirror leaves it alone, for the caller to reconcile once the head is seen; with no
+`on_unconfirmed` it is mirrored, since it most likely landed. `on_written` runs before
+the mirror, so a caller knows what changed even when the mirror then raises.
 
 Expiry is the writer's choice. `ttl_seconds`, `valid_to`, a type's or namespace's
 `retention_days`, or `LOOM_MEMORY_SENSITIVE_RETENTION_DAYS` set `expires_at` and

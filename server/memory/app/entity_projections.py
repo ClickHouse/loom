@@ -1011,12 +1011,9 @@ async def stated_by_live_rows(
     rows: list[str] | None = None,
 ) -> frozenset[tfr.Triple]:
     """Of `triples`, those a row that may hold graph facts (`GRAPH_HOLDER_SQL`) holds:
-    its current value's extractor stated it, or it was stated or written for a value
-    the row was revised from and the row still carries it (`tfr.carried`). Another
-    session's or user's row of the same fact keeps it open; `rows` (ids) limits the
-    rows asked to those. A retired loser is not live, so it never keeps its own
-    triples. Asked of every row, a row written before rows were linked holds what its
-    key is linked to and its value names (`held_by_unlinked_rows`)."""
+    stated for its current value, or carried from a value it was revised from
+    (`tfr.carried`). `rows` (ids) limits the rows asked; without it, rows that predate
+    row links count too (`held_by_unlinked_rows`)."""
     if not triples:
         return frozenset()
     only_rows = "AND memory_id IN {rows:Array(UUID)}" if rows is not None else ""

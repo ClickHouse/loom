@@ -31,7 +31,7 @@ from server.memory.app.auto_resolution import (
 )
 from server.memory.app.conflict_judge import CONTRADICTION, ELABORATION
 from server.memory.domain import lock
-from server.memory.domain.conflicts import preserves_quantities
+from server.memory.domain.conflicts import kept_versions, preserves_quantities
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -334,15 +334,8 @@ async def judge_same_key_rows(
         ):
             return JudgedRetirements()
         cap = max(int(settings.bulk_conflict_check_max_entries), 0)
-        # Entries of a bulk share one identity, so two entries of one key are two
-        # versions of one row: only the highest (the one FINAL keeps) is judged.
-        winner: dict[str, dict[str, Any]] = {}
-        for r in memory_rows:
-            key = str(r.get("memory_key") or "")
-            if key not in winner or int(r.get("version") or 0) >= int(
-                winner[key].get("version") or 0
-            ):
-                winner[key] = r
+        # Of two entries of one key, only the version FINAL keeps is judged.
+        winner = kept_versions(memory_rows)
         # A row the batch already retired or marked `duplicate` has a live twin that
         # speaks for it; a 'high' row's value never reaches an LLM.
         judged_rows = [

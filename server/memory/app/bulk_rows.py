@@ -110,6 +110,8 @@ class _BulkWriteState:
     judged_retired_keys: set[str] = field(default_factory=set)
     memory_rows: list[dict[str, Any]] = field(default_factory=list)
     embedding_rows: list[dict[str, Any]] = field(default_factory=list)
+    # Each landing row's id -> its key, built once the verdicts fix which rows land.
+    key_of: dict[str, str] = field(default_factory=dict)
     # One per entry, in order; version 0 for an entry that wrote nothing.
     results: list[_BulkSetResult] = field(default_factory=list)
     # Row i's result is results[row_results[i]], as built (before the verdicts drop rows).

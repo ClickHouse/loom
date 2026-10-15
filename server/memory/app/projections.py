@@ -21,7 +21,7 @@ from server.core.datetimes import naive_utc_now, parse_iso_dt
 from server.core.hashing import sha256_value
 from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetResult
 from server.memory.app import conflicts as _conflicts
-from server.memory.app.projection_errors import TriplesRepairFailed
+from server.memory.app.projection_errors import TriplesInsertFailed, TriplesRepairFailed
 from server.memory.domain.graph_quality import (
     MAX_TRIPLES_PER_ROW,
     observation_key,
@@ -345,20 +345,15 @@ async def write_entity_triples(
     ch: Any,
     entity_map: dict[str, str] | None = None,
     dedup_token: str = "",
+    arrived_at: datetime | None = None,
     inserted_at: datetime | None = None,
     repaired: list[IntervalRepair] | None = None,
 ) -> None:
-    """Emit typed (subject, relation, object) triples.
-
-    Mirrors write_entity_edges: shared canonicalizer, async insert. A failure
-    raises: every caller records it for the projection repair. One after the
-    insert raises `TriplesRepairFailed`, and its replay passes `inserted_at`, the
-    closes the write had `repaired` and the `entity_map` it resolved names with: the
-    triples that landed then are not inserted twice, and their repair is finished as
-    of that write (`_repair_triples`), on the triples as they were named. Empty
-    `relations` produce zero rows. Subject + object canonicalize; relation is
-    lowercased + space→underscore.
-    """
+    """Insert the write's (subject, relation, object) triples and repair the intervals
+    they contradict. A failed insert raises `TriplesInsertFailed`; its replay passes
+    `arrived_at` to date the triples as the write did. A failed repair raises
+    `TriplesRepairFailed`; its replay passes `inserted_at`, `repaired` and `entity_map`
+    and only finishes the repair. Both are recorded by every caller for replay."""
     from server.memory.app.entity_resolution import apply_entity_resolution
     from server.memory.domain.graph_quality import (
         canonical_entity_text,
@@ -378,7 +373,7 @@ async def write_entity_triples(
     # key keeps the write's order. `last_seen` and `invalid_at` store the arrival's
     # second, even when a long write's last offsets run into the next second; an
     # undated triple starts in the second of its own `seen_at`.
-    arrived = inserted_at or naive_utc_now()
+    arrived = inserted_at or arrived_at or naive_utc_now()
     now = arrived.replace(microsecond=0)
     triples: list[dict[str, Any]] = []
     triple_memories: list[dict[str, Any]] = []
@@ -507,7 +502,12 @@ async def write_entity_triples(
         return
 
     if inserted_at is None:
-        await _insert_triples(triples, triple_memories, triple_rows, dedup_token=dedup_token, ch=ch)
+        try:
+            await _insert_triples(
+                triples, triple_memories, triple_rows, dedup_token=dedup_token, ch=ch
+            )
+        except Exception as e:
+            raise TriplesInsertFailed(arrived, e) from e
 
     try:
         await _repair_triples(
@@ -619,10 +619,9 @@ async def _finish_recorded_repairs(
     at: datetime,
     ch: Any,
 ) -> tuple[list[IntervalRepair], list[tuple[Any, ...]]]:
-    """Of the closes a replayed write recorded, the ones it still makes, and those of
-    them to issue again because they never landed. A value stated since is that write's
-    to repair; one the close took while it landed is reopened and repaired against the
-    values written after it."""
+    """Of the closes a replayed write recorded, the ones it still makes, and those to
+    issue again because they never landed. A value restated since is skipped; one
+    restated while the close landed is reopened (`_reopen_restated`)."""
     from server.identity.app.namespace_ontology import load_relation_cardinality
 
     closed_at = at.replace(microsecond=0)  # as `invalid_at` stores it
@@ -678,10 +677,9 @@ async def _reopen_restated(
     triple_memories: list[dict[str, Any]],
     ch: Any,
 ) -> None:
-    """Undo the write's close of a value stated again while it landed, and give that
-    value the repair its restatement (stated `valid_from`, seen at `seen`) would have
-    had against the values written since: they found it closed. A newer one closes it
-    again and, as that one's write would have, retires the rows behind it."""
+    """Undo the write's close of a value stated again while it landed, first repairing
+    that restatement (from `valid_from`, seen at `seen`) against the values written
+    since. A newer one closes it again and retires the rows behind it."""
     restated = {
         "subject": repair.subject,
         "relation": repair.relation,
@@ -758,11 +756,9 @@ async def _recorded_close_states(
     at: datetime,
     ch: Any,
 ) -> dict[tuple[str, str, str], RecordedClose]:
-    """What became of each value the write that arrived at `at` recorded closing: open
-    again since (that write's repair decides), open because the close never landed, or
-    stated again while the close landed ("back to London", a `Restatement` the replay
-    judges). "Since" is per value: after the newest value that closed it and the
-    write's own rows of it, so a restatement in the write's own second counts."""
+    """What became of each value the write arriving at `at` recorded closing: restated
+    since, open because the close never landed, or stated again while the close landed
+    (`RecordedClose`). "Since" is per value, as memory-architecture.md's replay says."""
     values = sorted({_closed_value(r) for r in repairs})
     rows = await ch.query_all(
         """
@@ -1096,11 +1092,9 @@ async def _undo_raced_closes(
     declared: Mapping[str, str],
     ch: Any,
 ) -> list[IntervalRepair]:
-    """Undo the closes of a value that a write stated again while the repair ran ("back
-    to London"): the value has more current restatements (`restates_current`) than the
-    repair `read`, and that write's own repair closes this one's value instead. A
-    restatement older than the value that closed it undoes nothing. Returns the
-    repairs that stand."""
+    """Undo the closes of a value another write stated again while this repair ran
+    ("back to London"), when it now has more restatements newer than its closer
+    (`restates_current`) than the repair `read`. Returns the repairs that stand."""
     if not repairs:
         return repairs
     rows = await ch.query_all(

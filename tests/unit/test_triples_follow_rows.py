@@ -757,7 +757,7 @@ def test_a_revision_that_does_not_restate_it_closes_its_successor(old, new, trip
     ],
 )
 def test_a_question_closed_by_a_quote_or_bracket_states_nothing(text) -> None:
-    assert tfr._statements(tfr._sentences(text, set()), _LIVES) == {}
+    assert tfr._statements(tfr._sentences(text, _LIVES), _LIVES) == {}
 
 
 def test_a_follow_reads_dashed_and_bare_ids_and_skips_the_rest() -> None:
@@ -770,3 +770,21 @@ def test_a_follow_reads_dashed_and_bare_ids_and_skips_the_rest() -> None:
     odd = ("{" + dashed + "}", "urn:uuid:" + dashed, "2222-2222" + dashed[9:])
     for value in ("", "-", "not-a-uuid", dashed[:-1], *odd):
         assert _canonical_id(value) is None
+
+
+@pytest.mark.parametrize(
+    ("text", "triple"),
+    [
+        ("I live in Austin, Texas", ("user", "live_in", "austin texa")),
+        ("I live in St. Louis now.", ("user", "live_in", "st. louis")),
+        ("I live in New York, NY, near the park", ("user", "live_in", "new york ny")),
+        ("Dr. Smith works at Acme", ("dr. smith", "work_at", "acme")),
+        ("I own 1,000 books", ("user", "own", "1 000")),
+    ],
+)
+def test_a_name_with_a_comma_or_a_dot_is_one_clause(text, triple) -> None:
+    # The comma in "Austin, Texas" and the dot in "St. Louis" are the name's, not a
+    # clause or sentence break: the text still says the triple, and restates itself.
+    assert tfr._says_in_one_clause(text, triple)
+    assert tfr.restates(text, text, triple)
+    assert tfr._still_says(tfr.RowSupersession(loser_text=text, winner_text=text), triple)

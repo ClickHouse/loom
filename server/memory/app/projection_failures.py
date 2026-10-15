@@ -20,6 +20,7 @@ from server.identity.domain.read_scope import (
 )
 from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry, _BulkSetResult
 from server.memory.app.projection_errors import (
+    TRIPLES_ARRIVED_AT,
     TRIPLES_ENTITY_MAP,
     TRIPLES_INSERTED_AT,
     TRIPLES_REPAIRS,
@@ -735,12 +736,10 @@ async def _retry_graph_projection(
     *,
     ch: Any,
 ) -> str:
-    """Replay a bulk write's graph projection. Only a triples replay retires rows,
-    so only it needs the writer's read scope and runs within it; one recorded
-    refused or incomplete returns the reason (`refused_read_scope`,
-    `incomplete_read_scope`) that abandons the failure, as no retry can replay it.
-    A replay that inserts does so only for entries whose row still holds the value
-    they wrote; with none left, the failure resolves with nothing to do."""
+    """Replay a bulk write's graph projection, for the entries whose row still holds
+    the value they wrote. A triples replay runs within the writer's read scope; it
+    returns the reason that abandons the failure when that scope was refused or
+    incomplete."""
     entries = failure.payload.get("entries")
     results = failure.payload.get("results")
     if not isinstance(entries, list) or not isinstance(results, list):
@@ -826,6 +825,7 @@ async def _retry_graph_projection(
                     bulk_results,
                     ch=ch,
                     dedup_token=dedup_token,
+                    arrived_at=parse_iso_dt(failure.payload.get(TRIPLES_ARRIVED_AT) or ""),
                     inserted_at=parse_iso_dt(failure.payload.get(TRIPLES_INSERTED_AT) or ""),
                     repaired=_recorded_repairs(failure.payload),
                     entity_map=_recorded_entity_map(failure.payload),

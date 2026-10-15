@@ -22,11 +22,22 @@ from server.memory.domain.graph_quality import IntervalRepair
 
 log = logging.getLogger(__name__)
 
-# The payload keys saying a write's triples landed before their interval repair failed,
-# which closes that repair had made, and what the write resolved its names to.
+# The payload keys saying when a write's triples arrived (every failure), that they
+# landed before their interval repair failed, which closes that repair had made, and
+# what the write resolved its names to.
+TRIPLES_ARRIVED_AT = "triples_arrived_at"
 TRIPLES_INSERTED_AT = "triples_inserted_at"
 TRIPLES_REPAIRS = "triples_repairs"
 TRIPLES_ENTITY_MAP = "triples_entity_map"
+
+
+class TriplesInsertFailed(Exception):
+    """A write's triples, dated at `arrived_at`, failed to insert. The replay inserts
+    them dated at that arrival, not at its own clock."""
+
+    def __init__(self, arrived_at: datetime, cause: BaseException) -> None:
+        super().__init__(f"triples insert failed: {type(cause).__name__}: {cause}")
+        self.arrived_at = arrived_at
 
 
 class TriplesRepairFailed(Exception):
@@ -98,9 +109,9 @@ def bulk_projection_payload(
     input: Any, results: list[Any], *, error: BaseException | None = None
 ) -> dict[str, Any]:
     """What a replay of a bulk write's projection needs, the writer's read scope
-    included: a replay runs outside the request, and retires only within it. An
-    `error` that came after the triples landed records when, and the closes the repair
-    had made, so the replay only finishes their repair."""
+    included: a replay runs outside the request, and retires only within it. A triples
+    `error` records when the write arrived; one after the triples landed also records
+    the closes the repair had made, so the replay only finishes their repair."""
     entries: list[dict[str, Any]] = []
     for entry in list(getattr(input, "entries", []) or []):
         if hasattr(entry, "model_dump"):
@@ -121,6 +132,8 @@ def bulk_projection_payload(
         "results": result_rows,
         READ_SCOPE_KEY: _writers_read_scope(),
     }
+    if isinstance(error, TriplesInsertFailed):
+        payload[TRIPLES_ARRIVED_AT] = error.arrived_at.isoformat()
     if isinstance(error, TriplesRepairFailed):
         payload.update(repair_failure_payload(error))
     return payload
@@ -129,6 +142,7 @@ def bulk_projection_payload(
 def repair_failure_payload(error: TriplesRepairFailed) -> dict[str, Any]:
     """The payload keys that carry a failed repair to its replay, as JSON."""
     return {
+        TRIPLES_ARRIVED_AT: error.inserted_at.isoformat(),
         TRIPLES_INSERTED_AT: error.inserted_at.isoformat(),
         TRIPLES_REPAIRS: [
             {k: v.isoformat() if isinstance(v, datetime) else v for k, v in asdict(r).items()}

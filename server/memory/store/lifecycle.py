@@ -45,27 +45,11 @@ async def write_versions_by_ids(
     on_written: Callable[[list[dict[str, Any]]], None] | None = None,
     on_unconfirmed: Callable[[list[dict[str, Any]]], Awaitable[None]] | None = None,
 ) -> int:
-    """Write new RMT versions for live rows addressed by memory_id.
-
-    `update(existing)` returns the column overrides for that row. The helper
-    always assigns a fresh `version` unless the callback explicitly supplies
-    one, and it carries every persisted column forward via
-    build_memory_version_row. This is the preferred replacement for
-    in-place status flips on `loom.memory`. A row `skip(existing)` answers
-    True for is left as it is. `strong` reads each row read-your-writes (the
-    caller decided on a version it read earlier and must not rebuild a stale one).
-    `on_written` is called with the version rows confirmed to have taken effect,
-    right after the insert and before the embeddings mirror, so a caller can tell
-    what changed even when the mirror then raises. The re-read after the insert
-    confirms a row when its key's head is that version. A higher version (a write
-    that raced in after the read won under FINAL) means it did not take effect, and
-    the mirror skips it too. A key the read cannot see or holds at an older version,
-    or a read that fails twice, leaves the row unconfirmed. With `on_written` given,
-    `on_unconfirmed` hears it and the mirror leaves it alone (the write may or may
-    not have landed), for the caller to reconcile against the head once it is seen;
-    without `on_unconfirmed` it is mirrored, since it most likely landed.
-    Returns how many rows were written; with `on_written`, how many were confirmed.
-    """
+    """Write a new version of each live row in `memory_ids`: `update(existing)`'s
+    overrides on every persisted column carried forward, a fresh `version` unless it
+    sets one. `skip` leaves a row as it is; `strong` reads read-your-writes.
+    `on_written` / `on_unconfirmed` hear what the re-read confirmed or could not (see
+    Lifecycle in memory-architecture.md). Returns the rows written, or confirmed."""
 
     if not memory_ids:
         return 0

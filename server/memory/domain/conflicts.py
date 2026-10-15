@@ -240,6 +240,17 @@ def templated_substitution(a: str, b: str) -> bool:
     return abs(len(wa) - len(wb)) <= 2
 
 
+def kept_versions(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """The row FINAL keeps of each key a bulk writes. Its entries share one identity,
+    so two rows of one key are two versions of one row: the higher version is kept."""
+    kept: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        key = str(r.get("memory_key") or "")
+        if key not in kept or int(r.get("version") or 0) >= int(kept[key].get("version") or 0):
+            kept[key] = r
+    return kept
+
+
 def intra_batch_supersessions(
     values: list[str], types: list[str] | None = None
 ) -> list[tuple[int, int]]:

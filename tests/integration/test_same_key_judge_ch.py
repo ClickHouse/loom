@@ -1340,6 +1340,7 @@ async def test_a_revision_whose_links_fail_to_write_still_holds_its_successor(
     ch, org, monkeypatch
 ) -> None:
     from server.core import ch as ch_mod
+    from server.memory.app.projection_errors import TriplesInsertFailed
 
     paris = await _stated(ch, org, "s1", "I currently live in Paris")
     london = await _stated(ch, org, "s2", "I currently live in London", extracted=False, pinned=1)
@@ -1356,7 +1357,8 @@ async def test_a_revision_whose_links_fail_to_write_still_holds_its_successor(
 
     monkeypatch.setattr(client, "insert", _flaky)
     lives = ("user", "favourite_city", "london")
-    with pytest.raises(ConnectionError):
+    # Raised with the write's arrival, for its replay to date the triples by.
+    with pytest.raises(TriplesInsertFailed, match="ConnectionError"):
         await _stated(
             ch, org, "s2", "I currently live in London.", lives, memory_id=london["memory_id"]
         )
@@ -3444,3 +3446,45 @@ async def test_a_replayed_undo_leaves_a_value_asserted_later_in_its_second_curre
     assert (await retry_projection_failure(await _recorded_reconcile(ch, org), ch=ch)).resolved
     await _mutations_done(ch, org)
     assert await _open_cities(ch, org, {"rome"}) == {"rome"}
+
+
+async def test_a_replayed_insert_of_an_older_value_leaves_the_newer_one_current(
+    ch, org, monkeypatch
+) -> None:
+    # London's insert fails, then Paris is stated. The replay inserts London dated at
+    # its own write, so it lands behind Paris instead of closing it.
+    from server.memory.app import projections
+    from server.memory.app.projection_errors import bulk_projection_payload
+    from server.memory.app.projection_failures import ProjectionFailureRow, retry_projection_failure
+
+    lives = ("user", "live_in", "london")
+    _row, write, results = await _row_and_write(
+        ch, org, "s1", "I currently live in London", [lives]
+    )
+    insert = projections._insert_triples
+
+    async def _insert_fails(*args: Any, **kw: Any) -> None:
+        raise RuntimeError("insert timed out")
+
+    monkeypatch.setattr(projections, "_insert_triples", _insert_fails)
+    with pytest.raises(Exception) as raised:
+        await projections.write_entity_triples(write, results, ch=ch, entity_map={})
+    monkeypatch.setattr(projections, "_insert_triples", insert)
+    await _stated(ch, org, "s2", "I currently live in Paris", ("user", "live_in", "paris"))
+    payload = bulk_projection_payload(write, results, error=raised.value)
+    failure = ProjectionFailureRow(
+        failure_id=str(uuid.uuid4()),
+        org=org,
+        namespace=NS,
+        agent="bot",
+        projection="entity_triples",
+        source_operation="memory.bulk_set",
+        source_resource_id="",
+        memory_keys=[results[0].memory_key],
+        error_type="RuntimeError",
+        error_message="insert timed out",
+        payload=json.loads(json.dumps(payload)),
+    )
+    assert (await retry_projection_failure(failure, ch=ch)).resolved
+    await _mutations_done(ch, org)
+    assert await _open_facts(ch, org, {("live_in", "paris")}) == {("live_in", "paris")}

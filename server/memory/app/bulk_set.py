@@ -246,6 +246,9 @@ async def _bulk_verdicts(
     )
     state.memory_rows = plan.memory_rows
     state.embedding_rows = plan.embedding_rows
+    state.key_of = {
+        str(r.get("memory_id") or ""): str(r.get("memory_key") or "") for r in state.memory_rows
+    }
     return plan
 
 
@@ -318,9 +321,7 @@ async def _bulk_judge_same_key(
     }
     state.judged_retired_keys = set(behind)
     if behind:
-        key_of = {
-            str(r.get("memory_id") or ""): str(r.get("memory_key") or "") for r in state.memory_rows
-        }
+        key_of = state.key_of
         plan.conflict_marks = [
             (n, p) for n, p in plan.conflict_marks if key_of.get(n) not in behind
         ]
@@ -374,9 +375,7 @@ def _settle_results(
 
     behind = behind or {}
     retired_peers = retired_peers or set()
-    key_of = {
-        str(r.get("memory_id") or ""): str(r.get("memory_key") or "") for r in state.memory_rows
-    }
+    key_of = state.key_of
     still_marked = {key_of.get(n, "") for n, _p in plan.conflict_marks}
     still_refined = {key_of.get(r[0], "") for r in plan.refines}
     unmarked = {k for k in plan.conflicted if k not in still_marked}
@@ -403,14 +402,13 @@ def _settle_results(
 def _name_retired_rows(state: _BulkWriteState, retired: list[dict[str, Any]]) -> None:
     """Each entry's result lists the stored rows its row retired (confirmed ones:
     a result never claims a retirement the re-read could not see)."""
-    key_of = {
-        str(r.get("memory_id") or ""): str(r.get("memory_key") or "") for r in state.memory_rows
-    }
     by_key: dict[str, list[str]] = {}
     for v in retired:
         if v.get("unconfirmed"):
             continue
-        by_key.setdefault(key_of.get(str(v["superseded_by"]), ""), []).append(str(v["memory_id"]))
+        by_key.setdefault(state.key_of.get(str(v["superseded_by"]), ""), []).append(
+            str(v["memory_id"])
+        )
     for res in state.results:
         if int(res.version) > 0 and res.memory_key in by_key:
             res.retired = list(by_key[res.memory_key])
@@ -607,21 +605,16 @@ async def _record_intra_batch_retirements(
         NEWEST_WINS_CONTRADICTION,
         record_auto_supersessions,
     )
+    from server.memory.domain.conflicts import kept_versions
 
-    key_of = {str(r.get("memory_id") or ""): r.get("memory_key") for r in state.memory_rows}
     # A key sent twice is two versions of one row (one id, when the key already
-    # existed), and FINAL keeps the higher: only a kept version that landed
-    # superseded retired its row.
-    kept: dict[str, dict[str, Any]] = {}
-    for r in state.memory_rows:
-        key = str(r.get("memory_key") or "")
-        if key not in kept or int(r.get("version") or 0) >= int(kept[key].get("version") or 0):
-            kept[key] = r
+    # existed): only a kept version that landed superseded retired its row.
+    kept = kept_versions(state.memory_rows)
     # The kept version names the row it retired behind: one id can be the older row of
     # two pairs.
     older = {o for o, _n in pairs}
     retired = [
-        {**r, "superseded_by_key": key_of.get(str(r.get("superseded_by") or ""))}
+        {**r, "superseded_by_key": state.key_of.get(str(r.get("superseded_by") or ""))}
         for r in kept.values()
         if str(r.get("memory_id") or "") in older and r.get("status") == "superseded"
     ]

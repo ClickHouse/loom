@@ -172,7 +172,7 @@ async def test_a_triples_replay_retires_only_within_the_writers_scope(monkeypatc
     seen: list = []
 
     async def write_entity_triples(
-        input, results, *, ch, dedup_token, inserted_at, repaired, entity_map
+        input, results, *, ch, dedup_token, arrived_at, inserted_at, repaired, entity_map
     ):
         seen.append(request_scope())
 
@@ -215,7 +215,7 @@ async def test_a_retry_an_admin_runs_replays_under_the_writers_scope(monkeypatch
     seen: list = []
 
     async def write_entity_triples(
-        input, results, *, ch, dedup_token, inserted_at, repaired, entity_map
+        input, results, *, ch, dedup_token, arrived_at, inserted_at, repaired, entity_map
     ):
         seen.append(request_scope())
 
@@ -554,3 +554,80 @@ def test_a_failed_repairs_closes_ride_the_payload_by_name() -> None:
     assert payload["triples_repairs"][0]["old_object"] == "london"
     assert payload["triples_repairs"][0]["valid_to"] == "2026-06-01T00:00:00"
     assert _recorded_repairs(payload) == [made]
+
+
+class _InsertFailsCH(_GraphCH):
+    """The triples insert fails; everything else succeeds."""
+
+    async def insert(self, table, rows, settings=None):
+        if table == "loom.entity_triples":
+            raise RuntimeError("insert timed out")
+        await super().insert(table, rows, settings)
+
+
+async def test_a_replayed_triples_insert_is_dated_at_the_write(monkeypatch) -> None:
+    # W1 states london and its insert fails; W2 states paris later. A replay dated at
+    # its own clock would key london after paris and close paris. It inserts the
+    # triples as seen when W1 arrived, and repairs them as of then.
+    import json
+    from datetime import datetime
+
+    from server.memory.app import projections
+    from server.memory.app.projection_errors import bulk_projection_payload
+
+    arrived = datetime(2026, 10, 15, 9, 37, 51, 910300)
+    monkeypatch.setattr(projections, "naive_utc_now", lambda: arrived)
+    failure = _graph_failure("entity_triples")
+    write = projections.MemoryBulkSetInput(
+        org="o", namespace="n", agent="a", entries=failure.payload["entries"]
+    )
+    results = [projections._BulkSetResult(**r) for r in failure.payload["results"]]
+    with pytest.raises(Exception) as raised:
+        await projections.write_entity_triples(write, results, ch=_InsertFailsCH(), entity_map={})
+    payload = json.loads(json.dumps(bulk_projection_payload(write, results, error=raised.value)))
+    assert payload["triples_arrived_at"] == arrived.isoformat()
+    # Nothing landed: the replay still inserts.
+    assert "triples_inserted_at" not in payload
+
+    inserted: list = []
+    repaired: list = []
+
+    class _Recording(_GraphCH):
+        async def insert(self, table, rows, settings=None):
+            if table == "loom.entity_triples":
+                inserted.extend((r["object"], r["seen_at"], r["last_seen"]) for r in rows)
+            await super().insert(table, rows, settings)
+
+    async def repair(input, triples, *, ch, at):
+        repaired.append(at)
+        return []
+
+    monkeypatch.setattr(projections, "_repair_contradictory_triples", repair)
+    monkeypatch.setattr(projections, "naive_utc_now", lambda: datetime(2026, 10, 16))
+    failure.payload.update(payload)
+    assert (await retry_projection_failure(failure, ch=_Recording())).resolved
+    assert inserted == [("bob", arrived, arrived.replace(microsecond=0))]
+    assert repaired == [arrived]
+
+
+async def test_an_insert_failure_recorded_without_its_arrival_replays_as_it_did(
+    monkeypatch,
+) -> None:
+    # Recorded before failures carried the arrival: the replay dates it at its own clock.
+    from datetime import datetime
+
+    from server.memory.app import projections
+
+    now = datetime(2026, 10, 16, 8, 0, 0, 5)
+    monkeypatch.setattr(projections, "naive_utc_now", lambda: now)
+    repaired: list = []
+
+    async def repair(input, triples, *, ch, at):
+        repaired.append(at)
+        return []
+
+    monkeypatch.setattr(projections, "_repair_contradictory_triples", repair)
+    assert (
+        await retry_projection_failure(_graph_failure("entity_triples"), ch=_GraphCH())
+    ).resolved
+    assert repaired == [now]

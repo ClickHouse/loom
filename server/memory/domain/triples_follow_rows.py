@@ -177,19 +177,10 @@ _ANY_COPULA = _COPULA | frozenset(
 
 
 def object_substitution(old: str, new: str) -> tuple[str, str] | None:
-    """`substituted_spans` narrowed to the update shape: the two statements
-    share their whole beginning (subject and predicate, three tokens or
-    more) and differ only in the span that ends them — the object. This is
-    what an update to a single-valued attribute looks like, and what two
-    statements about DIFFERENT subjects do not: "Basketball was created in
-    the country of Soviet Union" / "Club Nouveau was created in the country
-    of Soviet Union" share their ending, not their beginning; "The capital of
-    Soviet Union is Moscow" / "The capital of Italy is Rome" share a
-    beginning but the differing span carries the copula. A looser rule pairs
-    both inside one write and supersedes the update row itself (basketball →
-    Soviet Union), then closes its triple, and multi-hop questions lose their
-    chain. A shared ending after a preposition is a detail both keep ("I work at
-    Acme in London" / "… at Globex in London" → ("acme", "globex"))."""
+    """`substituted_spans` narrowed to an update of one attribute: the statements share
+    a beginning of three tokens or more and differ only in the object that ends them
+    ("I work at Acme in London" / "… at Globex in London" → ("acme", "globex")). The
+    shapes it refuses are under "Words" in docs/architecture/memory-architecture.md."""
     a, b = _tokens(old), _tokens(new)
     if len(a) < 4 or len(b) < 4 or a == b:
         return None
@@ -344,14 +335,29 @@ def _words_and_signs(text: str) -> list[str]:
     return _scan((text or "").casefold(), signs=True)
 
 
-def _sentences(text: str, keep: set[str]) -> list[_Sentence]:
+def _protect_names(text: str, triple: Triple) -> str:
+    """`text` with the commas and dots inside the triple's subject and object blanked,
+    so "Austin, Texas" and "St. Louis" are never split. Words match as in `_mentions`."""
+    text = (text or "").casefold()
+    for name in (triple[0], triple[2]):
+        words = _words_and_signs(name)
+        if len(words) < 2:
+            continue
+        parts = [re.escape(w) + (r"\w*" if len(w) >= 3 else "") for w in words]
+        pattern = r"(?<!\w)" + r"[\s.,]+".join(parts) + r"(?!\w)"
+        text = re.sub(pattern, lambda m: re.sub(r"[.,]", " ", m.group()), text)
+    return text
+
+
+def _sentences(text: str, triple: Triple) -> list[_Sentence]:
     """The sentences of `text`, each as its clauses of words. A clause ends at a comma
-    or colon, and at "and" or "but" unless a name the triple holds has that word
-    (`keep`: "Marks and Spencer"). The text's lead-in ("User stated that") is
+    or colon, and at "and" or "but", but never inside the triple's subject or object
+    ("Austin, Texas", "Marks and Spencer"). The text's lead-in ("User stated that") is
     dropped."""
+    keep = set(_words_and_signs(triple[0])) | set(_words_and_signs(triple[2]))
     breaks = _CONJUNCTIONS - keep
     out: list[_Sentence] = []
-    for raw in _SENTENCE_END_RE.split(text or ""):
+    for raw in _SENTENCE_END_RE.split(_protect_names(text, triple)):
         asks = raw.rstrip().rstrip(_CLOSERS).endswith("?")
         clauses: list[list[str]] = []
         for part in _CLAUSE_BREAK_RE.split(raw):
@@ -398,10 +404,9 @@ def _clauses_saying(text: str, triple: Triple) -> list[list[str]]:
     in London" of "I live in Rome and work in London" says `(user, work_in, london)`."""
     obj = _words_and_signs(triple[2])
     relation_words = _relation_words(triple)
-    keep = set(_words_and_signs(triple[0])) | set(obj)
     return [
         clause
-        for sentence in _sentences(text, keep)
+        for sentence in _sentences(text, triple)
         for clause in sentence.clauses
         if _mentions(clause, obj) and any(w.startswith(r) for w in clause for r in relation_words)
     ]
@@ -451,8 +456,7 @@ def restates(old: str, new: str, triple: Triple) -> bool:
     restated by "I live in London" and "I live in London, not Paris."; not by "I
     live in London, near the river", "Still, I live in London", "I live in
     London?" or "I live in Rome and visited London"."""
-    keep = set(_words_and_signs(triple[0])) | set(_words_and_signs(triple[2]))
-    was, now = _sentences(old, keep), _sentences(new, keep)
+    was, now = _sentences(old, triple), _sentences(new, triple)
     statements = _statements(was, triple)
     if not statements:
         return False

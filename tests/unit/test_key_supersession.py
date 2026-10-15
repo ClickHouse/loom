@@ -446,6 +446,7 @@ async def test_bulk_drops_a_retired_new_row_from_the_settling_steps(monkeypatch)
         _row("n1", _d(20), status="conflicted"),
         {**_row("n2", _d(21)), "memory_key": "user_hometown"},
     ]
+    _index(state)
     plan = BulkVerdictPlan()
     plan.conflict_marks = [("n1", ["x"]), ("n2", ["y"])]
     plan.refines = [
@@ -521,6 +522,7 @@ async def test_bulk_retires_judged_peers_after_the_insert_and_links_only_live_ro
         # The lower version of a key whose kept row the judge retired.
         {**_row("n3", _d(20)), "memory_key": "user_hometown"},
     ]
+    _index(state)
     state.judged_retired_keys = {"user_hometown"}
 
     class Input:
@@ -749,6 +751,7 @@ async def test_a_key_written_twice_leaves_the_plan_by_key(monkeypatch) -> None:
     state = _BulkWriteState()
     # A key new to this identity, twice: two ids, one identity; FINAL keeps n2.
     state.memory_rows = [_row("n1", _d(10), version=1), _row("n2", _d(11), version=2)]
+    _index(state)
     state.results = [
         _BulkSetResult(memory_key="user_ethnicity", version=1),
         _BulkSetResult(memory_key="user_ethnicity", version=2),
@@ -826,6 +829,7 @@ def test_results_say_what_the_judge_did() -> None:
     keys = ["user_ethnicity", "user_heritage", "user_home", "user_age", "user_job", "user_pet"]
     state = _BulkWriteState()
     state.memory_rows = [{"memory_id": f"n-{k}", "memory_key": k} for k in keys]
+    _index(state)
     state.results = [
         res("user_ethnicity", "conflict", ["q"]),
         res("user_heritage", "conflict", ["p"]),
@@ -979,6 +983,7 @@ def test_only_entries_that_wrote_a_live_row_project_graph_facts() -> None:
         {"memory_id": "id-user_city", "version": 1, "sensitivity": "high"},
         {"memory_id": "id-user_job", "version": 2},
     ]
+    _index(state)
     assert projected() == (["user_job"], ["user_job"])
     # Two entries of one stored key share its id: only the 'high' version is fenced.
     state.results = [
@@ -989,6 +994,7 @@ def test_only_entries_that_wrote_a_live_row_project_graph_facts() -> None:
         {"memory_id": "id-user_city", "version": 1, "sensitivity": "high"},
         {"memory_id": "id-user_city", "version": 2},
     ]
+    _index(state)
     assert projected() == (["user_city"], ["user_city"])
 
 
@@ -1547,6 +1553,8 @@ async def test_a_verdict_lands_on_its_rows_result_after_a_skipped_entry(monkeypa
     state.row_results = [1]
     await bulk_set._bulk_verdicts(None, state, [], [], StageClock({}))
     assert [r.conflict_verdict for r in state.results] == ["", "clear"]
+    # The rows that land are known now: their keys by id, for the settling steps.
+    assert state.key_of == {"n1": "user_city"}
 
 
 async def test_a_successor_the_follow_wrote_closes_when_its_row_retires(monkeypatch) -> None:
@@ -1777,3 +1785,8 @@ async def test_the_repair_reads_a_chain_a_write_could_not(monkeypatch) -> None:
         hops=entity_projections.REPAIR_CHAIN_HOPS,
     )
     assert outcome.unfollowed == [] and graph.objects() == {"city69"}
+
+
+def _index(state) -> None:
+    # The id -> key map `_bulk_verdicts` builds once the rows that land are known.
+    state.key_of = {r["memory_id"]: r.get("memory_key", "") for r in state.memory_rows}
