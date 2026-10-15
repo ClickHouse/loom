@@ -169,6 +169,13 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   names that route where it works, the `repo_jobs_unsandboxed` fix in `loom doctor` and
   `/v1/health` matches it, and the sandbox docs say which hosts can load the AppArmor
   profile: AppArmor 4.0 or later, tested on Ubuntu 24.04.
+- A server with several web processes no longer exits when a boot migration holds the
+  provider configuration lock for more than 5 seconds: a booting process now waits for it as
+  long as for the migration lease (`LOOM_BOOT_MIGRATE_LEASE_WAIT_S`, 900 s) and logs who
+  holds it, instead of failing its start (uvicorn then stopped every process).
+- The blue/green proxy re-resolves the serving colour's name, so a colour container that
+  restarts on a new address is reached again within about 30 s, instead of timing out until
+  the next reload. `redeploy.sh` no longer reloads the proxy after a failed `nginx -t`.
 - On a host whose time zone is not UTC, a timestamp written through the driver's insert path
   was shifted by the host's offset (seven or eight hours on the US west coast): the driver
   reads a naive datetime as local time. Those writes now carry the UTC instant. Conversation

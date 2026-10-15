@@ -18,7 +18,8 @@ def setup(monkeypatch):
     owned = []
 
     @asynccontextmanager
-    async def lock():
+    async def lock(**kwargs):
+        assert kwargs["wait_s"] == boot.settings.boot_migrate_lease_wait_s
         owned.append(True)
         try:
             yield
@@ -160,3 +161,24 @@ async def test_failed_boot_migrations_keep_the_cache(setup):
         assert ch_schema_guard._schema_guard["at"] == 1e12
     finally:
         ch_schema_guard.schema_guard_reset()
+
+
+@pytest.mark.asyncio
+async def test_a_lock_still_missed_after_the_wait_fails_the_start(setup, monkeypatch):
+    """The pending list is read once, before the lock: an empty read after a
+    miss is no proof a sibling finished (the ledger read fails open)."""
+    client, migrate, pending, _, execute, _ = setup
+
+    @asynccontextmanager
+    async def missed(**kwargs):
+        pending.return_value = []
+        raise provider_lock.ConfigurationLockUnavailable("provider_configuration_lock_unavailable")
+        yield
+
+    monkeypatch.setattr(provider_lock, "configuration_lock", missed)
+    with pytest.raises(provider_lock.ConfigurationLockUnavailable):
+        await boot.run_fenced_boot_migrations(
+            client, migrate, "lock", enabled=True, pending=pending
+        )
+    pending.assert_called_once()
+    execute.assert_not_called()

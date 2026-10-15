@@ -18,6 +18,8 @@ class ProcessKeeperLock(KeeperLock):
     no residual ClickHouse work. An unreachable remote owner blocks recovery.
     """
 
+    label = "provider configuration lock"
+
     def _storage_idle(self) -> bool:
         checks = (
             "SELECT count() FROM system.processes WHERE query_id != currentQueryID() "
@@ -72,7 +74,9 @@ async def _finish_thread[T](operation: Callable[[], T]) -> T:
 
 
 @asynccontextmanager
-async def configuration_lock() -> AsyncIterator[KeeperLock]:
+async def configuration_lock(
+    wait_s: float = 5, out: Callable[[str], None] = lambda _: None
+) -> AsyncIterator[KeeperLock]:
     """Use an independent key in the existing Keeper lock table.
 
     Never fall back to a process-local lock: two containers could then overwrite
@@ -95,8 +99,8 @@ async def configuration_lock() -> AsyncIterator[KeeperLock]:
             ch,
             holder=f"{process_identity()}/{uuid4()}",
             lock_name="provider_configuration",
-            cfg=LeaseConfig(ttl_s=300, wait_s=5),
-            out=lambda _: None,
+            cfg=LeaseConfig(ttl_s=300, wait_s=wait_s),
+            out=out,
         )
         outcome = await _finish_thread(lock.acquire)
         if outcome != "held":
