@@ -7,6 +7,7 @@ import time
 from datetime import UTC, datetime
 
 from server.auth.grant_claims import grant_change
+from server.core.errors import GrantBusyError
 from server.identity.api.models_grants import (
     GrantsApproveInput,
     GrantsApproveOutput,
@@ -274,20 +275,30 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
 
     from server.code.app.index import maintainers
 
-    subject, row = await _live_grant_row(input.org, input.namespace, input.subject)
-    if row is None:
-        return GrantsRevokeOutput(revoked=False)
-    if _active_admin(row):
-        # A revoked maintainer leaves every branch of the repository, the others
-        # first: when one fails, this grant is still live and a retry redoes it all.
-        await _refuse_last_admin(input)
-        await maintainers.revoke_repo_maintainer(input.org, input.namespace, subject)
-    async with grant_change(input.org, input.namespace, subject):
-        # Read again under the claim: what was read before it may have changed.
-        row = await grants_repo.find_any_grant(input.org, input.namespace, subject)
+    fanned_out = False
+    for _ in range(_REVOKE_TRIES):
+        subject, row = await _live_grant_row(input.org, input.namespace, input.subject)
         if row is None:
             return GrantsRevokeOutput(revoked=False)
-        now = await _write_revoke(input, subject, row)
+        if _active_admin(row) and not fanned_out:
+            # A revoked maintainer leaves every branch of the repository, the others
+            # first: when one fails, this grant is still live and a retry redoes it all.
+            await _refuse_last_admin(input)
+            await maintainers.revoke_repo_maintainer(input.org, input.namespace, subject)
+            fanned_out = True
+        async with grant_change(input.org, input.namespace, subject):
+            # Read again under the claim: what was read before it may have changed.
+            row = await grants_repo.find_any_grant(input.org, input.namespace, subject)
+            if row is None:
+                return GrantsRevokeOutput(revoked=False)
+            if _active_admin(row) and not fanned_out:
+                continue  # made admin since the first read: fan out first
+            now = await _write_revoke(input, subject, row)
+            break
+    else:
+        raise GrantBusyError(
+            f"{input.subject!r} on {input.org}/{input.namespace} keeps changing; retry shortly"
+        )
     # The tokens this person minted lose their own grants here. Best-effort: the
     # person's revoke has landed; a failed cascade is logged, never a 500.
     from server.identity.app import token_grants
@@ -303,6 +314,10 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
             e,
         )
     return GrantsRevokeOutput(revoked=True, revoked_at=now)
+
+
+# A revoke that finds the grant made admin under it starts over this many times.
+_REVOKE_TRIES = 3
 
 
 def _active_admin(row: GrantState) -> bool:

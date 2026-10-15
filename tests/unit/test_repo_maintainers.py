@@ -351,7 +351,7 @@ async def test_a_revoke_leaves_a_grant_given_again_after_it_planned() -> None:
     assert [r["namespace"] for r in ch.inserted] == ["code-x-26-5"]
 
 
-async def test_a_failed_branch_fan_out_leaves_the_revoked_grant_for_the_retry(
+async def test_a_failed_branch_fan_out_leaves_the_grant_live_for_the_retry(
     _handler_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from server.core.errors import GrantBusyError
@@ -375,3 +375,26 @@ async def test_a_failed_branch_fan_out_leaves_the_revoked_grant_for_the_retry(
             GrantsRevokeInput(org="clickhouse", namespace="code-x", subject="alice")
         )
     assert _handler_env["rows"] == [], "the grant itself is revoked last"
+
+
+async def test_a_grant_made_admin_while_its_revoke_waits_is_fanned_out_first(
+    _handler_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The revoke reads a pending request; an approval makes it admin before the claim.
+    reads = iter(["pending", "active", "active", "active"])
+
+    async def _row(*_a: Any, **_k: Any) -> GrantState:
+        return GrantState.from_row(
+            {"subject": "alice", "role": "admin", "status": next(reads), "granted_by": "ops"}
+        )
+
+    async def _two(*_a: Any, **_k: Any) -> int:
+        return 2
+
+    monkeypatch.setattr(grants_repo, "find_any_grant", _row)
+    monkeypatch.setattr(grants_repo, "count_active_admins", _two)
+    out = await grants_mod.handle_grants_revoke(
+        GrantsRevokeInput(org="clickhouse", namespace="code-x", subject="alice")
+    )
+    assert out.revoked and _handler_env["revoke"] == [("clickhouse", "code-x", "alice")]
+    assert [r["revoked_at"] is not None for r in _handler_env["rows"]] == [True]
