@@ -62,10 +62,13 @@ ACCESS_DENIED = 497
 
 class PreflightError(RuntimeError):
     """A check failed; the message names the fix. `needs_admin`: only a
-    ClickHouse admin can apply it (`loom ch-setup --print-sql` has the SQL)."""
+    ClickHouse admin can apply it, and the text says where the SQL is; `reason`
+    is the message without that pointer, for ch-setup, which prints the SQL."""
 
-    def __init__(self, message: str, *, needs_admin: bool = False) -> None:
-        super().__init__(message)
+    def __init__(self, reason: str, *, needs_admin: bool = False) -> None:
+        pointer = " (`loom ch-setup --print-sql` prints it)" if needs_admin else ""
+        super().__init__(reason + pointer)
+        self.reason = reason
         self.needs_admin = needs_admin
 
 
@@ -143,7 +146,7 @@ def oldest_version(ch: Client) -> str:
 def _cannot_create(user: str) -> PreflightError:
     return PreflightError(
         f"{user!r} cannot see a database {DATABASE} and may not create it: "
-        "an admin has to run the SQL `loom ch-setup --print-sql` prints",
+        "an admin has to run Loom's setup SQL",
         needs_admin=True,
     )
 
@@ -170,19 +173,19 @@ def check(ch: Client, *, need: Need, create_database: bool = True) -> Server:
 
     user = settings.ch_user
     database = bool(ch.command(f"SELECT count() FROM system.databases WHERE name = '{DATABASE}'"))
-    if not database and need != "migrate":
-        raise PreflightError(f"database {DATABASE} does not exist: run `loom ch-setup`")
-    if not database and not create_database:
-        # The doctor creates nothing; it says so only where boot could.
-        if str(ch.command(f"CHECK GRANT CREATE DATABASE ON {DATABASE}.*")) != "1":
+    if not database:
+        if need != "migrate":
+            raise PreflightError(f"database {DATABASE} does not exist: run `loom ch-setup`")
+        if create_database:
+            try:
+                ch.command(f"CREATE DATABASE IF NOT EXISTS {DATABASE}")
+            except Exception as e:
+                if error_code(e) != ACCESS_DENIED:
+                    raise
+                raise _cannot_create(user) from None
+        # The doctor creates nothing; it only says whether boot could.
+        elif str(ch.command(f"CHECK GRANT CREATE DATABASE ON {DATABASE}.*")) != "1":
             raise _cannot_create(user)
-    if not database and create_database:
-        try:
-            ch.command(f"CREATE DATABASE IF NOT EXISTS {DATABASE}")
-        except Exception as e:
-            if error_code(e) != ACCESS_DENIED:
-                raise
-            raise _cannot_create(user) from None
 
     grants = GRANTS[need]
     if str(ch.command(f"CHECK GRANT {grants} ON {DATABASE}.*")) != "1":
@@ -199,7 +202,7 @@ def check(ch: Client, *, need: Need, create_database: bool = True) -> Server:
             raise
         raise PreflightError(
             f"{user!r} may not read the system tables Loom waits on: "
-            "an admin has to run the system grants `loom ch-setup --print-sql` prints",
+            "an admin has to run Loom's setup SQL",
             needs_admin=True,
         ) from None
 

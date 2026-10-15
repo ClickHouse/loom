@@ -75,13 +75,14 @@ parse_clickhouse_url() {
     *) fail "--clickhouse takes an http:// or https:// URL, such as https://default@abc.clickhouse.cloud:8443" ;;
   esac
   rest=${rest%%/*}
-  CH_USER= CH_PASSWORD=
+  # CH_PASSWORD_SET: a password was given, even an empty one (`user:@host`).
+  CH_USER= CH_PASSWORD= CH_PASSWORD_SET=
   case $rest in
     *@*)
       userinfo=${rest%@*}
       rest=${rest##*@}
       case $userinfo in
-        *:*) CH_USER=$(urldecode "${userinfo%%:*}") CH_PASSWORD=$(urldecode "${userinfo#*:}") ;;
+        *:*) CH_USER=$(urldecode "${userinfo%%:*}") CH_PASSWORD=$(urldecode "${userinfo#*:}") CH_PASSWORD_SET=1 ;;
         *) CH_USER=$(urldecode "$userinfo") ;;
       esac
       ;;
@@ -115,8 +116,10 @@ read_password() {
 
 if [ -n "$CH_URL" ]; then
   parse_clickhouse_url "$CH_URL"
-  [ -n "$CH_PASSWORD" ] || CH_PASSWORD=${LOOM_CH_PASSWORD:-}
-  [ -n "$CH_PASSWORD" ] || read_password
+  if [ -z "$CH_PASSWORD_SET" ] && [ -n "${LOOM_CH_PASSWORD+set}" ]; then
+    CH_PASSWORD=$LOOM_CH_PASSWORD CH_PASSWORD_SET=1
+  fi
+  [ -n "$CH_PASSWORD_SET" ] || read_password
   # .env holds it between single quotes, which take everything else literally.
   case $CH_PASSWORD in
     *"'"*) fail "the ClickHouse password contains a single quote, which .env cannot hold; choose another" ;;

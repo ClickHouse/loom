@@ -41,12 +41,11 @@ def _caps() -> dict[str, float]:
     """The reader profile's caps: Loom's caller-shaped ceilings (0 = none)."""
     from server.settings import settings
 
-    caps = {
+    return {
         "max_execution_time": float(settings.ch_caller_shaped_max_execution_s),
         "max_memory_usage": float(settings.ch_caller_shaped_max_memory_bytes),
         "max_rows_to_read": float(settings.ch_caller_shaped_max_rows_to_read),
     }
-    return {name: cap for name, cap in caps.items() if cap > 0}
 
 
 def reader_sql(reader: str, password: str) -> list[str]:
@@ -55,6 +54,9 @@ def reader_sql(reader: str, password: str) -> list[str]:
 
     settings = ["readonly = 2"]
     for name, cap in _caps().items():
+        if not cap:
+            settings.append(f"{name} = 0")  # no cap asked for: none pinned either
+            continue
         # The floor keeps a statement from sending 0, which ClickHouse reads as no limit.
         floor = STATEMENT_FLOOR_S if name == "max_execution_time" else 1
         settings.append(f"{name} = {_number(cap)} MIN {_number(floor)} MAX {_number(cap)}")
@@ -150,7 +152,8 @@ def _set_up(ch: Any, user: str, reader: str) -> int:
     try:
         server = preflight.check(ch, need="migrate")
     except preflight.PreflightError as e:
-        print(f"✗ {e}", file=sys.stderr)
+        # The admin SQL follows, so the pointer to it is left out.
+        print(f"✗ {e.reason}", file=sys.stderr)
         if e.needs_admin:
             _print_admin_sql(user, reader)
         return 1

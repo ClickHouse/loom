@@ -69,6 +69,20 @@ def test_a_missing_database_is_created_only_when_asked() -> None:
         preflight.check(FakeCH(database=False), need="serve")
 
 
+def test_the_admin_pointer_is_in_the_message_but_not_the_reason() -> None:
+    e = preflight.PreflightError("an admin has to run Loom's setup SQL", needs_admin=True)
+    assert "`loom ch-setup --print-sql` prints it" in str(e)
+    assert "--print-sql" not in e.reason
+
+
+def test_a_disabled_cap_is_written_uncapped(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "ch_caller_shaped_max_rows_to_read", 0)
+    profile = ch_setup.reader_sql("loom_reader", "'pw'")[0]
+    assert "max_rows_to_read = 0," in profile and "max_rows_to_read = 0 MIN" not in profile
+
+
 def test_a_user_who_may_not_create_the_database_needs_an_admin() -> None:
     ch = FakeCH(database=False, denied=("CREATE DATABASE",))
     with pytest.raises(preflight.PreflightError) as e:

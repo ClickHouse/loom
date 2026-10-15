@@ -38,7 +38,7 @@ Sizing (web replicas, uvicorn processes, the workers container) is in
   as Cloud's `default`, which would let Loom manage every database and user on the
   service. The URL must name one.
 - **The URL.** `http://` defaults to port 8123, `https://` to 8443 and TLS.
-  Percent-encode `@`, `:` and `/` in the user or password. `LOOM_CH_URL` works in place
+  Percent-encode `@`, `:`, `/` and `%` in the user or password; an empty password is `user:@host` or `LOOM_CH_PASSWORD=`. `LOOM_CH_URL` works in place
   of `--clickhouse`. A server on the Docker host is `host.docker.internal`: `localhost`
   inside the container is the container itself.
 - **The password.** Set `LOOM_CH_PASSWORD`, or answer the prompt, which does not echo;

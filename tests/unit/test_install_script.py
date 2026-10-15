@@ -122,6 +122,20 @@ def test_a_url_without_a_user_or_on_loopback_is_refused(install, url: str, messa
     assert not (target / ".env").exists()
 
 
+@pytest.mark.parametrize(
+    ("args", "env"),
+    [
+        (("--clickhouse", "http://loom:@h.example"), {}),
+        (("--clickhouse", "http://loom@h.example"), {"LOOM_CH_PASSWORD": ""}),
+    ],
+)
+def test_an_empty_password_needs_no_terminal(install, args, env) -> None:
+    run, target = install
+    result = run(*args, start_new_session=True, **env)
+    assert result.returncode == 0, result.stderr
+    assert _env(target)["LOOM_CH_PASSWORD"] == "''"
+
+
 def test_no_password_and_no_terminal_says_where_to_put_it(install) -> None:
     run, target = install
     result = run("--clickhouse", "https://loom@h.example", start_new_session=True)
