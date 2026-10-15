@@ -338,8 +338,7 @@ async def write_pair_cutoffs(
     _tighten_locally(keys, cutoff)
 
 
-# The reason a lowering's second cutoff carries. Until it is written, the
-# pair's cutoff still carries the op's own reason: the re-stamp is pending.
+# The reason a lowering's second cutoff carries.
 RESTAMPED = "grant lowered"
 
 
@@ -351,11 +350,19 @@ async def restamp(org: str, pairs: list[tuple[str, str]], *, revoked_by: str) ->
         await write_pair_cutoffs(org, pairs, reason=RESTAMPED, revoked_by=revoked_by)
 
 
-async def pending_restamps(org: str, pairs: list[tuple[str, str]]) -> list[tuple[str, str]]:
-    """The pairs whose cutoff is still the first of a lowering."""
-    keys = {grant_claim_key(org, *pair): pair for pair in pairs}
-    rows = await _read_revocations(sorted(keys))
-    return sorted(keys[str(r["jti"])] for r in rows if r.get("reason") != RESTAMPED)
+async def fell_this_week(org: str, pairs: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """The pairs whose grant now ranks below one the grant log holds for them."""
+    if not pairs:
+        return []
+    rows = await _logged(
+        org,
+        "namespace IN {ns:Array(String)} AND subject IN {subs:Array(String)}",
+        {"ns": sorted({ns for ns, _ in pairs}), "subs": sorted({s for _, s in pairs})},
+    )
+    ranks: dict[tuple[str, str], list[int]] = {}
+    for r in rows:
+        ranks.setdefault((str(r["namespace"]), str(r["subject"])), []).append(_rank(r))
+    return sorted(p for p in set(pairs) if p in ranks and max(ranks[p]) > ranks[p][-1])
 
 
 async def cut_where_raised_under(
@@ -368,23 +375,11 @@ async def cut_where_raised_under(
     that does not lower writes no less than the grant it read, so a higher row
     before it is a raise that landed after that read, now lowered. A row
     versioned below the one it read never won, so only the last one counts."""
-    from server.core.ch import get_client, own_write_reads
-
-    with own_write_reads():
-        rows = await get_client().query_all(
-            """
-            SELECT namespace, subject, role, status, revoked_at, version
-            FROM loom.namespace_grant_log
-            WHERE org = {org:String} AND namespace IN {ns:Array(String)}
-              AND subject IN {subs:Array(String)}
-            ORDER BY version
-            """,
-            params={
-                "org": org,
-                "ns": sorted({ns for ns, _ in written}),
-                "subs": sorted({s for _, s in written}),
-            },
-        )
+    rows = await _logged(
+        org,
+        "namespace IN {ns:Array(String)} AND subject IN {subs:Array(String)}",
+        {"ns": sorted({ns for ns, _ in written}), "subs": sorted({s for _, s in written})},
+    )
     before: dict[tuple[str, str], dict[str, Any]] = {}
     mine: dict[tuple[str, str], dict[str, Any]] = {}
     for r in rows:
@@ -413,20 +408,35 @@ def _rank(row: dict[str, Any]) -> int:
     return grant_rank(row["role"]) if live else 0
 
 
-async def logged_subjects(org: str, namespace: str) -> list[str]:
-    """The subjects the grant log holds for `namespace`: every grant written
-    there in the last week."""
+async def logged_pairs(
+    org: str, *, namespace: str | None = None, subject: str | None = None
+) -> list[tuple[str, str]]:
+    """The (namespace, subject) pairs the grant log holds, on `namespace` or
+    of `subject`: every grant written in the last week."""
+    rows = await _logged(
+        org,
+        "({ns:String} = '' OR namespace = {ns:String})"
+        " AND ({sub:String} = '' OR subject = {sub:String})",
+        {"ns": namespace or "", "sub": subject or ""},
+    )
+    return sorted({(str(r["namespace"]), str(r["subject"])) for r in rows})
+
+
+async def _logged(org: str, where: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+    """Grant log rows of `org` matching `where`, oldest first."""
     from server.core.ch import get_client, own_write_reads
 
     with own_write_reads():
-        rows = await get_client().query_all(
-            """
-            SELECT DISTINCT subject FROM loom.namespace_grant_log
-            WHERE org = {org:String} AND namespace = {ns:String}
+        rows: list[dict[str, Any]] = await get_client().query_all(
+            f"""
+            SELECT namespace, subject, role, status, revoked_at, version
+            FROM loom.namespace_grant_log
+            WHERE org = {{org:String}} AND {where}
+            ORDER BY version
             """,
-            params={"org": org, "ns": namespace},
+            params={"org": org, **params},
         )
-    return sorted(str(r["subject"]) for r in rows)
+    return rows
 
 
 def _cutoff_rows(keys: list[str], reason: str, revoked_by: str) -> tuple[list[dict[str, Any]], int]:

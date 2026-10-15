@@ -143,6 +143,9 @@ async def revoke_token_grants(
     if rows:
         revoked = [revoked_grant_row(org, sa_subject, r, now) for r in rows]
         await grant_writes.lower(org, revoked, reason="token grants revoked", ch=ch)
+    else:
+        # Perhaps a retry whose rows landed without their second cutoff.
+        await grant_writes.recheck_logged(org, namespace=namespace, subject=sa_subject)
     return len(rows)
 
 

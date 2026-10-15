@@ -278,6 +278,8 @@ async def handle_namespace_restore(
     # Grants. granted_by = caller so the restore is traceable; the
     # original granted_by stays in the snapshot payload.
     if payload.grants:
+        # Of a subject's rows, the last is the one that lands.
+        last = {g.subject: g for g in payload.grants}
         rows = [
             {
                 "org": input.org,
@@ -289,7 +291,7 @@ async def handle_namespace_restore(
                 "revoked_at": None,
                 "version": version_base + i,
             }
-            for i, g in enumerate(payload.grants)
+            for i, g in enumerate(last.values())
         ]
         cut = set(lowered)
         await grant_writes.finish_lowering(

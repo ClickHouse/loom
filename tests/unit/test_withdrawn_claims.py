@@ -257,14 +257,22 @@ def _logged_at(role: str, at: datetime, namespace: str = "team") -> dict[str, An
     }
 
 
-def test_a_lowering_is_pending_until_its_second_cutoff(ch: _CH) -> None:
-    # A committed insert can take seconds: a mint that read the grant before the
-    # write landed is issued after the first cutoff, so only a second one cuts it.
+@pytest.mark.parametrize(
+    ("roles", "fell"),
+    [
+        (["admin", "viewer"], True),
+        (["admin", "admin"], False),
+        (["viewer", "admin"], False),
+        ([], False),
+    ],
+)
+def test_a_pair_fell_when_its_grant_ranks_below_one_this_week(
+    ch: _CH, roles: list[str], fell: bool
+) -> None:
+    then = datetime(2026, 5, 1, 12, 0, 0)
+    ch.log = [_logged_at(role, then + timedelta(seconds=i)) for i, role in enumerate(roles)]
     pair = ("team", "alice")
-    _end("team")
-    assert asyncio.run(rev.pending_restamps(ORG, [pair, ("notes", "alice")])) == [pair]
-    asyncio.run(rev.restamp(ORG, [pair], revoked_by="boss"))
-    assert asyncio.run(rev.pending_restamps(ORG, [pair])) == []
+    assert asyncio.run(rev.fell_this_week(ORG, [pair])) == ([pair] if fell else [])
 
 
 def _cut_raised_under(ch: _CH, roles: list[str], written: int) -> bool:

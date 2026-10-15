@@ -307,8 +307,8 @@ def _no_grant_log_check(request: pytest.FixtureRequest) -> Iterator[None]:
         "cut_where_raised_under": _skip,
         "restamp": _skip,
         "write_pair_cutoffs": _skip,
-        "pending_restamps": _none,
-        "logged_subjects": _none,
+        "fell_this_week": _none,
+        "logged_pairs": _none,
     }
     before = {name: getattr(grant_writes, name) for name in stubs}
     for name, stub in stubs.items():

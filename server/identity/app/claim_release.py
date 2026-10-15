@@ -133,14 +133,14 @@ async def release_claim(
     # A pending request granted nothing, so its tombstone ends no claim.
     active = [t for t in tombstones if t["status"] == "active"]
     try:
-        if grants:
+        if active:
             await grant_writes.lower(
                 org, active, reason="claim released", revoked_by=actor_subject, ch=ch
             )
-            await grant_writes.write_rows([t for t in tombstones if t not in active], ch=ch)
         else:
             # Perhaps a retry whose tombstones landed without their second cutoff.
-            await grant_writes.recheck_namespace(org, namespace)
+            await grant_writes.recheck_logged(org, namespace=namespace)
+        await grant_writes.write_rows([t for t in tombstones if t not in active], ch=ch)
     except TooManySpellingsError as e:
         raise _release_refusal(org, namespace, e) from e
 

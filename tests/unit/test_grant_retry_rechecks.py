@@ -159,13 +159,16 @@ def test_a_retried_release_rechecks_every_subject_the_log_holds(
 ) -> None:
     rechecked: list[tuple[str, str]] = []
 
-    async def _recheck_namespace(org: str, namespace: str) -> list[tuple[str, str]]:
+    async def _recheck_logged(org: str, *, namespace: str) -> list[tuple[str, str]]:
         rechecked.append((org, namespace))
         return []
 
-    monkeypatch.setattr(grant_writes, "recheck_namespace", _recheck_namespace)
+    monkeypatch.setattr(grant_writes, "recheck_logged", _recheck_logged)
     assert _release(_Registry(grants=[])).released
-    assert rechecked == [(ORG, "vault")]
+    # A pending request left behind still means the active grantees' tombstones landed.
+    pending = [{"subject": "bob", "role": "viewer", "granted_by": "bob", "status": "pending"}]
+    assert _release(_Registry(grants=pending)).released
+    assert rechecked == [(ORG, "vault"), (ORG, "vault")]
 
 
 def test_a_release_refused_after_its_tombstones_says_what_to_release_first(
@@ -178,3 +181,25 @@ def test_a_release_refused_after_its_tombstones_says_what_to_release_first(
     live = [{"subject": "bob", "role": "writer", "granted_by": "alice", "status": "active"}]
     with pytest.raises(TooManySpellingsError, match="cannot release acme/vault"):
         _release(_Registry(grants=live))
+
+
+def test_a_retried_token_grant_revoke_rechecks_the_subjects_logged_pairs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.identity.app import token_grants
+
+    rechecked: list[tuple[str | None, str | None]] = []
+
+    async def _recheck_logged(org: str, *, namespace: str | None, subject: str | None) -> list:
+        rechecked.append((namespace, subject))
+        return []
+
+    class _NoLiveGrants:
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            return []
+
+    monkeypatch.setattr(grant_writes, "recheck_logged", _recheck_logged)
+    revoked = asyncio.run(
+        token_grants.revoke_token_grants(ORG, "sa:bot-1", namespace="team", ch=_NoLiveGrants())
+    )
+    assert revoked == 0 and rechecked == [("team", "sa:bot-1")]

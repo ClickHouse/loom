@@ -108,12 +108,14 @@ hold the design together:
   write that reads first goes through `grant_writes`:
   - An op that takes a role away (`lower`) cuts the claims before its rows and again after
     them: a token minted while the insert was in flight read the old grant and is issued
-    after the first cutoff. Until the second cutoff lands, the pair's cutoff keeps the op's
-    own reason, so a retry that finds its rows written knows to finish it.
+    after the first cutoff.
   - Every other op writes no less than it read, so a higher row just before its own in
     `loom.namespace_grant_log` (filled by a materialized view on every grant insert, kept a
     week) is a raise it lowered without knowing, and that pair is cut. A raise is never
     cut: a token minted after an older cutoff (by `loom mint-token`, say) keeps its claim.
+  - A retried op that finds its rows already written cannot tell what its first attempt
+    did, so it cuts again every pair the log shows fell this week. That also cuts tokens
+    minted since a finished lowering, which their next mint replaces.
 
   The spellings a cutoff covers are read with sequential consistency, since a missed one
   never gets a key.

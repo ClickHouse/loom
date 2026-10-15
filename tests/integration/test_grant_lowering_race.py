@@ -144,3 +144,33 @@ async def test_namespace_grant_log_mv_keeps_every_row_the_grants_table_replaces(
         params={"org": org},
     )
     assert [r["role"] for r in rows] == ["viewer", "admin", "writer"]
+
+
+async def test_a_retry_cuts_a_raise_its_failed_first_attempt_lowered_unseen(
+    ch: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The revoke read a pending request; an approve landed before its tombstone.
+    from server.identity.api.models_grants import GrantsRevokeInput
+
+    org = unique_org("lowering-race")
+    await grants_repo.insert_row({**_grant(org, "hal", "writer"), "status": "pending"})
+    read = grants_repo.find_any_grant
+
+    async def _read_then_approve(*args: Any, **kwargs: Any) -> Any:
+        before = await read(*args, **kwargs)
+        await grants_repo.insert_row(_grant(org, "hal", "writer"))
+        return before
+
+    async def _down(*_a: Any, **_k: Any) -> None:
+        raise RuntimeError("replica away")
+
+    revoke = GrantsRevokeInput(org=org, namespace="team", subject="hal")
+    with monkeypatch.context() as m:
+        m.setattr(grants_repo, "find_any_grant", _read_then_approve)
+        m.setattr(grant_writes, "cut_where_raised_under", _down)
+        with pytest.raises(RuntimeError):
+            await grants_app.handle_grants_revoke(revoke)
+    assert await _cutoff_reason(org, "hal") is None
+
+    assert not (await grants_app.handle_grants_revoke(revoke)).revoked
+    assert await _cutoff_reason(org, "hal") == revocation.RESTAMPED

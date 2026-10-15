@@ -285,14 +285,14 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
 
     subject, row = await _live_grant_row(input.org, input.namespace, input.subject)
     if row is None:
-        # Perhaps a retry: the revoke landed, under either spelling and on a
-        # maintainer's sibling branches too, without its second cutoff.
+        # Perhaps a retry: the revoke may have landed, under either spelling and
+        # on a maintainer's sibling branches too, without its second cutoff.
         branches = maintainers.branch_namespaces(input.org, input.namespace) or [input.namespace]
         spellings = sorted({subject, input.subject})
-        pending = await grant_writes.recheck(
+        fell = await grant_writes.recheck(
             input.org, [(ns, s) for ns in branches for s in spellings]
         )
-        for ns in sorted({input.namespace, *(ns for ns, _ in pending)}):
+        for ns in sorted({input.namespace, *(ns for ns, _ in fell)}):
             if ns == input.namespace or (await _live_grant_row(input.org, ns, subject))[1] is None:
                 await _cascade_quietly(input.org, ns, subject)
         return GrantsRevokeOutput(revoked=False)

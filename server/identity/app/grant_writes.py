@@ -9,6 +9,10 @@ its read did not see. Two paths keep older tokens' claims in line:
 * `write_row(s)` is for every other op. Such an op writes no less than it read,
   so a higher row just before its own in the grant log is a raise it lowered
   without knowing, and that pair is cut.
+* `recheck` is for a retried op that finds its rows already written, so it
+  cannot tell what its first attempt did: every pair the log shows fell this
+  week is cut again. That also cuts tokens minted since a finished lowering,
+  which their next mint replaces.
 
 Writers that only grant admin, or grant a subject that did not exist before,
 cannot lower a grant and insert through the repository directly.
@@ -21,8 +25,8 @@ from typing import Any
 from server.auth.context import current_auth
 from server.auth.revocation import (
     cut_where_raised_under,
-    logged_subjects,
-    pending_restamps,
+    fell_this_week,
+    logged_pairs,
     restamp,
     write_pair_cutoffs,
 )
@@ -69,17 +73,17 @@ async def finish_lowering(
 
 
 async def recheck(org: str, pairs: list[Pair]) -> list[Pair]:
-    """For a retried op that finds its rows already written: cut again every
-    pair whose lowering never got its second cutoff. Returns those pairs."""
-    pending = await pending_restamps(org, pairs)
-    await restamp(org, pending, revoked_by=_actor())
-    return pending
+    """Cut again each of `pairs` whose grant fell this week. Returns those pairs."""
+    fell = await fell_this_week(org, pairs)
+    await restamp(org, fell, revoked_by=_actor())
+    return fell
 
 
-async def recheck_namespace(org: str, namespace: str) -> list[Pair]:
-    """`recheck` for every subject the grant log holds on `namespace`."""
-    subjects = await logged_subjects(org, namespace)
-    return await recheck(org, [(namespace, s) for s in subjects])
+async def recheck_logged(
+    org: str, *, namespace: str | None = None, subject: str | None = None
+) -> list[Pair]:
+    """`recheck` for every pair the grant log holds on `namespace` or of `subject`."""
+    return await recheck(org, await logged_pairs(org, namespace=namespace, subject=subject))
 
 
 async def _cut_raised_under(rows: list[dict[str, Any]]) -> None:
