@@ -164,7 +164,7 @@ async def test_sync_quietly_never_raises(monkeypatch: pytest.MonkeyPatch) -> Non
 
 @pytest.fixture()
 def _handler_env(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-    calls: dict[str, Any] = {"sync": [], "revoke": [], "revoke_bound": [], "rows": []}
+    calls: dict[str, Any] = {"sync": [], "revoke": [], "rows": []}
 
     async def _find(*_a: Any, **_k: Any) -> dict[str, Any] | None:
         return None
@@ -178,9 +178,8 @@ def _handler_env(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     async def _sync(org: str, ns: str, **_k: Any) -> None:
         calls["sync"].append((org, ns))
 
-    async def _revoke(org: str, ns: str, subject: str, **k: Any) -> None:
+    async def _revoke(org: str, ns: str, subject: str, **_k: Any) -> None:
         calls["revoke"].append((org, ns, subject))
-        calls["revoke_bound"].append(k.get("granted_before"))
 
     monkeypatch.setattr(grants_repo, "find_active_grant", _find)
     monkeypatch.setattr(grants_repo, "insert_row", _insert)
@@ -316,45 +315,6 @@ async def test_a_sibling_that_fails_does_not_stop_the_revoke_of_the_others(
     assert [r["namespace"] for r in ch.inserted] == ["code-x-26-6"]
 
 
-@pytest.mark.parametrize("spelling", ["alice", "alice@x.io"])
-@pytest.mark.parametrize("stored", ["alice", "alice@x.io"])
-async def test_a_retried_revoke_finishes_the_fan_out_under_either_spelling(
-    _handler_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch, spelling: str, stored: str
-) -> None:
-    # The revoked row is stored under one spelling; the retry may name the other.
-    async def _none(*_a: Any, **_k: Any) -> None:
-        return None
-
-    async def _both(org: str, subject: str, **_k: Any) -> list[str]:
-        return [subject, *({"alice", "alice@x.io"} - {subject})]
-
-    async def _revoked_at(org: str, ns: str, subject: str, **_k: Any) -> datetime | None:
-        return T0 if subject == stored else None
-
-    monkeypatch.setattr(grants_repo, "find_any_grant", _none)
-    monkeypatch.setattr(grants_repo, "admin_revoked_at", _revoked_at)
-    monkeypatch.setattr("server.auth.aliases.subject_aliases", _both)
-    out = await grants_mod.handle_grants_revoke(
-        GrantsRevokeInput(org="clickhouse", namespace="code-x", subject=spelling)
-    )
-    assert not out.revoked and _handler_env["revoke"] == [("clickhouse", "code-x", stored)]
-    assert _handler_env["revoke_bound"] == [T0]
-
-
-async def test_a_finishing_fan_out_leaves_an_admin_grant_newer_than_the_revoke() -> None:
-    ch = _FakeCH(
-        [
-            _admin("code-x-26-5", "alice", at=T0 - timedelta(hours=1)),
-            _admin("code-x-26-6", "alice", at=T0 + timedelta(hours=1)),
-            *(_admin(ns, "bob") for ns in ("code-x-26-5", "code-x-26-6")),
-        ]
-    )
-    await maintainers.revoke_repo_maintainer(
-        "clickhouse", "code-x", "alice", ch=ch, granted_before=T0
-    )
-    assert [r["namespace"] for r in ch.inserted] == ["code-x-26-5"]
-
-
 async def test_a_mirror_onto_a_new_branch_does_not_override_a_lowering_on_another() -> None:
     class _Applied(_FakeCH):
         async def insert(self, table: str, rows: list[dict[str, Any]], **k: Any) -> None:
@@ -376,23 +336,6 @@ async def test_a_mirror_onto_a_new_branch_does_not_override_a_lowering_on_anothe
     assert ch.inserted[0]["granted_at"] == T0, "the mirror keeps its source's time"
 
 
-async def test_a_retried_revoke_on_a_namespace_without_branches_reads_nothing(
-    _handler_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def _none(*_a: Any, **_k: Any) -> None:
-        return None
-
-    async def _unexpected(*_a: Any, **_k: Any) -> None:
-        raise AssertionError("no revoked-row read off a repository")
-
-    monkeypatch.setattr(grants_repo, "find_any_grant", _none)
-    monkeypatch.setattr(grants_repo, "admin_revoked_at", _unexpected)
-    out = await grants_mod.handle_grants_revoke(
-        GrantsRevokeInput(org="clickhouse", namespace="team", subject="alice")
-    )
-    assert not out.revoked and _handler_env["revoke"] == []
-
-
 async def test_a_revoke_leaves_a_grant_given_again_after_it_planned() -> None:
     class _Regranted(_FakeCH):
         async def query_one(self, sql: str, params: Any = None) -> dict[str, Any] | None:
@@ -408,25 +351,27 @@ async def test_a_revoke_leaves_a_grant_given_again_after_it_planned() -> None:
     assert [r["namespace"] for r in ch.inserted] == ["code-x-26-5"]
 
 
-async def test_a_retry_finishes_every_spelling_with_a_revoked_admin_row(
+async def test_a_failed_branch_fan_out_leaves_the_revoked_grant_for_the_retry(
     _handler_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    async def _none(*_a: Any, **_k: Any) -> None:
-        return None
+    from server.core.errors import GrantBusyError
 
-    async def _both(org: str, subject: str, **_k: Any) -> list[str]:
-        return ["alice@x.io", "alice"]
+    async def _any(*_a: Any, **_k: Any) -> GrantState:
+        return GrantState.from_row(
+            {"subject": "alice", "role": "admin", "status": "active", "granted_by": "ops"}
+        )
 
-    revoked = {"alice@x.io": T0, "alice": T0 + timedelta(hours=2)}
+    async def _two(*_a: Any, **_k: Any) -> int:
+        return 2
 
-    async def _revoked_at(org: str, ns: str, subject: str, **_k: Any) -> datetime | None:
-        return revoked.get(subject)
+    async def _busy(*_a: Any, **_k: Any) -> None:
+        raise GrantBusyError("busy")
 
-    monkeypatch.setattr(grants_repo, "find_any_grant", _none)
-    monkeypatch.setattr(grants_repo, "admin_revoked_at", _revoked_at)
-    monkeypatch.setattr("server.auth.aliases.subject_aliases", _both)
-    await grants_mod.handle_grants_revoke(
-        GrantsRevokeInput(org="clickhouse", namespace="code-x", subject="alice@x.io")
-    )
-    assert [s for _o, _n, s in _handler_env["revoke"]] == ["alice@x.io", "alice"]
-    assert _handler_env["revoke_bound"] == [T0, T0 + timedelta(hours=2)]
+    monkeypatch.setattr(grants_repo, "find_any_grant", _any)
+    monkeypatch.setattr(grants_repo, "count_active_admins", _two)
+    monkeypatch.setattr(maintainers, "revoke_repo_maintainer", _busy)
+    with pytest.raises(GrantBusyError):
+        await grants_mod.handle_grants_revoke(
+            GrantsRevokeInput(org="clickhouse", namespace="code-x", subject="alice")
+        )
+    assert _handler_env["rows"] == [], "the grant itself is revoked last"

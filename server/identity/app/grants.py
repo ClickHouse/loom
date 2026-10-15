@@ -275,16 +275,19 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
     from server.code.app.index import maintainers
 
     subject, row = await _live_grant_row(input.org, input.namespace, input.subject)
-    now: datetime | None = None
-    if row is not None:
-        async with grant_change(input.org, input.namespace, subject):
-            # Read again under the claim: what was read before it may have changed.
-            row = await grants_repo.find_any_grant(input.org, input.namespace, subject)
-            if row is not None:
-                now = await _write_revoke(input, subject, row)
-    if row is None or now is None:
-        await _finish_revoke_fan_out(input)
+    if row is None:
         return GrantsRevokeOutput(revoked=False)
+    if _active_admin(row):
+        # A revoked maintainer leaves every branch of the repository, the others
+        # first: when one fails, this grant is still live and a retry redoes it all.
+        await _refuse_last_admin(input)
+        await maintainers.revoke_repo_maintainer(input.org, input.namespace, subject)
+    async with grant_change(input.org, input.namespace, subject):
+        # Read again under the claim: what was read before it may have changed.
+        row = await grants_repo.find_any_grant(input.org, input.namespace, subject)
+        if row is None:
+            return GrantsRevokeOutput(revoked=False)
+        now = await _write_revoke(input, subject, row)
     # The tokens this person minted lose their own grants here. Best-effort: the
     # person's revoke has landed; a failed cascade is logged, never a 500.
     from server.identity.app import token_grants
@@ -299,45 +302,30 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
             subject,
             e,
         )
-    if row.role == "admin" and (row.status or "active") == "active":
-        # A revoked maintainer leaves every branch of the repository; a failure here
-        # answers an error, and a retry of the revoke finishes the fan-out.
-        await maintainers.revoke_repo_maintainer(input.org, input.namespace, subject)
     return GrantsRevokeOutput(revoked=True, revoked_at=now)
 
 
-async def _finish_revoke_fan_out(input: GrantsRevokeInput) -> None:
-    """A revoke that finds nothing to revoke finishes the branch fan-out of an
-    earlier one (a retry after a fan-out failed): for each spelling of the
-    subject with a revoked admin row here, it revokes their sibling admin
-    grants no newer than that revocation. A removed maintainer revoked again
-    on any branch is so removed from every branch."""
-    from server.auth.aliases import subject_aliases
-    from server.code.app.index import maintainers
+def _active_admin(row: GrantState) -> bool:
+    # Only an active admin row is load-bearing for ownership.
+    return row.role == "admin" and (row.status or "active") == "active"
 
-    if len(maintainers.branch_namespaces(input.org, input.namespace)) < 2:
-        return
-    for subject in await subject_aliases(input.org, input.subject):
-        revoked_at = await grants_repo.admin_revoked_at(input.org, input.namespace, subject)
-        if revoked_at is not None:
-            await maintainers.revoke_repo_maintainer(
-                input.org, input.namespace, subject, granted_before=revoked_at
-            )
+
+async def _refuse_last_admin(input: GrantsRevokeInput) -> None:
+    if await grants_repo.count_active_admins(input.org, input.namespace) <= 1:
+        from server.core.errors import PreconditionFailedError
+
+        raise PreconditionFailedError(
+            f"{input.subject!r} is the only admin of "
+            f"{input.namespace!r}; promote another member to admin "
+            f"first (grants.create role=admin)"
+        )
 
 
 async def _write_revoke(input: GrantsRevokeInput, subject: str, row: GrantState) -> datetime:
     """`grants.revoke`'s write, under the grant's claim. Refuses to revoke a
     namespace's last active admin."""
-    # Only an active admin row is load-bearing for ownership.
-    if row.role == "admin" and (row.status or "active") == "active":
-        if await grants_repo.count_active_admins(input.org, input.namespace) <= 1:
-            from server.core.errors import PreconditionFailedError
-
-            raise PreconditionFailedError(
-                f"{input.subject!r} is the only admin of "
-                f"{input.namespace!r}; promote another member to admin "
-                f"first (grants.create role=admin)"
-            )
+    if _active_admin(row):
+        await _refuse_last_admin(input)
     now = datetime.now(UTC).replace(tzinfo=None)
     await grants_repo.insert_row(
         {
