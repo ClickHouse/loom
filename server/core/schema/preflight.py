@@ -37,8 +37,9 @@ GRANTS: dict[Need, str] = {
     "replica": "SELECT, INSERT, ALTER UPDATE, ALTER DELETE",
     "read": "SELECT",
 }
-# A server retires views with it, and tolerates a refusal (the scheduled
-# refresh removes the rows anyway), so a missing one is a warning.
+# A server refreshes the code views with it after a purge, and tolerates a
+# refusal (the scheduled refresh removes the rows anyway), so a missing one is
+# a warning.
 REFRESH_GRANT = "SYSTEM REFRESH VIEW"
 # The system tables the migration runner reads (and the preflight's own): a
 # refused one would fail a migration halfway, so it stops a migrating boot.

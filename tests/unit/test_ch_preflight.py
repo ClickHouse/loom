@@ -96,7 +96,7 @@ def test_replicas_that_cannot_be_asked_are_not_taken_for_one_server(
     assert e.value.needs_admin is needs_admin
 
 
-def test_a_serving_process_falls_back_when_the_replicas_cannot_be_asked() -> None:
+def test_a_read_replica_falls_back_when_the_replicas_cannot_be_asked() -> None:
     ch = FakeCH(replica_error="Code: 279. DB::Exception: All connection tries failed")
     assert preflight.check(ch, need="replica").version == "26.5.1.882"
     runner = {f"SELECT * FROM system.{t} LIMIT 0" for t in preflight.RUNNER_SYSTEM_TABLES}
@@ -237,14 +237,14 @@ def test_missing_grants_name_the_grant_to_run() -> None:
     assert e.value.needs_admin and "GRANT CURRENT GRANTS ON loom.* TO `loom`" in str(e.value)
 
 
-def test_a_process_that_does_not_migrate_needs_only_the_serving_grants() -> None:
+def test_a_read_replica_needs_only_the_replica_grants() -> None:
     ch = FakeCH()
     preflight.check(ch, need="replica")
     assert f"CHECK GRANT {preflight.GRANTS['replica']} ON loom.*" in ch.ran
     assert not any(preflight.GRANTS["server"] in sql for sql in ch.ran)
 
 
-def test_the_migration_grants_never_name_the_global_alter_group() -> None:
+def test_the_server_grants_never_name_the_global_alter_group() -> None:
     # 26.9 put the global-only ALTER HANDLER in ALTER: a grant on loom.* never holds it.
     assert "ALTER," not in preflight.GRANTS["server"] + ","
     assert "ALTER TABLE" in preflight.GRANTS["server"]
@@ -827,14 +827,16 @@ def test_a_server_without_refresh_view_boots_with_a_warning() -> None:
     assert not preflight.check(NoRefresh(), need="replica").no_refresh
 
 
-@pytest.mark.parametrize(("exporter", "level"), [("", "INFO"), ("otlp", "INFO"), ("ch", "WARNING")])
-def test_an_exporter_disables_itself_quietly_unless_chosen(
-    monkeypatch: pytest.MonkeyPatch, exporter: str, level: str
+def test_ch_setup_says_a_missing_refresh_grant_and_how_to_give_it(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    import logging
+    class NoRefresh(FakeCH):
+        def command(self, sql: str, **kwargs: Any) -> Any:
+            if sql == f"CHECK GRANT {preflight.REFRESH_GRANT} ON loom.*":
+                return 0
+            return super().command(sql, **kwargs)
 
-    from server.observability import otel_exporters
-    from server.settings import settings
-
-    monkeypatch.setattr(settings, "otel_exporter", exporter)
-    assert otel_exporters._disabled_level() == getattr(logging, level)
+    monkeypatch.setattr(ch_setup, "reader_objects", lambda ch, reader: "config")
+    monkeypatch.setattr(ch_setup, "reader_status", lambda reader: (True, ""))
+    assert ch_setup._set_up(NoRefresh(), "loom_app", "loom_reader") == 0
+    assert "GRANT SYSTEM REFRESH VIEW ON loom.* TO `loom_app`" in capsys.readouterr().out

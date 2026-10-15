@@ -67,3 +67,15 @@ def test_a_missing_table_or_a_refused_grant_disables_export(error: str, permanen
     from server.observability import otel_exporters
 
     assert bool(otel_exporters._unwritable(RuntimeError(error))) is permanent
+
+
+@pytest.mark.parametrize(("exporter", "level"), [("", "INFO"), ("otlp", "INFO"), ("ch", "WARNING")])
+def test_an_exporter_disables_itself_quietly_unless_chosen(
+    monkeypatch: pytest.MonkeyPatch, exporter: str, level: str
+) -> None:
+    import logging
+
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "otel_exporter", exporter)
+    assert otel_exporters._disabled_level() == getattr(logging, level)

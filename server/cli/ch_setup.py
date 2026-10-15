@@ -332,6 +332,12 @@ def _set_up(ch: Any, user: str, reader: str | None) -> int:
             f"· may not read system.{table}, so its telemetry stays empty; "
             f"an admin can run GRANT SELECT ON system.{table} TO `{user}`"
         )
+    if server.no_refresh:
+        print(
+            f"· may not {preflight.REFRESH_GRANT} on {preflight.DATABASE}.*, so purged code "
+            "stays in the refreshable views until their next refresh; an admin can run "
+            f"GRANT {preflight.REFRESH_GRANT} ON {preflight.DATABASE}.* TO `{user}`"
+        )
 
     if reader is None:
         print(f"· LOOM_CH_READER_USER is empty: caller-shaped reads run as {user!r}")

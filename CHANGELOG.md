@@ -24,9 +24,8 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   Loom needs, each failure with its fix, before any DDL. **Upgrading on a self-managed
   or Cloud ClickHouse:** every boot of a process that is not a read replica needs the
   DDL grants plus `OPTIMIZE` and `TRUNCATE` on `loom.*` (`SYSTEM REFRESH VIEW` too, or a
-  warning), and the
-  first boot after the upgrade, with a migration pending, also needs `READ ON REMOTE` and
-  `SELECT` on the system tables the migrations read. Run `loom doctor` or `loom ch-setup`
+  warning), and the first boot after the upgrade, with a migration pending, also needs
+  `READ ON REMOTE` and `SELECT` on the system tables the migrations read. Run `loom doctor` or `loom ch-setup`
   (or have an admin run `loom ch-setup --print-sql`) before upgrading.
 - Every Loom session on a ClickHouse older than 26.8 runs with the query condition cache
   off (the vector-read fix, ClickHouse #112086), on every target; boot used to warn only.
