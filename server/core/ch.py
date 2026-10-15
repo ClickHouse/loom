@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import math
 import os
 import re
 import sys
@@ -340,7 +341,7 @@ def _driver_read_timeout_s() -> int:
     inside may raise this bound but never lower it."""
     bounds = (settings.ch_timeout_read_s, settings.ch_timeout_write_s, settings.ch_timeout_ddl_s)
     t = max(float(b) or _DRIVER_DEFAULT_READ_TIMEOUT_S for b in bounds)
-    return int(max(t, statement_timeout_var.get()))
+    return math.ceil(max(t, statement_timeout_var.get()))
 
 
 def _apply_class_timeout(out: dict[str, Any], cls: str) -> dict[str, Any]:

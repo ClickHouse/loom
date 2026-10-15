@@ -191,6 +191,9 @@ async def test_the_driver_read_timeout_is_the_largest_class(
     with ch_mod.statement_timeout(600):
         await ch_mod.CHClient().connect()
     assert captured["send_receive_timeout"] == 600
+    with ch_mod.statement_timeout(450.7):  # never below the statement's own deadline
+        await ch_mod.CHClient().connect()
+    assert captured["send_receive_timeout"] == 451
 
 
 # ------------------------------------------------------------- retries
