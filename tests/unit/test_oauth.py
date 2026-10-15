@@ -652,7 +652,28 @@ def test_a_spend_abandoned_long_ago_counts_as_spent(monkeypatch) -> None:
     with pytest.raises(claims.Busy):  # still in time to finish
         asyncio.run(store.take_refresh(rt, "loom-test"))
     monkeypatch.setattr(time, "time", lambda: started + 600)
-    with pytest.raises(oauth.CodeReplayed):  # never will: its owner signs in again
+    with pytest.raises(oauth.CodeReplayed) as replayed:  # never will: sign in again
+        asyncio.run(store.take_refresh(rt, "loom-test"))
+    assert replayed.value.abandoned  # Loom's loss, not a copy in other hands
+    r = _refresh(_client(), rt)
+    assert r.json()["error"] == "invalid_grant"
+    assert "did not finish" in r.json()["error_description"]
+
+
+def test_an_older_generations_abandoned_spend_seen_by_a_read_behind_is_a_retry(
+    monkeypatch,
+) -> None:
+    from server.auth import claims
+
+    c = _client()
+    rt = _refresh(c, _refresh_token_for_alice(c)).json()["refresh_token"]  # generation 1
+    store = oauth.store
+
+    async def behind(k: str, old: str | None, new: str, exp: int) -> str | None:
+        return f"0:spending:{int(time.time()) - 600}:n"  # generation 0's, long ago
+
+    monkeypatch.setattr(store, "_swap", behind)
+    with pytest.raises(claims.Busy):
         asyncio.run(store.take_refresh(rt, "loom-test"))
 
 

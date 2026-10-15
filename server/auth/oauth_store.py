@@ -82,9 +82,11 @@ class CodeReplayed(Exception):
     """A single-use code, refresh token or device code was presented after
     it was spent."""
 
-    def __init__(self, grant: Grant | Device) -> None:
+    def __init__(self, grant: Grant | Device, *, abandoned: bool = False) -> None:
         super().__init__("spent credential presented again")
         self.grant = grant
+        # Spent by a refresh that never finished (Loom's failure, not a copy).
+        self.abandoned = abandoned
 
 
 def token_id(token: str) -> str:
@@ -118,7 +120,7 @@ class OAuthStore(Protocol):
     async def session_ended(self, family: str) -> bool: ...
 
 
-_GRANT_FIELDS = (
+_CODE_FIELDS = (
     "client_id",
     "redirect_uri",
     "code_challenge",
@@ -127,6 +129,7 @@ _GRANT_FIELDS = (
     "namespaces",
     "roles",
     "exp",
+    "since",
     "family",
 )
 _DEVICE_FIELDS = (
@@ -153,10 +156,8 @@ def _record(g: Grant | Device, fields: tuple[str, ...], spent: bool) -> dict[str
     return record | {"spent": spent, "nonce": claims.nonce()}
 
 
-def _grant(r: dict[str, Any]) -> Grant:
-    g = {f: r[f] for f in _GRANT_FIELDS}
-    if "since" in r:  # a code's
-        g["since"] = r["since"]
+def _code(r: dict[str, Any]) -> Grant:
+    g = {f: r[f] for f in _CODE_FIELDS}
     return cast(Grant, g | {"upstream_refresh": unseal(UPSTREAM_PURPOSE, r["upstream_refresh"])})
 
 
@@ -260,8 +261,7 @@ class ClickHouseStore:
     async def save_code(self, code: str, g: Grant) -> None:
         """A new code, or a spent one put back."""
         key = f"code:{token_id(code)}"
-        record = _record(g, _GRANT_FIELDS, spent=False) | {"since": g["since"]}
-        await self._put(key, _held(g, key), record)
+        await self._put(key, _held(g, key), _record(g, _CODE_FIELDS, spent=False))
 
     async def take_code(
         self, code: str, client_id: str, accept: Callable[[Grant], bool]
@@ -273,7 +273,7 @@ class ClickHouseStore:
         if loaded is None or loaded[0]["exp"] < int(time.time()):
             return None
         record, value = loaded
-        grant = _grant(record)
+        grant = _code(record)
         if grant["client_id"] != client_id or not accept(grant):
             return None
         if record["spent"]:
@@ -344,8 +344,10 @@ class ClickHouseStore:
         # A read may lag behind Keeper, never run ahead of it: a later
         # generation seen is one that was issued, so this token was spent. So
         # was one whose spend was abandoned: that costs its owner a sign-in.
-        if _generation(now) > generation or _abandoned(now):
+        if _generation(now) > generation:
             raise CodeReplayed(grant)
+        if _generation(now) == generation and _abandoned(now):
+            raise CodeReplayed(grant, abandoned=True)
         raise claims.Busy(f"{key} is being spent")  # or this read is behind: retry
 
     async def retire_refresh(self, g: Grant) -> None:

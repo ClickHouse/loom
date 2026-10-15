@@ -969,8 +969,9 @@ async def end_replayed_session(e: CodeReplayed, what: str) -> OAuthError:
     if ended:  # a logout spent it, or an earlier replay ended the session
         log.warning("oauth: a spent %s of ended session %s was presented again", what, family)
         return _invalid_grant("this session has ended; sign in again")
+    reason = f"{what} abandoned" if e.abandoned else f"{what} replayed"
     try:
-        await end_session(e.grant, f"{what} replayed")
+        await end_session(e.grant, reason)
     except Exception:  # nothing durable landed: the presenter is told to retry
         log.exception("oauth: ending a replayed %s's session failed", what)
         return _unavailable()
@@ -978,6 +979,8 @@ async def end_replayed_session(e: CodeReplayed, what: str) -> OAuthError:
         from server.auth import oidc
 
         await oidc.revoke(e.grant["upstream_refresh"])  # best effort; may be rotated already
+    if e.abandoned:  # Loom lost it, not a copy in other hands
+        return _invalid_grant("this sign-in's last refresh did not finish; sign in again")
     return _invalid_grant(_REPLAYED.format(what=what))
 
 

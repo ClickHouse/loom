@@ -187,9 +187,8 @@ async def sweep() -> None:
             f"ALTER TABLE {_TABLE} DELETE WHERE expires_at < toUInt32(now()) "
             "SETTINGS keeper_map_strict_mode = 1"
         )
-    except (
-        Exception
-    ) as e:  # a key changed meanwhile: this sweep deletes nothing, the next tries again
+    # A key changed meanwhile: this sweep deletes nothing; the next one tries again.
+    except Exception as e:
         if not _lost_race(e):
             raise
         log.info("oauth claims: a key changed during the sweep; left for the next one")
