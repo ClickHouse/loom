@@ -15,6 +15,7 @@ of the token. This guide holds the procedures;
 | `POST /v1/admin/token.mint`                        | an `org_admin` token                             | a token [delegated](#delegated-tokens) from the caller's, inside the caller's own org; body fields `subject`, `namespaces`, `roles`, `ns_roles`, `consumer`, `ttl_seconds`, `is_service_account` |
 | `POST /v1/me/setup/mcp_config`                     | any signed-in person (the dashboard's Setup tab) | a flat token [delegated](#delegated-tokens) from the person's: `*` (every namespace they hold a grant on, now and later) or the one namespace named                                              |
 | `POST /v1/me/service_accounts.create`              | any signed-in person (the dashboard)             | a scoped service-account token [delegated](#delegated-tokens) from the person's, over a subset of their own namespaces                                                                           |
+| `loom login`, `loom.login()`                       | a person, on any browser                         | an hour-long user token and a rotating refresh token, stored in `~/.loom/credentials` ([below](#sign-in-from-a-terminal-or-a-notebook))                                                          |
 | `POST /v1/auth/login`, OAuth                       | a person                                         | a user token for their own subject                                                                                                                                                               |
 | `POST /v1/auth/self-signup`                        | anyone, when `LOOM_SELF_SIGNUP=open`             | a writer token on the namespace the caller claims                                                                                                                                                |
 | `POST /v1/auth/agent-signup` (`loom init --agent`) | a bot, when `LOOM_SELF_SIGNUP=open`              | a service-account writer token on `agent-<slug>` plus a one-time claim code ([headless bots](headless-bots.md))                                                                                  |
@@ -49,6 +50,42 @@ refuses to start with it (except the `make dev` stack).
 
 Without `--save` stdout is the bare token, so `TOKEN=$(loom mint-token …)` works. The
 [CLI reference](../reference/cli.md) lists every flag as the parser defines it.
+
+## Sign in from a terminal or a notebook
+
+People who never open the dashboard sign in with the OAuth device grant. It
+works the same with the password form and with [single sign-on](../operations/sso.md),
+and on a machine with no browser (an SSH box, a remote notebook kernel):
+
+```console
+$ loom login --server https://loom.example.com
+To sign in, open https://loom.example.com/oauth/device and enter the code BCDF-GHJK
+$ loom whoami
+$ loom logout
+```
+
+Open the URL on any device, sign in, check that the code matches, and approve.
+In Python the same flow is `loom.login("https://loom.example.com")`, and
+`python -m loom login` works with only the SDK installed (`loom login` needs
+it too: `pip install clickhouse-loom`).
+
+The session is stored in `~/.loom/credentials` (mode `0600`): a one-hour
+access token and a refresh token that rotates on every use. An `Agent` given
+no `api_key` and no `LOOM_API_KEY` uses it, and refreshes as it goes. If a
+spent refresh token is ever presented again, the server ends the whole
+session. `loom logout` revokes it on the server. `--profile NAME` (or
+`LOOM_PROFILE`) keeps sessions for several servers side by side; a profile's
+token is only ever sent to the server it signed in to.
+
+**CI and services** have no one to approve a code. Give them a scoped
+service-account token instead, minted by an operator or from the dashboard's
+service accounts. Pass it as `LOOM_API_KEY`, which takes precedence over a
+stored session:
+
+```bash
+loom mint-token --service-account --subject sa:ci --org acme \
+  --namespace-role support=writer --ttl-days 30
+```
 
 ## Read the claims
 
@@ -370,7 +407,8 @@ modes are described in
 [identities and namespaces](../concepts/identities-and-namespaces.md) and their settings in
 [deployment](../operations/deployment.md#identity-modes).
 
-**People through an IdP.** `LOOM_OAUTH_ENABLED=true` serves an OAuth 2.1 authorization
+**People through an IdP.** [Single sign-on](../operations/sso.md) has the setup.
+`LOOM_OAUTH_ENABLED=true` serves an OAuth 2.1 authorization
 server for MCP one-click connect (`/.well-known` discovery, `/oauth/{register,authorize,token}`;
 `LOOM_OAUTH_ISSUER` is the public base URL). `LOOM_OAUTH_LOGIN_PROVIDER=oidc` sends the
 sign-in to an external IdP (`LOOM_OIDC_ISSUER`, `LOOM_OIDC_CLIENT_ID`,

@@ -193,14 +193,36 @@ over HTTP to act as another principal. The header's subject becomes the effectiv
 subject, and `impersonated_by` records the caller on its `agent_events` rows.
 
 **OIDC and OAuth.** OIDC login trusts only the configured issuer's discovery, verified
-emails and nonce-bound id_tokens. The OAuth server (`LOOM_OAUTH_ENABLED`, off by
-default):
+emails and nonce-bound id_tokens, sends PKCE to the provider, and refuses a callback whose
+`iss` names another issuer (RFC 9207). With `LOOM_OAUTH_LOGIN_PROVIDER=oidc` the provider
+is the only way in: password sign-in and self-signup are refused, since a local password
+would bypass the provider's MFA and outlive a deactivation there.
+
+Loom stays the authorization server for every client (the dashboard, `loom login`, MCP
+clients); the provider only authenticates the person. The OAuth server:
 
 - accepts only https, loopback-http or app-scheme redirect URIs;
 - binds codes to client, redirect and PKCE S256;
-- stores codes and refresh tokens only as hashes;
+- stores codes, refresh tokens, device codes and user codes only as hashes, and the
+  provider's refresh token sealed (`server/core/secrets_at_rest.py`);
 - binds each refresh to its client; a refresh honours revocation, re-checks that the
   account is active and re-derives its roles.
+
+**Sessions.** Each sign-in starts a session family. Its access tokens (one hour) carry the
+family as their `jti`, and its refresh tokens rotate within it. Revoking the family in
+`loom.revoked_tokens` ends every token of the session. That happens on logout
+(`/oauth/revoke`), when a spent refresh token, code or device code is presented again
+(someone else holds a copy), and when the provider refuses the user. Under OIDC each
+refresh first spends the provider's refresh token. A user deactivated there is cut off
+within an hour, and a provider that issues no refresh token gets no Loom refresh token.
+
+**Device grant** (RFC 8628, `server/auth/device.py`). `loom login` gets a device code and
+an eight-letter user code (20 letters, about 2^34.6) that both live ten minutes. Approval
+happens on a page shown only after sign-in. The page names the code, the requesting
+address and the time, and it needs a click. It carries a one-time ticket bound to that
+signed-in user, so a forged cross-site POST approves nothing, and it cannot be framed.
+Wrong codes (10 per address per 15 minutes), new device grants (30) and polls (one per
+interval, else `slow_down`) are limited per process.
 
 **Unauthenticated routes.** Sign-up and password sign-in are rate-limited in-process
 (`server/auth/attempts.py`) per client address (the connection's peer, which uvicorn
@@ -357,6 +379,7 @@ hashing are engineering primitives, not a compliance guarantee.
 - Only `HS256` and `RS256` verify; a token without `iat`, `sub`, `iss` or `aud` is
   refused.
 - A process refuses every token until its revocation snapshot has loaded once.
+- A spent refresh token, code or device code that comes back ends its whole session.
 - A namespace is never authorized without an org.
 - A row-scoped op answers `found=False` outside the caller's scope, never 403.
 - A restricted namespace admits only a literal, same-org, directly granted caller, and

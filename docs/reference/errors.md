@@ -528,6 +528,10 @@ HTTP 503, raised as `server.core.errors.OverloadedError`. 503 — too busy, retr
 
 HTTP 503, raised as `server.core.errors.OverrideNotSharedError`. 503 — a runtime override (budget or rate limit) could not be shared with the server's other web processes, so none of them took it.
 
+#### `PASSWORD_LOGIN_SSO`
+
+Raised in `server/auth/login.py`.
+
 #### `PINNED_CONFLICT`
 
 Raised in `server/memory/app/set_commit.py`, `server/memory/app/update.py`, `server/memory/app/write.py`. What to do: [common errors](#common-errors-and-what-to-do).

@@ -1,0 +1,291 @@
+"""Device authorization grant (RFC 8628): how `loom login` signs in with no
+browser on the machine it runs on.
+
+  CLI → POST /oauth/device_authorization → device_code + user_code + URL
+  user, on any browser → /oauth/device → enters the code → signs in (the
+      password form, or the identity provider under OIDC) → confirm page →
+      Approve
+  CLI → POST /oauth/token (device_code grant), every `interval` seconds,
+      until the grant is approved, denied or expired.
+
+The approval happens on a page shown only after sign-in, which names the code,
+where the request came from and when, and needs an explicit click: a code
+someone else started and sent you is the phishing case this flow is known for.
+That page carries a one-time ticket bound to the signed-in user, so a forged
+POST from another site cannot approve anything. Device and user codes are
+stored as sha256; both expire after ten minutes.
+"""
+
+from __future__ import annotations
+
+import html
+import secrets
+import time
+from typing import Any
+
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse, Response
+
+from server.auth import oauth
+from server.auth.attempts import Attempts, client_address
+from server.auth.jwt import new_jti
+from server.observability import audit
+from server.settings import settings
+
+router = APIRouter()
+
+DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
+# The CLI and the SDK are one public client; there is nothing to register.
+DEVICE_CLIENT_ID = "loom-cli"
+
+_DEVICE_TTL = 600
+_INTERVAL = 5
+# Consonants only: no vowels to spell words, no 0/O or 1/I to misread.
+_USER_CODE_ALPHABET = "BCDFGHJKLMNPQRSTVWXZ"
+_USER_CODE_LENGTH = 8  # 20**8 ≈ 2**34.6, against 10 guesses per address per 15 min
+
+_requests_by_address = Attempts(30, 900)
+_wrong_codes_by_address = Attempts(10, 900)
+# One poll per interval (with a second of slack for timer jitter); a faster
+# poll gets `slow_down`.
+_polls = Attempts(1, _INTERVAL - 1)
+
+
+def _new_user_code() -> str:
+    return "".join(secrets.choice(_USER_CODE_ALPHABET) for _ in range(_USER_CODE_LENGTH))
+
+
+def normalize_user_code(raw: str) -> str:
+    """What the user typed, as stored: upper case, the dash and spaces gone."""
+    return "".join(c for c in raw.upper() if c in _USER_CODE_ALPHABET)
+
+
+def _display(user_code: str) -> str:
+    return f"{user_code[:4]}-{user_code[4:]}"
+
+
+@router.post("/oauth/device_authorization")
+async def device_authorization(request: Request) -> JSONResponse:
+    f = await oauth._form_body(request)
+    if f.get("client_id") != DEVICE_CLIENT_ID:
+        raise HTTPException(status_code=400, detail={"error": "invalid_client"})
+    address = client_address(request)
+    if not _requests_by_address.allow(address):
+        raise HTTPException(
+            status_code=429,
+            detail={"error": "slow_down"},
+            headers={"Retry-After": "900"},
+        )
+    device_code = secrets.token_urlsafe(32)
+    user_code = _new_user_code()
+    await oauth._store.save_device(
+        {
+            "id": oauth._token_id(device_code),
+            "client_id": DEVICE_CLIENT_ID,
+            "subject": "",
+            "org": "",
+            "namespaces": [],
+            "roles": [],
+            "exp": int(time.time()) + _DEVICE_TTL,
+            "family": "",
+            "upstream_refresh": "",
+            "user_code": oauth._token_id(user_code),
+            "status": "pending",
+            "address": address,
+            "ticket": "",
+        }
+    )
+    page = f"{oauth.issuer(request)}/oauth/device"
+    return JSONResponse(
+        {
+            "device_code": device_code,
+            "user_code": _display(user_code),
+            "verification_uri": page,
+            "verification_uri_complete": f"{page}?user_code={_display(user_code)}",
+            "expires_in": _DEVICE_TTL,
+            "interval": _INTERVAL,
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+def _code_form(user_code: str, error: str = "", status_code: int = 200) -> Response:
+    sso = settings.oauth_login_provider == "oidc"
+    sign_in = (
+        '<button type="submit">Continue with single sign-on</button>'
+        if sso
+        else """<input name="identifier" placeholder="email or namespace"
+       autocomplete="username" required>
+<input name="password" type="password" placeholder="password"
+       autocomplete="current-password" required>
+<button type="submit">Sign in</button>"""
+    )
+    message = f'<p class="error">{html.escape(error)}</p>' if error else ""
+    return oauth.html_page(
+        "Sign in to Loom",
+        f"""<h2>Sign in to Loom</h2>
+<p>Enter the code your terminal shows, then sign in.</p>{message}
+<form method="post" action="/oauth/device">
+<input name="user_code" value="{html.escape(user_code)}" placeholder="XXXX-XXXX"
+       autocomplete="off" autocapitalize="characters" required>
+{sign_in}
+</form>""",
+        status_code,
+    )
+
+
+@router.get("/oauth/device")
+async def device_page(user_code: str = "") -> Response:
+    return _code_form(user_code)
+
+
+@router.post("/oauth/device")
+async def device_sign_in(request: Request) -> Response:
+    from server.auth.login import LoginThrottled, resolve_user_credentials
+
+    f = await oauth._form_body(request)
+    typed = f.get("user_code", "")
+    address = client_address(request)
+    if _wrong_codes_by_address.blocked(address):
+        return _code_form(typed, "Too many wrong codes. Try again later.", 429)
+    user_code = normalize_user_code(typed)
+    device = await oauth._store.device_by_user_code(oauth._token_id(user_code))
+    if device is None:
+        _wrong_codes_by_address.record(address)
+        return _code_form(typed, "That code is wrong or has expired.", 400)
+    if settings.oauth_login_provider == "oidc":
+        return await oauth.start_oidc_login("device", user_code=user_code)
+    try:
+        identity = await resolve_user_credentials(
+            f.get("identifier", ""), f.get("password", ""), address=address
+        )
+    except LoginThrottled:
+        return _code_form(typed, "Too many failed sign-ins. Try again later.", 429)
+    if identity is None:
+        return _code_form(typed, "Invalid email or password.", 401)
+    return await signed_in(user_code, identity, "")
+
+
+def _expired_page() -> Response:
+    return oauth.html_page(
+        "Sign in to Loom",
+        "<h2>This sign-in has expired</h2><p>Run <code>loom login</code> again.</p>",
+        400,
+    )
+
+
+async def signed_in(
+    user_code: str,
+    identity: tuple[str, str, list[str], list[str]],
+    upstream_refresh: str,
+) -> Response:
+    """The user has signed in: remember who, and ask them to confirm."""
+    device = await oauth._store.device_by_user_code(oauth._token_id(user_code))
+    if device is None:
+        return _expired_page()
+    subject, org, namespaces, roles = identity
+    ticket = secrets.token_urlsafe(32)
+    device |= {
+        "subject": subject,
+        "org": org,
+        "namespaces": namespaces,
+        "roles": roles,
+        "upstream_refresh": upstream_refresh,
+        "ticket": oauth._token_id(ticket),
+    }
+    await oauth._store.save_device(device)
+    asked = time.strftime("%H:%M UTC", time.gmtime(device["exp"] - _DEVICE_TTL))
+    return oauth.html_page(
+        "Approve sign-in",
+        f"""<h2>Approve sign-in?</h2>
+<p>Signed in as <b>{html.escape(subject)}</b> ({html.escape(org)}).</p>
+<p>The Loom command line asked to sign in as you at {asked}
+from <b>{html.escape(device["address"] or "an unknown address")}</b>.
+Check that your terminal shows this code:</p>
+<p><code>{_display(user_code)}</code></p>
+<p>Approve only if you ran <code>loom login</code> yourself just now.
+If someone sent you this code, deny it.</p>
+<form method="post" action="/oauth/device/approve">
+<input type="hidden" name="user_code" value="{user_code}">
+<input type="hidden" name="ticket" value="{ticket}">
+<button type="submit" name="decision" value="approve">Approve</button>
+<button type="submit" name="decision" value="deny" class="secondary">Deny</button>
+</form>""",
+    )
+
+
+async def deny(user_code: str) -> None:
+    """The identity provider signed the user in but Loom has no account for
+    them: end the grant so `loom login` stops waiting."""
+    device = await oauth._store.device_by_user_code(oauth._token_id(user_code))
+    if device is not None:
+        await oauth._store.save_device(device | {"status": "denied", "ticket": ""})
+
+
+@router.post("/oauth/device/approve")
+async def device_approve(request: Request) -> Response:
+    f = await oauth._form_body(request)
+    device = await oauth._store.device_by_user_code(
+        oauth._token_id(normalize_user_code(f.get("user_code", "")))
+    )
+    ticket = f.get("ticket", "")
+    if (
+        device is None
+        or not device["ticket"]
+        or not ticket
+        or not secrets.compare_digest(device["ticket"], oauth._token_id(ticket))
+    ):
+        return _expired_page()
+    approved = f.get("decision") == "approve"
+    device |= {
+        "status": "approved" if approved else "denied",
+        "ticket": "",
+        "family": new_jti() if approved else "",
+    }
+    await oauth._store.save_device(device)
+    await audit.emit(
+        "auth.device_approved" if approved else "auth.device_denied",
+        org=device["org"],
+        namespace="-",
+        actor=device["subject"],
+        subject={
+            "client_id": DEVICE_CLIENT_ID,
+            "family": device["family"],
+            "requested_from": device["address"],
+            "approved_from": client_address(request),
+        },
+    )
+    if not approved:
+        return oauth.html_page(
+            "Sign-in denied", "<h2>Denied</h2><p>The terminal will not be signed in.</p>"
+        )
+    return oauth.html_page(
+        "Signed in",
+        "<h2>You're signed in</h2><p>You can close this tab and return to the terminal.</p>",
+    )
+
+
+def _token_error(error: str) -> HTTPException:
+    return HTTPException(status_code=400, detail={"error": error})
+
+
+async def device_code_grant(f: dict[str, str]) -> dict[str, Any]:
+    """The token endpoint's answer to a polling CLI (RFC 8628 §3.5)."""
+    if f.get("client_id") != DEVICE_CLIENT_ID:
+        raise HTTPException(status_code=400, detail={"error": "invalid_client"})
+    device_code = f.get("device_code", "")
+    if not _polls.allow(oauth._token_id(device_code)):
+        raise _token_error("slow_down")
+    try:
+        device = await oauth._store.take_device(device_code)
+    except oauth.CodeReplayed as e:
+        raise await oauth.end_replayed_session(e, "device code") from None
+    if device is None:
+        raise _token_error("invalid_grant")
+    if device["exp"] < int(time.time()):
+        raise _token_error("expired_token")
+    if device["status"] == "pending":
+        raise _token_error("authorization_pending")
+    if device["status"] != "approved":
+        raise _token_error("access_denied")
+    return await oauth.issue_tokens(device, DEVICE_CLIENT_ID)

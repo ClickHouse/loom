@@ -97,7 +97,15 @@ async def test_a_failed_callback_does_not_echo_the_idp(
 ) -> None:
     store = MemoryOAuthStore()
     await store.save_pending(
-        "s", {"nonce": "n", "client_id": "c", "redirect_uri": "r", "code_challenge": "x"}
+        "s",
+        {
+            "kind": "mcp",
+            "nonce": "n",
+            "code_verifier": "v",
+            "client_id": "c",
+            "redirect_uri": "r",
+            "code_challenge": "x",
+        },
     )
     monkeypatch.setattr(oauth, "_store", store)
 
@@ -116,7 +124,15 @@ async def test_an_unverified_email_is_refused_at_the_callback(
 ) -> None:
     store = MemoryOAuthStore()
     await store.save_pending(
-        "s", {"nonce": "n", "client_id": "c", "redirect_uri": "r", "code_challenge": "x"}
+        "s",
+        {
+            "kind": "mcp",
+            "nonce": "n",
+            "code_verifier": "v",
+            "client_id": "c",
+            "redirect_uri": "r",
+            "code_challenge": "x",
+        },
     )
     monkeypatch.setattr(oauth, "_store", store)
 
@@ -126,8 +142,38 @@ async def test_an_unverified_email_is_refused_at_the_callback(
     async def verify(token: str, *, nonce: str) -> dict[str, Any]:
         return {"email": "a@x.io", "email_verified": "false"}
 
+    denied: list[str] = []
+
+    async def emit(event_type: str, **kw: Any) -> str:
+        denied.append(event_type)
+        return ""
+
     monkeypatch.setattr(oidc, "exchange_code", exchange)
     monkeypatch.setattr(oidc, "verify_id_token", verify)
-    with pytest.raises(oauth.HTTPException) as ei:
-        await oauth.oidc_callback(_Req())  # type: ignore[arg-type]
-    assert ei.value.status_code == 403
+    monkeypatch.setattr(oauth.audit, "emit", emit)
+    page = await oauth.oidc_callback(_Req())  # type: ignore[arg-type]
+    assert page.status_code == 403
+    assert b"verified email required" in page.body
+    assert denied == ["auth.signin_denied"]
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "refused"),
+    [
+        (400, {"error": "invalid_grant"}, True),  # the user or token is gone at the IdP
+        (401, {"error": "invalid_client"}, False),  # Loom's secret is wrong: not the user's fault
+        (400, {"error": "invalid_request"}, False),
+        (503, {}, False),
+    ],
+)
+async def test_only_invalid_grant_ends_a_session_at_refresh(
+    monkeypatch: pytest.MonkeyPatch, status: int, body: dict[str, Any], refused: bool
+) -> None:
+    async def token_request(form: dict[str, str]) -> dict[str, Any]:
+        response = httpx.Response(status, json=body, request=httpx.Request("POST", "https://idp"))
+        raise httpx.HTTPStatusError("refused", request=response.request, response=response)
+
+    monkeypatch.setattr(oidc, "_token_request", token_request)
+    expected = oidc.UpstreamRefused if refused else httpx.HTTPStatusError
+    with pytest.raises(expected):
+        await oidc.refresh("idp-refresh")

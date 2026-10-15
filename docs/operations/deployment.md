@@ -193,8 +193,9 @@ renaming the database; give each its own service.
 | `LOOM_OAUTH_ISSUER`    | empty            | OAuth is on: the public HTTPS base URL the discovery metadata advertises. Empty derives it per request.                 |
 | `LOOM_CORS_ORIGINS`    | empty (CORS off) | A browser application on another origin calls Loom directly. List exactly those origins; `*` refuses to start.          |
 
-OAuth sign-in through your identity provider also needs `LOOM_OAUTH_LOGIN_PROVIDER=oidc`
-and the `LOOM_OIDC_*` settings ([auth settings](../reference/configuration.md#auth)).
+Sign-in through your identity provider (dashboard, `loom login` and OAuth) needs
+`LOOM_OAUTH_LOGIN_PROVIDER=oidc` and the `LOOM_OIDC_*` settings; [single sign-on](sso.md)
+walks through it.
 
 ### Process and scale
 

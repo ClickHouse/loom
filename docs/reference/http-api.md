@@ -52,14 +52,16 @@ See [Task inbox](../features/tasks-and-decisions.md) for the watch stream.
 
 ### MCP, sign-in and OAuth
 
-| Method and path                                                                                   | Auth   | What it is                                                                                                                                  |
-| ------------------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /mcp`, `DELETE /mcp`                                                                        | bearer | The MCP endpoint (JSON-RPC over streamable HTTP); see [MCP](./mcp.md).                                                                      |
-| `POST /v1/auth/login`                                                                             | none   | Dashboard sign-in with a password; answers a token.                                                                                         |
-| `POST /v1/auth/self-signup`                                                                       | none   | A person claims a namespace. Off unless `LOOM_SELF_SIGNUP=open`; closed when sign-in is delegated to an OIDC provider.                      |
-| `POST /v1/auth/agent-signup`                                                                      | none   | A bot signs itself up: an `agent-<slug>` namespace, a writer token, and a claim code a person later uses to take ownership. Same gates.     |
-| `/.well-known/oauth-authorization-server`, `/.well-known/oauth-protected-resource`                | none   | OAuth 2.1 discovery, served only with `LOOM_OAUTH_ENABLED=true`.                                                                            |
-| `POST /oauth/register`, `GET`/`POST /oauth/authorize`, `GET /oauth/callback`, `POST /oauth/token` | none   | Dynamic client registration, browser sign-in, the OIDC provider's return (`/oauth/callback`) and token exchange; see [MCP](./mcp.md#oauth). |
+| Method and path                                                                                | Auth   | What it is                                                                                                                                                               |
+| ---------------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `POST /mcp`, `DELETE /mcp`                                                                     | bearer | The MCP endpoint (JSON-RPC over streamable HTTP); see [MCP](./mcp.md).                                                                                                   |
+| `POST /v1/auth/login`                                                                          | none   | Dashboard sign-in with a password; answers a token.                                                                                                                      |
+| `POST /v1/auth/self-signup`                                                                    | none   | A person claims a namespace. Off unless `LOOM_SELF_SIGNUP=open`; closed when sign-in is delegated to an OIDC provider.                                                   |
+| `POST /v1/auth/agent-signup`                                                                   | none   | A bot signs itself up: an `agent-<slug>` namespace, a writer token, and a claim code a person later uses to take ownership. Same gates.                                  |
+| `/.well-known/oauth-authorization-server`                                                      | none   | OAuth 2.1 discovery, served whenever auth is on.                                                                                                                         |
+| `POST /oauth/device_authorization`, `GET`/`POST /oauth/device`, `POST /oauth/device/approve`   | none   | The device grant `loom login` uses: a code, the approval page, the approval ([tokens and grants](../guides/tokens-and-grants.md#sign-in-from-a-terminal-or-a-notebook)). |
+| `POST /oauth/token`, `POST /oauth/revoke`, `GET /oauth/callback`, `GET /oauth/sso`             | none   | Token exchange and refresh, revocation (RFC 7009), the OIDC provider's return and the dashboard's SSO button ([single sign-on](../operations/sso.md)).                   |
+| `/.well-known/oauth-protected-resource`, `POST /oauth/register`, `GET`/`POST /oauth/authorize` | none   | MCP one-click connect, served only with `LOOM_OAUTH_ENABLED=true`; see [MCP](./mcp.md#oauth).                                                                            |
 
 ### Dashboard routes
 

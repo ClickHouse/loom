@@ -20,7 +20,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from tests.unit.oauth_store_fake import MemoryOAuthStore
+from tests.unit.oauth_store_fake import MemoryOAuthStore, oauth_app
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
@@ -283,14 +283,13 @@ async def test_authorize_redirects_to_idp(monkeypatch) -> None:
 
     captured: dict[str, Any] = {}
 
-    async def fake_build(*, redirect_uri: str, state: str, nonce: str) -> str:
-        captured.update(redirect_uri=redirect_uri, state=state, nonce=nonce)
+    async def fake_build(*, redirect_uri: str, state: str, nonce: str, code_challenge: str) -> str:
+        captured.update(redirect_uri=redirect_uri, state=state, nonce=nonce, pkce=code_challenge)
         return f"{_ISS}/authorize?state={state}&nonce={nonce}"
 
     monkeypatch.setattr(oidc, "build_authorize_url", fake_build)
 
-    app = FastAPI()
-    app.include_router(oauth.router)
+    app = oauth_app()
     c = TestClient(app)
     reg = c.post(
         "/oauth/register",
@@ -319,3 +318,5 @@ async def test_authorize_redirects_to_idp(monkeypatch) -> None:
     pend = oauth._store.pending[captured["state"]]
     assert pend["client_id"] == cid and pend["mcp_state"] == "mcp-state"
     assert pend["nonce"] == captured["nonce"]
+    # PKCE on the IdP leg: the challenge sent is the S256 of the kept verifier.
+    assert oauth.verify_pkce_s256(pend["code_verifier"], captured["pkce"])

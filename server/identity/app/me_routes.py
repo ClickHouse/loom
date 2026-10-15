@@ -127,13 +127,17 @@ async def memory_dashboard(request: Request, spa_path: str = "") -> Response:
     # Self-signup availability rides the boot snippet rather than being probed: probing by
     # POSTing a real signup would be a read that writes (claiming a namespace on a fresh
     # instance, then a 409 on every later load). The server already knows the answer.
-    signup_open = settings.self_signup == "open"
+    # With SSO on, the sign-in screen is one button to the identity provider:
+    # password sign-in and self-signup are both refused server-side.
+    sso = settings.oauth_login_provider == "oidc"
+    signup_open = settings.self_signup == "open" and not sso
     nonce = secrets.token_urlsafe(16)
     boot_snippet = (
         f'<script nonce="{nonce}">'
         f"window.__LOOM_PROXY_AUTH = {'true' if has_bearer else 'false'};"
         f"window.__LOOM_AUTH_DISABLED = {'true' if auth_disabled else 'false'};"
         f"window.__LOOM_SELF_SIGNUP = {'true' if signup_open else 'false'};"
+        f"window.__LOOM_SSO = {'true' if sso else 'false'};"
         f"window.__LOOM_DEFAULT_NAMESPACE = {_js_string(default_ns)};"
         f"</script>"
     )

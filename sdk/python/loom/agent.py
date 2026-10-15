@@ -27,6 +27,7 @@ from loom.conflicts import ConflictsClient
 from loom.context import ContextClient
 from loom.conversations import ConversationsClient
 from loom.cost import CostClient
+from loom.credentials import DEFAULT_SERVER, StoredLogin, stored_login
 from loom.decision import DecisionClient
 from loom.erasure import ErasureClient
 from loom.facts import FactsClient
@@ -60,6 +61,22 @@ def default_agent_name(agent: str | None) -> str:
     script = os.path.basename(sys.argv[0]) if sys.argv and sys.argv[0] else ""
     script = script.rsplit(".", 1)[0] if script.endswith(".py") else script
     return f"sdk-python:{script or 'bot'}"
+
+
+def _credentials(
+    base_url: str | None, api_key: str | None
+) -> tuple[str, str | None, StoredLogin | None]:
+    """The server and credential to use, first found wins: `api_key=`,
+    LOOM_API_KEY, the `loom login` profile for this server, then
+    `~/.loom/token` (what `loom mint-token --save` writes)."""
+    base_url = base_url or os.environ.get("LOOM_BASE_URL")
+    api_key = api_key or os.environ.get("LOOM_API_KEY")
+    if api_key:
+        return base_url or DEFAULT_SERVER, api_key, None
+    stored = stored_login(base_url)
+    if stored is not None:
+        return stored[0], None, stored[1]
+    return base_url or DEFAULT_SERVER, token_from_file(), None
 
 
 class Agent:
@@ -131,9 +148,7 @@ class Agent:
             )
         self.auto_run = bool(auto_run)
 
-        base_url = base_url or os.environ.get("LOOM_BASE_URL", "http://localhost:7777")
-        # `~/.loom/token` (what `loom mint-token --save` writes) is the last resort.
-        api_key = api_key or os.environ.get("LOOM_API_KEY") or token_from_file()
+        base_url, api_key, auth = _credentials(base_url, api_key)
 
         self.transport = Transport(
             base_url=base_url,
@@ -143,6 +158,7 @@ class Agent:
             ratelimit_max_wait_s=ratelimit_max_wait_s,
             retry=retry,
             consumer=consumer,
+            auth=auth,
         )
         #: The consumer label as the transport stamps it ('' = none).
         self.consumer: str = self.transport.consumer

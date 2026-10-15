@@ -1,7 +1,8 @@
 """An in-process stand-in for the OAuth store (`server.auth.oauth._CHStore`).
 
 Install it with `monkeypatch.setattr(oauth, "_store", MemoryOAuthStore())`;
-codes and refresh tokens are kept under their hashes, as the real store does.
+codes, refresh tokens and device codes are kept under their hashes, as the
+real store does, and a spent one is kept (marked) so a replay is seen.
 """
 
 from __future__ import annotations
@@ -9,7 +10,20 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from fastapi import FastAPI
+
+from server.auth import device, oauth
+from server.auth.oauth import CodeReplayed
 from server.auth.oauth import _token_id as token_id
+
+
+def oauth_app() -> FastAPI:
+    """Every OAuth route: sign-in, the device grant and MCP connect."""
+    app = FastAPI()
+    app.include_router(oauth.router)
+    app.include_router(device.router)
+    app.include_router(oauth.connect_router)
+    return app
 
 
 class MemoryOAuthStore:
@@ -20,6 +34,8 @@ class MemoryOAuthStore:
         self.codes: dict[str, dict[str, Any]] = {}
         self.refresh: dict[str, dict[str, Any]] = {}
         self.pending: dict[str, dict[str, Any]] = {}
+        self.devices: dict[str, dict[str, Any]] = {}
+        self.spent: set[str] = set()
 
     async def save_client(self, client_id: str, redirect_uris: list[str], name: str) -> None:
         self.clients[client_id] = {"redirect_uris": list(redirect_uris), "client_name": name}
@@ -28,24 +44,58 @@ class MemoryOAuthStore:
         return self.clients.get(client_id)
 
     async def save_code(self, code: str, g: dict[str, Any]) -> None:
-        self.codes[token_id(code)] = dict(g)
+        self.codes[token_id(code)] = {"family": "", "upstream_refresh": "", **g}
+        self.spent.discard(token_id(code))
 
     async def save_refresh(self, token: str, g: dict[str, Any]) -> None:
-        self.refresh[token_id(token)] = dict(g)
+        self.refresh[token_id(token)] = {"family": "", "upstream_refresh": "", **g}
+        self.spent.discard(token_id(token))
+
+    def _take(
+        self, rows: dict[str, dict[str, Any]], key: str, client_id: str | None = None
+    ) -> dict[str, Any] | None:
+        g = rows.get(key)
+        if g is None or g["exp"] < int(time.time()):
+            return None
+        if client_id is not None and g["client_id"] != client_id:
+            return None
+        if key in self.spent:
+            raise CodeReplayed(dict(g))
+        self.spent.add(key)
+        return dict(g)
 
     async def take_code(self, code: str) -> dict[str, Any] | None:
-        g = self.codes.pop(token_id(code), None)
-        return None if (g is None or g["exp"] < int(time.time())) else g
+        return self._take(self.codes, token_id(code))
 
     async def take_refresh(self, token: str, client_id: str) -> dict[str, Any] | None:
-        g = self.refresh.get(token_id(token))
-        if g is None or g["client_id"] != client_id:
-            return None
-        del self.refresh[token_id(token)]
-        return None if g["exp"] < int(time.time()) else g
+        return self._take(self.refresh, token_id(token), client_id)
 
     async def save_pending(self, state: str, data: dict[str, Any]) -> None:
         self.pending[state] = dict(data)
 
     async def take_pending(self, state: str) -> dict[str, Any] | None:
         return self.pending.pop(state, None)
+
+    async def save_device(self, d: dict[str, Any]) -> None:
+        self.devices[d["id"]] = dict(d)
+
+    async def device_by_user_code(self, user_code_id: str) -> dict[str, Any] | None:
+        for d in self.devices.values():
+            if (
+                d["user_code"] == user_code_id
+                and d["status"] == "pending"
+                and d["id"] not in self.spent
+                and d["exp"] >= int(time.time())
+            ):
+                return dict(d)
+        return None
+
+    async def take_device(self, device_code: str) -> dict[str, Any] | None:
+        d = self.devices.get(token_id(device_code))
+        if d is None:
+            return None
+        if d["id"] in self.spent:
+            raise CodeReplayed(dict(d))
+        if d["status"] != "pending":
+            self.spent.add(d["id"])
+        return dict(d)

@@ -276,6 +276,9 @@ python scripts/codegen/docs_reference.py
 | `loom ingest-transcript` | Pipe a chat-history file (markdown / JSON) into Loom's conversation table as one thread. | `--server-url`, `--token`, `--org`, `--namespace`, `--agent`, `--thread-id`, `--file`, `--dry-run` |
 | `loom memory-search` | Run a memory.search from the shell. | `--server-url`, `--token`, `--org`, `--namespace`, `--agent`, `--user-id`, `--query`, `--top-k`, `--search-mode`, `--json-agent` |
 | `loom set-host` | Designate the Loom host(s) for this deployment. | `<emails>`, `--env-file`, `--append`, `--dry-run` |
+| `loom login` | Sign in to a Loom server on any browser with a one-time code. | `--profile`, `--server`, `--no-browser` |
+| `loom logout` | End the stored session on the server and forget it here. | `--profile` |
+| `loom whoami` | Show who the stored session signs you in as. | `--profile` |
 
 <!-- prettier-ignore-end -->
 <!-- END GENERATED: cli -->

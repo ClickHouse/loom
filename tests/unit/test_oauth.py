@@ -14,11 +14,10 @@ import hashlib
 import time
 
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from server.auth import login, oauth
-from tests.unit.oauth_store_fake import MemoryOAuthStore
+from tests.unit.oauth_store_fake import MemoryOAuthStore, oauth_app
 
 
 def _challenge(verifier: str) -> str:
@@ -42,8 +41,7 @@ def _mem_store(monkeypatch):
 
 
 def _client() -> TestClient:
-    app = FastAPI()
-    app.include_router(oauth.router)
+    app = oauth_app()
     return TestClient(app)
 
 
@@ -56,7 +54,18 @@ def test_verify_pkce_s256() -> None:
     assert oauth.verify_pkce_s256(v, "") is False
 
 
-def test_discovery_metadata_shape() -> None:
+def test_sign_in_metadata_without_mcp_connect(monkeypatch) -> None:
+    monkeypatch.setattr(oauth.settings, "oauth_enabled", False)
+    md = oauth.authorization_server_metadata("https://loom.example")
+    assert md["device_authorization_endpoint"] == "https://loom.example/oauth/device_authorization"
+    assert md["revocation_endpoint"] == "https://loom.example/oauth/revoke"
+    assert "authorization_endpoint" not in md
+    assert "registration_endpoint" not in md
+    assert "authorization_code" not in md["grant_types_supported"]
+
+
+def test_discovery_metadata_shape(monkeypatch) -> None:
+    monkeypatch.setattr(oauth.settings, "oauth_enabled", True)
     md = oauth.authorization_server_metadata("https://loom.example")
     assert md["issuer"] == "https://loom.example"
     assert md["authorization_endpoint"].endswith("/oauth/authorize")

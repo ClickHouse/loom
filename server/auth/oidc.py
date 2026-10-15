@@ -4,14 +4,19 @@ When `settings.oauth_login_provider == "oidc"`, loom delegates the human
 sign-in at `/oauth/authorize` to an external identity provider (Okta, Auth0,
 Google, Azure AD, Keycloak, …) instead of its own password form. loom stays
 the authorization server the MCP client talks to — only the human-login step
-redirects to the IdP. loom is a confidential client (client_secret); `state`
-guards CSRF and `nonce` guards id_token replay. The verified email is mapped
-to a loom account by `server.auth.login.resolve_identity_for_email`.
+redirects to the IdP. loom is a confidential client (client_secret) and sends
+PKCE too; `state` guards CSRF and `nonce` guards id_token replay. The verified
+email is mapped to a loom account by `server.auth.login.resolve_identity_for_email`.
+
+When the IdP advertises `offline_access`, loom asks for it and keeps the IdP's
+refresh token (sealed). Every Loom refresh spends it at the IdP first, so a
+user the IdP has deactivated loses Loom at their next refresh.
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
 import secrets
 import time
 from typing import Any
@@ -22,6 +27,8 @@ import jwt
 from jwt import PyJWKClient
 
 from server.settings import settings
+
+log = logging.getLogger(__name__)
 
 _DISCOVERY_TTL = 3600.0
 # issuer -> (expiry_epoch, openid-configuration document)
@@ -51,37 +58,119 @@ async def _discover() -> dict[str, Any]:
     return doc
 
 
-async def build_authorize_url(*, redirect_uri: str, state: str, nonce: str) -> str:
+class UpstreamRefused(Exception):
+    """The IdP answered a refresh with an OAuth error: the user's IdP session
+    is gone (deactivated, signed out everywhere, token revoked)."""
+
+
+def _scope(doc: dict[str, Any]) -> str:
+    # Some IdPs reject a scope they don't list, so offline_access is asked
+    # for only where the discovery document advertises it.
+    if "offline_access" in (doc.get("scopes_supported") or []):
+        return "openid email profile offline_access"
+    return "openid email profile"
+
+
+async def build_authorize_url(
+    *, redirect_uri: str, state: str, nonce: str, code_challenge: str
+) -> str:
     """The IdP authorize URL loom redirects the browser to (auth-code flow)."""
     doc = await _discover()
     params = {
         "response_type": "code",
         "client_id": settings.oidc_client_id,
         "redirect_uri": redirect_uri,
-        "scope": "openid email profile",
+        "scope": _scope(doc),
         "state": state,
         "nonce": nonce,
+        "code_challenge": code_challenge,
+        "code_challenge_method": "S256",
     }
     return f"{doc['authorization_endpoint']}?{urlencode(params)}"
 
 
-async def exchange_code(*, code: str, redirect_uri: str) -> dict[str, Any]:
-    """Exchange the IdP authorization code for tokens (confidential client)."""
+async def _token_request(form: dict[str, str]) -> dict[str, Any]:
     doc = await _discover()
     async with httpx.AsyncClient(timeout=10.0) as c:
         r = await c.post(
             doc["token_endpoint"],
             data={
-                "grant_type": "authorization_code",
-                "code": code,
-                "redirect_uri": redirect_uri,
+                **form,
                 "client_id": settings.oidc_client_id,
                 "client_secret": settings.oidc_client_secret,
             },
         )
-        r.raise_for_status()
-        tokens: dict[str, Any] = r.json()
+    r.raise_for_status()
+    tokens: dict[str, Any] = r.json()
     return tokens
+
+
+async def exchange_code(*, code: str, redirect_uri: str, code_verifier: str) -> dict[str, Any]:
+    """Exchange the IdP authorization code for tokens (confidential client)."""
+    return await _token_request(
+        {
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": redirect_uri,
+            "code_verifier": code_verifier,
+        }
+    )
+
+
+async def refresh(refresh_token: str) -> str:
+    """Spend the IdP refresh token; returns the one to keep next (the IdP may
+    rotate it). Raises UpstreamRefused only for `invalid_grant`, the IdP's
+    answer for a user or token it no longer honours; any other failure (the
+    IdP down, a 5xx, a rejected client secret) is Loom's or the IdP's problem,
+    not the user's, and comes through as the httpx error."""
+    try:
+        tokens = await _token_request(
+            {"grant_type": "refresh_token", "refresh_token": refresh_token}
+        )
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 400 and _error_code(e.response) == "invalid_grant":
+            raise UpstreamRefused from e
+        raise
+    return str(tokens.get("refresh_token") or refresh_token)
+
+
+def _error_code(response: httpx.Response) -> str:
+    try:
+        body = response.json()
+    except ValueError:
+        return ""
+    return str(body.get("error") or "") if isinstance(body, dict) else ""
+
+
+async def revoke(refresh_token: str) -> None:
+    """Revoke the IdP refresh token at the IdP's revocation endpoint (RFC 7009)
+    when it has one. Best effort: logout has already ended the Loom session."""
+    doc = await _discover()
+    endpoint = doc.get("revocation_endpoint")
+    if not endpoint:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            await c.post(
+                endpoint,
+                data={
+                    "token": refresh_token,
+                    "token_type_hint": "refresh_token",
+                    "client_id": settings.oidc_client_id,
+                    "client_secret": settings.oidc_client_secret,
+                },
+            )
+    except httpx.HTTPError as e:
+        log.warning("oidc: revoking the identity provider's token failed: %s", type(e).__name__)
+
+
+async def check_callback_issuer(iss: str) -> bool:
+    """RFC 9207: an IdP that names itself on the callback must be the one loom
+    sent the user to. Absent is fine (not every IdP sends it)."""
+    if not iss:
+        return True
+    doc = await _discover()
+    return iss.rstrip("/") == str(doc["issuer"]).rstrip("/")
 
 
 def _signing_key(jwks_uri: str, id_token: str) -> Any:

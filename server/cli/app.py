@@ -17,6 +17,7 @@ from server.cli.import_brain import _add_brain_import_parser
 from server.cli.import_clickgap import _add_clickgap_import_parser
 from server.cli.import_recall import _add_recall_import_parser
 from server.cli.install import _INSTALL_HELP, _add_install_flags, _cmd_install
+from server.cli.login import add_login_parsers
 from server.cli.maintenance import (
     _add_activity_trivia_parser,
     _add_memory_repair_parsers,
@@ -291,6 +292,7 @@ _SUBCOMMAND_BUILDERS: tuple[Any, ...] = (
     _add_integrity_and_stats_parsers,
     _add_version_install_demo_init_parsers,
     _add_shell_client_parsers,
+    add_login_parsers,
 )
 
 

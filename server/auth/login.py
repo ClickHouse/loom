@@ -300,6 +300,7 @@ async def jit_provision_for_email(
     import hashlib
 
     from server.auth.self_signup import provision_account
+    from server.observability import audit
     from server.settings import settings as _settings
 
     if not _settings.oidc_jit_provision:
@@ -324,6 +325,13 @@ async def jit_provision_for_email(
         password_hash="",  # SSO-only account
         description="Auto-provisioned via OIDC SSO.",
     )
+    await audit.emit(
+        "auth.jit_provisioned",
+        org=_settings.oidc_jit_org,
+        namespace=ns,
+        actor=ident,
+        subject={"provider": "oidc", "namespace": ns},
+    )
     # Re-resolve through the normal mapping (applies admin-promotion + the
     # cross-org guard). A simultaneous first login for the same email
     # writes the same (org, namespace) row — ReplacingMergeTree collapses it.
@@ -332,6 +340,19 @@ async def jit_provision_for_email(
 
 @router.post("/v1/auth/login", response_model=LoginOutput)
 async def login(input: LoginInput, request: Request) -> LoginOutput:
+    from server.settings import settings
+
+    # With SSO on, the identity provider is the only way in: a local password
+    # would skip its MFA and outlive a deactivation there. An operator who is
+    # locked out mints a token on the host (`loom mint-token`).
+    if settings.oauth_login_provider == "oidc":
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "PASSWORD_LOGIN_SSO",
+                "message": "this deployment uses SSO; sign in via your identity provider",
+            },
+        )
     try:
         resolved = await resolve_user_credentials(
             input.identifier, input.password, address=client_address(request)

@@ -26,8 +26,45 @@ export const DOCS_MCP_URL = `${REPO_DOCS}/features/integrations/mcp-clients.md`;
  * boot flag). No token surfaces: the server mints the JWT and the client
  * stores it without showing it. Operators who need a raw token use the
  * `loom mint-token` CLI, which is not exposed here.
+ *
+ * With SSO on (the `__LOOM_SSO` boot flag) the gate is one button instead:
+ * the server refuses password sign-in and sign-up there.
  */
 export function TokenGate({ onLogin, reason = null }: TokenGateProps) {
+  if (window.__LOOM_SSO === true) return <SsoGate reason={reason} />;
+  return <PasswordGate onLogin={onLogin} reason={reason} />;
+}
+
+/** Sends the browser to the identity provider; it comes back to `/me#token=…`. */
+function SsoGate({ reason }: { reason?: GateReason }) {
+  return (
+    <main className="min-h-screen flex items-center justify-center px-4 bg-[var(--color-bg)]">
+      <div className="w-full max-w-md">
+        <header className="flex items-center gap-2 mb-6">
+          <div className="w-10 h-10 rounded-xl bg-[var(--color-accent)] grid place-items-center" aria-hidden="true">
+            <Workflow size={20} className="text-[var(--color-on-accent)]" />
+          </div>
+          <h1 className="text-xl font-semibold tracking-tight m-0">Loom</h1>
+        </header>
+        <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-sm">
+          {reason === "expired" && (
+            <p role="status" className="mb-4 text-xs text-[var(--color-text)]">
+              Your session expired — sign in again.
+            </p>
+          )}
+          <a
+            href="/oauth/sso"
+            className="flex items-center justify-center gap-1.5 w-full px-4 py-2.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-lg hover:bg-[var(--color-accent-strong)]"
+          >
+            <LogIn size={14} /> Sign in with SSO
+          </a>
+        </div>
+      </div>
+    </main>
+  );
+}
+
+function PasswordGate({ onLogin, reason = null }: TokenGateProps) {
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   // Sign-in fields
   const [signinIdent, setSigninIdent] = useState("");

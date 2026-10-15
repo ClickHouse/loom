@@ -10218,6 +10218,221 @@
        "metavar": null
       }
      ]
+    },
+    "login": {
+     "prog": "loom login",
+     "usage": null,
+     "description": null,
+     "epilog": null,
+     "formatter_class": "argparse:HelpFormatter",
+     "add_help": true,
+     "allow_abbrev": true,
+     "defaults": {
+      "func": "server.cli.login:_cmd_login"
+     },
+     "groups": [
+      {
+       "title": "positional arguments",
+       "description": null,
+       "dests": []
+      },
+      {
+       "title": "options",
+       "description": null,
+       "dests": [
+        "help",
+        "profile",
+        "server",
+        "no_browser"
+       ]
+      }
+     ],
+     "mutually_exclusive": [],
+     "arguments": [
+      {
+       "option_strings": [
+        "-h",
+        "--help"
+       ],
+       "dest": "help",
+       "action": "_HelpAction",
+       "default": "==SUPPRESS==",
+       "const": null,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "show this help message and exit",
+       "metavar": null
+      },
+      {
+       "option_strings": [
+        "--profile"
+       ],
+       "dest": "profile",
+       "action": "_StoreAction",
+       "default": null,
+       "const": null,
+       "choices": null,
+       "nargs": null,
+       "type": null,
+       "required": false,
+       "help": "Credentials profile (default: LOOM_PROFILE or 'default').",
+       "metavar": null
+      },
+      {
+       "option_strings": [
+        "--server"
+       ],
+       "dest": "server",
+       "action": "_StoreAction",
+       "default": null,
+       "const": null,
+       "choices": null,
+       "nargs": null,
+       "type": null,
+       "required": false,
+       "help": "Server URL (default: LOOM_BASE_URL or localhost).",
+       "metavar": null
+      },
+      {
+       "option_strings": [
+        "--no-browser"
+       ],
+       "dest": "no_browser",
+       "action": "_StoreTrueAction",
+       "default": false,
+       "const": true,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "Only print the URL.",
+       "metavar": null
+      }
+     ]
+    },
+    "logout": {
+     "prog": "loom logout",
+     "usage": null,
+     "description": null,
+     "epilog": null,
+     "formatter_class": "argparse:HelpFormatter",
+     "add_help": true,
+     "allow_abbrev": true,
+     "defaults": {
+      "func": "server.cli.login:_cmd_login"
+     },
+     "groups": [
+      {
+       "title": "positional arguments",
+       "description": null,
+       "dests": []
+      },
+      {
+       "title": "options",
+       "description": null,
+       "dests": [
+        "help",
+        "profile"
+       ]
+      }
+     ],
+     "mutually_exclusive": [],
+     "arguments": [
+      {
+       "option_strings": [
+        "-h",
+        "--help"
+       ],
+       "dest": "help",
+       "action": "_HelpAction",
+       "default": "==SUPPRESS==",
+       "const": null,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "show this help message and exit",
+       "metavar": null
+      },
+      {
+       "option_strings": [
+        "--profile"
+       ],
+       "dest": "profile",
+       "action": "_StoreAction",
+       "default": null,
+       "const": null,
+       "choices": null,
+       "nargs": null,
+       "type": null,
+       "required": false,
+       "help": "Credentials profile (default: LOOM_PROFILE or 'default').",
+       "metavar": null
+      }
+     ]
+    },
+    "whoami": {
+     "prog": "loom whoami",
+     "usage": null,
+     "description": null,
+     "epilog": null,
+     "formatter_class": "argparse:HelpFormatter",
+     "add_help": true,
+     "allow_abbrev": true,
+     "defaults": {
+      "func": "server.cli.login:_cmd_login"
+     },
+     "groups": [
+      {
+       "title": "positional arguments",
+       "description": null,
+       "dests": []
+      },
+      {
+       "title": "options",
+       "description": null,
+       "dests": [
+        "help",
+        "profile"
+       ]
+      }
+     ],
+     "mutually_exclusive": [],
+     "arguments": [
+      {
+       "option_strings": [
+        "-h",
+        "--help"
+       ],
+       "dest": "help",
+       "action": "_HelpAction",
+       "default": "==SUPPRESS==",
+       "const": null,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "show this help message and exit",
+       "metavar": null
+      },
+      {
+       "option_strings": [
+        "--profile"
+       ],
+       "dest": "profile",
+       "action": "_StoreAction",
+       "default": null,
+       "const": null,
+       "choices": null,
+       "nargs": null,
+       "type": null,
+       "required": false,
+       "help": "Credentials profile (default: LOOM_PROFILE or 'default').",
+       "metavar": null
+      }
+     ]
     }
    },
    "aliases_of": {
@@ -10268,7 +10483,10 @@
     "init": "loom init",
     "ingest-transcript": "loom ingest-transcript",
     "memory-search": "loom memory-search",
-    "set-host": "loom set-host"
+    "set-host": "loom set-host",
+    "login": "loom login",
+    "logout": "loom logout",
+    "whoami": "loom whoami"
    },
    "choices_help": [
     {
@@ -10510,6 +10728,21 @@
      "dest": "set-host",
      "help": "Designate the Loom host(s) for this deployment. Writes the given login handle(s) or email(s) to LOOM_PLATFORM_ADMINS in the .env (--env-file, default ./.env): a handle promotes that password account to platform_admin, an email promotes an SSO sign-in with that verified email. Multiple OK (on-call rotation, co-operators, etc.). Re-login required after to pick up the role.",
      "metavar": "set-host"
+    },
+    {
+     "dest": "login",
+     "help": "Sign in to a Loom server on any browser with a one-time code.",
+     "metavar": "login"
+    },
+    {
+     "dest": "logout",
+     "help": "End the stored session on the server and forget it here.",
+     "metavar": "logout"
+    },
+    {
+     "dest": "whoami",
+     "help": "Show who the stored session signs you in as.",
+     "metavar": "whoami"
     }
    ]
   }

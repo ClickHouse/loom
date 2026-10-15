@@ -1,0 +1,520 @@
+"""The device grant behind `loom login`, session families, revocation, and the
+SSO-only paths: every grant and every refusal, against the in-memory store."""
+
+from __future__ import annotations
+
+import re
+import time
+from typing import Any
+
+import httpx
+import jwt as pyjwt
+import pytest
+from fastapi.testclient import TestClient
+
+from server.auth import device, login, oauth, oidc, revocation
+from server.auth.jwt import mint_token
+from tests.unit.oauth_store_fake import MemoryOAuthStore, oauth_app
+
+_USER = ("alice@example.com", "acme", ["alice"], ["writer"])
+
+
+@pytest.fixture(autouse=True)
+def _world(monkeypatch):
+    """In-memory store, a loaded empty revocation list whose writes land
+    locally, a recorded audit trail, and one password account."""
+    store = MemoryOAuthStore()
+    monkeypatch.setattr(oauth, "_store", store)
+    monkeypatch.setattr(oauth.settings, "oauth_login_provider", "password")
+    monkeypatch.setattr(revocation, "_loaded", True)
+    monkeypatch.setattr(revocation, "_revoked_jtis", frozenset())
+    monkeypatch.setattr(revocation, "_revoked_before", {})
+    revoked: list[str] = []
+
+    async def revoke(token_id: str, **kw: Any) -> dict[str, Any]:
+        revoked.append(token_id)
+        revocation._apply_locally(token_id, None)
+        return {}
+
+    monkeypatch.setattr(revocation, "revoke", revoke)
+    events: list[tuple[str, dict[str, Any]]] = []
+
+    async def emit(event_type: str, **kw: Any) -> str:
+        events.append((event_type, kw))
+        return ""
+
+    monkeypatch.setattr(oauth.audit, "emit", emit)
+    monkeypatch.setattr(device.audit, "emit", emit)
+
+    async def credentials(identifier: str, password: str, *, address: str = "") -> Any:
+        return _USER if (identifier, password) == ("alice@example.com", "pw") else None
+
+    monkeypatch.setattr(login, "resolve_user_credentials", credentials)
+
+    async def active(subject: str, org: str, roles: list[str]) -> list[str]:
+        return roles
+
+    monkeypatch.setattr(login, "refreshed_roles", active)
+    for limiter in (device._polls, device._requests_by_address, device._wrong_codes_by_address):
+        limiter.clear()
+    return {"store": store, "revoked": revoked, "events": events}
+
+
+def _client() -> TestClient:
+    return TestClient(oauth_app())
+
+
+def _start(c: TestClient) -> dict[str, Any]:
+    r = c.post("/oauth/device_authorization", data={"client_id": device.DEVICE_CLIENT_ID})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _poll(c: TestClient, device_code: str) -> httpx.Response:
+    device._polls.clear()  # each test poll stands for one a full interval later
+    return c.post(
+        "/oauth/token",
+        data={
+            "grant_type": device.DEVICE_GRANT,
+            "device_code": device_code,
+            "client_id": device.DEVICE_CLIENT_ID,
+        },
+    )
+
+
+def _sign_in(c: TestClient, user_code: str, password: str = "pw") -> httpx.Response:
+    return c.post(
+        "/oauth/device",
+        data={"user_code": user_code, "identifier": "alice@example.com", "password": password},
+    )
+
+
+def _ticket(page: str) -> str:
+    match = re.search(r'name="ticket" value="([^"]+)"', page)
+    assert match, page
+    return match.group(1)
+
+
+def _approve(c: TestClient, user_code: str, page: str, decision: str = "approve") -> httpx.Response:
+    return c.post(
+        "/oauth/device/approve",
+        data={"user_code": user_code, "ticket": _ticket(page), "decision": decision},
+    )
+
+
+def _signed_in_tokens(c: TestClient) -> dict[str, Any]:
+    grant = _start(c)
+    page = _sign_in(c, grant["user_code"])
+    assert _approve(c, grant["user_code"], page.text).status_code == 200
+    r = _poll(c, grant["device_code"])
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _refresh(c: TestClient, token: str) -> httpx.Response:
+    return c.post(
+        "/oauth/token",
+        data={
+            "grant_type": "refresh_token",
+            "refresh_token": token,
+            "client_id": device.DEVICE_CLIENT_ID,
+        },
+    )
+
+
+def _error(r: httpx.Response) -> str:
+    return str(r.json()["detail"]["error"])
+
+
+# ── device authorization ──────────────────────────────────────────────────
+
+
+def test_device_authorization_answers_rfc_8628_fields(_world) -> None:
+    grant = _start(_client())
+    assert re.fullmatch(r"[BCDFGHJKLMNPQRSTVWXZ]{4}-[BCDFGHJKLMNPQRSTVWXZ]{4}", grant["user_code"])
+    assert grant["verification_uri"].endswith("/oauth/device")
+    assert grant["verification_uri_complete"].endswith(f"?user_code={grant['user_code']}")
+    assert (grant["expires_in"], grant["interval"]) == (600, 5)
+    stored = next(iter(_world["store"].devices.values()))
+    # Neither code is stored as itself.
+    assert grant["device_code"] not in str(stored)
+    assert device.normalize_user_code(grant["user_code"]) not in str(stored)
+
+
+def test_device_authorization_needs_the_cli_client_id() -> None:
+    r = _client().post("/oauth/device_authorization", data={"client_id": "someone"})
+    assert (r.status_code, _error(r)) == (400, "invalid_client")
+
+
+def test_device_authorization_is_rate_limited_per_address() -> None:
+    c = _client()
+    for _ in range(30):
+        _start(c)
+    r = c.post("/oauth/device_authorization", data={"client_id": device.DEVICE_CLIENT_ID})
+    assert r.status_code == 429
+
+
+# ── polling ───────────────────────────────────────────────────────────────
+
+
+def test_polling_before_approval_is_pending() -> None:
+    c = _client()
+    r = _poll(c, _start(c)["device_code"])
+    assert (r.status_code, _error(r)) == (400, "authorization_pending")
+
+
+def test_polling_faster_than_the_interval_is_slowed_down() -> None:
+    c = _client()
+    code = _start(c)["device_code"]
+    _poll(c, code)
+    r = c.post(
+        "/oauth/token",
+        data={"grant_type": device.DEVICE_GRANT, "device_code": code, "client_id": "loom-cli"},
+    )
+    assert _error(r) == "slow_down"
+
+
+def test_an_unknown_device_code_is_an_invalid_grant() -> None:
+    assert _error(_poll(_client(), "made-up")) == "invalid_grant"
+
+
+def test_a_device_code_for_another_client_is_refused() -> None:
+    c = _client()
+    r = c.post(
+        "/oauth/token",
+        data={
+            "grant_type": device.DEVICE_GRANT,
+            "device_code": _start(c)["device_code"],
+            "client_id": "x",
+        },
+    )
+    assert _error(r) == "invalid_client"
+
+
+def test_an_expired_device_code_says_so(_world) -> None:
+    c = _client()
+    grant = _start(c)
+    for d in _world["store"].devices.values():
+        d["exp"] = int(time.time()) - 1
+    assert _error(_poll(c, grant["device_code"])) == "expired_token"
+
+
+# ── the approval page ─────────────────────────────────────────────────────
+
+
+def test_a_wrong_user_code_is_refused_and_counted() -> None:
+    c = _client()
+    for _ in range(10):
+        assert _sign_in(c, "BBBB-BBBB").status_code == 400
+    assert _sign_in(c, "BBBB-BBBB").status_code == 429
+
+
+def test_a_wrong_password_keeps_the_grant_pending() -> None:
+    c = _client()
+    grant = _start(c)
+    r = _sign_in(c, grant["user_code"], password="nope")
+    assert r.status_code == 401 and "Invalid email or password" in r.text
+    assert _error(_poll(c, grant["device_code"])) == "authorization_pending"
+
+
+def test_signing_in_shows_a_confirm_page_that_cannot_be_framed() -> None:
+    c = _client()
+    grant = _start(c)
+    page = _sign_in(c, grant["user_code"].lower().replace("-", " "))
+    assert page.status_code == 200
+    assert "alice@example.com" in page.text and grant["user_code"] in page.text
+    assert "frame-ancestors 'none'" in page.headers["content-security-policy"]
+    assert page.headers["x-frame-options"] == "DENY"
+    # Signed in is not approved.
+    assert _error(_poll(c, grant["device_code"])) == "authorization_pending"
+
+
+def test_approval_needs_the_ticket_from_the_signed_in_page() -> None:
+    c = _client()
+    grant = _start(c)
+    _sign_in(c, grant["user_code"])
+    forged = c.post(
+        "/oauth/device/approve",
+        data={"user_code": grant["user_code"], "ticket": "guess", "decision": "approve"},
+    )
+    assert forged.status_code == 400
+    assert _error(_poll(c, grant["device_code"])) == "authorization_pending"
+
+
+def test_a_ticket_approves_once(_world) -> None:
+    c = _client()
+    grant = _start(c)
+    page = _sign_in(c, grant["user_code"]).text
+    assert _approve(c, grant["user_code"], page).status_code == 200
+    assert _approve(c, grant["user_code"], page).status_code == 400
+
+
+def test_approved_grant_issues_a_session_and_is_audited(_world) -> None:
+    tokens = _signed_in_tokens(_client())
+    claims = pyjwt.decode(tokens["access_token"], options={"verify_signature": False})
+    assert claims["sub"] == "alice@example.com" and claims["exp"] - claims["iat"] == 3600
+    assert tokens["refresh_token"]
+    approved = [kw for name, kw in _world["events"] if name == "auth.device_approved"]
+    assert approved and approved[0]["subject"]["family"] == claims["jti"]
+
+
+def test_denied_grant_ends_with_access_denied(_world) -> None:
+    c = _client()
+    grant = _start(c)
+    page = _sign_in(c, grant["user_code"]).text
+    _approve(c, grant["user_code"], page, decision="deny")
+    assert _error(_poll(c, grant["device_code"])) == "access_denied"
+    assert [n for n, _ in _world["events"]] == ["auth.device_denied"]
+
+
+def test_a_replayed_device_code_ends_the_session(_world) -> None:
+    c = _client()
+    grant = _start(c)
+    _approve(c, grant["user_code"], _sign_in(c, grant["user_code"]).text)
+    tokens = _poll(c, grant["device_code"]).json()
+    assert _error(_poll(c, grant["device_code"])) == "invalid_grant"
+    jti = pyjwt.decode(tokens["access_token"], options={"verify_signature": False})["jti"]
+    assert _world["revoked"] == [jti]
+    assert _error(_refresh(c, tokens["refresh_token"])) == "invalid_grant"
+
+
+# ── refresh families ──────────────────────────────────────────────────────
+
+
+def test_refresh_rotates_within_the_session() -> None:
+    c = _client()
+    first = _signed_in_tokens(c)
+    second = _refresh(c, first["refresh_token"]).json()
+    assert second["refresh_token"] != first["refresh_token"]
+    jti = [
+        pyjwt.decode(t["access_token"], options={"verify_signature": False})["jti"]
+        for t in (first, second)
+    ]
+    assert jti[0] == jti[1]
+
+
+def test_a_replayed_refresh_token_revokes_the_whole_family(_world) -> None:
+    c = _client()
+    first = _signed_in_tokens(c)
+    second = _refresh(c, first["refresh_token"]).json()
+    # The old token comes back (someone kept a copy): refused, and the session ends.
+    assert _error(_refresh(c, first["refresh_token"])) == "invalid_grant"
+    assert len(_world["revoked"]) == 1
+    # So the legitimate holder's newer token is dead too, and so is its access token.
+    assert _error(_refresh(c, second["refresh_token"])) == "invalid_grant"
+    assert revocation.is_revoked(_world["revoked"][0])
+    reasons = [kw["subject"]["reason"] for n, kw in _world["events"] if n == "auth.session_revoked"]
+    assert reasons == ["refresh token replayed"]
+
+
+def test_refresh_needs_the_client_it_was_issued_to() -> None:
+    c = _client()
+    tokens = _signed_in_tokens(c)
+    r = c.post(
+        "/oauth/token",
+        data={
+            "grant_type": "refresh_token",
+            "refresh_token": tokens["refresh_token"],
+            "client_id": "x",
+        },
+    )
+    assert _error(r) == "invalid_grant"
+    # Refused unconsumed: the right client still refreshes.
+    assert _refresh(c, tokens["refresh_token"]).status_code == 200
+
+
+# ── revocation (`loom logout`) ────────────────────────────────────────────
+
+
+def test_revoking_a_refresh_token_ends_the_session(_world) -> None:
+    c = _client()
+    tokens = _signed_in_tokens(c)
+    r = c.post(
+        "/oauth/revoke",
+        data={"token": tokens["refresh_token"], "client_id": device.DEVICE_CLIENT_ID},
+    )
+    assert r.status_code == 200
+    jti = pyjwt.decode(tokens["access_token"], options={"verify_signature": False})["jti"]
+    assert _world["revoked"] == [jti]
+    assert _error(_refresh(c, tokens["refresh_token"])) == "invalid_grant"
+
+
+def test_revoking_an_access_token_revokes_its_jti(_world) -> None:
+    access = mint_token(
+        subject="bob", org="acme", namespaces=["bob"], roles=["writer"], ttl_seconds=60, jti="j1"
+    )
+    r = _client().post("/oauth/revoke", data={"token": access, "client_id": "loom-cli"})
+    assert r.status_code == 200 and _world["revoked"] == ["j1"]
+
+
+def test_revoking_garbage_is_a_quiet_200(_world) -> None:
+    r = _client().post("/oauth/revoke", data={"token": "nonsense", "client_id": "loom-cli"})
+    assert r.status_code == 200 and _world["revoked"] == []
+
+
+# ── OIDC: the approval page signs in at the identity provider ─────────────
+
+
+@pytest.fixture
+def sso(monkeypatch):
+    """Provider oidc with a stub IdP: sign-in redirects, the callback signs in
+    `email`, and a refresh at the IdP does what `upstream` says."""
+    monkeypatch.setattr(oauth.settings, "oauth_login_provider", "oidc")
+    monkeypatch.setattr(oauth.settings, "oauth_issuer", "https://loom.example")
+    state: dict[str, Any] = {"email": "alice@example.com", "upstream": "ok", "refresh": "idp-r1"}
+
+    async def build(*, redirect_uri: str, state: str, nonce: str, code_challenge: str) -> str:
+        return f"https://idp.example/authorize?state={state}"
+
+    async def exchange(**kw: Any) -> dict[str, Any]:
+        out: dict[str, Any] = {"id_token": "t"}
+        if state["refresh"]:
+            out["refresh_token"] = state["refresh"]
+        return out
+
+    async def verify(token: str, *, nonce: str) -> dict[str, Any]:
+        return {"email": state["email"], "email_verified": True}
+
+    async def issuer_ok(iss: str) -> bool:
+        return iss in ("", "https://idp.example")
+
+    async def refresh(token: str) -> str:
+        if state["upstream"] == "refused":
+            raise oidc.UpstreamRefused
+        if state["upstream"] == "down":
+            raise httpx.ConnectError("down")
+        return token + "+"
+
+    async def by_email(email: str) -> Any:
+        return _USER if email == "alice@example.com" else None
+
+    async def no_jit(email: str) -> None:
+        return None
+
+    monkeypatch.setattr(oidc, "build_authorize_url", build)
+    monkeypatch.setattr(oidc, "exchange_code", exchange)
+    monkeypatch.setattr(oidc, "verify_id_token", verify)
+    monkeypatch.setattr(oidc, "check_callback_issuer", issuer_ok)
+    monkeypatch.setattr(oidc, "refresh", refresh)
+    monkeypatch.setattr(login, "resolve_identity_for_email", by_email)
+    monkeypatch.setattr(login, "jit_provision_for_email", no_jit)
+    return state
+
+
+def _sso_round_trip(c: TestClient, user_code: str, iss: str = "") -> httpx.Response:
+    r = c.post("/oauth/device", data={"user_code": user_code}, follow_redirects=False)
+    assert r.status_code == 302 and r.headers["location"].startswith("https://idp.example/")
+    state = r.headers["location"].split("state=")[1]
+    params = {"code": "idp-code", "state": state}
+    if iss:
+        params["iss"] = iss
+    return c.get("/oauth/callback", params=params, follow_redirects=False)
+
+
+def test_sso_device_sign_in_is_approved_on_the_same_confirm_page(sso) -> None:
+    c = _client()
+    grant = _start(c)
+    page = _sso_round_trip(c, grant["user_code"], iss="https://idp.example")
+    assert page.status_code == 200 and "alice@example.com" in page.text
+    _approve(c, grant["user_code"], page.text)
+    assert "refresh_token" in _poll(c, grant["device_code"]).json()
+
+
+def test_sso_page_offers_no_password_form(sso) -> None:
+    page = _client().get("/oauth/device")
+    assert "single sign-on" in page.text and 'name="password"' not in page.text
+
+
+def test_a_callback_naming_another_issuer_is_refused(sso) -> None:
+    c = _client()
+    r = _sso_round_trip(c, _start(c)["user_code"], iss="https://evil.example")
+    assert (r.status_code, r.json()["detail"]["error"]) == (400, "invalid_issuer")
+
+
+def test_sso_without_an_account_denies_the_device(sso, _world) -> None:
+    sso["email"] = "mallory@elsewhere.example"
+    c = _client()
+    grant = _start(c)
+    page = _sso_round_trip(c, grant["user_code"])
+    assert page.status_code == 403 and "no loom account" in page.text
+    assert _error(_poll(c, grant["device_code"])) == "access_denied"
+    assert [n for n, _ in _world["events"]] == ["auth.signin_denied"]
+
+
+def test_sso_without_an_idp_refresh_token_issues_no_refresh_token(sso) -> None:
+    sso["refresh"] = ""
+    c = _client()
+    grant = _start(c)
+    _approve(c, grant["user_code"], _sso_round_trip(c, grant["user_code"]).text)
+    tokens = _poll(c, grant["device_code"]).json()
+    assert tokens["access_token"] and "refresh_token" not in tokens
+
+
+def _sso_tokens(c: TestClient) -> dict[str, Any]:
+    grant = _start(c)
+    _approve(c, grant["user_code"], _sso_round_trip(c, grant["user_code"]).text)
+    tokens: dict[str, Any] = _poll(c, grant["device_code"]).json()
+    return tokens
+
+
+def test_refresh_asks_the_identity_provider_and_keeps_its_rotation(sso, _world) -> None:
+    c = _client()
+    tokens = _sso_tokens(c)
+    assert _refresh(c, tokens["refresh_token"]).status_code == 200
+    kept = [g["upstream_refresh"] for g in _world["store"].refresh.values()]
+    assert "idp-r1+" in kept
+
+
+def test_a_user_the_identity_provider_refuses_is_cut_off_at_refresh(sso, _world) -> None:
+    c = _client()
+    tokens = _sso_tokens(c)
+    sso["upstream"] = "refused"
+    assert _error(_refresh(c, tokens["refresh_token"])) == "invalid_grant"
+    assert len(_world["revoked"]) == 1
+    reasons = [kw["subject"]["reason"] for n, kw in _world["events"] if n == "auth.session_revoked"]
+    assert reasons == ["identity provider refused the user"]
+
+
+def test_an_unreachable_identity_provider_leaves_the_refresh_token_usable(sso) -> None:
+    c = _client()
+    tokens = _sso_tokens(c)
+    sso["upstream"] = "down"
+    assert _refresh(c, tokens["refresh_token"]).status_code == 503
+    sso["upstream"] = "ok"
+    assert _refresh(c, tokens["refresh_token"]).status_code == 200
+
+
+def test_a_password_session_cannot_refresh_once_sso_is_on(monkeypatch) -> None:
+    c = _client()
+    tokens = _signed_in_tokens(c)
+    monkeypatch.setattr(oauth.settings, "oauth_login_provider", "oidc")
+    assert _error(_refresh(c, tokens["refresh_token"])) == "invalid_grant"
+
+
+# ── dashboard SSO and the closed password door ────────────────────────────
+
+
+def test_dashboard_sso_is_404_without_oidc() -> None:
+    assert _client().get("/oauth/sso", follow_redirects=False).status_code == 404
+
+
+def test_dashboard_sso_hands_back_a_short_token_in_the_fragment(sso, _world) -> None:
+    c = _client()
+    r = c.get("/oauth/sso", follow_redirects=False)
+    state = r.headers["location"].split("state=")[1]
+    back = c.get("/oauth/callback", params={"code": "c", "state": state}, follow_redirects=False)
+    assert back.status_code == 302 and back.headers["location"].startswith("/me#token=")
+    token = back.headers["location"].split("#token=")[1]
+    claims = pyjwt.decode(token, options={"verify_signature": False})
+    assert claims["exp"] - claims["iat"] == 12 * 3600
+    assert [n for n, _ in _world["events"]] == ["auth.sso_signin"]
+
+
+def test_password_login_is_closed_under_sso(monkeypatch) -> None:
+    from fastapi import FastAPI
+
+    monkeypatch.setattr(oauth.settings, "oauth_login_provider", "oidc")
+    app = FastAPI()
+    app.include_router(login.router)
+    r = TestClient(app).post("/v1/auth/login", json={"identifier": "a", "password": "b"})
+    assert r.status_code == 404 and r.json()["detail"]["code"] == "PASSWORD_LOGIN_SSO"

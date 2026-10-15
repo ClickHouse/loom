@@ -31,6 +31,8 @@ TypeScript SDKs, and the `/me` dashboard. This page lists every page in reading 
 
 - [Deployment](operations/deployment.md): shapes, environment, providers, identity modes,
   proxy, images, production checklist.
+- [Single sign-on](operations/sso.md): Okta or another OIDC provider for the dashboard,
+  `loom login` and MCP clients.
 - [Upgrades](operations/upgrades.md) · [Backup and recovery](operations/backup-and-recovery.md) ·
   [Monitoring](operations/monitoring.md) · [Maintenance](operations/maintenance.md) ·
   [Troubleshooting](operations/troubleshooting.md) ·

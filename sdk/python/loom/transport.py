@@ -26,6 +26,7 @@ import httpx
 
 from loom._logging import logger, redact_headers, redact_secret
 from loom._version import __version__
+from loom.credentials import StoredLogin
 from loom.errors import (
     DEFAULT_RETRY_AFTER_S,
     INVALID_RESPONSE_CODE,
@@ -252,6 +253,7 @@ class Transport:
         ratelimit_max_wait_s: float | None = None,
         retry: RetryPolicy | dict[str, Any] | None = None,
         consumer: str = "",
+        auth: StoredLogin | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         #: The consumer this process speaks for. Stamped into every body that
@@ -263,7 +265,12 @@ class Transport:
         # A blank or whitespace credential is no credential (an exported but
         # empty LOOM_API_KEY must not send `Bearer ` and confuse the 401).
         api_key = (api_key or "").strip() or None
-        self._key_hint = redact_secret(api_key) if api_key else "none"
+        # `auth` (a `loom login` profile) sends and refreshes its own token.
+        self._auth = auth
+        if auth is not None:
+            self._key_hint = f"login:{auth.profile}"
+        else:
+            self._key_hint = redact_secret(api_key) if api_key else "none"
         # The credential lives in the httpx client's header set only; this
         # object's attributes and repr never carry it.
         self._hints_seen: set[str] = set()
@@ -278,6 +285,7 @@ class Transport:
             http2=True,
             limits=httpx.Limits(max_connections=100, max_keepalive_connections=50),
             headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
+            auth=auth,
         )
         self._timeout_s = float(timeout_s)
         self._pacing = pacing
@@ -313,11 +321,13 @@ class Transport:
     @property
     def has_credential(self) -> bool:
         """Whether an `Authorization` header goes out with every request."""
-        return "Authorization" in self._client.headers
+        return self._auth is not None or "Authorization" in self._client.headers
 
     def token_claims(self) -> TokenClaims | None:
         """The bearer token's payload (org, namespaces, roles, ns_roles),
         decoded, not verified; None without a JWT."""
+        if self._auth is not None:
+            return decode_token_claims(self._auth.current_token() or None)
         auth = self._client.headers.get("Authorization", "")
         return decode_token_claims(auth[7:] if auth.startswith("Bearer ") else None)
 

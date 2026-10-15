@@ -2623,7 +2623,13 @@ CREATE TABLE IF NOT EXISTS loom.oauth_state
     `consumed` UInt8 DEFAULT 0,
     `created_at` DateTime DEFAULT now(),
     `expires_at` UInt32 DEFAULT 0,
-    `version` UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
+    `version` UInt64 DEFAULT toUnixTimestamp64Nano(now64(9)),
+    `family` String DEFAULT '',
+    `user_code` String DEFAULT '',
+    `status` LowCardinality(String) DEFAULT '',
+    `address` String DEFAULT '',
+    `ticket` String DEFAULT '',
+    `upstream_refresh` String DEFAULT ''
 )
 ENGINE = ReplacingMergeTree(version)
 PARTITION BY record_type

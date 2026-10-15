@@ -25,7 +25,7 @@ Python 3.11+. Runtime deps: `httpx[http2]` (HTTP/2 via `h2`).
 You'll need:
 
 - A `base_url` pointing at your team's Loom deployment.
-- A JWT — your operator mints one via `POST /v1/admin/token.mint` or `loom mint-token` inside the Loom container.
+- A credential. Either sign in once with `python -m loom login --server <url>` (or `loom.login(url)` in a notebook), approving on any browser with your password or SSO; every `Agent` then uses that session and refreshes it. Or use a JWT your operator mints (`POST /v1/admin/token.mint`, `loom mint-token`), passed as `api_key=` or `LOOM_API_KEY` — the right choice for CI and services.
 
 ```python
 from loom import Datapack
