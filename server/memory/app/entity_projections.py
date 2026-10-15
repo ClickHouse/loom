@@ -576,8 +576,8 @@ async def reopen_held_facts(
                -- The latest row's place in the order of its relation.
                max(seen_at) AS seen, argMax(tuple(valid_from), seen_at).1 AS start,
                argMax(valid_to IS NULL, seen_at) AS open,
-               -- The newest open row by start day, then seen, as the repair orders them.
-               countIf(valid_to IS NULL) > 0 AS any_open,
+               -- The newest open row by start day, then seen, as the repair orders them;
+               -- a fact with none reads back as the 1970 default, older than any marker.
                argMaxIf(tuple(valid_from, seen_at),
                         tuple(toDate(ifNull(valid_from, toDateTime(seen_at))), seen_at),
                         valid_to IS NULL) AS newest_open,
@@ -628,69 +628,7 @@ async def reopen_held_facts(
     # them and adds none, while another Undo in the same second is told apart.
     fresh = [m for m in markers if not m.row["restored"]]
     settings = {"async_insert": 1, "wait_for_async_insert": 1}
-    # The edge plane agrees: each new marker's edge gets an observation from the Undo
-    # too, inserted before the markers, from its earliest marker's start. Only a pair
-    # the graph has an edge for: the Undo invents none, and weighs it as above. Edges
-    # carry no microseconds, so an edge row seen in the Undo's second, starting there,
-    # and not closed by a repair since, stands for it: a replay after the markers
-    # failed to land does not add a second one.
-    edge_markers: dict[tuple[str, str], list[_Marker]] = {}
-    for m in fresh:
-        pair = canonical_edge_pair(m.row["subject"], m.row["object"])
-        edge_markers.setdefault(pair, []).append(m)
-    pairs = sorted(edge_markers)
-    starts = [min(m.start for m in edge_markers[p]) for p in pairs]
-    edges = (
-        await ch.query_all(
-            """
-            SELECT entity_a, entity_b,
-                   argMax(tuple(if(invalid_at IS NULL, valid_to, NULL)), last_seen).1
-                       AS ends,
-                   countIf(valid_from = arrayElement({starts:Array(DateTime)},
-                               indexOf({pairs:Array(Tuple(String, String))}, (entity_a, entity_b)))
-                           AND last_seen = {at:DateTime} AND invalid_at IS NULL) AS restored,
-                   countIf(co_occur > 0
-                           AND (valid_from IS NULL OR valid_from <= {at:DateTime})
-                           AND (valid_to IS NULL OR valid_to > {at:DateTime})
-                           AND invalid_at IS NULL) AS weighted
-            FROM loom.entity_edges
-            WHERE org = {org:String} AND namespace = {ns:String}
-              AND (entity_a, entity_b) IN {pairs:Array(Tuple(String, String))}
-            GROUP BY entity_a, entity_b
-            SETTINGS select_sequential_consistency = 1, apply_mutations_on_fly = 1
-            """,
-            params={
-                "org": input.org,
-                "ns": input.namespace,
-                "pairs": pairs,
-                "starts": starts,
-                "at": now,
-            },
-        )
-        if pairs
-        else []
-    )
-    edge_rows = []
-    for e in edges:
-        pair = (e["entity_a"], e["entity_b"])
-        if e["restored"] or pair not in edge_markers:
-            continue
-        start = starts[pairs.index(pair)]
-        lost = all(_triple(m) in beaten for m in edge_markers[pair])
-        edge_rows.append(
-            entity_edge_row(
-                input.org,
-                input.namespace,
-                pair[0],
-                pair[1],
-                last_seen=now,
-                valid_from=start,
-                valid_to=_still_ahead(e["ends"], start),
-                co_occur=0 if e["weighted"] or lost else 1,
-            )
-        )
-    if edge_rows:
-        await ch.insert("loom.entity_edges", edge_rows, settings=settings)
+    await _insert_edge_markers(input, fresh, beaten, now, settings=settings, ch=ch)
     rows = [
         entity_triple_row(
             input.org,
@@ -771,11 +709,83 @@ def _triple(m: _Marker) -> tuple[str, str, str]:
     return (m.row["subject"], m.row["relation"], m.row["object"])
 
 
+async def _insert_edge_markers(
+    input: Any,
+    fresh: list[_Marker],
+    beaten: set[tuple[str, str, str]],
+    now: datetime,
+    *,
+    settings: dict[str, Any],
+    ch: Any,
+) -> None:
+    # The edge plane agrees: each new marker's edge gets an observation from the Undo
+    # too, inserted before the markers, from its earliest marker's start. Only a pair
+    # the graph has an edge for: the Undo invents none, and weighs it as above. Edges
+    # carry no microseconds, so an edge row seen in the Undo's second, starting there,
+    # and not closed by a repair since, stands for it: a replay after the markers
+    # failed to land does not add a second one.
+    edge_markers: dict[tuple[str, str], list[_Marker]] = {}
+    for m in fresh:
+        pair = canonical_edge_pair(m.row["subject"], m.row["object"])
+        edge_markers.setdefault(pair, []).append(m)
+    pairs = sorted(edge_markers)
+    starts = [min(m.start for m in edge_markers[p]) for p in pairs]
+    edges = (
+        await ch.query_all(
+            """
+            SELECT entity_a, entity_b,
+                   argMax(tuple(if(invalid_at IS NULL, valid_to, NULL)), last_seen).1
+                       AS ends,
+                   countIf(valid_from = arrayElement({starts:Array(DateTime)},
+                               indexOf({pairs:Array(Tuple(String, String))}, (entity_a, entity_b)))
+                           AND last_seen = {at:DateTime} AND invalid_at IS NULL) AS restored,
+                   countIf(co_occur > 0
+                           AND (valid_from IS NULL OR valid_from <= {at:DateTime})
+                           AND (valid_to IS NULL OR valid_to > {at:DateTime})
+                           AND invalid_at IS NULL) AS weighted
+            FROM loom.entity_edges
+            WHERE org = {org:String} AND namespace = {ns:String}
+              AND (entity_a, entity_b) IN {pairs:Array(Tuple(String, String))}
+            GROUP BY entity_a, entity_b
+            SETTINGS select_sequential_consistency = 1, apply_mutations_on_fly = 1
+            """,
+            params={
+                "org": input.org,
+                "ns": input.namespace,
+                "pairs": pairs,
+                "starts": starts,
+                "at": now,
+            },
+        )
+        if pairs
+        else []
+    )
+    edge_rows = []
+    for e in edges:
+        pair = (e["entity_a"], e["entity_b"])
+        if e["restored"] or pair not in edge_markers:
+            continue
+        start = starts[pairs.index(pair)]
+        lost = all(_triple(m) in beaten for m in edge_markers[pair])
+        edge_rows.append(
+            entity_edge_row(
+                input.org,
+                input.namespace,
+                pair[0],
+                pair[1],
+                last_seen=now,
+                valid_from=start,
+                valid_to=_still_ahead(e["ends"], start),
+                co_occur=0 if e["weighted"] or lost else 1,
+            )
+        )
+    if edge_rows:
+        await ch.insert("loom.entity_edges", edge_rows, settings=settings)
+
+
 def _newest(m: _Marker) -> tuple[date, datetime, str]:
     """The newest row the repair weighs `m`'s value at: the marker, or the fact's newest
     open row when that is newer."""
-    if not m.row["any_open"]:
-        return _key(m)
     start, seen = m.row["newest_open"]
     return max(_key(m), observation_key(start, seen, m.row["object"]))
 

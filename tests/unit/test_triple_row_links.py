@@ -12,6 +12,9 @@ from server.core.hashing import sha256_value
 from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetResult
 from server.memory.app.projections import write_entity_triples
 
+# What ClickHouse reads back as a fact's newest open row when it has none.
+_NO_OPEN_ROW = (None, datetime(1970, 1, 1))
+
 
 class _CH:
     def __init__(self) -> None:
@@ -213,7 +216,7 @@ async def test_an_undo_weighs_what_is_open_with_pending_closes_applied(monkeypat
                 return [{"subject": "user", "relation": "live_in", "object": city,
                          "confidence": 1.0, "provenance": "extracted", "ends": until,
                          "seen": stored + timedelta(microseconds=i), "start": None, "open": 0,
-                         "any_open": 0, "restored": 0, "weighted": 1}
+                         "newest_open": _NO_OPEN_ROW, "restored": 0, "weighted": 1}
                         for city, i in (("berlin", 1), ("rome", 0))]  # fmt: skip
             return [{"entity_a": "berlin", "entity_b": "user", "ends": until,
                      "restored": 0, "weighted": 1}]  # fmt: skip
@@ -370,7 +373,7 @@ async def _undo_of_rome_and(
 def _as_read(row: dict[str, Any], params: Any) -> dict[str, Any]:
     """`row` as the Undo's read returns it: a stored marker is its own only when seen in
     the Undo's range, and a fact's newest open row is its latest one unless given."""
-    row = {"newest_open": (row["start"], row["seen"]), "any_open": row["open"], **row}
+    row = {"newest_open": (row["start"], row["seen"]) if row["open"] else _NO_OPEN_ROW, **row}
     if "marker_seen" in row:
         row["restored"] = int(params["seen"] <= row["marker_seen"] < params["until"])
     return row
@@ -477,7 +480,6 @@ async def test_an_undo_weighs_a_value_by_its_newest_open_row(monkeypatch) -> Non
         "seen": datetime(2026, 9, 15),
         "open": 1,
         "newest_open": (datetime(2026, 12, 5), datetime(2026, 9, 7)),
-        "any_open": 1,
     }
     ch, _ = await _undo_of_rome_and(monkeypatch, berlin)
     assert _weights(ch.inserts["loom.entity_triples"], "co_occur")["berlin"] == (1,)
