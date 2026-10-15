@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict
 from server.core.ch import sequential_reads
 from server.core.errors import OverloadedError
 from server.core.repo_base import _CHClient, _default_client, param_slices
+from server.identity.domain.read_scope import ReadFilters, scope_where
 from server.knowledge.domain.conversations import EMBEDDED_EXCERPT_CHARS, ConversationRole
 
 
@@ -612,6 +613,7 @@ async def search_substring(
     agent: str,
     query: str,
     *,
+    scope: ReadFilters,
     thread_id: str | None = None,
     role: str | None = None,
     run_id: str | None = None,
@@ -656,6 +658,7 @@ async def search_substring(
     if user_id is not None:
         where.append("user_id = {user_id:String}")
         params["user_id"] = user_id
+    where.extend(scope_where(scope, params))
     if saved_only:
         where.append("is_saved")
 

@@ -416,3 +416,20 @@ def test_saved_message_ops_are_registered_with_their_roles() -> None:
     assert save.required_role is Role.WRITER
     assert save.idempotent is True
     assert search.required_role is Role.VIEWER
+
+
+@pytest.mark.asyncio
+async def test_a_session_bounded_token_cannot_search_saved_messages() -> None:
+    """Conversation rows carry no session_id: an own_session scope has nothing to
+    filter on, so the search is refused rather than widened to the user."""
+    from server.core.errors import AuthInsufficientError
+    from server.identity.domain.read_scope import ReadFilters, read_filters_bound
+    from server.knowledge.app import conversations
+
+    scope = ReadFilters(scope="own_session", user_id="u-1", session_id="s-1")
+    with read_filters_bound(None, scope), pytest.raises(AuthInsufficientError):
+        await conversations.handle_conversation_search_saved_messages(
+            ConversationSearchSavedMessagesInput(
+                org="o", namespace="n", agent="librechat", user_id="u-1", query="q"
+            )
+        )

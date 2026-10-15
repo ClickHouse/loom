@@ -14,8 +14,11 @@ from server.auth.fanout import namespaces_to_search
 from server.core.cursors import decode_cursor as _decode_cursor
 from server.core.cursors import encode_cursor as _encode_cursor
 from server.core.datetimes import naive_utc_now
+from server.core.errors import AuthInsufficientError
 from server.embedding import get_embedder
 from server.identity.app.conversation_logging import set_conversation_logging
+from server.identity.app.request_scope import request_scope
+from server.identity.domain.read_scope import ReadFilters
 from server.knowledge.api.models_conversations import (
     ConversationAppendInput,
     ConversationAppendOutput,
@@ -738,6 +741,18 @@ async def handle_conversation_list(
     return ConversationListOutput(rows=entries, next_cursor=next_cursor)
 
 
+def _conversation_read_scope() -> ReadFilters:
+    """The request's read scope for conversation rows. They carry a user but no
+    session, so a session-bounded token cannot be kept to its rows and is refused."""
+    scope = request_scope()
+    if scope.scope == "own_session":
+        raise AuthInsufficientError(
+            "conversation rows carry no session_id, so read_scope=own_session cannot "
+            "bound them; call with an own_user or namespace-scoped token"
+        )
+    return scope
+
+
 async def handle_conversation_search(
     input: ConversationSearchInput,
 ) -> ConversationSearchOutput:
@@ -768,11 +783,14 @@ async def _search_conversations(
         log.warning("conversation embed query failed; falling back to substring: %s", e)
         query_vec = None
 
+    scope = _conversation_read_scope()
     namespaces, skipped = await namespaces_to_search(
         input.org, input.namespace, input.namespace_scope
     )
     if query_vec is None:
-        return await _search_substring_fallback(input, namespaces, skipped, saved_only=saved_only)
+        return await _search_substring_fallback(
+            input, namespaces, skipped, scope=scope, saved_only=saved_only
+        )
 
     async def _search_one(ns: str) -> tuple[str, list[ConversationHit]]:
         return ns, await vector_search(
@@ -783,6 +801,7 @@ async def _search_conversations(
                 embedding_model=embedder.model_name,
                 query_vec=query_vec,
                 top_k=input.top_k,
+                scope=scope,
                 thread_id=input.thread_id or None,
                 role=input.role or None,
                 run_id=input.run_id,
@@ -823,6 +842,7 @@ async def _search_substring_fallback(
     namespaces: list[str],
     skipped: list[str],
     *,
+    scope: ReadFilters,
     saved_only: bool,
 ) -> ConversationSearchOutput:
     """Lexical fallback used when the embedder is unavailable: the same
@@ -834,6 +854,7 @@ async def _search_substring_fallback(
         namespaces,
         input.agent,
         input.query,
+        scope=scope,
         thread_id=input.thread_id or None,
         role=input.role or None,
         run_id=input.run_id,
