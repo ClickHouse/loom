@@ -41,7 +41,6 @@
   "server/memory/app/search/assemble.py": 1,
   "server/memory/app/search/key_match.py": 1,
   "server/memory/app/search/payload.py": 2,
-  "server/memory/app/search/vector_legs.py": 1,
   "server/memory/app/value_updates.py": 1,
   "server/memory/domain/context_block.py": 1,
   "server/memory/domain/extraction_temporal.py": 1,

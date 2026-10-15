@@ -378,7 +378,7 @@ async def tombstone_thread(
 
 async def search_substring(
     org: str,
-    namespace: str,
+    namespaces: list[str],
     agent: str,
     query: str,
     *,
@@ -388,7 +388,8 @@ async def search_substring(
     limit: int = 50,
     ch: _CHClient | None = None,
 ) -> list[MessageRow]:
-    """Case-insensitive substring search over loom.conversations.
+    """Case-insensitive substring search over loom.conversations in
+    `namespaces`, in one statement.
 
     The lexical fallback for conversation.search when the embedder is
     unavailable. Ordering is `ts DESC` (recency-first); cosineDistance
@@ -397,14 +398,14 @@ async def search_substring(
     ch = ch or _default_client()
     where = [
         "org = {org:String}",
-        "namespace = {ns:String}",
+        "namespace IN {nss:Array(String)}",
         "agent = {agent:String}",
         "positionCaseInsensitive(content, {q:String}) > 0",
         "tombstoned_at IS NULL",
     ]
     params: dict[str, Any] = {
         "org": org,
-        "ns": namespace,
+        "nss": list(namespaces),
         "agent": agent,
         "q": query,
         "limit": int(limit),

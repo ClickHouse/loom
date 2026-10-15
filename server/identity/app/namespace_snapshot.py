@@ -6,6 +6,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from server.core import grant_cache
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.grant_sql import LIVE_GRANT
@@ -20,6 +21,7 @@ from server.identity.api.models import (
     _SnapshotTypeRow,
 )
 from server.identity.app import namespace as _registry
+from server.identity.store import grants as grants_repo
 from server.identity.store import namespaces as namespaces_repo
 from server.memory.app import snapshot_rows as memory_snapshot
 from server.memory.app.provenance import writer_actor
@@ -151,13 +153,19 @@ async def handle_namespace_restore(
     payload = input.payload
 
     # Existing target, active or soft-deleted (namespace.delete leaves its data in place) ⇒
-    # the same admin + restricted check as namespace.register, before anything about the
+    # the admin + restricted check of namespace.register, less its pass for the
+    # auto-registered owner (a restore writes grants), before anything about the
     # target is read or answered. Fresh target ⇒ caller becomes admin via the auto-grant
     # below.
     target_existing = await namespaces_repo.fetch_row(input.org, input.target_namespace, ch=ch)
     if target_existing is not None:
         await _registry.require_admin_of_existing(
-            target_existing, input.org, input.target_namespace, caller, visibility=None
+            target_existing,
+            input.org,
+            input.target_namespace,
+            caller,
+            visibility=None,
+            owner_may_complete=False,
         )
 
     # Idempotency: if this snapshot_id already appears as a restore
@@ -198,6 +206,7 @@ async def handle_namespace_restore(
     # mutates loom.namespaces.
     if target_existing is not None and not bool(target_existing.get("active", False)):
         await ch.insert("loom.namespaces", [{**target_existing, "active": True, "updated_at": now}])
+        grant_cache.invalidate(input.org)  # the claim cap reads account ties from this table
     elif target_existing is None:
         await ch.insert(
             "loom.namespaces",
@@ -260,8 +269,7 @@ async def handle_namespace_restore(
     # Grants. granted_by = caller so the restore is traceable; the
     # original granted_by stays in the snapshot payload.
     if payload.grants:
-        await ch.insert(
-            "loom.namespace_grants",
+        await grants_repo.insert_rows(
             [
                 {
                     "org": input.org,
@@ -275,7 +283,7 @@ async def handle_namespace_restore(
                 }
                 for i, g in enumerate(payload.grants)
             ],
-            settings={"async_insert": 0, "wait_for_async_insert": 1},
+            ch=ch,
         )
 
     # Provenance audit row — carries the snapshot_id in the subject for

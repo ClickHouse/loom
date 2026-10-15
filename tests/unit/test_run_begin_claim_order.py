@@ -424,18 +424,58 @@ def test_a_failed_boot_probe_leaves_it_to_the_first_begin(monkeypatch) -> None:
     assert runs_store.claims_atomic() is None
 
 
+@pytest.mark.parametrize("table", ["agent_run_claims", "oauth_claims", "grant_claims"])
 @pytest.mark.parametrize(
     ("rows", "atomic"), [([{"engine": "KeeperMap"}], True), ([], False), (None, None)]
 )
-def test_the_doctor_reads_the_same_claims_check(monkeypatch, rows, atomic) -> None:
+def test_the_doctor_reads_the_same_claims_check(monkeypatch, rows, atomic, table) -> None:
+    from server.auth import grant_claims, oauth_claims
     from server.cli import doctor
+    from server.core.schema import migrate_lease
     from server.settings import settings
 
+    table_sql = {
+        "agent_run_claims": migrate_lease.RUN_CLAIMS_TABLE_SQL,
+        "oauth_claims": oauth_claims.CLAIMS.table_sql,
+        "grant_claims": grant_claims.CLAIMS.table_sql,
+    }[table]
+
     def query(_settings, sql, params):
-        assert "agent_run_claims" in sql
+        assert f"'{table}'" in sql
         if rows is None:
             raise RuntimeError("connection refused")
         return rows
 
     monkeypatch.setattr(doctor, "_doctor_ch_query", query)
-    assert doctor._doctor_run_claims(settings) is atomic
+    assert doctor._doctor_keeper_table(settings, table_sql) is atomic
+
+
+@pytest.mark.parametrize("oauth", [True, False])
+def test_the_doctor_reports_unclaimed_oauth_exchanges_only_with_oauth_on(
+    monkeypatch, oauth: bool
+) -> None:
+    from server.cli import doctor
+    from server.settings import settings
+
+    asked: list[str] = []
+
+    def query(_settings, sql, params):
+        asked.append(sql)
+        return [] if "'oauth_claims'" in sql else [{"engine": "KeeperMap"}]
+
+    monkeypatch.setattr(settings, "oauth_enabled", oauth)
+    monkeypatch.setattr(doctor, "_doctor_ch_query", query)
+    monkeypatch.setattr(doctor, "_doctor_reader_probe", lambda _s: ("ok", ""))
+    codes = [p.code for p in doctor._doctor_problems()]
+    assert ("oauth_claims_not_atomic" in codes) is oauth
+    assert any("'oauth_claims'" in sql for sql in asked) is oauth
+
+
+def test_the_doctor_reports_grant_changes_without_a_keeper(monkeypatch) -> None:
+    from server.cli import doctor
+
+    def _missing(_settings, table_sql):
+        return "'grant_claims'" not in table_sql
+
+    monkeypatch.setattr(doctor, "_doctor_keeper_table", _missing)
+    assert "grant_changes_not_atomic" in [p.code for p in doctor._doctor_problems()]

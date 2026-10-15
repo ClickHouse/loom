@@ -47,6 +47,7 @@ async def handle_audit_list(input: AuditListInput) -> AuditListOutput:
         # tokens included (resolve_org_scope drops the same set); otherwise
         # admins (and auth-off) pass and a non-admin is held to their own
         # namespaces.
+        from server.auth.authz import claim_cap
         from server.auth.context import (
             current_auth,
             resolve_my_namespaces,
@@ -66,9 +67,10 @@ async def handle_audit_list(input: AuditListInput) -> AuditListOutput:
                 # Covered if the JWT reaches the namespace — can_access honours
                 # the `*` org/namespace wildcards (operator tooling) — or a
                 # grant elevates the caller into it.
-                covered = auth.can_access(input.org, input.namespace) or (
-                    input.namespace in await resolve_my_namespaces(input.org)
-                )
+                covered = (
+                    auth.can_access(input.org, input.namespace)
+                    and await claim_cap(auth, input.org, input.namespace) != 0
+                ) or input.namespace in await resolve_my_namespaces(input.org)
                 if not covered:
                     return AuditListOutput(rows=[], next_cursor=None)
         scope_where = " AND namespace = {ns:String}"

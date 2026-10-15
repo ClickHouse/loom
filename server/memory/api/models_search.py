@@ -30,13 +30,15 @@ class MemorySearchInput(BaseModel):
 
     `namespace_scope` controls which namespaces the query spans:
       • "this"      — `input.namespace` only.
-      • "all_mine"  — every namespace the caller belongs to (JWT + grants).
+      • "all_mine"  — also the caller's own namespaces, up to the fan-out cap
+                      (the rest in `namespaces_skipped`); see
+                      docs/concepts/identities-and-namespaces.md#reading-several-namespaces.
       • unset       — the deployment default (setting
                       `memory_search_default_namespace_scope`, default
                       "this").
-    The response names the namespaces actually searched
-    (`namespaces_searched`) and marks every hit from a namespace other than
-    the addressed one with `score_components.foreign = 1.0`.
+    The response names the namespaces in scope (`namespaces_searched`) and
+    marks every hit from a namespace other than the addressed one with
+    `score_components.foreign = 1.0`.
     """
 
     org: str
@@ -64,10 +66,9 @@ class MemorySearchInput(BaseModel):
     # Which rows to read: "private" = per-agent rows (narrowed to `agent` when it names
     # one), "shared" = rows promoted to the namespace's shared scope.
     scope: Literal["private", "shared"] = "private"
-    # "all_mine" spans every namespace the caller is a member of (own +
-    # granted); "this" scopes to input.namespace only. None → the deployment
-    # default `memory_search_default_namespace_scope` (default "this"; an
-    # operator may set all_mine to search the union).
+    # "this" reads input.namespace only; "all_mine" also the caller's own
+    # namespaces, see docs/concepts/identities-and-namespaces.md#reading-several-namespaces.
+    # None → `memory_search_default_namespace_scope` (default "this").
     namespace_scope: Literal["this", "all_mine"] | None = None
     # Recall fusion mode. Default "rrf" = Reciprocal Rank Fusion of lexical +
     # semantic — parameter-free and score-scale-independent, so heterogeneous
@@ -669,10 +670,14 @@ class MemorySearchOutput(BaseModel):
     bodies_elided: int = 0
     # Estimated tokens (chars / 4) the whole values served under bodies="unit" added.
     tokens_returned: int = 0
-    # The namespaces this search actually read: the
-    # addressed one first, then the fan-out under namespace_scope=all_mine.
-    # A single-namespace caller sees exactly [input.namespace].
+    # The namespaces in this search's scope: the addressed one first, then the
+    # fan-out under namespace_scope=all_mine. A tiered all_mine search can stop
+    # before it reaches the last of them. A single-namespace caller sees
+    # exactly [input.namespace].
     namespaces_searched: list[str] = Field(default_factory=list)
+    # Namespaces of the caller the fan-out did not read because it stops at
+    # `memory_search_fanout_max_namespaces`; address one by name to search it.
+    namespaces_skipped: list[str] = Field(default_factory=list)
     # Distinct memories in the fused pool before the top_k cut
     # ("showing 10 of 124"); the handle that serves the next slice when the
     # caller asked for paging and there was more; and this page's offset

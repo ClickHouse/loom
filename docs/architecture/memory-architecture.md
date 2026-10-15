@@ -371,7 +371,7 @@ the value it was written or stated for (`carried`):
   asserted after the Undo, or starting on a later day, stays current. An Undo never
   retires a row. A replayed Undo reuses the restore's instant from the failure, not the
   replay's clock, so it keeps its place in the order: a value asserted after the Undo,
-  even in its second, stays current. Each Undo has an id (`restore_id`, migration 031),
+  even in its second, stays current. Each Undo has an id (`restore_id`, migration 034),
   stored on every triple and edge marker it writes and recorded in its failure: a marker
   is this Undo's when it carries that id, open or closed since, so a replay adds none
   and restates each as stored, from its own start ("Berlin on Dec 1" still closes Rome
@@ -411,7 +411,7 @@ the value it was written or stated for (`carried`):
   current and the older closes when the newer starts. Every triple row is placed by one
   key, `(start day, seen_at, object)`: its start is its `valid_from`, or, undated, its
   `seen_at`, the arrival of the write that stored it to the microsecond, plus one
-  microsecond per triple stated before it in that write (migration 030; `last_seen`,
+  microsecond per triple stated before it in that write (migration 033; `last_seen`,
   `invalid_at`, `valid_from` and `valid_to` stay whole seconds, the arrival's for the
   first two). Values on different days order by day: Rome from July, imported after London
   was stated undated in October, closes when London was seen, and London undated on Oct 5
@@ -450,7 +450,7 @@ the value it was written or stated for (`carried`):
 
 A facet edge (the agent's file, concept or topic) is no row's: it is never linked, and
 no retirement closes it. A triple another live row's links still state stays open; a
-row stored before migration 028 has none, so it keeps nothing open for other rows. A
+row stored before migration 031 has none, so it keeps nothing open for other rows. A
 cycle or a longer chain leaves the loser's triples open and logs a warning, and a write
 records the pair for `projection_repair`; a pair even the repair cannot read abandons
 its row (status `abandoned`, with `unfollowable_chain: N pair(s)` in `error_message`).

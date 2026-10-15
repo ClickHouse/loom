@@ -1,4 +1,5 @@
-"""The namespace facts the authorization gate reads.
+"""The namespace facts the authorization gate reads, and the ones an all_mine
+fan-out narrows by (kind, visibility).
 
 The gate is platform code; what it decides on belongs to the domains: which
 namespaces of an org are restricted (the directory rows and the code-plane
@@ -65,6 +66,11 @@ class NamespaceDirectory(Protocol):
 
     async def fanout_namespaces(self, org: str, namespaces: list[str]) -> list[str]:
         """`namespaces` in order, narrowed to the kinds a fan-out spans."""
+        ...
+
+    async def public_namespaces(self, org: str, namespaces: list[str]) -> set[str]:
+        """Those of `namespaces` whose visibility is public; one of unknown
+        visibility is not."""
         ...
 
 

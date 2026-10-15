@@ -2208,6 +2208,7 @@ export interface ConversationHit {
 
 export interface ConversationSearchOutput {
   hits: ConversationHit[];
+  namespaces_skipped?: string[];
 }
 
 export interface ConversationSetLoggingInput {
@@ -3194,6 +3195,7 @@ export interface SearchHit {
 export interface KnowledgeSearchOutput {
   results: SearchHit[];
   embedding_model: string;
+  namespaces_skipped?: string[];
 }
 
 export interface KnowledgeSynthesizeInput {
@@ -5381,6 +5383,7 @@ export interface MemorySearchOutput {
   bodies_elided?: number;
   tokens_returned?: number;
   namespaces_searched?: string[];
+  namespaces_skipped?: string[];
   candidates_total?: number;
   next_page?: string;
   page_offset?: number;
@@ -6261,6 +6264,7 @@ export interface NamespaceRegisterInput {
   org: string;
   /** Recommend kebab-case, e.g. eng-tooling */
   namespace: string;
+  /** The namespace's owner; an account with a login (an email, or an agent's claim code) keeps its stored owner exactly, so send that value back to update settings. */
   owner_email: string;
   description?: string | null;
   kind?: "memory" | "code" | "bench" | null;
@@ -7347,6 +7351,7 @@ export interface SearchQueryOutput {
   profile?: Record<string, unknown>;
   conversations?: Record<string, unknown>;
   withheld?: Record<string, unknown> | null;
+  namespaces_skipped?: string[];
 }
 
 export interface SessionBriefDeleteInput {

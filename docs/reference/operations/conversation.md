@@ -171,11 +171,12 @@ Text search across a namespace's conversation history (ILIKE over message conten
 | `run_id` | `str \| None` | `None` | optional: filter by run_id |
 | `role` | `Literal['user', 'assistant', 'system', 'tool'] \| None` | `None` | optional: filter by speaker |
 | `top_k` | `int` | `20` | At most this many hits (1-200). |
-| `namespace_scope` | `Literal['this', 'all_mine']` | `'all_mine'` | "all_mine" fans out across every namespace the caller belongs to — symmetric with memory.search / knowledge.search. |
+| `namespace_scope` | `Literal['this', 'all_mine']` | `'all_mine'` | "all_mine" also reads the caller's own namespaces, up to `memory_search_fanout_max_namespaces`, as knowledge.search does. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `hits` | `list[_ConversationHit]` | Matching messages, most similar first; empty when none clears the similarity floor. |
+| `namespaces_skipped` | `list[str]` | Namespaces of the caller an all_mine search did not read because it stops at `memory_search_fanout_max_namespaces`; address one by name to search it. |
 
 ## `conversation.set_logging`
 

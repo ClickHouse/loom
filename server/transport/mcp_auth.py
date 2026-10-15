@@ -50,8 +50,8 @@ def _not_accessible_result(tool_name: Any, auth: Any, ns: str) -> dict[str, Any]
         )
     msg = (
         f"namespace {ns!r} is not in your accessible list and you don't have an active grant "
-        f"on it. Omit the namespace argument to search across all namespaces you do have "
-        f"access to, or request a grant via /me/discover."
+        f"on it. Omit the namespace argument to use your default namespace (loom_search "
+        f"reads your own namespaces), or request a grant via /me/discover."
     )
     body = {"error": msg, "code": "NAMESPACE_NOT_ACCESSIBLE", "namespace": ns}
     return {"content": [{"type": "text", "text": msg}], "isError": True, "structuredContent": body}
@@ -252,9 +252,9 @@ async def _screen_tool_call(req: dict[str, Any], auth: AuthInfo) -> dict[str, An
         return None
     req_org = args.get("org")
     req_ns = args.get("namespace")
-    # loom_search is server-defaulted and fans across every
-    # accessible namespace — strip any namespace arg rather than
-    # reject the call, and let the handler run with defaults.
+    # loom_search addresses the caller's home and reads its own memory
+    # namespaces (`server.auth.fanout`), so strip any namespace arg rather
+    # than reject the call, and let the handler run with defaults.
     tool_name = params.get("name")
     if tool_name == _LOOM_SEARCH_TOOL_NAME and req_ns:
         args.pop("namespace", None)

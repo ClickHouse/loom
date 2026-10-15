@@ -103,8 +103,8 @@ def _synthetic_tool_descriptors_core() -> list[dict[str, Any]]:
                 "list, a count), call again with "
                 "`page` = `memory.next_page` to read the next slice. Stop when "
                 "next_page is empty or the answer is complete.\n\n"
-                "Namespaces are selected server-side (the memory-kind "
-                "namespaces the caller can read; code/QA indexes have their "
+                "Namespaces are selected server-side (your own memory-kind "
+                "namespaces, up to a cap; code/QA indexes have their "
                 "own tools); no namespace argument. Do NOT call for general "
                 "knowledge, arithmetic, or code/syntax help."
             ),
@@ -566,6 +566,10 @@ def _memory_section_lines(
     return out
 
 
+# How many skipped namespaces the loom_search text names before "and N more".
+_SKIPPED_NAMED = 5
+
+
 def search_answer(
     payload: dict[str, Any], arguments: dict[str, Any], namespace: str, mcp_session_id: str
 ) -> dict[str, Any]:
@@ -587,6 +591,14 @@ def search_answer(
         f"{know_n} knowledge, {conv_n} conversation hit"
         f"{'' if (mem_n + prof_n + know_n + conv_n) == 1 else 's'}.{withheld_note(payload)}"
     ]
+    if skipped := payload.get("namespaces_skipped"):
+        named = ", ".join(skipped[:_SKIPPED_NAMED])
+        more = len(skipped) - _SKIPPED_NAMED
+        lines.append(
+            f"Not read, over the fan-out cap: {named}"
+            + (f" and {more} more (namespaces_skipped)" if more > 0 else "")
+            + "."
+        )
     if prof_hits:
         lines.append("\nProfile hits:")
         for h in prof_hits[:top_k]:

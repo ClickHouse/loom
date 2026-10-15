@@ -5,9 +5,12 @@ wire-hit fields every leg copies."""
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 from typing import Any
 
+from server.core.vectors.private_first import best_similarity, search_private_first
+from server.identity.app import namespace_visibility
 from server.memory.api.models_search import _MemorySearchHit
 from server.memory.app.search.context import SearchContext
 from server.memory.app.search.filters import read_filters
@@ -135,9 +138,9 @@ async def _run_vector_legs(
     input = ctx.input
 
     # Private-first sequential fallback (cross-namespace only, unscoped /
-    # order-less tokens): search private-visibility namespaces first; if a
-    # private hit clears the relevance floor, return only those and skip the
-    # public pass — otherwise also search public and merge. Without this a
+    # order-less tokens): search the addressed namespace and the private ones
+    # first; if a hit there clears the relevance floor, skip the public pass —
+    # otherwise also search the public ones and merge. Without this a
     # strong private hit gets diluted by team-scratchpad noise.
     # CAVEAT — visibility is a rough OWNERSHIP proxy here, nothing more. It is
     # orthogonal to the caller's role: a private namespace the caller only
@@ -154,10 +157,10 @@ async def _run_vector_legs(
     PRIVATE_HIT_THRESHOLD = float(_tier_settings.memory_search_private_first_stop_similarity)
 
     # Strict token-order waterfall (scoped tokens carrying `ns_roles`): search
-    # namespaces one tier at a time in the token's EXACT priority order and
-    # stop at the first tier that clears the relevance floor. No visibility- or
-    # ownership-based reordering — the order the user put in the token is
-    # honored verbatim (public-first if that's what they chose).
+    # the addressed namespace, then the others one tier at a time in the
+    # token's priority order, and stop at the first tier that clears the
+    # relevance floor. No visibility- or ownership-based reordering
+    # (public-first if that's what the token says).
     if (
         ctx.namespace_order_authoritative
         and input.namespace_scope == "all_mine"
@@ -178,86 +181,25 @@ async def _run_vector_legs(
             ):
                 tier = await asyncio.gather(_search_one(ctx, ns))
             results_per_ns = list(results_per_ns) + list(tier)
-            best_tier_similarity = max(
-                (1.0 - getattr(h, "distance", 1.0) for _n, hits in tier for h in hits),
-                default=0.0,
-            )
-            if best_tier_similarity >= TIER_HIT_THRESHOLD:
+            if best_similarity(tier) >= TIER_HIT_THRESHOLD:
                 break
     else:
         # ---- unscoped path (no scoped-token order): visibility-based private-first
-        # fallback, else a flat concurrent fan-out.
-        do_private_first = input.namespace_scope == "all_mine" and len(ctx.namespaces) > 1
-
-        ns_visibility_early: dict[str, str] = {}
-        if do_private_first:
-            from server.identity.app.namespace_visibility import visibility_map
-
-            # TTL-cached, so a multi-namespace search does not pay a `loom.namespaces FINAL`
-            # round trip. Returns a partial map on error, which lands us in the flat fan-out
-            # below.
-            ns_visibility_early = await visibility_map(input.org, list(ctx.namespaces))
-            if not ns_visibility_early:
-                do_private_first = False
-
-        private_ns: list[str] = []
-        public_ns: list[str] = []
-        if do_private_first:
-            private_ns = [
-                n for n in ctx.namespaces if ns_visibility_early.get(n, "private") == "private"
-            ]
-            public_ns = [
-                n for n in ctx.namespaces if ns_visibility_early.get(n, "private") != "private"
-            ]
-            # No private namespace means the private pass would search nothing and the public pass
-            # would search everything — i.e. exactly the flat fan-out, but spending two spans and an
-            # empty gather to get there. Common in practice (well over a third of searches in one
-            # measured namespace).
-            if not private_ns:
-                do_private_first = False
-
-        if do_private_first:
-            with traced(
-                "ch.query.memory_embeddings",
-                op="vector_search.private",
-                top_k=input.top_k,
-                namespaces=len(private_ns),
-            ):
-                # private_ns is non-empty here — the guard above routed the
-                # empty case to the flat fan-out.
-                results_per_ns = list(
-                    await asyncio.gather(*[_search_one(ctx, ns) for ns in private_ns])
-                )
-            # Did the private pass clear the relevance floor? Best
-            # similarity across all private hits has to exceed threshold.
-            best_private_similarity = 0.0
-            for _ns, hits in results_per_ns:
-                for h in hits:
-                    sim = 1.0 - getattr(h, "distance", 1.0)
-                    if sim > best_private_similarity:
-                        best_private_similarity = sim
-            if best_private_similarity < PRIVATE_HIT_THRESHOLD and public_ns:
-                # Private pass was empty / noise — also search public and merge.
-                with traced(
-                    "ch.query.memory_embeddings",
-                    op="vector_search.public",
-                    top_k=input.top_k,
-                    namespaces=len(public_ns),
-                ):
-                    public_results = await asyncio.gather(
-                        *[_search_one(ctx, ns) for ns in public_ns]
-                    )
-                results_per_ns = list(results_per_ns) + list(public_results)
-        else:
-            with traced(
-                "ch.query.memory_embeddings",
-                op="vector_search",
-                top_k=input.top_k,
-                namespaces=len(ctx.namespaces),
-            ):
-                results_per_ns = await asyncio.gather(
-                    *[_search_one(ctx, ns) for ns in ctx.namespaces]
-                )
+        # fallback, else a flat concurrent fan-out. Visibility is TTL-cached, so a
+        # multi-namespace search does not pay a `loom.namespaces FINAL` round trip.
+        fan_out = input.namespace_scope == "all_mine"
+        results_per_ns = await search_private_first(
+            input.namespace,
+            list(ctx.namespaces),
+            lambda ns: _search_one(ctx, ns),
+            visibility=(
+                functools.partial(namespace_visibility.visibility_map, input.org)
+                if fan_out
+                else None
+            ),
+            threshold=PRIVATE_HIT_THRESHOLD,
+            span=functools.partial(traced, "ch.query.memory_embeddings", top_k=input.top_k),
+        )
 
     # Join the entity-store ANN task launched before the vector legs.
     if entity_boost_task is not None:

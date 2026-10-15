@@ -71,14 +71,14 @@ def _require_same_org(org: str) -> None:
 
 
 async def _namespace_taken(org: str, namespace: str) -> bool:
+    from server.auth.default_namespace import auth_off_subject
     from server.code.domain.index.repos import repo_for_namespace
-    from server.core.ch import get_client
+    from server.identity.app.registration import namespace_claimable
 
     if repo_for_namespace(org, namespace) is not None:
         return True
-    from server.identity.app.registration import namespace_is_active
-
-    return await namespace_is_active(org, namespace, ch=get_client())
+    subject = current_caller()[0] or auth_off_subject()
+    return not await namespace_claimable(org, namespace, subject)
 
 
 async def _make_maintainer(org: str, namespace: str, subject: str) -> None:

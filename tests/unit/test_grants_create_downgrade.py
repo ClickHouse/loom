@@ -38,6 +38,7 @@ def _wire(
         return None
 
     monkeypatch.setattr(grants_repo, "find_active_grant", _find)
+    monkeypatch.setattr(grants_repo, "find_any_grant", _find)
     monkeypatch.setattr(grants_repo, "insert_row", _insert)
     monkeypatch.setattr(grants_mod, "_enforce_code_ceiling", _no_ceiling)
     return inserted, looked_up
@@ -110,9 +111,17 @@ async def test_downgrade_without_replace_is_409_with_typed_code(
     assert inserted == [], "a refused create must not write"
 
 
+def _admins(monkeypatch: pytest.MonkeyPatch, n: int) -> None:
+    async def _count(*_a: Any, **_k: Any) -> int:
+        return n
+
+    monkeypatch.setattr(grants_repo, "count_active_admins", _count)
+
+
 @pytest.mark.asyncio
 async def test_downgrade_with_replace_overwrites(monkeypatch: pytest.MonkeyPatch) -> None:
     inserted, _ = _wire(monkeypatch, _row("admin"))
+    _admins(monkeypatch, 2)
     out = await grants_mod.handle_grants_create(_create("viewer", replace=True))
     assert out.role == "viewer"
     assert inserted[0]["role"] == "viewer"
@@ -217,3 +226,14 @@ async def test_revoke_by_email_revokes_the_canonical_row(monkeypatch: pytest.Mon
     )
     assert out.revoked is True
     assert inserted[0]["subject"] == "alice" and inserted[0]["revoked_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_the_last_admin_is_not_lowered(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.core.errors import PreconditionFailedError
+
+    inserted, _ = _wire(monkeypatch, _row("admin"))
+    _admins(monkeypatch, 1)
+    with pytest.raises(PreconditionFailedError, match="only admin"):
+        await grants_mod.handle_grants_create(_create("viewer", replace=True))
+    assert inserted == []

@@ -99,3 +99,26 @@ async def test_approve_on_a_grant_with_nothing_pending_writes_nothing(
         )
     )
     assert out.role is None and inserted == []
+
+
+@pytest.mark.asyncio
+async def test_approving_an_elevation_below_the_base_grant_is_refused(
+    inserted: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A writer asking for admin, answered "viewer": that lowers the grant, which
+    only grants.create replace=true does (it also ends the older tokens' claims)."""
+    from server.core.errors import GrantWouldDowngradeError
+    from server.identity.api.models_grants import GrantsApproveInput
+
+    async def _writer_asking_for_admin(*_a: Any, **_k: Any) -> GrantState:
+        return GrantState.from_row(
+            {"role": "writer", "granted_by": "root", "status": "active", "pending_role": "admin"}
+        )
+
+    monkeypatch.setattr(grants_repo, "find_any_grant", _writer_asking_for_admin)
+    approve = GrantsApproveInput(
+        org="o", namespace="ns", subject="alice", decision="approve", role="viewer"
+    )
+    with pytest.raises(GrantWouldDowngradeError):
+        await grants_mod.handle_grants_approve(approve)
+    assert inserted == []
