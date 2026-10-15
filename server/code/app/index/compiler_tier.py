@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 from server.code.app.index.entry_lock import EntryLockHeld, entry_lock
-from server.code.app.index.gitrepo import is_local_remote
+from server.code.app.index.gitrepo import is_local_remote, upload_pack_args
 from server.code.app.index.producer_inference import worker_owns
 from server.code.app.index.sandbox import run_job, sandbox_available
 from server.code.domain.index.repos import checkout_for
@@ -283,7 +283,13 @@ def checkout_fetch_args(bare: Path | str, target: str) -> list[str]:
     """`git` arguments that fetch `target` from the local bare clone into a
     checkout: no submodule recursion, and the commit recorded on
     `SCIP_HEAD_REF` so the next fetch sends only what is new."""
-    return ["fetch", "--recurse-submodules=no", str(bare), f"+{target}:{SCIP_HEAD_REF}"]
+    return [
+        "fetch",
+        "--recurse-submodules=no",
+        *upload_pack_args(str(bare)),
+        str(bare),
+        f"+{target}:{SCIP_HEAD_REF}",
+    ]
 
 
 async def git(
