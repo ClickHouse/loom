@@ -46,7 +46,7 @@ async def _init(args: argparse.Namespace) -> int:
         # environment (gitrepo.auth_env), never through the URL, so the
         # token reaches neither argv nor code_index_state.repo_remote; a
         # restricted entry's clone is readable by this user only.
-        from server.code.app.index.gitrepo import auth_env
+        from server.code.app.index.gitrepo import auth_env, upload_pack_args
 
         proc = await asyncio.create_subprocess_exec(
             "git",
@@ -56,6 +56,7 @@ async def _init(args: argparse.Namespace) -> int:
             "-c",
             "maintenance.auto=false",
             "--bare",
+            *upload_pack_args(cfg.git_remote),
             cfg.git_remote,
             git_dir,
             env=auth_env(cfg.github_token, cfg.git_remote),
