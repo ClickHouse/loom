@@ -587,3 +587,15 @@ async def test_a_lowering_in_the_same_second_after_a_promotion_stands() -> None:
     )
     await maintainers.sync_repo_maintainers("clickhouse", "code-x", ch=ch)
     assert [r["namespace"] for r in ch.inserted] == ["code-x-26-6"]
+
+
+async def test_a_request_older_than_the_admin_grant_is_mirrored_over() -> None:
+    ch = _FakeCH(
+        [
+            _admin("code-x-26-5", "alice", status="pending", version=1_000),
+            _admin("code-x", "alice", version=1_001),
+        ]
+    )
+    await maintainers.sync_repo_maintainers("clickhouse", "code-x", ch=ch)
+    mirrored = {r["namespace"]: r["version"] for r in ch.inserted}
+    assert mirrored == {"code-x-26-5": 1_001, "code-x-26-6": 1_001}

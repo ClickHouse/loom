@@ -7,11 +7,12 @@ across the configured branch namespaces of one repository:
 
 * ``sync_repo_maintainers`` — the union of active admins over the branches,
   written to every branch that lacks one (``granted_by =
-  repo-maintainers:<source namespace>``). An explicit revocation on a branch,
-  or a lower role set there, newer than the subject's newest sibling grant is
-  respected: admin is not re-added. Called after an admin grant is created or approved
-  on a code namespace, when a branch is added, and once per process per
-  namespace by the registrar (so environment-registered branches inherit).
+  repo-maintainers:<source namespace>``). Any change of the subject's grant on
+  a branch at least as new as their newest sibling grant (a revocation, a lower
+  role, or a request) is respected: admin is not re-added. Called after an admin
+  grant is created or approved on a code namespace, when a branch is added, and
+  once per process per namespace by the registrar (so environment-registered
+  branches inherit).
 * ``revoke_repo_maintainer`` — a revoked admin leaves every branch, except a
   branch where they are the only active admin (the handler's own guard).
 
@@ -244,8 +245,8 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
     # Grant changes are ordered by row version: `granted_at` keeps whole seconds,
     # so a lowering and a promotion within one would compare equal.
     active: dict[str, dict[str, tuple[int, datetime]]] = {ns: {} for ns in branches}
-    # The newest change of a subject's grant on a branch that is not a live admin
-    # grant: a revoke, a lower role, or a request. A mirror only replaces an older row.
+    # The version of a subject's row on a branch that is not a live admin grant: a
+    # revoke, a lower role, or a request. A mirror only replaces an older row.
     newest: dict[tuple[str, str], int] = {}
     for r in rows:
         ns, subject = str(r["namespace"]), str(r["subject"])
@@ -255,8 +256,7 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
         if live and r.get("role") == "admin":
             active[ns][subject] = (int(r["version"]), r["granted_at"])
         else:
-            key = (ns, subject)
-            newest[key] = max(newest.get(key, 0), int(r["version"]))
+            newest[(ns, subject)] = int(r["version"])
     # newest sibling grant per subject, and the branch it came from
     union: dict[str, tuple[int, datetime, str]] = {}
     for ns, subs in active.items():
