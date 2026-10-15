@@ -223,7 +223,9 @@ class ConversationListOutput(BaseModel):
 
 
 class ConversationSearchInput(BaseModel):
-    """Text search across a namespace's conversation history (ILIKE over message content)."""
+    """Vector search across a namespace's conversation history: messages ranked by
+    embedding similarity to `query`, optionally narrowed to one thread, run or speaker
+    role (substring matching when the embedder is unavailable)."""
 
     org: str
     namespace: str
