@@ -88,7 +88,7 @@ parse_clickhouse_url() {
       esac
       ;;
   esac
-  rest=${rest%%/*}
+  rest=${rest%%[/?#]*}
   case $rest in
     *:*) CH_HOST=${rest%:*} CH_PORT=${rest##*:} ;;
     *) CH_HOST=$rest ;;
@@ -227,9 +227,13 @@ else
   printf 'Preserved existing %s/.env\n' "$INSTALL_DIR"
   had_env=1
   set_env LOOM_VERSION "$version"
-  # An install from before profiles always ran the bundled ClickHouse.
+  # An install from before profiles always ran the bundled ClickHouse, and its
+  # compose file ignored any LOOM_CH_* lines in .env: keep it that way.
   if ! grep -q '^COMPOSE_PROFILES=' "$INSTALL_DIR/.env"; then
     set_env COMPOSE_PROFILES bundled
+    awk '/^LOOM_CH_[A-Z_]*=/ { print "# ignored before profiles: " $0; next } { print }' \
+      "$INSTALL_DIR/.env" >"$tmp_dir/env.updated"
+    mv "$tmp_dir/env.updated" "$INSTALL_DIR/.env"
   fi
 fi
 if [ -n "$CH_URL" ]; then
@@ -284,7 +288,7 @@ while [ "$attempt" -lt 90 ]; do
     printf 'Dashboard: http://127.0.0.1:%s/me\n' "$port"
     printf 'Files:     %s\n' "$INSTALL_DIR"
     printf 'Logs:      docker compose --project-directory %s logs -f loom\n' "$INSTALL_DIR"
-    printf 'Stop:      docker compose --project-directory %s down\n' "$INSTALL_DIR"
+    printf 'Stop:      docker compose --project-directory %s --profile bundled down\n' "$INSTALL_DIR"
     exit 0
   fi
   attempt=$((attempt + 1))

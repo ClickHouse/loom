@@ -809,7 +809,9 @@ def _apply_under_lease(ch: Client, files: list[Path], to_apply: list[Path]) -> i
         lease.release()
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, *, preflight: bool = True) -> int:
+    """The `loom migrate` command. `preflight=False` for the server's boot,
+    which ran the ClickHouse preflight before its first connect."""
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -861,12 +863,13 @@ def main(argv: list[str] | None = None) -> int:
         print("  ✗ no migration files found", file=sys.stderr)
         return 2
 
-    from server.core.schema import preflight
+    from server.core.schema import preflight as checks
 
     try:
-        preflight.require_ready(need="read" if args.status or args.dry_run else "migrate")
+        if preflight:
+            checks.require_ready(need="read" if args.status or args.dry_run else "migrate")
         ch = client()
-    except preflight.PreflightError as e:
+    except checks.PreflightError as e:
         print(f"  ✗ {e}", file=sys.stderr)
         return 1
     except Exception as e:  # noqa: BLE001 — any connect failure exits with a message

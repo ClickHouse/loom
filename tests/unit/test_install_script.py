@@ -106,6 +106,12 @@ def test_a_raw_slash_or_colon_in_the_password_is_never_printed(install) -> None:
     assert env["LOOM_CH_PASSWORD"] == "'Secr3t/xy:12'"
 
 
+def test_a_query_string_after_the_port_is_ignored(install) -> None:
+    run, target = install
+    assert run("--clickhouse", "https://loom:pw@h.example:8443?secure=1#x").returncode == 0
+    assert (_env(target)["LOOM_CH_HOST"], _env(target)["LOOM_CH_PORT"]) == ("h.example", "8443")
+
+
 def test_the_password_can_come_from_the_environment(install) -> None:
     run, target = install
     result = run(LOOM_CH_URL="http://loom@ch.internal", LOOM_CH_PASSWORD="from-env")
@@ -181,13 +187,18 @@ def test_an_upgrade_keeps_env_and_an_older_install_stays_bundled(install) -> Non
     assert run().returncode == 0
     env_path = target / ".env"
     lines = [line for line in env_path.read_text().splitlines() if "COMPOSE_PROFILES" not in line]
-    env_path.write_text("\n".join(lines + ["LOOM_JWT_SECRET=kept"]) + "\n")
+    env_path.write_text(
+        "\n".join(lines + ["LOOM_JWT_SECRET=kept", "LOOM_CH_HOST=localhost"]) + "\n"
+    )
     (target / "clickhouse-config").mkdir()  # the layout before deploy/
     result = run()
     assert result.returncode == 0, result.stderr
     env = _env(target)
     assert env["COMPOSE_PROFILES"] == "bundled"
     assert env["LOOM_JWT_SECRET"] == "kept" and env["LOOM_VERSION"] == "9.9.9"
+    # The old compose file pinned the connection, so a stray line stays inert.
+    assert "LOOM_CH_HOST" not in env
+    assert "# ignored before profiles: LOOM_CH_HOST=localhost" in (target / ".env").read_text()
     assert not (target / "clickhouse-config").exists()
 
 
