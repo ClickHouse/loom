@@ -278,6 +278,15 @@ async def _fenced_boot_migrations(
         raise RuntimeError("Cannot establish provider configuration schema before boot DDL")
     if exists["n"] == 0:
         return run_boot_migrations_if_enabled(migrate, lock_path, enabled=True, pending=pending)
+    keeper = await ch.query_one(
+        "SELECT count() AS n FROM system.tables "
+        "WHERE database='loom' AND name='_migration_lock' AND engine='KeeperMap'"
+    )
+    if not (keeper and keeper.get("n")):
+        # No Keeper: the runner never made its KeeperMap lock, so the provider
+        # lock (a key in it) could never be held and no configuration was ever
+        # published. There is no rebuild to fence against.
+        return run_boot_migrations_if_enabled(migrate, lock_path, enabled=True, pending=pending)
     from server.insights.domain.provider_setup import pending_configuration
     from server.insights.store.provider_configuration import configurations
     from server.insights.store.provider_lock import configuration_lock

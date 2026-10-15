@@ -25,30 +25,32 @@ def _build(tmp: Path) -> tuple[Path, Path]:
 
 
 @pytest.fixture
-def install(tmp_path: Path):
+def installer_env(tmp_path: Path) -> dict[str, str]:
+    """The environment install.sh runs in: a local bundle, a stub docker, no start."""
     archive, checksum = _build(tmp_path)
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     docker = bin_dir / "docker"
     docker.write_text('#!/bin/sh\n[ "$1 $2 $3" = "compose version --short" ] && echo 2.29.1\n')
     docker.chmod(0o755)
-    target = tmp_path / "loom"
+    return {
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "HOME": str(tmp_path),
+        "LOOM_INSTALL_DIR": str(tmp_path / "loom"),
+        "LOOM_INSTALL_BUNDLE": str(archive),
+        "LOOM_INSTALL_CHECKSUM": str(checksum),
+        "LOOM_SKIP_START": "1",
+    }
 
+
+@pytest.fixture
+def install(installer_env: dict[str, str]):
     def run(
         *args: str, start_new_session: bool = False, **env: str
     ) -> subprocess.CompletedProcess[str]:
-        full_env = {
-            "PATH": f"{bin_dir}:{os.environ['PATH']}",
-            "HOME": str(tmp_path),
-            "LOOM_INSTALL_DIR": str(target),
-            "LOOM_INSTALL_BUNDLE": str(archive),
-            "LOOM_INSTALL_CHECKSUM": str(checksum),
-            "LOOM_SKIP_START": "1",
-            **env,
-        }
         return subprocess.run(
             ["sh", str(ROOT / "install.sh"), *args],
-            env=full_env,
+            env={**installer_env, **env},
             capture_output=True,
             text=True,
             stdin=subprocess.DEVNULL,
@@ -56,7 +58,7 @@ def install(tmp_path: Path):
             check=False,
         )
 
-    return run, target
+    return run, Path(installer_env["LOOM_INSTALL_DIR"])
 
 
 def _env(target: Path) -> dict[str, str]:
@@ -188,3 +190,31 @@ def test_switching_an_install_to_an_outside_clickhouse(install) -> None:
     env = _env(target)
     assert env["COMPOSE_PROFILES"] == "" and env["LOOM_CH_HOST"] == "h.example"
     assert list(env).count("LOOM_CH_HOST") == 1
+
+
+def _answer_prompt(env: dict[str, str], url: str, answer: bytes) -> None:
+    """Run the installer on a pseudo-terminal and type `answer` at the prompt."""
+    import pty
+    import select
+    import time
+
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.execvpe("sh", ["sh", str(ROOT / "install.sh"), "--clickhouse", url], env)
+    seen = b""
+    deadline = time.monotonic() + 20
+    while b"password for" not in seen and time.monotonic() < deadline:
+        if select.select([fd], [], [], 0.5)[0]:
+            seen += os.read(fd, 1024)
+    assert b"(Enter keeps the one saved in .env)" in seen, seen
+    os.write(fd, answer)
+    os.waitpid(pid, 0)
+
+
+def test_enter_at_a_rerun_prompt_keeps_the_saved_password(install, installer_env) -> None:
+    run, target = install
+    assert run("--clickhouse", "https://loom:first@h.example").returncode == 0
+    _answer_prompt(installer_env, "https://loom@h.example", b"\n")
+    assert _env(target)["LOOM_CH_PASSWORD"] == "'first'"
+    _answer_prompt(installer_env, "https://loom@h.example", b"second\n")
+    assert _env(target)["LOOM_CH_PASSWORD"] == "'second'"

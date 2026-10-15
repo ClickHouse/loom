@@ -101,10 +101,11 @@ parse_clickhouse_url() {
   case $CH_PORT in '' | *[!0-9]*) fail "the ClickHouse URL has an invalid port: $CH_PORT" ;; esac
 }
 
+# read_password [HINT]: ask on the terminal, without echo.
 read_password() {
   # A subshell: a failed redirection on `:` would end the script itself.
   (: </dev/tty) 2>/dev/null || fail "no ClickHouse password: set LOOM_CH_PASSWORD or put it in the URL"
-  printf 'ClickHouse password for %s@%s: ' "$CH_USER" "$CH_HOST" >/dev/tty
+  printf 'ClickHouse password for %s@%s%s: ' "$CH_USER" "$CH_HOST" "${1:-}" >/dev/tty
   # Ctrl-C at the prompt stops the install, with the terminal echoing again.
   trap 'stty echo </dev/tty; printf "\\n" >/dev/tty; exit 130' HUP INT TERM
   stty -echo </dev/tty
@@ -126,15 +127,21 @@ if [ -n "$CH_URL" ]; then
   if [ -z "$CH_PASSWORD_SET" ] && [ -n "${LOOM_CH_PASSWORD+set}" ]; then
     CH_PASSWORD=$LOOM_CH_PASSWORD CH_PASSWORD_SET=1
   fi
-  # Without a terminal, a rerun for the same server and user keeps the
-  # password .env holds; with one, it asks, so a wrong saved one can be fixed.
+  # A rerun for the same server and user may keep the password .env holds:
+  # without a terminal it does, with one Enter does and typing replaces it.
   saved="$(get_env LOOM_CH_HOST):$(get_env LOOM_CH_PORT):$(get_env LOOM_CH_USER)"
-  if [ -z "$CH_PASSWORD_SET" ] && ! (: </dev/tty) 2>/dev/null \
-    && [ "$saved" = "$CH_HOST:$CH_PORT:$CH_USER" ] && grep -q '^LOOM_CH_PASSWORD=' "$INSTALL_DIR/.env"; then
-    KEEP_PASSWORD=1
-    printf 'Using the ClickHouse password saved in .env; set LOOM_CH_PASSWORD to replace it\n'
+  if [ -z "$CH_PASSWORD_SET" ] && [ "$saved" = "$CH_HOST:$CH_PORT:$CH_USER" ] \
+    && grep -q '^LOOM_CH_PASSWORD=' "$INSTALL_DIR/.env"; then
+    if (: </dev/tty) 2>/dev/null; then
+      read_password " (Enter keeps the one saved in .env)"
+      [ -n "$CH_PASSWORD" ] || KEEP_PASSWORD=1
+    else
+      KEEP_PASSWORD=1
+      printf 'Using the ClickHouse password saved in .env; set LOOM_CH_PASSWORD to replace it\n'
+    fi
+    CH_PASSWORD_SET=1
   fi
-  [ -n "$CH_PASSWORD_SET${KEEP_PASSWORD:-}" ] || read_password
+  [ -n "$CH_PASSWORD_SET" ] || read_password
   # .env holds it between single quotes, which take everything else literally.
   case $CH_PASSWORD in
     *"'"*) fail "the ClickHouse password contains a single quote, which .env cannot hold; choose another" ;;
