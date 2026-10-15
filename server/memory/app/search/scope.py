@@ -10,10 +10,10 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from server.auth.fanout import Fanout, resolve_fanout
 from server.core.background import create_deferred_task
 from server.core.ch import get_client
 from server.memory.api.models_search import MemorySearchInput
-from server.memory.app.search.evidence import _merge_namespace_scope
 from server.memory.app.search.query_plan import _enrichment_parser_gate_active
 
 log = logging.getLogger(__package__)
@@ -40,10 +40,13 @@ class _SearchRun:
     rerank_override: str
     rerank_cfg_task: asyncio.Task[Any] | None
     calibration_task: asyncio.Task[Any]
-    my_namespaces_task: asyncio.Task[Any] | None
-    order_authoritative: bool
+    fanout_task: asyncio.Task[Fanout] | None
     # Scope, filled before the embed (parser-gate prelaunch) or after it.
     namespaces: list[str] = field(default_factory=list)
+    # Whether `namespaces` is a priority order (a scoped token's), and the
+    # caller's namespaces the all_mine fan-out cut at its cap.
+    order_authoritative: bool = False
+    namespaces_skipped: list[str] = field(default_factory=list)
     effective_entity_filter: list[str] = field(default_factory=list)
     canonical_task: asyncio.Task[list[str]] | None = None
     canonical_prelaunched: bool = False
@@ -65,7 +68,7 @@ class _SearchRun:
         for task in (
             self.rerank_cfg_task,
             self.calibration_task,
-            self.my_namespaces_task,
+            self.fanout_task,
             self.canonical_task,
             *self.side_tasks,
         ):
@@ -91,47 +94,36 @@ def _launch_scope_reads(input: MemorySearchInput) -> _SearchRun:
         _rerank_cfg_task.add_done_callback(_retain_task_result)
     _calibration_task = create_deferred_task(resolve_calibration(input.org, input.namespace))
     _calibration_task.add_done_callback(_retain_task_result)
-    _my_namespaces_task: asyncio.Task[Any] | None = None
-    # Scoped token (carries `ns_roles`): its `namespaces` claim is an ordered
-    # priority list, so the search fans out in that exact order as strict tiers
-    # and the addressed namespace is NOT force-pinned to the front.
-    from server.auth.context import current_auth as _current_auth
-
-    _auth = _current_auth()
-    _order_authoritative = bool(_auth is not None and _auth.has_ns_roles())
+    _fanout_task: asyncio.Task[Fanout] | None = None
     if input.namespace_scope == "all_mine":
-        from server.auth.context import resolve_fanout_namespaces
-
-        _my_namespaces_task = create_deferred_task(resolve_fanout_namespaces(input.org))
-        _my_namespaces_task.add_done_callback(_retain_task_result)
+        _fanout_task = create_deferred_task(resolve_fanout(input.org))
+        _fanout_task.add_done_callback(_retain_task_result)
     return _SearchRun(
         rerank_override=request_rerank_override,
         rerank_cfg_task=_rerank_cfg_task,
         calibration_task=_calibration_task,
-        my_namespaces_task=_my_namespaces_task,
-        order_authoritative=_order_authoritative,
+        fanout_task=_fanout_task,
     )
 
 
-async def _scope_inputs(
-    input: MemorySearchInput,
-    run: _SearchRun,
-    llm_query_entities: list[str],
-    actual_work: dict[str, Any],
-) -> tuple[list[str], list[str]]:
-    """(entity filter, namespaces searched), before canonicalisation. The caller's explicit
-    `entity_filter` wins over the entities the intent parser found. "all_mine" fans out across
-    every namespace the caller belongs to, but the addressed `input.namespace` is ALWAYS in the
-    set: membership may only widen the search, never redirect it."""
-    entity_filter = list(input.entity_filter or []) or list(llm_query_entities)
-    if run.my_namespaces_task is not None:
-        namespaces = _merge_namespace_scope(
-            input.namespace, await run.my_namespaces_task, ordered=run.order_authoritative
-        )
-    else:
-        namespaces = [input.namespace]
-    actual_work["namespace_count"] = len(namespaces)
-    return entity_filter, namespaces
+async def _settle_namespaces(
+    input: MemorySearchInput, run: _SearchRun, actual_work: dict[str, Any]
+) -> None:
+    """The namespaces this search reads, onto `run`. "all_mine" reads the caller's fan-out
+    (`server.auth.fanout`: its kinds, its cap) led by the addressed `input.namespace`:
+    membership may only widen the search, never redirect it."""
+    run.namespaces = [input.namespace]
+    if run.fanout_task is not None:
+        fanout = await run.fanout_task
+        run.namespaces, run.namespaces_skipped = fanout.split(input.namespace)
+        run.order_authoritative = fanout.ordered
+    actual_work["namespace_count"] = len(run.namespaces)
+
+
+def _entity_filter(input: MemorySearchInput, llm_query_entities: list[str]) -> list[str]:
+    """The entity filter before canonicalisation: the caller's own wins over the
+    entities the intent parser found."""
+    return list(input.entity_filter or []) or list(llm_query_entities)
 
 
 async def _prelaunch_canonical_lookup(
@@ -150,19 +142,17 @@ async def _prelaunch_canonical_lookup(
     # serial.
     _canonical_task: asyncio.Task[list[str]] | None = None
     effective_entity_filter: list[str] = []
-    namespaces: list[str] = []
     _canonical_prelaunched = False
     if _enrichment_parser_gate_active(input):
-        effective_entity_filter, namespaces = await _scope_inputs(
-            input, run, llm_query_entities, actual_work
-        )
+        await _settle_namespaces(input, run, actual_work)
+        effective_entity_filter = _entity_filter(input, llm_query_entities)
         if effective_entity_filter:
             from server.memory.app.entity_resolution import lookup_canonical_entities
 
             # Snapshot the inputs the task closes over so the parallel and
             # serial paths resolve the same canonical set.
             _canonical_entity_texts = list(effective_entity_filter)
-            _canonical_namespaces = list(namespaces)
+            _canonical_namespaces = list(run.namespaces)
             _canonical_task = create_deferred_task(
                 lookup_canonical_entities(
                     get_client(),
@@ -175,7 +165,6 @@ async def _prelaunch_canonical_lookup(
         _canonical_prelaunched = True
     run.canonical_task = _canonical_task
     run.effective_entity_filter = effective_entity_filter
-    run.namespaces = namespaces
     run.canonical_prelaunched = _canonical_prelaunched
 
 
@@ -188,16 +177,14 @@ async def _resolve_entity_scope(
     """Phase 11: settle the namespaces searched and the canonical entity
     filter — serially here, or by awaiting the lookup phase 9 prelaunched.
     Writes the result into `run`."""
-    namespaces = run.namespaces
     effective_entity_filter = run.effective_entity_filter
     _canonical_prelaunched = run.canonical_prelaunched
     _canonical_task = run.canonical_task
     if not _canonical_prelaunched:
         # Default (serial) path: entity-filter build, namespace resolution,
         # and canonical lookup all run here, after the embed.
-        effective_entity_filter, namespaces = await _scope_inputs(
-            input, run, llm_query_entities, actual_work
-        )
+        await _settle_namespaces(input, run, actual_work)
+        effective_entity_filter = _entity_filter(input, llm_query_entities)
         if effective_entity_filter:
             try:
                 from server.memory.app.entity_resolution import (
@@ -207,7 +194,7 @@ async def _resolve_entity_scope(
                 effective_entity_filter = await lookup_canonical_entities(
                     get_client(),
                     org=input.org,
-                    namespaces=namespaces,
+                    namespaces=run.namespaces,
                     entity_texts=effective_entity_filter,
                 )
             except Exception as e:  # noqa: BLE001 — canonical entity lookup is optional; raw filter kept
@@ -219,5 +206,4 @@ async def _resolve_entity_scope(
             effective_entity_filter = await _canonical_task
         except Exception as e:  # noqa: BLE001 — canonical entity lookup is optional; raw filter kept
             log.warning("entity canonical lookup failed (non-fatal): %s", e)
-    run.namespaces = namespaces
     run.effective_entity_filter = effective_entity_filter

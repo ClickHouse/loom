@@ -18,14 +18,17 @@ when `LOOM_OAUTH_LOGIN_PROVIDER=oidc` (see oidc.py). Grants persist in
 
 from __future__ import annotations
 
+import asyncio
 import base64
+import functools
 import hashlib
 import html
 import json
 import logging
 import secrets
 import time
-from typing import Any
+from collections.abc import Awaitable, Callable
+from typing import Any, Literal
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 import httpx
@@ -48,12 +51,14 @@ _PENDING_TTL = 600  # OIDC pending-login record: time to complete IdP sign-in
 # --------------------------------------------------------------------------
 # Grant store — durable (ClickHouse) by default; in-memory for tests.
 #
-# Async interface (both impls):
+# Async interface (`_CHStore`; tests swap in tests/unit/oauth_store_fake.py):
 #   save_client(client_id, redirect_uris, client_name) / get_client(client_id)
-#   save_code(code, grant)   / take_code(code)    — single-use
-#   save_refresh(token, gr)  / take_refresh(token, client_id) — rotating
-#     (single-use) and bound to the issuee: another client_id gets None and
-#     the token is left unconsumed, so a wrong presenter can't burn it.
+#   save_code(code, grant)   / find_code(code), consume_code(code, grant)
+#   save_refresh(token, gr)  / find_refresh(token, client_id),
+#     consume_refresh(token, grant) — single-use: consumed once the exchange
+#     is decided with a Keeper, before the decision without one (`_exchange`);
+#     a refresh is bound to the issuee: another client_id finds
+#     nothing, so a wrong presenter can't burn it.
 # Codes and refresh tokens are bearer secrets, so the store keys them by
 # _token_id(token) (sha256 hex), never the token itself: a row read out of
 # loom.oauth_state (a backup, a SELECT grant) is not a working credential.
@@ -71,15 +76,11 @@ class _CHStore:
     """Durable OAuth state in loom.oauth_state — survives restart + replicas.
 
     Single-use is a consumed=1 ReplacingMergeTree version; reads take FINAL +
-    consumed=0 + unexpired.
-
-    Known limit: take_* is read-then-mark, not atomic: two presenters of the same
-    code or refresh token racing within one round trip can both succeed. A code
-    is useless without its PKCE verifier and lives 60 s; a refresh token is
-    bound to its client_id. An insert_deduplication_token would drop the second
-    consume row but tell neither caller, so it is no guard; the upgrade is a
-    KeeperMap claim key under keeper_map_strict_mode (the migration lock's
-    mechanism), whose second INSERT fails.
+    consumed=0 + unexpired, with sequential consistency, so a replica that has
+    not seen a consume cannot replay the credential. Finding and consuming are
+    two steps (the exchange is decided in between), so /oauth/token keeps two
+    concurrent exchanges of one credential apart with a Keeper claim
+    (`oauth_claims`); without a Keeper both can succeed.
     """
 
     _T = "loom.oauth_state"
@@ -151,51 +152,39 @@ class _CHStore:
             ],
         )
 
-    async def take_code(self, code: str) -> dict[str, Any] | None:
-        return await self._take("code", _token_id(code))
+    async def find_code(self, code: str) -> dict[str, Any] | None:
+        return await self._find("code", _token_id(code))
 
-    async def take_refresh(self, token: str, client_id: str) -> dict[str, Any] | None:
-        return await self._take("refresh", _token_id(token), client_id)
+    async def find_refresh(self, token: str, client_id: str) -> dict[str, Any] | None:
+        return await self._find("refresh", _token_id(token), client_id)
 
-    async def _take(
+    async def consume_code(self, code: str, grant: dict[str, Any]) -> None:
+        await self._consume("code", _token_id(code), grant)
+
+    async def consume_refresh(self, token: str, grant: dict[str, Any]) -> None:
+        await self._consume("refresh", _token_id(token), grant)
+
+    async def _find(
         self, rtype: str, rid: str, client_id: str | None = None
     ) -> dict[str, Any] | None:
-        ch = self._ch()
-        row = await ch.query_one(
-            f"""SELECT client_id, redirect_uri, code_challenge, subject, org,
-                       namespaces, roles, expires_at
-                FROM {self._T} FINAL
-                WHERE record_type = {{t:String}} AND id = {{id:String}} AND consumed = 0
-                LIMIT 1""",
-            params={"t": rtype, "id": rid},
-        )
+        from server.core.ch import own_write_reads
+
+        with own_write_reads():
+            row = await self._ch().query_one(
+                f"""SELECT client_id, redirect_uri, code_challenge, subject, org,
+                           namespaces, roles, expires_at
+                    FROM {self._T} FINAL
+                    WHERE record_type = {{t:String}} AND id = {{id:String}} AND consumed = 0
+                    LIMIT 1""",
+                params={"t": rtype, "id": rid},
+            )
         if not row:
             return None
         exp = int(row.get("expires_at") or 0)
         if exp and exp < int(time.time()):
             return None
         if client_id is not None and row["client_id"] != client_id:
-            return None  # checked before the consume: see take_refresh
-        # Mark consumed: a new full-row version (RMT collapses to it).
-        await ch.insert(
-            self._T,
-            [
-                {
-                    "record_type": rtype,
-                    "id": rid,
-                    "client_id": row["client_id"],
-                    "redirect_uri": row.get("redirect_uri", ""),
-                    "code_challenge": row.get("code_challenge", ""),
-                    "subject": row["subject"],
-                    "org": row["org"],
-                    "namespaces": list(row["namespaces"]),
-                    "roles": list(row["roles"]),
-                    "expires_at": exp,
-                    "consumed": 1,
-                    "version": time.time_ns(),
-                }
-            ],
-        )
+            return None
         return {
             "client_id": row["client_id"],
             "redirect_uri": row.get("redirect_uri", ""),
@@ -206,6 +195,28 @@ class _CHStore:
             "roles": list(row["roles"]),
             "exp": exp or (int(time.time()) + _REFRESH_TTL),
         }
+
+    async def _consume(self, rtype: str, rid: str, grant: dict[str, Any]) -> None:
+        """Mark consumed: a new full-row version (RMT collapses to it)."""
+        await self._ch().insert(
+            self._T,
+            [
+                {
+                    "record_type": rtype,
+                    "id": rid,
+                    "client_id": grant["client_id"],
+                    "redirect_uri": grant["redirect_uri"],
+                    "code_challenge": grant["code_challenge"],
+                    "subject": grant["subject"],
+                    "org": grant["org"],
+                    "namespaces": list(grant["namespaces"]),
+                    "roles": list(grant["roles"]),
+                    "expires_at": int(grant["exp"]),
+                    "consumed": 1,
+                    "version": time.time_ns(),
+                }
+            ],
+        )
 
     async def save_pending(self, state: str, data: dict[str, Any]) -> None:
         # OIDC in-flight login: stash the MCP client's params + nonce keyed by
@@ -253,7 +264,7 @@ class _CHStore:
         return data
 
 
-_store: Any = _CHStore()
+_store: _CHStore = _CHStore()
 
 
 # --------------------------------------------------------------------------
@@ -499,6 +510,10 @@ async def authorize_submit(request: Request) -> RedirectResponse:
     from server.auth.attempts import client_address
     from server.auth.login import LoginThrottled, resolve_user_credentials
 
+    # The code's issue time is taken before the revocations are read at its
+    # exchange, so a revocation landing after that read postdates it. Its 60 s
+    # lifetime counts from here, so the password check comes out of it.
+    issued_at = int(time.time())
     try:
         resolved = await resolve_user_credentials(
             f.get("identifier", ""), f.get("password", ""), address=client_address(request)
@@ -524,7 +539,7 @@ async def authorize_submit(request: Request) -> RedirectResponse:
             "org": org,
             "namespaces": namespaces,
             "roles": roles,
-            "exp": int(time.time()) + _CODE_TTL,
+            "exp": issued_at + _CODE_TTL,
         },
     )
     params = {"code": code}
@@ -576,7 +591,8 @@ async def _start_oidc_login(
 @router.get("/oauth/callback")
 async def oidc_callback(request: Request) -> RedirectResponse:
     from server.auth import oidc
-    from server.auth.login import jit_provision_for_email, resolve_identity_for_email
+    from server.auth.jit import finish_unfinished_account, jit_provision_for_email
+    from server.auth.login import SignInUnavailable, resolve_identity_for_email
 
     code = request.query_params.get("code", "")
     state = request.query_params.get("state", "")
@@ -602,10 +618,17 @@ async def oidc_callback(request: Request) -> RedirectResponse:
             status_code=403,
             detail={"error": "access_denied", "error_description": "verified email required"},
         )
-    resolved = await resolve_identity_for_email(email)
-    if resolved is None:
-        # No account — auto-provision one if JIT is on (else stay fail-closed).
-        resolved = await jit_provision_for_email(email)
+    # As in authorize_submit, the code's lifetime counts
+    # from here, so the account lookup (and a JIT provisioning) comes out of it.
+    issued_at = int(time.time())
+    try:
+        await finish_unfinished_account(email)
+        resolved = await resolve_identity_for_email(email)
+        if resolved is None:
+            # No account — auto-provision one if JIT is on (else stay fail-closed).
+            resolved = await jit_provision_for_email(email)
+    except SignInUnavailable as e:
+        raise _logged_unavailable("sign-in", e) from e
     if resolved is None:
         raise HTTPException(
             status_code=403,
@@ -627,7 +650,7 @@ async def oidc_callback(request: Request) -> RedirectResponse:
             "org": org,
             "namespaces": namespaces,
             "roles": roles,
-            "exp": int(time.time()) + _CODE_TTL,
+            "exp": issued_at + _CODE_TTL,
         },
     )
     params = {"code": code_out}
@@ -641,7 +664,9 @@ async def oidc_callback(request: Request) -> RedirectResponse:
 # --------------------------------------------------------------------------
 # Token endpoint
 # --------------------------------------------------------------------------
-async def _issue_tokens(grant: dict[str, Any], client_id: str) -> dict[str, Any]:
+async def _issue_tokens(grant: dict[str, Any], client_id: str, issued_at: int) -> dict[str, Any]:
+    """The tokens for a decided grant, both issued at `issued_at`: the time
+    the exchange took before it read the revocations."""
     access = mint_token(
         subject=grant["subject"],
         org=grant["org"],
@@ -649,6 +674,7 @@ async def _issue_tokens(grant: dict[str, Any], client_id: str) -> dict[str, Any]
         roles=list(grant["roles"]),
         ttl_seconds=_ACCESS_TTL,
         is_service_account=False,
+        issued_at=issued_at,
     )
     refresh = secrets.token_urlsafe(32)
     await _store.save_refresh(
@@ -659,7 +685,7 @@ async def _issue_tokens(grant: dict[str, Any], client_id: str) -> dict[str, Any]
             "org": grant["org"],
             "namespaces": list(grant["namespaces"]),
             "roles": list(grant["roles"]),
-            "exp": int(time.time()) + _REFRESH_TTL,
+            "exp": issued_at + _REFRESH_TTL,
         },
     )
     return {
@@ -681,59 +707,233 @@ async def token(request: Request) -> JSONResponse:
     code_verifier = f.get("code_verifier", "")
     refresh_token = f.get("refresh_token", "")
     if grant_type == "authorization_code":
-        grant = await _store.take_code(code)  # single-use: marks consumed
-        if grant is None:
-            raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
-        if grant["client_id"] != client_id or grant["redirect_uri"] != redirect_uri:
-            raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
-        if not verify_pkce_s256(code_verifier, grant["code_challenge"]):
-            raise HTTPException(
-                status_code=400,
-                detail={"error": "invalid_grant", "error_description": "PKCE failed"},
-            )
-        return JSONResponse(await _issue_tokens(grant, client_id))
+        issued = await _exchange(
+            "code",
+            code,
+            client_id=client_id,
+            decide=lambda grant: _decide_code(grant, client_id, redirect_uri, code_verifier),
+        )
+        return JSONResponse(issued)
 
     if grant_type == "refresh_token":
-        from server.auth.revocation import is_revoked, loaded
-
-        # A refresh mints a token with a fresh iat, which would pass any
-        # `revoke-token --issued-before` cutoff — so the revocation check must
-        # run here, against the refresh token's own issue time. Before the
-        # first snapshot load that check can't be answered: refuse without
-        # consuming the token so the client can retry.
-        if not loaded():
-            raise HTTPException(
-                status_code=503,
-                detail={"error": "temporarily_unavailable"},
-                headers={"Retry-After": "5"},
-            )
-        # take_refresh rotates: returns the grant + invalidates the old token.
         # A public client identifies itself on refresh (RFC 6749 §6), and the
-        # token refreshes only for the client it was issued to; a mismatch is
-        # refused unconsumed.
+        # token refreshes only for the client it was issued to; a mismatch
+        # finds nothing and leaves the token for its owner.
         if not client_id:
             raise HTTPException(
                 status_code=400,
                 detail={"error": "invalid_request", "error_description": "client_id required"},
             )
-        grant = await _store.take_refresh(refresh_token, client_id)
-        if grant is None:
-            raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
-        # exp is always saved as mint time + _REFRESH_TTL.
-        issued_at = int(grant["exp"]) - _REFRESH_TTL
-        if is_revoked(str(grant["subject"]), issued_at=issued_at):
-            raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
-        # The grant is a sign-in snapshot; each refresh re-checks the account
-        # is still active and re-derives its roles, so neither a released
-        # account nor a removed host rides a rolling 30-day chain.
-        from server.auth.login import refreshed_roles
-
-        roles = await refreshed_roles(grant["subject"], grant["org"], list(grant["roles"]))
-        if roles is None:
-            raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
-        return JSONResponse(await _issue_tokens({**grant, "roles": roles}, grant["client_id"]))
+        issued = await _exchange(
+            "refresh", refresh_token, client_id=client_id, decide=_decide_refresh
+        )
+        return JSONResponse(issued)
 
     raise HTTPException(status_code=400, detail={"error": "unsupported_grant_type"})
+
+
+# What an exchange presents: an authorization code or a refresh token.
+_Kind = Literal["code", "refresh"]
+_Decider = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
+
+
+async def _exchange(
+    kind: _Kind, credential: str, *, client_id: str, decide: _Decider
+) -> dict[str, Any]:
+    """Exchange a code or refresh token for tokens, once: under a Keeper claim
+    where there is one (`oauth_claims`), else as before the claim existed."""
+    from server.auth import oauth_claims
+    from server.core.ch import get_client
+
+    # A made-up credential costs a read, not a Keeper write.
+    try:
+        async with asyncio.timeout(oauth_claims.FIND_TIMEOUT_S):
+            found = await _find(kind, credential, client_id)
+    except Exception as e:  # an unreadable store answers retryably, as below
+        raise _logged_unavailable("credential read", e) from e
+    if found is None:
+        raise _invalid_grant()
+    ch = get_client()
+    key = f"{kind}:{_token_id(credential)}"
+    try:
+        claim, holder = await oauth_claims.CLAIMS.claim(ch, key)
+    except Exception as e:  # an exchange Keeper could not keep apart does not run
+        raise _logged_unavailable("exchange claim", e) from e
+    if claim is oauth_claims.Claim.TAKEN:
+        log.info("oauth: %s is being exchanged by another request; told to retry", kind)
+        raise _unavailable()
+    issued_at = int(time.time())  # before the decision reads the revocations
+    if claim is oauth_claims.Claim.UNCLAIMED:
+        return await _exchange_unclaimed(kind, credential, found, decide, issued_at)
+    release = functools.partial(oauth_claims.CLAIMS.release_shielded, ch, key, holder)
+    return await _exchange_claimed(kind, credential, client_id, decide, issued_at, release)
+
+
+async def _exchange_claimed(
+    kind: _Kind,
+    credential: str,
+    client_id: str,
+    decide: _Decider,
+    issued_at: int,
+    release: Callable[[], Awaitable[None]],
+) -> dict[str, Any]:
+    """Under the claim: read the credential again, decide, then use it up, so
+    a failure before the consume leaves it for the client's retry. The claim
+    is released unless the consume did not finish: that may still land, and
+    the kept claim holds a retry off until it goes stale."""
+    from server.auth import oauth_claims
+
+    keep_claim = False
+    grant: dict[str, Any] | None = None
+    refusal: HTTPException | None = None
+    try:
+        try:
+            async with asyncio.timeout(oauth_claims.EXCHANGE_TIMEOUT_S):
+                grant = await _find(kind, credential, client_id)
+                if grant is None:
+                    raise _invalid_grant()
+                tokens = await _decide_and_issue(grant, decide, issued_at)
+        except HTTPException as e:
+            if e.status_code == 503 or grant is None:  # nothing to use up
+                raise
+            refusal = e
+        except Exception as e:  # a find, decision or issue that did not finish
+            raise _logged_unavailable("exchange", e) from e
+        keep_claim = True  # until the consume answers: a cancelled one may still land
+        if await _consume(kind, credential, grant):
+            keep_claim = False
+    finally:
+        if not keep_claim:
+            await release()
+    if refusal is not None:
+        raise refusal
+    if keep_claim and kind == "refresh":
+        # A code expires before the claim goes stale, so its tokens are
+        # answered; the new refresh token is saved but never delivered.
+        log.warning("oauth: consume of a refresh token did not finish")
+        raise _unavailable(oauth_claims.STALE_S)
+    return tokens
+
+
+async def _exchange_unclaimed(
+    kind: _Kind, credential: str, grant: dict[str, Any], decide: _Decider, issued_at: int
+) -> dict[str, Any]:
+    """Without a Keeper: use the credential up first, so two presenters race
+    only in the window between the read and the consume. Once it is used up a
+    retry cannot succeed, so any failure answers `invalid_grant`."""
+    from server.auth import oauth_claims
+
+    if not await _consume(kind, credential, grant):
+        raise _unavailable()
+    try:
+        async with asyncio.timeout(oauth_claims.EXCHANGE_TIMEOUT_S):
+            return await _decide_and_issue(grant, decide, issued_at)
+    except Exception as e:  # a refusal goes out as it is; any other failure burnt the credential
+        if isinstance(e, HTTPException) and e.status_code != 503:
+            raise
+        log.warning("oauth: exchange failed after its credential was used up: %s", e)
+        raise _invalid_grant() from e
+
+
+async def _decide_and_issue(
+    grant: dict[str, Any], decide: _Decider, issued_at: int
+) -> dict[str, Any]:
+    """The tokens for `grant`; a refusal is raised as its HTTPException."""
+    decided = await decide(grant)
+    return await _issue_tokens(decided, decided["client_id"], issued_at)
+
+
+async def _find(kind: _Kind, credential: str, client_id: str) -> dict[str, Any] | None:
+    if kind == "code":
+        return await _store.find_code(credential)
+    return await _store.find_refresh(credential, client_id)
+
+
+def _invalid_grant() -> HTTPException:
+    return HTTPException(status_code=400, detail={"error": "invalid_grant"})
+
+
+async def _consume(kind: _Kind, credential: str, grant: dict[str, Any]) -> bool:
+    """Mark the credential consumed; False when that did not finish within
+    `CONSUME_TIMEOUT_S` (it may still land)."""
+    from server.auth import oauth_claims
+
+    try:
+        async with asyncio.timeout(oauth_claims.CONSUME_TIMEOUT_S):
+            if kind == "code":
+                await _store.consume_code(credential, grant)
+            else:
+                await _store.consume_refresh(credential, grant)
+        return True
+    except Exception as e:  # noqa: BLE001 — the answer is decided; the caller keeps the claim
+        log.warning("oauth: consume failed for %r in %r: %s", grant["subject"], grant["org"], e)
+        return False
+
+
+async def _decide_code(
+    grant: dict[str, Any], client_id: str, redirect_uri: str, code_verifier: str
+) -> dict[str, Any]:
+    if grant["client_id"] != client_id or grant["redirect_uri"] != redirect_uri:
+        raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
+    if not verify_pkce_s256(code_verifier, grant["code_challenge"]):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "invalid_grant", "error_description": "PKCE failed"},
+        )
+    code_issued_at = int(grant["exp"]) - _CODE_TTL
+    return {**grant, "namespaces": await _mint_namespaces(grant, code_issued_at)}
+
+
+async def _decide_refresh(grant: dict[str, Any]) -> dict[str, Any]:
+    """The grant a refresh mints from. The grant is a sign-in snapshot; each
+    refresh re-checks the account is still active and re-derives its roles,
+    so neither a released account nor a removed host rides a rolling 30-day
+    chain."""
+    from server.auth.login import refreshed_roles
+
+    # exp is always saved as mint time + _REFRESH_TTL.
+    issued_at = int(grant["exp"]) - _REFRESH_TTL
+    try:
+        roles = await refreshed_roles(grant["subject"], grant["org"], list(grant["roles"]))
+    except Exception as e:  # an account that could not be read mints nothing
+        raise _logged_unavailable("account read", e, grant) from e
+    if roles is None:
+        raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
+    return {**grant, "roles": roles, "namespaces": await _mint_namespaces(grant, issued_at)}
+
+
+def _logged_unavailable(
+    what: str, cause: Exception, grant: dict[str, Any] | None = None
+) -> HTTPException:
+    """The retryable 503 for an exchange whose `what` failed because of
+    `cause`, which it logs."""
+    who = f" for {grant['subject']!r} in {grant['org']!r}" if grant else ""
+    log.warning("oauth: %s failed%s: %s", what, who, cause)
+    return _unavailable()
+
+
+def _unavailable(retry_after: int = 5) -> HTTPException:
+    return HTTPException(
+        status_code=503,
+        detail={"error": "temporarily_unavailable"},
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
+async def _mint_namespaces(grant: dict[str, Any], issued_at: int) -> list[str]:
+    """The namespaces a token minted from `grant` may claim, `issued_at` being
+    when the grant was decided; refused when the subject was revoked since.
+    Read from ClickHouse: a token minted past a revocation this process has
+    not seen keeps it."""
+    from server.auth.revocation import subjects_revoked
+
+    try:
+        revoked = await subjects_revoked([grant["subject"]], issued_at=issued_at)
+    except Exception as e:  # no token is minted past a revocation it could not read
+        raise _logged_unavailable("mint-time read", e, grant) from e
+    if revoked:
+        raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
+    return list(grant["namespaces"])
 
 
 def attach(app: Any) -> None:

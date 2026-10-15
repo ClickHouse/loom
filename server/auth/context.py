@@ -16,6 +16,7 @@ from server.auth.directory import ClassificationUnavailable, directory
 from server.core.ch import set_quota_key
 
 if TYPE_CHECKING:
+    from server.auth.fanout import Fanout
     from server.auth.jwt import AuthInfo
     from server.operations.base import Role
 
@@ -46,18 +47,16 @@ def quota_key_for(auth: AuthInfo | None) -> str:
 
 def set_current_auth(auth: AuthInfo | None) -> None:
     current_auth_var.set(auth)
-    _fanout_memo.set(None)
+    fanout_memo.set(None)
     creator_grant_memo.set({} if getattr(auth, "creator", "") else None)
     # every ClickHouse query of this request draws the caller's own quota bucket
     set_quota_key(quota_key_for(auth))
 
 
-# The fan-out set the current principal resolved in `org`, kept for the rest
-# of its request: MCP resolves it to address an unaddressed search, and the
-# search handler reads it again. Binding a principal clears it.
-_fanout_memo: ContextVar[tuple[str, list[str]] | None] = ContextVar(
-    "loom_fanout_namespaces", default=None
-)
+# The fan-out the current principal resolved (`server.auth.fanout`), kept for
+# the rest of its request: MCP resolves it to address an unaddressed search,
+# and the search handler reads it again. Binding a principal clears it.
+fanout_memo: ContextVar[Fanout | None] = ContextVar("loom_fanout", default=None)
 
 # A delegated token's creator grants, (org, namespace, creator) -> role, read
 # once per request by `authz._check_delegated`. Binding a principal resets it.
@@ -81,12 +80,16 @@ async def resolve_my_namespaces(org: str, subject: str | None = None) -> list[st
       `namespaces` claim and active `loom.namespace_grants` rows (grants
       widen), returned sorted.
 
+    Either way a claim on a namespace where the subject holds a grant row is
+    capped at that grant (`authz.claim_cap`), and stays while it is live
+    (`authz.live_claims`).
+
     A delegated token (a `creator` claim) is neither: its claim narrowed to
     the creator's live grants (`_delegated_namespaces`).
 
     `subject` lets dev mode pass an explicit identity when no JWT is present.
     """
-    from server.auth.authz import may_act_in_org
+    from server.auth.authz import live_claims, may_act_in_org
     from server.auth.service_accounts import inheriting_creator
 
     auth = current_auth()
@@ -106,16 +109,14 @@ async def resolve_my_namespaces(org: str, subject: str | None = None) -> list[st
     # order (= read priority); do not union other grants (= subset restrict).
     if auth is not None and auth.has_ns_roles():
         return await _without_unreadable_restricted(
-            org, [ns for ns in auth.namespaces if ns and ns != "*"]
+            org, await live_claims(auth, org, auth.namespaces)
         )
 
     jwt_namespaces: set[str] = set()
     resolved_subject: str | None = None
     if auth is not None and auth.subject:
         resolved_subject = auth.subject
-        for ns in auth.namespaces:
-            if ns and ns != "*":
-                jwt_namespaces.add(ns)
+        jwt_namespaces = set(await live_claims(auth, org, auth.namespaces))
     if not resolved_subject:
         resolved_subject = subject
 
@@ -164,22 +165,6 @@ async def _delegated_namespaces(auth: AuthInfo, org: str) -> list[str]:
     if "*" in auth.namespaces and not auth.has_ns_roles():
         return sorted(granted)
     return [ns for ns in auth.namespaces if ns in granted]
-
-
-async def resolve_fanout_namespaces(org: str) -> list[str]:
-    """The namespaces a `namespace_scope=all_mine` search spans:
-    `resolve_my_namespaces` narrowed to the kinds in
-    `memory_search_fanout_kinds`. A code or QA index is a namespace the
-    caller can read, not one a personal-fact search should sweep; it is
-    addressed by name or by its own tools. Order (= read priority) is kept.
-    Unknown kinds stay: the directory can only narrow, never widen. Resolved
-    once per bound principal and org."""
-    memo = _fanout_memo.get()
-    if memo is not None and memo[0] == org:
-        return list(memo[1])
-    out = await directory().fanout_namespaces(org, await resolve_my_namespaces(org))
-    _fanout_memo.set((org, list(out)))
-    return out
 
 
 async def _without_unreadable_restricted(org: str, namespaces: list[str]) -> list[str]:

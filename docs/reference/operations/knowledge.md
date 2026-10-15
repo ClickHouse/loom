@@ -233,7 +233,7 @@ Search the user's uploaded document library — bills, contracts, receipts, resu
 | `tags` | `list[str]` | *(computed)* | Keep only chunks carrying at least one of these tags; empty = no tag filter. |
 | `since_seconds` | `int \| None` | `None` | optional recency filter |
 | `top_k` | `int` | `5` | At most this many hits are returned (1-100). |
-| `namespace_scope` | `Literal['this', 'all_mine']` | `'all_mine'` | "this" → input.namespace only; "all_mine" → fan out across every namespace the caller belongs to (JWT + grants). |
+| `namespace_scope` | `Literal['this', 'all_mine']` | `'all_mine'` | "this" → input.namespace only; "all_mine" → also the caller's own namespaces, up to `memory_search_fanout_max_namespaces`. |
 | `search_mode` | `Literal['hybrid', 'semantic', 'lexical']` | `'hybrid'` | hybrid: vector leg + BM25 lexical leg fused by reciprocal rank; semantic: vector only; lexical: BM25 only. |
 | `lexical_weight` | `float` | `1.0` | Weight of the lexical leg in reciprocal-rank fusion (hybrid mode). 1.0 = equal weight; lower it for queries whose tokens are ubiquitous in the corpus (paths, boilerplate) where the lexical leg cannot discriminate. |
 | `narrow_spans` | `bool` | `False` | Needle reads: also return, per hit, the two-sentence window of the chunk nearest the query as `span`, so a caller after one fact reads a sentence instead of a 1,500-character section. |
@@ -244,6 +244,7 @@ Search the user's uploaded document library — bills, contracts, receipts, resu
 | --- | --- | --- |
 | `results` | `list[_SearchHit]` | Hits ranked by `score` (then similarity), best first; empty when nothing matched. |
 | `embedding_model` | `str` | Embedding model the query was embedded with; only chunks of this model are searched. |
+| `namespaces_skipped` | `list[str]` | Namespaces of the caller an all_mine search did not read because it stops at `memory_search_fanout_max_namespaces`; address one by name to search it. |
 
 ## `knowledge.synthesize`
 

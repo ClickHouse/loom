@@ -130,9 +130,8 @@ class KnowledgeSearchInput(BaseModel):
     since_seconds: int | None = None  # optional recency filter
     # At most this many hits are returned (1-100).
     top_k: int = Field(default=5, ge=1, le=100)
-    # "this" → input.namespace only; "all_mine" → fan out across every
-    # namespace the caller belongs to (JWT + grants). Symmetric with
-    # memory.search, which also defaults to all_mine.
+    # "this" → input.namespace only; "all_mine" → also the caller's own
+    # namespaces, up to `memory_search_fanout_max_namespaces`.
     namespace_scope: Literal["this", "all_mine"] = "all_mine"
     # hybrid: vector leg + BM25 lexical leg fused by reciprocal rank;
     # semantic: vector only;
@@ -179,6 +178,9 @@ class KnowledgeSearchOutput(BaseModel):
     results: list[_SearchHit]
     # Embedding model the query was embedded with; only chunks of this model are searched.
     embedding_model: str
+    # Namespaces of the caller an all_mine search did not read because it stops
+    # at `memory_search_fanout_max_namespaces`; address one by name to search it.
+    namespaces_skipped: list[str] = Field(default_factory=list)
 
 
 class _KnowledgeBulkEntry(BaseModel):

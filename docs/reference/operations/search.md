@@ -26,7 +26,7 @@ Search every plane of the caller's Loom content in one call.
 | `query` | `str` | required | The question, searched in every plane at once. |
 | `top_k` | `int` | `5` | At most this many hits per section (1-100); the tracker leg caps it at 10. |
 | `tags` | `list[str]` | *(computed)* | Tag filter for the memory and knowledge legs; profile and conversations ignore it. |
-| `namespace_scope` | `Literal['this', 'all_mine']` | `'all_mine'` | `this` searches `namespace` only; `all_mine` (the default) also reads every memory-kind namespace the caller can read. |
+| `namespace_scope` | `Literal['this', 'all_mine']` | `'all_mine'` | `this` searches `namespace` only; `all_mine` (the default) also reads the caller's own memory-kind namespaces. |
 | `recipe` | `Literal['', 'fast', 'balanced', 'quality', 'verbatim', 'code', 'temporal', 'graph']` | `''` | Named `memory.search` preset for the memory leg (`fast`, `balanced`, `quality`, ...); empty = the server's defaults. |
 | `bodies` | `Literal['full', 'excerpt', 'none', 'unit']` | `'excerpt'` | What each memory hit carries: `excerpt` (the first 200 characters), `full` (the stored clip), `none` (keys and scores only) or `unit` (whole values within a budget). |
 | `explain` | `bool` | `False` | Every section unwithheld, and the ranking terms of each memory hit. |
@@ -41,5 +41,6 @@ Search every plane of the caller's Loom content in one call.
 | `conversations` | `dict[str, Any]` | The `conversation.search` hits under `results`. |
 | `withheld` | `dict[str, Any] \| None` | Counts of hits held back per section by the answer-first rules, with `reason`; absent when nothing was withheld or `explain` is set. |
 | `temporal_coverage` | `dict[str, str] \| None` | On a bi-temporal search: what each plane could answer for (V, K). |
+| `namespaces_skipped` | `list[str]` | The caller's namespaces no leg read because the fan-out stops at `memory_search_fanout_max_namespaces`; address one by name to search it. |
 
 <!-- prettier-ignore-end -->

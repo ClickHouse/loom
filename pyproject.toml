@@ -178,6 +178,7 @@ markers = [
   "recovery: kills, restarts or resumes a worker, saga or migration mid-flight",
   "copy_head_check: a unit test that runs the post-copy head re-check (off by default in unit)",
   "temporal_journal: a unit test that runs the bi-temporal journal on memory inserts (off by default in unit)",
+  "claim_cap: a unit test that runs the namespace gate's claim cap (off by default in unit)",
 ]
 
 [tool.mypy]

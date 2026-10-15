@@ -11,9 +11,11 @@ import uuid
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, cast
 
+from server.auth.authz import claim_cap, live_claims
 from server.auth.personal_namespace import derive_personal_slug
 from server.core.naming import slugify
 from server.identity.app import caller_defaults
+from server.operations.base import grant_rank
 from server.transport.mcp_config import _DEFAULT_MCP_AGENT, _MCP_SESSION_AGENT_CAP
 
 if TYPE_CHECKING:
@@ -279,8 +281,13 @@ async def _claimed_home_default(auth_info: Any, org: str, claimed: list[str], ch
             sa = await sa_creator(org, owner, ch=ch)
             owner = sa.subject if sa is not None else owner
         owner_default = await caller_defaults.saved_default(org, owner, ch=ch)
+        # A claim capped below writer there is not a write home.
+        caps = {ns: await claim_cap(auth_info, org, ns) for ns in claimed}
 
         def _can_write(ns: str) -> bool:
+            cap = caps.get(ns)
+            if cap is not None and cap < grant_rank("writer"):
+                return False
             if _scoped(auth_info):  # a scoped viewer claim is not writable
                 return token_can_write(auth_info, org, ns)
             try:
@@ -330,9 +337,11 @@ async def _caller_defaults(
     if auth is not None:
         auth_info = cast("AuthInfo", auth)
         subject = auth_info.subject
-        claimed_namespaces = [
-            n for n in (getattr(auth_info, "namespaces", None) or ()) if n and n != "*"
-        ]
+        named = [n for n in (getattr(auth_info, "namespaces", None) or ()) if n and n != "*"]
+        try:
+            claimed_namespaces = await live_claims(auth_info, org, named)
+        except Exception:  # noqa: BLE001 — defaults fail open; the gate still decides access
+            claimed_namespaces = named
     else:
         subject = "you"
         claimed_namespaces = []

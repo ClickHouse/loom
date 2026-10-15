@@ -85,7 +85,10 @@ def test_the_journal_files() -> None:
         "025_agent_run_claims.sql",
         "026_memory_code_links.sql",
         "027_run_id_indexes.sql",
-        "028_bitemporal_memory.sql",
+        "028_oauth_claims.sql",
+        "029_grant_claims.sql",
+        "030_namespace_released_aliases.sql",
+        "031_bitemporal_memory.sql",
     ]
 
 

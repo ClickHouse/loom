@@ -114,7 +114,9 @@ call. It is the same search with the identity explicit:
 | Result      | text summary plus the lean structured result      | `memory`, `knowledge`, `profile`, `conversations`, and `tracker` / `withheld` when they fired                |
 | Tracker leg | fires under an `X-Loom-Code-Scope` connection     | does not fire: only an MCP connection sets a code scope                                                      |
 
-When the fan-out namespaces cannot be resolved, `all_mine` narrows to `namespace`; it never widens.
+When the fan-out namespaces cannot be resolved, `all_mine` narrows to `namespace`; it never widens. Which namespaces
+count as the caller's, and the cap on how many are read, are in
+[Reading several namespaces](../concepts/identities-and-namespaces.md#reading-several-namespaces).
 
 ```bash
 curl -s -X POST "$LOOM_BASE_URL/v1/search.query" \
@@ -192,12 +194,13 @@ The SDK's `Session.offload` / `Session.fetch` wrap the pair for one session.
 
 ## Settings
 
-| Setting                           | Effect                                                                                        |
-| --------------------------------- | --------------------------------------------------------------------------------------------- |
-| `LOOM_MCP_LOOM_SEARCH_*`          | Legs, floors and withholding rules ([Mcp](../reference/configuration.md#mcp)).                |
-| `LOOM_MEMORY_SEARCH_FANOUT_KINDS` | Namespace kinds a fan-out spans ([MemorySearch](../reference/configuration.md#memorysearch)). |
-| `LOOM_MCP_TOOLSET`                | Which tools `tools/list` shows ([toolsets](../reference/mcp.md#toolsets)).                    |
-| `LOOM_CONTEXT_OFFLOAD_MAX_BYTES`  | The largest body `context.offload` stores ([Context](../reference/configuration.md#context)). |
+| Setting                                    | Effect                                                                                                                                      |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LOOM_MCP_LOOM_SEARCH_*`                   | Legs, floors and withholding rules ([Mcp](../reference/configuration.md#mcp)).                                                              |
+| `LOOM_MEMORY_SEARCH_FANOUT_KINDS`          | Namespace kinds a fan-out spans ([MemorySearch](../reference/configuration.md#memorysearch)).                                               |
+| `LOOM_MEMORY_SEARCH_FANOUT_MAX_NAMESPACES` | How many of the caller's namespaces a fan-out reads besides the addressed one ([MemorySearch](../reference/configuration.md#memorysearch)). |
+| `LOOM_MCP_TOOLSET`                         | Which tools `tools/list` shows ([toolsets](../reference/mcp.md#toolsets)).                                                                  |
+| `LOOM_CONTEXT_OFFLOAD_MAX_BYTES`           | The largest body `context.offload` stores ([Context](../reference/configuration.md#context)).                                               |
 
 ## Limits
 

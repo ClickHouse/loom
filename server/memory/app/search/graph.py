@@ -78,9 +78,9 @@ async def _run_graph_expansion(ctx: SearchContext) -> None:
             paths=ctx.graph_paths_by_ns.setdefault(ns, {}),
             min_co_occur=1,
             max_neighbors=50,
-            # Cross-namespace expansion: the entity hop unions across
-            # every namespace the caller can reach. The JWT already
-            # scopes reachability, so always on.
+            # Cross-namespace expansion: the entity hop unions across the
+            # namespaces this search reads (`ctx.namespaces`: the addressed
+            # one, plus the all_mine fan-out under its cap), so always on.
             accessible_namespaces=ctx.namespaces,
             # Edge-level temporal validity: replay `as_of` wins, else the
             # resolved query/observation date. NULL bounds always-valid.

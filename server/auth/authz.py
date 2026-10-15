@@ -17,6 +17,7 @@ BOTH a token that names the namespace AND a live direct grant.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
 from server.auth.directory import ClassificationUnavailable, directory
@@ -35,6 +36,9 @@ log = logging.getLogger(__name__)
 # The roles a namespace grant can hold. Org- and platform-wide roles are never
 # grantable per namespace: an unknown grant role maps to no role at all.
 _ROLE_NAME_TO_ENUM: dict[str, Role] = {name: Role[name.upper()] for name in GRANT_ROLES}
+_ROLE_BY_RANK: dict[int, Role] = {
+    grant_rank(name): role for name, role in _ROLE_NAME_TO_ENUM.items()
+}
 
 
 def grant_role(name: str | None) -> Role | None:
@@ -135,6 +139,11 @@ async def check_authorized(
     ):
         return
 
+    # A claim on a namespace where the subject holds a grant row is capped at
+    # that grant, so a revoked or lowered grant ends every older token's claim.
+    cap = None if org is None or namespace is None else await claim_cap(auth, org, namespace)
+    capped = cap is not None
+
     # Scoped token (carries an `ns_roles` map): the per-namespace role is
     # AUTHORITATIVE and was capped to the minter's live grant at mint, so it
     # cannot over-grant (this closes the flat-role write-escalation). For a
@@ -143,29 +152,11 @@ async def check_authorized(
     # (and possibly downgraded), so it is its own ceiling. Non-namespace
     # (org-level) ops fall through to the flat-role check below.
     if auth.has_ns_roles() and org is not None and namespace is not None:
-        eff = auth.effective_role(org, namespace)
-        # An `ns_write` claim (inherited by a delegated child) binds writes too.
-        outside_write_claim = (
-            required_role.value >= Role.WRITER.value
-            and bool(auth.write_namespaces)
-            and not auth.can_write(org, namespace)
-        )
-        if eff is not None and eff.value >= required_role.value and not outside_write_claim:
+        role = _scoped_role(auth, required_role, org, namespace, cap=cap)
+        if role is not None and role.value >= required_role.value:
             return
-        # On a repository the join IS the read. A scoped
-        # token's map caps what it writes and which memory it reads; a code
-        # index is read-only reference data a maintainer admits people to by
-        # grant, so a reader grant — the subject's own, or the creator's for
-        # a service account — widens READS of a configured code namespace and
-        # nothing else. Without it, every agent token minted before a person
-        # joined a repository would need a re-mint to follow them in.
-        if not (required_role.value <= Role.VIEWER.value and _is_code_namespace(org, namespace)):
-            raise _refused(
-                f"scoped token: {required_role.name} required on {org}/{namespace}; "
-                f"token grants {eff.name if eff else 'no access'} there",
-                org,
-                namespace,
-            )
+        if not _code_namespace_read(required_role, org, namespace):
+            raise _scoped_refusal(required_role, org, namespace, role, capped=capped)
 
     # Reads check the readable set; writes (WRITER+) check the narrower
     # writable set, so a token can read an inherited parent namespace
@@ -175,6 +166,9 @@ async def check_authorized(
         ns_covered_by_jwt = (
             auth.can_write(org, namespace) if is_write else auth.can_access(org, namespace)
         )
+        if cap is not None:
+            live = _rank_role(cap)
+            ns_covered_by_jwt = ns_covered_by_jwt and live is not None and live >= required_role
     else:
         ns_covered_by_jwt = False
 
@@ -203,15 +197,13 @@ async def check_authorized(
     # A caller that already read the principal's
     # grants this request (a listing over many namespaces) hands the answer
     # in — `None` included — instead of paying one grants read per namespace.
-    grant_role = (
-        known_grant
-        if known_grant is not _UNKNOWN_GRANT
-        else await _lookup_grant(org, namespace, auth.subject)
-    )
+    grant_role = await _grant_role(auth, org, namespace, cap, known_grant)
     if grant_role is not None and grant_role.value >= required_role.value:
         return
 
     # Be specific so the failing gate is visible to debug clients.
+    if capped:
+        raise _refused(_capped_message(org, namespace, required_role), org, namespace)
     if not ns_covered_by_jwt:
         raise _refused(
             f"principal {auth.subject!r} cannot access {org}/{namespace} "
@@ -226,6 +218,27 @@ async def check_authorized(
         org,
         namespace,
     )
+
+
+async def _grant_role(
+    auth: AuthInfo, org: str, namespace: str, cap: int | None, known_grant: Role | None
+) -> Role | None:
+    """The grant the subject holds there. Where its claim is capped, the cap's
+    read decides for the subject itself: it covers every spelling consistently,
+    and no second read of its own grants may loosen it. A service account with
+    none live there still reads through its creator, as the listings do."""
+    if cap is not None:
+        role = _rank_role(cap)
+        if role is None:
+            from server.auth.service_accounts import inheriting_creator
+
+            creator = await inheriting_creator(org, auth.subject)
+            if creator is not None:
+                role = await grant_role_for(org, namespace, creator)
+        return role
+    if known_grant is not _UNKNOWN_GRANT:
+        return known_grant
+    return await _lookup_grant(org, namespace, auth.subject)
 
 
 async def _check_creator(
@@ -323,6 +336,77 @@ def names_namespace(auth: AuthInfo, org: str, namespace: str) -> bool:
     if namespace in auth.namespaces:
         return True
     return any(ns == namespace for ns, _role in auth.ns_roles)
+
+
+def _scoped_role(
+    auth: AuthInfo, required_role: Role, org: str, namespace: str, *, cap: int | None
+) -> Role | None:
+    """The role a scoped token holds on (org, namespace) for this op: its own,
+    capped at the subject's live grant where it holds one. None for a write
+    outside its `ns_write` claim (inherited by a delegated child)."""
+    if (
+        required_role.value >= Role.WRITER.value
+        and auth.write_namespaces
+        and not auth.can_write(org, namespace)
+    ):
+        return None
+    role = auth.effective_role(org, namespace)
+    if role is not None and cap is not None:
+        live = _rank_role(cap)
+        role = None if live is None else min(role, live)
+    return role
+
+
+def _code_namespace_read(required_role: Role, org: str, namespace: str) -> bool:
+    """A read of a configured code namespace, which a scoped token leaves to
+    the grant check. On a repository the join IS the read: a code index is
+    read-only reference data a maintainer admits people to by grant, so a
+    reader grant (the subject's own, or the creator's for a service account)
+    widens reads there and nothing else. Without it, every agent token minted
+    before a person joined a repository would need a re-mint to follow them."""
+    return required_role.value <= Role.VIEWER.value and _is_code_namespace(org, namespace)
+
+
+def _scoped_refusal(
+    required_role: Role, org: str, namespace: str, role: Role | None, *, capped: bool
+) -> PermissionError:
+    if capped:
+        return _refused(_capped_message(org, namespace, required_role), org, namespace)
+    return _refused(
+        f"scoped token: {required_role.name} required on {org}/{namespace}; "
+        f"token grants {role.name if role else 'no access'} there",
+        org,
+        namespace,
+    )
+
+
+def _capped_message(org: str, namespace: str, required_role: Role) -> str:
+    return (
+        f"this token's claim on {org}/{namespace} goes no further than the grant held "
+        f"there, which does not allow {required_role.name}"
+    )
+
+
+async def claim_cap(auth: AuthInfo, org: str, namespace: str) -> int | None:
+    """The live grant rank this token's claim on `namespace` is capped at (0:
+    none live), where the token names it and its subject holds a grant row
+    there of any status. None where the subject never held one (an operator's
+    `loom mint-token`): the claim stands as minted."""
+    from server.core.grant_cache import grant_map
+
+    if not names_namespace(auth, org, namespace):
+        return None
+    return (await grant_map(org, auth.subject)).rank(namespace)
+
+
+def _rank_role(rank: int) -> Role | None:
+    return _ROLE_BY_RANK.get(rank)
+
+
+async def live_claims(auth: AuthInfo, org: str, namespaces: Iterable[str]) -> list[str]:
+    """The named `namespaces` (no `*`), in order, that the claim still reaches:
+    all but those capped at a grant that is no longer live."""
+    return [ns for ns in namespaces if ns and ns != "*" and await claim_cap(auth, org, ns) != 0]
 
 
 async def _check_restricted(auth: AuthInfo, required_role: Role, org: str, namespace: str) -> None:
@@ -491,9 +575,11 @@ __all__ = [
     "GRANT_ROLES",
     "Role",
     "check_authorized",
+    "claim_cap",
     "grant_rank",
     "grant_role",
     "grant_role_for",
+    "live_claims",
     "names_namespace",
     "restricted_allows",
     "row_in_scope",

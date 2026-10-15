@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import re
 
-from server.auth.context import resolve_fanout_namespaces
+from server.auth.fanout import namespaces_to_search
 from server.core.errors import ValidationError
 from server.embedding import get_embedder
 from server.identity.app.request_scope import request_scope
@@ -55,10 +55,9 @@ async def search(input: MemorySearchInput) -> MemorySearchOutput:
     if unsupported:
         raise ValidationError(f"a historical memory.search does not take {', '.join(unsupported)}")
     axes = reads.axes_of(input)
-    namespaces = [input.namespace]
-    if input.namespace_scope == "all_mine":
-        fanned = await resolve_fanout_namespaces(input.org)
-        namespaces = list(dict.fromkeys([input.namespace, *(fanned or [])]))
+    namespaces, skipped = await namespaces_to_search(
+        input.org, input.namespace, input.namespace_scope
+    )
     embedder = get_embedder()
     query_vec = await embedder.embed(input.query)
     per_ns = await asyncio.gather(
@@ -83,6 +82,7 @@ async def search(input: MemorySearchInput) -> MemorySearchOutput:
     return MemorySearchOutput(
         results=hits,
         namespaces_searched=namespaces,
+        namespaces_skipped=skipped,
         candidates_total=sum(len(got) for got, _ in per_ns),
         embedding_model=embedder.model_name,
         abstain=abstain,

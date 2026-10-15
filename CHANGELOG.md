@@ -46,12 +46,72 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   `/v1/health` reports `repo_jobs_unsandboxed` as an error. `loom code init`'s first bare
   clone stays a plain `git clone`.
 
+- `LOOM_MEMORY_SEARCH_FANOUT_MAX_NAMESPACES` (default 32) caps how many of the caller's
+  namespaces a `namespace_scope=all_mine` search reads besides the addressed one. For
+  anyone but a scoped token the cut drops public namespaces before private ones.
+  `memory.search` names the rest in a new output field, `namespaces_skipped`, and the
+  `loom_search` output and text list them. `knowledge.search` and `conversation.search`
+  carry the same field, and every page of a paged `memory.search` repeats the first call's
+  lists, less any namespace the caller can no longer read.
+
 ### Changed
 
 - **Breaking:** `rerank` (`memory.search`, `memory.search_trace`, `code.search`, `code.ask`)
   and a namespace's `rerank_endpoint` take a name, not a URL: `none`, `builtin:openai[:model]`,
   `builtin:cohere[:model]`, or an endpoint the operator names in `LOOM_RERANK_ENDPOINTS_JSON`.
   A URL or an unknown name is a 422. A namespace that still stores a URL is no longer reranked.
+- **Security:** a token's claim on a namespace goes no further than the grant its subject
+  holds there. A revoked or lowered grant ends every older token's claim, and a pending or
+  rejected request caps it at no access; a scoped token keeps its own role there capped at
+  the grant. It applies at once on every web process of the server that changed the grant
+  and within `LOOM_GRANT_CACHE_TTL_SECONDS` (default 10 s) on the others. A namespace the
+  subject never held a grant on (named by an operator at mint) keeps its claim; a
+  `loom mint-token` claim beyond a grant the subject holds is now capped at it.
+- **Security:** with a Keeper, `/oauth/token` runs one exchange per code or refresh token
+  (a KeeperMap claim, `loom.oauth_claims`, migration `028_oauth_claims.sql`); a concurrent
+  presenter is told to retry, and a failed read answers a retryable 503
+  `temporarily_unavailable` that leaves the credential usable, where a failed account read
+  on refresh used to answer 500 and burn the token. Without a Keeper the credential is used
+  up before the decision, as before; a failure after that answers `invalid_grant`, and
+  `/v1/health` reports `oauth_claims_not_atomic`.
+- **Security:** `context.fetch` no longer serves, and `context.offload` refuses to write,
+  `page/` blobs: a parked `memory.search` page holds hits from every namespace its search
+  fanned out over, and only `memory.search(page=...)` serves it, re-checking each of them.
+- `grants.revoke` of a repository maintainer revokes them on the other branches first, in one
+  write; when that cannot be written it answers a retryable error and leaves the grant until
+  a retry, where it used to revoke the grant and log the failed branches. A maintainer's
+  revoke and a maintainer sync of the same person hold one claim on the repository, so a
+  sync can no longer copy a revoked maintainer's admin grant back onto a branch.
+- **Security:** releasing a person's account (`loom claim-release`, the release endpoint) keeps
+  its login handle and email in the namespace's new `released_aliases` column (migration
+  `030_namespace_released_aliases.sql`). The release clears the account's owner and contact
+  email, the binding through which a token minted for one spelling is capped at a grant
+  revoked under the other; the claim cap reads the column, and nothing else does.
+- **Security:** `namespace.register` refuses (409 `PRECONDITION_FAILED`) to change the owner
+  of an account with a login (an email, or an agent's claim code): the login signs in as the
+  owner, so it would sign the new owner in with the old person's credential. Release the
+  account (`loom claim-release`) to hand it on.
+- **Security:** two changes that each remove an admin of one namespace (a revoke, a lowering,
+  `namespace.leave`, a maintainer's branch fan-out) no longer run at once: each takes the
+  namespace's admins claim and counts the admins under it, so the namespace always keeps
+  one. `grants.create` with `replace=true` now refuses (409) to lower the last admin too.
+- `grants.approve` refuses (409 `GRANT_WOULD_DOWNGRADE`) to approve a request below the
+  subject's current grant; lower a grant with `grants.create replace=true`.
+- **Security:** two changes of one grant no longer interleave. An op that reads a grant
+  and then writes it (`grants.create`, `grants.approve`, `grants.revoke`, `namespace.join`,
+  `namespace.leave`, `namespace.cancel_request`) holds the grant from the read to the
+  write, in a KeeperMap claim (`loom.grant_claims`, migration `029_grant_claims.sql`); a
+  concurrent change of the same grant waits, and past 10 s answers a retryable 503
+  `GRANT_BUSY`. An approval could write over a promotion or a revoke that landed after its
+  read. Without a Keeper the changes are kept apart within each process only, and
+  `/v1/health` reports `grant_changes_not_atomic`.
+- With auth off, an `all_mine` search also reads every namespace the single user registered,
+  not only the addressed one.
+- The addressed namespace is always searched first. A scoped token's other namespaces follow
+  in its order, so a confident hit in a namespace the token lists first no longer ends the
+  search before the addressed one is read. Without a scoped token, an addressed public
+  namespace is read in the private pass. Knowledge, conversation and profile search read it
+  even when the fan-out does not list it.
 - **Breaking:** a `LOOM_CODE_REPOS_JSON` entry (or the scalar `LOOM_CODE_REPO`) that names
   no `scip_producer` gets the compiler tiers its tree's build files call for, as a
   dashboard entry does, instead of `clang`. An entry relying on the old default can gain a
@@ -129,6 +189,19 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
 
 ### Fixed
 
+- **Security:** OIDC just-in-time provisioning no longer rebuilds an existing account. A
+  person's next sign-in recreated a released or deleted account, or one another account
+  registered under the derived name, with default settings and an admin grant, its data
+  included. Now a person with an active account in the org is signed in to it, one with an
+  account revoked outright (`loom revoke-token --subject`) is refused, and anyone else
+  gets the next free name (`<name>-2`, ..., then a random suffix). A first sign-in whose
+  owner grant failed to land is finished at the next sign-in, from a new `oidc-jit` tag on
+  the account; a grant revoked or lowered since is never given back.
+- **Security:** `namespace.restore` into an existing namespace needs an admin of it. The
+  owner a first write auto-registered, who holds no grant there, could restore a payload
+  whose grants made them, or anyone, admin.
+- **Security:** a second `namespace.join` request on an approval namespace no longer turns
+  the first, still pending, request into an active grant; it replaces the request.
 - In sandboxed repository jobs, git refused a local repository another uid owns (one the
   host operator cloned, not the container's `loom` user) with `detected dubious ownership`:
   a compiler tier's fetch from its bare clone failed every pass, and so did the fetches,

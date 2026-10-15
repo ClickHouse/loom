@@ -20,9 +20,10 @@ class SearchInput(TemporalArgs):
     """Search every plane of the caller's Loom content in one call.
 
     `namespace` is the namespace the search addresses (and is authorized
-    against); `namespace_scope="all_mine"` also reads every memory-kind
-    namespace the caller can read. `page` is a `memory.next_page` handle
-    from an earlier answer."""
+    against); `namespace_scope="all_mine"` also reads the caller's own
+    memory-kind namespaces, see
+    docs/concepts/identities-and-namespaces.md#reading-several-namespaces. `page` is a
+    `memory.next_page` handle from an earlier answer."""
 
     org: str
     namespace: str
@@ -33,8 +34,8 @@ class SearchInput(TemporalArgs):
     top_k: int = Field(default=5, ge=1, le=100)
     # Tag filter for the memory and knowledge legs; profile and conversations ignore it.
     tags: list[str] = Field(default_factory=list)
-    # `this` searches `namespace` only; `all_mine` (the default) also reads every
-    # memory-kind namespace the caller can read.
+    # `this` searches `namespace` only; `all_mine` (the default) also reads the
+    # caller's own memory-kind namespaces.
     namespace_scope: Literal["this", "all_mine"] = "all_mine"
     # Named `memory.search` preset for the memory leg (`fast`, `balanced`, `quality`, ...);
     # empty = the server's defaults.
@@ -84,3 +85,6 @@ class SearchOutput(BaseModel):
     # planes answered from their history; `not_historical` planes returned nothing
     # rather than today's state.
     temporal_coverage: dict[str, str] | None = None
+    # The caller's namespaces no leg read because the fan-out stops at
+    # `memory_search_fanout_max_namespaces`; address one by name to search it.
+    namespaces_skipped: list[str] = Field(default_factory=list)

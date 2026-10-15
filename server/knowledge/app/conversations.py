@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from server.auth.fanout import namespaces_to_search
 from server.core.cursors import decode_cursor as _decode_cursor
 from server.core.cursors import encode_cursor as _encode_cursor
 from server.core.datetimes import naive_utc_now
@@ -487,17 +488,11 @@ async def handle_conversation_search(
         log.warning("conversation embed query failed; falling back to substring: %s", e)
         query_vec = None
 
+    namespaces, skipped = await namespaces_to_search(
+        input.org, input.namespace, input.namespace_scope
+    )
     if query_vec is None:
-        return await _search_substring_fallback(input)
-
-    if input.namespace_scope == "all_mine":
-        from server.auth.context import resolve_fanout_namespaces
-
-        namespaces = await resolve_fanout_namespaces(input.org)
-        if not namespaces:
-            namespaces = [input.namespace]
-    else:
-        namespaces = [input.namespace]
+        return await _search_substring_fallback(input, namespaces, skipped)
 
     async def _search_one(ns: str) -> tuple[str, list[ConversationHit]]:
         return ns, await vector_search(
@@ -536,18 +531,21 @@ async def handle_conversation_search(
                 )
             )
     scored.sort(key=lambda pair: pair[0], reverse=True)
-    return ConversationSearchOutput(hits=[h for _, h in scored[: input.top_k]])
+    return ConversationSearchOutput(
+        hits=[h for _, h in scored[: input.top_k]], namespaces_skipped=skipped
+    )
 
 
 async def _search_substring_fallback(
-    input: ConversationSearchInput,
+    input: ConversationSearchInput, namespaces: list[str], skipped: list[str]
 ) -> ConversationSearchOutput:
-    """Lexical fallback used when the embedder is unavailable."""
+    """Lexical fallback used when the embedder is unavailable: the same
+    namespaces, newest match first."""
     from server.knowledge.store import conversations as conversation_repo
 
     rows = await conversation_repo.search_substring(
         input.org,
-        input.namespace,
+        namespaces,
         input.agent,
         input.query,
         thread_id=input.thread_id or None,
@@ -564,10 +562,11 @@ async def _search_substring_fallback(
                 r.content[:_EXCERPT_LIMIT] + "…" if len(r.content) > _EXCERPT_LIMIT else r.content
             ),
             ts=r.ts,
+            namespace=r.namespace,
         )
         for r in rows
     ]
-    return ConversationSearchOutput(hits=hits)
+    return ConversationSearchOutput(hits=hits, namespaces_skipped=skipped)
 
 
 def _safe_load_json(s: Any) -> dict[str, Any]:

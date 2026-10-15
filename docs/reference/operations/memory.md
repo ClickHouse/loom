@@ -608,7 +608,7 @@ Test-time learning from memory: the nearest memories tagged as examples (default
 | `k` | `int` | `8` | At most this many labelled examples feed the vote and the block, 1-50. |
 | `example_tag` | `str` | `'example'` | Only memories carrying this tag are examples. |
 | `label_prefix` | `str` | `'label:'` | The label rides as a second tag: "<label_prefix><label>". |
-| `namespace_scope` | `Literal['this', 'all_mine']` | `'this'` | `this` searches `namespace`; `all_mine` every namespace the caller belongs to, but labels are read from `namespace` only. |
+| `namespace_scope` | `Literal['this', 'all_mine']` | `'this'` | `this` searches `namespace`; `all_mine` also the caller's own namespaces (up to the fan-out cap), but labels are read from `namespace` only. |
 | `min_margin` | `float` | `0.0` | Below this normalised top-vote margin the prediction is reported but `abstain` is set, so a caller can fall back to its own reasoning. |
 | `max_block_chars` | `int` | `6000` | Character budget of `few_shot_block`; the nearest example is always included. |
 
@@ -1776,7 +1776,7 @@ Semantic search over the agent's own memory.
 | `memory_type` | `Literal['semantic', 'procedural', 'preference', 'reflection', 'decision'] \| None` | `None` | None = every searchable type except the hidden-by-default ones (reflection). "reflection" = only process lessons (what worked / failed in past runs), which never surface in an unfiltered search. |
 | `tags` | `list[str]` | *(computed)* | OR-filter on tags (set semantics). |
 | `scope` | `Literal['private', 'shared']` | `'private'` | Which rows to read: "private" = per-agent rows (narrowed to `agent` when it names one), "shared" = rows promoted to the namespace's shared scope. |
-| `namespace_scope` | `Literal['this', 'all_mine'] \| None` | `None` | "all_mine" spans every namespace the caller is a member of (own + granted); "this" scopes to input.namespace only. |
+| `namespace_scope` | `Literal['this', 'all_mine'] \| None` | `None` | "this" reads input.namespace only; "all_mine" also the caller's own namespaces, see docs/concepts/identities-and-namespaces.md#reading-several-namespaces. |
 | `search_mode` | `Literal['semantic', 'lexical', 'hybrid', 'bm25_hybrid', 'related', 'graph', 'rrf', 'temporal']` | `'rrf'` | Recall fusion mode. |
 | `recipe` | `Literal['', 'fast', 'balanced', 'quality', 'verbatim', 'code', 'temporal', 'graph']` | `''` | Named presets over the lower-level knobs. |
 | `alpha` | `float` | `0.5` | Lexical weight for `search_mode` "hybrid" / "bm25_hybrid": the score is alpha * lexical + (1 - alpha) * cosine. |
@@ -1851,7 +1851,8 @@ Semantic search over the agent's own memory.
 | `bodies_returned` | `int` | bodies="unit" accounting: whole values served / withheld for budget, and the estimated tokens those bodies added (len/4). |
 | `bodies_elided` | `int` | Hits whose whole value was withheld because `body_budget_tokens` ran out. |
 | `tokens_returned` | `int` | Estimated tokens (chars / 4) the whole values served under bodies="unit" added. |
-| `namespaces_searched` | `list[str]` | The namespaces this search actually read: the addressed one first, then the fan-out under namespace_scope=all_mine. |
+| `namespaces_searched` | `list[str]` | The namespaces in this search's scope: the addressed one first, then the fan-out under namespace_scope=all_mine. |
+| `namespaces_skipped` | `list[str]` | Namespaces of the caller the fan-out did not read because it stops at `memory_search_fanout_max_namespaces`; address one by name to search it. |
 | `candidates_total` | `int` | Distinct memories in the fused pool before the top_k cut ("showing 10 of 124"); the handle that serves the next slice when the caller asked for paging and there was more; and this page's offset into the parked list (0 for a fresh search). |
 | `next_page` | `str` | Handle to pass as `page` for the next slice; empty when `paging` was off or no more candidates remained. |
 | `page_offset` | `int` | This page's offset into the parked list; 0 for a fresh search. |
@@ -1906,7 +1907,7 @@ Same shape as memory.search; returns the per-candidate scoring breakdown instead
 | `memory_type` | `Literal['semantic', 'procedural', 'preference', 'reflection', 'decision'] \| None` | `None` | None = every searchable type except the hidden-by-default ones (reflection). "reflection" = only process lessons (what worked / failed in past runs), which never surface in an unfiltered search. |
 | `tags` | `list[str]` | *(computed)* | OR-filter on tags (set semantics). |
 | `scope` | `Literal['private', 'shared']` | `'private'` | Which rows to read: "private" = per-agent rows (narrowed to `agent` when it names one), "shared" = rows promoted to the namespace's shared scope. |
-| `namespace_scope` | `Literal['this', 'all_mine'] \| None` | `None` | "all_mine" spans every namespace the caller is a member of (own + granted); "this" scopes to input.namespace only. |
+| `namespace_scope` | `Literal['this', 'all_mine'] \| None` | `None` | "this" reads input.namespace only; "all_mine" also the caller's own namespaces, see docs/concepts/identities-and-namespaces.md#reading-several-namespaces. |
 | `search_mode` | `Literal['semantic', 'lexical', 'hybrid', 'bm25_hybrid', 'related', 'graph', 'rrf', 'temporal']` | `'rrf'` | Recall fusion mode. |
 | `recipe` | `Literal['', 'fast', 'balanced', 'quality', 'verbatim', 'code', 'temporal', 'graph']` | `''` | Named presets over the lower-level knobs. |
 | `alpha` | `float` | `0.5` | Lexical weight for `search_mode` "hybrid" / "bm25_hybrid": the score is alpha * lexical + (1 - alpha) * cosine. |

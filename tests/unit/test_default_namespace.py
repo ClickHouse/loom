@@ -436,7 +436,7 @@ async def test_mcp_defaults_claimed_namespace_still_wins(  # type: ignore[no-unt
     from server.settings import settings
     from server.transport.mcp_identity import _caller_defaults
 
-    auth = SimpleNamespace(subject="svc@local", org="dev", namespaces=["minted-ns"])
+    auth = SimpleNamespace(subject="svc@local", org="dev", namespaces=["minted-ns"], issued_at=None)
     with (
         patch.object(settings, "auth_required", False),
         patch.object(settings, "identity_provider", ""),

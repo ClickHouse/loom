@@ -159,7 +159,7 @@ async def test_search_substring_uses_positioncaseinsensitive() -> None:
     ch.query_all_returns.append([_msg_row()])
     rows = await search_substring(
         "clickhouse",
-        "ns",
+        ["ns"],
         "bot",
         "deploy",
         thread_id="t-1",

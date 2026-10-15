@@ -95,6 +95,17 @@ class GrantWouldDowngradeError(LoomServerError):
         super().__init__(message, current_role=current_role, requested_role=requested_role)
 
 
+class GrantBusyError(LoomServerError):
+    """503 — another change to the same grant held it past the wait. Retry
+    after `retry_after_s`."""
+
+    code = "GRANT_BUSY"
+    status_code = 503
+
+    def __init__(self, message: str = "", *, retry_after_s: int = 1) -> None:
+        super().__init__(message, retry_after_s=retry_after_s)
+
+
 class OverloadedError(LoomServerError):
     """503 — too busy, retry: every pooled ClickHouse connection was busy past
     `ch_pool_wait_ms`, or a sibling held an override's lock past its wait.

@@ -84,6 +84,12 @@ class HealthState:
     # Whether run.begin claims run ids in Keeper (loom.agent_run_claims exists):
     # None = no run.begin has asked yet in this process.
     run_claims_atomic: bool | None = None
+    # Whether /oauth/token claims each exchange in Keeper (loom.oauth_claims
+    # exists): None = no exchange or boot probe has asked yet.
+    oauth_claims_atomic: bool | None = None
+    # Whether grant changes are claimed in Keeper (loom.grant_claims exists):
+    # None = no grant change or boot probe has asked yet.
+    grant_claims_atomic: bool | None = None
     env: Mapping[str, str] = field(default_factory=lambda: os.environ)
     # Saved keys take precedence over the environment, including explicit empty keys.
     saved_keys: Mapping[str, bool] = field(default_factory=saved_key_presence)
@@ -639,6 +645,45 @@ def _run_claim_problems(state: HealthState) -> list[Problem]:
     ]
 
 
+def _oauth_claim_problems(settings: Any, state: HealthState) -> list[Problem]:
+    """No Keeper: two concurrent exchanges of one OAuth code or refresh token can both mint."""
+    if not settings.oauth_enabled or state.oauth_claims_atomic is not False:
+        return []
+    return [
+        Problem(
+            "oauth_claims_not_atomic",
+            "warn",
+            "loom.oauth_claims is absent (no ClickHouse Keeper), so /oauth/token keeps two "
+            "exchanges of one code or refresh token apart only by using it up first: two "
+            "concurrent ones can still both mint tokens.",
+            "Run ClickHouse with a Keeper (deploy/clickhouse-config/keeper.xml) and create the "
+            "table from schemas/migrations/028_oauth_claims.sql (the migration skipped it); "
+            "an exchange within a minute finds it.",
+            source="runtime",
+        )
+    ]
+
+
+def _grant_claim_problems(state: HealthState) -> list[Problem]:
+    """No Keeper: two processes can change one grant at once, the later writing over
+    the earlier."""
+    if state.grant_claims_atomic is not False:
+        return []
+    return [
+        Problem(
+            "grant_changes_not_atomic",
+            "warn",
+            "loom.grant_claims is absent (no ClickHouse Keeper), so two changes of one grant "
+            "are kept apart only within each server process: across processes an approval "
+            "can still write over a promotion or a revoke that landed after its read.",
+            "Run ClickHouse with a Keeper (deploy/clickhouse-config/keeper.xml) and create the "
+            "table from schemas/migrations/029_grant_claims.sql (the migration skipped it); "
+            "a grant change within a minute finds it.",
+            source="runtime",
+        )
+    ]
+
+
 def _constraint_message(error: str) -> str:
     """`Setting max_execution_time shouldn't be greater than 30` out of the error text."""
     m = re.search(r"Setting \w+ [^.(]*", error)
@@ -662,6 +707,8 @@ def collect_problems(settings: Any, state: HealthState | None = None) -> list[Pr
         + _sandbox_problems(settings, st)
         + _reader_user_problems(settings, st)
         + _run_claim_problems(st)
+        + _oauth_claim_problems(settings, st)
+        + _grant_claim_problems(st)
     )
     return sorted(problems, key=lambda p: (SEVERITY_RANK.get(p.severity, 9), p.code))
 

@@ -7395,6 +7395,7 @@ class ConversationSearchBody(TypedDict, total=False):
 
 class ConversationSearchOutput(TypedDict, total=False):
     hits: Required[list["ConversationHit"]]
+    namespaces_skipped: NotRequired[list[str]]
 
 
 class ConversationHit(TypedDict, total=False):
@@ -8885,6 +8886,7 @@ class KnowledgeSearchBody(TypedDict, total=False):
 class KnowledgeSearchOutput(TypedDict, total=False):
     results: Required[list["SearchHit"]]
     embedding_model: Required[str]
+    namespaces_skipped: NotRequired[list[str]]
 
 
 class SearchHit(TypedDict, total=False):
@@ -12373,6 +12375,7 @@ class MemorySearchOutput(TypedDict, total=False):
     bodies_elided: NotRequired[int]
     tokens_returned: NotRequired[int]
     namespaces_searched: NotRequired[list[str]]
+    namespaces_skipped: NotRequired[list[str]]
     candidates_total: NotRequired[int]
     next_page: NotRequired[str]
     page_offset: NotRequired[int]
@@ -15393,6 +15396,7 @@ class SearchQueryOutput(TypedDict, total=False):
     conversations: NotRequired[dict[str, Any]]
     withheld: NotRequired[Optional[dict[str, Any]]]
     temporal_coverage: NotRequired[Optional[dict[str, str]]]
+    namespaces_skipped: NotRequired[list[str]]
 
 
 class SessionBriefDeleteInput(TypedDict, total=False):

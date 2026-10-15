@@ -75,6 +75,52 @@ boot and refreshes it every `LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` (30 s), thro
 token on every fresh process, which is when an operator restarts the fleet after
 revoking a leaked token. The cost is a short 503 window at boot.
 
+**A claim goes no further than the grant.** A token names namespaces, and a flat token's
+claim on one would otherwise admit it with the token's own role. Where the subject holds a
+grant row on the namespace, of any status, the claim is capped at that grant instead
+(`authz.claim_cap`): a revoked or lowered grant ends every older token's claim there, a
+pending or rejected request caps it at no access, and a scoped token keeps its own role
+there capped at the live grant. A namespace the subject never held a grant on (a `loom
+mint-token` claim) keeps the claim; grant rows are never deleted, so a revocation is never
+forgotten.
+
+- The subject's rows, under every spelling the directory ties to it, are read in one
+  statement per (org, subject) into a per-process cache (`server/core/grant_cache.py`) kept
+  for `grant_cache_ttl_seconds` (10 s). A grant write in this process drops at once the
+  entries whose read covered the spelling it wrote, and any read in flight; a write to the
+  accounts that tie a person's spellings drops the org's. The server's other web processes
+  (`LOOM_WEB_WORKERS`) read again at once: the write marks a file in their runtime directory,
+  and an entry read before the mark is not served. Another server sees either within the TTL.
+- A failed re-read serves the cached entry while it is younger than
+  `jwt_revocation_max_stale_seconds`, the bound a token check already lives with, and
+  answers a retryable 503 past it.
+
+**One exchange per credential** (`server/auth/oauth_claims.py`). The OAuth store marks a
+code or refresh token used by writing a new ReplacingMergeTree version, so reading and then
+marking cannot keep two concurrent exchanges apart. With a Keeper, `/oauth/token` first
+inserts the credential's key into `loom.oauth_claims`, a KeeperMap table, in strict mode.
+Keeper refuses the second insert, so exactly one presenter runs.
+
+- **The other presenter** gets a retryable 503, not `invalid_grant`: it may be the owner
+  retrying after a lost reply. Its retry, after the release, finds the credential used.
+- **Time limits.** Each phase has a wall-clock limit that counts retries and pool waits:
+  10 s for a first read that finds the credential (a made-up one is refused there, before
+  any Keeper write), 10 s to take the claim, 60 s to read the credential again and decide,
+  10 s to use it up. The first read ends before the claim lands, so a live claim is at
+  most 80 s old. A claim older than 120 s was left by a dead exchange, and the next
+  presenter takes it over with a compare-and-swap.
+- **A consume that did not finish** (failed or cancelled) may still land, so the claim is
+  kept until it goes stale. A refresh answers 503 with `Retry-After: 120`; a code, which
+  expires sooner, answers with its tokens. A retry inside those 120 s finds the claim held
+  and is told to retry in 5 s, as any concurrent presenter is, until it goes stale. Each
+  server boot deletes stale claims.
+- **Without a Keeper** there is no table. The credential is used up before the decision,
+  as before the claim existed, and `/v1/health` reports `oauth_claims_not_atomic`.
+
+Every token an OAuth exchange mints takes its issue time before it reads the subject's
+revocations from ClickHouse, so a `revoke-token --subject` that landed while it ran still
+postdates the token.
+
 ## Authorization
 
 ### Roles
