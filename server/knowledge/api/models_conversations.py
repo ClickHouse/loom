@@ -126,6 +126,33 @@ class ConversationSaveMessageOutput(BaseModel):
     ts: datetime
 
 
+class ConversationUnsaveMessageInput(BaseModel):
+    """Withdraw one message from a user's saved-message search."""
+
+    org: str
+    namespace: str
+    agent: str
+    # LibreChat's conversation id, as given to conversation.save_message.
+    conversation_id: str = Field(min_length=1, max_length=256)
+    # LibreChat's message id, as given to conversation.save_message.
+    message_id: str = Field(min_length=1, max_length=256)
+    # Only this user's saved row is withdrawn.
+    user_id: str = Field(min_length=1, max_length=256)
+
+
+class ConversationUnsaveMessageOutput(BaseModel):
+    conversation_id: str
+    message_id: str
+    # False when no saved row of this user exists: never saved, already
+    # withdrawn, or saved by another user (which is not confirmed).
+    found: bool
+    # True when the turn itself was removed: the namespace does not record
+    # transcripts, so the row existed only because of the save. False keeps
+    # the turn in the recorded transcript, no longer flagged saved.
+    removed: bool = False
+    ts: datetime
+
+
 class ConversationSetLoggingInput(BaseModel):
     """Toggle whether this namespace records conversation transcripts. When
     disabled, conversation.append accepts calls but stores nothing."""

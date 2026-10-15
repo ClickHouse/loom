@@ -263,6 +263,29 @@ Recent conversation threads of a namespace, newest first.
 | --- | --- | --- |
 | `threads` | `list[ConversationThreadSummary]` | Threads, most recently active first, each with its count and last message excerpt. |
 
+## `conversation.unsave_message`
+
+Withdraw one message from a user's saved-message search.
+
+`POST /v1/conversation.unsave_message` · MCP `loom_conversation_unsave_message` · role `writer` · idempotent · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `agent` | `str` | required | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
+| `conversation_id` | `str` | required | LibreChat's conversation id, as given to conversation.save_message. |
+| `message_id` | `str` | required | LibreChat's message id, as given to conversation.save_message. |
+| `user_id` | `str` | required | Only this user's saved row is withdrawn. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `conversation_id` | `str` |  |
+| `message_id` | `str` |  |
+| `found` | `bool` | False when no saved row of this user exists: never saved, already withdrawn, or saved by another user (which is not confirmed). |
+| `removed` | `bool` | True when the turn itself was removed: the namespace does not record transcripts, so the row existed only because of the save. |
+| `ts` | `datetime` |  |
+
 ## `conversation.update`
 
 Update one thread's title/metadata/run_id.

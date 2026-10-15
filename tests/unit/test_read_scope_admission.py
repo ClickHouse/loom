@@ -256,6 +256,7 @@ def test_a_write_under_an_unresolved_scope_is_refused() -> None:
 # be decided here rather than follow the rule it is checked against.
 _ACTS_AS_A_USER = [
     "conversation.save_message",
+    "conversation.unsave_message",
     "cost.record_turns",
     "cost.summary",
     # A document records the session it was written in: under a session ceiling

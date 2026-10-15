@@ -123,6 +123,7 @@ OpName = Literal[
     "conversation.search_saved_messages",
     "conversation.set_logging",
     "conversation.threads",
+    "conversation.unsave_message",
     "conversation.update",
     "cost.agent_summary",
     "cost.budget_status",
@@ -440,6 +441,7 @@ OP_NAMES: tuple[str, ...] = (
     "conversation.search_saved_messages",
     "conversation.set_logging",
     "conversation.threads",
+    "conversation.unsave_message",
     "conversation.update",
     "cost.agent_summary",
     "cost.budget_status",
@@ -1680,6 +1682,18 @@ OPS: dict[str, OpSpec] = {
         120,
         False,
         True,
+    ),
+    "conversation.unsave_message": OpSpec(
+        "conversation.unsave_message",
+        "ConversationUnsaveMessageInput",
+        "ConversationUnsaveMessageBody",
+        "ConversationUnsaveMessageOutput",
+        True,
+        "writer",
+        "experimental",
+        250,
+        False,
+        False,
     ),
     "conversation.update": OpSpec(
         "conversation.update",
@@ -8037,6 +8051,36 @@ class ConversationThreadSummary(TypedDict, total=False):
     last_role: Required[str]
     last_content_excerpt: Required[str]
     title: NotRequired[str]
+
+
+class ConversationUnsaveMessageInput(TypedDict, total=False):
+    "Withdraw one message from a user's saved-message search."
+
+    org: Required[str]
+    namespace: Required[str]
+    agent: Required[str]
+    conversation_id: Required[str]
+    message_id: Required[str]
+    user_id: Required[str]
+
+
+class ConversationUnsaveMessageBody(TypedDict, total=False):
+    "Withdraw one message from a user's saved-message search."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    agent: NotRequired[str]
+    conversation_id: Required[str]
+    message_id: Required[str]
+    user_id: NotRequired[str]
+
+
+class ConversationUnsaveMessageOutput(TypedDict, total=False):
+    conversation_id: Required[str]
+    message_id: Required[str]
+    found: Required[bool]
+    removed: NotRequired[bool]
+    ts: Required[str]  # date-time as ISO-8601 text
 
 
 class ConversationUpdateInput(TypedDict, total=False):

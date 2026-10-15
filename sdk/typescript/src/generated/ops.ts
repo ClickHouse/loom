@@ -2359,6 +2359,23 @@ export interface ConversationThreadsOutput {
   threads: ConversationThreadSummary[];
 }
 
+export interface ConversationUnsaveMessageInput {
+  org: string;
+  namespace: string;
+  agent: string;
+  conversation_id: string;
+  message_id: string;
+  user_id: string;
+}
+
+export interface ConversationUnsaveMessageOutput {
+  conversation_id: string;
+  message_id: string;
+  found: boolean;
+  removed?: boolean;
+  ts: string; // date-time
+}
+
 export interface ConversationUpdateInput {
   org: string;
   namespace: string;
@@ -8644,6 +8661,7 @@ export type OpName =
   | "conversation.search_saved_messages"
   | "conversation.set_logging"
   | "conversation.threads"
+  | "conversation.unsave_message"
   | "conversation.update"
   | "cost.agent_summary"
   | "cost.budget_status"
@@ -8961,6 +8979,7 @@ export interface OpMap {
   "conversation.search_saved_messages": { input: ConversationSearchSavedMessagesInput; output: ConversationSearchSavedMessagesOutput };
   "conversation.set_logging": { input: ConversationSetLoggingInput; output: ConversationSetLoggingOutput };
   "conversation.threads": { input: ConversationThreadsInput; output: ConversationThreadsOutput };
+  "conversation.unsave_message": { input: ConversationUnsaveMessageInput; output: ConversationUnsaveMessageOutput };
   "conversation.update": { input: ConversationUpdateInput; output: ConversationUpdateOutput };
   "cost.agent_summary": { input: CostAgentSummaryInput; output: CostAgentSummaryOutput };
   "cost.budget_status": { input: CostBudgetStatusInput; output: CostBudgetStatusOutput };
@@ -9278,6 +9297,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "conversation.search_saved_messages", group: "conversation", method: "searchSavedMessages", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 200, audit: false, readOnly: true },
   { name: "conversation.set_logging", group: "conversation", method: "setLogging", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 200, audit: true, readOnly: false },
   { name: "conversation.threads", group: "conversation", method: "threads", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 120, audit: false, readOnly: true },
+  { name: "conversation.unsave_message", group: "conversation", method: "unsaveMessage", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 250, audit: false, readOnly: false },
   { name: "conversation.update", group: "conversation", method: "update", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 50, audit: false, readOnly: false },
   { name: "cost.agent_summary", group: "cost", method: "agentSummary", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 250, audit: false, readOnly: true },
   { name: "cost.budget_status", group: "cost", method: "budgetStatus", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 120, audit: false, readOnly: true },
@@ -9514,4 +9534,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 314;
+export const GENERATED_OP_COUNT = 315;

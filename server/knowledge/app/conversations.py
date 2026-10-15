@@ -43,6 +43,8 @@ from server.knowledge.api.models_conversations import (
     ConversationThreadsInput,
     ConversationThreadsOutput,
     ConversationThreadSummary,
+    ConversationUnsaveMessageInput,
+    ConversationUnsaveMessageOutput,
     ConversationUpdateInput,
     ConversationUpdateOutput,
     _ConversationEntry,
@@ -474,6 +476,56 @@ def _save_refused(
         indexed=False,
         reason=reason,
         ts=naive_utc_now(),
+    )
+
+
+async def handle_conversation_unsave_message(
+    input: ConversationUnsaveMessageInput,
+) -> ConversationUnsaveMessageOutput:
+    """Withdraw a message from its owner's saved-message search.
+
+    A namespace that records transcripts keeps the turn, unflagged: the owner
+    chose to record it. One that does not removes it, since the row existed
+    only because of the save. A row saved by another user is reported as not
+    found, never as someone else's.
+    """
+    from server.knowledge.store import conversations as conversation_repo
+
+    _conversation_read_scope()
+    key = _TurnKey(input.org, input.namespace, input.agent, input.conversation_id, input.message_id)
+    now = naive_utc_now()
+    with traced("ch.query.conversation_saved_owner"):
+        owner = await conversation_repo.saved_message_owner(
+            key.org, key.namespace, key.agent, key.thread_id, key.msg_id
+        )
+    if owner != input.user_id:
+        return ConversationUnsaveMessageOutput(
+            conversation_id=input.conversation_id,
+            message_id=input.message_id,
+            found=False,
+            ts=now,
+        )
+    with traced("ch.query.conversation_logging_enabled"):
+        recording = await conversation_repo.namespace_logging_enabled(input.org, input.namespace)
+    for table in conversation_repo.SAVED_MESSAGE_TABLES:
+        with traced("ch.mutate.conversation_unsave", table=table):
+            await conversation_repo.unsave_message(
+                table,
+                key.org,
+                key.namespace,
+                key.agent,
+                key.thread_id,
+                key.msg_id,
+                user_id=input.user_id,
+                remove=not recording,
+                when=now,
+            )
+    return ConversationUnsaveMessageOutput(
+        conversation_id=input.conversation_id,
+        message_id=input.message_id,
+        found=True,
+        removed=not recording,
+        ts=now,
     )
 
 

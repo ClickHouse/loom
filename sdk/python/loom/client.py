@@ -820,6 +820,15 @@ class ConversationOps:
             await self._agent.call("conversation.threads", body, **options),
         )
 
+    async def unsave_message(
+        self, body: _ops.ConversationUnsaveMessageBody | None = None, /, **options: Any
+    ) -> _ops.ConversationUnsaveMessageOutput:
+        """`conversation.unsave_message`."""
+        return cast(
+            "_ops.ConversationUnsaveMessageOutput",
+            await self._agent.call("conversation.unsave_message", body, **options),
+        )
+
     async def update(
         self, body: _ops.ConversationUpdateBody | None = None, /, **options: Any
     ) -> _ops.ConversationUpdateOutput:

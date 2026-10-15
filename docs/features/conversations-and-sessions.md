@@ -88,6 +88,14 @@ answers `indexed: false, reason: "embed_failed"`; saving it again retries the em
 transcript append whose embedding lands after a concurrent save flags its own embedding
 row.
 
+`conversation.unsave_message` (writer) withdraws a saved message from its owner's
+search. Where the namespace records transcripts, the turn stays in the transcript with
+the flag cleared, because the owner chose to record it. Where it does not, the turn is
+tombstoned too, because it existed only because of the save (`removed: true`). A message
+the caller's user never saved, or one another user saved, answers `found: false`; it
+never says which. Unsaving is idempotent, and saving again restores the message. Erasure
+by user removes saved messages with the rest of that user's conversation rows.
+
 ### Reading and searching
 
 | Operation              | Role   | Does                                                                                                                       |
