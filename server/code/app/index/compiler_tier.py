@@ -179,14 +179,18 @@ def resolve_checkout(cfg: RepoConfig, producer: str) -> tuple[Path, Path, str | 
     bare = Path(cfg.git_dir)
     if not bare.exists():
         return checkout, bare, f"bare clone missing at {bare}"
-    if not checkout.exists() and cfg.source == "registry":
-        # a Repositories-page entry has no operator to create its checkout; an
-        # empty repository is enough, the tier fetches the target from the mirror
+    if not checkout.exists() and (cfg.source == "registry" or producer != "clang"):
+        # An empty repository is enough: the tier fetches the target from the mirror.
+        # An operator's scip-clang entry needs its configured build tree, so a missing
+        # one is reported instead.
         from server.code.app.index.gitrepo import auth_env
 
-        subprocess.run(
-            ["git", "init", "-q", str(checkout)], check=True, capture_output=True, env=auth_env()
+        init = subprocess.run(
+            ["git", "init", "-q", str(checkout)], capture_output=True, text=True, env=auth_env()
         )
+        if init.returncode:
+            reason = init.stderr.strip()
+            return checkout, bare, f"checkout missing at {checkout} (git init: {reason})"
     if not checkout.exists():
         return checkout, bare, f"checkout missing at {checkout}"
     return checkout, bare.resolve(), None

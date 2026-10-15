@@ -96,18 +96,24 @@ LOOM_CODE_REPOS_JSON='[
 | `embed_reuse_from`                   | a namespace whose embeddings are reused when the chunk text is identical (a release branch of the same repository)            |
 | `public`                             | the repository is public on its host: anyone in the org can join its index as a reader at once                                |
 | `classification`                     | `restricted` for a private repository: a maintainer approves each reader, and it is never org-readable                        |
-| `scip_producer`, `scip_checkout_dir` | the compiler-tier indexer (`clang`, `typescript`, `python`, `go`) and the working tree it runs in                             |
+| `scip_producer`, `scip_checkout_dir` | the compiler-tier indexer (`clang`, `typescript`, `python`, `go`; unset, the tree's build files pick) and its working tree    |
 | `scip_extra_producers`               | further compiler-tier producers over the same tree (a Python repository with a TypeScript frontend), each in its own checkout |
 | `git_extra_branches`                 | globs of other remote branches the shared mirror should carry                                                                 |
 | `github_token`                       | per-entry override of `LOOM_CODE_GITHUB_TOKEN`                                                                                |
 
-The repository's `.gitattributes` `linguist-generated` / `linguist-vendored` patterns and
-a `.loomignore` file at the indexed commit are honoured as excludes. A dependency
+`public` is read when `loom code init` first registers the namespace; editing it later
+does not change the join policy, which a maintainer changes with `code.repo.set_access`.
+An entry that names no `scip_producer` keeps `scip_checkout_dir` for C/C++ (see
+[Compiler tier](#compiler-tier)), so name the producer when you prepare that tree for
+another language.
+
+The repository's `.gitattributes` `linguist-generated` / `linguist-vendored` patterns
+and a `.loomignore` file at the indexed commit are honoured as excludes. A dependency
 vendored as a git submodule is not in the bare mirror; give it its own entry and name it
 in `depends_on`. The gauge `loom.code.repos_config_errors` reports entries the server
-could not use (invalid JSON, a nameless entry, a duplicate namespace); 0 means the value
-parsed clean. Validate the JSON before a restart with
-`docker compose --env-file .env -f dev/docker-compose.cloud.yml config`.
+could not use (invalid JSON, a nameless entry, a namespace with `.` or `/`, a duplicate
+namespace); 0 means the value parsed clean. Validate the JSON before a restart
+with `docker compose --env-file .env -f dev/docker-compose.cloud.yml config`.
 
 Who can read an index is governed by the namespace's join policy and grants
 ([tokens and grants](../guides/tokens-and-grants.md)). `LOOM_CODE_ORG_READABLE=true`
@@ -196,13 +202,24 @@ only an entry's first index does.
 | Python     | `python`        | `LOOM_CODE_SCIP_PY_DELTA_ENABLED` | scip-python (in the image)                                                                                           |
 | Go         | `go`            | `LOOM_CODE_SCIP_GO_DELTA_ENABLED` | Go and scip-go (in the image)                                                                                        |
 
+An entry that names no `scip_producer` gets every tier whose build file its tree
+carries: `go.mod` (at any depth) for Go; `tsconfig.json`, `jsconfig.json` or
+`package.json` at the root for TypeScript; a root `CMakeLists.txt` for C/C++;
+`pyproject.toml`, `setup.py` or `requirements.txt` at the root for Python.
+`code.index_status` lists them as `compiler_candidates`. Name the producer where a build
+file is incidental, such as a C++ repository whose `pyproject.toml` only serves its test
+tooling; `scip_extra_producers` adds tiers beside a named one. Each tier works in its own
+tree: the named producer (C/C++ when the entry names none) in `scip_checkout_dir`, every
+other one in `<scip_checkout_dir>.<producer>`.
+
 All four workers are enabled by default. The Docker image includes the Python,
-TypeScript, and Go indexers and creates persistent compiler checkouts for repositories
-added from the dashboard. A worker whose project prerequisites are absent records a
-skip in `workers.status`; the Tree-sitter tier remains available. TypeScript projects
-have their dependencies installed automatically in their checkout. C/C++ projects need a
-compilation database and scip-clang (upstream publishes Linux binaries only for
-x86_64).
+TypeScript, and Go indexers. Their workers create a missing working tree as an empty
+repository and fetch each commit into it from the entry's mirror; the C/C++ tier of an
+operator's entry needs the configured build tree instead, and Loom never creates it. A worker whose project
+prerequisites are absent records a skip in `workers.status`; the Tree-sitter tier
+remains available. TypeScript projects have their dependencies installed automatically
+in their checkout. C/C++ projects need a compilation database and scip-clang (upstream
+publishes Linux binaries only for x86_64).
 
 - **C/C++ delta cap.** The worker indexes changed translation units, including those
   that include a changed header, up to `LOOM_CODE_SCIP_DELTA_MAX_TUS` (200); above the
@@ -320,6 +337,24 @@ _Without the sandbox_). To run it there, once the host has the profile:
 
 A source run (`make server`) has the sandbox only where the host passes the same
 requirements.
+
+**Which hosts can load the profile.** The shipped profile targets AppArmor 4.0 or later
+(`abi <abi/4.0>`). Only Ubuntu 24.04 is tested, by the CI `sandbox-profile` job with
+`kernel.apparmor_restrict_unprivileged_userns=1`; Debian 13's 4.x parser accepts the
+ABI, but the profile is untested there. Hosts without AppArmor, such as Docker Desktop
+(on any OS) or SELinux distributions like Fedora and RHEL, cannot use the colours'
+options safely: Docker ignores `apparmor=` there, so nothing replaces the `/proc` masks
+that `systempaths=unconfined` drops (see _`/proc`_ below). Older parsers (Ubuntu 22.04,
+Debian 12) reject the profile; those hosts can run the sandbox only with
+`seccomp=unconfined` and `apparmor=unconfined` (the paragraph before _Without the
+sandbox_), which lose the same `/proc` protection. The released stack runs on all of
+these hosts without the sandbox.
+
+Unless `LOOM_CODE_SANDBOX_REQUIRED` is set, every host still indexes the repositories
+listed in `LOOM_CODE_REPOS_JSON`; only repositories added from the page need the
+sandbox. _Without the sandbox_ says what that runs, and the
+[quickstart](../getting-started/quickstart.md#optional-index-a-repository-on-the-released-stack)
+has the released stack's commands.
 
 **Requirements.** `bwrap` and `prlimit` (util-linux) on `PATH` (the image has both) and
 unprivileged user namespaces. Docker's defaults block bwrap three ways, and the colour

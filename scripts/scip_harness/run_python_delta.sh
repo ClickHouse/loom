@@ -79,6 +79,8 @@ async def m():
         owner = "worker"
     elif producer in ("go", "typescript"):
         owner = producer  # its in-process worker moves this checkout, outside the cron lock
+    elif cfg and not producer and not await worker_owns(repo, cfg, "python"):
+        owner = "none"  # the tree calls for no Python tier
     else:
         owner = "cron"
     print(org, ns, wm or "-", head or "-", bare or "-", owner)
@@ -90,6 +92,10 @@ PYEOF
   [[ "$BASE" == "-" ]] && BASE=""
   if [[ "$OWNER" == "worker" ]]; then
     echo ">> $NS: the code_scip_py_delta worker owns the python tier — skipping"
+    exit 0
+  fi
+  if [[ "$OWNER" == "none" ]]; then
+    echo ">> $NS: the tree has no Python build file — no python tier"
     exit 0
   fi
   if [[ "$OWNER" != "cron" ]]; then

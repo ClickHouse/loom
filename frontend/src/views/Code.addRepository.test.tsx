@@ -7,7 +7,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../lib/errors";
-import { AddRepositoryDialog } from "./Code";
+import { AddRepositoryDialog, sandboxProblem } from "./Code";
 import { must } from "../test/must";
 
 vi.mock("../api", async (importOriginal) => {
@@ -206,5 +206,16 @@ describe("Add repository — fetching versus reading are two questions", () => {
     expect(screen.getByLabelText("Access token")).toBeTruthy();
     // without a listing the single Branch field remains the way in
     expect(screen.getByLabelText("Branch")).toBeTruthy();
+  });
+});
+
+describe("sandboxProblem", () => {
+  it("is the severity of health's repo_jobs_unsandboxed, null without it", () => {
+    const problem = (code: string, severity = "warn") => ({ code, severity, message: "", fix: "" });
+    expect(sandboxProblem({ problems: [problem("repo_jobs_unsandboxed")] })).toBe("warn");
+    expect(sandboxProblem({ problems: [problem("repo_jobs_unsandboxed", "error")] })).toBe("error");
+    expect(sandboxProblem({ problems: [problem("fake_llm")] })).toBeNull();
+    expect(sandboxProblem({ problems: "not a list" })).toBeNull();
+    expect(sandboxProblem(null)).toBeNull();
   });
 });

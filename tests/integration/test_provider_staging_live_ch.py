@@ -381,3 +381,82 @@ async def test_cleanup_refuses_a_live_create_query():
         if identity is not None:
             await discard_snapshot(names, schema.table_uuid, identity, ch=client)
         await client.disconnect()
+
+
+async def _drop_owned(client, name, uuid):
+    current = await client.query_one(
+        "SELECT uuid FROM system.tables WHERE database='loom' AND name={name:String}",
+        {"name": name},
+    )
+    if current is not None and str(current["uuid"]) == str(uuid):
+        await client.execute(f"DROP TABLE loom.{name} SYNC")
+
+
+@pytest.mark.asyncio
+async def test_a_text_less_summary_card_rebuilds_verifies_and_publishes_as_a_placeholder():
+    """Right after a backfill a file's summary card is the graph pass's structural row:
+    no summary, and the zero vector the insert path pads the vector column with."""
+    if os.environ.get("LOOM_PROVIDER_STAGING_LIVE_TEST") != "1":
+        pytest.skip(_OPT_IN)
+    from server.code.store.index import CodeRepo, build_row
+
+    client = _default_client()
+    await client.connect()
+    await _require_empty(client, "code_summaries")
+    org, namespace = "rebuild-placeholder", f"code-{uuid4().hex[:8]}"
+    names = StagingNames(uuid4(), "code_summaries")
+    embedder = _EightDimEmbedder()
+    identity = target_uuid = prepared_uuid = None
+    try:
+        card = build_row(
+            "code_summaries",
+            org=org,
+            namespace=namespace,
+            embedding_model="old-model",
+            scope_path="tests/__init__.py",
+            pagerank=0.5,
+        )
+        await CodeRepo(client).insert_rows("code_summaries", [card])
+        schema = await source_schema(names, ch=client)
+        identity = await ensure_snapshot(names, schema, ch=client)
+        target_uuid = await ensure_target(names, schema, identity, "a" * 64, ch=client)
+        checkpoint = await rebuild_snapshot_page(
+            names, schema, identity, target_uuid, "a" * 64, embedder, after=0, ch=client
+        )
+        assert checkpoint.done and checkpoint.rows_written == 1
+        rows = await verify_reembedded_target(
+            names, schema, identity, target_uuid, "a" * 64, model=embedder.model_name,
+            dimensions=8, ch=client,
+        )  # fmt: skip
+        prepared_uuid = await prepare_live_table(
+            names, schema, identity, target_uuid, "a" * 64,
+            expected_rows=rows, dimensions=8, ch=client,
+        )  # fmt: skip
+        codec = await client.query_one(
+            "SELECT compression_codec FROM system.columns WHERE database='loom' "
+            "AND table={t:String} AND name='embedding'",
+            {"t": names.prepared},
+        )
+        published = await client.query_one(
+            f"SELECT embedding_model, embedding, embedding_dim, pagerank FROM loom.{names.prepared} "
+            "WHERE org = {org:String} AND namespace = {ns:String}",
+            {"org": org, "ns": namespace},
+        )
+        assert published["embedding_model"] == embedder.model_name
+        assert (published["embedding_dim"], published["pagerank"]) == (0, 0.5)
+        # A coded column takes its placeholder at the new width; a plain one stays empty.
+        coded = codec is not None and "Quantized" in str(codec["compression_codec"])
+        assert published["embedding"] == ([0.0] * 8 if coded else [])
+    finally:
+        for name, uuid in (
+            (names.prepared, prepared_uuid),
+            (names.target, target_uuid),
+            (names.snapshot, identity),
+        ):
+            if uuid is not None:
+                await _drop_owned(client, name, uuid)
+        await client.execute(
+            "DELETE FROM loom.code_summaries WHERE org = {org:String} AND namespace = {ns:String}",
+            {"org": org, "ns": namespace},
+        )
+        await client.disconnect()

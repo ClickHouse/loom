@@ -37,8 +37,8 @@ installs the Compose and ClickHouse configuration under `~/.loom`, pulls the mat
 `ghcr.io/clickhouse/loom:X.Y.Z` image, and waits for
 `http://localhost:7777/v1/health`. The image contains the API, workers, migrations and
 the built React dashboard at `/me`; no Python or Node installation is needed. Python,
-TypeScript and Go compiler indexers are included and enabled. TypeScript repository
-dependencies are prepared automatically when you add a repository from the dashboard.
+TypeScript and Go compiler indexers are included and enabled. A repository indexed
+with the TypeScript indexer gets its dependencies installed automatically.
 The image supports Linux `amd64` and `arm64`, including Docker Desktop on Apple Silicon.
 
 Pin a release or inspect everything before starting:
@@ -383,6 +383,65 @@ search from the tool descriptions; there are no trigger words.
 
 The rest is in [Dashboard](../features/dashboard.md).
 
+## Optional: index a repository on the released stack
+
+Adding a repository from the dashboard is refused on this stack with `SANDBOX_UNAVAILABLE`:
+it needs the [repository-job sandbox](../operations/code-index-operations.md#repository-job-sandbox),
+which this stack leaves off because Docker's default confinement blocks it. Only list
+repositories you trust: their build steps (TypeScript installs, Go module downloads,
+CMake) run without the sandbox, in the `loom` container, whose environment holds the JWT
+secret and provider keys.
+
+`LOOM_CODE_REPOS_JSON` is one line holding every repository as a JSON array
+([Configure the entry](../operations/code-index-operations.md#configure-the-entry)).
+In `~/.loom/.env`, uncomment that line (add it if your `.env` predates it) and edit it.
+`dev` is the org a single-user stack runs as, and the org multi-user accounts sign up
+into (`LOOM_SELF_SIGNUP_ORG`); if you changed that, use your account's org here and in
+`--org` below:
+
+```dotenv
+LOOM_CODE_REPOS_JSON=[{"org":"dev","namespace":"code-myrepo","repo":"acme/myrepo","git_branch":"main","public":true}]
+```
+
+- Loom picks the compiler-tier indexers from the repository's build files (`go.mod`,
+  `package.json`, `pyproject.toml`, a root `CMakeLists.txt`, …); `scip_producer` names
+  one instead ([Compiler tier](../operations/code-index-operations.md#compiler-tier)).
+  C/C++ also needs a configured build tree, so without one a C/C++ repository gets only
+  the parser tier.
+- For a private repository, add a GitHub token (`LOOM_CODE_GITHUB_TOKEN` in `.env`, or
+  `github_token` on the entry) and drop `"public":true`: it is for repositories public on
+  their host, and lets anyone in the org join the index as a reader at once from
+  **Repositories**. Decide before the first `loom code init`: it sets the namespace's join
+  policy from `public`, and editing `public` later does not change it (a maintainer
+  changes it with `code.repo.set_access`).
+
+Then recreate the `loom` container and run the first index:
+
+```bash
+docker compose --project-directory "$HOME/.loom" up -d --force-recreate loom
+docker compose --project-directory "$HOME/.loom" exec loom loom code init --namespace code-myrepo --org dev
+docker compose --project-directory "$HOME/.loom" exec loom loom code backfill --namespace code-myrepo --org dev --embed
+```
+
+`backfill --embed` needs an embedding provider ([Models and keys](./models-and-keys.md)).
+On the stock keyless stack it refuses the fallback embedder and exits. To try the wiring
+anyway, add `--allow-fake-embedder`. Choosing a model later in **Settings → Models &
+keys** re-embeds the code index; after an `.env` change it needs its own re-embedding, as
+[Models and keys](./models-and-keys.md) describes.
+
+In multi-user mode a listed repository has no maintainer, so without `"public":true` a
+reader's join request waits with nobody to approve it. After `loom code init`, give
+someone access as the operator with a token minted in the container: `admin` makes them
+the maintainer, who approves readers from then on, and `viewer` lets them read. The
+subject is the account's sign-in email:
+
+```bash
+ADMIN_TOKEN=$(docker compose --project-directory "$HOME/.loom" exec -T loom loom mint-token --subject operator --org dev --namespaces code-myrepo --roles admin --ttl-days 1)
+curl -s http://localhost:7777/v1/grants.create -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"org":"dev","namespace":"code-myrepo","subject":"you@example.com","role":"admin"}'
+```
+
 ## Optional: ask a question about a document
 
 ```bash
@@ -396,13 +455,14 @@ the answer and the chunks it cited. With the fake LLM it prints the top
 
 ## Common problems
 
-| Symptom                                                | Cause and fix                                                                                                                                                                  |
-| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `set_from_messages` writes no facts; results arbitrary | Fake providers are active. Follow [Models and keys](./models-and-keys.md) to configure providers and rebuild existing embeddings. Do not delete your volumes to change models. |
-| 401 `AUTH_INVALID` after turning auth on               | No token, or one signed with another `LOOM_JWT_SECRET`. Re-mint with the Compose command in [Get a token](#3-get-a-token).                                                     |
-| `/me` returns 503                                      | The server runs from source (`make server`) without a built frontend. Run `make frontend-build`.                                                                               |
-| Released stack does not become healthy                 | Run `docker compose --project-directory "$HOME/.loom" logs --tail 100 loom clickhouse`. See [Troubleshooting](../operations/troubleshooting.md).                               |
-| Port `8123`, `9000` or `7777` is taken                 | Remap the ClickHouse host ports ([local stack](../operations/deployment.md#local-stack)).                                                                                      |
+| Symptom                                                | Cause and fix                                                                                                                                                                      |
+| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `set_from_messages` writes no facts; results arbitrary | Fake providers are active. Follow [Models and keys](./models-and-keys.md) to configure providers and rebuild existing embeddings. Do not delete your volumes to change models.     |
+| 401 `AUTH_INVALID` after turning auth on               | No token, or one signed with another `LOOM_JWT_SECRET`. Re-mint with the Compose command in [Get a token](#3-get-a-token).                                                         |
+| `/me` returns 503                                      | The server runs from source (`make server`) without a built frontend. Run `make frontend-build`.                                                                                   |
+| Released stack does not become healthy                 | Run `docker compose --project-directory "$HOME/.loom" logs --tail 100 loom clickhouse`. See [Troubleshooting](../operations/troubleshooting.md).                                   |
+| Adding a repository answers `SANDBOX_UNAVAILABLE`      | The stack runs without the repository-job sandbox. Index the repository through `LOOM_CODE_REPOS_JSON` ([Index a repository](#optional-index-a-repository-on-the-released-stack)). |
+| Port `8123`, `9000` or `7777` is taken                 | Remap the ClickHouse host ports ([local stack](../operations/deployment.md#local-stack)).                                                                                          |
 
 ## Next
 

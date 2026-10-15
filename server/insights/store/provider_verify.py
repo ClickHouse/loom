@@ -27,7 +27,9 @@ def _vector_checks(schema: SourceSchema, columns: list[str]) -> str:
                 f"length({vector}) NOT IN (0, {{dim:UInt32}})",
                 f"NOT arrayAll(x -> isFinite(toFloat64(x)), {vector})",
                 f"(notEmpty({vector}) AND ({norm} <= 0 OR NOT isFinite({norm})))",
-                f"(empty({vector}) AND notEmpty({source}) AND {active})",
+                # An all-zero source is a placeholder (vectors/placeholders.py) and
+                # rebuilds empty, as in provider_rebuild_batch._inputs.
+                f"(empty({vector}) AND arrayExists(x -> x != 0, {source}) AND {active})",
             ]
         )
         if "tombstoned_at" in schema.columns:

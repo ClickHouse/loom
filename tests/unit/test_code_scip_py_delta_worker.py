@@ -55,14 +55,15 @@ async def test_only_python_producers_are_checked_and_a_current_tier_is_a_noop():
 
 
 @pytest.mark.asyncio
-async def test_missing_checkout_skips(monkeypatch, tmp_path: Path):
+async def test_missing_checkout_is_created(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(w.settings, "code_scip_checkout_dir", str(tmp_path / "nope"))
     monkeypatch.setattr(w.settings, "code_git_dir", str(tmp_path))
     repo = _repo("a" * 40, "")
     p1, p2 = _patched(repo, [_Cfg()])
     with p1, p2:
         res = await w.run_pass()
-    assert res.skipped and "checkout missing" in res.skipped[0]
+    assert (tmp_path / "nope" / ".git").is_dir()
+    assert not any("checkout missing" in s for s in res.skipped)
 
 
 @pytest.mark.asyncio

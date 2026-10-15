@@ -159,6 +159,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     await probe_reader_user(ch)
     await runs_store.probe_claims(ch)
     tracker_sources_loop = boot.start_tracker_sources_refresher(ch)
+    await boot.probe_sandbox()
     lease_retry: asyncio.Task[None] | None = None
     if lease.held:
         supervisor.start_all()

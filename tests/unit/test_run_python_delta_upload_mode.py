@@ -128,6 +128,15 @@ def test_a_checkout_another_worker_moves_is_never_touched(repos, producer: str) 
     assert _git(Path(str(repos["checkout"])), "rev-parse", "HEAD") == repos["c1"]
 
 
+def test_a_tree_without_a_python_build_file_gets_no_python_pass(repos) -> None:
+    out, calls = _run(
+        repos, wm=str(repos["c1"]), head=str(repos["c2"]), bare=str(repos["bare"]), owner="none"
+    )
+    assert "no python tier" in out
+    assert calls == ""
+    assert _git(Path(str(repos["checkout"])), "rev-parse", "HEAD") == repos["c1"]
+
+
 def test_an_unseeded_git_head_indexes_nothing(repos) -> None:
     out, calls = _run(repos, wm="-", head="-", bare=str(repos["bare"]))
     assert "git_head not seeded" in out
@@ -148,3 +157,57 @@ def test_scip_python_runs_with_the_wildcard_import_stubs_on_its_path(repos) -> N
     first = Path(line.split(" ", 1)[1].split(":")[0])
     assert first.is_absolute() and first.name == "python_stubs"
     assert (first / "delta" / "__init__.pyi").is_file()
+
+
+def _ident_snippet() -> str:
+    """The Python the script runs for the entry's identity, as written in it."""
+    text = _SCRIPT.read_text()
+    start = text.index('"$PYTHON" - <<PYEOF\n') + len('"$PYTHON" - <<PYEOF\n')
+    return text[start : text.index("\nPYEOF", start)]
+
+
+@pytest.mark.parametrize(
+    ("tree", "producer", "extras", "py_worker", "owner"),
+    [
+        (["go.mod"], "", (), False, "none"),
+        (["go.mod", "pyproject.toml"], "", (), False, "cron"),
+        (["pyproject.toml"], "", (), False, "cron"),
+        (["CMakeLists.txt"], "", (), False, "none"),
+        (["go.mod", "pyproject.toml"], "go", (), False, "go"),
+        (["go.mod", "pyproject.toml"], "go", ("python",), False, "go"),
+        (["CMakeLists.txt"], "clang", (), False, "cron"),
+        (["go.mod"], "", (), True, "none"),
+        (["go.mod", "pyproject.toml"], "", (), True, "worker"),
+        (["go.mod", "pyproject.toml"], "go", ("python",), True, "worker"),
+    ],
+)
+def test_the_cron_python_pass_goes_where_the_entry_and_its_tree_say(
+    monkeypatch, capsys, tree, producer, extras, py_worker, owner
+) -> None:
+    """The Python worker takes what it owns; a Go or TypeScript entry's worker moves its
+    checkout; an entry naming no producer gets the cron pass only where its tree has a
+    Python build file (its Go and TypeScript tiers work in their own trees)."""
+    from unittest.mock import AsyncMock
+
+    from server.code.domain.index import repos
+    from server.code.store import index as store_index
+    from server.core import ch
+    from server.settings import settings
+    from tests.unit.code_fixtures import repo_config
+
+    repo = AsyncMock()
+    repo.get_state.return_value = ""
+    repo.live_paths_present.return_value = tree
+    monkeypatch.setattr(store_index, "CodeRepo", lambda: repo)
+    monkeypatch.setattr(ch, "get_client", lambda: AsyncMock())
+    monkeypatch.setattr(settings, "code_scip_py_delta_enabled", py_worker)
+    cfg = repo_config(
+        org="org", namespace="code-x", scip_producer=producer, scip_extra_producers=extras
+    )
+    monkeypatch.setattr(repos, "configured_repos", lambda: [cfg])
+    monkeypatch.setenv("ORG_ARG", "org")
+    monkeypatch.setenv("NS_ARG", "code-x")
+
+    exec(_ident_snippet(), {})
+
+    assert capsys.readouterr().out.split()[-1] == owner

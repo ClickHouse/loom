@@ -30,7 +30,7 @@ def _lock_dir(monkeypatch, tmp_path):
 
 
 def _Cfg(namespace: str) -> Any:
-    return repo_config(org="acme", namespace=namespace)
+    return repo_config(org="acme", namespace=namespace, scip_producer="clang")
 
 
 def _hold(path: Path) -> int:

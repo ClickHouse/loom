@@ -62,10 +62,10 @@ class RepoConfig:
     # THIS branch. One per entry: two branches cannot share a checkout, but
     # they can and should share the bare clone (`git_dir`).
     scip_checkout_dir: str = ""
-    # Which compiler-tier producer indexes this entry's checkout — "clang" (scip-clang,
-    # code_scip_delta) or "typescript" (scip-typescript, code_scip_ts_delta). One per
-    # entry, like the checkout.
-    scip_producer: str = "clang"
+    # Which compiler-tier producer indexes this entry's checkout: "clang", "typescript",
+    # "go" or "python". One per entry, like the checkout. '' reads it from the tree's
+    # build manifests (producer_inference).
+    scip_producer: str = ""
     # Further compiler tiers over the same tree, each in its own checkout
     # (`checkout_for`) so two producers never move one working tree under each other:
     # a Python repository with a TypeScript frontend runs both.
@@ -207,12 +207,15 @@ def default_git_dir() -> str:
 
 
 def checkout_for(cfg: RepoConfig, producer: str) -> str:
-    """The working tree `producer` indexes for this entry: the entry's checkout for its
-    primary producer, a sibling `<checkout>-<producer>` for an extra one."""
+    """The working tree `producer` indexes for this entry: the entry's checkout for the
+    producer it names, a sibling `<checkout>.<producer>` for any other, so two tiers
+    never move one tree. An entry that names none keeps its checkout for scip-clang,
+    which needs it to be a configured build tree. The dot keeps a sibling from being
+    another entry's `checkout-<namespace>`: an entry's namespace has no dots."""
     base = cfg.scip_checkout_dir or settings.code_scip_checkout_dir
-    if producer in cfg.scip_extra_producers:
-        return f"{base.rstrip('/')}-{producer}"
-    return base
+    if producer == (cfg.scip_producer or "clang"):
+        return base
+    return f"{base.rstrip('/')}.{producer}"
 
 
 def _default_checkout_dir(base: RepoConfig, ns: str) -> str:
@@ -251,6 +254,17 @@ def _publish_config_errors(errors: dict[str, str]) -> None:
     _config_errors.clear()
     _config_errors.update(errors)
     _config_evaluated = True
+
+
+def config_errors_for(namespace: str) -> list[str]:
+    """Why this process could not use the entry for `namespace`, as of its last
+    `configured_repos()` call."""
+    out = []
+    for key, msg in _config_errors.items():
+        kind, _, ns = key.partition(":")  # per-entry keys end in the namespace
+        if ns == namespace and kind != "entry":  # `entry:<i>` is an index, not a name
+            out.append(msg)
+    return out
 
 
 def config_error_count() -> int | None:
@@ -361,6 +375,12 @@ def _configured_from_env() -> list[RepoConfig]:
             errors[f"entry:{i}"] = f"code repo entry missing 'namespace', skipped: {e!r}"
             continue
         ns = str(e["namespace"])
+        if "." in ns or "/" in ns:
+            # a tier's working tree is `<checkout>.<producer>`
+            errors[f"namespace:{ns}"] = (
+                f"code repo {ns} skipped: a namespace may not contain '.' or '/'"
+            )
+            continue
         if ns in seen:
             errors[f"duplicate:{ns}"] = f"duplicate code repo namespace {ns} skipped"
             continue

@@ -40,7 +40,11 @@ def _repo_cfg(args: argparse.Namespace) -> Any:
     never a fallback to the first entry: when LOOM_CODE_REPOS_JSON fails to
     parse, configured_repos() degrades to the scalar entry, and falling back
     would index one branch's tree under another branch's namespace."""
-    from server.code.domain.index.repos import configured_repos, repo_for_namespace
+    from server.code.domain.index.repos import (
+        config_errors_for,
+        configured_repos,
+        repo_for_namespace,
+    )
 
     org, ns = _identity(args)
     cfg = repo_for_namespace(org, ns)
@@ -54,11 +58,16 @@ def _repo_cfg(args: argparse.Namespace) -> Any:
             "LOOM_CODE_REPOS_JSON, or add the repository from the Repositories page."
         )
     if getattr(args, "namespace", None) and ns != repos[0].namespace:
+        errors = config_errors_for(ns)
+        why = (
+            "; ".join(errors) + "."
+            if errors
+            else "Check LOOM_CODE_REPOS_JSON — a JSON parse failure degrades it to the "
+            "scalar entry; quote the value with single quotes in .env."
+        )
         raise SystemExit(
             f"namespace {org}/{ns} is not a configured code repo entry "
-            f"(configured: {', '.join(r.namespace for r in repos)}). Check "
-            "LOOM_CODE_REPOS_JSON — a JSON parse failure degrades it to the "
-            "scalar entry; quote the value with single quotes in .env."
+            f"(configured: {', '.join(r.namespace for r in repos)}). {why}"
         )
     return repos[0]
 

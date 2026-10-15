@@ -42,10 +42,17 @@ def test_extra_producers_are_owned_beside_the_primary_one() -> None:
 def test_each_extra_producer_indexes_its_own_checkout() -> None:
     cfg = _cfg(scip_extra_producers=("typescript",))
     assert checkout_for(cfg, "python") == "var/code_repos/checkout-x"
-    assert checkout_for(cfg, "typescript") == "var/code_repos/checkout-x-typescript"
+    assert checkout_for(cfg, "typescript") == "var/code_repos/checkout-x.typescript"
     assert checkout_for(_cfg(scip_producer="typescript"), "typescript") == (
         "var/code_repos/checkout-x"
     )
+
+
+def test_an_entry_naming_no_producer_keeps_its_checkout_for_scip_clang() -> None:
+    cfg = _cfg(scip_producer="")
+    assert checkout_for(cfg, "clang") == "var/code_repos/checkout-x"
+    assert checkout_for(cfg, "python") == "var/code_repos/checkout-x.python"
+    assert checkout_for(cfg, "typescript") == "var/code_repos/checkout-x.typescript"
 
 
 def test_the_entry_json_carries_the_extra_producers_and_the_projects(monkeypatch) -> None:

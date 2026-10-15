@@ -647,6 +647,41 @@ async def test_scip_full_runs_its_harness_as_a_gated_repository_job(
 
 
 @pytest.mark.asyncio
+async def test_scip_full_runs_in_the_clang_tree_when_clang_is_an_extra_tier(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import argparse
+    from unittest.mock import AsyncMock
+
+    from server.cli import code_scip
+    from server.code.app.index import compiler_tier
+    from server.code.store import index as store_index
+    from server.settings import settings
+    from tests.unit.code_fixtures import repo_config
+
+    for d in ("checkout", "checkout.clang", "bare.git"):
+        (tmp_path / d).mkdir()
+    (tmp_path / "scip-clang").touch()
+    monkeypatch.setattr(settings, "code_scip_clang_path", str(tmp_path / "scip-clang"))
+    monkeypatch.setattr(sandbox, "_available", True)
+    repo = AsyncMock()
+    repo.get_state.return_value = "a" * 40
+    monkeypatch.setattr(store_index, "CodeRepo", lambda: repo)
+    monkeypatch.setattr(code_scip, "_scip_move_checkout", AsyncMock())
+    harness = AsyncMock(return_value=(1, "harness output\n"))
+    monkeypatch.setattr(compiler_tier, "run_harness", harness)
+    cfg = repo_config(
+        git_dir=str(tmp_path / "bare.git"),
+        scip_checkout_dir=str(tmp_path / "checkout"),
+        scip_producer="python",
+        scip_extra_producers=("clang",),
+    )
+    args = argparse.Namespace(checkout="", jobs=0, apply_delta="", keep_delta="")
+    await code_scip._scip_full_locked(args, "o", "code-x", cfg)
+    assert harness.await_args.args[1] == (tmp_path / "checkout.clang").resolve()
+
+
+@pytest.mark.asyncio
 async def test_scip_full_moves_its_checkout_as_sandboxed_jobs(tmp_path: Path, monkeypatch) -> None:
     """The fetch reads the bare clone, which the sandbox mounts only when named,
     and the submodule pins come from the network."""

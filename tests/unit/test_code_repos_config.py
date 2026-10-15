@@ -58,6 +58,30 @@ def test_entries_fall_back_to_scalars(monkeypatch: pytest.MonkeyPatch) -> None:
     assert repos[1].git_branch == repos[0].git_branch
 
 
+def test_an_entry_names_its_producer_or_leaves_it_to_the_tree(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        settings,
+        "code_repos_json",
+        '[{"namespace": "code-a"}, {"namespace": "code-b", "scip_producer": "clang"}]',
+    )
+    assert [r.scip_producer for r in configured_repos()] == ["", "clang"]
+
+
+def test_an_entry_whose_namespace_could_name_a_tier_tree_is_skipped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A tier's working tree is `<checkout>.<producer>`; a dot in a namespace could make
+    it another entry's checkout. Other names are kept as they are."""
+    monkeypatch.setattr(
+        settings,
+        "code_repos_json",
+        '[{"namespace": "code-a"}, {"namespace": "code-a.python"}, {"namespace": "code_b"}]',
+    )
+    assert [r.namespace for r in configured_repos()] == ["code-a", "code_b"]
+
+
 def test_invalid_json_degrades_to_scalar(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "code_repos_json", "{not json")
     repos = configured_repos()

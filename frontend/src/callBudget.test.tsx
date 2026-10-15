@@ -153,7 +153,8 @@ const BUDGET: Record<string, { render: () => JSX.Element; view: View; allow: Rec
   Repositories: {
     render: () => <CodeView />,
     view: "code",
-    allow: { "/v1/code.repos": 1, "/v1/tracker.source.list": 1 },
+    // Health says whether the page can add repositories; the problems banner shares the read.
+    allow: { "/v1/code.repos": 1, "/v1/tracker.source.list": 1, "/v1/health": 1 },
   },
   // The Tasks page reads the namespace's inboxes once, their counts once (the rail's "N
   // to do · M running" and the tiles need no call of their own), and the picked inbox's

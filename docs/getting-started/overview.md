@@ -24,7 +24,8 @@ It is Apache-2.0. This page helps you decide whether it fits.
 
 Memory and the code index are separate planes on one server. Use either alone or both.
 Memory needs a server and a writer token. The code index also needs a repository added
-(**Repositories → Add repository** in `/me`, or `LOOM_CODE_REPOS_JSON`) and
+(`LOOM_CODE_REPOS_JSON`, or **Repositories → Add repository** in `/me` where the
+[repository-job sandbox](../operations/code-index-operations.md#repository-job-sandbox) runs) and
 `LOOM_CODE_INGEST_ENABLED=true`. The [Claude Code and Codex plugins](connect-a-coding-agent.md)
 use both.
 
