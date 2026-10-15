@@ -424,11 +424,12 @@ def test_a_failed_boot_probe_leaves_it_to_the_first_begin(monkeypatch) -> None:
     assert runs_store.claims_atomic() is None
 
 
-@pytest.mark.parametrize("table", ["agent_run_claims", "oauth_claims"])
+@pytest.mark.parametrize("table", ["agent_run_claims", "oauth_claims", "grant_claims"])
 @pytest.mark.parametrize(
     ("rows", "atomic"), [([{"engine": "KeeperMap"}], True), ([], False), (None, None)]
 )
 def test_the_doctor_reads_the_same_claims_check(monkeypatch, rows, atomic, table) -> None:
+    from server.auth import grant_claims
     from server.cli import doctor
     from server.core.schema import migrate_lease
     from server.settings import settings
@@ -436,6 +437,7 @@ def test_the_doctor_reads_the_same_claims_check(monkeypatch, rows, atomic, table
     table_sql = {
         "agent_run_claims": migrate_lease.RUN_CLAIMS_TABLE_SQL,
         "oauth_claims": migrate_lease.OAUTH_CLAIMS_TABLE_SQL,
+        "grant_claims": grant_claims.CLAIMS.table_sql,
     }[table]
 
     def query(_settings, sql, params):
@@ -467,3 +469,13 @@ def test_the_doctor_reports_unclaimed_oauth_exchanges_only_with_oauth_on(
     codes = [p.code for p in doctor._doctor_problems()]
     assert ("oauth_claims_not_atomic" in codes) is oauth
     assert any("'oauth_claims'" in sql for sql in asked) is oauth
+
+
+def test_the_doctor_reports_grant_changes_without_a_keeper(monkeypatch) -> None:
+    from server.cli import doctor
+
+    def _missing(_settings, table_sql):
+        return "'grant_claims'" not in table_sql
+
+    monkeypatch.setattr(doctor, "_doctor_keeper_table", _missing)
+    assert "grant_changes_not_atomic" in [p.code for p in doctor._doctor_problems()]

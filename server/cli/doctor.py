@@ -205,8 +205,8 @@ def _doctor_reader_probe(settings: Any) -> tuple[str, str]:
 
 def _doctor_keeper_table(settings: Any, table_sql: str) -> bool | None:
     """Whether the KeeperMap table `table_sql` asks for exists here (run.begin's
-    run id claims, /oauth/token's exchange claims); None when ClickHouse does
-    not answer (`clickhouse_reachable` says so)."""
+    run id claims, /oauth/token's exchange claims, the grant change claims); None
+    when ClickHouse does not answer (`clickhouse_reachable` says so)."""
     from server.core.schema.migrate_lease import is_keeper_table
 
     if not settings.ch_host:
@@ -223,6 +223,7 @@ def _doctor_problems() -> list[Any]:
     only — no probed dim, breaker, lease or ledger before boot. Empty when
     settings do not load (the `settings_load` check already says so)."""
     try:
+        from server.auth.grant_claims import CLAIMS as GRANT_CLAIMS
         from server.code.app.index.sandbox import layout_refusal, sandbox_available
         from server.core.schema.migrate_lease import (
             OAUTH_CLAIMS_TABLE_SQL,
@@ -246,6 +247,7 @@ def _doctor_problems() -> list[Any]:
                     if settings.oauth_enabled
                     else None
                 ),
+                grant_claims_atomic=_doctor_keeper_table(settings, GRANT_CLAIMS.table_sql),
             ),
         )
         if status == "not_probed" and detail:
