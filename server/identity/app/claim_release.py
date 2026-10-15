@@ -145,7 +145,8 @@ async def release_claim(
     if existing.get("contact_email"):
         # A person's account ties its login handle to its email, the binding that
         # caps a token's claims at the grants held under either; it is kept here.
-        spellings = {existing.get("owner_email") or "", existing["contact_email"]} - {""}
+        spellings = {(existing.get("owner_email") or "").lower(), existing["contact_email"].lower()}
+        spellings.discard("")
         row["released_aliases"] = sorted(set(existing.get("released_aliases") or []) | spellings)
     row["owner_email"] = ""
     row["contact_email"] = ""

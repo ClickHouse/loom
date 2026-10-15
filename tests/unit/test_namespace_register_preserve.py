@@ -16,6 +16,7 @@ from server.identity.app.namespace_autoregister import AUTO_REGISTER_TAG
 
 STORED: dict[str, Any] = {
     "description": "the team's facts",
+    "released_aliases": ["mal", "victim@corp"],
     "active": False,
     "visibility": "public",
     "consolidation_enabled": True,

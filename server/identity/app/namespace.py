@@ -224,6 +224,7 @@ def registry_row(
         # settings-only update wipes the user's login silently.
         "contact_email": ((existing or {}).get("contact_email") or ""),
         "password_hash": ((existing or {}).get("password_hash") or ""),
+        "released_aliases": list((existing or {}).get("released_aliases") or []),
         # Not on the form: a re-register keeps the namespace's own override and birth date.
         "duplicate_threshold": (existing or {}).get("duplicate_threshold"),
         "created_at": (existing or {}).get("created_at") or now,

@@ -111,30 +111,43 @@ def _loaded(key: _Key, task: asyncio.Task[GrantMap]) -> None:
 
 async def _read(org: str, subject: str) -> GrantMap:
     """One read: the subject's rows under every spelling the directory ties to
-    it (`server.auth.aliases`), folded per namespace. A deactivated account
-    still ties its spellings, and so does a released one (`released_aliases`):
-    its grants there may be the revocations that cap."""
+    it (`server.auth.aliases`), folded per namespace. Only the spelling itself
+    and an active account's pair (`held`) set the rank there. A deactivated
+    account's pair, and a released one's (`released_aliases`), still tie the
+    spellings, at rank 0 (`capping`): their rows may be the revocations that
+    cap, never a grant that admits."""
     from server.core.ch import get_client, own_write_reads
 
     human = bool(subject) and subject != "*" and not subject.startswith("sa:")
     with own_write_reads():
         rows = await get_client().query_all(
             """
-            SELECT namespace, max(if({live}, {rank}, 0)) AS rank
+            WITH (
+                SELECT (
+                    arrayFlatten(groupArrayIf([lower(owner_email), lower(contact_email)], active)),
+                    arrayFlatten(groupArray(arrayConcat(
+                        if(active, [], [lower(owner_email), lower(contact_email)]),
+                        released_aliases
+                    )))
+                )
+                FROM (
+                    SELECT owner_email, contact_email, released_aliases,
+                           ifNull(active, true) AND contact_email != '' AS active
+                    FROM loom.namespaces FINAL
+                    WHERE {human:Bool} AND org = {org:String}
+                      AND ((contact_email != ''
+                            AND (lower(owner_email) = {sub:String}
+                                 OR lower(contact_email) = {sub:String}))
+                           OR has(released_aliases, {sub:String}))
+                )
+            ) AS ties,
+            arrayPushFront(ties.1, {sub:String}) AS held,
+            ties.2 AS capping
+            SELECT namespace,
+                   max(if({live} AND has(held, lower(subject)), {rank}, 0)) AS rank
             FROM loom.namespace_grants FINAL
-            WHERE org = {org:String} AND lower(subject) IN (
-                SELECT {sub:String}
-                UNION ALL
-                SELECT lower(arrayJoin([owner_email, contact_email]))
-                FROM loom.namespaces FINAL
-                WHERE {human:Bool} AND org = {org:String} AND contact_email != ''
-                  AND (lower(owner_email) = {sub:String} OR lower(contact_email) = {sub:String})
-                UNION ALL
-                SELECT lower(arrayJoin(released_aliases))
-                FROM loom.namespaces FINAL
-                WHERE {human:Bool} AND org = {org:String}
-                  AND has(arrayMap(x -> lower(x), released_aliases), {sub:String})
-            )
+            WHERE org = {org:String}
+              AND (has(held, lower(subject)) OR has(capping, lower(subject)))
             GROUP BY namespace
             """.replace("{live}", LIVE_GRANT).replace("{rank}", GRANT_RANK_SQL),
             params={"org": org, "sub": subject, "human": human},
