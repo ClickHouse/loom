@@ -380,8 +380,9 @@ the value it was written or stated for (`carried`):
   keeps its triple markers' end, open while any of them is, never the end of another
   relation's row of the same two entities; it is written before its triple marker, so a
   replay after a failed triple insert finds the edge by the id and does not repeat it.
-  The failure records each restored row's `content_sha256`; a replay skips a row revised since, whose revision
-  reconciles its facts, so the revised value is never dated at the Undo.
+  The failure records each restored row's `content_sha256`; a replay skips a row revised
+  since, whose revision reconciles its facts, so the revised value is never dated at the
+  Undo.
   A failed interval repair records the triple write for replay too; when the triples
   landed before the repair failed, the replay does not insert them again and never
   repairs as of the replay's own clock. When the repair had issued closes before it
@@ -412,10 +413,10 @@ the value it was written or stated for (`carried`):
   current and the older closes when the newer starts. Every triple row is placed by one
   key, `(start day, seen_at, object)`: its start is its `valid_from`, or, undated, its
   `seen_at`, the arrival of the write that stored it to the microsecond, plus one
-  microsecond per triple stated before it in that write (the `seen_at` migration; `last_seen`,
-  `invalid_at`, `valid_from` and `valid_to` stay whole seconds, the arrival's for the
-  first two). Values on different days order by day: Rome from July, imported after London
-  was stated undated in October, closes when London was seen, and London undated on Oct 5
+  microsecond per triple stated before it in that write (`last_seen`, `invalid_at`,
+  `valid_from` and `valid_to` stay whole seconds, the arrival's for the first two).
+  Values on different days order by day: Rome from July, imported after London was
+  stated undated in October, closes when London was seen, and London undated on Oct 5
   closes when Berlin from Dec 1 begins, never Berlin before it begins. On one day the
   later arrival is newer, whether either is dated: a fact dated by its session's day beats
   an undated value seen earlier that day, and an undated update later that day beats a
