@@ -47,11 +47,14 @@ never fails the write. A `high`-sensitivity bulk entry projects nothing.
    a write that states the older value again while that close runs keeps it open. An Undo (`memory.restore`) makes
    the restored value current from the restore on, even over a value written in the same second: the restored fact
    and its edge are stored again starting at the restore, so later writes order against that date, weighing 1 only
-   when no open row still carries the fact's weight, so the graph keeps counting it and Undoing back and forth adds none;
+   when no current row still carries the fact's weight (read once the retirement's closes have landed), so the graph
+   keeps counting it and Undoing back and forth adds none;
    the other value's interval closes, and its row stays live. A value dated after the restore still wins, and so does
    a value stated after the restore, by the usual order. A failed close is replayed as of the write (or the Undo) that
    made it, so a value stated since stays current; a replayed Undo skips a row revised since. An undated value and a
    dated one stated within two days after its date order by arrival, so racing writers agree on one current value.
+   A value stated with its own end ("London until December") is never closed early: it stays current beside the newer
+   value until that end.
 
 A point write (`memory.set`, `memory.update`, `memory.update_by_id`) writes the triples the caller passes in
 `relations`, at most 8, over HTTP and in the SDKs' typed operations (not in the MCP listing); it extracts none.

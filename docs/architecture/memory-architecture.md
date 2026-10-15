@@ -338,8 +338,12 @@ the value it was written or stated for (`carried`):
   before it stays as history, and every later repair reads the fact as stated then), as
   does its edge when the graph has one, so both planes show the restored value current.
   These observations state nothing new: one carries `co_occur` 1 only when its fact (or
-  edge) has no open weighted row left, the usual Undo of a closed value, so the graph's
-  readers still count it, and 0 otherwise, so Undoing back and forth adds no weight. And
+  edge) has no weighted row the readers count as current after the restore (open, or
+  ending later), the usual Undo of a closed value, so the graph's readers still count
+  it, and 0 otherwise, so Undoing back and forth adds no weight. A close is an
+  `ALTER UPDATE` that takes only the rows stored when it was issued, so the Undo first
+  waits, up to five seconds, for the namespace's pending triple and edge closes to land;
+  past that it is recorded as a `triples_reconcile` failure, which a replay finishes. And
   its facts go through the interval repair dated at the restore as the newest value: the
   other row stays live, and its single-valued fact closes, even one seen in the same
   second; only a value starting after the restore stays current. That priority covers
@@ -392,7 +396,9 @@ the value it was written or stated for (`carried`):
   in one second order by text, not by which came last. A value can have several open
   rows, one per observation, so each value gets one verdict from all its rows: it is the
   newer when any of them is, and otherwise every start of it closes, each with its own
-  edge. One value stays current, never neither.
+  edge. One value stays current, never neither. Only an open-ended value is closed: one
+  stated with its own end ("London until December") is left as it is, so it stays
+  current beside the newer value until that end.
 
 A facet edge (the agent's file, concept or topic) is no row's: it is never linked, and
 no retirement closes it. A triple another live row's links still state stays open; a

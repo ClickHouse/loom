@@ -447,10 +447,11 @@ async def _row_and_write(
     value: str,
     relations: list,
     valid_at: datetime | None = None,
+    fact_valid_to: datetime | None = None,
     **extra: Any,
 ) -> tuple[dict[str, Any], Any, list[Any]]:
     """A stored row of `value` and the bulk write that states its `relations`, dated
-    `valid_at` when given."""
+    `valid_at` and ending at `fact_valid_to` when given."""
     from server.core.hashing import sha256_value
     from server.memory import store as M
     from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetResult
@@ -466,7 +467,15 @@ async def _row_and_write(
         agent="bot",
         user_id=USER,
         session_id=session,
-        entries=[{"memory_key": key, "value": value, "relations": relations, "valid_at": valid_at}],
+        entries=[
+            {
+                "memory_key": key,
+                "value": value,
+                "relations": relations,
+                "valid_at": valid_at,
+                "valid_to": fact_valid_to,
+            }
+        ],
     )
     result = _BulkSetResult(memory_key=key, version=row["version"], memory_id=str(row["memory_id"]))
     return row, write, [result]
@@ -493,12 +502,13 @@ async def _follow_retirement(
 
 
 async def _mutations_done(ch: Any, org: str) -> None:
-    """Wait for the org's triple closes to land: a check that nothing closed cannot poll."""
+    """Wait for the org's triple and edge closes to land: a check that nothing closed
+    cannot poll."""
     for _ in range(100):
         (row,) = await ch.query_all(
             "SELECT countIf(NOT is_done) AS running,"
             " maxIf(latest_fail_reason, NOT is_done) AS failed FROM system.mutations"
-            " WHERE database = 'loom' AND table = 'entity_triples'"
+            " WHERE database = 'loom' AND table IN ('entity_triples', 'entity_edges')"
             " AND position(command, {org:String}) > 0",
             params={"org": org},
         )
@@ -1312,12 +1322,16 @@ async def test_undo_makes_the_restored_value_current_and_retires_nothing(
 
 
 async def _open_weights(ch: Any, org: str, city: str) -> dict[str, int]:
-    """The summed weight of `city`'s open rows, on the triple and the edge plane."""
+    """The summed weight of `city`'s rows the graph's readers count as current from the
+    next second on (they count a row closed this second too), on the triple and the edge
+    plane."""
     weights = await ch.query_all(
         "SELECT 'triples' AS plane, sum(co_occur) AS n FROM loom.entity_triples"
-        " WHERE org = {org:String} AND object = {city:String} AND valid_to IS NULL"
+        " WHERE org = {org:String} AND object = {city:String}"
+        " AND (valid_to IS NULL OR valid_to > now())"
         " UNION ALL SELECT 'edges', sum(co_occur) FROM loom.entity_edges"
-        " WHERE org = {org:String} AND entity_a = {city:String} AND valid_to IS NULL"
+        " WHERE org = {org:String} AND entity_a = {city:String}"
+        " AND (valid_to IS NULL OR valid_to > now()) AND invalid_at IS NULL"
         " SETTINGS select_sequential_consistency = 1",
         params={"org": org, "city": city},
     )
@@ -1353,6 +1367,72 @@ async def _undo_in_the_second_of(ch: Any, org: str, city: str, monkeypatch: Any)
     )
     monkeypatch.setattr(entity_projections, "naive_utc_now", lambda: row["seen"])
     return row["seen"]
+
+
+async def test_an_undo_weighs_its_fact_after_the_retirements_closes_land(ch, org) -> None:
+    # The retirement's closes are mutations. Held back (merges stopped), London's old
+    # row still reads open when the Undo runs; the Undo waits for them, so its own
+    # row carries London's weight once they land.
+    from types import SimpleNamespace
+
+    from server.memory import store as M
+    from server.memory.api.models_crud import MemoryRestoreInput
+    from server.memory.app.entity_projections import follow_row_supersessions
+    from server.memory.app.restore import handle_memory_restore
+
+    london = await _stated(ch, org, "s1", "My favourite city is London")
+    paris = await _stated(ch, org, "s2", "My favourite city is Paris")
+    await _edges_like_triples(ch, org)
+    tables = ("loom.entity_triples", "loom.entity_edges")
+    for table in tables:
+        await ch.execute(f"SYSTEM STOP MERGES {table}")
+    try:
+        retired = {**london, "version": M.next_version(), "status": "superseded"}
+        retired["superseded_by"] = str(paris["memory_id"])
+        await M.insert_memory_versions([retired], ch=ch)
+        await follow_row_supersessions(
+            SimpleNamespace(org=org, namespace=NS),
+            [(str(london["memory_id"]), retired["superseded_by"])],
+            ch=ch,
+        )
+        undo = asyncio.create_task(
+            handle_memory_restore(
+                MemoryRestoreInput(
+                    org=org,
+                    namespace=NS,
+                    agent="bot",
+                    user_id=USER,
+                    session_id="s1",
+                    memory_key=KEY,
+                    if_superseded_by=str(paris["memory_id"]),
+                )
+            )
+        )
+        await asyncio.sleep(0.5)
+    finally:
+        for table in tables:
+            await ch.execute(f"SYSTEM START MERGES {table}")
+    assert (await undo).restored
+    await _mutations_done(ch, org)
+    assert await _open_weights(ch, org, "london") == {"triples": 1, "edges": 1}
+
+
+async def test_an_undo_of_a_fact_open_until_later_adds_no_weight(ch, org) -> None:
+    # "I live in London until next year": the readers count that row as current, so
+    # the Undo's own row of it weighs nothing.
+    from types import SimpleNamespace
+
+    from server.memory.app import entity_projections
+
+    until = datetime.now(UTC).replace(tzinfo=None, microsecond=0) + timedelta(days=60)
+    london = await _stated(
+        ch, org, "s1", "I live in London", ("user", "live_in", "london"), fact_valid_to=until
+    )
+    await _edges_like_triples(ch, org)
+    scope = SimpleNamespace(org=org, namespace=NS, agent="bot")
+    await entity_projections.reopen_held_facts(scope, [str(london["memory_id"])], ch=ch)
+    await _mutations_done(ch, org)
+    assert await _open_weights(ch, org, "london") == {"triples": 1, "edges": 1}
 
 
 async def test_undo_of_an_open_fact_keeps_its_date_for_later_writes(ch, org, monkeypatch) -> None:

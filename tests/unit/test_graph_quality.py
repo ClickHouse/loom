@@ -80,6 +80,27 @@ def test_triple_interval_repairs_close_conflicting_current_state() -> None:
     )
 
 
+def test_a_value_stated_with_its_own_end_is_not_closed_early() -> None:
+    # A documented limit: "works at Acme until December" stays current until then.
+    repairs = triple_interval_repairs(
+        existing=[
+            {
+                "subject": "user",
+                "relation": "works_at",
+                "object": "acme",
+                "valid_from": datetime(2023, 1, 1),
+                "valid_to": datetime(2025, 12, 1),
+            }
+        ],
+        new_subject="user",
+        new_relation="works at",
+        new_object="ClickHouse",
+        new_valid_at=datetime(2025, 1, 1),
+    )
+
+    assert repairs == []
+
+
 def test_triple_interval_repairs_do_not_close_multi_valued_relations() -> None:
     repairs = triple_interval_repairs(
         existing=[
