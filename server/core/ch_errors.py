@@ -57,6 +57,9 @@ _REPLICA_BOUND_ERROR_CODES: tuple[int, ...] = (10, 242, 999)
 REPLICA_BOUND_RETRIES: int = 2
 # Strict-mode KeeperMap answers, the same on every replica.
 _KEEPER_ANSWERS: tuple[str, ...] = ("Node exists", "Bad version")
+# A strict-mode write on a sign-in claim another request just dropped
+# (server/auth/claims.py): a lost race, not a replica problem.
+_CLAIM_RACE: tuple[str, ...] = ("Transaction failed (No node)", "/oauth_claims/")
 
 
 # A query-level setting one replica does not know. ClickHouse
@@ -105,7 +108,7 @@ def is_replica_bound_error(e: BaseException) -> bool:
     if not isinstance(e, DatabaseError):
         return False
     msg = str(e)
-    if any(answer in msg for answer in _KEEPER_ANSWERS):
+    if any(answer in msg for answer in _KEEPER_ANSWERS) or all(p in msg for p in _CLAIM_RACE):
         return False
     return any(f"Code: {code}." in msg for code in _REPLICA_BOUND_ERROR_CODES)
 

@@ -179,7 +179,7 @@ async def test_of_many_waiters_on_a_dead_holders_claim_one_takes_it_over(store: 
     key = f"test:{uuid.uuid4().hex}"
     await ch.execute(
         "INSERT INTO loom.oauth_claims (claim_key, holder, claimed_at) "
-        "VALUES ({k:String}, 'dead', now64(3) - INTERVAL 60 SECOND)",
+        "VALUES ({k:String}, 'dead', now64(3) - INTERVAL 1 HOUR)",
         params={"k": key},
     )
     inside, most = 0, 0
@@ -237,7 +237,7 @@ async def test_a_slow_takeover_cannot_write_once_the_next_waiter_may_take_it(
     monkeypatch.setattr(claims, "_HOLD_S", 0.67)
     await ch.execute(
         "INSERT INTO loom.oauth_claims (claim_key, holder, claimed_at) "
-        "VALUES ({k:String}, 'dead', now64(3) - INTERVAL 60 SECOND)",
+        "VALUES ({k:String}, 'dead', now64(3) - INTERVAL 1 HOUR)",
         params={"k": key},
     )
     real = type(ch).query_one

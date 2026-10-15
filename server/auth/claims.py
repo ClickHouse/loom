@@ -16,8 +16,8 @@ mode, so of a late release and a takeover only one lands.
 A live holder must be done before its claim can go stale. Every statement it
 issues is bounded at `_STATEMENT_S`, and its write must start by `_HOLD_S`
 (`before_write`); a write is never cancelled once sent, since ClickHouse may
-still apply it. So the last write, with its retries, ends long before
-`_STALE_S`.
+still apply it. A spend and its put-back each go through the client's retry
+ladder (at most six sends), so `_STALE_S` leaves room for both.
 
 A ClickHouse without a Keeper has no claims table: transitions then run
 unclaimed, as they did before, and /v1/health says so
@@ -41,9 +41,9 @@ log = logging.getLogger(__name__)
 
 _TABLE = "loom.oauth_claims"
 _TABLE_SQL = "SELECT engine FROM system.tables WHERE database = 'loom' AND name = 'oauth_claims'"
-_STALE_S = 60  # a claim this old belongs to a holder that died
+_STALE_S = 120  # a claim this old belongs to a holder that died
 _HOLD_S = 10  # a holder's write must start by then
-_STATEMENT_S = 5  # each statement's bound; a write retried twice still ends by 25 s
+_STATEMENT_S = 5  # each send's bound: 10 s + 2 writes x 6 sends x 5 s, plus reconnects
 _WAITS_S = (0.05, 0.1, 0.2, 0.4)  # then the request is told to retry
 
 # Whether loom.oauth_claims exists here: None until the boot probe or the
