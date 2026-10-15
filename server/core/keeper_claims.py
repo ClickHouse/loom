@@ -39,6 +39,16 @@ async def shielded(release: Coroutine[Any, Any, None], *, name: str) -> None:
     await asyncio.shield(_releases.spawn(release, name=name))
 
 
+async def drain(timeout_s: float = 5.0) -> int:
+    """Wait for the shielded writes still running (at most `timeout_s`);
+    returns how many were. Shutdown calls it before the client disconnects:
+    a request cancelled there leaves its write to finish here."""
+    live = [t for t in _releases if not t.done()]
+    if live:
+        await asyncio.wait(live, timeout=timeout_s)
+    return len(live)
+
+
 class Claim(enum.Enum):
     HELD = enum.auto()  # this caller holds the key
     TAKEN = enum.auto()  # another holder has it

@@ -720,3 +720,22 @@ async def test_a_put_back_finishes_though_the_request_is_cancelled_again() -> No
     with pytest.raises(asyncio.CancelledError):
         await request
     await asyncio.wait_for(saved.wait(), 1)
+
+
+async def test_shutdown_lands_a_put_back_its_cancelled_request_left_running() -> None:
+    from server.core import keeper_claims
+
+    saved = asyncio.Event()
+
+    async def slow_save() -> None:
+        await asyncio.sleep(0.05)
+        saved.set()
+
+    request = asyncio.create_task(oauth.put_back(slow_save()))
+    await asyncio.sleep(0)
+    request.cancel()  # cancelled again: the wait returns, the save runs on
+    with pytest.raises(asyncio.CancelledError):
+        await request
+    assert not saved.is_set()
+    await keeper_claims.drain(timeout_s=1)  # what shutdown does before ClickHouse goes
+    assert saved.is_set()

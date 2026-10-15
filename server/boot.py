@@ -458,6 +458,11 @@ async def drain_writes() -> None:
     the service-side tasks, then the drop ledger (last of the services: the
     side effects before it record their drops too), the events stream and
     the buffered write marks."""
+    # A request cancelled by the shutdown left its Keeper release or its
+    # credential put-back running: they land first.
+    from server.core import keeper_claims
+
+    await keeper_claims.drain(timeout_s=5.0)
     # In-flight deferred conflict judges settle first.
     from server.memory.app import conflict_deferred, drops
 

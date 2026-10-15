@@ -42,7 +42,6 @@ from server.auth.oauth_store import (
     OAuthStore,
     token_id,
 )
-from server.core.background import TaskSet
 from server.core.secrets_at_rest import open_sealed, seal, unseal
 from server.observability import audit
 from server.settings import settings
@@ -958,13 +957,12 @@ async def _audit_ended(grant: Grant | Device, reason: str) -> None:
     )
 
 
-_put_backs = TaskSet()
-
-
 async def put_back(saving: Coroutine[Any, Any, None]) -> None:
     """Return a spent credential from a request being cancelled: held to its
-    end even if the cancellation comes again, and a failure logged from inside
-    it, so it neither hides the cancellation nor goes unseen."""
+    end even if the cancellation comes again (shutdown drains it before
+    ClickHouse goes), and a failure logged from inside it, so it neither hides
+    the cancellation nor goes unseen."""
+    from server.core import keeper_claims
 
     async def logged() -> None:
         try:
@@ -972,7 +970,7 @@ async def put_back(saving: Coroutine[Any, Any, None]) -> None:
         except Exception as e:  # noqa: BLE001 — the cancellation is what goes on
             log.warning("oauth: could not put a credential back: %s", e)
 
-    await asyncio.shield(_put_backs.spawn(logged(), name="oauth put-back"))
+    await keeper_claims.shielded(logged(), name="oauth put-back")
 
 
 def _unavailable() -> OAuthError:
