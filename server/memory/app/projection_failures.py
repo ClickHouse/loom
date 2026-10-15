@@ -548,7 +548,8 @@ async def _retry_triples_reconcile(failure: ProjectionFailureRow, *, ch: Any) ->
     """Reconcile the facts of the rows a revision or an Undo changed, as it would have."""
     from types import SimpleNamespace
 
-    from server.memory.app.entity_projections import close_dropped_facts, reopen_held_facts
+    from server.memory.app.entity_projections import close_dropped_facts
+    from server.memory.app.graph_undo import reopen_held_facts
 
     ids = [str(i) for i in failure.payload.get("memory_ids") or []]
     if not ids:

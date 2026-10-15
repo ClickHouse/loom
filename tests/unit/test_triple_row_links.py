@@ -210,7 +210,7 @@ async def test_an_undo_weighs_what_is_open_with_pending_closes_applied(monkeypat
     # to come. Rome was stored before Berlin, so Berlin's marker is the later.
     from types import SimpleNamespace
 
-    from server.memory.app import entity_projections as ep
+    from server.memory.app import graph_undo
 
     restored = datetime(2026, 10, 15, 9, 0, 0, 123456)
     stored = datetime(2026, 10, 1)
@@ -260,12 +260,12 @@ async def test_an_undo_weighs_what_is_open_with_pending_closes_applied(monkeypat
         repaired.append((triples, at))
         return []
 
-    monkeypatch.setattr(ep, "_linked_triples", held)
-    monkeypatch.setattr(ep, "_stated_by_live_rows", held)
-    monkeypatch.setattr(ep, "repair_intervals", repair)
+    monkeypatch.setattr(graph_undo, "_linked_triples", held)
+    monkeypatch.setattr(graph_undo, "_stated_by_live_rows", held)
+    monkeypatch.setattr(graph_undo, "repair_intervals", repair)
     ch = _WeighingCH()
     scope = SimpleNamespace(org="o", namespace="ns")
-    await ep.reopen_held_facts(scope, ["m1"], ch=ch, restored_at=restored, restore_id="u1")
+    await graph_undo.reopen_held_facts(scope, ["m1"], ch=ch, restored_at=restored, restore_id="u1")
     assert len(ch.reads) == 2
     assert all("apply_mutations_on_fly = 1" in sql for sql in ch.reads)
     assert not any("system.mutations" in sql for sql in ch.reads)
@@ -293,6 +293,7 @@ async def test_an_undo_refused_on_the_fly_writes_nothing_and_is_recorded(monkeyp
     from types import SimpleNamespace
 
     from server.memory.app import entity_projections as ep
+    from server.memory.app import graph_undo
 
     refusal = (
         "Code: 36. DB::Exception: ALTER UPDATE/ALTER DELETE statement with subquery may"
@@ -341,10 +342,10 @@ async def test_an_undo_refused_on_the_fly_writes_nothing_and_is_recorded(monkeyp
         recorded.append(kw)
 
     restored = datetime(2026, 10, 15, 9, 0, 0, 5)
-    monkeypatch.setattr(ep, "_linked_triples", held)
-    monkeypatch.setattr(ep, "_stated_by_live_rows", held)
+    monkeypatch.setattr(graph_undo, "_linked_triples", held)
+    monkeypatch.setattr(graph_undo, "_stated_by_live_rows", held)
     monkeypatch.setattr(ep, "record_input_projection_failure", record)
-    monkeypatch.setattr(ep, "repair_intervals", repair)
+    monkeypatch.setattr(graph_undo, "repair_intervals", repair)
     monkeypatch.setattr(ep, "naive_utc_now", lambda: restored)
     ch = _RefusingCH()
     scope = SimpleNamespace(org="o", namespace="ns", agent="a")
@@ -377,7 +378,7 @@ async def _undo_of_rome_and(
     from types import SimpleNamespace
 
     import server.identity.app.namespace_ontology as onto
-    from server.memory.app import entity_projections as ep
+    from server.memory.app import graph_undo
 
     stored = datetime(2026, 10, 1)
 
@@ -422,13 +423,13 @@ async def _undo_of_rome_and(
         repaired.extend(triples)
         return []
 
-    monkeypatch.setattr(ep, "_linked_triples", linked)
-    monkeypatch.setattr(ep, "_stated_by_live_rows", stated)
-    monkeypatch.setattr(ep, "repair_intervals", repair)
+    monkeypatch.setattr(graph_undo, "_linked_triples", linked)
+    monkeypatch.setattr(graph_undo, "_stated_by_live_rows", stated)
+    monkeypatch.setattr(graph_undo, "repair_intervals", repair)
     monkeypatch.setattr(onto, "load_relation_cardinality", declared)
     ch = _ClosedCH()
     restored = datetime(2026, 10, 15, 9, 0, 0, 5)
-    await ep.reopen_held_facts(
+    await graph_undo.reopen_held_facts(
         SimpleNamespace(org="o", namespace="ns"),
         ["m1"],
         ch=ch,

@@ -1715,7 +1715,7 @@ async def test_an_undo_replay_without_its_id_or_instant_is_abandoned_unread(
     monkeypatch, payload
 ) -> None:
     # '' is every other row's restore id, and the clock would date the Undo at the replay.
-    from server.memory.app import entity_projections, projection_failures
+    from server.memory.app import graph_undo, projection_failures
 
     abandoned: list[str] = []
     called: list[str] = []
@@ -1728,7 +1728,7 @@ async def test_an_undo_replay_without_its_id_or_instant_is_abandoned_unread(
 
     monkeypatch.setattr(projection_failures, "mark_projection_failure_abandoned", mark_abandoned)
     monkeypatch.setattr(projection_failures, "_rows_still_holding", never)
-    monkeypatch.setattr(entity_projections, "reopen_held_facts", never)
+    monkeypatch.setattr(graph_undo, "reopen_held_facts", never)
     failure = projection_failures.ProjectionFailureRow(
         failure_id="f1",
         org="o",

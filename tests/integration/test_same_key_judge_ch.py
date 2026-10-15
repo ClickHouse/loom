@@ -1414,7 +1414,7 @@ async def test_undo_makes_the_restored_value_current_and_retires_nothing(
     from types import SimpleNamespace
 
     from server.memory.api.models_crud import MemoryRestoreInput
-    from server.memory.app import entity_projections
+    from server.memory.app import graph_undo
     from server.memory.app.restore import handle_memory_restore
 
     london = await _stated(
@@ -1450,7 +1450,7 @@ async def test_undo_makes_the_restored_value_current_and_retires_nothing(
     assert await _walked(org, ["london"], labeled=False) == ["london"]
     # A replay of the Undo finds its observations and weighs London no more.
     scope = SimpleNamespace(org=org, namespace=NS, agent="bot")
-    await entity_projections.reopen_held_facts(
+    await graph_undo.reopen_held_facts(
         scope,
         [str(london["memory_id"])],
         ch=ch,
@@ -1711,7 +1711,7 @@ async def test_an_undo_starts_a_fact_dated_ahead_on_its_date(ch, org) -> None:
 async def test_a_replayed_undo_restates_a_fact_dated_ahead_as_stored(ch, org, monkeypatch) -> None:
     # As above, but the repair fails after the markers land. The replay reads them back
     # as stored, Berlin from Dec 1 to the second, so Rome still closes on Dec 1.
-    from server.memory.app import entity_projections
+    from server.memory.app import graph_undo
     from server.memory.app.projection_failures import retry_projection_failure
     from server.memory.app.projections import write_entity_triples
     from server.memory.app.restore import handle_memory_restore
@@ -1731,14 +1731,14 @@ async def test_a_replayed_undo_restates_a_fact_dated_ahead_as_stored(ch, org, mo
     await _edges_like_triples(ch, org)
     paris = await _stated(ch, org, "s2", "I live in Paris", (*live, "paris"))
     await _follow_retirement(ch, org, row, paris)
-    repair = entity_projections.repair_intervals
+    repair = graph_undo.repair_intervals
 
     async def _fails(*a: Any, **k: Any) -> Any:
         raise RuntimeError("repair down")
 
-    monkeypatch.setattr(entity_projections, "repair_intervals", _fails)
+    monkeypatch.setattr(graph_undo, "repair_intervals", _fails)
     assert (await handle_memory_restore(_undo_of(paris))).restored
-    monkeypatch.setattr(entity_projections, "repair_intervals", repair)
+    monkeypatch.setattr(graph_undo, "repair_intervals", repair)
     failure = await _recorded_reconcile(ch, org)
     assert (await retry_projection_failure(failure, ch=ch)).resolved
     await _mutations_done(ch, org)
@@ -1797,7 +1797,7 @@ async def test_an_undo_of_a_fact_open_until_later_adds_no_weight(ch, org) -> Non
     # the Undo's own row of it weighs nothing.
     from types import SimpleNamespace
 
-    from server.memory.app import entity_projections
+    from server.memory.app import graph_undo
 
     until = datetime.now(UTC).replace(tzinfo=None, microsecond=0) + timedelta(days=60)
     london = await _stated(
@@ -1805,7 +1805,7 @@ async def test_an_undo_of_a_fact_open_until_later_adds_no_weight(ch, org) -> Non
     )
     await _edges_like_triples(ch, org)
     scope = SimpleNamespace(org=org, namespace=NS, agent="bot")
-    await entity_projections.reopen_held_facts(
+    await graph_undo.reopen_held_facts(
         scope,
         [str(london["memory_id"])],
         ch=ch,
@@ -1860,7 +1860,7 @@ async def test_an_undo_keeps_no_end_a_supersession_set(ch, org) -> None:
     # London open.
     from types import SimpleNamespace
 
-    from server.memory.app import entity_projections
+    from server.memory.app import graph_undo
     from server.memory.app.projections import close_triples
 
     live = ("user", "live_in")
@@ -1875,7 +1875,7 @@ async def test_an_undo_keeps_no_end_a_supersession_set(ch, org) -> None:
     await close_triples(ch, org=org, namespace=NS, closes=[(*live, "berlin", now, now)])
     await _mutations_done(ch, org)
     scope = SimpleNamespace(org=org, namespace=NS, agent="bot")
-    await entity_projections.reopen_held_facts(
+    await graph_undo.reopen_held_facts(
         scope,
         [str(london["memory_id"])],
         ch=ch,
@@ -1927,7 +1927,7 @@ async def test_an_undo_weighs_a_fact_whose_row_a_close_ends_ahead(ch, org) -> No
     # not current for the readers, so the Undo's own London row carries the weight.
     from types import SimpleNamespace
 
-    from server.memory.app import entity_projections
+    from server.memory.app import graph_undo
     from server.memory.app.projections import close_triples
 
     live = ("user", "live_in")
@@ -1937,7 +1937,7 @@ async def test_an_undo_weighs_a_fact_whose_row_a_close_ends_ahead(ch, org) -> No
     await close_triples(ch, org=org, namespace=NS, closes=[(*live, "london", december, now)])
     await _mutations_done(ch, org)
     scope = SimpleNamespace(org=org, namespace=NS, agent="bot")
-    await entity_projections.reopen_held_facts(
+    await graph_undo.reopen_held_facts(
         scope,
         [str(london["memory_id"])],
         ch=ch,
@@ -2092,7 +2092,7 @@ async def test_an_undo_takes_no_end_from_an_older_row_of_its_fact(ch, org) -> No
     # keeps London open, not until December.
     from types import SimpleNamespace
 
-    from server.memory.app import entity_projections
+    from server.memory.app import graph_undo
     from server.memory.app.projections import close_triples, entity_triple_row
 
     live = ("user", "live_in")
@@ -2117,7 +2117,7 @@ async def test_an_undo_takes_no_end_from_an_older_row_of_its_fact(ch, org) -> No
     await _mutations_done(ch, org)
     await _edges_like_triples(ch, org)
     scope = SimpleNamespace(org=org, namespace=NS, agent="bot")
-    await entity_projections.reopen_held_facts(
+    await graph_undo.reopen_held_facts(
         scope,
         [str(london["memory_id"])],
         ch=ch,
@@ -2156,7 +2156,7 @@ async def test_undo_of_an_open_fact_keeps_its_date_for_later_writes(ch, org, mon
     from types import SimpleNamespace
 
     from server.memory.api.models_crud import MemoryRestoreInput
-    from server.memory.app import entity_projections
+    from server.memory.app import entity_projections, graph_undo
     from server.memory.app.restore import handle_memory_restore
 
     live = ("user", "live_in")
@@ -2189,7 +2189,7 @@ async def test_undo_of_an_open_fact_keeps_its_date_for_later_writes(ch, org, mon
     assert out.restored
     # A replay, as the repair runs it: the Undo's instant and id.
     scope = SimpleNamespace(org=org, namespace=NS, agent="bot")
-    await entity_projections.reopen_held_facts(
+    await graph_undo.reopen_held_facts(
         scope,
         [str(london["memory_id"])],
         ch=ch,
@@ -2556,7 +2556,7 @@ async def test_a_replayed_undo_is_dated_at_the_undo(ch, org, monkeypatch) -> Non
     # The Undo's reconcile fails; Rome is stated after it. Replayed, the Undo brings
     # London back as of the Undo, so Rome, the newer value, stays current.
     from server.memory.api.models_crud import MemoryRestoreInput
-    from server.memory.app import entity_projections
+    from server.memory.app import graph_undo
     from server.memory.app.projection_failures import (
         TRIPLES_RECONCILE,
         list_projection_failures,
@@ -2568,12 +2568,12 @@ async def test_a_replayed_undo_is_dated_at_the_undo(ch, org, monkeypatch) -> Non
     london = await _stated(ch, org, "s1", "I currently live in London", (*live, "london"))
     paris = await _stated(ch, org, "s2", "I currently live in Paris", (*live, "paris"))
     await _follow_retirement(ch, org, london, paris)
-    reopen = entity_projections.reopen_held_facts
+    reopen = graph_undo.reopen_held_facts
 
     async def _fails(*a: Any, **k: Any) -> Any:
         raise RuntimeError("reconcile down")
 
-    monkeypatch.setattr(entity_projections, "reopen_held_facts", _fails)
+    monkeypatch.setattr(graph_undo, "reopen_held_facts", _fails)
     undo = MemoryRestoreInput(
         org=org,
         namespace=NS,
@@ -2584,7 +2584,7 @@ async def test_a_replayed_undo_is_dated_at_the_undo(ch, org, monkeypatch) -> Non
         if_superseded_by=str(paris["memory_id"]),
     )
     assert (await handle_memory_restore(undo)).restored
-    monkeypatch.setattr(entity_projections, "reopen_held_facts", reopen)
+    monkeypatch.setattr(graph_undo, "reopen_held_facts", reopen)
     # Rome arrives after the Undo, in its second or a later one.
     await _stated(ch, org, "s3", "I moved to Rome", (*live, "rome"), memory_key="k3")
     await _mutations_done(ch, org)
@@ -3093,7 +3093,7 @@ async def test_a_replayed_undo_leaves_a_revision_since_to_its_own_reconcile(
 ) -> None:
     # The Undo of London fails; the row is then revised to Berlin. The replay never
     # dates Berlin at the Undo: that revision's own reconcile owns the row.
-    from server.memory.app import entity_projections
+    from server.memory.app import graph_undo
     from server.memory.app.projection_failures import retry_projection_failure
     from server.memory.app.restore import handle_memory_restore
 
@@ -3101,14 +3101,14 @@ async def test_a_replayed_undo_leaves_a_revision_since_to_its_own_reconcile(
     london = await _stated(ch, org, "s1", "I currently live in London", (*live, "london"))
     paris = await _stated(ch, org, "s2", "I currently live in Paris", (*live, "paris"))
     await _follow_retirement(ch, org, london, paris)
-    reopen = entity_projections.reopen_held_facts
+    reopen = graph_undo.reopen_held_facts
 
     async def _fails(*a: Any, **k: Any) -> Any:
         raise RuntimeError("reconcile down")
 
-    monkeypatch.setattr(entity_projections, "reopen_held_facts", _fails)
+    monkeypatch.setattr(graph_undo, "reopen_held_facts", _fails)
     assert (await handle_memory_restore(_undo_of(paris))).restored
-    monkeypatch.setattr(entity_projections, "reopen_held_facts", reopen)
+    monkeypatch.setattr(graph_undo, "reopen_held_facts", reopen)
     failure = await _recorded_reconcile(ch, org)
     await _revise("memory.update_by_id", org, london, "I live in Berlin", ((*live, "berlin"),))
     await _mutations_done(ch, org)
@@ -3240,7 +3240,7 @@ async def test_a_replayed_undo_leaves_a_value_asserted_later_in_its_second_curre
     # The Undo of London at T lands, then fails. Rome, dated T, is asserted later in
     # the same second and is current. Replayed with its own instant, the Undo keeps
     # its place: before Rome, so Rome stays current.
-    from server.memory.app import entity_projections, projections
+    from server.memory.app import entity_projections, graph_undo, projections
     from server.memory.app.projection_failures import retry_projection_failure
     from server.memory.app.restore import handle_memory_restore
 
@@ -3251,15 +3251,15 @@ async def test_a_replayed_undo_leaves_a_value_asserted_later_in_its_second_curre
     second = datetime.now(UTC).replace(tzinfo=None, microsecond=0) + timedelta(seconds=1)
     undo_at, rome_at = second.replace(microsecond=100), second.replace(microsecond=200)
     monkeypatch.setattr(entity_projections, "naive_utc_now", lambda: undo_at)
-    repair = entity_projections.repair_intervals
+    repair = graph_undo.repair_intervals
 
     async def _lands_then_fails(*a: Any, **k: Any) -> Any:
         await repair(*a, **k)
         raise RuntimeError("reconcile down after it landed")
 
-    monkeypatch.setattr(entity_projections, "repair_intervals", _lands_then_fails)
+    monkeypatch.setattr(graph_undo, "repair_intervals", _lands_then_fails)
     assert (await handle_memory_restore(_undo_of(paris))).restored
-    monkeypatch.setattr(entity_projections, "repair_intervals", repair)
+    monkeypatch.setattr(graph_undo, "repair_intervals", repair)
     await _mutations_done(ch, org)
     assert await _open_cities(ch, org, {"london"}) == {"london"}
     monkeypatch.setattr(projections, "naive_utc_now", lambda: rome_at)
