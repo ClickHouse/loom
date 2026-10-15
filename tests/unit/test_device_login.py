@@ -1102,6 +1102,17 @@ def test_a_logout_retried_after_the_token_was_spent_is_still_a_logout(_world) ->
     _refresh(c, tokens["refresh_token"])  # spent
     c.post("/oauth/revoke", data={"token": tokens["refresh_token"], "client_id": "loom-cli"})
     reasons = [kw["subject"]["reason"] for n, kw in _world["events"] if n == "auth.session_revoked"]
+    assert reasons == ["logout (token already spent)"]
+
+
+def test_a_refresh_after_logout_is_refused_without_a_replay_verdict(_world) -> None:
+    c = _client()
+    tokens = _signed_in_tokens(c)
+    c.post("/oauth/revoke", data={"token": tokens["refresh_token"], "client_id": "loom-cli"})
+    r = _refresh(c, tokens["refresh_token"])  # a stale process still holds it
+    assert _error(r) == "invalid_grant"
+    assert "other hands" not in r.json()["error_description"]
+    reasons = [kw["subject"]["reason"] for n, kw in _world["events"] if n == "auth.session_revoked"]
     assert reasons == ["logout"]
 
 
@@ -1112,18 +1123,3 @@ async def test_one_family_gets_one_retry_task() -> None:
     oauth._keep_trying(grant, "x")  # type: ignore[arg-type]
     assert list(oauth._owed) == ["f1"]
     oauth._owed["f1"].cancel()
-
-
-def test_a_pending_poll_claims_nothing(_world, monkeypatch) -> None:
-    c = _client()
-    code = _start(c)["device_code"]
-    claimed: list[str] = []
-    real = _world["store"].transition
-
-    def transition(key: str) -> Any:
-        claimed.append(key)
-        return real(key)
-
-    monkeypatch.setattr(_world["store"], "transition", transition)
-    assert _error(_poll(c, code)) == "authorization_pending"
-    assert claimed == []

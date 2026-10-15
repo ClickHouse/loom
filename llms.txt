@@ -21,7 +21,7 @@ Start with docs/index.md (the map) and docs/getting-started/connect-a-coding-age
 - [Maintenance](docs/operations/maintenance.md): Every command here is a `loom` subcommand; run it inside the container that has the deployment's environment (`docker exec loom-server loom …`, or `loom-workers` in a split deployment).
 - [Monitoring](docs/operations/monitoring.md): This page says what to watch.
 - [Read-replicas: more Looms on the same brain](docs/operations/read-replicas.md): A read-replica is another Loom on the same ClickHouse service as your main Loom.
-- [Single sign-on (Okta and other OIDC providers)](docs/operations/sso.md): Loom can hand the human sign-in to an OpenID Connect identity provider.
+- [Single sign-on (OIDC)](docs/operations/sso.md): Loom can hand the human sign-in to an OpenID Connect identity provider.
 - [Troubleshooting](docs/operations/troubleshooting.md): Each entry gives a symptom, the check that confirms its cause, and the fix.
 - [Upgrades](docs/operations/upgrades.md): An upgrade replaces the image and applies the migrations the new build carries.
 

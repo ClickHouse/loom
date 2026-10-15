@@ -823,6 +823,10 @@ async def end_replayed_session(e: CodeReplayed, what: str) -> OAuthError:
     an answer. Either way the session ends; its owner signs in again, told why,
     so a theft is not taken for an expiry. While the end is not recorded
     anywhere, the answer is "retry", not a final refusal."""
+    from server.auth.revocation import is_revoked
+
+    if e.grant["family"] and is_revoked(e.grant["family"]):
+        return _invalid_grant("this session has ended; sign in again")  # a logout spent it
     try:
         await end_session(e.grant, f"{what} replayed")
     except Exception:  # nothing durable landed: the presenter is told to retry
@@ -988,15 +992,18 @@ async def revoke_token(request: Request) -> Response:
         # token could not be matched, and logout would quietly do nothing.
         raise OAuthError("invalid_request", description="client_id required")
     grant: Grant | Device | None = None
+    reason = "logout"
     try:
         grant = await store.take_refresh(token_value, client_id)
     except CodeReplayed as e:
-        grant = e.grant  # spent already (a logout retried, or an old copy): still a logout
+        # Spent already: a logout retried, or an old copy. Still a logout,
+        # but the audit keeps the difference.
+        grant, reason = e.grant, "logout (token already spent)"
     except claims.Busy:
         raise _unavailable() from None
     if grant is not None:
         try:
-            await end_session(grant, "logout")
+            await end_session(grant, reason)
         except Exception as e:  # nothing durable landed: the client must not think it did
             log.exception("oauth: logout could not end session %s", grant["family"])
             raise _unavailable() from e

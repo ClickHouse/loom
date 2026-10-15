@@ -170,3 +170,76 @@ async def test_a_holder_taken_over_cannot_release_the_new_holders_claim(
     _, b_holder = await asyncio.gather(a(), b())
     assert b_holder, "A's release dropped the claim B held"
     assert await ch.query_one(held, params={"k": key}) is None  # B dropped its own
+
+
+async def test_of_many_waiters_on_a_dead_holders_claim_one_takes_it_over(store: Any) -> None:
+    from server.core.ch import get_client
+
+    ch = get_client()
+    key = f"test:{uuid.uuid4().hex}"
+    await ch.execute(
+        "INSERT INTO loom.oauth_claims (claim_key, holder, claimed_at) "
+        "VALUES ({k:String}, 'dead', now64(3) - INTERVAL 60 SECOND)",
+        params={"k": key},
+    )
+    inside, most = 0, 0
+
+    async def wait_and_enter() -> None:
+        nonlocal inside, most
+        async with claims.holding(ch, key):
+            inside += 1
+            most = max(most, inside)
+            await asyncio.sleep(0.05)
+            inside -= 1
+
+    results = await _all(*(wait_and_enter() for _ in range(6)))
+    assert most == 1
+    assert any(r is None for r in results), results  # someone got in
+
+
+async def test_a_claim_insert_retried_after_a_lost_answer_is_still_ours(store: Any) -> None:
+    from server.core.ch import get_client
+
+    ch = get_client()
+    key = f"test:{uuid.uuid4().hex}"
+    assert await claims._claim(ch, key, "me")
+    assert await claims._claim(ch, key, "me")  # the retry finds its own key
+    assert not await claims._claim(ch, key, "someone-else")
+    await ch.execute(
+        "ALTER TABLE loom.oauth_claims DELETE WHERE claim_key = {k:String}", params={"k": key}
+    )
+
+
+async def test_a_holder_running_past_its_bound_is_cut_off(
+    store: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.core.ch import get_client
+
+    ch = get_client()
+    key = f"test:{uuid.uuid4().hex}"
+    monkeypatch.setattr(claims, "_HOLD_S", 0.1)
+    with pytest.raises(claims.Busy):
+        async with claims.holding(ch, key):
+            await asyncio.sleep(5)
+    held = "SELECT holder FROM loom.oauth_claims WHERE claim_key = {k:String}"
+    assert await ch.query_one(held, params={"k": key}) is None
+
+
+async def test_polling_a_pending_device_grant_takes_no_claim(
+    store: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    d, _ = _device()
+    code = secrets.token_urlsafe(32)
+    d["id"] = token_id(code)
+    await store.save_device(d)
+    claimed: list[str] = []
+    real = claims.holding
+
+    def holding(ch: Any, key: str) -> Any:
+        claimed.append(key)
+        return real(ch, key)
+
+    monkeypatch.setattr(claims, "holding", holding)
+    polled = await store.take_device(code)
+    assert polled is not None and polled["status"] == "pending"
+    assert claimed == []

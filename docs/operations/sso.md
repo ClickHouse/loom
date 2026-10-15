@@ -1,4 +1,4 @@
-# Single sign-on (Okta and other OIDC providers)
+# Single sign-on (OIDC)
 
 Loom can hand the human sign-in to an OpenID Connect identity provider. With
 it on, the dashboard shows one **Sign in with SSO** button, `loom login` and
