@@ -128,6 +128,8 @@ by the time the command starts.
 `over_budget: ["time"]` once the run goes past it; the agent decides what to do,
 since Loom never stops it. The run is closed however the work ends: `completed`,
 `cancelled` when it stops for the budget or is cancelled, `failed` on an error.
+A stop for the budget still exits 0, so AX reports the task as finished; the run
+ledger is where the stop shows.
 
 A SIGTERM that arrives while the run is still opening stops the task by
 default; if `run.begin` had already reached Loom, that run stays `active`, as

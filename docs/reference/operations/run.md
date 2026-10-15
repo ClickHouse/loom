@@ -30,8 +30,8 @@ Open a RUN — one execution of a task — BEFORE you start working on it.
 | `consumer` | `str` | `''` | The calling integration's tag, recorded on the ledger row. |
 | `role` | `str` | `''` | The agent's role in a multi-agent run — planner, executor, critic, or the team's own word. |
 | `metadata` | `dict[str, Any]` | *(computed)* | Free-form key/values stored on the run; `role`, when set, is added to it. |
-| `budget_usd` | `float` | `0.0` | Model spend in USD the run may reach; needs a session_id (0 = none, kept on a re-sent begin). |
-| `budget_seconds` | `int` | `0` | Seconds the run may take (0 = none, kept on a re-sent begin). |
+| `budget_usd` | `float` | `0.0` | Model spend in USD the run may reach; needs a session_id (0 = none, kept on a re-sent begin of the same run_id). |
+| `budget_seconds` | `int` | `0` | Seconds the run may take (0 = none, kept on a re-sent begin of the same run_id). |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

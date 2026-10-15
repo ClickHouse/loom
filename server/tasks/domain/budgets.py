@@ -8,7 +8,7 @@ BudgetKind = Literal["cost", "time"]
 
 
 def budgets_exceeded(
-    budget_usd: float, budget_seconds: int, cost_usd: float, elapsed_seconds: int
+    *, budget_usd: float, budget_seconds: int, cost_usd: float, elapsed_seconds: int
 ) -> list[BudgetKind]:
     """The budgets a run has gone past; a budget of 0 is no budget."""
     over: list[BudgetKind] = []

@@ -977,7 +977,12 @@ async def handle_run_get(input: RunGetInput) -> RunGetOutput:
         unpriced_turns=unpriced,
         cost_usd=cost,
         elapsed_seconds=elapsed,
-        over_budget=budgets_exceeded(run.budget_usd, run.budget_seconds, cost, elapsed),
+        over_budget=budgets_exceeded(
+            budget_usd=run.budget_usd,
+            budget_seconds=run.budget_seconds,
+            cost_usd=cost,
+            elapsed_seconds=elapsed,
+        ),
     )
 
 
