@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -42,7 +43,12 @@ from server.memory.domain import provenance as _prov
 from server.memory.domain.files import files_for_set
 from server.memory.domain.graph_quality import canonical_entities
 from server.memory.domain.procedural_contract import retype_for as _procedural_retype
-from server.memory.domain.temporal_capture import current_intent, intent_for, write_intent
+from server.memory.domain.temporal_capture import (
+    WriteIntent,
+    current_intent,
+    intent_for,
+    write_intent,
+)
 from server.memory.domain.value_shape import value_shape_advisories
 from server.memory.store import key_write_lock
 from server.memory.store.rows import next_version
@@ -181,13 +187,14 @@ async def handle_memory_set(input: MemorySetInput) -> MemorySetOutput:
     if input.change_kind == "transition" and input.valid_at is None:
         # The row states the bound the journal records for the new state.
         input = input.model_copy(update={"valid_at": input.effective_at})
-    intent = input.write_intent()
+    # A set never replaces a pinned value it does not pin, as the journal holds it
+    # when the write is planned (a pin may land after the guard below read the key).
+    intent = replace(
+        input.write_intent() or WriteIntent(memory_key=input.memory_key), pin_guard=True
+    )
     try:
-        if intent is None:
+        with write_intent(intent):
             out = await _handle_memory_set(input)
-        else:
-            with write_intent(intent):
-                out = await _handle_memory_set(input)
     except (HTTPException, LoomServerError) as e:
         # A guard for a new write refused it: a retry of a set this request's client
         # key already committed is answered from that commit instead.

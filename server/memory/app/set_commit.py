@@ -250,14 +250,6 @@ def _committed_id(w: _SetWrite) -> str:
     return w.memory_id
 
 
-def _reading(w: _SetWrite) -> Any:
-    """The set's row is built over the head it read: what it does not change (a
-    lock, a pin another write set since) is the journal's when it is planned."""
-    import server.memory.store as memory_repo
-
-    return memory_repo.reading([w.existing] if w.existing is not None else [])
-
-
 async def _replayed_answer(w: _SetWrite) -> MemorySetOutput:
     """A write whose row was not written, answered from its commit: a retry whose
     key has changed since, or late evidence that only filled the past (that one is
@@ -339,8 +331,7 @@ async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
             dry_run=True,
         )
     with traced("ch.insert.memory", table="loom.memory"):
-        with _reading(w):
-            written = await insert_memory_versions([memory_row], ch=ch)
+        written = await insert_memory_versions([memory_row], ch=ch)
         if not written:
             return await _replayed_answer(w)  # the commit answers: no row was written
     memory_id = _committed_id(w)
@@ -721,10 +712,7 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
 
     # The embedding row lands only once the journal accepted the version row.
     with traced("ch.insert.dual_write", concurrent=2):
-        with _reading(w):
-            written = await insert_memory_versions(
-                [memory_row], ch=ch, alongside=[_insert_embedding]
-            )
+        written = await insert_memory_versions([memory_row], ch=ch, alongside=[_insert_embedding])
         if not written:
             return False  # a retry its key has moved past: nothing was written
     memory_id = _committed_id(w)

@@ -167,6 +167,7 @@ async def decide(
     )
     by_key = {r.memory_key: r for r in rows}
     to_write: list[tuple[dict[str, Any], Any]] = []
+    fields: dict[int, frozenset[str]] = {}
     out: list[DecideResult] = []
     for key in wanted:
         row = by_key.get(key)
@@ -188,11 +189,14 @@ async def decide(
         }
         if decision == "reject":
             overrides["rejection_reason"] = (reason or "proposal rejected")[:512]
-        to_write.append((memory_repo.build_memory_version_row(row, **overrides), row))
+        vrow = memory_repo.build_memory_version_row(row, **overrides)
+        fields[id(vrow)] = frozenset(overrides)
+        to_write.append((vrow, row))
         out.append(DecideResult(key, True, str(overrides["status"])))
     if not to_write:
         return out
-    kept = {id(r) for r in await memory_repo.insert_over_heads(to_write, ch=ch)}
+    declared = [(r, fields[id(r)]) for r, _ in to_write]
+    kept = {id(r) for r in await memory_repo.insert_over_heads(declared, ch=ch)}
     moved = {h.memory_key for r, h in to_write if id(r) not in kept}
     out = [
         DecideResult(d.memory_key, False, "", "changed since it was read; re-read and retry")

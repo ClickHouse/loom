@@ -48,12 +48,18 @@ def kept_embedding_rows(
 ) -> list[dict[str, Any]]:
     """The embedding rows of the version rows the hooks kept, at the version and
     with the expiry those were given (stamped by the publisher; a retry's are its
-    commit's)."""
+    commit's). A row the journal left unembedded (high, or a type never embedded)
+    keeps no vector: its embedding row is dropped."""
+    from server.memory.domain.memory_types import is_embedded
+
     kept_by = {_ident(r): r for r in kept}
     return [
         {**e, "version": kept_by[k]["version"], "expires_at": kept_by[k].get("expires_at")}
         for e in embedding_rows
         if (k := _ident(e)) in kept_by
+        and is_embedded(
+            str(kept_by[k].get("memory_type")), str(kept_by[k].get("sensitivity") or "")
+        )
     ]
 
 

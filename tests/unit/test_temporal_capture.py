@@ -231,17 +231,3 @@ def test_a_metadata_write_leaves_another_qualifiers_claim_alone() -> None:
         row('"qv"', valid_at=datetime(2026, 1, 1)),
     )
     assert out.retired == (plain.assertion_id,)
-
-
-def test_a_touch_changes_only_the_expiry_it_asked_for() -> None:
-    one = tm.first('"v"', valid_from=d(1), qualifiers={"scope": "one"}, confidence=0.2)
-    two = tm.first('"v"', valid_from=d(1), qualifiers={"scope": "two"}, confidence=0.9)
-    head = row('"v"', valid_at=datetime(2026, 1, 1), confidence=0.9)
-    touch = row(
-        '"v"', valid_at=datetime(2026, 1, 1), confidence=0.9, expires_at=datetime(2027, 1, 1)
-    )
-    out = amendment_for_row(
-        touch, [one, two], WriteIntent(), head, changed=frozenset({"expires_at"})
-    )
-    assert sorted(a.confidence for a in out.added) == [0.2, 0.9]
-    assert all(a.expires_at == datetime(2027, 1, 1, tzinfo=UTC) for a in out.added)

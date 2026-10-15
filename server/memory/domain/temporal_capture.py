@@ -80,9 +80,14 @@ class WriteIntent:
     existing: bool = False
     # The memory id a new key's current-state row takes (the one already journaled).
     memory_id: str = ""
-    # The write holds only while what it changes is as it read it (an expiry sweep:
-    # a key touched or locked since keeps its new state, the write is left out).
+    # The write holds only while the key is still expired (an expiry sweep: a key
+    # touched since keeps its new expiry, the write is left out).
     conditional: bool = False
+    # A value write that must not replace a pinned current value it did not pin
+    # (memory.set, bulk).
+    pin_guard: bool = False
+    # A lock that may only tighten the lock in force (memory.lock).
+    tighten_lock: bool = False
 
 
 _intent: ContextVar[WriteIntent | None] = ContextVar("loom_temporal_intent", default=None)
@@ -103,27 +108,27 @@ def current_intent() -> WriteIntent:
 
 _NONE = WriteIntent()
 
-# Per (org, namespace, agent, user_id, session_id, memory_key): the head a
-# read-modify-write built its row from, as the row builder renders it. A column the
-# writer left as it read it is taken from the journal when the row is planned, so
-# a copy never carries a stale lock, pin, value or status over a newer one.
-_read_bases: ContextVar[Mapping[tuple[str, ...], Mapping[str, Any]] | None] = ContextVar(
-    "loom_temporal_read_bases", default=None
+# Per (org, namespace, agent, user_id, session_id, memory_key): the columns a
+# metadata write sets (a lock, a pin, an expiry, a status flip). Its row is built,
+# when it is planned, from the key's state in the journal with only those set: it
+# never carries a stale copy of anything else.
+_declared: ContextVar[Mapping[tuple[str, ...], frozenset[str]] | None] = ContextVar(
+    "loom_temporal_declared", default=None
 )
 
 
 @contextmanager
-def read_bases(bases: Mapping[tuple[str, ...], Mapping[str, Any]]) -> Iterator[None]:
-    token = _read_bases.set(bases)
+def declare_fields(fields: Mapping[tuple[str, ...], frozenset[str]]) -> Iterator[None]:
+    token = _declared.set(fields)
     try:
         yield
     finally:
-        _read_bases.reset(token)
+        _declared.reset(token)
 
 
-def read_base(row: Mapping[str, Any]) -> Mapping[str, Any] | None:
-    """The head the writer of `row` built it from (None when it declared none)."""
-    return (_read_bases.get() or {}).get(row_key(row))
+def declared_fields(row: Mapping[str, Any]) -> frozenset[str] | None:
+    """The columns a metadata write of `row` sets (None: a write of its own row)."""
+    return (_declared.get() or {}).get(row_key(row))
 
 
 # Per row_key: why the journal left a row of this block out (superseded, stale,
@@ -244,7 +249,6 @@ def amendment_for_row(
     head: Mapping[str, Any] | None = None,
     *,
     now: datetime | None = None,
-    changed: frozenset[str] | None = None,
 ) -> tm.Amendment:
     """The change one version row makes to what its key serves. `head` is the
     loom.memory row it replaces: a row that carries the head's value and validity
@@ -265,10 +269,7 @@ def amendment_for_row(
             return tm.correct(served, new.valid_from, new.valid_to, new)
     if served and _carries_forward(row, head, served, new, now) and not _reshapes(intent, served):
         shown = _shown(served, new, str(row.get("content_sha256") or ""), head, now)
-        # A writer that declared the head it read changes what it changed, nothing
-        # else: another claim keeps its own confidence, tags and the rest.
-        fields = [f for f in ASSESS_FIELDS if changed is None or f in changed]
-        am = _assess(shown, {f: getattr(new, f) for f in fields})
+        am = _assess(shown, {f: getattr(new, f) for f in ASSESS_FIELDS})
         # A new type changes the embed text (a procedure embeds its steps, not its JSON).
         key = str(row.get("memory_key") or "")
         added = tuple(
@@ -326,6 +327,19 @@ def _reshapes(intent: WriteIntent, served: Sequence[tm.Assertion]) -> bool:
         for f in _SHAPE_FIELDS
         for a in served
     )
+
+
+def assess_claims(
+    claims: Sequence[tm.Assertion], changes: dict[str, Any], memory_key: str
+) -> tm.Amendment:
+    """An assessment of `claims` with `changes`; a new type re-derives the embed text
+    (a procedure embeds its steps, not its JSON)."""
+    am = _assess(claims, changes)
+    added = tuple(
+        replace(a, embed_input_sha256=embed_input_sha256(a.memory_type, a.value, memory_key))
+        for a in am.added
+    )
+    return replace(am, added=added)
 
 
 def _assess(served: Sequence[tm.Assertion], changes: dict[str, Any]) -> tm.Amendment:

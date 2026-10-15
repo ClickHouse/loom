@@ -473,7 +473,6 @@ def _patch_memory_io(mp: pytest.MonkeyPatch, ch: Any, row: Any) -> None:
     mp.setattr("server.memory.store.lifecycle.get_by_id", get_by_id)
     mp.setattr("server.memory.store.lifecycle.insert_memory_versions", no_insert)
     mp.setattr("server.memory.store.insert_memory_versions", no_insert)
-    mp.setattr("server.memory.app.expiry.insert_memory_versions", no_insert)
     mp.setattr("server.memory.store.embeddings._default_client", lambda: ch)
     mp.setattr("server.memory.store.lifecycle._default_client", lambda: ch)
     mp.setattr("server.memory.store.shared._default_client", lambda: ch)

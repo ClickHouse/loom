@@ -11,7 +11,7 @@ from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
 from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters, scope_and
-from server.memory.domain.temporal_capture import read_bases, row_key
+from server.memory.domain.temporal_capture import declare_fields, row_key
 from server.memory.store.embeddings import mirror_status_to_embeddings
 from server.memory.store.inserts import insert_memory_versions
 from server.memory.store.reads import get_by_id
@@ -631,10 +631,8 @@ async def clear_duplicate_tag(
     row = build_memory_version_row(
         existing, status="active", duplicate_of="", version=next_version()
     )
-    # Over the head read here: what this flip did not change is the journal's.
-    with read_bases(
-        {row_key(row): build_memory_version_row(existing, version=int(existing.version))}
-    ):
+    # Only the flip: the rest of the row is the journal's when it is planned.
+    with declare_fields({row_key(row): frozenset({"status", "duplicate_of"})}):
         if not await insert_memory_versions([row], ch=ch):
             return False
     await mirror_status_to_embeddings([row], ch=ch)

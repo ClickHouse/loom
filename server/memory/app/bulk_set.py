@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextvars import ContextVar
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -44,6 +45,7 @@ from server.memory.app.projections import (
 )
 from server.memory.app.provenance import writer_actor
 from server.memory.domain.memory_types import is_embedded
+from server.memory.domain.temporal_capture import current_intent, write_intent
 
 if TYPE_CHECKING:
     from server.memory.app.search.clock import StageClock
@@ -306,9 +308,8 @@ async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
         written.extend(memory_repo.kept_embedding_rows(kept, state.embedding_rows))
         await memory_repo.insert_embedding_rows(written, ch=ch)
 
-    # Each revision is built over the live row read for its key: a lock or pin
-    # another write committed since is the journal's, never undone by this copy.
-    with memory_repo.reading(list(state.existing_rows.values())):
+    # A bulk write never replaces a pinned value it does not pin (as memory.set).
+    with write_intent(replace(current_intent(), pin_guard=True)):
         await memory_repo.insert_memory_versions(state.memory_rows, ch=ch, alongside=[_embed])
     _drop_left_out(state, kept_keys)
     # The entries' versions were drawn before the batch embedded: a slow batch indexes

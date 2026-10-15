@@ -229,7 +229,7 @@ async def _label(row: Any, spec: ApplyLabel, *, reason: str) -> int:
     vrow = memory_repo.build_memory_version_row(
         row, version=version, tags=new, updated_at=memory_repo.written_now()
     )
-    if not await memory_repo.insert_over_heads([(vrow, row)], ch=get_client()):
+    if not await memory_repo.insert_over_heads([(vrow, frozenset({"tags"}))], ch=get_client()):
         return 0  # the memory changed since it was read
     await _mirror(row, tags=new)
     return version
@@ -250,7 +250,9 @@ async def _demote(row: Any, spec: ApplyDemote, *, reason: str) -> int:
     vrow = memory_repo.build_memory_version_row(
         row, version=version, confidence=new_conf, updated_at=memory_repo.written_now()
     )
-    if not await memory_repo.insert_over_heads([(vrow, row)], ch=get_client()):
+    if not await memory_repo.insert_over_heads(
+        [(vrow, frozenset({"confidence"}))], ch=get_client()
+    ):
         return 0  # the memory changed since it was read
     await _mirror(row, confidence=new_conf)
     return version

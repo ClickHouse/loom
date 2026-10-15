@@ -445,6 +445,6 @@ async def test_a_row_left_out_in_one_namespace_is_not_mirrored_from_another(
             await f(kept)
         return len(kept)
 
-    monkeypatch.setattr(X, "insert_memory_versions", _insert)
+    monkeypatch.setattr("server.memory.store.lifecycle.insert_memory_versions", _insert)
     await X.run_pass(X.ExpiryConfig())
     assert [k for k, _v in retired] == ["churn_note"]  # ns1's only

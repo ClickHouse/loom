@@ -10,7 +10,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
-from server.memory.domain.temporal_capture import read_bases, row_key
+from server.memory.domain.temporal_capture import declare_fields, row_key
 from server.memory.store.embeddings import retire_copies_under_unembedded_heads
 from server.memory.store.inserts import insert_embedding_rows, insert_memory_versions
 from server.memory.store.reads import memory_rows_by_identity_keys
@@ -243,9 +243,8 @@ async def apply_entities_batch(
         async def _landed(rows: Any) -> None:
             landed.update(_identity_key(r) for r in rows)
 
-        # Over the heads read here: what this pass did not change is the journal's.
-        bases = {row_key(r): _base(existing[_identity_key(r)]) for r in mem_rows}
-        with read_bases(bases):
+        # Only the entities: the rest of each row is the journal's when it is planned.
+        with declare_fields({row_key(r): frozenset({"entities"}) for r in mem_rows}):
             written["memory"] = await insert_memory_versions(mem_rows, ch=ch, alongside=[_landed])
         keys = [k for k in keys if k in landed]  # a row the journal left out: no mirror
     # A key whose head keeps no vector ('high', unsearchable) gets no mirror copy.
@@ -333,7 +332,3 @@ async def heal_divergent_entities(*, limit: int = 200, ch: _CHClient | None = No
     await insert_embedding_rows(copies, ch=ch)
     await retire_copies_under_unembedded_heads(copies, ch=ch)
     return len(emb_rows)
-
-
-def _base(head: Any) -> dict[str, Any]:
-    return build_memory_version_row(head, version=int(head.version))

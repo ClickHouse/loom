@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Sequence
-from contextlib import AbstractContextManager
 from datetime import datetime
 from typing import Any
 
@@ -16,7 +15,7 @@ from server.core.datetimes import naive_utc_now
 from server.core.errors import PreconditionFailedError
 from server.core.repo_base import _CHClient, _default_client
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
-from server.memory.domain.temporal_capture import left_out_reasons, read_bases, row_key
+from server.memory.domain.temporal_capture import declare_fields, left_out_reasons, row_key
 from server.memory.store.embeddings import (
     mirror_status_to_embeddings,
     reemit_embedding_rows_for_keys,
@@ -92,35 +91,17 @@ async def rewrite_heads(
     reasons: dict[str, str] | None = None,
 ) -> list[Any]:
     """A new version of each head with `update(head)` over it; returns the rows the
-    journal kept. Each row is declared as built from its head (`reading`): what
-    the update did not change is taken from the journal as it stands, so a
-    change never carries a stale lock, pin, expiry or value over a newer one.
-    `reasons` receives, per memory_key, why a row was left out."""
-    ch = ch or _default_client()
-    kept: list[Any] = []
-
-    async def _keep(rows: Any) -> None:
-        kept.extend(rows)
-
-    written = [
-        (build_memory_version_row(h, **_with_version(update(h))), h)
-        for h in heads
-        if skip is None or not skip(h)
-    ]
-    if not written:
-        return kept
-    with reading([h for _, h in written]), left_out_reasons() as why:
-        await insert_memory_versions([r for r, _ in written], ch=ch, alongside=[_keep])
-    if reasons is not None:
-        landed = {id(r) for r in kept}
-        reasons.update(
-            {
-                str(r["memory_key"]): why.get(row_key(r), "")
-                for r, _ in written
-                if id(r) not in landed
-            }
-        )
-    return kept
+    journal kept. The columns `update` sets are declared: the journal builds each
+    row from the key as it stands then, with only those set, so a change never
+    carries a stale lock, pin, expiry or value over a newer one. `reasons`
+    receives, per memory_key, why a row was left out."""
+    rows: list[tuple[dict[str, Any], frozenset[str]]] = []
+    for h in heads:
+        if skip is not None and skip(h):
+            continue
+        overrides = update(h)
+        rows.append((build_memory_version_row(h, **_with_version(overrides)), frozenset(overrides)))
+    return await insert_over_heads(rows, ch=ch, reasons=reasons)
 
 
 def not_written(memory_key: str, op: str, reasons: dict[str, str]) -> PreconditionFailedError:
@@ -130,36 +111,35 @@ def not_written(memory_key: str, op: str, reasons: dict[str, str]) -> Preconditi
 
 
 async def insert_over_heads(
-    pairs: Sequence[tuple[dict[str, Any], MemoryRow]], *, ch: _CHClient | None = None
+    rows: Sequence[tuple[dict[str, Any], frozenset[str]]],
+    *,
+    ch: _CHClient | None = None,
+    reasons: dict[str, str] | None = None,
 ) -> list[Any]:
-    """Insert version rows built from heads a writer read; returns the rows the
-    journal kept. A row whose head another write moved (or removed) since is
-    left out, never written over the newer state."""
+    """Insert metadata version rows, each with the columns it sets; returns the rows
+    the journal kept (`rewrite_heads`)."""
     kept: list[Any] = []
 
-    async def _keep(rows: Any) -> None:
-        kept.extend(rows)
+    async def _keep(kept_rows: Any) -> None:
+        kept.extend(kept_rows)
 
-    if pairs:
-        with reading([h for _, h in pairs]):
-            await insert_memory_versions([r for r, _ in pairs], ch=ch, alongside=[_keep])
+    if not rows:
+        return kept
+    declared = {row_key(r): fields - _STAMPS for r, fields in rows}
+    with declare_fields(declared), left_out_reasons() as why:
+        await insert_memory_versions(
+            [r for r, _ in rows], ch=ch or _default_client(), alongside=[_keep]
+        )
+    if reasons is not None:
+        landed = {id(r) for r in kept}
+        reasons.update(
+            {str(r["memory_key"]): why.get(row_key(r), "") for r, _ in rows if id(r) not in landed}
+        )
     return kept
 
 
-def reading(heads: Sequence[MemoryRow]) -> AbstractContextManager[None]:
-    """Declare the heads a write's rows were built from: a column a row kept as
-    its head had it is taken from the journal as it stands when the row is planned
-    (another write may have changed it since the read)."""
-    return read_bases(
-        {
-            tuple(
-                str(getattr(h, c, ""))
-                for c in ("org", "namespace", "agent", "user_id", "session_id", "memory_key")
-            ): build_memory_version_row(h, version=_version_of(h))
-            for h in heads
-            if isinstance(h, MemoryRow)
-        }
-    )
+# A version row's own stamps, never "set" by a metadata write.
+_STAMPS = frozenset({"version", "updated_at"})
 
 
 def _with_version(overrides: dict[str, Any]) -> dict[str, Any]:

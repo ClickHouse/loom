@@ -93,31 +93,30 @@ the `loom.memory` row (the current-state projection) are written after it.
   one a restatement restates. One that applies only to the past, like late
   evidence, is journaled without a row; when it re-cut the current claim (a plan
   bounding it), that key's current row is reconciled once the batch is published.
-- **A copied row is merged over the journal.** A writer that built its row from a
-  head it read (lock, unlock, pin, unpin, touch, verify, update, delete, set, bulk,
-  restore, status flips, conflict marks, expiry, apply, proposals, move, observe)
-  declares that head. What it changed is what differs from that head (datetimes
-  to the second, as `loom.memory` keeps them); a column it left as it read it is
-  not a change, so a deliberate "set it to what it already was" loses to a write
-  that changed it since. When the row is planned:
-  - Its content and its removal are always its own: a new value asserts that value
-    (the later draw wins) and takes only the lock from the journal.
-  - A metadata write takes every other column from the claim it read (same
-    content, under the write's qualifiers, or the one lineage the read row showed)
-    as the journal holds it now, and the columns the journal does not keep from a
-    current row no older than that claim. When the content it read no longer
-    applies, another write moved the key and it is left out (`superseded`); when
-    the same text holds under several qualifier sets it is left out
-    (`ambiguous`).
-  - The lock (mode, deadline, reason, by whom, since when) is journaled and
-    merges as one unit: a writer that set any of it set all of it.
-  - A conditional write (the expiry sweep) is left out when anything it changes
-    was changed by another write since its read (`superseded`).
-  - A new value, a removal or a new expiry that a `read_only` lock in force on
-    what holds now refuses is left out as `locked`; a lock on an ended claim binds
-    nothing.
-    Every left-out write answers why (`left_out`: superseded, ambiguous, locked,
-    restated). Nothing is refused or retried for having read an older head.
+- **Every writer says what it means.** Nothing is inferred from which columns of a
+  copied row differ:
+  - A **metadata write** (lock, unlock, pin, unpin, touch, verify, delete, status
+    flips, conflict marks, expiry, apply, proposals, move, observe, entities,
+    restore) declares the columns it sets. Its row is built, when it is planned,
+    from the key's state in the journal (the current claim, and the current row's
+    columns the journal does not keep when that row is as new as the claim), with
+    only those columns its own; the assessment sets only those columns, on what
+    holds now. A lock, pin, expiry, value or status committed after the read is
+    never undone, and the write never needs a re-read.
+  - A **value write** (set, bulk, update, restore of a value) writes its own row:
+    its content, metadata and removal are its own, the later draw wins. The lock
+    is the journal's (the strictest in force on what holds now). A new value under
+    a `read_only` lock is left out as `locked`; memory.set and bulk, which never
+    replace a pinned value they do not pin, are left out as `pinned` when a pin
+    committed since their read.
+  - `memory.lock` only tightens, checked against the journal's lock in force when
+    it is planned (`locked` otherwise); unlock is its own operation.
+  - The expiry sweep holds only while the key is still expired (`superseded` once
+    a touch extended it).
+  - A lock binds only what holds now; a lock on an ended claim binds nothing.
+    Every left-out write answers why (`left_out`: superseded, locked, pinned,
+    restated). An embedding row lands only with a kept memory row the journal left
+    embedded.
 - A removal of a key whose lock in force refuses it is refused in planning (the
   journal's lock and deadline decide), with its row. A write that changes the
   memory it read (lock, pin, verify, touch, update by id) on a key the journal no

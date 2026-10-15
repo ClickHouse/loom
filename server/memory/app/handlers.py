@@ -861,7 +861,10 @@ async def handle_memory_touch(input: MemoryTouchInput) -> MemoryTouchOutput:
 
     new_expires_at = None
     if not input.clear_expiry:
-        new_expires_at = datetime.now(UTC) + timedelta(seconds=input.ttl_seconds or 0)
+        # To the second, as the row keeps it: the answer says what was written.
+        new_expires_at = (datetime.now(UTC) + timedelta(seconds=input.ttl_seconds or 0)).replace(
+            microsecond=0
+        )
     naive_expiry = new_expires_at.replace(tzinfo=None) if new_expires_at else None
     overrides: dict[str, Any] = {"expires_at": new_expires_at}
     if input.on_expire:

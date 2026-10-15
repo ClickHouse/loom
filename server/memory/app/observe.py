@@ -440,7 +440,7 @@ async def handle_observe_crystallize(
             version=next_version(),
             tags=new_tags,
         )
-        if await memory_repo.insert_over_heads([(version_row, existing)], ch=ch):
+        if await memory_repo.insert_over_heads([(version_row, frozenset({"tags"}))], ch=ch):
             enqueued += 1
 
     return ObserveCrystallizeOutput(enqueued=enqueued, session_id=input.session_id)

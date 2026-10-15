@@ -15,7 +15,6 @@ from server.memory.api.models_crud import (
     MemoryRestoreOutput,
 )
 from server.memory.domain.excerpt import build_excerpt
-from server.memory.store.inserts import insert_memory_versions
 from server.memory.store.rows import next_version
 
 if TYPE_CHECKING:
@@ -60,14 +59,15 @@ async def _restore_superseded(
         superseded_by="",
         invalid_at=None,
     )
-    # Over the head read here: a write committed since keeps what it set.
-    with memory_repo.reading([existing]):
-        if not await insert_memory_versions([restore_row], ch=ch):
-            return MemoryRestoreOutput(
-                restored=False,
-                memory_id=str(row.get("memory_id") or ""),
-                version=int(row.get("version") or 0),
-            )
+    # Only what the restore sets: a write committed since keeps the rest.
+    if not await memory_repo.insert_over_heads(
+        [(restore_row, frozenset({"status", "superseded_by", "invalid_at"}))], ch=ch
+    ):
+        return MemoryRestoreOutput(
+            restored=False,
+            memory_id=str(row.get("memory_id") or ""),
+            version=int(row.get("version") or 0),
+        )
     try:
         await memory_repo.unsupersede_embeddings(
             input.org,
@@ -310,14 +310,15 @@ async def handle_memory_restore(input: MemoryRestoreInput) -> MemoryRestoreOutpu
         tombstoned_at=None,
         expires_at=None,
     )
-    # Over the head read here: a write committed since keeps what it set.
-    with memory_repo.reading([existing]):
-        if not await insert_memory_versions([restore_row], ch=ch):
-            return MemoryRestoreOutput(
-                restored=False,
-                memory_id=str(row.get("memory_id") or ""),
-                version=int(row.get("version") or 0),
-            )
+    # Only what the restore sets: a write committed since keeps the rest.
+    if not await memory_repo.insert_over_heads(
+        [(restore_row, frozenset({"tombstoned_at", "expires_at"}))], ch=ch
+    ):
+        return MemoryRestoreOutput(
+            restored=False,
+            memory_id=str(row.get("memory_id") or ""),
+            version=int(row.get("version") or 0),
+        )
     if existing.sensitivity == "high":
         # The key is high again: a plain write still embedding lands below the fence.
         from server.memory.app.high_fence import fence_high

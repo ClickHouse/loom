@@ -51,10 +51,11 @@ from server.memory.domain.temporal_capture import (
     WriteIntent,
     amendment_for_row,
     assertion_from_row,
+    assess_claims,
     current_intent,
+    declared_fields,
     intent_for,
     note_left_out,
-    read_base,
     removes,
     write_intent,
 )
@@ -662,17 +663,20 @@ def _plan_row(
             f"{ident[3]!r} no longer serves revision {intent.expected_revision}; re-read and retry"
         )
     active = [x.a for x in current.values()]
-    base = read_base(row)
-    # What the writer changed from the head it read (None: it declared no head).
-    changed = None if base is None else _changed(row, base)
+    fields = declared_fields(row)
     left_out = _left_out_before(row, intent, active, head, floor, ident)
-    if not left_out and base is not None and changed is not None:
-        left_out = _rebase(row, base, changed, head, active, intent, now)
-        left_out = left_out or _locked_against_change(changed, active, now)
+    if not left_out:
+        if fields is not None:
+            left_out = _as_metadata(row, fields, head, active, intent, now)
+        else:
+            left_out = _as_value_write(row, active, intent, now)
     if left_out:
         return left_out
+    if fields is not None and not removes(row):
+        # Only what it sets, on what holds now: the row was built from the journal.
+        return _assess_fields(row, fields, active, now) or tm.Amendment("restate")
     try:
-        amendment = amendment_for_row(row, active, intent, head, now=now, changed=changed)
+        amendment = amendment_for_row(row, active, intent, head, now=now)
     except tm.EmptyInterval as e:
         raise ValidationError(f"{ident[3]!r}: {e}") from e
     if not amendment.empty:
@@ -752,7 +756,7 @@ def _left_out_before(
     return ""
 
 
-# Columns a row never takes from the journal: its identity and its own stamps.
+# Columns a metadata row never takes from the journal: its identity and stamps.
 _NOT_REBASED = frozenset(
     {
         "org",
@@ -767,111 +771,121 @@ _NOT_REBASED = frozenset(
         "created_at",
     }
 )
-# What a row says about the world: the writer's own, never merged.
-_CONTENT = frozenset({"value", "value_json", "content_sha256", "tombstoned_at", "redacted_at"})
-# One lock: a writer that set any of it set all of it.
+# One lock: (mode, deadline, reason, by whom, since when).
 _LOCK = ("lock_mode", "lock_until", "lock_reason", "locked_by", "locked_at")
+_UNLOCKED: dict[str, Any] = {
+    "lock_mode": "",
+    "lock_until": None,
+    "lock_reason": "",
+    "locked_by": "",
+    "locked_at": None,
+}
+_STRICTNESS = {"": 0, "no_delete": 1, "read_only": 2}
 
 
-def _same(a: Any, b: Any) -> bool:
-    """Equal as loom.memory stores them (datetimes as UTC whole seconds)."""
-    if isinstance(a, datetime) or isinstance(b, datetime):
-        return _second(a) == _second(b)
-    return bool(a == b)
-
-
-def _second(d: Any) -> datetime | None:
-    u = tm.utc(d) if isinstance(d, datetime) else None
-    return u.replace(microsecond=0) if u is not None else None
-
-
-def _changed(row: Mapping[str, Any], base: Mapping[str, Any]) -> frozenset[str]:
-    return frozenset(c for c, v in row.items() if c in base and not _same(base[c], v))
-
-
-def _rebase(
+def _as_metadata(
     row: Mapping[str, Any],
-    base: Mapping[str, Any],
-    changed: frozenset[str],
+    fields: frozenset[str],
     head: Mapping[str, Any] | None,
     served: Sequence[tm.Assertion],
     intent: WriteIntent,
     now: datetime,
 ) -> str:
-    """A row built from a head its writer read, merged over the key as it is now;
-    '' or why it is left out. What the writer changed is its own. Its content
-    and removal always are: a write of a new value asserts that value (the later
-    draw wins) and takes only the lock from the journal. A metadata write takes
-    the rest from the claim it read (same content and qualifiers), as the journal
-    holds it now; when the content it read is no longer what applies, another
-    write moved the key and it is left out (`superseded`), never applied to
-    someone else's claim. The lock merges as one unit."""
+    """A metadata write (it declared the columns it sets): its row becomes the key's
+    state now, the journal's current claim (and the current row's columns the
+    journal does not keep, when that row is as new as the claim), with only the
+    declared columns its own. '' or why it is left out."""
     claims = tm.current_claims(served, now)
-    sha, value = str(base.get("content_sha256") or ""), str(base.get("value") or "")
-    mine = [a for a in claims if a.content_sha256 == sha or _same_value(a.value, value)]
-    if not mine and len(claims) == 1 and head is not None:
-        # A row whose stored hash or text form differs from the journal's (written
-        # before the hash, or as bare text): unmoved while the current row, as new
-        # as the claim, still carries what the writer read.
-        fresh = int(head.get("version") or 0) >= claims[0].source_version
-        if fresh and str(head.get("content_sha256") or "") == sha:
-            mine = list(claims)
-    if intent.qualifiers:
-        mine = [a for a in mine if a.qualifiers == dict(intent.qualifiers)]
-    if len({tuple(sorted(a.qualifiers.items())) for a in mine}) > 1:
-        start, end = _base_validity(base)
-        mine = [
-            a for a in mine if (_second(tm.row_start(a)), _second(a.valid_to)) == (start, end)
-        ] or mine
-    if len({tuple(sorted(a.qualifiers.items())) for a in mine}) > 1:
-        return "ambiguous"  # the same text under several qualifier sets: name one
-    claim = mine[0] if mine else None
-    writes_content = bool(changed & _CONTENT)
-    if claim is None:
-        if not writes_content and claims:
-            return "superseded"  # the key now holds other content
+    if intent.conditional and any(a.expires_at is None or a.expires_at > now for a in claims):
+        return "superseded"  # no longer expired: touched since the sweep read it
+    if intent.tighten_lock and _loosens(row, claims, now):
+        return "locked"
+    if "expires_at" in fields and _locked_against(served, "expire", now):
+        return "locked"
+    if not claims:
         return ""
+    shown = str((head or {}).get("content_sha256") or "")
+    claim = next((a for a in claims if a.content_sha256 == shown), claims[0])
     theirs = columns_of(claim)
-    if intent.conditional and any(
-        c in theirs and not _same(theirs[c], base.get(c)) for c in changed
-    ):
-        return "superseded"  # what it was conditioned on changed (a touch, a lock)
-    if writes_content:
-        cols = [] if changed & set(_LOCK) else list(_LOCK)
-    else:
-        lock = [] if changed & set(_LOCK) else list(_LOCK)
-        own = _CONTENT | set(_LOCK) | changed | _NOT_REBASED
-        cols = [c for c in theirs if c not in own] + lock
-        # Columns the journal does not keep, from a current row no older than the claim.
-        if head is not None and int(head.get("version") or 0) >= claim.source_version:
-            cols += [c for c in head if c not in theirs and c not in own]
-            theirs = dict(head) | theirs
+    if head is not None and int(head.get("version") or 0) >= claim.source_version:
+        theirs = dict(head) | theirs
     r = cast(dict[str, Any], row)
-    for c in cols:
-        if c in r and c in theirs and c not in _NOT_REBASED:
-            r[c] = theirs[c]
+    for c, v in theirs.items():
+        if c in r and c not in fields and c not in _NOT_REBASED:
+            r[c] = v
     return ""
 
 
-def _base_validity(base: Mapping[str, Any]) -> tuple[datetime | None, datetime | None]:
+def _as_value_write(
+    row: Mapping[str, Any], served: Sequence[tm.Assertion], intent: WriteIntent, now: datetime
+) -> str:
+    """A write of its own row (a value, a restatement): its content, metadata and
+    removal are its own, the later draw wins; the lock is the journal's, as it holds
+    now. Refused (left out) where the journal's state forbids it: a new value under
+    `read_only`, or, for a write that guards pins, a value replacing a pinned one
+    it did not pin. '' or why it is left out."""
+    claims = tm.current_claims(served, now)
+    r = cast(dict[str, Any], row)
+    if all(c in r for c in _LOCK):
+        r.update(_lock_in_force(claims, now))
+    if removes(row):
+        return ""
+    sha = str(row.get("content_sha256") or "")
+    new_value = bool(claims) and all(a.content_sha256 != sha for a in claims)
+    if new_value and _locked_against(served, "value", now):
+        return "locked"
+    if intent.pin_guard and new_value and not row.get("pinned") and any(a.pinned for a in claims):
+        return "pinned"
+    return ""
+
+
+def _lock_in_force(claims: Sequence[tm.Assertion], now: datetime) -> dict[str, Any]:
+    """The lock columns of the strictest lock in force on what holds now."""
+    live = [a for a in claims if a.lock_mode and (a.lock_until is None or a.lock_until > now)]
+    if not live:
+        return dict(_UNLOCKED)
+    a = max(
+        live,
+        key=lambda x: (
+            _STRICTNESS.get(x.lock_mode, 0),
+            x.lock_until is None,
+            x.lock_until or tm.MIN,
+        ),
+    )
+    cols = columns_of(a)
+    return {c: cols[c] for c in _LOCK}
+
+
+def _loosens(row: Mapping[str, Any], claims: Sequence[tm.Assertion], now: datetime) -> bool:
+    """Would this lock loosen the one in force (a weaker mode, or a sooner end)?"""
+    held = _lock_in_force(claims, now)
+    if not held["lock_mode"]:
+        return False
+    mine, theirs = str(row.get("lock_mode") or ""), str(held["lock_mode"])
+    if _STRICTNESS.get(mine, 0) < _STRICTNESS.get(theirs, 0):
+        return True
+    until, held_until = tm.utc(row.get("lock_until")), tm.utc(held["lock_until"])
     return (
-        _second(base.get("valid_at") or base.get("temporal_anchor")),
-        _second(base.get("valid_to")),
+        held_until is None
+        and until is not None
+        or (until is not None and held_until is not None and until < held_until)
     )
 
 
-def _locked_against_change(
-    changed: frozenset[str], served: Sequence[tm.Assertion], now: datetime
-) -> str:
-    """A change the key's lock in force refuses, though its writer read the key
-    unlocked: a new value, a removal or a new expiry, under `read_only`. Only what
-    the writer itself changed counts."""
-    actions = set()
-    if changed & {"value", "content_sha256"}:
-        actions.add("value")
-    if "expires_at" in changed:
-        actions.add("expire")
-    return "locked" if any(_locked_against(served, a, now) for a in actions) else ""
+def _assess_fields(
+    row: Mapping[str, Any], fields: frozenset[str], served: Sequence[tm.Assertion], now: datetime
+) -> tm.Amendment | None:
+    """The assessment a metadata write makes: its journaled columns, set on what
+    holds now and on the history of that same content (an attestation or a
+    sensitivity binds the text). None when it changes none of them."""
+    current = {a.content_sha256 for a in tm.current_claims(served, now)}
+    claims = [a for a in served if a.content_sha256 in current]
+    if not claims:
+        return None
+    new = assertion_from_row(row, WriteIntent())
+    changes = {f: getattr(new, f) for f in ASSESS_FIELDS if f in fields}
+    am = assess_claims(claims, changes, str(row.get("memory_key") or ""))
+    return None if am.empty else am
 
 
 def _locked_against_removal(served: Sequence[tm.Assertion], head: Mapping[str, Any] | None) -> bool:

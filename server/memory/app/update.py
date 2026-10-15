@@ -692,10 +692,7 @@ async def _write_revision(
     try:
         # The vector writes go with the version row, once the journal accepted it; a
         # revision of a memory removed since it was read is refused, not re-asserted.
-        with (
-            write_intent(WriteIntent(memory_key=existing.memory_key, existing=True)),
-            memory_repo.reading([existing]),
-        ):
+        with write_intent(WriteIntent(memory_key=existing.memory_key, existing=True)):
             written = await insert_memory_versions(
                 [memory_row],
                 ch=ch,

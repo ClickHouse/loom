@@ -93,7 +93,11 @@ async def handle_memory_lock(input: MemoryLockInput) -> MemoryLockOutput:
         }
 
     why: dict[str, str] = {}
-    with write_intent(WriteIntent(memory_key=existing.memory_key, existing=True)):
+    # Tighten-only against the journal too: a lock committed since the read is not
+    # loosened by this one.
+    with write_intent(
+        WriteIntent(memory_key=existing.memory_key, existing=True, tighten_lock=True)
+    ):
         kept = await memory_repo.rewrite_heads([existing], _locked, ch=get_client(), reasons=why)
     if not kept:
         raise memory_repo.not_written(existing.memory_key, "lock", why)

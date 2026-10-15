@@ -40,7 +40,6 @@ from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value as _sha
 from server.memory.domain import lock as _lock
 from server.memory.domain.temporal_capture import WriteIntent, write_intent
-from server.memory.store.inserts import insert_memory_versions
 
 log = logging.getLogger(__name__)
 
@@ -193,6 +192,7 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
 
     now = naive_utc_now()
     version_rows: list[dict[str, Any]] = []
+    sets: list[frozenset[str]] = []  # the columns each expiry row sets
     mirrors: list[tuple[str, Any, int]] = []  # (action, row, version) for the embeddings side
     for row in rows:
         res.scanned += 1
@@ -219,6 +219,7 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
         # older read (read + 1) stays below the retire.
         version = memory_repo.next_version()
         version_rows.append(memory_repo.build_memory_version_row(row, version=version, **overrides))
+        sets.append(frozenset(overrides))
         mirrors.append((action, row, version))
 
     if version_rows:
@@ -229,13 +230,13 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
             kept.update(_ident(r) for r in rows)
 
         try:
-            # Declared as read, and conditional: a key touched or locked since is left
-            # out, not swept.
-            with (
-                memory_repo.reading([m[1] for m in mirrors]),
-                write_intent(WriteIntent(conditional=True)),
-            ):
-                await insert_memory_versions(version_rows, ch=ch, alongside=[_keep])
+            # Each row sets only what its expiry sets, and holds only while the key is
+            # still expired: a key touched since is left out, not swept.
+            with write_intent(WriteIntent(conditional=True)):
+                kept_rows = await memory_repo.insert_over_heads(
+                    list(zip(version_rows, sets, strict=True)), ch=ch
+                )
+            await _keep(kept_rows)
         except Exception as e:  # the pass records a failure; the rows expire next pass
             log.exception("memory_expiry_sweep: version insert failed")
             res.failures.append(f"insert: {type(e).__name__}: {e}")

@@ -144,7 +144,9 @@ async def _redirect_source(source: MemoryRow, dest_id: str, ch: Any) -> None:
         duplicate_of=dest_id,
         updated_at=now,
     )
-    if not await memory_repo.insert_over_heads([(row, source)], ch=ch):
+    if not await memory_repo.insert_over_heads(
+        [(row, frozenset({"status", "duplicate_of", "updated_at"}))], ch=ch
+    ):
         raise PreconditionFailedError(
             f"{source.memory_key!r} changed since it was read; re-read and retry"
         )
