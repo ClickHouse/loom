@@ -164,6 +164,7 @@ def test_a_turn_without_a_time_keeps_the_one_it_is_recorded_with() -> None:
     assert at["m1"] == recorded.replace(tzinfo=UTC)
     # Never recorded before: now.
     assert abs((datetime.now(UTC) - at["m2"]).total_seconds()) < 60
+    assert abs((datetime.now(UTC) - at["m4"]).total_seconds()) < 60
     assert at["m3"] == datetime(2026, 10, 15, 13, tzinfo=UTC)
 
 

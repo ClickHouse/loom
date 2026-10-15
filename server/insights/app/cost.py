@@ -201,8 +201,8 @@ async def handle_budget_status(input: BudgetStatusInput) -> BudgetStatusOutput:
 
 
 def _parse_turn_at(text: str) -> datetime | None:
-    """A turn's ISO-8601 time in UTC, or None when it has none or it does not
-    parse (an offset that takes it past year 1 or 9999 included)."""
+    """A turn's ISO-8601 time in UTC, or None when it has none, does not parse,
+    or its offset takes it before year 1 or after 9999."""
     try:
         parsed = datetime.fromisoformat(text)
         return (parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)).astimezone(UTC)
