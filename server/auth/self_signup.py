@@ -37,6 +37,7 @@ from server.auth.login import platform_roles
 from server.auth.passwords import hash_password_off_loop
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now_seconds
+from server.core.naming import SSO_NAMESPACE_PREFIX
 from server.settings import settings
 
 router = APIRouter()
@@ -283,7 +284,7 @@ def _claimable_namespace(name: str) -> str:
     """The namespace name, which is also the account's token subject, in the
     shared namespace shape — so it can never spell an email, a service-account
     `sa:` subject or a wildcard that grants under that subject would honour.
-    `personal-*` is reserved for per-subject auto-provisioning."""
+    `personal-*` and the SSO prefix are reserved for auto-provisioning."""
     from server.core.naming import validate_namespace_name
 
     try:
@@ -292,14 +293,15 @@ def _claimable_namespace(name: str) -> str:
         raise HTTPException(
             status_code=422, detail={"code": "VALIDATION_FAILED", "message": str(e)}
         ) from e
-    if namespace.startswith("personal-"):
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "VALIDATION_FAILED",
-                "message": "'personal-' names are reserved for auto-provisioned namespaces",
-            },
-        )
+    for prefix in ("personal-", SSO_NAMESPACE_PREFIX):
+        if namespace.startswith(prefix):
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "VALIDATION_FAILED",
+                    "message": f"'{prefix}' names are reserved for auto-provisioned namespaces",
+                },
+            )
     return namespace
 
 

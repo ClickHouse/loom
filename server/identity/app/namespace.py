@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from server.core.ch import CHClient, get_client
 from server.core.datetimes import naive_utc_now_seconds
+from server.core.errors import ValidationError
+from server.core.naming import SSO_NAMESPACE_PREFIX
 from server.identity.api.models import (
     NamespaceBrowseInput,
     NamespaceBrowseOutput,
@@ -318,6 +320,10 @@ async def handle_namespace_register(
     if existing is not None:
         await require_admin_of_existing(
             existing, input.org, input.namespace, caller, visibility=input.visibility
+        )
+    elif input.namespace.startswith(SSO_NAMESPACE_PREFIX):
+        raise ValidationError(
+            f"'{SSO_NAMESPACE_PREFIX}' names are reserved for the accounts single sign-on creates"
         )
 
     now = naive_utc_now_seconds()

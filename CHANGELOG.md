@@ -21,7 +21,7 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   ([without the dashboard](docs/guides/without-the-dashboard.md)).
 - With `LOOM_OAUTH_LOGIN_PROVIDER=oidc` the dashboard signs in through the identity
   provider ([single sign-on](docs/operations/sso.md)), and every refresh first spends the
-  provider's refresh token, so a user deactivated there loses Loom within the hour.
+  provider's refresh token, so a user deactivated there loses their sessions, and the machine tokens they made, at their next refresh.
 - A sign-in session's access tokens carry its family as their `sid` claim: logout, a replayed
   refresh token, code or device code, and a provider refusing the user each revoke the
   whole session. Every sign-in, approval, denial and ended session writes an `auth.*`

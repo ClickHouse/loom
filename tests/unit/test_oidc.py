@@ -206,12 +206,48 @@ async def test_jit_provisions_when_enabled(monkeypatch) -> None:
 
     monkeypatch.setattr(self_signup, "provision_account", fake_provision)
     monkeypatch.setattr(login, "resolve_identity_for_email", fake_resolve)
+    monkeypatch.setattr(login, "get_client", lambda: _NamespacesCH(taken=False))
 
     out = await login.jit_provision_for_email("Bob@Acme.com")
     assert out == ("u-bob-xxxx", "acme", ["u-bob-xxxx"], ["writer"])
     assert calls["org"] == "acme"
     assert calls["contact_email"] == "bob@acme.com"  # normalized
     assert calls["namespace"].startswith("u-bob-") and calls["password_hash"] == ""
+
+
+class _NamespacesCH:
+    """Answers whether the JIT namespace already exists."""
+
+    def __init__(self, *, taken: bool) -> None:
+        self.taken = taken
+
+    async def query_one(self, sql: str, params: Any = None) -> dict[str, Any] | None:
+        return {"1": 1} if self.taken else None
+
+
+async def test_jit_refuses_a_namespace_someone_made_first(monkeypatch) -> None:
+    """The JIT name follows from the email; one already there is someone
+    else's, waiting with their grants for this person's first sign-in."""
+    monkeypatch.setattr(settings, "oidc_jit_provision", True)
+    monkeypatch.setattr(settings, "oidc_jit_org", "acme")
+    monkeypatch.setattr(settings, "oidc_jit_email_domains", "")
+    called = {"n": 0}
+
+    async def fake_provision(**kw: Any) -> None:
+        called["n"] += 1
+
+    monkeypatch.setattr(self_signup, "provision_account", fake_provision)
+    monkeypatch.setattr(login, "get_client", lambda: _NamespacesCH(taken=True))
+    assert await login.jit_provision_for_email("bob@acme.com") is None
+    assert called["n"] == 0
+
+
+def test_nobody_can_claim_an_sso_namespace_name() -> None:
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as e:
+        self_signup._claimable_namespace("u-bob-1234abcd")
+    assert e.value.status_code == 422
 
 
 async def test_jit_rejects_disallowed_domain(monkeypatch) -> None:

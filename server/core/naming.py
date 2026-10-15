@@ -19,6 +19,10 @@ NAMESPACE_MAX_LEN = 128
 # The value of an absent optional identity field (user_id, session_id, run_id)
 # on the wire and in every row.
 SENTINEL = "-"
+# Namespaces single sign-on creates on a first sign-in (`u-<name>-<hash>`).
+# Their names follow from the email, so nobody else may create one: it would
+# be waiting, with its creator's grants, for that person's first sign-in.
+SSO_NAMESPACE_PREFIX = "u-"
 
 _NAMESPACE_RE = re.compile(r"[a-z0-9][a-z0-9-]*")
 

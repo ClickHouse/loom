@@ -27,6 +27,7 @@ from server.auth.attempts import Attempts, client_address
 from server.auth.jwt import mint_token
 from server.auth.passwords import hash_password, verify_password_off_loop
 from server.core.ch import get_client
+from server.core.naming import SSO_NAMESPACE_PREFIX
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -318,7 +319,17 @@ async def jit_provision_for_email(
     # hash so two different emails can never collide onto one account.
     local = ident.split("@", 1)[0]
     slug = "".join(c if c.isalnum() else "-" for c in local).strip("-")[:40] or "user"
-    ns = f"u-{slug}-{hashlib.sha256(ident.encode()).hexdigest()[:8]}"
+    ns = f"{SSO_NAMESPACE_PREFIX}{slug}-{hashlib.sha256(ident.encode()).hexdigest()[:8]}"
+    taken = await get_client().query_one(
+        "SELECT 1 FROM loom.namespaces FINAL "
+        "WHERE org = {org:String} AND namespace = {ns:String} LIMIT 1",
+        params={"org": _settings.oidc_jit_org, "ns": ns},
+    )
+    if taken is not None:
+        # Not this person's (their account would have resolved): someone made
+        # it first, and their grants on it must not reach this person's data.
+        log.warning("oidc jit: namespace %r already exists; refusing the sign-in", ns)
+        return None
     await provision_account(
         org=_settings.oidc_jit_org,
         namespace=ns,

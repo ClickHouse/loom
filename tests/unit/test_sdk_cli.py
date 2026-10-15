@@ -153,3 +153,22 @@ def test_route_errors_are_the_typed_sdk_errors(wire) -> None:
 
     with pytest.raises(AuthInsufficient):
         asyncio.run(go())
+
+
+def test_options_may_come_before_the_fields(wire) -> None:
+    assert (
+        cli.main(["call", "memory.get", "--namespace", "ns1", "memory_key=a/b/c", "--org", "acme"])
+        == 0
+    )
+    _, path, body = wire.seen[0]
+    assert path == "/v1/memory.get" and body["memory_key"] == "a/b/c" and body["namespace"] == "ns1"
+
+
+def test_an_unknown_operation_points_at_the_list(capsys) -> None:
+    assert cli.main(["call", "memory.nosuch"]) == 2
+    assert "--list" in capsys.readouterr().err
+
+
+def test_a_stray_option_is_still_an_error() -> None:
+    with pytest.raises(SystemExit):
+        cli.main(["call", "memory.get", "--bogus", "x"])

@@ -267,3 +267,24 @@ def test_an_agent_can_name_its_profile(server, monkeypatch) -> None:
     credentials.login(_SERVER, profile="work", open_browser=False, echo=lambda _: None)
     assert "login:" not in repr(Agent("acme", "a", "n", base_url=_SERVER).transport)
     assert "login:work" in repr(Agent("acme", "a", "n", base_url=_SERVER, profile="work").transport)
+
+
+def test_an_unreachable_server_is_a_typed_sdk_error(monkeypatch) -> None:
+    from loom.errors import BackendUnavailable
+
+    with pytest.raises(BackendUnavailable, match="cannot reach"):
+        credentials.login("http://127.0.0.1:1", open_browser=False, echo=lambda _: None)
+
+
+def test_an_explicit_profile_wins_and_keeps_to_its_server(server, monkeypatch) -> None:
+    from loom import Agent
+
+    credentials.login(_SERVER, profile="work", open_browser=False, echo=lambda _: None)
+    monkeypatch.setenv("LOOM_API_KEY", "from-the-environment")
+    monkeypatch.setenv("LOOM_BASE_URL", "https://elsewhere.example")
+    agent = Agent("acme", "a", "n", profile="work")
+    assert agent.transport.base_url == _SERVER and "login:work" in repr(agent.transport)
+    with pytest.raises(ValueError, match="work"):
+        Agent("acme", "a", "n", profile="work", base_url="https://elsewhere.example")
+    with pytest.raises(AuthInvalid):
+        Agent("acme", "a", "n", profile="never-signed-in")

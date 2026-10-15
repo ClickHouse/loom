@@ -239,10 +239,11 @@ def unseal_user_code(sealed: str) -> str:
 
 
 async def deny(user_code: str) -> None:
-    """The IdP sign-in failed or Loom has no account for the user: end the
-    grant so `loom login` stops waiting."""
+    """Loom has no account for the person who signed in at the IdP: end the
+    grant so `loom login` stops waiting, unless someone else already signed
+    in on it (a stranger's failed sign-in must not end theirs)."""
     device = await oauth.store.device_by_user_code(_user_code_id(user_code))
-    if device is not None:
+    if device is not None and not device["subject"]:
         await oauth.store.save_device(device | {"status": "denied", "ticket": ""})
 
 

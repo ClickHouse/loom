@@ -136,3 +136,20 @@ async def test_the_handler_writes_the_whole_stored_row_forward(
     carried = {k: v for k, v in stored.items() if k != "warm_days"}
     assert {k: row[k] for k in carried} == carried
     assert out.visibility == "public", "the answer names the stored visibility"
+
+
+async def test_a_new_namespace_may_not_take_an_sso_account_name(monkeypatch) -> None:
+    """`u-…` names are the ones single sign-on creates from an email: made
+    first by someone else, the person's first sign-in would land in it."""
+    from server.core.errors import ValidationError
+
+    async def no_row(*a: Any, **kw: Any) -> None:
+        return None
+
+    monkeypatch.setattr(h, "get_client", lambda: object())
+    monkeypatch.setattr(h, "resolve_subject", lambda: "mallory")
+    monkeypatch.setattr(h.namespaces_repo, "fetch_row", no_row)
+    with pytest.raises(ValidationError, match="reserved"):
+        await h.handle_namespace_register(
+            NamespaceRegisterInput(org="o", namespace="u-bob-1234abcd", owner_email="m@x")
+        )

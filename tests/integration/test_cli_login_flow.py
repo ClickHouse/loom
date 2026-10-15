@@ -476,3 +476,19 @@ def test_service_accounts_and_account_views_need_no_dashboard(
     )
     credentials.logout()
     assert _whoami(base, kept["token"])["authenticated"] is True
+
+
+def test_a_replayed_session_takes_its_machine_tokens_with_it(
+    password_server, tmp_path, monkeypatch
+) -> None:
+    base, _org, ns, email, password = password_server
+    home = tmp_path / "owner"
+    _session_for(base, home, email, password, monkeypatch)
+    made = _loom(
+        home, "call", "/v1/me/service_accounts.create", "name=ci", f"namespaces:={json.dumps([ns])}"
+    )
+    first = _stored()
+    credentials.access_token(refused=first["access_token"])  # rotate once
+    time.sleep(1)  # the revocation cutoff counts whole seconds
+    assert _refresh(base, first["refresh_token"]).json()["detail"]["error"] == "invalid_grant"
+    assert _whoami(base, made["token"])["authenticated"] is False

@@ -106,7 +106,8 @@ class _CHStore:
     Known limit: take_* is read-then-mark, not atomic: two presenters of the same
     code or refresh token racing within one round trip can both succeed. A code
     is useless without its PKCE verifier and lives 60 s; a refresh token is
-    bound to its client_id. An insert_deduplication_token would drop the second
+    bound to its client_id. device.signed_in's "the first person to sign in owns
+    the code" is the same read-then-write. An insert_deduplication_token would drop the second
     consume row but tell neither caller, so it is no guard; the upgrade is a
     KeeperMap claim key under keeper_map_strict_mode (the migration lock's
     mechanism), whose second INSERT fails.
@@ -779,11 +780,10 @@ async def _finish_oidc_login(request: Request) -> Response:
     kind = pending["kind"]
     user_code = device.unseal_user_code(pending["user_code"]) if kind == "device" else ""
     if request.query_params.get("error"):
-        # The user cancelled at the IdP, or it refused them there.
+        # Cancelled at the IdP, or refused there. A device grant stays pending:
+        # who cancelled is unknown, so it is no reason to end anyone's sign-in.
         await _signin_denied("", "cancelled at the identity provider")
-        if kind == "device":
-            await device.deny(user_code)
-        return _denied_page("The identity provider did not sign you in")
+        return _denied_page("The identity provider did not sign you in; try again")
     code = request.query_params.get("code", "")
     if not code:
         raise HTTPException(status_code=400, detail={"error": "invalid_request"})
@@ -919,6 +919,9 @@ async def _dashboard_signed_in(identity: tuple[str, str, list[str], list[str]]) 
         roles=roles,
         ttl_seconds=_DASHBOARD_TTL,
         is_service_account=False,
+        # A sign-in session like the CLI's: revocable as one, and what it mints
+        # is bounded like the person, not by its twelve hours.
+        session_id=new_jti(),
     )
     await audit.emit(
         "auth.sso_signin",
@@ -980,16 +983,22 @@ async def issue_tokens(grant: dict[str, Any], client_id: str) -> dict[str, Any]:
     return body
 
 
-async def end_session(grant: dict[str, Any], reason: str) -> None:
+async def end_session(grant: dict[str, Any], reason: str, *, everything: bool = False) -> None:
     """Revoke the grant's session family: its refresh tokens stop refreshing and
-    its access tokens stop verifying. Raises when the revocation did not land."""
+    its access tokens stop verifying. With `everything` (a stolen copy came
+    back, or the IdP no longer knows the user) every token of the person
+    issued until now goes too, so the machine tokens this session made die
+    with it; a plain logout leaves those. Raises when a revocation did not land."""
     from server.auth.revocation import revoke
 
+    now = datetime.now(UTC)
+    if everything:
+        await revoke(grant["subject"], issued_before=now, reason=reason, revoked_by="oauth")
     if not grant["family"]:
-        return  # a session from before families existed has nothing to revoke
+        return  # a session from before families existed has nothing more to revoke
     await revoke(
         grant["family"],
-        expires_at=datetime.now(UTC) + timedelta(seconds=_REFRESH_TTL),
+        expires_at=now + timedelta(seconds=_REFRESH_TTL),
         reason=reason,
         revoked_by="oauth",
     )
@@ -998,14 +1007,19 @@ async def end_session(grant: dict[str, Any], reason: str) -> None:
         org=grant["org"],
         namespace="-",
         actor=grant["subject"],
-        subject={"family": grant["family"], "client_id": grant["client_id"], "reason": reason},
+        subject={
+            "family": grant["family"],
+            "client_id": grant["client_id"],
+            "reason": reason,
+            "every_token": everything,
+        },
     )
 
 
 async def end_replayed_session(e: CodeReplayed, what: str) -> HTTPException:
     """A spent credential came back: whoever holds a copy must lose the session."""
     try:
-        await end_session(e.grant, f"{what} replayed")
+        await end_session(e.grant, f"{what} replayed", everything=True)
     except Exception:  # the replay is refused whether or not the revoke landed
         log.exception("oauth: revoking a replayed %s's session failed", what)
     return _invalid_grant()
@@ -1037,7 +1051,7 @@ async def _ask_identity_provider(grant: dict[str, Any], refresh_token: str) -> s
     try:
         return await oidc.refresh(grant["upstream_refresh"])
     except oidc.UpstreamRefused:
-        await end_session(grant, "identity provider refused the user")
+        await end_session(grant, "identity provider refused the user", everything=True)
         raise _invalid_grant("the identity provider ended this session") from None
     except oidc.UpstreamUnavailable as e:
         # Not the user's fault: put the spent token back so the retry works.
@@ -1112,14 +1126,11 @@ async def token(request: Request) -> JSONResponse:
 
 
 def _revocation_end(info: AuthInfo) -> datetime | None:
-    """How long revoking this token must last: a session for as long as its
-    refresh tokens can, any other token until it expires (None: never does)."""
-    session_end = datetime.now(UTC) + timedelta(seconds=_REFRESH_TTL)
+    """How long revoking this token must last: a session as long as its refresh
+    tokens can, any other token until it expires (None: it never does)."""
     if info.session_id:
-        return session_end
-    if info.expires_at is None:
-        return None
-    return max(datetime.fromtimestamp(info.expires_at, UTC), session_end)
+        return datetime.now(UTC) + timedelta(seconds=_REFRESH_TTL)
+    return datetime.fromtimestamp(info.expires_at, UTC) if info.expires_at else None
 
 
 @router.post("/oauth/revoke")

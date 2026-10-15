@@ -80,8 +80,14 @@ The provider can never grant admin.
   button again, and Okta's own session usually makes that one click.
 - `loom logout` revokes the Loom session on the server and the Okta refresh
   token at Okta.
-- If a spent refresh token is ever presented again, Loom ends the whole
-  session, because someone else holds a copy.
+- If a spent refresh token is ever presented again, someone else holds a
+  copy. Loom then revokes every token issued to that person until then:
+  their sessions, and the service accounts and MCP tokens they made. Okta
+  refusing the user at a refresh does the same.
+- Service accounts and MCP tokens a person creates outlive their sign-in
+  session, including `loom logout`. Only a refresh asks Okta about the user,
+  so for someone with no live session nothing checks. When offboarding,
+  revoke the person: `loom revoke-token --subject <their subject>`.
 - Every sign-in, approval, denial, JIT account and ended session writes an
   `auth.*` row to the audit log.
 

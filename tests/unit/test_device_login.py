@@ -36,7 +36,8 @@ def _world(monkeypatch):
     async def revoke(token_id: str, **kw: Any) -> dict[str, Any]:
         revoked.append(token_id)
         expiries.append(kw.get("expires_at"))
-        revocation._apply_locally(token_id, None)
+        before = kw.get("issued_before")
+        revocation._apply_locally(token_id, int(before.timestamp()) + 1 if before else None)
         return {}
 
     monkeypatch.setattr(revocation, "revoke", revoke)
@@ -278,8 +279,9 @@ def test_a_replayed_device_code_ends_the_session(_world) -> None:
     _approve(c, grant["user_code"], _sign_in(c, grant["user_code"]).text)
     tokens = _poll(c, grant["device_code"]).json()
     assert _error(_poll(c, grant["device_code"])) == "invalid_grant"
-    jti = pyjwt.decode(tokens["access_token"], options={"verify_signature": False})["sid"]
-    assert _world["revoked"] == [jti]
+    sid = pyjwt.decode(tokens["access_token"], options={"verify_signature": False})["sid"]
+    # The session, and every token of the person issued until now with it.
+    assert _world["revoked"] == ["alice@example.com", sid]
     assert _error(_refresh(c, tokens["refresh_token"])) == "invalid_grant"
 
 
@@ -291,11 +293,12 @@ def test_refresh_rotates_within_the_session() -> None:
     first = _signed_in_tokens(c)
     second = _refresh(c, first["refresh_token"]).json()
     assert second["refresh_token"] != first["refresh_token"]
-    jti = [
-        pyjwt.decode(t["access_token"], options={"verify_signature": False})["sid"]
+    claims = [
+        pyjwt.decode(t["access_token"], options={"verify_signature": False})
         for t in (first, second)
     ]
-    assert jti[0] == jti[1]
+    assert claims[0]["sid"] == claims[1]["sid"]  # one session
+    assert claims[0]["jti"] != claims[1]["jti"]  # two tokens
 
 
 def test_a_replayed_refresh_token_revokes_the_whole_family(_world) -> None:
@@ -304,10 +307,11 @@ def test_a_replayed_refresh_token_revokes_the_whole_family(_world) -> None:
     second = _refresh(c, first["refresh_token"]).json()
     # The old token comes back (someone kept a copy): refused, and the session ends.
     assert _error(_refresh(c, first["refresh_token"])) == "invalid_grant"
-    assert len(_world["revoked"]) == 1
+    sid = pyjwt.decode(second["access_token"], options={"verify_signature": False})["sid"]
+    assert _world["revoked"] == ["alice@example.com", sid]
     # So the legitimate holder's newer token is dead too, and so is its access token.
     assert _error(_refresh(c, second["refresh_token"])) == "invalid_grant"
-    assert revocation.is_revoked(_world["revoked"][0])
+    assert revocation.is_revoked(sid)
     reasons = [kw["subject"]["reason"] for n, kw in _world["events"] if n == "auth.session_revoked"]
     assert reasons == ["refresh token replayed"]
 
@@ -344,15 +348,28 @@ def test_revoking_a_refresh_token_ends_the_session(_world) -> None:
     assert _error(_refresh(c, tokens["refresh_token"])) == "invalid_grant"
 
 
-def test_revoking_an_access_token_revokes_its_session_for_as_long_as_refresh_lives(_world) -> None:
+def test_revoking_a_session_access_token_lasts_as_long_as_its_refresh(_world) -> None:
+    access = mint_token(
+        subject="bob",
+        org="acme",
+        namespaces=["bob"],
+        roles=["writer"],
+        ttl_seconds=60,
+        session_id="s1",
+    )
+    r = _client().post("/oauth/revoke", data={"token": access, "client_id": "loom-cli"})
+    assert r.status_code == 200 and _world["revoked"] == ["s1"]
+    # The session's refresh token lives 30 days, not the access token's minute.
+    assert _world["expiries"][0] - datetime.now(UTC) > timedelta(days=29)
+
+
+def test_revoking_another_token_revokes_its_jti_until_it_expires(_world) -> None:
     access = mint_token(
         subject="bob", org="acme", namespaces=["bob"], roles=["writer"], ttl_seconds=60, jti="j1"
     )
-    r = _client().post("/oauth/revoke", data={"token": access, "client_id": "loom-cli"})
-    assert r.status_code == 200 and _world["revoked"] == ["j1"]
-    # The jti names the session, whose refresh token lives 30 days, not the access token's minute.
-    lasts = _world["expiries"][0] - datetime.now(UTC)
-    assert lasts > timedelta(days=29)
+    _client().post("/oauth/revoke", data={"token": access, "client_id": "loom-cli"})
+    assert _world["revoked"] == ["j1"]
+    assert timedelta(0) < _world["expiries"][0] - datetime.now(UTC) <= timedelta(seconds=61)
 
 
 def test_revoking_garbage_is_a_quiet_200(_world) -> None:
@@ -481,7 +498,7 @@ def test_a_user_the_identity_provider_refuses_is_cut_off_at_refresh(sso, _world)
     tokens = _sso_tokens(c)
     sso["upstream"] = "refused"
     assert _error(_refresh(c, tokens["refresh_token"])) == "invalid_grant"
-    assert len(_world["revoked"]) == 1
+    assert _world["revoked"][0] == "alice@example.com"  # the machine tokens they made too
     reasons = [kw["subject"]["reason"] for n, kw in _world["events"] if n == "auth.session_revoked"]
     assert reasons == ["identity provider refused the user"]
 
@@ -554,14 +571,28 @@ def test_the_pending_sign_in_holds_no_usable_user_code(sso, _world) -> None:
     assert device.normalize_user_code(grant["user_code"]) not in pending
 
 
-def test_cancelling_at_the_identity_provider_ends_the_device_grant(sso, _world) -> None:
+def test_cancelling_at_the_identity_provider_leaves_the_grant_to_retry(sso, _world) -> None:
     c = _client()
     grant = _start(c)
     r = c.post("/oauth/device", data={"user_code": grant["user_code"]}, follow_redirects=False)
     state = r.headers["location"].split("state=")[1]
     back = c.get("/oauth/callback", params={"error": "access_denied", "state": state})
-    assert back.status_code == 403
-    assert _error(_poll(c, grant["device_code"])) == "access_denied"
+    assert back.status_code == 403 and "try again" in back.text
+    # Whoever cancelled is unknown, so nobody's sign-in ends: the user retries.
+    assert _error(_poll(c, grant["device_code"])) == "authorization_pending"
+    page = _sso_round_trip(c, grant["user_code"])
+    _approve(c, grant["user_code"], page.text)
+    assert "access_token" in _poll(c, grant["device_code"]).json()
+
+
+def test_a_strangers_failed_sign_in_does_not_end_someone_elses_grant(sso) -> None:
+    c = _client()
+    grant = _start(c)
+    victim_page = _sso_round_trip(c, grant["user_code"])  # alice signs in first
+    sso["email"] = "stranger@elsewhere.example"
+    assert _sso_round_trip(c, grant["user_code"]).status_code == 403
+    _approve(c, grant["user_code"], victim_page.text)
+    assert "access_token" in _poll(c, grant["device_code"]).json()
 
 
 def test_dashboard_sso_starts_are_throttled_per_address(sso) -> None:

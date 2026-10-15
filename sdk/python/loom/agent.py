@@ -28,10 +28,11 @@ from loom.conflicts import ConflictsClient
 from loom.context import ContextClient
 from loom.conversations import ConversationsClient
 from loom.cost import CostClient
-from loom.credentials import DEFAULT_SERVER, StoredLogin, stored_login
+from loom.credentials import DEFAULT_SERVER, StoredLogin, signed_in_server, stored_login
 from loom.decision import DecisionClient
 from loom.deployment import DeploymentClient
 from loom.erasure import ErasureClient
+from loom.errors import AuthInvalid
 from loom.facts import FactsClient
 from loom.grants import GrantsClient
 from loom.knowledge import KnowledgeClient
@@ -68,16 +69,26 @@ def default_agent_name(agent: str | None) -> str:
 def _credentials(
     base_url: str | None, api_key: str | None, profile: str | None
 ) -> tuple[str, str | None, StoredLogin | None]:
-    """The server and credential to use. The server: `base_url=`, else
-    LOOM_BASE_URL, else localhost. The credential, first found wins: `api_key=`,
-    LOOM_API_KEY, the `loom login` session for that server (`profile`, else
-    LOOM_PROFILE, else `default`), `~/.loom/token` (what `loom mint-token
-    --save` writes)."""
+    """The server and credential to use. A `profile` named here is the
+    `loom login` session to use, on the server it signed in to. Otherwise
+    the server is `base_url=`, else LOOM_BASE_URL, else localhost, and the
+    credential, first found wins: `api_key=`, LOOM_API_KEY, the session of
+    LOOM_PROFILE (else `default`) for that server, `~/.loom/token` (what
+    `loom mint-token --save` writes)."""
+    if profile:
+        server = signed_in_server(profile)
+        if server is None:
+            raise AuthInvalid(f"not signed in (profile {profile!r}); run `loom login`")
+        if api_key or (base_url and base_url.rstrip("/") != server):
+            raise ValueError(
+                f"profile {profile!r} is a session for {server}; pass one or the other"
+            )
+        return server, None, StoredLogin(profile)
     base_url = base_url or os.environ.get("LOOM_BASE_URL") or DEFAULT_SERVER
     api_key = api_key or os.environ.get("LOOM_API_KEY")
     if api_key:
         return base_url, api_key, None
-    auth = stored_login(base_url, profile)
+    auth = stored_login(base_url)
     return base_url, None if auth else token_from_file(), auth
 
 

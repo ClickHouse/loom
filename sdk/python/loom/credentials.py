@@ -97,6 +97,17 @@ def _locked() -> Iterator[None]:
             fcntl.flock(lock, fcntl.LOCK_UN)
 
 
+@contextlib.contextmanager
+def _server(url: str) -> Iterator[httpx.Client]:
+    """A client for `url` whose failures to reach it, or to read its answer,
+    come out as BackendUnavailable: callers catch LoomError, never httpx."""
+    try:
+        with httpx.Client(base_url=url, timeout=30.0) as client:
+            yield client
+    except (httpx.TransportError, ValueError) as e:
+        raise BackendUnavailable(f"cannot reach {url}: {type(e).__name__}") from e
+
+
 def _endpoints(client: httpx.Client) -> dict[str, str]:
     """The server's sign-in endpoints, each checked to be on the server itself,
     so a code or token only ever goes where the user chose to sign in."""
@@ -169,7 +180,7 @@ def login(
     or expires (ten minutes). Returns what `whoami()` returns."""
     server = (server or os.environ.get("LOOM_BASE_URL") or DEFAULT_SERVER).rstrip("/")
     profile = profile or default_profile()
-    with httpx.Client(base_url=server, timeout=30.0) as client:
+    with _server(server) as client:
         meta = _endpoints(client)
         r = client.post(meta["device_authorization_endpoint"], data={"client_id": CLIENT_ID})
         if r.status_code != 200:
@@ -183,7 +194,8 @@ def login(
             with contextlib.suppress(webbrowser.Error):
                 webbrowser.open(grant["verification_uri_complete"])
         tokens = _poll(client, meta["token_endpoint"], grant)
-    _save(profile, server, tokens)
+    with _locked():  # another process may be rotating a profile in the same file
+        _save(profile, server, tokens)
     return whoami(profile=profile)
 
 
@@ -242,7 +254,7 @@ def _refresh(profile: str, refused: str) -> dict[str, Any]:
         return dict(entry)  # another process refreshed it while we waited
     if not entry.get("refresh_token"):
         raise AuthInvalid(f"the session for profile {profile!r} ended; run `loom login`")
-    with httpx.Client(base_url=entry["server"], timeout=30.0) as client:
+    with _server(entry["server"]) as client:
         r = client.post(
             _endpoints(client)["token_endpoint"],
             data={
@@ -288,7 +300,7 @@ def logout(profile: str | None = None) -> bool:
     if not entry:
         return False
     try:
-        with httpx.Client(base_url=entry["server"], timeout=30.0) as client:
+        with _server(entry["server"]) as client:
             r = client.post(
                 _endpoints(client)["revocation_endpoint"],
                 data={
@@ -297,7 +309,7 @@ def logout(profile: str | None = None) -> bool:
                 },
             )
         return r.status_code == 200
-    except (httpx.HTTPError, LoomError):
+    except LoomError:
         return False
     finally:
         forget(profile)
@@ -308,7 +320,7 @@ def whoami(profile: str | None = None) -> dict[str, Any]:
     profile = profile or default_profile()
     token = access_token(profile)
     server = _read()["profiles"][profile]["server"]
-    with httpx.Client(base_url=server, timeout=30.0) as client:
+    with _server(server) as client:
         r = client.get("/v1/whoami", headers={"Authorization": f"Bearer {token}"})
     if r.status_code != 200:
         raise _failed(r, "asking the server who you are")

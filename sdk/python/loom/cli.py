@@ -60,12 +60,15 @@ def _body(args: argparse.Namespace) -> dict[str, Any] | None:
     return body if (args.data or args.fields) else None
 
 
-def _server(args: argparse.Namespace) -> str:
-    """--server, else LOOM_BASE_URL, else the server this profile signed in to."""
+def _server(args: argparse.Namespace) -> str | None:
+    """--server, else LOOM_BASE_URL, else the server `loom login` signed in
+    to. None with --profile: that profile's session names its own server."""
+    if args.profile:
+        return str(args.server) if args.server else None
     return (
         args.server
         or os.environ.get("LOOM_BASE_URL")
-        or credentials.signed_in_server(args.profile)
+        or credentials.signed_in_server()
         or credentials.DEFAULT_SERVER
     ).rstrip("/")
 
@@ -121,11 +124,11 @@ def run(args: argparse.Namespace) -> int:
         elif args.list:
             _list_ops()
         else:
-            if not args.target:
-                print(
-                    "loom call: name an op or a /path (`loom call --list` lists the ops)",
-                    file=sys.stderr,
+            if not args.target or not (args.target.startswith("/") or args.target in OPS):
+                what = (
+                    f"unknown operation {args.target!r}" if args.target else "name an op or a /path"
                 )
+                print(f"loom call: {what} (`loom call --list` lists the ops)", file=sys.stderr)
                 return 2
             result = asyncio.run(_call(args))
             if result is not None:
@@ -169,4 +172,14 @@ def main(argv: list[str] | None = None, prog: str = "python -m loom") -> int:
             p.add_argument("--namespace", help="namespace for an op (default: the token's first)")
             p.add_argument("--method", choices=("GET", "POST"), help="for a /path")
             p.add_argument("--list", action="store_true", help="list every op and its role")
-    return run(parser.parse_args(argv))
+    # Fields may follow options (`--namespace x query=…`), which argparse
+    # leaves over; anything else left over is a mistake.
+    args, extra = parser.parse_known_args(argv)
+    if extra and (args.cmd != "call" or any(x.startswith("-") for x in extra)):
+        parser.error(f"unrecognized arguments: {' '.join(extra)}")
+    if extra:
+        try:
+            args.fields = [*args.fields, *map(_field, extra)]
+        except argparse.ArgumentTypeError as e:
+            parser.error(str(e))
+    return run(args)
