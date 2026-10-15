@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from server.core.naming import SENTINEL
 from server.operations.read_projection import ProjectedRow
-from server.tasks.domain.budgets import BudgetKind
+from server.tasks.domain.budgets import BudgetKind, names_session
 from server.tasks.domain.states import RunStatus
 
 
@@ -54,9 +54,8 @@ class RunBeginInput(BaseModel):
     role: str = Field(default="", max_length=64)
     # Free-form key/values stored on the run; `role`, when set, is added to it.
     metadata: dict[str, Any] = Field(default_factory=dict)
-    # Model spend in USD the run may reach (0 = none, kept on a re-sent begin); needs a session_id.
-    # A retry that re-sends budget_usd must re-send session_id. run.get reports
-    # a budget the run went past in `over_budget`: a signal, never a stop.
+    # Model spend in USD the run may reach (0 = none, kept on a re-sent begin).
+    # Needs a session_id, re-sent with it; run.get reports going past it in `over_budget`.
     budget_usd: float = Field(default=0.0, ge=0.0, le=100_000.0)
     # Seconds the run may take (0 = none, kept on a re-sent begin).
     budget_seconds: int = Field(default=0, ge=0, le=30 * 86400)
@@ -64,7 +63,7 @@ class RunBeginInput(BaseModel):
     @model_validator(mode="after")
     def _cost_budget_has_a_session(self) -> RunBeginInput:
         # A run's spend is read from its session's recorded turns.
-        if self.budget_usd > 0 and self.session_id.strip() in ("", SENTINEL):
+        if self.budget_usd > 0 and not names_session(self.session_id):
             raise ValueError("budget_usd needs a session_id: a run's spend is its session's turns")
         return self
 

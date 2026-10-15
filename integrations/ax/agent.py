@@ -68,5 +68,5 @@ async def main() -> None:
 if __name__ == "__main__":
     try:
         asyncio.run(main())
-    except asyncio.CancelledError:
+    except asyncio.CancelledError:  # only SIGTERM cancels main()
         sys.exit(128 + signal.SIGTERM)

@@ -45,7 +45,7 @@ from server.tasks.api.models_run import (
     RunListOutput,
     RunRow,
 )
-from server.tasks.domain.budgets import budgets_exceeded
+from server.tasks.domain.budgets import budgets_exceeded, names_session
 from server.tasks.domain.session_runs import is_session_run_id
 from server.tasks.store import runs as runs_store
 from server.tasks.store.rows import RunLedgerRow
@@ -101,6 +101,11 @@ def _parse_metadata(raw: Any) -> dict[str, Any]:
         return v if isinstance(v, dict) else {}
     except (TypeError, ValueError):
         return {}
+
+
+def _claim_session(input: RunBeginInput) -> str:
+    """The session a run-id claim is held under: the one named, or the sentinel."""
+    return input.session_id if names_session(input.session_id) else SENTINEL
 
 
 def _grade_columns(existing: RunLedgerRow | None) -> RunLedgerRow:
@@ -230,7 +235,7 @@ def _own_run_id(input: RunBeginInput, requested: str) -> str:
     derived from (org, namespace, user, session, requested), so a retry of a begin
     whose answer was lost lands on the same run, and no other user or session can."""
     seed = json.dumps(
-        [input.org, input.namespace, _user_of(input), input.session_id or "-", requested]
+        [input.org, input.namespace, _user_of(input), _claim_session(input), requested]
     )
     return "r" + hashlib.sha256(seed.encode()).hexdigest()[:31]
 
@@ -378,7 +383,7 @@ async def handle_run_begin(input: RunBeginInput) -> RunBeginOutput:
         run_id, existing = await _own_run(ch, input, supplied)
         return await _open_run(ch, input, run_id, existing)
     claim = await runs_store.claim_run(
-        ch, input.org, input.namespace, supplied, _user_of(input), input.session_id or "-"
+        ch, input.org, input.namespace, supplied, _user_of(input), _claim_session(input)
     )
     run_id, existing = await _target_run(ch, input, supplied, claim)
     opened = await _open_run(ch, input, run_id, existing)
@@ -401,7 +406,7 @@ async def _open_run(
     # A re-sent begin that names no session or budget keeps the run's.
     prior = existing or {}
     session_id = input.session_id
-    if session_id.strip() in ("", SENTINEL):
+    if not names_session(session_id):
         session_id = str(prior.get("session_id") or SENTINEL)
     budget_usd = input.budget_usd or float(prior.get("budget_usd") or 0.0)
     budget_seconds = input.budget_seconds or int(prior.get("budget_seconds") or 0)

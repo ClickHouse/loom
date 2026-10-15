@@ -524,10 +524,11 @@ jobs:
         run: |
           if out=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" 2>&1); then
             echo "release=true" >>"$GITHUB_OUTPUT"
-          elif grep -q 'HTTP 404' <<<"$out"; then
+          elif grep -q "(HTTP 404)" <<<"$out"; then
             echo "release=false" >>"$GITHUB_OUTPUT"
           else
-            echo "::error::could not tell whether $GITHUB_REF_NAME has a release: $out"
+            echo "$out" >&2
+            echo "::error::could not tell whether $GITHUB_REF_NAME has a release"
             exit 1
           fi
       # An existing release for the tag is updated and its other files replaced,

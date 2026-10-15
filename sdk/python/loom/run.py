@@ -390,8 +390,8 @@ class RunScope:
     `memory.ask` answers cited (plus anything passed to `used()`), status
     `completed` (or `run.status` when the block set it), `failed` on an
     exception or `cancelled` on a cancellation (either propagates after the
-    ledger row is written), and outcome `positive` when memories were used on a clean
-    exit, `negative` on failure, unless set explicitly. Inside the block,
+    ledger row is written), and outcome `positive` when memories were used on
+    a clean exit, `negative` on failure, unless set explicitly. Inside the block,
     writes without a run_id carry the run's, typed or through `Agent.call`
     (Session, AgentTools); recalls are labelled with it (`scope_read_label`).
     The ledger write is best-effort: a failed complete() never masks the

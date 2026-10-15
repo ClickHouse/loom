@@ -28,12 +28,12 @@ Two plugin pull requests that bump to the same number merge without a conflict, 
 ## Release notes
 
 The run that creates the GitHub Release generates its notes from the commits since the previous tag; a
-re-run or the later registry dispatch keeps them as they are. What commits cannot say goes in a "Release notes" section of the
-release pull request's description, so it is reviewed before the tag: operator steps (new settings,
-backfills, table rebuilds) and client-visible wire changes, including every removed request field and
-retired flag. No registry of removed fields exists, so the release notes are where a client learns of one.
-Once the workflow creates the release, paste that section above the generated notes. Generate the wire
-diff instead of writing it:
+re-run or the later registry dispatch keeps them as they are. What commits cannot say goes in a "Release
+notes" section of the release pull request's description, so it is reviewed before the tag: operator
+steps (new settings, backfills, table rebuilds) and client-visible wire changes, including every removed
+request field and retired flag. No registry of removed fields exists, so the release notes are where a
+client learns of one. Once the workflow creates the release, paste that section above the generated
+notes. Generate the wire diff instead of writing it:
 
 ```bash
 python scripts/codegen/wire_changelog.py v<previous> HEAD
@@ -118,8 +118,9 @@ A tag containing `-` (`vX.Y.Z-rc.1`) makes a GitHub pre-release and does not mov
    waiting one, which must then be re-run by hand (Re-run failed jobs). A refusal here
    comes after `docker` pushed the tag's image tags (and `:latest` for a final release). A
    re-run keeps the run's inputs and fails again, so dispatch the tag instead, which also
-   publishes the SDKs: `gh workflow run release.yml --ref vX.Y.Z -f clickhouse_image=<the
-newer release the error names>` (if that release dumps the tag's `schemas/schema.sql`),
+   publishes the SDKs:
+   `gh workflow run release.yml --ref vX.Y.Z -f clickhouse_image=<the newer release the error names>`
+   (if that release dumps the tag's `schemas/schema.sql`),
    or `gh workflow run release.yml --ref vX.Y.Z -f allow_clickhouse_downgrade=true`.
    Otherwise move `:latest` back to the previous release by hand.
 
