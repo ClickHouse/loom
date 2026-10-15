@@ -16,19 +16,6 @@ import pytest
 import server.identity.app.claim_release as cr
 from server.settings import settings
 
-
-@pytest.fixture(autouse=True)
-def _tokens_revoked(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """A release ends the account's tokens; here it only records whose."""
-    revoked: list[str] = []
-
-    async def _revoke(subject: str, **_k: object) -> None:
-        revoked.append(subject)
-
-    monkeypatch.setattr("server.auth.revocation.revoke", _revoke)
-    return revoked
-
-
 _CREATED = datetime(2025, 1, 2, 3, 4, 5)
 
 _ROW: dict[str, Any] = {
@@ -96,7 +83,10 @@ def test_release_keeps_classification_and_every_other_column(
     assert written["active"] is False
     assert written["description"] == "Released by local (left)"
     assert written["updated_at"] > _CREATED
+    # the person's spellings stay tied for the claim cap, and for nothing else
+    assert written["released_aliases"] == ["alice@acme.test"]
     changed = {
+        "released_aliases",
         "owner_email",
         "contact_email",
         "password_hash",

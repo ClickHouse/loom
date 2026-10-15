@@ -2609,7 +2609,8 @@ CREATE TABLE IF NOT EXISTS loom.namespaces
     `join_policy` Enum8('inherit' = 0, 'open' = 1, 'approval' = 2, 'closed' = 3) DEFAULT 'inherit',
     `retrieval_defaults` String DEFAULT '',
     `proposal_policy` String DEFAULT '',
-    `code_change_policy` LowCardinality(String) DEFAULT ''
+    `code_change_policy` LowCardinality(String) DEFAULT '',
+    `released_aliases` Array(String) DEFAULT []
 )
 ENGINE = ReplacingMergeTree(updated_at)
 PARTITION BY org

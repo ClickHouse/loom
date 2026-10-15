@@ -224,10 +224,18 @@ async def _grant_role(
     auth: AuthInfo, org: str, namespace: str, cap: int | None, known_grant: Role | None
 ) -> Role | None:
     """The grant the subject holds there. Where its claim is capped, the cap's
-    read decides: it covers every spelling consistently, and no second,
-    exact-spelling read may loosen it."""
+    read decides for the subject itself: it covers every spelling consistently,
+    and no second read of its own grants may loosen it. A service account with
+    none live there still reads through its creator, as the listings do."""
     if cap is not None:
-        return _rank_role(cap)
+        role = _rank_role(cap)
+        if role is None:
+            from server.auth.service_accounts import inheriting_creator
+
+            creator = await inheriting_creator(org, auth.subject)
+            if creator is not None:
+                role = await grant_role_for(org, namespace, creator)
+        return role
     if known_grant is not _UNKNOWN_GRANT:
         return known_grant
     return await _lookup_grant(org, namespace, auth.subject)

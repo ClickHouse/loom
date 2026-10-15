@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -141,12 +141,12 @@ async def release_claim(
     # (classification, join_policy, kind, caps, ...) forward.
     # The contact email and password are cleared with the owner, so the old
     # credential dies with the claim.
+    row = dict(existing)
     if existing.get("contact_email"):
         # A person's account ties its login handle to its email, the binding that
-        # caps a token's claims at the grants held under either; the release
-        # clears it, so the account's tokens end with it.
-        await _revoke_account_tokens(existing, actor_subject, now)
-    row = dict(existing)
+        # caps a token's claims at the grants held under either; it is kept here.
+        spellings = {existing.get("owner_email") or "", existing["contact_email"]} - {""}
+        row["released_aliases"] = sorted(set(existing.get("released_aliases") or []) | spellings)
     row["owner_email"] = ""
     row["contact_email"] = ""
     row["password_hash"] = ""
@@ -169,19 +169,6 @@ async def release_claim(
         previous_owner=previous_owner,
         grants_revoked=grants_count,
     )
-
-
-async def _revoke_account_tokens(account: dict[str, Any], actor: str, now: datetime) -> None:
-    from server.auth import revocation
-
-    for subject in {account.get("owner_email") or "", account.get("contact_email") or ""} - {""}:
-        # `now` keeps whole seconds; a token issued within that second goes too.
-        await revocation.revoke(
-            subject,
-            reason="account released",
-            revoked_by=actor,
-            issued_before=now + timedelta(seconds=1),
-        )
 
 
 async def _may_release(info: AuthInfo, org: str, namespace: str) -> bool:

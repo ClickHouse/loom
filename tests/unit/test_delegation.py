@@ -410,17 +410,12 @@ async def test_a_claim_release_disables_the_creator(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
     monkeypatch.setattr("server.auth.aliases.subject_aliases", _no_aliases)
     monkeypatch.setattr(delegation, "_account_active", {})
-    revoked: list[str] = []
-
-    async def _revoke(subject: str, **_k: Any) -> None:
-        revoked.append(subject)
-
-    monkeypatch.setattr("server.auth.revocation.revoke", _revoke)
     assert await delegation.creator_account_active(ORG, "alice") is True
     await release_claim(org=ORG, namespace="a", reason="", actor_subject="op", ch=ch)
-    assert ch.namespaces[(ORG, "a")]["owner_email"] == ""
-    # The release clears the handle-to-email binding, so both spellings' tokens end.
-    assert sorted(revoked) == ["a@x", "alice"]
+    released = ch.namespaces[(ORG, "a")]
+    assert released["owner_email"] == ""
+    # The handle-to-email binding the claim cap reads is kept, for that cap alone.
+    assert released["released_aliases"] == ["a@x", "alice"]
     monkeypatch.setattr(delegation, "_account_active", {})
     assert await delegation.creator_account_active(ORG, "alice") is False
 

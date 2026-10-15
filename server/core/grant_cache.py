@@ -112,7 +112,8 @@ def _loaded(key: _Key, task: asyncio.Task[GrantMap]) -> None:
 async def _read(org: str, subject: str) -> GrantMap:
     """One read: the subject's rows under every spelling the directory ties to
     it (`server.auth.aliases`), folded per namespace. A deactivated account
-    still ties its spellings: its grants there may be the revocations that cap."""
+    still ties its spellings, and so does a released one (`released_aliases`):
+    its grants there may be the revocations that cap."""
     from server.core.ch import get_client, own_write_reads
 
     human = bool(subject) and subject != "*" and not subject.startswith("sa:")
@@ -128,6 +129,11 @@ async def _read(org: str, subject: str) -> GrantMap:
                 FROM loom.namespaces FINAL
                 WHERE {human:Bool} AND org = {org:String} AND contact_email != ''
                   AND (lower(owner_email) = {sub:String} OR lower(contact_email) = {sub:String})
+                UNION ALL
+                SELECT lower(arrayJoin(released_aliases))
+                FROM loom.namespaces FINAL
+                WHERE {human:Bool} AND org = {org:String}
+                  AND has(arrayMap(x -> lower(x), released_aliases), {sub:String})
             )
             GROUP BY namespace
             """.replace("{live}", LIVE_GRANT).replace("{rank}", GRANT_RANK_SQL),

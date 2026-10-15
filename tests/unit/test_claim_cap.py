@@ -341,3 +341,27 @@ def test_a_stale_exact_grant_read_does_not_loosen_the_cap(
 
     monkeypatch.setattr(ch, "query_one", _stale)
     assert not _admits(_flat("team"), "team", Role.WRITER)
+
+
+def test_a_service_account_capped_to_nothing_reads_through_its_creator(
+    ch: _CH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The listings union the creator's grants in; the gate admits the same.
+    ch.grants["team"] = ("writer", "active", True)  # the account's own row, revoked
+
+    async def _creator(org: str, subject: str, **_k: Any) -> str:
+        return "alice"
+
+    async def _alice_writes(org: str, ns: str, subject: str) -> Role | None:
+        return Role.WRITER if subject == "alice" else None
+
+    monkeypatch.setattr("server.auth.service_accounts.inheriting_creator", _creator)
+    monkeypatch.setattr(authz, "grant_role_for", _alice_writes)
+    bot = AuthInfo(
+        subject="sa:bot",
+        org=ORG,
+        namespaces=("team",),
+        roles=(Role.WRITER,),
+        is_service_account=True,
+    )
+    assert _admits(bot, "team", Role.WRITER)
