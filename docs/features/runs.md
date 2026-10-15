@@ -31,8 +31,9 @@ compares them with `cost_usd` and `elapsed_seconds` and lists the ones the run h
 (`cost`, `time`, or both). Loom does not run the agent, so a budget is a signal for whoever does, never a stop.
 
 A run's spend is its session's turns made while the run was open, by each turn's own time (`turn_at`, from the
-transcript), so `budget_usd` needs a `session_id` (a 422 otherwise). Time runs from the run's start to its close on
-the server's clock, whatever `duration_ms` the client reported. Set the budget in the run's first `run.begin`.
+transcript), so `budget_usd` needs a `session_id` (a 422 otherwise). It is kept to 6 places, like cost, so the
+smallest is $0.000001. Time runs from the run's start to its close on the server's clock, whatever `duration_ms` the
+client reported. Set the budget in the run's first `run.begin`.
 
 The first `run.get` in a session that finds an active run over budget also carries the mentor hint
 `run_over_budget`, which the plugins hand to the model as advice. A closed run still reports `over_budget` but gets
