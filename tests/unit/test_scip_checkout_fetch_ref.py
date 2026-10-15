@@ -76,3 +76,25 @@ def test_the_fetched_target_lands_on_the_ref_and_the_next_fetch_sends_only_new(
     got = _received(checkout, checkout_fetch_args(bare, second))
     assert _git(checkout, "rev-parse", SCIP_HEAD_REF) == second
     assert got <= 2 * 3  # two commits: commit + tree + blob each
+
+
+def test_a_bare_clone_another_uid_owns_is_fetched_from(tmp_path: Path) -> None:
+    """A repository job's git reads no system config; the fetch must still trust a
+    bare clone the host operator owns. The test variable makes git treat every
+    repository as owned by someone else."""
+    from server.code.app.index.gitrepo import auth_env
+
+    src, bare, checkout = _setup(tmp_path)
+    target = _commits(src, 1, "c")
+    _git(src, "push", "-q", str(bare), "master")
+    env = {**auth_env(remote=str(bare)), "GIT_TEST_ASSUME_DIFFERENT_OWNER": "1"}
+
+    def fetch(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", "-C", str(checkout), *args], capture_output=True, text=True, env=env
+        )
+
+    plain = fetch("fetch", "--recurse-submodules=no", str(bare), f"+{target}:{SCIP_HEAD_REF}")
+    assert plain.returncode and "dubious ownership" in plain.stderr
+    assert fetch(*checkout_fetch_args(bare, target)).returncode == 0
+    assert _git(checkout, "rev-parse", SCIP_HEAD_REF) == target

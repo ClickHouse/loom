@@ -129,6 +129,10 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
 
 ### Fixed
 
+- A compiler tier whose bare clone another uid owns (one the host operator cloned, not the
+  container's `loom` user) failed every pass with `detected dubious ownership` in sandboxed
+  repository jobs: the local fetch's upload-pack does not see the `safe.directory` the job
+  passes in its environment. The fetch now hands it to upload-pack directly.
 - Choosing a new embedding model in **Settings → Models & keys** failed with
   `source_text_missing` on a freshly indexed repository: the rebuild took the zero vector
   that pads a text-less row (a file's structural summary card before its summary is

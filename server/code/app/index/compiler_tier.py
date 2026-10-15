@@ -278,12 +278,23 @@ def resolve_binary(configured: str) -> Path:
 # ~2 GB pack every pass on a ClickHouse checkout.
 SCIP_HEAD_REF = "refs/loom/scip-head"
 
+# A local fetch starts upload-pack in the bare clone with the config passed in the
+# environment cleared, so auth_env's safe.directory does not reach it, and a clone
+# owned by another uid (one the host operator made) is refused as dubious.
+_UPLOAD_PACK = "git -c 'safe.directory=*' upload-pack"
+
 
 def checkout_fetch_args(bare: Path | str, target: str) -> list[str]:
     """`git` arguments that fetch `target` from the local bare clone into a
     checkout: no submodule recursion, and the commit recorded on
     `SCIP_HEAD_REF` so the next fetch sends only what is new."""
-    return ["fetch", "--recurse-submodules=no", str(bare), f"+{target}:{SCIP_HEAD_REF}"]
+    return [
+        "fetch",
+        "--recurse-submodules=no",
+        f"--upload-pack={_UPLOAD_PACK}",
+        str(bare),
+        f"+{target}:{SCIP_HEAD_REF}",
+    ]
 
 
 async def git(
