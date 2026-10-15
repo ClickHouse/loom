@@ -220,7 +220,7 @@ async def _git(
     runs as a repository job (sandbox.run_job): the network only through the egress
     proxy, the clone the one writable path, `token` for the remote's host. A local
     command reads and writes `index_file` as its index when given."""
-    extra = upload_pack_args(remote) if remote else []
+    extra = upload_pack_args(remote)
     argv = ["git", *UNQUOTED_PATHS, "--git-dir", git_dir, args[0], *extra, *args[1:]]
     label = " ".join(args[:2])
     returncode: int | None
