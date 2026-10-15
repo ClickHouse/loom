@@ -94,3 +94,23 @@ async def test_cancelled_connection_is_closed_when_connect_returns(monkeypatch: 
         client.close.assert_called_once()
     finally:
         proceed.set()
+
+
+@pytest.mark.asyncio
+async def test_a_caller_sets_the_wait_and_hears_who_holds_the_lock(monkeypatch: pytest.MonkeyPatch):
+    seen = {}
+    lock = Mock()
+    lock.acquire.return_value = "held"
+
+    def keeper_lock(*args, **kwargs):
+        seen.update(kwargs)
+        return lock
+
+    monkeypatch.setattr(provider_lock, "client", Mock)
+    monkeypatch.setattr(provider_lock, "ProcessKeeperLock", keeper_lock)
+    heard: list[str] = []
+    async with provider_lock.configuration_lock(wait_s=300, out=heard.append):
+        pass
+    assert seen["cfg"].wait_s == 300 and seen["cfg"].ttl_s == 300
+    seen["out"]("held by another")
+    assert heard == ["held by another"]

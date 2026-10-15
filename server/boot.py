@@ -268,7 +268,14 @@ async def _fenced_boot_migrations(
     from server.insights.store.provider_configuration import configurations
     from server.insights.store.provider_lock import configuration_lock
 
-    async with configuration_lock():
+    # A sibling holds the lock while its migrations run, so wait as long as for
+    # the migration lease: failing to start would stop the whole server
+    # (uvicorn exits when one worker fails to start).
+    log = logging.getLogger(__name__)
+    async with configuration_lock(
+        wait_s=settings.boot_migrate_lease_wait_s,
+        out=lambda m: log.info(m.strip(" ·")),
+    ):
         if pending_configuration(await configurations(ch=ch)) is not None:
             raise RuntimeError("Finish the provider rebuild before applying schema migrations")
         return run_boot_migrations_if_enabled(migrate, lock_path, enabled=True, pending=pending)

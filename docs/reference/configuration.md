@@ -85,7 +85,7 @@ Source: `server/settings/_clickhouse.py`
 | `LOOM_BOOT_MIGRATE_LOCK_PATH` | `str` | `'/tmp/loom-migrate.lock'` | Advisory flock that serialises boot migrations across the processes of one host. |
 | `LOOM_BOOT_MIGRATE` | `bool` | `True` | Apply pending migrations at boot. Set False for any server started from a branch against a shared service, or it applies unmerged migrations. |
 | `LOOM_BOOT_MIGRATE_LEASE_TTL_S` | `int` | `300` | Seconds after which a holder that stopped renewing is replaced. |
-| `LOOM_BOOT_MIGRATE_LEASE_WAIT_S` | `float` | `900.0` | Seconds a contender waits for the holder before boot fails (exit 1, the container restarts). |
+| `LOOM_BOOT_MIGRATE_LEASE_WAIT_S` | `float` | `900.0` | Seconds a contender waits for the holder before boot fails (exit 1, the container restarts); also how long a booting process waits for the provider configuration lock a sibling holds while it migrates. |
 | `LOOM_BOOT_MIGRATE_LEASE_SETTLE_S` | `float` | `1.0` | Pause between a contender's insert and its read-back, so a row just acknowledged on another replica is visible. |
 | `LOOM_MIGRATE_MUTATION_WAIT_S` | `int` | `600` | Seconds a migration file waits for the mutations it started (MATERIALIZE, UPDATE, a column type change) to finish on every replica; past it the file fails unrecorded. |
 | `LOOM_VECTOR_SEARCH_EF_SEARCH` | `int` | `256` | HNSW candidate list size (`ef_search`) for the helper legs, emitted via vector_search_settings(); tracks ClickHouse's default. The main leg scales its own value with top_k. |

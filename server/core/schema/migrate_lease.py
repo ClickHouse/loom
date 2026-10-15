@@ -367,6 +367,7 @@ class KeeperLock:
     (Keeper refused the first insert: the caller falls back)."""
 
     kind = "keeper"
+    label = "migration lock"  # how its messages name it
 
     def __init__(
         self,
@@ -439,7 +440,7 @@ class KeeperLock:
         if row is None:  # released between the insert and the read
             return False, None
         if row[3] and self._try_takeover(row[0]):
-            self.out(f"  · migration lock: took over from {row[0]} (stopped renewing)")
+            self.out(f"  · {self.label}: took over from {row[0]} (stopped renewing)")
             return True, None
         return False, row
 
@@ -461,7 +462,7 @@ class KeeperLock:
             if row is not None and row[0] != announced:
                 announced = row[0]
                 self.out(
-                    f"  · migration lock: held by {row[0]} since "
+                    f"  · {self.label}: held by {row[0]} since "
                     f"{row[1]:%H:%M:%S}Z (ttl {row[2]} s) — waiting"
                 )
             self.sleep(poll)
@@ -469,7 +470,7 @@ class KeeperLock:
             try:
                 won, row = self._attempt()
             except Exception as e:  # noqa: BLE001 — a failed round; the wait is bounded
-                self.out(f"  · migration lock: {describe_error(e)} — retrying")
+                self.out(f"  · {self.label}: {describe_error(e)} — retrying")
                 won, row = False, None
         self.waited_s = self.clock() - started
         self.held = True
@@ -492,13 +493,13 @@ class KeeperLock:
                 ch.command(LOCK_RENEW, parameters=self._params())
                 rows = ch.query(LOCK_ROW, parameters={"name": self.lock_name}).result_rows
             except Exception as e:  # noqa: BLE001 — a missed renewal is a WARNING
-                self.out(f"  · migration lock: renewal failed ({describe_error(e)})")
+                self.out(f"  · {self.label}: renewal failed ({describe_error(e)})")
                 return
             self._last_renew = self.clock()
             now = str(rows[0][0]) if rows else ""
             if now != self.holder:
                 self.held = False
-                self.out(f"  · migration lock: lost to {now or 'nobody'} (renewal came too late)")
+                self.out(f"  · {self.label}: lost to {now or 'nobody'} (renewal came too late)")
 
     def start_heartbeat(self, client: Callable[[], Any]) -> None:
         """Renew from a thread on its own connection, so a statement that
@@ -509,7 +510,7 @@ class KeeperLock:
         try:
             ch = client()
         except Exception as e:  # noqa: BLE001 — renewals between files remain
-            self.out(f"  · migration lock: no heartbeat connection ({describe_error(e)})")
+            self.out(f"  · {self.label}: no heartbeat connection ({describe_error(e)})")
             return
         interval = max(self.cfg.ttl_s / 3, 1.0)
 
@@ -531,7 +532,7 @@ class KeeperLock:
             try:
                 self.ch.command(LOCK_RELEASE, parameters=self._params())
             except Exception as e:  # noqa: BLE001 — the key expires by TTL
-                self.out(f"  · migration lock: release failed ({describe_error(e)})")
+                self.out(f"  · {self.label}: release failed ({describe_error(e)})")
             self.held = False
 
 

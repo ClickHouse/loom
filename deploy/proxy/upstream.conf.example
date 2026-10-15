@@ -1,6 +1,7 @@
 # Written by redeploy.sh to var/proxy/upstream.conf; this file is the shape.
 # One colour only — the one serving. The other is idle or booting.
 upstream loom {
-  server loom-blue:7781;
+  zone loom 64k;
+  server loom-blue:7781 resolve;
   keepalive 32;
 }
