@@ -139,8 +139,14 @@ async def test_the_handler_writes_the_whole_stored_row_forward(
     assert out.visibility == "public", "the answer names the stored visibility"
 
 
-def test_a_new_owner_keeps_the_old_handle_tied_to_the_email_for_the_cap() -> None:
-    existing = _existing(owner_email="bob", contact_email="bob@x.io")
+def test_a_new_owner_does_not_take_the_old_login_and_keeps_its_tie_for_the_cap() -> None:
+    existing = _existing(owner_email="bob", contact_email="bob@x.io", password_hash="h")
     row = _row(existing)  # registered again with owner o@x
-    assert row["contact_email"] == "bob@x.io"
+    assert row["contact_email"] == "" and row["password_hash"] == "", "bob's login stays bob's"
     assert row["released_aliases"] == ["bob", "bob@x.io", "mal", "victim@corp"]
+
+
+def test_the_same_owner_keeps_the_login() -> None:
+    existing = _existing(owner_email="o@x", contact_email="o@x.io", password_hash="h")
+    row = _row(existing)
+    assert (row["contact_email"], row["password_hash"]) == ("o@x.io", "h")

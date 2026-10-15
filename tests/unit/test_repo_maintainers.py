@@ -598,23 +598,26 @@ async def test_a_request_older_than_the_admin_grant_is_mirrored_over() -> None:
     assert {r["namespace"] for r in ch.inserted} == {"code-x-26-5", "code-x-26-6"}
 
 
-async def test_a_mirror_over_a_request_does_not_outrank_a_lowering_elsewhere() -> None:
-    # Admin on code-x, then lowered on 26-6, then a request on 26-5: the mirror
-    # answering the request is written later than the lowering, but it is not a
-    # grant of its own, so 26-6 keeps its lower role on this sync and the next.
+async def test_a_request_after_a_revoke_on_a_branch_does_not_bring_admin_back() -> None:
+    # Revoked on 26-5 after the admin grant on code-x, then asked for reader there:
+    # the request replaced the revoke's row, and is respected as it was.
     ch = _FakeCH(
         [
             _admin("code-x", "alice", version=1_000),
-            _admin("code-x-26-6", "alice", role="viewer", version=1_001),
-            _admin("code-x-26-5", "alice", status="pending", version=1_002),
+            _admin("code-x-26-5", "alice", role="viewer", status="pending", version=1_002),
         ]
     )
     await maintainers.sync_repo_maintainers("clickhouse", "code-x", ch=ch)
-    assert [r["namespace"] for r in ch.inserted] == ["code-x-26-5"]
-    ch.rows = [r for r in ch.rows if r["namespace"] != "code-x-26-5"] + ch.inserted
-    ch.inserted = []
-    await maintainers.sync_repo_maintainers("clickhouse", "code-x-26-5", ch=ch)
-    assert ch.inserted == []
+    assert [r["namespace"] for r in ch.inserted] == ["code-x-26-6"]
+
+
+async def test_a_maintainer_granted_on_a_branch_no_longer_configured_reaches_a_new_one() -> None:
+    # Every row alice has is a mirror: one stands in as the source, onto a branch
+    # she has no row on.
+    mirror = {**_admin("code-x", "alice"), "granted_by": "repo-maintainers:code-x-26-4"}
+    ch = _FakeCH([mirror])
+    await maintainers.sync_repo_maintainers("clickhouse", "code-x", ch=ch)
+    assert {r["namespace"] for r in ch.inserted} == {"code-x-26-5", "code-x-26-6"}
 
 
 async def test_a_mirror_alone_is_no_source_for_another_branch() -> None:

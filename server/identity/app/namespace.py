@@ -31,7 +31,7 @@ from server.identity.api.models import (
     _NamespaceEntry,
 )
 from server.identity.domain import join_policy as _jp
-from server.identity.domain.account_ties import kept_aliases
+from server.identity.domain.account_ties import kept_aliases, owner_moved
 from server.identity.store import grants as grants_repo
 from server.identity.store import namespaces as namespaces_repo
 from server.memory.app import namespace_retrieval_defaults as _rd
@@ -103,6 +103,19 @@ async def insert_admin_grant(ch: CHClient, org: str, namespace: str, subject: st
         ],
         ch=ch,
     )
+
+
+def _login_fields(existing: dict[str, Any], owner: str) -> dict[str, Any]:
+    """The account's login, kept by a settings-only update (else it would wipe
+    the user's login silently) and cleared when the row is handed to another
+    owner; the old handle and email stay tied for the claim cap alone."""
+    moved = owner_moved(existing, owner)
+    contact = "" if moved else str(existing.get("contact_email") or "")
+    return {
+        "contact_email": contact,
+        "password_hash": "" if moved else str(existing.get("password_hash") or ""),
+        "released_aliases": kept_aliases(existing, owner, contact),
+    }
 
 
 def registry_row(
@@ -222,14 +235,7 @@ def registry_row(
         "code_change_policy": _set_or_stored(
             input.code_change_policy, existing, "code_change_policy", ""
         ),
-        # Preserve auth fields written by self_signup, else a
-        # settings-only update wipes the user's login silently.
-        "contact_email": ((existing or {}).get("contact_email") or ""),
-        "password_hash": ((existing or {}).get("password_hash") or ""),
-        # A changed owner no longer ties the old handle to the email; keep the pair.
-        "released_aliases": kept_aliases(
-            existing or {}, input.owner_email, (existing or {}).get("contact_email") or ""
-        ),
+        **_login_fields(existing or {}, input.owner_email),
         # Not on the form: a re-register keeps the namespace's own override and birth date.
         "duplicate_threshold": (existing or {}).get("duplicate_threshold"),
         "created_at": (existing or {}).get("created_at") or now,

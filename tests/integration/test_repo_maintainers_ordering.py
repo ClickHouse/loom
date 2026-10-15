@@ -95,13 +95,22 @@ async def test_a_lowering_in_the_same_second_after_a_promotion_stands(
     assert await _state(client, org, "code-ord-26-5") == "viewer/active"
 
 
-async def test_a_newer_join_request_on_a_branch_is_answered_by_the_mirror(
+async def test_an_older_join_request_on_a_branch_is_answered_by_the_mirror(
     ch: tuple[Any, str],
 ) -> None:
     client, org = ch
     second = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
-    await _grant(client, org, "code-ord", "admin", second)
     await _grant(client, org, "code-ord-26-5", "viewer", second, status="pending")
+    await _grant(client, org, "code-ord", "admin", second)
     assert await maintainers.sync_repo_maintainers(org, "code-ord", ch=client) == 1
     assert await _state(client, org, "code-ord-26-5") == "admin/active"
     assert await maintainers.sync_repo_maintainers(org, "code-ord", ch=client) == 0
+
+
+async def test_a_request_after_a_revoke_is_left_for_its_approval(ch: tuple[Any, str]) -> None:
+    client, org = ch
+    second = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
+    await _grant(client, org, "code-ord", "admin", second)
+    await _grant(client, org, "code-ord-26-5", "viewer", second, status="pending")
+    assert await maintainers.sync_repo_maintainers(org, "code-ord", ch=client) == 0
+    assert await _state(client, org, "code-ord-26-5") == "viewer/pending"

@@ -20,3 +20,10 @@ def kept_aliases(existing: dict[str, Any], owner: str, contact: str) -> list[str
     if old_contact and (old_owner, old_contact) != (owner.lower(), contact.lower()):
         kept |= {old_owner, old_contact} - {""}
     return sorted(kept)
+
+
+def owner_moved(existing: dict[str, Any], owner: str) -> bool:
+    """Whether writing `owner` over a person's account hands it to someone else:
+    their email and password must not follow it."""
+    old = (existing.get("owner_email") or "").lower()
+    return bool(existing.get("contact_email")) and old != owner.lower()
