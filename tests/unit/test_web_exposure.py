@@ -392,6 +392,14 @@ def test_loom_serve_binds_loopback_and_trusts_only_loopback_proxies(
     assert seen["forwarded_allow_ips"] == "127.0.0.1"
 
 
+@pytest.mark.parametrize(("env", "loop"), [("", "asyncio"), ("uvloop", "uvloop")])
+def test_loom_serve_runs_the_stdlib_loop_unless_told(
+    monkeypatch: pytest.MonkeyPatch, env: str, loop: str
+) -> None:
+    monkeypatch.setenv("LOOM_UVICORN_LOOP", env)
+    assert _serve_args(monkeypatch, None)["loop"] == loop
+
+
 def test_loom_serve_host_flag_reaches_the_startup_checks(monkeypatch: pytest.MonkeyPatch) -> None:
     import os
 

@@ -642,10 +642,49 @@ def test_a_memory_naming_more_than_the_cap_is_marked_incomplete() -> None:
 
     defs = [Definition("a.py", f"a::fn_{i:02d}_x", f"fn_{i:02d}_x") for i in range(40)]
     names = [Mention(d.name, in_prose=False) for d in defs]
-    links, _, complete = code_links._plan(names, defs, [], {})
+    by_name = {d.name: [d] for d in defs}
+    links, _, complete = code_links._plan(names, by_name, [], {})
     assert len(links) == code_links._MAX_LINKS and not complete
-    links, _, complete = code_links._plan(names[:3], defs, [], {})
+    links, _, complete = code_links._plan(names[:3], by_name, [], {})
     assert len(links) == 3 and complete
+
+
+def test_a_qualified_mention_finds_its_candidates_under_the_bare_name() -> None:
+    from server.code.domain.anchor import Definition, Mention
+
+    fn = Definition("a.py", "a::fn", "fn")
+    links, waiting, _ = code_links._plan([Mention("a::fn", in_prose=False)], {"fn": [fn]}, [], {})
+    assert links == [fn] and waiting == []
+
+
+@pytest.mark.asyncio
+async def test_a_qualified_mention_links_through_the_candidates_the_index_names(
+    monkeypatch,
+) -> None:
+    from server.code.domain.anchor import Definition
+
+    files = code_link_pass.RepoReads("o", "code-a")
+
+    async def at(commit, path):
+        return _file(path, "def fetch_rows(n):\n    return n\n") if path == "pkg/a.py" else None
+
+    async def candidates(org, cns, *, names):
+        assert names == ["fetch_rows"]
+        return [Definition("pkg/a.py", "pkg.a::fetch_rows", "fetch_rows")]
+
+    async def indexed_head(org, cns):
+        return "c1"
+
+    _reads(monkeypatch, files, at)
+    monkeypatch.setattr(code_links.code, "indexed_head", indexed_head)
+    monkeypatch.setattr(code_links.code, "candidates", candidates)
+    memory = _row("m", value="`pkg.a::fetch_rows` reads one page")
+    memory["inputs"] = "i"
+    rows, gone = await code_links._link("o", "code-a", [memory], {}, files)
+    assert [(r["path"], r["qualified_name"], r["state"]) for r in rows] == [
+        ("pkg/a.py", "pkg.a::fetch_rows", "fresh")
+    ]
+    assert gone == []
 
 
 def test_exactly_the_cap_of_mentions_is_not_cut() -> None:
@@ -653,8 +692,8 @@ def test_exactly_the_cap_of_mentions_is_not_cut() -> None:
 
     cap = code_links._MAX_MENTIONS
     names = [Mention(f"fn_{i:03d}_x", in_prose=False) for i in range(cap + 1)]
-    assert code_links._plan(names[:cap], [], [], {})[2]
-    assert not code_links._plan(names, [], [], {})[2]
+    assert code_links._plan(names[:cap], {}, [], {})[2]
+    assert not code_links._plan(names, {}, [], {})[2]
 
 
 def test_definitions_come_from_the_file_with_every_overload_in_one_fingerprint() -> None:
