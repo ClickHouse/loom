@@ -596,7 +596,12 @@ flowchart LR
 - `dev/docker-compose.proxy.yml` runs nginx (`loom-proxy`) on host `:7777` with
   `deploy/proxy/nginx.conf`. It forwards to the colour named in
   `var/proxy/upstream.conf` (template: `deploy/proxy/upstream.conf.example`). A swap is
-  a file write plus `nginx -s reload`; no port is rebound.
+  a file write plus `nginx -s reload`; no port is rebound. nginx re-resolves the colour's
+  name through Docker's DNS, so a colour container that restarts on a new address is
+  reached again, within about 30 s of coming back (nginx answers 502 meanwhile). The
+  `nginx.conf` of a commit from before this re-resolution cannot load the `upstream.conf`
+  a newer `redeploy.sh` wrote (`no resolver defined`): after checking such a commit out,
+  run its `redeploy.sh` before the proxy restarts.
 
 Once per host, before the first redeploy, load the AppArmor profile the colours run the
 repository-job sandbox under, then check it in a throwaway container built from the
