@@ -380,6 +380,7 @@ def authorization_server_metadata(issuer: str) -> dict[str, Any]:
         "device_authorization_endpoint": f"{issuer}/oauth/device_authorization",
         "revocation_endpoint": f"{issuer}/oauth/revoke",
         "grant_types_supported": [DEVICE_GRANT, "refresh_token"],
+        "response_types_supported": [],  # required by RFC 8414; "code" with MCP connect
         "token_endpoint_auth_methods_supported": ["none"],
         "revocation_endpoint_auth_methods_supported": ["none"],
         "scopes_supported": ["loom"],
@@ -1013,7 +1014,10 @@ async def end_session(grant: dict[str, Any], reason: str, *, stolen: bool = Fals
     until = datetime.now(UTC) + timedelta(seconds=_REFRESH_TTL)
     await revoke(grant["family"], expires_at=until, reason=reason, revoked_by="oauth")
     if stolen:
-        await revoke(minted_by(grant["family"]), expires_at=None, reason=reason, revoked_by="oauth")
+        # Children live at most SESSION_TTL, so the revocation need not outlast that.
+        await revoke(
+            minted_by(grant["family"]), expires_at=until, reason=reason, revoked_by="oauth"
+        )
     await audit.emit(
         "auth.session_revoked",
         org=grant["org"],
@@ -1059,7 +1063,13 @@ async def _authorization_code_grant(f: dict[str, str]) -> dict[str, Any]:
         raise _invalid_grant()
     if not verify_pkce_s256(f.get("code_verifier", ""), grant["code_challenge"]):
         raise _invalid_grant("PKCE failed")
-    return await issue_tokens(grant, client_id)
+    try:
+        return await issue_tokens(grant, client_id)
+    except HTTPException:
+        raise
+    except Exception:  # Loom's own failure: unspend the code so the retry is no replay
+        await store.save_code(f.get("code", ""), grant)
+        raise
 
 
 async def _ask_identity_provider(grant: dict[str, Any], refresh_token: str) -> str:
@@ -1143,6 +1153,12 @@ async def _refresh_session(grant: dict[str, Any], refresh_token: str) -> dict[st
     # account nor a removed host rides a rolling 30-day chain.
     roles = await refreshed_roles(grant["subject"], grant["org"], list(grant["roles"]))
     if roles is None:
+        # The account is gone: so is the session, and the IdP token just rotated.
+        if grant["upstream_refresh"] and settings.oauth_login_provider == "oidc":
+            from server.auth import oidc
+
+            await oidc.revoke(grant["upstream_refresh"])
+        await end_session(grant, "account no longer active")
         raise _invalid_grant()
     return await issue_tokens({**grant, "roles": roles}, grant["client_id"])
 

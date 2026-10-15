@@ -288,3 +288,19 @@ def test_an_explicit_profile_wins_and_keeps_to_its_server(server, monkeypatch) -
         Agent("acme", "a", "n", profile="work", base_url="https://elsewhere.example")
     with pytest.raises(AuthInvalid):
         Agent("acme", "a", "n", profile="never-signed-in")
+
+
+def test_a_refresh_whose_answer_is_lost_is_asked_again_at_once(server, monkeypatch) -> None:
+    credentials.login(_SERVER, open_browser=False, echo=lambda _: None)
+    real = server.__class__.__call__
+    lost = {"n": 0}
+
+    def drop_first_refresh(self: Any, request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/oauth/token" and lost["n"] == 0:
+            lost["n"] += 1
+            raise httpx.ReadTimeout("answer lost", request=request)
+        return real(self, request)
+
+    monkeypatch.setattr(server.__class__, "__call__", drop_first_refresh)
+    assert credentials.access_token(refused="a1") == "a2"
+    assert lost["n"] == 1

@@ -17,6 +17,10 @@ async def set_conversation_logging(org: str, namespace: str, enabled: bool) -> N
 
     ch = get_client()
     existing = await namespaces_repo.fetch_row(org, namespace, ch=ch)
+    if existing is None:
+        from server.identity.app.namespace import refuse_sso_name
+
+        refuse_sso_name(namespace)
     now = naive_utc_now_seconds()
     row = (
         dict(existing)

@@ -43,6 +43,8 @@ _DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
 # Refresh this long before the access token expires, so a call never leaves
 # with a token that dies in flight.
 _REFRESH_MARGIN_S = 60
+# Well inside the server's 30-second grace for a retried refresh.
+_REFRESH_TIMEOUT_S = 10.0
 
 
 def _path() -> Path:
@@ -232,8 +234,7 @@ def _poll(client: httpx.Client, token_endpoint: str, grant: dict[str, Any]) -> d
         if r.status_code >= 500:
             continue
         if r.status_code == 200:
-            tokens = _json(r)
-            return tokens
+            return _json(r)
         error = _oauth_error(r)
         if error == "authorization_pending":
             continue
@@ -268,15 +269,19 @@ def _refresh(profile: str, refused: str) -> dict[str, Any]:
         return dict(entry)  # another process refreshed it while we waited
     if not entry.get("refresh_token"):
         raise AuthInvalid(f"the session for profile {profile!r} ended; run `loom login`")
+    form = {
+        "grant_type": "refresh_token",
+        "refresh_token": entry["refresh_token"],
+        "client_id": CLIENT_ID,
+    }
     with _server(entry["server"]) as client:
-        r = client.post(
-            _endpoints(client)["token_endpoint"],
-            data={
-                "grant_type": "refresh_token",
-                "refresh_token": entry["refresh_token"],
-                "client_id": CLIENT_ID,
-            },
-        )
+        endpoint = _endpoints(client)["token_endpoint"]
+        try:
+            r = client.post(endpoint, data=form, timeout=_REFRESH_TIMEOUT_S)
+        except httpx.TransportError:
+            # The server may have spent the token and lost the answer: ask
+            # again at once, inside its retry grace, or it takes us for a thief.
+            r = client.post(endpoint, data=form, timeout=_REFRESH_TIMEOUT_S)
     if r.status_code == 400 and _oauth_error(r) == "invalid_grant":
         _drop(profile)
         raise AuthInvalid(f"the session for profile {profile!r} ended; run `loom login`")

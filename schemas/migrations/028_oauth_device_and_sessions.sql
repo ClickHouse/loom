@@ -16,3 +16,7 @@ ALTER TABLE loom.oauth_state
     ADD COLUMN IF NOT EXISTS address String DEFAULT '',
     ADD COLUMN IF NOT EXISTS ticket String DEFAULT '',
     ADD COLUMN IF NOT EXISTS upstream_refresh String DEFAULT '';
+-- The device page finds a grant by its user code, which is not in the sort
+-- key: skip the granules that cannot hold it.
+ALTER TABLE loom.oauth_state
+    ADD INDEX IF NOT EXISTS user_code_bloom_idx user_code TYPE bloom_filter(0.01) GRANULARITY 1;

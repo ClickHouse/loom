@@ -58,8 +58,8 @@ _polls = Attempts(1, _INTERVAL - 1)
 
 
 def _guesser(address: str) -> str:
-    """Who a wrong-code limit counts: the address, or its /64 for IPv6, where
-    one host holds a whole /64 to spread guesses over."""
+    """Who a per-address limit counts: the address, or its /64 for IPv6, where
+    one host holds a whole /64 to spread requests over."""
     try:
         ip = ipaddress.ip_address(address)
     except ValueError:
@@ -95,7 +95,7 @@ async def device_authorization(request: Request) -> JSONResponse:
     if f.get("client_id") != DEVICE_CLIENT_ID:
         raise HTTPException(status_code=400, detail={"error": "invalid_client"})
     address = client_address(request)
-    if not _requests_by_address.allow(address):
+    if not _requests_by_address.allow(_guesser(address)):
         raise HTTPException(
             status_code=429,
             detail={"error": "slow_down"},
@@ -211,13 +211,14 @@ async def signed_in(
     terminal has to start again."""
     device = await oauth.store.device_by_user_code(_user_code_id(user_code))
     subject, org, namespaces, roles = identity
-    if device is None or device["subject"] not in ("", subject):
+    if device is None:
         if upstream_refresh:
             await oidc.revoke(upstream_refresh)
-        if device is None:
-            return _expired_page()
-        if device["upstream_refresh"]:
-            await oidc.revoke(device["upstream_refresh"])
+        return _expired_page()
+    if device["subject"] not in ("", subject):
+        for token in (upstream_refresh, device["upstream_refresh"]):
+            if token:
+                await oidc.revoke(token)
         await oauth.store.save_device(
             device | {"status": "denied", "ticket": "", "upstream_refresh": ""}
         )

@@ -251,7 +251,7 @@ whether it is refreshable. `make lint` fails when the page is stale.
 | `namespace_visits` | `ReplacingMergeTree(version)` | `(org, subject, namespace)` | `org` |  |  |
 | `namespace_write_marks` | `AggregatingMergeTree` | `(org, namespace, plane)` |  |  |  |
 | `namespaces` | `ReplacingMergeTree(updated_at)` | `(org, namespace)` | `org` |  |  |
-| `oauth_state` | `ReplacingMergeTree(version)` | `(record_type, id)` | `record_type` | `created_at + toIntervalDay(90)` |  |
+| `oauth_state` | `ReplacingMergeTree(version)` | `(record_type, id)` | `record_type` | `created_at + toIntervalDay(90)` | 1 skip index (bloom_filter) |
 | `operator_edges` | `ReplacingMergeTree(created_at)` | `(org, namespace, from_key, to_key, relation)` | `toYYYYMM(created_at)` |  | 1 skip index (bloom_filter) |
 | `policy_decisions` | `MergeTree` | `(org, namespace, ts)` | `toYYYYMM(ts)` | `toDateTime(ts) + toIntervalDay(90)` |  |
 | `procedure_runs` | `MergeTree` | `(org, namespace, memory_key, ts)` | `toYYYYMM(ts)` |  |  |

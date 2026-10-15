@@ -293,15 +293,18 @@ def _claimable_namespace(name: str) -> str:
         raise HTTPException(
             status_code=422, detail={"code": "VALIDATION_FAILED", "message": str(e)}
         ) from e
-    prefix = "personal-" if namespace.startswith("personal-") else SSO_NAMESPACE_PREFIX
-    if namespace.startswith("personal-") or reserved_for_sso(namespace):
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "VALIDATION_FAILED",
-                "message": f"'{prefix}' names are reserved for auto-provisioned namespaces",
-            },
-        )
+    for prefix, reserved in (
+        ("personal-", namespace.startswith("personal-")),
+        (SSO_NAMESPACE_PREFIX, reserved_for_sso(namespace)),
+    ):
+        if reserved:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "VALIDATION_FAILED",
+                    "message": f"'{prefix}' names are reserved for auto-provisioned namespaces",
+                },
+            )
     return namespace
 
 

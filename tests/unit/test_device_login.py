@@ -989,3 +989,50 @@ def test_a_leaked_spent_code_alone_ends_nothing(_world, monkeypatch) -> None:
     # With the verifier, it is the client's own copy coming back: the session ends.
     assert _error(_exchange(c, client_id, code, verifier)) == "invalid_grant"
     assert len(_world["revoked"]) == 2
+
+
+# ── round 8 ───────────────────────────────────────────────────────────────
+
+
+def test_a_failed_code_exchange_leaves_the_code_unspent(_world, monkeypatch) -> None:
+    c = _client()
+    client_id, code, verifier = _code_for(c, _world["store"])
+    real = _world["store"].save_refresh
+
+    async def flaky(token: str, g: dict[str, Any]) -> None:
+        monkeypatch.setattr(_world["store"], "save_refresh", real)
+        raise RuntimeError("insert failed")
+
+    monkeypatch.setattr(_world["store"], "save_refresh", flaky)
+    with pytest.raises(RuntimeError):
+        _exchange(c, client_id, code, verifier)
+    assert _exchange(c, client_id, code, verifier).status_code == 200
+    assert _world["revoked"] == []
+
+
+def test_an_inactive_account_ends_its_session_at_refresh(_world, monkeypatch) -> None:
+    c = _client()
+    tokens = _signed_in_tokens(c)
+
+    async def gone(subject: str, org: str, roles: list[str]) -> None:
+        return None
+
+    monkeypatch.setattr(login, "refreshed_roles", gone)
+    assert _error(_refresh(c, tokens["refresh_token"])) == "invalid_grant"
+    sid = pyjwt.decode(tokens["access_token"], options={"verify_signature": False})["sid"]
+    assert _world["revoked"] == [sid]
+
+
+def test_a_thefts_minted_revocation_lapses_with_what_it_revokes(_world, monkeypatch) -> None:
+    monkeypatch.setattr(oauth, "_RETRY_GRACE_S", -1)
+    c = _client()
+    first = _signed_in_tokens(c)
+    _refresh(c, first["refresh_token"])
+    _refresh(c, first["refresh_token"])
+    lasts = [e - datetime.now(UTC) for e in _world["expiries"]]
+    assert all(timedelta(days=29) < left <= timedelta(days=30) for left in lasts)
+
+
+def test_discovery_always_names_its_response_types(monkeypatch) -> None:
+    monkeypatch.setattr(oauth.settings, "oauth_enabled", False)
+    assert oauth.authorization_server_metadata("https://x")["response_types_supported"] == []

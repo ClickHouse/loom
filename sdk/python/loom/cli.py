@@ -5,7 +5,7 @@ installed; the server's `loom` command hands these four to it.
 `loom call` reaches the whole API with the stored session (or LOOM_API_KEY):
 
   loom call grants.pending_for_me
-  loom call grants.approve namespace=support subject=bob@example.com role=writer
+  loom call grants.approve namespace=support subject=bob@example.com decision=approve
   loom call memory.search query="deploy window" top_k:=5 --namespace support
   loom call /v1/me/service_accounts
   loom call /v1/me/service_accounts.create --data '{"name": "ci", "namespaces": ["support"]}'

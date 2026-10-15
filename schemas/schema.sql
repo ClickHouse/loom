@@ -2629,7 +2629,8 @@ CREATE TABLE IF NOT EXISTS loom.oauth_state
     `status` LowCardinality(String) DEFAULT '',
     `address` String DEFAULT '',
     `ticket` String DEFAULT '',
-    `upstream_refresh` String DEFAULT ''
+    `upstream_refresh` String DEFAULT '',
+    INDEX user_code_bloom_idx user_code TYPE bloom_filter(0.01) GRANULARITY 1
 )
 ENGINE = ReplacingMergeTree(version)
 PARTITION BY record_type
