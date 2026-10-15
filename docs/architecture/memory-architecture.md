@@ -351,9 +351,11 @@ the value it was written or stated for (`carried`):
   its fact (or edge) has no weighted row the readers count as current after the restore
   (started by then, and open or ending later), the usual Undo of a closed value, so the
   graph's readers still count it, and 0 otherwise, so Undoing back and forth adds no
-  weight. A marker that a later marker of the same Undo closes as it starts (same
-  subject, same single-valued relation, starting no later) is never current, so it
-  weighs 0 too: Rome's total stays the same however often that row is undone. A close is
+  weight. A marker the interval repair closes as it starts is never current, so it
+  weighs 0 too: another marker of the same Undo (same subject, same single-valued
+  relation) starts no later and is newer than the value's newest row, the marker or
+  its fact's latest row while open. Rome's total stays the same however often that row
+  is undone. A close is
   an `ALTER UPDATE`, so the retirement's closes may still be pending when the Undo
   weighs its facts: it reads with `apply_mutations_on_fly`, which applies them (their
   expressions are deterministic), rather than waiting on `system.mutations`. ClickHouse
@@ -369,8 +371,9 @@ the value it was written or stated for (`carried`):
   instant from the failure, not the replay's clock, so it keeps its place in the order:
   a value asserted after the Undo, even in its second, stays current. A marker is this
   Undo's when it is a `row-restore` row seen in its microseconds (from the instant, one
-  per fact), open or closed since, so a replay adds none, and another Undo in the same
-  second, with its own instant, is told apart. Edges carry no microseconds: an edge
+  per fact), open or closed since, so a replay adds none and restates each as stored,
+  from its own start ("Berlin on Dec 1" still closes Rome on Dec 1), and another Undo in
+  the same second, with its own instant, is told apart. Edges carry no microseconds: an edge
   marker is written only beside a missing triple marker, before it, and an edge row seen
   in the Undo's second, starting where the marker starts, that no repair closed stands
   for it, so a replay after a failed triple insert does not repeat it. The failure

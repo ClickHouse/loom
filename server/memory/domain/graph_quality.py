@@ -577,9 +577,8 @@ def triple_interval_repairs(
     date nor an arrival, nothing happens. Values compare at their newest open row; the
     new value's rows are the new one and its open stored rows. The older value closes,
     every start of it, when the earliest row of the newer value that beats it starts.
-    One write stores its triples a microsecond apart
-    in the order stated, so on one day its later-stated value is the newer, for every
-    writer that reads them back.
+    One write stores its triples a microsecond apart in the order stated, so on one day
+    its later-stated value is the newer, for every writer that reads them back.
 
     * `later_batch_objects` — objects that a LATER triple in the same write
       asserts for this subject + relation. Those rows are skipped here (the
@@ -626,14 +625,12 @@ def triple_interval_repairs(
     repairs: list[IntervalRepair] = []
     for old_object, rows in observed.items():
         old_key = max(observation_key(start, seen, old_object) for start, seen in rows)
-        if old_key > new_key:
-            # The value being written is already superseded: close each of its starts
-            # when the other value's earliest row newer than it starts.
-            closed, closer, closed_rows, closer_rows, beaten = obj, old_object, ours, rows, new_key
-        else:
-            # The new value is newer: the old one closes when the new value's
-            # earliest row newer than it starts.
-            closed, closer, closed_rows, closer_rows, beaten = old_object, obj, rows, ours, old_key
+        # The older value closes when the newer value's earliest row newer than it
+        # starts. The value being written may be the older one.
+        values = {obj: (ours, new_key), old_object: (rows, old_key)}
+        closed, closer = (obj, old_object) if old_key > new_key else (old_object, obj)
+        closed_rows, beaten = values[closed]
+        closer_rows, _ = values[closer]
         winner = min(
             (r for r in closer_rows if observation_key(r[0], r[1], closer) > beaten), key=_start
         )

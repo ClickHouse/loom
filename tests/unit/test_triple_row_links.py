@@ -212,7 +212,7 @@ async def test_an_undo_weighs_what_is_open_with_pending_closes_applied(monkeypat
             if "FROM loom.entity_triples" in sql:
                 return [{"subject": "user", "relation": "live_in", "object": city,
                          "confidence": 1.0, "provenance": "extracted", "ends": until,
-                         "seen": stored + timedelta(microseconds=i), "start": None,
+                         "seen": stored + timedelta(microseconds=i), "start": None, "open": 0,
                          "restored": 0, "weighted": 1}
                         for city, i in (("berlin", 1), ("rome", 0))]  # fmt: skip
             return [{"entity_a": "berlin", "entity_b": "user", "ends": until,
@@ -311,9 +311,12 @@ async def test_an_undo_refused_on_the_fly_writes_nothing_and_is_recorded(monkeyp
     }
 
 
-async def _undo_of_rome_and(monkeypatch, berlin: dict[str, Any]) -> tuple[_CH, list]:
-    """An Undo of a row holding Rome (undated, stored first) and Berlin (`berlin`'s
-    columns), both closed by its retirement. Returns the CH and the repaired triples."""
+async def _undo_of_rome_and(
+    monkeypatch, berlin: dict[str, Any], rome: dict[str, Any] | None = None
+) -> tuple[_CH, list]:
+    """An Undo of a row holding Rome (undated, stored first, or `rome`'s columns) and
+    Berlin (`berlin`'s columns), both closed by its retirement. Returns the CH and the
+    repaired triples."""
     from types import SimpleNamespace
 
     import server.identity.app.namespace_ontology as onto
@@ -327,7 +330,7 @@ async def _undo_of_rome_and(monkeypatch, berlin: dict[str, Any]) -> tuple[_CH, l
                 base = {"subject": "user", "relation": "live_in", "confidence": 1.0,
                         "provenance": "extracted", "ends": None, "start": None, "open": 0,
                         "restored": 0, "weighted": 0}  # fmt: skip
-                return [{**base, "object": "rome", "seen": stored},
+                return [{**base, "object": "rome", "seen": stored, **(rome or {})},
                         {**base, "object": "berlin", "seen": stored, **berlin}]  # fmt: skip
             return [{"entity_a": a, "entity_b": b, "ends": None, "restored": 0, "weighted": 0}
                     for a, b in params["pairs"]]  # fmt: skip
@@ -393,3 +396,56 @@ async def test_an_undo_starts_at_the_restore_a_fact_another_open_row_dates_ahead
     now = datetime(2026, 10, 15, 9, 0, 0)
     ch, _ = await _undo_of_rome_and(monkeypatch, {"start": datetime(2026, 12, 1), "open": 1})
     assert _weights(ch.inserts["loom.entity_triples"], "valid_from")["berlin"] == (now,)
+
+
+async def test_an_undo_weighs_a_value_a_later_one_closes_only_after_it_starts(
+    monkeypatch,
+) -> None:
+    # Rome (closed) from Dec 1; Berlin's open row dates it Dec 5. Berlin's marker starts
+    # at the restore but is older than Rome's, so only Berlin's Dec 5 row closes Rome:
+    # Rome is current from Dec 1 to Dec 5 and keeps its weight.
+    dec = datetime(2026, 12, 1)
+    ch, _ = await _undo_of_rome_and(
+        monkeypatch, {"start": datetime(2026, 12, 5), "open": 1}, rome={"start": dec}
+    )
+    assert _weights(ch.inserts["loom.entity_triples"], "valid_from", "co_occur")["rome"] == (
+        dec,
+        1,
+    )
+    assert _weights(ch.inserts["loom.entity_edges"], "co_occur")["rome"] == (1,)
+
+
+async def test_an_undo_weighs_a_value_its_own_open_row_keeps_newer(monkeypatch) -> None:
+    # Rome's open row dates it Dec 5, Berlin's Dec 10: both markers start at the
+    # restore, Berlin's a microsecond later, but Rome's Dec 5 row is newer than it, so
+    # Rome closes only on Dec 10 and its marker is current until then.
+    ch, _ = await _undo_of_rome_and(
+        monkeypatch,
+        {"start": datetime(2026, 12, 10), "open": 1},
+        rome={"start": datetime(2026, 12, 5), "open": 1},
+    )
+    assert _weights(ch.inserts["loom.entity_triples"], "co_occur") == {
+        "rome": (1,), "berlin": (1,)
+    }  # fmt: skip
+
+
+async def test_a_replay_restates_the_markers_it_finds_as_they_are_stored(monkeypatch) -> None:
+    # "I live in Rome. Moving to Berlin on Dec 1": the first attempt's markers landed
+    # (Rome from the restore, Berlin from Dec 1), then its repair failed. The replay
+    # restates Berlin from Dec 1 again, so Rome still closes on Dec 1, not now.
+    restored = datetime(2026, 10, 15, 9, 0, 0, 5)
+    now, dec = restored.replace(microsecond=0), datetime(2026, 12, 1)
+
+    def marker(start: datetime, seen: datetime) -> dict[str, Any]:
+        return {"start": start, "seen": seen, "open": 1, "restored": 1,
+                "marker_start": start, "marker_seen": seen}  # fmt: skip
+
+    later = restored + timedelta(microseconds=1)
+    ch, repaired = await _undo_of_rome_and(
+        monkeypatch, marker(dec, later), rome=marker(now, restored)
+    )
+    assert ch.inserts == {}  # the markers are not written twice
+    assert [(t["object"], t["valid_from"], t["seen_at"]) for t in repaired] == [
+        ("rome", now, restored),
+        ("berlin", dec, later),
+    ]

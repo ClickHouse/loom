@@ -10,7 +10,7 @@ import re
 import unicodedata
 import uuid
 from collections.abc import Mapping
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any, NamedTuple
 
@@ -542,14 +542,14 @@ async def reopen_held_facts(
     values the rows hold the later stays the later. It weighs 1 only when the fact (or
     edge) has no weighted row the readers count as current after the Undo, the usual
     Undo of a closed value, so readers still count it; otherwise 0, so Undoing back and
-    forth adds no weight, and 0 when a later observation of the Undo closes it as it
+    forth adds no weight, and 0 when another of the Undo's observations closes it as it
     starts. While another tenant's mutation blocks the weight read, it raises and writes
     nothing: the caller records the failure for the replay. Every one then
     goes through the interval repair as a value seen at its observation, by the usual
     rule: it beats the retirement it undoes, which arrived earlier, and loses to a
     value asserted after it or starting on a later day. No row retires.
     A replay passes the restore's time: it finds the observations written, by that
-    instant, and repairs again as of the Undo."""
+    instant, restates them as stored, and repairs again as of the Undo."""
     from server.identity.app.namespace_ontology import load_relation_cardinality
 
     # Only what the restored rows' values hold now: another row's claim keeps a fact
@@ -565,9 +565,10 @@ async def reopen_held_facts(
     until = restored + timedelta(microseconds=len(held))
     # On the fly: a retirement's closes are mutations, and a row they will close is
     # weighed as closed already (the close expressions are deterministic).
-    latest = await _read_closes_applied(
-        ch,
+    latest = await ch.query_all(
         """
+        WITH adapter_name = 'row-restore' AND seen_at >= {seen:DateTime64(6)}
+             AND seen_at < {until:DateTime64(6)} AS ours
         SELECT subject, relation, object, argMax(confidence, seen_at) AS confidence,
                argMax(provenance, seen_at) AS provenance,
                -- The latest row's place in the order of its relation.
@@ -576,8 +577,9 @@ async def reopen_held_facts(
                -- A tuple keeps a NULL (open) end, which argMax would skip. Only the
                -- latest row's own end: a supersession close stamps `invalid_at`.
                argMax(tuple(if(invalid_at IS NULL, valid_to, NULL)), seen_at).1 AS ends,
-               countIf(adapter_name = 'row-restore' AND seen_at >= {seen:DateTime64(6)}
-                       AND seen_at < {until:DateTime64(6)}) AS restored,
+               countIf(ours) AS restored,
+               -- This Undo's own marker, found by a replay: its start and when seen.
+               minIf(valid_from, ours) AS marker_start, minIf(seen_at, ours) AS marker_seen,
                -- What the readers count as current after the Undo's second.
                countIf(co_occur > 0 AND (valid_from IS NULL OR valid_from <= {at:DateTime})
                        AND (valid_to IS NULL OR valid_to > {at:DateTime})) AS weighted
@@ -585,9 +587,9 @@ async def reopen_held_facts(
         WHERE org = {org:String} AND namespace = {ns:String}
           AND (subject, relation, object) IN {triples:Array(Tuple(String, String, String))}
         GROUP BY subject, relation, object
-        SETTINGS select_sequential_consistency = 1
+        SETTINGS select_sequential_consistency = 1, apply_mutations_on_fly = 1
         """,
-        {
+        params={
             "org": input.org,
             "ns": input.namespace,
             "triples": sorted(held),
@@ -599,20 +601,26 @@ async def reopen_held_facts(
     # Marker i is seen i microseconds after the restore, in the facts' stored order, so
     # the later of two values the rows hold stays the later one.
     latest = sorted(latest, key=lambda r: observation_key(r["start"], r["seen"], r["object"]))
+    # A replay restates the markers it finds as they are stored.
     markers = [
-        _Marker(r, restored + timedelta(microseconds=i), _marker_start(r, now))
+        _Marker(r, r["marker_seen"], r["marker_start"])
+        if r["restored"]
+        else _Marker(r, restored + timedelta(microseconds=i), _marker_start(r, now))
         for i, r in enumerate(latest)
     ]
     declared = await load_relation_cardinality(input.org, input.namespace)
-    # A marker a later one closes as it starts is never current: it adds no weight.
+    # A marker is never current when the repair closes its value as it starts: another
+    # value's marker is newer than the value's newest row and starts no later.
     beaten = {
         m.seen
-        for i, m in enumerate(markers)
+        for m in markers
         if is_single_valued_relation(m.row["relation"], declared)
         and any(
             (n.row["subject"], n.row["relation"]) == (m.row["subject"], m.row["relation"])
             and n.start <= m.start
-            for n in markers[i + 1 :]
+            and _key(n) > _newest(m)
+            for n in markers
+            if n is not m
         )
     }
     # This Undo's markers are its 'row-restore' rows seen in its range: a replay finds
@@ -632,8 +640,7 @@ async def reopen_held_facts(
     pairs = sorted(edge_markers)
     starts = [min(m.start for m in edge_markers[p]) for p in pairs]
     edges = (
-        await _read_closes_applied(
-            ch,
+        await ch.query_all(
             """
             SELECT entity_a, entity_b,
                    argMax(tuple(if(invalid_at IS NULL, valid_to, NULL)), last_seen).1
@@ -649,9 +656,15 @@ async def reopen_held_facts(
             WHERE org = {org:String} AND namespace = {ns:String}
               AND (entity_a, entity_b) IN {pairs:Array(Tuple(String, String))}
             GROUP BY entity_a, entity_b
-            SETTINGS select_sequential_consistency = 1
+            SETTINGS select_sequential_consistency = 1, apply_mutations_on_fly = 1
             """,
-            {"org": input.org, "ns": input.namespace, "pairs": pairs, "starts": starts, "at": now},
+            params={
+                "org": input.org,
+                "ns": input.namespace,
+                "pairs": pairs,
+                "starts": starts,
+                "at": now,
+            },
         )
         if pairs
         else []
@@ -723,24 +736,24 @@ class _Marker(NamedTuple):
 
 def _marker_start(latest: Mapping[str, Any], now: datetime) -> datetime:
     """A closed fact is restated from the restore, or from its own start when that is
-    still to come ("moving to Berlin on Dec 1"). The start of a fact still open is
-    another row's, so it is restated from the restore."""
+    still to come ("moving to Berlin on Dec 1"). An open fact's latest row may be
+    another live row's claim, so the Undo restates it from the restore."""
     start: datetime | None = latest["start"]
     if start is None or latest["open"]:
         return now
     return max(now, start)
 
 
-async def _read_closes_applied(ch: Any, sql: str, params: dict[str, Any]) -> list[Any]:
-    """The weight read `sql` (ending in its SETTINGS) with pending closes applied.
-    ClickHouse refuses that for the whole table while any pending mutation on it has a
-    subquery, as another tenant's erasure delete does. The refusal is raised: the Undo
-    writes nothing to the graph, and its failure is recorded for the projection repair,
-    which replays it once that mutation has landed."""
-    rows: list[Any] = await ch.query_all(
-        sql.rstrip() + ", apply_mutations_on_fly = 1", params=params
-    )
-    return rows
+def _key(m: _Marker) -> tuple[date, datetime, str]:
+    return observation_key(m.start, m.seen, m.row["object"])
+
+
+def _newest(m: _Marker) -> tuple[date, datetime, str]:
+    """The newest row the repair weighs `m`'s value at: the marker, or the fact's latest
+    row when that is still open."""
+    if not m.row["open"]:
+        return _key(m)
+    return max(_key(m), observation_key(m.row["start"], m.row["seen"], m.row["object"]))
 
 
 def _still_ahead(end: datetime | None, now: datetime) -> datetime | None:
