@@ -224,11 +224,9 @@ def _doctor_problems() -> list[Any]:
     settings do not load (the `settings_load` check already says so)."""
     try:
         from server.auth.grant_claims import CLAIMS as GRANT_CLAIMS
+        from server.auth.oauth_claims import CLAIMS as OAUTH_CLAIMS
         from server.code.app.index.sandbox import layout_refusal, sandbox_available
-        from server.core.schema.migrate_lease import (
-            OAUTH_CLAIMS_TABLE_SQL,
-            RUN_CLAIMS_TABLE_SQL,
-        )
+        from server.core.schema.migrate_lease import RUN_CLAIMS_TABLE_SQL
         from server.observability.problems import HealthState, Problem, collect_problems
         from server.settings import settings
 
@@ -243,7 +241,7 @@ def _doctor_problems() -> list[Any]:
                 run_claims_atomic=_doctor_keeper_table(settings, RUN_CLAIMS_TABLE_SQL),
                 # Only with OAuth on, the one place the answer is used: no query otherwise.
                 oauth_claims_atomic=(
-                    _doctor_keeper_table(settings, OAUTH_CLAIMS_TABLE_SQL)
+                    _doctor_keeper_table(settings, OAUTH_CLAIMS.table_sql)
                     if settings.oauth_enabled
                     else None
                 ),

@@ -429,14 +429,14 @@ def test_a_failed_boot_probe_leaves_it_to_the_first_begin(monkeypatch) -> None:
     ("rows", "atomic"), [([{"engine": "KeeperMap"}], True), ([], False), (None, None)]
 )
 def test_the_doctor_reads_the_same_claims_check(monkeypatch, rows, atomic, table) -> None:
-    from server.auth import grant_claims
+    from server.auth import grant_claims, oauth_claims
     from server.cli import doctor
     from server.core.schema import migrate_lease
     from server.settings import settings
 
     table_sql = {
         "agent_run_claims": migrate_lease.RUN_CLAIMS_TABLE_SQL,
-        "oauth_claims": migrate_lease.OAUTH_CLAIMS_TABLE_SQL,
+        "oauth_claims": oauth_claims.CLAIMS.table_sql,
         "grant_claims": grant_claims.CLAIMS.table_sql,
     }[table]
 
