@@ -566,10 +566,9 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
       const fresh = await getMemory(identity, memoryKey, { include_recall_breakdown: true });
       if (stale()) return;
       setDetail(fresh);
-      if (r.restored) {
-        toast("Restored", "ok");
-        onChanged();
-      }
+      if (r.restored) toast("Restored", "ok");
+      // Either way the row changed, so the list behind the drawer is stale too.
+      onChanged();
     } catch (e) {
       if (!stale()) toast(`Restore failed: ${humanizeError(e)}`, "error");
     } finally {

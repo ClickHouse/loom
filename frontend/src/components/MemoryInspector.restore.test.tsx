@@ -176,15 +176,19 @@ describe("MemoryInspector restore of a superseded row", () => {
     expect(onChanged).not.toHaveBeenCalled();
   });
 
-  it("re-reads the row when the restore finds nothing, so Restore is not offered again", async () => {
+  it("re-reads the row and the list when the restore finds nothing, so Restore is not offered again", async () => {
     seed("writer");
-    await open();
+    const onChanged = vi.fn();
+    await open(onChanged);
     vi.mocked(restoreMemory).mockResolvedValue({ restored: false, from_status: "" });
     // Restored by someone else since the drawer read it.
     vi.mocked(getMemory).mockResolvedValue({ ...SUPERSEDED, status: "active" });
     await userEvent.click(await screen.findByRole("button", { name: "Restore" }));
     await waitFor(() => expect(toast).toHaveBeenCalledWith("Nothing to restore", "info"));
     await waitFor(() => expect(screen.queryByRole("button", { name: "Restore" })).toBeNull());
+    // The list behind the drawer still shows the row as it was read.
+    expect(onChanged).toHaveBeenCalled();
+    expect(toast).not.toHaveBeenCalledWith("Restored", "ok");
   });
 
   it("offers Restore on the next memory while a restore of the last one is pending", async () => {
