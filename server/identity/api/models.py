@@ -99,8 +99,8 @@ class NamespaceRegisterInput(BaseModel):
     # not EmailStr — local-only dev may use non-email strings
     owner_email: str = Field(
         description=(
-            "The namespace's owner. An account with a login (an email, or an agent's claim "
-            "code) keeps its stored owner exactly: send it back to update settings."
+            "The namespace's owner; an account with a login (an email, or an agent's claim "
+            "code) keeps its stored owner exactly, so send that value back to update settings."
         )
     )
     # Every setting left None (or omitted) keeps the stored value, and a fresh row takes the
