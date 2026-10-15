@@ -3787,8 +3787,9 @@ def test_the_settle_window_has_a_floor() -> None:
 async def test_elsewhere_finds_the_same_name_and_the_same_name_in_another_module(
     monkeypatch,
 ) -> None:
-    same = Definition("lib/a.py", "pkg.a::fn", "fn")  # its own name, a local name apart
-    moved = Definition("pkg/b.py", "pkg.b::fn", "fn")  # the same name inside another module
+    # the same qualified name; its path gives it another local name
+    same = Definition("lib/a.py", "pkg.a::fn", "fn")
+    moved = Definition("pkg/b.py", "pkg.b::fn", "fn")  # the same local name in another module
     other = Definition("pkg/b.py", "pkg.b::gn", "gn")
 
     async def candidates(org, cns, *, names=None, qualified_names=None):
