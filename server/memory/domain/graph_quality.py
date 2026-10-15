@@ -574,10 +574,10 @@ def triple_interval_repairs(
 
     Ordering: each row is placed by `observation_key` (start day, `seen_at`, object).
     The new fact arrived at `new_seen_at`; undated, it starts then. With neither a
-    date nor an arrival, nothing happens. An existing value is newer than the new one
-    when any of its open rows is; it then stays current and the new row closes when
-    that value's earliest such row starts. Otherwise every start of the existing value
-    closes when the new one starts. One write stores its triples a microsecond apart
+    date nor an arrival, nothing happens. Values compare at their newest open row; the
+    new value's rows are the new one and its open stored rows. The older value closes,
+    every start of it, when the earliest row of the newer value that beats it starts.
+    One write stores its triples a microsecond apart
     in the order stated, so on one day its later-stated value is the newer, for every
     writer that reads them back.
 
@@ -599,66 +599,64 @@ def triple_interval_repairs(
         return []
     obj = canonical_entity_text(new_object)
     skip = {canonical_entity_text(o) for o in later_batch_objects}
-    new_key = observation_key(new_valid_at, new_seen_at, obj)
-    # Stored columns are whole seconds; only `seen_at` keeps microseconds.
-    new_start = new_valid_at or _second(new_seen_at)
     # Plain MergeTree keeps one open row per observation, and an edge is keyed by its
-    # row's start: collect each open value's (valid_from, seen_at) rows.
+    # row's start: collect each open value's (valid_from, seen_at) rows. The new
+    # value's rows are the new one plus its open stored rows.
+    ours: list[tuple[datetime | None, datetime | None]] = [(new_valid_at, new_seen_at)]
     observed: dict[str, list[tuple[datetime | None, datetime | None]]] = {}
     for row in existing:
         old_subject = canonical_entity_text(str(row.get("subject") or ""))
         old_relation = canonical_relation(str(row.get("relation") or "")).verb
         old_object = canonical_entity_text(str(row.get("object") or ""))
-        if old_subject != subject or old_relation != relation or old_object == obj:
+        if old_subject != subject or old_relation != relation:
             continue
         if old_object in skip or isinstance(row.get("valid_to"), datetime):
             continue
         start, seen = row.get("valid_from"), row.get("seen_at")
-        observed.setdefault(old_object, []).append(
-            (
-                start if isinstance(start, datetime) else None,
-                seen if isinstance(seen, datetime) else None,
-            )
+        found = (
+            start if isinstance(start, datetime) else None,
+            seen if isinstance(seen, datetime) else None,
         )
+        if old_object == obj:
+            ours.append(found)
+        else:
+            observed.setdefault(old_object, []).append(found)
+    # Value against value: each is judged at its newest row.
+    new_key = max(observation_key(start, seen, obj) for start, seen in ours)
     repairs: list[IntervalRepair] = []
     for old_object, rows in observed.items():
-        newer = [
-            (valid_from, seen)
-            for valid_from, seen in rows
-            if observation_key(valid_from, seen, old_object) > new_key
-        ]
-        if newer:
-            # The row being written is already superseded: close the NEW row.
-            valid_from, seen = min(newer, key=lambda r: r[0] or _second(r[1]))
+        old_key = max(observation_key(start, seen, old_object) for start, seen in rows)
+        if old_key > new_key:
+            # The value being written is already superseded: close each of its starts
+            # when the other value's earliest row newer than it starts.
+            closed, closer, closed_rows, closer_rows, beaten = obj, old_object, ours, rows, new_key
+        else:
+            # The new value is newer: the old one closes when the new value's
+            # earliest row newer than it starts.
+            closed, closer, closed_rows, closer_rows, beaten = old_object, obj, rows, ours, old_key
+        winner = min(
+            (r for r in closer_rows if observation_key(r[0], r[1], closer) > beaten), key=_start
+        )
+        for valid_from in dict.fromkeys(start for start, _ in closed_rows):
             repairs.append(
                 IntervalRepair(
                     subject=subject,
                     relation=relation,
-                    old_object=obj,
-                    new_object=old_object,
-                    valid_to=valid_from or _second(seen),
-                    valid_from=new_valid_at,
-                    invalid_at=superseded_at,
-                    new_valid_from=valid_from,
-                    new_seen_at=seen,
-                )
-            )
-            continue
-        for valid_from in dict.fromkeys(start for start, _ in rows):
-            repairs.append(
-                IntervalRepair(
-                    subject=subject,
-                    relation=relation,
-                    old_object=old_object,
-                    new_object=obj,
-                    valid_to=new_start,
+                    old_object=closed,
+                    new_object=closer,
+                    valid_to=_start(winner),
                     valid_from=valid_from,
                     invalid_at=superseded_at,
-                    new_valid_from=new_valid_at,
-                    new_seen_at=new_seen_at,
+                    new_valid_from=winner[0],
+                    new_seen_at=winner[1],
                 )
             )
     return repairs
+
+
+def _start(row: tuple[datetime | None, datetime | None]) -> datetime:
+    # Stored columns are whole seconds; only `seen_at` keeps microseconds.
+    return row[0] or _second(row[1])
 
 
 def _second(at: datetime | None) -> datetime:

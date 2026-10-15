@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, NamedTuple
 
@@ -697,6 +698,18 @@ def _closed_value(repair: IntervalRepair) -> tuple[str, str, str]:
     return (repair.subject, repair.relation, repair.old_object)
 
 
+def _closer_key(repair: IntervalRepair, at: datetime) -> tuple[Any, ...]:
+    """Where the value that closed `repair`'s value sits in the order (seen at `at` when
+    the repair recorded no arrival)."""
+    return observation_key(repair.new_valid_from, repair.new_seen_at or at, repair.new_object)
+
+
+def _since(row: Restatement, cutoff: datetime, newest: tuple[Any, ...], obj: str) -> bool:
+    """Whether a row of `obj` came after the closes: seen after `cutoff`, or newer than
+    the newest value that closed it."""
+    return row.seen > cutoff or observation_key(row.valid_from, row.seen, obj) > newest
+
+
 def _triple_key(triple: Mapping[str, Any]) -> tuple[str, str, str]:
     return (str(triple["subject"]), str(triple["relation"]), str(triple["object"]))
 
@@ -715,31 +728,18 @@ async def _recorded_close_states(
     repair decides. A value open with neither is one whose close never landed. A row
     seen after the write and stamped by its close was stated while the close landed
     ("back to London"): each such row is a `Restatement` the replay judges. "After" is
-    by `seen_at`, in microseconds, per value: after the earliest value that closed it
-    and after the write's own `triples` of it, so a restatement in the write's own
-    second counts, even one stored between the write's triples."""
-    # Each value's cutoff is the earliest value that closed it. The write's own rows of
-    # it are never later than that when the write stated the closer (a later-stated
-    # value is never closed), but a stored value that closed the write's own may have
-    # been seen before it: the cutoff is then the write's last row of it.
+    per value: seen after the newest value that closed it and after the write's own
+    `triples` of it, in microseconds, so a restatement in the write's own second counts,
+    even one stored between the write's triples; or newer than that value by
+    `observation_key`, as a row dated on a later day is."""
     values = sorted({_closed_value(r) for r in repairs})
-    since = []
-    for value in values:
-        closers = [r.new_seen_at or at for r in repairs if _closed_value(r) == value]
-        own = [t["seen_at"] for t in triples if _triple_key(t) == value]
-        since.append(max([min(closers), *own]))
     rows = await ch.query_all(
         """
-        WITH arrayElement({seens:Array(DateTime64(6))},
-                          indexOf({triples:Array(Tuple(String, String, String))},
-                                  (subject, relation, object))) AS since
         SELECT subject, relation, object,
-               countIf(valid_to IS NULL) > 0 AS open,
                countIf(invalid_at = {at:DateTime}) > 0 AS landed,
-               countIf(valid_to IS NULL AND seen_at > since) > 0 AS seen_since,
                -- A tuple keeps a NULL valid_from, which an aggregate would skip.
-               groupArrayIf(tuple(valid_from, seen_at),
-                            invalid_at = {at:DateTime} AND seen_at > since) AS raced
+               groupArrayIf(tuple(valid_from, seen_at), valid_to IS NULL) AS opened,
+               groupArrayIf(tuple(valid_from, seen_at), invalid_at = {at:DateTime}) AS stamped
         FROM loom.entity_triples
         WHERE org = {org:String}
           AND namespace = {ns:String}
@@ -753,17 +753,32 @@ async def _recorded_close_states(
             "ns": input.namespace,
             "triples": values,
             "at": at.replace(microsecond=0),
-            "seens": since,
         },
     )
     states: dict[tuple[str, str, str], RecordedClose] = {}
     for row in rows:
-        key = (str(row["subject"]), str(row["relation"]), str(row["object"]))
-        restated = bool(row["open"] and (row["landed"] or row["seen_since"]))
+        key = _triple_key(row)
+        closers = [r for r in repairs if _closed_value(r) == key]
+        # A row seen before the newest closer cannot beat it on the same day. The
+        # write's own rows of the value are never later than that when the write stated
+        # the closer, but a stored value that closed the write's own may have been seen
+        # before it: the cutoff is then the write's last row of it.
+        own = [t["seen_at"] for t in triples if _triple_key(t) == key]
+        cutoff = max([*(r.new_seen_at or at for r in closers), *own])
+        newest = max(_closer_key(r, at) for r in closers)
+        opened = [Restatement(*t) for t in row["opened"]]
+        stamped = [Restatement(*t) for t in row["stamped"]]
+        # The write's own rows are never stated since.
+        later = [
+            t
+            for t in [*opened, *stamped]
+            if t.seen not in own and _since(t, cutoff, newest, key[2])
+        ]
+        restated = bool(opened) and (bool(row["landed"]) or any(t in later for t in opened))
         states[key] = RecordedClose(
             restated=restated,
-            unlanded=bool(row["open"]) and not restated,
-            raced=[Restatement(*t) for t in row["raced"]],
+            unlanded=bool(opened) and not restated,
+            raced=[t for t in stamped if t in later],
         )
     return states
 
@@ -1012,8 +1027,18 @@ async def _repair_contradictory_triples(
     for repair in all_repairs:
         key = (repair.subject, repair.relation, repair.old_object, repair.valid_from)
         prior = earliest.get(key)
-        if prior is None or repair.valid_to < prior.valid_to:
+        if prior is None:
             earliest[key] = repair
+            continue
+        # It records the newest value that closed it: a restatement has to beat that one.
+        first = min(prior, repair, key=lambda r: r.valid_to)
+        newest = max(prior, repair, key=lambda r: _closer_key(r, at))
+        earliest[key] = replace(
+            first,
+            new_object=newest.new_object,
+            new_valid_from=newest.new_valid_from,
+            new_seen_at=newest.new_seen_at,
+        )
     all_repairs = list(earliest.values())
     # valid_to is the older fact's stated end; invalid_at (when the repair
     # carries it) is the transaction time loom learned the fact was stale. The

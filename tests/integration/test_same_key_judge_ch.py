@@ -4,6 +4,7 @@ re-read run as SQL on real `loom.memory` rows; only the LLM is stubbed."""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 from datetime import UTC, datetime, timedelta
@@ -1430,15 +1431,11 @@ async def test_an_undo_weighs_its_fact_after_the_retirements_closes_land(ch, org
     assert await _open_weights(ch, org, "london") == {"triples": 1, "edges": 1}
 
 
-async def test_an_undo_succeeds_while_another_orgs_subquery_mutation_is_pending(ch, org) -> None:
-    # A user erasure in another org deletes with a subquery, and while it is pending
-    # ClickHouse refuses every on-the-fly read of the table. The Undo still lands.
-    from server.memory.app.restore import handle_memory_restore
-
-    london = await _stated(ch, org, "s1", "My favourite city is London")
-    paris = await _stated(ch, org, "s2", "My favourite city is Paris")
-    await _edges_like_triples(ch, org)
-    await _follow_retirement(ch, org, london, paris)
+@contextlib.asynccontextmanager
+async def _another_orgs_erasure_pending(ch: Any) -> Any:
+    """A user erasure in another org deletes with a subquery; while it is pending,
+    ClickHouse refuses every on-the-fly read of the table. Merges are held so it stays
+    pending, and on the way out they restart and the mutation is killed."""
     other = unique_org("same-key-erasure")
     tables = ("loom.entity_triples", "loom.entity_edges")
     for table in tables:
@@ -1451,16 +1448,152 @@ async def test_an_undo_succeeds_while_another_orgs_subquery_mutation_is_pending(
                 f" AND namespace IN (SELECT namespace FROM loom.entity_triple_memories"
                 f" WHERE org = '{other}')"
             )
-        out = await handle_memory_restore(_undo_of(paris))
+        yield
     finally:
         for table in tables:
             await ch.execute(f"SYSTEM START MERGES {table}")
-        await _mutations_done(ch, other, kill_after=50)
+        await _mutations_done(ch, other, kill_after=0)
+
+
+async def _restored_markers(ch: Any, org: str) -> int:
+    (row,) = await ch.query_all(
+        "SELECT count() AS n FROM loom.entity_triples WHERE org = {org:String}"
+        " AND adapter_name = 'row-restore' SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    return int(row["n"])
+
+
+async def test_an_undo_waits_for_another_orgs_subquery_mutation_to_reach_the_graph(ch, org) -> None:
+    # While the erasure is pending the Undo restores the row and writes nothing to
+    # the graph: the failure is recorded, and its replay makes London current, weighed
+    # once, on both planes.
+    from server.memory.app.projection_failures import retry_projection_failure
+    from server.memory.app.restore import handle_memory_restore
+
+    live = ("user", "live_in")
+    london = await _stated(ch, org, "s1", "I currently live in London", (*live, "london"))
+    paris = await _stated(ch, org, "s2", "I currently live in Paris", (*live, "paris"))
+    await _edges_like_triples(ch, org)
+    await _follow_retirement(ch, org, london, paris)
+    async with _another_orgs_erasure_pending(ch):
+        out = await handle_memory_restore(_undo_of(paris))
+        failure = await _recorded_reconcile(ch, org)
+        assert await _restored_markers(ch, org) == 0
     assert out.restored
+    assert failure.payload["memory_ids"] == [str(london["memory_id"])]
+    assert failure.payload["restored_at"] and failure.payload["content_sha256"]
+    assert (await retry_projection_failure(failure, ch=ch)).resolved
     await _mutations_done(ch, org)
-    assert "london" in await _open_cities(ch, org, {"london"})
-    weights = await _open_weights(ch, org, "london")
-    assert weights["triples"] >= 1 and weights["edges"] >= 1
+    assert await _open_cities(ch, org, {"london"}) == {"london"}
+    assert await _open_edges(ch, org, {"london"}) == ["london"]
+    assert await _open_weights(ch, org, "london") == {"triples": 1, "edges": 1}
+    assert await _walked(org, ["london"], labeled=True) == ["london"]
+    assert await _walked(org, ["london"], labeled=False) == ["london"]
+
+
+async def test_a_deferred_undo_adds_no_weight_to_a_fact_another_live_row_holds(ch, org) -> None:
+    # Two live rows say London (weight 2). An Undo of one, deferred by another org's
+    # erasure and replayed after it, leaves London's weight at 2.
+    from types import SimpleNamespace
+
+    from server.memory.app.entity_projections import reconcile_row_facts
+    from server.memory.app.projection_failures import retry_projection_failure
+
+    london = await _stated(ch, org, "s1", "My favourite city is London")
+    await _stated(ch, org, "s3", "My favourite city is London", memory_key="k3")
+    await _mutations_done(ch, org)
+    await _edges_like_triples(ch, org)
+    assert await _open_weights(ch, org, "london") == {"triples": 2, "edges": 2}
+    scope = SimpleNamespace(org=org, namespace=NS, agent="bot")
+    ids = [str(london["memory_id"])]
+    async with _another_orgs_erasure_pending(ch):
+        await reconcile_row_facts(
+            scope, ids, reopen=True, op="memory.restore", ch=ch,
+            hashes={ids[0]: london["content_sha256"]},
+        )  # fmt: skip
+        failure = await _recorded_reconcile(ch, org)
+    assert (await retry_projection_failure(failure, ch=ch)).resolved
+    await _mutations_done(ch, org)
+    assert await _open_weights(ch, org, "london") == {"triples": 2, "edges": 2}
+
+
+async def test_an_undo_starts_a_fact_dated_ahead_on_its_date(ch, org) -> None:
+    # "I live in Rome. Moving to Berlin on Dec 1": the row retires behind Paris and is
+    # Undone. Berlin starts on Dec 1 again, and Rome is current until then.
+    from server.memory.app.projections import write_entity_triples
+    from server.memory.app.restore import handle_memory_restore
+
+    live = ("user", "live_in")
+    december = datetime.now(UTC).replace(tzinfo=None, microsecond=0) + timedelta(days=47)
+    row, write, results = await _row_and_write(
+        ch, org, "s1", "I live in Rome. Moving to Berlin on Dec 1.", [(*live, "rome")]
+    )
+    await write_entity_triples(write, results, ch=ch, entity_map={})
+    # The same row states Berlin, dated Dec 1.
+    entry = write.entries[0].model_copy(
+        update={"relations": [(*live, "berlin")], "valid_at": december}
+    )
+    dated = write.model_copy(update={"entries": [entry]})
+    await write_entity_triples(dated, results, ch=ch, entity_map={})
+    await _mutations_done(ch, org)
+    await _edges_like_triples(ch, org)
+    paris = await _stated(ch, org, "s2", "I live in Paris", (*live, "paris"))
+    await _follow_retirement(ch, org, row, paris)
+    assert (await handle_memory_restore(_undo_of(paris))).restored
+    await _mutations_done(ch, org)
+    markers = await ch.query_all(
+        "SELECT object, valid_from, valid_to FROM loom.entity_triples WHERE org = {org:String}"
+        " AND adapter_name = 'row-restore' ORDER BY object"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    berlin, rome = markers
+    assert (berlin["object"], berlin["valid_from"], berlin["valid_to"]) == (
+        "berlin", december, None
+    )  # fmt: skip
+    assert (rome["object"], rome["valid_to"]) == ("rome", december)
+    assert rome["valid_from"] < december
+    edges = await ch.query_all(
+        "SELECT entity_a, valid_from, valid_to FROM loom.entity_edges WHERE org = {org:String}"
+        " AND entity_a IN ('berlin', 'rome') SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    edges = {(e["entity_a"], e["valid_from"], e["valid_to"]) for e in edges}
+    assert {("berlin", december, None), ("rome", rome["valid_from"], december)} <= edges
+    # No Berlin edge is current before Dec 1.
+    assert not [e for e in edges if e[0] == "berlin" and e[2] is None and e[1] < december]
+
+
+async def test_a_bulk_write_keeps_the_value_with_the_newest_observation(ch, org) -> None:
+    # One write: London from Oct 15, Paris from Oct 14, London from Oct 13. London has
+    # the newest observation and stays current; Paris closes when it starts.
+    from server.memory.api.models_bulk import MemoryBulkSetInput
+    from server.memory.app.bulk_set import handle_memory_bulk_set
+
+    live = ("user", "live_in")
+    stated = [
+        ("k1", "I moved to London this week", "london", datetime(2026, 10, 15)),
+        ("k2", "Paris was my home base for a while", "paris", datetime(2026, 10, 14)),
+        ("k3", "Back then I had a flat near the Thames", "london", datetime(2026, 10, 13)),
+    ]
+    await handle_memory_bulk_set(
+        MemoryBulkSetInput(
+            org=org, namespace=NS, agent="bot", user_id=USER, session_id="s1",
+            entries=[
+                {"memory_key": k, "value": v, "relations": [(*live, city)], "valid_at": at}
+                for k, v, city, at in stated
+            ],
+        )
+    )  # fmt: skip
+    await _mutations_done(ch, org)
+    assert await _open_cities(ch, org, {"london"}) == {"london"}
+    (paris,) = await ch.query_all(
+        "SELECT valid_to FROM loom.entity_triples WHERE org = {org:String}"
+        " AND object = 'paris' SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert paris["valid_to"] == datetime(2026, 10, 15)
 
 
 async def test_an_undo_of_a_fact_open_until_later_adds_no_weight(ch, org) -> None:

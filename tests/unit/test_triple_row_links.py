@@ -215,7 +215,7 @@ async def test_an_undo_weighs_what_is_open_with_pending_closes_applied(monkeypat
                          "seen": stored + timedelta(microseconds=i), "start": None,
                          "restored": 0, "weighted": 1}
                         for city, i in (("berlin", 1), ("rome", 0))]  # fmt: skip
-            return [{"entity_a": "london", "entity_b": "user", "ends": until,
+            return [{"entity_a": "berlin", "entity_b": "user", "ends": until,
                      "restored": 0, "weighted": 1}]  # fmt: skip
 
     async def held(*a: Any, **k: Any) -> list:
@@ -253,9 +253,12 @@ async def test_an_undo_weighs_what_is_open_with_pending_closes_applied(monkeypat
     ]
 
 
-async def test_an_undo_refused_on_the_fly_weighs_its_markers_one() -> None:
+async def test_an_undo_refused_on_the_fly_writes_nothing_and_is_recorded(monkeypatch) -> None:
     # While another org's subquery mutation is pending, ClickHouse refuses every
-    # on-the-fly read of the table: the Undo reads as stored and weighs its marker 1.
+    # on-the-fly read of the table: the Undo writes nothing to the graph, and the
+    # failure is recorded, dated at the restore, for the repair worker to replay.
+    from types import SimpleNamespace
+
     from server.memory.app import entity_projections as ep
 
     refusal = (
@@ -264,21 +267,129 @@ async def test_an_undo_refused_on_the_fly_weighs_its_markers_one() -> None:
     )
 
     class _RefusingCH(_CH):
-        def __init__(self, error: str) -> None:
-            super().__init__()
-            self.error = error
-            self.reads: list[str] = []
-
         async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
-            self.reads.append(sql)
             if "apply_mutations_on_fly" in sql:
-                raise RuntimeError(self.error)
-            return [{"weighted": 1}]
+                raise RuntimeError(refusal)
+            if "FROM loom.entity_triples" in sql:
+                return [{"subject": "user", "relation": "live_in", "object": "london",
+                         "confidence": 1.0, "provenance": "extracted", "ends": None,
+                         "seen": restored, "start": None, "open": 1, "restored": 0,
+                         "weighted": 1}]  # fmt: skip
+            return [{"entity_a": "london", "entity_b": "user", "ends": None,
+                     "restored": 0, "weighted": 1}]  # fmt: skip
 
-    ch = _RefusingCH(refusal)
-    assert await ep._read_closes_applied(ch, "SELECT 1 SETTINGS a = 1", {}) == [{"weighted": 0}]
-    assert ch.reads == ["SELECT 1 SETTINGS a = 1, apply_mutations_on_fly = 1",
-                        "SELECT 1 SETTINGS a = 1"]  # fmt: skip
-    # Any other error is not this refusal and stands.
-    with pytest.raises(RuntimeError):
-        await ep._read_closes_applied(_RefusingCH("Code: 36. DB::Exception: other"), "S", {})
+    async def held(*a: Any, **k: Any) -> list:
+        return [("user", "live_in", "london")]
+
+    async def repair(*a: Any, **k: Any) -> list:
+        return []
+
+    recorded: list = []
+
+    async def record(input: Any, **kw: Any) -> None:
+        recorded.append(kw)
+
+    restored = datetime(2026, 10, 15, 9, 0, 0, 5)
+    monkeypatch.setattr(ep, "_linked_triples", held)
+    monkeypatch.setattr(ep, "_stated_by_live_rows", held)
+    monkeypatch.setattr(ep, "record_input_projection_failure", record)
+    monkeypatch.setattr(ep, "repair_intervals", repair)
+    monkeypatch.setattr(ep, "naive_utc_now", lambda: restored)
+    ch = _RefusingCH()
+    scope = SimpleNamespace(org="o", namespace="ns", agent="a")
+    await ep.reconcile_row_facts(
+        scope, ["m1"], reopen=True, op="memory.restore", ch=ch, hashes={"m1": "h"}
+    )
+    assert ch.inserts == {}
+    ((failure,),) = [recorded]
+    assert failure["projection"] == "triples_reconcile"
+    assert failure["payload"] == {
+        "memory_ids": ["m1"],
+        "reopen": True,
+        "restored_at": restored.isoformat(),
+        "content_sha256": {"m1": "h"},
+    }
+
+
+async def _undo_of_rome_and(monkeypatch, berlin: dict[str, Any]) -> tuple[_CH, list]:
+    """An Undo of a row holding Rome (undated, stored first) and Berlin (`berlin`'s
+    columns), both closed by its retirement. Returns the CH and the repaired triples."""
+    from types import SimpleNamespace
+
+    import server.identity.app.namespace_ontology as onto
+    from server.memory.app import entity_projections as ep
+
+    stored = datetime(2026, 10, 1)
+
+    class _ClosedCH(_CH):
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            if "FROM loom.entity_triples" in sql:
+                base = {"subject": "user", "relation": "live_in", "confidence": 1.0,
+                        "provenance": "extracted", "ends": None, "start": None, "open": 0,
+                        "restored": 0, "weighted": 0}  # fmt: skip
+                return [{**base, "object": "rome", "seen": stored},
+                        {**base, "object": "berlin", "seen": stored, **berlin}]  # fmt: skip
+            return [{"entity_a": a, "entity_b": b, "ends": None, "restored": 0, "weighted": 0}
+                    for a, b in params["pairs"]]  # fmt: skip
+
+    async def held(*a: Any, **k: Any) -> list:
+        return [("user", "live_in", "berlin"), ("user", "live_in", "rome")]
+
+    async def declared(*a: Any) -> dict:
+        return {}
+
+    repaired: list = []
+
+    async def repair(input: Any, triples: list, *, ch: Any, at: datetime) -> list:
+        repaired.extend(triples)
+        return []
+
+    monkeypatch.setattr(ep, "_linked_triples", held)
+    monkeypatch.setattr(ep, "_stated_by_live_rows", held)
+    monkeypatch.setattr(ep, "repair_intervals", repair)
+    monkeypatch.setattr(onto, "load_relation_cardinality", declared)
+    ch = _ClosedCH()
+    restored = datetime(2026, 10, 15, 9, 0, 0, 5)
+    await ep.reopen_held_facts(SimpleNamespace(org="o", namespace="ns"), ["m1"], ch=ch,
+                               restored_at=restored)  # fmt: skip
+    return ch, repaired
+
+
+def _weights(rows: list[dict[str, Any]], *keys: str) -> dict[str, tuple]:
+    return {r["entity_a"] if "entity_a" in r else r["object"]: tuple(r[k] for k in keys)
+            for r in rows}  # fmt: skip
+
+
+async def test_an_undo_of_two_values_weighs_only_the_one_left_current(monkeypatch) -> None:
+    # "I lived in Rome. I now live in Berlin": Berlin's marker closes Rome's as it
+    # starts, so Rome's marker is never current and adds no weight to its total.
+    ch, _ = await _undo_of_rome_and(monkeypatch, {"seen": datetime(2026, 10, 1, 0, 0, 1)})
+    assert _weights(ch.inserts["loom.entity_triples"], "co_occur") == {
+        "rome": (0,), "berlin": (1,)
+    }  # fmt: skip
+    assert _weights(ch.inserts["loom.entity_edges"], "co_occur") == {"rome": (0,), "berlin": (1,)}
+
+
+async def test_an_undo_keeps_a_fact_dated_ahead_starting_on_its_date(monkeypatch) -> None:
+    # "I live in Rome. Moving to Berlin on Dec 1": Berlin starts on Dec 1 again, so
+    # Rome is current, and weighed, until then.
+    now = datetime(2026, 10, 15, 9, 0, 0)
+    dec = datetime(2026, 12, 1)
+    ch, repaired = await _undo_of_rome_and(monkeypatch, {"start": dec})
+    assert _weights(ch.inserts["loom.entity_triples"], "valid_from", "co_occur") == {
+        "rome": (now, 1), "berlin": (dec, 1)
+    }  # fmt: skip
+    assert _weights(ch.inserts["loom.entity_edges"], "valid_from", "co_occur") == {
+        "rome": (now, 1), "berlin": (dec, 1)
+    }  # fmt: skip
+    assert [(t["object"], t["valid_from"]) for t in repaired] == [("rome", now), ("berlin", dec)]
+
+
+async def test_an_undo_starts_at_the_restore_a_fact_another_open_row_dates_ahead(
+    monkeypatch,
+) -> None:
+    # Another live row says Berlin from Dec 1 and is still open: the restored row's
+    # own Berlin is undone from the restore.
+    now = datetime(2026, 10, 15, 9, 0, 0)
+    ch, _ = await _undo_of_rome_and(monkeypatch, {"start": datetime(2026, 12, 1), "open": 1})
+    assert _weights(ch.inserts["loom.entity_triples"], "valid_from")["berlin"] == (now,)

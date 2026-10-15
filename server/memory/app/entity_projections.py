@@ -15,7 +15,6 @@ from types import SimpleNamespace
 from typing import Any, NamedTuple
 
 from server.core.ch import get_client
-from server.core.ch_errors import error_code
 from server.core.datetimes import naive_utc_now, parse_iso_dt
 from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry, _BulkSetResult
 from server.memory.app.projection_errors import (
@@ -36,7 +35,11 @@ from server.memory.app.projections import (
     write_entity_triples,
 )
 from server.memory.domain import triples_follow_rows as tfr
-from server.memory.domain.graph_quality import canonical_edge_pair, observation_key
+from server.memory.domain.graph_quality import (
+    canonical_edge_pair,
+    is_single_valued_relation,
+    observation_key,
+)
 from server.memory.domain.temporal_sql import GRAPH_HOLDER_SQL
 
 log = logging.getLogger(__name__)
@@ -532,18 +535,23 @@ async def reopen_held_facts(
     them by): an Undo brings a retired row's facts back with it.
     An Undo is an assertion made at the restore (`restored_at`, now by default, to the
     microsecond): each fact the rows hold, open or not, gets a new observation of its
-    latest row starting at the restore, ending where that row's own stated end (not one
-    a close set) is still to come, and its edge one from the restore too, so later
-    writes read the Undo's date back from storage. The observations are a microsecond
-    apart in the facts' stored order, so of two values the rows hold the later stays
-    the later. It weighs 1 only when the fact (or edge) has no weighted row the readers
-    count as current after the Undo, the usual Undo of a closed value, so readers still
-    count it; otherwise 0, so Undoing back and forth adds no weight. Every one then
+    latest row starting at the restore (or at a closed fact's own later start), ending
+    where that row's own stated end (not one a close set) is still to come, and its edge
+    one from the same start, so later writes read the Undo's date back from storage.
+    The observations are a microsecond apart in the facts' stored order, so of two
+    values the rows hold the later stays the later. It weighs 1 only when the fact (or
+    edge) has no weighted row the readers count as current after the Undo, the usual
+    Undo of a closed value, so readers still count it; otherwise 0, so Undoing back and
+    forth adds no weight, and 0 when a later observation of the Undo closes it as it
+    starts. While another tenant's mutation blocks the weight read, it raises and writes
+    nothing: the caller records the failure for the replay. Every one then
     goes through the interval repair as a value seen at its observation, by the usual
     rule: it beats the retirement it undoes, which arrived earlier, and loses to a
     value asserted after it or starting on a later day. No row retires.
     A replay passes the restore's time: it finds the observations written, by that
     instant, and repairs again as of the Undo."""
+    from server.identity.app.namespace_ontology import load_relation_cardinality
+
     # Only what the restored rows' values hold now: another row's claim keeps a fact
     # from closing, but never reopens one.
     linked = await _linked_triples(input, ids, ch=ch)
@@ -564,6 +572,7 @@ async def reopen_held_facts(
                argMax(provenance, seen_at) AS provenance,
                -- The latest row's place in the order of its relation.
                max(seen_at) AS seen, argMax(tuple(valid_from), seen_at).1 AS start,
+               argMax(valid_to IS NULL, seen_at) AS open,
                -- A tuple keeps a NULL (open) end, which argMax would skip. Only the
                -- latest row's own end: a supersession close stamps `invalid_at`.
                argMax(tuple(if(invalid_at IS NULL, valid_to, NULL)), seen_at).1 AS ends,
@@ -590,17 +599,38 @@ async def reopen_held_facts(
     # Marker i is seen i microseconds after the restore, in the facts' stored order, so
     # the later of two values the rows hold stays the later one.
     latest = sorted(latest, key=lambda r: observation_key(r["start"], r["seen"], r["object"]))
-    stamped = [(r, restored + timedelta(microseconds=i)) for i, r in enumerate(latest)]
+    markers = [
+        _Marker(r, restored + timedelta(microseconds=i), _marker_start(r, now))
+        for i, r in enumerate(latest)
+    ]
+    declared = await load_relation_cardinality(input.org, input.namespace)
+    # A marker a later one closes as it starts is never current: it adds no weight.
+    beaten = {
+        m.seen
+        for i, m in enumerate(markers)
+        if is_single_valued_relation(m.row["relation"], declared)
+        and any(
+            (n.row["subject"], n.row["relation"]) == (m.row["subject"], m.row["relation"])
+            and n.start <= m.start
+            for n in markers[i + 1 :]
+        )
+    }
     # This Undo's markers are its 'row-restore' rows seen in its range: a replay finds
     # them and adds none, while another Undo in the same second is told apart.
-    fresh = [(r, seen) for r, seen in stamped if not r["restored"]]
+    fresh = [m for m in markers if not m.row["restored"]]
     settings = {"async_insert": 1, "wait_for_async_insert": 1}
     # The edge plane agrees: each new marker's edge gets an observation from the Undo
-    # too, inserted before the markers. Only a pair the graph has an edge for: the Undo
-    # invents none, and weighs it as above. Edges carry no microseconds, so an edge row
-    # seen and starting in the Undo's second, and not closed by a repair since, stands
-    # for it: a replay after the markers failed to land does not add a second one.
-    pairs = sorted({canonical_edge_pair(r["subject"], r["object"]) for r, _ in fresh})
+    # too, inserted before the markers, from its earliest marker's start. Only a pair
+    # the graph has an edge for: the Undo invents none, and weighs it as above. Edges
+    # carry no microseconds, so an edge row seen in the Undo's second, starting there,
+    # and not closed by a repair since, stands for it: a replay after the markers
+    # failed to land does not add a second one.
+    edge_markers: dict[tuple[str, str], list[_Marker]] = {}
+    for m in fresh:
+        pair = canonical_edge_pair(m.row["subject"], m.row["object"])
+        edge_markers.setdefault(pair, []).append(m)
+    pairs = sorted(edge_markers)
+    starts = [min(m.start for m in edge_markers[p]) for p in pairs]
     edges = (
         await _read_closes_applied(
             ch,
@@ -608,8 +638,9 @@ async def reopen_held_facts(
             SELECT entity_a, entity_b,
                    argMax(tuple(if(invalid_at IS NULL, valid_to, NULL)), last_seen).1
                        AS ends,
-                   countIf(valid_from = {at:DateTime} AND last_seen = {at:DateTime}
-                           AND invalid_at IS NULL) AS restored,
+                   countIf(valid_from = arrayElement({starts:Array(DateTime)},
+                               indexOf({pairs:Array(Tuple(String, String))}, (entity_a, entity_b)))
+                           AND last_seen = {at:DateTime} AND invalid_at IS NULL) AS restored,
                    countIf(co_occur > 0
                            AND (valid_from IS NULL OR valid_from <= {at:DateTime})
                            AND (valid_to IS NULL OR valid_to > {at:DateTime})
@@ -620,84 +651,96 @@ async def reopen_held_facts(
             GROUP BY entity_a, entity_b
             SETTINGS select_sequential_consistency = 1
             """,
-            {"org": input.org, "ns": input.namespace, "pairs": pairs, "at": now},
+            {"org": input.org, "ns": input.namespace, "pairs": pairs, "starts": starts, "at": now},
         )
         if pairs
         else []
     )
-    edge_rows = [
-        entity_edge_row(
-            input.org,
-            input.namespace,
-            e["entity_a"],
-            e["entity_b"],
-            last_seen=now,
-            valid_from=now,
-            valid_to=_still_ahead(e["ends"], now),
-            co_occur=0 if e["weighted"] else 1,
+    edge_rows = []
+    for e in edges:
+        pair = (e["entity_a"], e["entity_b"])
+        if e["restored"] or pair not in edge_markers:
+            continue
+        start = starts[pairs.index(pair)]
+        lost = all(m.seen in beaten for m in edge_markers[pair])
+        edge_rows.append(
+            entity_edge_row(
+                input.org,
+                input.namespace,
+                pair[0],
+                pair[1],
+                last_seen=now,
+                valid_from=start,
+                valid_to=_still_ahead(e["ends"], start),
+                co_occur=0 if e["weighted"] or lost else 1,
+            )
         )
-        for e in edges
-        if not e["restored"]
-    ]
     if edge_rows:
         await ch.insert("loom.entity_edges", edge_rows, settings=settings)
     rows = [
         entity_triple_row(
             input.org,
             input.namespace,
-            r["subject"],
-            r["relation"],
-            r["object"],
-            provenance=r["provenance"],
-            confidence=float(r["confidence"]),
+            m.row["subject"],
+            m.row["relation"],
+            m.row["object"],
+            provenance=m.row["provenance"],
+            confidence=float(m.row["confidence"]),
             adapter_name="row-restore",
             last_seen=now,
-            seen_at=seen,
+            seen_at=m.seen,
             # Dated at the Undo; a closed interval before it stays as history.
-            valid_from=now,
-            valid_to=_still_ahead(r["ends"], now),
+            valid_from=m.start,
+            valid_to=_still_ahead(m.row["ends"], m.start),
             # The Undo states nothing new: it only gives a closed fact its weight back.
-            co_occur=0 if r["weighted"] else 1,
+            co_occur=0 if m.row["weighted"] or m.seen in beaten else 1,
         )
-        for r, seen in fresh
+        for m in fresh
     ]
     if rows:
         await ch.insert("loom.entity_triples", rows, settings=settings)
     restated = [
         {
-            "subject": r["subject"],
-            "relation": r["relation"],
-            "object": r["object"],
-            "valid_from": now,
-            "seen_at": seen,
+            "subject": m.row["subject"],
+            "relation": m.row["relation"],
+            "object": m.row["object"],
+            "valid_from": m.start,
+            "seen_at": m.seen,
         }
-        for r, seen in stamped
+        for m in markers
     ]
     await repair_intervals(input, restated, ch=ch, at=restored)
 
 
-# The refusal: Code 36, "... with subquery may be nondeterministic and cannot be
-# applied on fly".
-_BAD_ARGUMENTS = 36
-_ON_FLY_REFUSED = "cannot be applied on fly"
+class _Marker(NamedTuple):
+    """One fact an Undo restates: its latest stored row, when the marker is seen, and
+    when it starts."""
+
+    row: Mapping[str, Any]
+    seen: datetime
+    start: datetime
+
+
+def _marker_start(latest: Mapping[str, Any], now: datetime) -> datetime:
+    """A closed fact is restated from the restore, or from its own start when that is
+    still to come ("moving to Berlin on Dec 1"). The start of a fact still open is
+    another row's, so it is restated from the restore."""
+    start: datetime | None = latest["start"]
+    if start is None or latest["open"]:
+        return now
+    return max(now, start)
 
 
 async def _read_closes_applied(ch: Any, sql: str, params: dict[str, Any]) -> list[Any]:
     """The weight read `sql` (ending in its SETTINGS) with pending closes applied.
     ClickHouse refuses that for the whole table while any pending mutation on it has a
-    subquery, as a user erasure's delete does. Then it reads the rows as stored and
-    counts none as weighted: an Undo made while such a mutation is pending may leave
-    the fact weighted twice, but it never vanishes from the graph."""
-    try:
-        rows: list[Any] = await ch.query_all(
-            sql.rstrip() + ", apply_mutations_on_fly = 1", params=params
-        )
-        return rows
-    except Exception as e:  # only the on-the-fly refusal is handled
-        if error_code(e) != _BAD_ARGUMENTS or _ON_FLY_REFUSED not in str(e):
-            raise
-    rows = await ch.query_all(sql, params=params)
-    return [{**r, "weighted": 0} for r in rows]
+    subquery, as another tenant's erasure delete does. The refusal is raised: the Undo
+    writes nothing to the graph, and its failure is recorded for the projection repair,
+    which replays it once that mutation has landed."""
+    rows: list[Any] = await ch.query_all(
+        sql.rstrip() + ", apply_mutations_on_fly = 1", params=params
+    )
+    return rows
 
 
 def _still_ahead(end: datetime | None, now: datetime) -> datetime | None:

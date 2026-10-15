@@ -508,17 +508,14 @@ class _Triples(StubCH):
             states: dict[tuple[str, str, str], dict[str, Any]] = {}
             for r in out:
                 k = (r["subject"], r["relation"], r["object"])
-                # Each value's own cutoff, matched by position as the SQL does.
-                since = params["seens"][[tuple(t) for t in params["triples"]].index(k)]
                 st = states.setdefault(k, {"subject": k[0], "relation": k[1], "object": k[2],
-                                           "landed": False, "seen_since": False, "open": False,
-                                           "raced": []})  # fmt: skip
+                                           "landed": False, "opened": [], "stamped": []})  # fmt: skip
                 stamped = r.get("invalid_at") == params["at"]
                 st["landed"] |= stamped
-                st["seen_since"] |= r["valid_to"] is None and r["seen_at"] > since
-                st["open"] |= r["valid_to"] is None
-                if stamped and r["seen_at"] > since:
-                    st["raced"].append((r["valid_from"], r["seen_at"]))
+                if r["valid_to"] is None:
+                    st["opened"].append((r["valid_from"], r["seen_at"]))
+                if stamped:
+                    st["stamped"].append((r["valid_from"], r["seen_at"]))
             return list(states.values())
         if "count()" in sql:
             n: dict[tuple[str, str, str], int] = {}
@@ -765,7 +762,7 @@ async def test_a_replay_leaves_closed_a_value_stated_again_with_an_older_date(
     made = IntervalRepair("user", "works_at", "london", "rome", rome_from, None, _T, rome_from)
     back = {**_CLOSED_AT_T, "seen_at": datetime(2026, 9, 12, 10, 0, 1)}
     rows = [
-        {**_row("london", None), **_CLOSED_AT_T},
+        {**_row("london", datetime(2025, 1, 1)), **_CLOSED_AT_T},
         {**_row("london", datetime(2019, 1, 1)), **back},
     ]
     if back_since:
@@ -883,7 +880,7 @@ async def test_a_replay_judges_every_row_stated_again_while_the_close_ran(
     made = IntervalRepair("user", "works_at", "london", "rome", rome_from, None, _T, rome_from)
     seen_1, seen_2 = datetime(2026, 9, 12, 10, 0, 1), datetime(2026, 9, 12, 10, 0, 2)
     rows = [
-        {**_row("london", None), **_CLOSED_AT_T},
+        {**_row("london", datetime(2025, 1, 1)), **_CLOSED_AT_T},
         {**_row("london", datetime(2026, 8, 1)), **_CLOSED_AT_T, "seen_at": seen_1},
         {**_row("london", second_from), **_CLOSED_AT_T, "seen_at": seen_2},
     ]
@@ -1018,3 +1015,85 @@ async def test_a_batch_and_a_racing_writer_leave_one_current_value(monkeypatch, 
         repairs = await _repair_contradictory_triples(_bulk_input(), new, ch=ch, at=_T)
         closed |= {r.old_object for r in repairs}
     assert {r["object"] for r in stored} - closed == {"london"}
+
+
+def test_a_value_is_judged_at_its_newest_open_row() -> None:
+    # London is open from Oct 15; London stated again on Oct 13 still beats Paris (Oct 14),
+    # so Paris closes when London's newer row starts, and London stays open.
+    from server.memory.domain.graph_quality import triple_interval_repairs
+
+    seen = datetime(2026, 10, 15, 9)
+    existing = [
+        {**_row("london", datetime(2026, 10, 15)), "seen_at": seen},
+        {**_row("paris", datetime(2026, 10, 14)), "seen_at": seen},
+    ]
+    repairs = triple_interval_repairs(
+        existing=existing, new_subject="user", new_relation="works_at", new_object="london",
+        new_valid_at=datetime(2026, 10, 13), new_seen_at=seen,
+    )  # fmt: skip
+    assert [(r.old_object, r.valid_to, r.valid_from) for r in repairs] == [
+        ("paris", datetime(2026, 10, 15), datetime(2026, 10, 14))
+    ]
+    assert repairs[0].new_valid_from == datetime(2026, 10, 15)
+
+
+@pytest.mark.asyncio
+async def test_a_batch_keeps_the_value_with_the_newest_observation(monkeypatch, _declared) -> None:
+    # One write: London on Oct 15, Paris on Oct 14, London on Oct 13. London is current.
+    rows = await _stored_batch(
+        monkeypatch,
+        ("london", datetime(2026, 10, 15)),
+        ("paris", datetime(2026, 10, 14)),
+        ("london", datetime(2026, 10, 13)),
+    )
+    ch = _Triples([{**r, "invalid_at": None} for r in rows])
+    repairs = await _repair_contradictory_triples(_bulk_input(), rows, ch=ch, at=_T)
+    assert [(r.old_object, r.valid_to) for r in repairs] == [("paris", datetime(2026, 10, 15))]
+
+
+async def _replay_of_paris_then_madrid(monkeypatch, london_from: datetime | None) -> list[Any]:
+    """One write states Paris (+0 µs) and Madrid (+2 µs), and its closes never land;
+    another write states London at +1 µs, dated `london_from`. Returns the triples
+    the replay closes."""
+    from server.memory.app import projections as proj
+    from server.memory.app.projection_errors import TriplesRepairFailed
+
+    class _Fails(_Triples):
+        async def execute(self, sql: str, params: dict[str, Any] | None = None):
+            raise TimeoutError("close timed out")
+
+    async def finish(input, repairs, *rest, ch):
+        return None
+
+    monkeypatch.setattr(proj, "_repair_contradictory_edges", finish)
+    monkeypatch.setattr(proj, "_retire_memories_behind_repairs", finish)
+    written = [
+        {**_row(city, None), "seen_at": _T + timedelta(microseconds=n)}
+        for city, n in (("paris", 0), ("madrid", 2))
+    ]
+    stored = [_row("london", datetime(2025, 1, 1)), *written]
+    with pytest.raises(TriplesRepairFailed) as failed:
+        await _repair_contradictory_triples(_bulk_input(), written, ch=_Fails(stored), at=_T)
+    london = _row("london", london_from, seen_at=_T + timedelta(microseconds=1))
+    ch = _Triples([*stored, london])
+    await proj._repair_triples(
+        _bulk_input(), written, [], at=_T, replay=True, repaired=failed.value.repairs, ch=ch
+    )
+    closes = [p for sql, p in ch.execute_calls if "UPDATE valid_to = greatest" in sql]
+    return sorted(t[2] for c in closes for t in c["triples"])
+
+
+@pytest.mark.asyncio
+async def test_a_replay_judges_a_value_by_the_newest_value_that_closed_it(
+    _declared, monkeypatch
+) -> None:
+    # London at +1 µs is older than Madrid, the newest value closing it: it closes again.
+    assert await _replay_of_paris_then_madrid(monkeypatch, None) == ["london", "paris"]
+
+
+@pytest.mark.asyncio
+async def test_a_replay_leaves_open_a_value_dated_after_the_newest_closer(
+    _declared, monkeypatch
+) -> None:
+    # London at +1 µs but dated on a later day than Madrid: stated since, left open.
+    assert await _replay_of_paris_then_madrid(monkeypatch, datetime(2026, 10, 1)) == ["paris"]

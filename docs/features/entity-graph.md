@@ -46,17 +46,20 @@ never fails the write. A `high`-sensitivity bulk entry projects nothing.
    not attest get `invalid_at`. For a `one` relation (employer, location), a newer `valid_at` closes the older
    interval; a write that states the older value again while that close runs keeps it open. Values order by the day
    they start (an undated value starts when it arrives), then by arrival to the microsecond, so racing writers agree
-   on one current value: the later day, or on one day the later arrival (within one write, the later-stated value). An
-   Undo (`memory.restore`) makes the restored value current from the restore on: the restored fact and its edge are
-   stored again starting at the restore, in their stored order (of two values the row held, the later stays current),
-   and keep the fact's own end if one is still to come, weighing 1 only when no current row still carries the fact's
-   weight (the retirement's pending closes applied; while another tenant's erasure blocks that read, always 1), so the
-   graph keeps counting it and Undoing back and forth adds none; the other value's interval closes, and its row stays
-   live. A value dated on a later day still wins, and so does a value
-   stated after the Undo, even in its second. A failed close is replayed as of the write (or the Undo) that made it,
-   to the microsecond, so a value stated since stays current; a replayed Undo skips a row revised since. A value
-   stated with its own end ("London until December") is never closed early: it stays current beside the newer value
-   until that end.
+   on one current value: the later day, or on one day the later arrival (within one write, the later-stated value).
+   A value is judged at its newest row: "London from Oct 15, Paris from Oct 14, London from Oct 13" leaves London
+   current. An Undo (`memory.restore`) makes the restored value current from the restore on: the restored fact and its
+   edge are stored again starting at the restore (or at the fact's own later start: "moving to Berlin on Dec 1" starts
+   on Dec 1 again), in their stored order (of two values the row held, the later stays current), and keep the fact's
+   own end if one is still to come, weighing 1 only when no current row still carries the fact's weight (the
+   retirement's pending closes applied) and no later value of the same Undo closes it as it starts, so the graph keeps
+   counting it and Undoing back and forth adds none; the other value's interval closes, and its row stays live. While
+   another tenant's erasure blocks that read, the row is restored at once and its graph follows when
+   `projection_repair` replays the Undo. A value dated on a later day still wins, and so does a value stated after the
+   Undo, even in its second. A failed close is replayed as of the write (or the Undo) that made it, to the
+   microsecond, so a value stated since stays current; a replayed Undo skips a row revised since. A value stated with
+   its own end ("London until December") is never closed early: it stays current beside the newer value until that
+   end.
 
 A point write (`memory.set`, `memory.update`, `memory.update_by_id`) writes the triples the caller passes in
 `relations`, at most 8, over HTTP and in the SDKs' typed operations (not in the MCP listing); it extracts none.

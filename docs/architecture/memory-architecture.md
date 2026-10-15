@@ -308,12 +308,12 @@ the value it was written or stated for (`carried`):
   "travaille à Paris"): a missed update is safer than a wrong supersession. One shared
   word is the head of the object ("prefers dark mode" / "… light mode" pairs), and so
   are more after "a", "an" or "the" ("drives a red sports car" / "… a blue sports car"
-  pairs). Otherwise a shared
-  ending from a preposition on is a detail both keep ("I work at Acme in London" / "…
-  at Globex in London" pairs Acme with Globex). After a bare name and a copula or "have"
-  verb of a major language, the two spans are two attributes unless both are numbers
-  ("Wang Xiaoming est âgé de 28 ans" / "… est ingénieur logiciel" and "У меня есть
-  собака" / "… кошка" never pair; "I live in Москва" / "… in Berlin" does).
+  pairs). Otherwise a shared ending from a preposition on is a detail both keep ("I work
+  at Acme in London" / "… at Globex in London" pairs Acme with Globex). After a bare
+  name and a copula or "have" verb of a major language, the two spans are two
+  attributes unless both are numbers ("Wang Xiaoming est âgé de 28 ans" / "… est
+  ingénieur logiciel" and "У меня есть собака" / "… кошка" never pair; "I live in
+  Москва" / "… in Berlin" does).
 - **Erased values:** an old value since erased or redacted holds nothing (another
   unredacted version with the same hash still counts). The links stay until the row is
   erased; each carries its row's `user_id`, so a user's erasure finds them after the
@@ -334,64 +334,74 @@ the value it was written or stated for (`carried`):
   A `memory.bulk_set` entry whose row is `high` projects nothing into the graph and
   records nothing for a replay.
   Undo makes the restored value current in the graph: every fact the restored row holds,
-  open or closed, gets a new observation (a `row-restore` marker) starting at the
-  restore and seen from its instant on, to the microsecond (a closed interval before it
-  stays as history, and every later repair reads the fact as stated then), as does its
-  edge when the graph has one, so both planes show the restored value current. The
+  open or closed, gets a new observation (a `row-restore` marker) seen from the
+  restore's instant on, to the microsecond (a closed interval before it stays as
+  history, and every later repair reads the fact as stated then), as does its edge when
+  the graph has one, so both planes show the restored value current. A marker starts at
+  the restore, or, for a closed fact whose latest row starts later, at that start ("I
+  live in Rome. Moving to Berlin on Dec 1." is undone with Rome current until Dec 1 and
+  Berlin from then); a fact still open is another row's, so its start is not taken. The
   markers are a microsecond apart, in the order of their facts' latest stored rows, as
-  one write stores its triples: a row that said "I lived in Rome. I now live in
-  Berlin." is undone with Berlin current. A marker keeps the end its fact's latest row
-  stated when that end is still to come ("London until December" is undone until
-  December, not for ever); when that row's end was set by a supersession close (it
-  stamps `invalid_at`), the fact stated none, so the marker has none, even when an older
-  row stated one. These
-  observations state nothing new: one carries `co_occur` 1 only when its fact (or edge)
-  has no weighted row the readers count as current after the restore (started by then,
-  and open or ending later), the usual Undo of a closed value, so the graph's readers
-  still count it, and 0 otherwise, so Undoing back and forth adds no weight. A close is
+  one write stores its triples: a row that said "I lived in Rome. I now live in Berlin."
+  is undone with Berlin current. A marker keeps the end its fact's latest row stated
+  when that end is still to come ("London until December" is undone until December, not
+  for ever); when that row's end was set by a supersession close (it stamps
+  `invalid_at`), the fact stated none, so the marker has none, even when an older row
+  stated one. These observations state nothing new: one carries `co_occur` 1 only when
+  its fact (or edge) has no weighted row the readers count as current after the restore
+  (started by then, and open or ending later), the usual Undo of a closed value, so the
+  graph's readers still count it, and 0 otherwise, so Undoing back and forth adds no
+  weight. A marker that a later marker of the same Undo closes as it starts (same
+  subject, same single-valued relation, starting no later) is never current, so it
+  weighs 0 too: Rome's total stays the same however often that row is undone. A close is
   an `ALTER UPDATE`, so the retirement's closes may still be pending when the Undo
-  weighs its facts: it reads with
-  `apply_mutations_on_fly`, which applies them (their expressions are deterministic),
-  rather than waiting on `system.mutations`. ClickHouse refuses that read for the whole
-  table while any pending mutation on it has a subquery (a user erasure's delete does);
-  the Undo then reads the rows as stored and weighs its markers 1: an Undo made while
-  such a mutation is pending may leave the fact weighted twice, but it never vanishes
-  from the graph. Its facts then go through the interval
-  repair by the usual rule, as values seen at their markers: the retirement it undoes
-  arrived earlier, so its value closes and its row stays live; a value asserted after
-  the Undo, or starting on a later day, stays current. An Undo never retires a row. A
-  replayed Undo reuses the restore's instant from the failure, not the replay's clock,
-  so it keeps its place in the order: a value asserted after the Undo, even in its
-  second, stays current. A marker is this Undo's when it is a `row-restore` row seen in
-  its microseconds (from the instant, one per fact), open or closed since, so a replay
-  adds none, and another Undo in the same second, with its own instant, is told apart. Edges carry no microseconds: an
-  edge marker is written only beside a missing triple marker, before it, and an edge
-  row starting and seen in the Undo's second that no repair closed stands for it, so a
-  replay after a failed triple insert does not repeat it. The failure records each
-  restored row's `content_sha256`; a replay skips a row revised since, whose revision
-  reconciles its facts, so the revised value is never dated at the Undo.
+  weighs its facts: it reads with `apply_mutations_on_fly`, which applies them (their
+  expressions are deterministic), rather than waiting on `system.mutations`. ClickHouse
+  refuses that read for the whole table while any pending mutation on it has a subquery
+  (another tenant's erasure delete does). The Undo then writes nothing to the graph: the
+  memory row is restored at once, the refusal is recorded as a `triples_reconcile`
+  failure dated at the restore, and `projection_repair` replays it once that mutation
+  has landed and the read works again (until then each pass fails it again and it stays
+  active). Its facts then go through the interval repair by the usual rule, as values
+  seen at their markers: the retirement it undoes arrived earlier, so its value closes
+  and its row stays live; a value asserted after the Undo, or starting on a later day,
+  stays current. An Undo never retires a row. A replayed Undo reuses the restore's
+  instant from the failure, not the replay's clock, so it keeps its place in the order:
+  a value asserted after the Undo, even in its second, stays current. A marker is this
+  Undo's when it is a `row-restore` row seen in its microseconds (from the instant, one
+  per fact), open or closed since, so a replay adds none, and another Undo in the same
+  second, with its own instant, is told apart. Edges carry no microseconds: an edge
+  marker is written only beside a missing triple marker, before it, and an edge row seen
+  in the Undo's second, starting where the marker starts, that no repair closed stands
+  for it, so a replay after a failed triple insert does not repeat it. The failure
+  records each restored row's `content_sha256`; a replay skips a row revised since,
+  whose revision reconciles its facts, so the revised value is never dated at the Undo.
   A failed interval repair records the triple write for replay too; when the triples
   landed before the repair failed, the replay does not insert them again and never
   repairs as of the replay's own clock. When the repair had issued closes before it
   failed, the failure records them and the replay finishes them: it issues again a close
   that never landed, closes their edges and, under `newest_wins`, retires the rows
-  behind them. It first skips a closed value a later write has stated again (open beside
-  a row the close took, or in a row seen after the write). Otherwise it judges every row
-  the close took that was seen after the write (a restatement that landed while the
-  close ran). When any of them is the newer, the close is undone, as the write's own
-  re-check would have, and the value is first repaired as of the newest such restatement
-  by start (an undated one starts when seen) against the values written since, which
-  found it closed: a newer one closes it again and, under `newest_wins`, retires the
-  rows behind it, as that value's own write would have. A restatement counts, here and
-  in the write's own re-check, only when the interval repair, judging it as a new value
-  against the value that closed it, finds it the newer: "back to London" dated by its
-  session day still beats an undated Rome written earlier that day. "After the write"
-  is by `seen_at`, per closed value: after the earliest value that closed it (or the
-  write's own last row of it, when that is later), so a restatement in the write's own
-  second counts, even one another write stored between the write's triples. When it had closed none, the replay repairs only the write's triples
-  that are still open (one a newer write closed was handled by that write's repair),
-  dated at the write. A replay that fails in
-  turn records the closes it made on the same failure, for the next one to finish.
+  behind them. Each recorded close names the newest value that closed its value (a
+  write closing London with Paris and then Madrid records Madrid). The replay first
+  skips a closed value a later write has stated again (open beside a row the close took,
+  or in a row that came after the close). Otherwise it judges every row the close took
+  that came after it (a restatement that landed while the close ran). When any of them
+  is the newer, the close is undone, as the write's own re-check would have, and the
+  value is first repaired as of the newest such restatement by start (an undated one
+  starts when seen) against the values written since, which found it closed: a newer
+  one closes it again and, under `newest_wins`, retires the rows behind it, as that
+  value's own write would have. A restatement counts, here and in the write's own
+  re-check, only when the interval repair, judging it as a new value against the value
+  that closed it, finds it the newer: "back to London" dated by its session day still
+  beats an undated Rome written earlier that day. A row "came after the close" when it
+  was seen after the newest value that closed it (or after the write's own last row of
+  it, when that is later), so a restatement in the write's own second counts, even one
+  another write stored between the write's triples; or when it is newer than that value
+  by the key below, as one dated on a later day is. A row seen before that value on its
+  day cannot beat it, so it closes again. When it had closed none, the replay repairs
+  only the write's triples that are still open (one a newer write closed was handled by
+  that write's repair), dated at the write. A replay that fails in turn records the
+  closes it made on the same failure, for the next one to finish.
 - **Which value is newer:** of two values of a single-valued relation, the newer stays
   current and the older closes when the newer starts. Every triple row is placed by one
   key, `(start day, seen_at, object)`: its start is its `valid_from`, or, undated, its
@@ -408,14 +418,15 @@ the value it was written or stated for (`carried`):
   later start day still wins whatever the order ("I move to Berlin" next month, then an
   undated "I live in Paris": Paris closes when Berlin begins). Two writers racing, even in
   one second, so agree on one current value: the later arrival. A value can have several
-  open rows, one per observation, so each value gets one verdict: it is the newer when any
-  of its rows is, and the new row then closes when the earliest such row starts; otherwise
-  every start of it closes, each with its own edge (an edge, as a triple, never closes
-  before it starts). One value stays current, never neither. Only an open-ended value is
-  closed: one stated with its own end ("London until December") is left as it is, so it
-  stays current beside the newer value until that end. Two values with one start day, one
-  `seen_at` and two writers are left to their object text: writes whose offsets overlap
-  may tie.
+  open rows, one per observation, so values compare at their newest open row, the new
+  value's open stored rows counted with the new one ("London from Oct 15, Paris from
+  Oct 14, London from Oct 13" in one write leaves London current). Every start of the
+  older value closes, each with its own edge, when the earliest row of the newer value
+  that beats it starts (an edge, as a triple, never closes before it starts). One value
+  stays current, never neither. Only an open-ended value is closed: one stated with its
+  own end ("London until December") is left as it is, so it stays current beside the
+  newer value until that end. Two values with one start day, one `seen_at` and two
+  writers are left to their object text: writes whose offsets overlap may tie.
 
   _Why one key._ The rule it replaces compared pairs: by date, by arrival when two
   values shared a start, and by arrival again when a dated and an undated value sat
