@@ -496,3 +496,31 @@ def test_an_unreadable_write_count_still_shares_one_read(
 
     asyncio.run(_many())
     assert ch.grant_reads == 1
+
+
+def test_an_unreadable_count_does_not_join_a_read_begun_before_a_sibling_s_write(
+    ch: _CH, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    sibling_writes = _sibling_processes(monkeypatch, tmp_path)
+    ch.grants["team"] = ("writer", "active", False)
+    read_done, go = _slow_reads(ch, monkeypatch)
+    stat = grant_cache.os.stat
+
+    def _unreadable(path: str) -> Any:
+        raise PermissionError(path)
+
+    async def _run() -> int | None:
+        early = asyncio.ensure_future(grant_cache.grant_map(ORG, "alice"))
+        await read_done.wait()
+        ch.grants["team"] = ("writer", "active", True)
+        sibling_writes(ORG)  # the revoke, on the other process
+        monkeypatch.setattr(grant_cache.os, "stat", _unreadable)
+        late = asyncio.ensure_future(grant_cache.grant_map(ORG, "alice"))
+        await asyncio.sleep(0)
+        go.set()
+        await early
+        rank = (await late).rank("team")
+        monkeypatch.setattr(grant_cache.os, "stat", stat)
+        return rank
+
+    assert asyncio.run(_run()) == 0

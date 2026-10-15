@@ -14,7 +14,8 @@ that count moved is not served (one count per org, so across processes a write
 drops the org's entries). Another server sees either within the TTL. A failed
 re-read serves the old entry while it is younger than
 `jwt_revocation_max_stale_seconds`, the bound a token check already lives with,
-and refuses (503) past it.
+and refuses (503) past it; an entry a sibling's write in its org has since
+superseded is never served so, whoever that write was for.
 """
 
 from __future__ import annotations
@@ -76,8 +77,9 @@ async def grant_map(org: str, subject: str) -> GrantMap:
         _entries.move_to_end(key)
         return hit[2]
     loading = _loading.get(key)
-    # An unreadable count (negative) serves nothing cached, but still joins a read.
-    if loading is not None and (loading[1] == writes or (writes is not None and writes < 0)):
+    # An unreadable count (negative) serves nothing cached, but still joins a read
+    # begun on one: never one begun on a count a sibling's write has since moved.
+    if loading is not None and (loading[1] == writes or (_unread(writes) and _unread(loading[1]))):
         task = loading[0]
     else:
         # Only an entry the TTL aged may stand in for a failed read, not one a write
@@ -150,9 +152,14 @@ def _marker(org: str) -> str | None:
     return path
 
 
+def _unread(writes: int | None) -> bool:
+    return writes is not None and writes < 0
+
+
 def _writes(org: str) -> int | None:
     """The org's grant write count on this server; None with one web process.
-    An unreadable count is a fresh one each time, so nothing is served on it."""
+    An unreadable count is a fresh negative one each time, so no entry is
+    served on it (a read in flight on one is still shared)."""
     path = _marker(org)
     if path is None:
         return None
