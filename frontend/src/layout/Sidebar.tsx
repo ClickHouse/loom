@@ -317,7 +317,7 @@ export function Sidebar() {
       }
       if (canCall("audit.list", roleHere, whoami)) {
         tasks.push(
-          // One record's time: enough to know the Auto-resolved tab is not empty.
+          // The newest auto-resolve record: enough to know the Auto-resolved tab is not empty.
           hasAutoResolved({ org: identity.org, namespace: identity.namespace })
             .then((found) => {
               if (!cancelled) {

@@ -106,7 +106,7 @@ describe("hasAutoResolved", () => {
     vi.unstubAllGlobals();
   });
 
-  it("counts only a record with a retirement the tab can show, in the tab's first page", async () => {
+  it("reads one record and counts it only if it holds a retirement the tab can show", async () => {
     const shown = JSON.stringify({ reason: "refines", retired: [entry("a")] });
     const malformed = JSON.stringify({ reason: "refines", retired: [{ memory_key: "no_id" }] });
     const bodies = stubAudit([
@@ -120,7 +120,7 @@ describe("hasAutoResolved", () => {
       org: "o",
       namespace: "n",
       event_type: "memory.auto_supersede",
-      limit: 20,
+      limit: 1,
       fields: ["ts", "subject"],
     });
     const since = Date.parse(String(bodies[0]?.["since"]));
