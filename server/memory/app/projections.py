@@ -550,72 +550,18 @@ async def _repair_triples(
     repaired: list[IntervalRepair],
     ch: Any,
 ) -> None:
-    """Close what the write's `triples` contradict, as of the write that arrived at `at`
-    (microseconds); under the namespace's `newest_wins` policy the memory rows that
-    carried the closed triples retire with them.
-
-    A replay never re-derives from the clock. When the write had `repaired`, it issues
-    and finishes those closes again, but for a value stated since. When it had made
-    none, it repairs only the triples no newer write has closed since (that write's
-    repair handled them). A failure raises `TriplesRepairFailed` with the closes made,
-    for the replay to finish."""
+    """Close what the write's `triples` contradict, as of its arrival `at`; under
+    `newest_wins` the rows behind the closed triples retire too. A replay never reads
+    the clock: it finishes the closes the write recorded (`repaired`) or, with none
+    recorded, repairs only the triples still open. A failure raises
+    `TriplesRepairFailed` with the closes made, for the next replay to finish."""
     repairs = repaired
-    closed_at = at.replace(microsecond=0)  # as `invalid_at` stores it
     try:
         if repairs:
-            # A value stated since is that write's to repair; a close that never
-            # landed is issued again; one that took a value stated since is undone, and
-            # that value meets the values written after it.
-            from server.identity.app.namespace_ontology import load_relation_cardinality
-
-            declared = await load_relation_cardinality(input.org, input.namespace)
-            states = await _recorded_close_states(input, repairs, triples, at=at, ch=ch)
-            skip: set[tuple[str, str, str]] = set()
-            unlanded: set[tuple[str, str, str]] = set()
-            for r in repairs:
-                value = (r.subject, r.relation, r.old_object)
-                state = states.get(value)
-                if state is None:
-                    continue
-                if state.restated:
-                    # Restated wins over raced: a newer write already handled the value.
-                    skip.add(value)
-                    continue
-                # As on the write: only a restatement newer than the closing value reopens.
-                current = [
-                    x
-                    for x in state.raced
-                    if restates_current(
-                        r, x.valid_from, x.seen, closed_at=closed_at, declared=declared
-                    )
-                ]
-                if current:
-                    latest = max(
-                        current, key=lambda x: observation_key(x.valid_from, x.seen, r.old_object)
-                    )
-                    await _reopen_restated(
-                        input,
-                        r,
-                        valid_from=latest.valid_from,
-                        seen=latest.seen,
-                        closed_at=closed_at,
-                        triple_memories=triple_memories,
-                        ch=ch,
-                    )
-                    skip.add(value)
-                elif state.unlanded:
-                    unlanded.add(value)
-            repairs = [r for r in repairs if (r.subject, r.relation, r.old_object) not in skip]
-            await close_triples(
-                ch,
-                org=input.org,
-                namespace=input.namespace,
-                closes=[
-                    (r.subject, r.relation, r.old_object, r.valid_to, r.invalid_at)
-                    for r in repairs
-                    if (r.subject, r.relation, r.old_object) in unlanded
-                ],
+            repairs, reissued = await _finish_recorded_repairs(
+                input, repairs, triples, triple_memories, at=at, ch=ch
             )
+            await close_triples(ch, org=input.org, namespace=input.namespace, closes=reissued)
         else:
             if replay:
                 still_open = await open_triples_among(
@@ -635,6 +581,64 @@ async def _repair_triples(
         raise
     except Exception as e:
         raise TriplesRepairFailed(at, e, list(repairs)) from e
+
+
+async def _finish_recorded_repairs(
+    input: MemoryBulkSetInput,
+    repairs: list[IntervalRepair],
+    triples: list[dict[str, Any]],
+    triple_memories: list[dict[str, Any]],
+    *,
+    at: datetime,
+    ch: Any,
+) -> tuple[list[IntervalRepair], list[tuple[Any, ...]]]:
+    """Of the closes a replayed write recorded, the ones it still makes, and those of
+    them to issue again because they never landed. A value stated since is that write's
+    to repair; one the close took while it landed is reopened and repaired against the
+    values written after it."""
+    from server.identity.app.namespace_ontology import load_relation_cardinality
+
+    closed_at = at.replace(microsecond=0)  # as `invalid_at` stores it
+    declared = await load_relation_cardinality(input.org, input.namespace)
+    states = await _recorded_close_states(input, repairs, triples, at=at, ch=ch)
+    skip: set[tuple[str, str, str]] = set()
+    unlanded: set[tuple[str, str, str]] = set()
+    for r in repairs:
+        value = (r.subject, r.relation, r.old_object)
+        state = states.get(value)
+        if state is None:
+            continue
+        if state.restated:
+            # Restated wins over raced: a newer write already handled the value.
+            skip.add(value)
+            continue
+        # As on the write: only a restatement newer than the closing value reopens.
+        current = [
+            x
+            for x in state.raced
+            if restates_current(r, x.valid_from, x.seen, closed_at=closed_at, declared=declared)
+        ]
+        if current:
+            latest = max(current, key=lambda x: observation_key(x.valid_from, x.seen, r.old_object))
+            await _reopen_restated(
+                input,
+                r,
+                valid_from=latest.valid_from,
+                seen=latest.seen,
+                closed_at=closed_at,
+                triple_memories=triple_memories,
+                ch=ch,
+            )
+            skip.add(value)
+        elif state.unlanded:
+            unlanded.add(value)
+    kept = [r for r in repairs if (r.subject, r.relation, r.old_object) not in skip]
+    closes = [
+        (r.subject, r.relation, r.old_object, r.valid_to, r.invalid_at)
+        for r in kept
+        if (r.subject, r.relation, r.old_object) in unlanded
+    ]
+    return kept, closes
 
 
 async def _reopen_restated(
@@ -727,16 +731,11 @@ async def _recorded_close_states(
     at: datetime,
     ch: Any,
 ) -> dict[tuple[str, str, str], RecordedClose]:
-    """What became of each value the write that arrived at `at` recorded closing. The
-    write's close stamped its rows `invalid_at` with its second. A value open beside
-    such a row, or open in a row seen after the write, was stated since: that write's
-    repair decides. A value open with neither is one whose close never landed. A row
-    seen after the write and stamped by its close was stated while the close landed
-    ("back to London"): each such row is a `Restatement` the replay judges. "After" is
-    per value: seen after the newest value that closed it and after the write's own
-    `triples` of it, in microseconds, so a restatement in the write's own second counts,
-    even one stored between the write's triples; or newer than that value by
-    `observation_key`, as a row dated on a later day is."""
+    """What became of each value the write that arrived at `at` recorded closing: open
+    again since (that write's repair decides), open because the close never landed, or
+    stated again while the close landed ("back to London", a `Restatement` the replay
+    judges). "Since" is per value: after the newest value that closed it and the
+    write's own rows of it, so a restatement in the write's own second counts."""
     values = sorted({_closed_value(r) for r in repairs})
     rows = await ch.query_all(
         """

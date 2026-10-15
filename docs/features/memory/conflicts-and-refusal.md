@@ -160,7 +160,11 @@ The Review queue's **Auto-resolved** tab lists the last 30 days, a page of 20 re
 a time, and its Undo calls `memory.restore` with `if_superseded_by`: the row comes back
 `active` and `memory.unsupersede` is recorded only while it is still retired behind the
 memory the record names; a row deleted, revived or retired again since shows "No longer
-retired". An Undo does not reopen the graph triples the retirement closed. To mark rows
+retired". The Undo holds the key's write lock from its read of the row to its insert,
+as a conditional write (`if_match_sha256`) does: a revision made meanwhile lands first
+and the Undo shows "No longer retired", or waits for the Undo. An Undo opens again the
+graph facts the restored row still holds (see the
+[entity graph](../entity-graph.md)). To mark rows
 already restored, the tab reads up to 2,500 `memory.unsupersede` records (5 pages of 500) back to the oldest retirement it shows. Past that, an older row still offers Undo,
 and undoing a row that is already live shows "No longer retired". An Undo is not
 remembered: a later write of the same key is judged again, and can retire the row again

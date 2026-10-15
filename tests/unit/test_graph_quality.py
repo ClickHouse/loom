@@ -8,7 +8,6 @@ from server.memory.domain.graph_quality import (
     canonical_entity_text,
     canonical_relation,
     is_single_valued_relation,
-    should_invalidate_interval,
     triple_interval_repairs,
 )
 
@@ -32,24 +31,6 @@ def test_canonical_relation_marks_out_of_ontology_lower_confidence() -> None:
     assert rejected.verb == "mentions"
     assert rejected.accepted is False
     assert rejected.confidence == 0.5
-
-
-def test_should_invalidate_open_interval_only_when_newer_fact_is_dated() -> None:
-    assert should_invalidate_interval(
-        existing_valid_at=datetime(2024, 1, 1),
-        existing_valid_to=None,
-        new_valid_at=datetime(2025, 1, 1),
-    )
-    assert not should_invalidate_interval(
-        existing_valid_at=datetime(2024, 1, 1),
-        existing_valid_to=datetime(2024, 6, 1),
-        new_valid_at=datetime(2025, 1, 1),
-    )
-    assert not should_invalidate_interval(
-        existing_valid_at=datetime(2024, 1, 1),
-        existing_valid_to=None,
-        new_valid_at=None,
-    )
 
 
 def test_triple_interval_repairs_close_conflicting_current_state() -> None:

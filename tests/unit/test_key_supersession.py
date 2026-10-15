@@ -1169,6 +1169,16 @@ class _Graph:
         return row["tombstoned_at"] is None and row["status"] in LIVE_STATUSES
 
     async def query_all(self, sql, params):
+        if "WITH keyed AS" in sql:
+            # Live rows with no row link, of a key a triple is linked to.
+            linked = {link[0] for link in self.links}
+            return [
+                {"value": row["value"], "subject": s, "relation": r, "object": o}
+                for row in self.rows.values()
+                if self._holds(row) and row["id"] not in linked
+                for s, r, o, key in sorted(self.provenance)
+                if key == row["memory_key"] and (s, r, o) in params["triples"]
+            ]
         if "WITH links AS" in sql:
             live = {r["id"]: r for r in self.rows.values() if self._holds(r)}
             return [

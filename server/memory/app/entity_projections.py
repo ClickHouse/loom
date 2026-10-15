@@ -40,7 +40,7 @@ from server.memory.domain.graph_quality import (
     is_single_valued_relation,
     observation_key,
 )
-from server.memory.domain.temporal_sql import GRAPH_HOLDER_SQL
+from server.memory.domain.temporal_sql import GRAPH_HOLDER_SQL, LIVE_STATUSES
 
 log = logging.getLogger(__name__)
 
@@ -428,19 +428,28 @@ async def project_stated_relations(
     """Write the `relations` a point write states, as a `memory.bulk_set` entry's are:
     linked to `row` (the `loom.memory` row holding `value`), and through the interval
     repair, which may close an older single-valued fact and, under `newest_wins`,
-    retire the rows behind it. A row that may not hold graph facts (`GRAPH_HOLDER_SQL`:
-    'high', expired, or past its `valid_to`) states none. Then, for a row `revised`
+    retire the rows behind it. A row that may not hold graph facts (`holds_graph_facts`)
+    states none: a proposal is one, and accepting it later projects nothing, so its
+    facts are stated again once it is established. Then, for a row `revised`
     (it held a value before this write), the facts it held are reconciled with its
     new value (`close_dropped_facts`). It runs after the same-key supersession, which
     reads no triples: point writes run no row follow. Fail-open: a failed write is
     recorded for the projection repair to replay."""
-    ends = [parse_iso_dt(row.get(c)) for c in ("expires_at", "valid_to")]
-    ended = any(end is not None and end <= naive_utc_now() for end in ends)
-    if relations and row.get("sensitivity") != "high" and not ended:
+    if relations and holds_graph_facts(row):
         await _write_stated_relations(row, value, relations, op=op, ch=ch)
     if revised:
         scope = SimpleNamespace(org=row["org"], namespace=row["namespace"], agent=row["agent"])
         await reconcile_row_facts(scope, [str(row["memory_id"])], reopen=False, op=op, ch=ch)
+
+
+def holds_graph_facts(row: Mapping[str, Any]) -> bool:
+    """`GRAPH_HOLDER_SQL` for a row in hand: live, not deleted, not ended, not 'high'."""
+    if row.get("status") not in LIVE_STATUSES or row.get("tombstoned_at") is not None:
+        return False
+    ends = [parse_iso_dt(row.get(c)) for c in ("expires_at", "valid_to")]
+    if any(end is not None and end <= naive_utc_now() for end in ends):
+        return False
+    return row.get("sensitivity") != "high"
 
 
 async def _write_stated_relations(
@@ -1267,7 +1276,8 @@ async def _stated_by_live_rows(
     the row was revised from and the row still carries it (`tfr.carried`). Another
     session's or user's row of the same fact keeps it open; `rows` (ids) limits the
     rows asked to those. A retired loser is not live, so it never keeps its own
-    triples."""
+    triples. Asked of every row, a row written before rows were linked holds what its
+    key is linked to and its value names (`_held_by_unlinked_rows`)."""
     if not triples:
         return frozenset()
     only_rows = "AND memory_id IN {rows:Array(UUID)}" if rows is not None else ""
@@ -1309,11 +1319,55 @@ async def _stated_by_live_rows(
             heads[mid] = {"id": mid, "content_sha256": f["current"], "value": f["value"]}
             hashes.setdefault(mid, {}).setdefault(triple, set()).add(str(f["sha"]))
     held_triples = frozenset(held)
+    if rows is None:
+        held_triples |= await _held_by_unlinked_rows(org, namespace, triples, ch=ch)
     if not heads:
         return held_triples
     stated_now = await _stated_links(org, namespace, list(heads.values()), ch=ch)
     holds = await _carried_by(org, namespace, list(heads.values()), stated_now, hashes, ch=ch)
     return held_triples.union(*holds.values())
+
+
+async def _held_by_unlinked_rows(
+    org: str, namespace: str, triples: list[tfr.Triple], *, ch: Any
+) -> frozenset[tfr.Triple]:
+    """Of `triples`, those a row written before rows were linked to triples holds: a
+    live row with no `entity_triple_rows` link, of a key the triple is linked to
+    (`entity_triple_memories`), whose value still names it (`tfr.still_states`)."""
+    found = await ch.query_all(
+        f"""
+        WITH keyed AS (
+            SELECT memory_key, subject, relation, object
+            FROM loom.entity_triple_memories
+            WHERE org = {{org:String}} AND namespace = {{ns:String}}
+              AND (subject, relation, object) IN {{triples:Array(Tuple(String, String, String))}}
+        ),
+        live AS (
+            SELECT memory_id, memory_key, value
+            FROM loom.memory FINAL
+            WHERE org = {{org:String}} AND namespace = {{ns:String}}
+              AND memory_key IN (SELECT memory_key FROM keyed)
+              AND {GRAPH_HOLDER_SQL}
+        )
+        SELECT l.value AS value, k.subject AS subject, k.relation AS relation,
+               k.object AS object
+        FROM keyed AS k
+        INNER JOIN live AS l ON k.memory_key = l.memory_key
+        WHERE l.memory_id NOT IN (
+            SELECT memory_id FROM loom.entity_triple_rows
+            WHERE org = {{org:String}} AND namespace = {{ns:String}}
+              AND memory_id IN (SELECT memory_id FROM live)
+        )
+        SETTINGS select_sequential_consistency = 1
+        """,
+        params={"org": org, "ns": namespace, "triples": triples},
+    )
+    held = set()
+    for f in found:
+        triple = (str(f["subject"]), str(f["relation"]), str(f["object"]))
+        if tfr.still_states(_text(f["value"]), triple):
+            held.add(triple)
+    return frozenset(held)
 
 
 async def _stated_links(

@@ -196,6 +196,42 @@ async def test_a_triples_replay_retires_only_within_the_writers_scope(monkeypatc
     assert len(seen) == 2
 
 
+async def test_a_retry_an_admin_runs_replays_under_the_writers_scope(monkeypatch) -> None:
+    # Run from the ops op, the admin's own namespace-wide scope is bound: the replay
+    # still retires only within the scope the failed write recorded.
+    from server.auth.context import set_current_auth
+    from server.auth.jwt import AuthInfo
+    from server.identity.app.request_scope import request_scope
+    from server.identity.domain.read_scope import (
+        READ_SCOPE_KEY,
+        WHOLE_NAMESPACE,
+        ReadFilters,
+        bind_request_read_filters,
+    )
+    from server.memory.app import projections
+
+    seen: list = []
+
+    async def write_entity_triples(input, results, *, ch, dedup_token, inserted_at, repaired):
+        seen.append(request_scope())
+
+    monkeypatch.setattr(projections, "write_entity_triples", write_entity_triples)
+    failure = _graph_failure("entity_triples")
+    scope = {"scope": "own_user", "user_id": "u1", "session_id": None}
+    failure.payload[READ_SCOPE_KEY] = scope
+    admin = AuthInfo(
+        subject="admin", org="o", namespaces=("n",), roles=(), is_service_account=False
+    )
+    set_current_auth(admin)
+    bind_request_read_filters(admin, WHOLE_NAMESPACE)
+    try:
+        assert (await retry_projection_failure(failure, ch=_GraphCH())).resolved
+    finally:
+        set_current_auth(None)
+        bind_request_read_filters(None, WHOLE_NAMESPACE)
+    assert seen == [ReadFilters(**scope)]
+
+
 async def test_only_a_triples_replay_reads_the_stored_scope() -> None:
     # Vectors and edges retire nothing: a refused scope does not hold them back.
     from server.identity.domain.read_scope import READ_SCOPE_KEY

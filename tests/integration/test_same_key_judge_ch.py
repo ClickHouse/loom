@@ -232,6 +232,52 @@ async def test_undo_restores_only_the_retirement_it_lists(ch, org, judge) -> Non
     assert (await handle_memory_restore(_undo(org, korean))).restored is True
 
 
+# The revision starts after the Undo's first read of the row, or after its read under
+# the key's write lock: the Undo sees it and refuses, or the revision waits for the Undo.
+@pytest.mark.parametrize("after_read", [1, 2])
+async def test_an_undo_never_overwrites_a_conditional_revision_made_while_it_ran(
+    ch, org, judge, monkeypatch, after_read
+) -> None:
+    from server.memory import store as M
+    from server.memory.api.models_crud import MemoryGetByIdInput, MemoryUpdateByIdInput
+    from server.memory.app.handlers import handle_memory_get_by_id
+    from server.memory.app.restore import handle_memory_restore
+    from server.memory.app.update import handle_memory_update_by_id
+
+    irish = _row(org, "s2", "User is Irish", datetime(2023, 5, 1))
+    await M.insert_memory_versions([irish], ch=ch)
+    # The hash a writer read while the row was live.
+    read_live = await handle_memory_get_by_id(
+        MemoryGetByIdInput(org=org, memory_id=str(irish["memory_id"]))
+    )
+    japanese = await _retire(ch, org, "User is Japanese", datetime(2023, 6, 1), "s3")
+    revision = MemoryUpdateByIdInput(
+        org=org,
+        memory_id=str(irish["memory_id"]),
+        value="User is Brazilian",
+        if_match_sha256=read_live.content_sha256,
+    )
+    read, reads, revising = M.get_by_key, [], []
+
+    async def read_then_revise(*args: Any, **kwargs: Any) -> Any:
+        row = await read(*args, **kwargs)
+        reads.append(row)
+        if len(reads) == after_read:
+            revising.append(asyncio.create_task(handle_memory_update_by_id(revision)))
+            await asyncio.wait(revising, timeout=5)
+        return row
+
+    monkeypatch.setattr(M, "get_by_key", read_then_revise)
+    undone = await handle_memory_restore(_undo(org, japanese))
+    assert (await revising[0]).updated
+    head = await M.get_by_id(
+        str(irish["memory_id"]), org=org, ch=ch, strong=True, scope=WHOLE_NAMESPACE
+    )
+    assert "Brazilian" in str(head.value)
+    assert undone.restored is (after_read == 2)
+    assert not undone.restored or undone.version < head.version
+
+
 async def test_undo_survives_a_re_emit_and_refuses_a_later_delete(ch, org, judge) -> None:
     from server.memory import store as M
     from server.memory.app.restore import handle_memory_restore
@@ -887,6 +933,91 @@ async def test_a_point_write_naming_a_single_valued_fact_closes_the_older_one(ch
     )
     await _mutations_done(ch, org)
     assert await _open_facts(ch, org, {("live_in", "rome")}) == {("live_in", "rome")}
+
+
+async def test_a_proposal_naming_a_single_valued_fact_changes_no_established_one(
+    ch, org, newest_wins
+) -> None:
+    # A fact on trial supersedes nothing: the facts it names stay out of the graph.
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app.write import handle_memory_set
+
+    london = await _stated(ch, org, "s1", "I live in London", ("user", "live_in", "london"))
+    await handle_memory_set(
+        MemorySetInput(
+            org=org,
+            namespace=NS,
+            agent="bot",
+            user_id=USER,
+            session_id="s2",
+            memory_key="user_home",
+            value="I moved to Rome",
+            relations=[("user", "live_in", "rome")],
+            proposed=True,
+        )
+    )
+    await _mutations_done(ch, org)
+    assert await _open_facts(ch, org, {("live_in", "london")}) == {("live_in", "london")}
+    assert await _status(ch, org, london) == "active"
+
+
+async def _legacy_stated(ch: Any, org: str, value: str, triple: tuple, key: str) -> None:
+    """A row written before rows were linked to triples: its triple is linked to its
+    key only."""
+    from server.memory import store as M
+    from server.memory.app.projections import entity_triple_row
+
+    now = naive_utc_now()
+    await M.insert_memory_versions([_row(org, "s0", value, now, memory_key=key)], ch=ch)
+    s, r, o = triple
+    await ch.insert(
+        "loom.entity_triples",
+        [
+            entity_triple_row(
+                org,
+                NS,
+                s,
+                r,
+                o,
+                provenance="",
+                confidence=1.0,
+                adapter_name="legacy",
+                last_seen=now,
+                seen_at=now,
+            )
+        ],
+    )
+    link = {"org": org, "namespace": NS, "subject": s, "relation": r, "object": o}
+    await ch.insert("loom.entity_triple_memories", [{**link, "memory_key": key}])
+
+
+@pytest.mark.parametrize(
+    ("legacy", "want"),
+    [
+        ("I like jazz", {("like", "jazz"), ("like", "rock")}),
+        # Its key is linked to jazz, but its value no longer names it.
+        ("I like folk", {("like", "rock")}),
+    ],
+)
+async def test_a_fact_a_row_predating_row_links_states_survives_a_revision(
+    ch, org, legacy, want
+) -> None:
+    jazz, rock = ("user", "like", "jazz"), ("user", "like", "rock")
+    await _legacy_stated(ch, org, legacy, jazz, "legacy")
+    linked = await _stated(ch, org, "s1", "I like jazz", jazz, memory_key="r1")
+    await _revise("memory.update_by_id", org, linked, "I like rock", (rock,))
+    await _mutations_done(ch, org)
+    assert await _open_facts(ch, org, want) == want
+
+
+async def test_a_fact_a_row_predating_row_links_states_survives_a_follow(ch, org) -> None:
+    jazz, rock = ("user", "like", "jazz"), ("user", "like", "rock")
+    await _legacy_stated(ch, org, "I like jazz", jazz, "legacy")
+    loser = await _stated(ch, org, "s1", "I like jazz", jazz, memory_key="r1")
+    winner = await _stated(ch, org, "s2", "I like rock", rock, memory_key="r1")
+    await _follow_retirement(ch, org, loser, winner)
+    want = {("like", "jazz"), ("like", "rock")}
+    assert await _open_facts(ch, org, want) == want
 
 
 async def test_a_merged_write_links_the_facts_it_names_to_the_row_it_merged_into(ch, org) -> None:

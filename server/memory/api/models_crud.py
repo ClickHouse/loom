@@ -239,8 +239,8 @@ class MemorySetInput(_Identity):
     # graph and linked to the row as a `memory.bulk_set` entry's are: a single-valued
     # fact closes the older one it replaces and, under `newest_wins`, retires the rows
     # behind it. A revision that names a fact keeps it however it is worded; one naming
-    # none keeps a fact only while it repeats the old words. A 'high' row's facts are
-    # not graphed. Not in the MCP listing.
+    # none keeps a fact only while it repeats the old words. A 'high' row's facts, and a
+    # proposal's, are not graphed. Not in the MCP listing.
     relations: list[Fact] = Field(
         default_factory=list, max_length=MAX_TRIPLES_PER_ROW, json_schema_extra=MCP_HIDDEN
     )

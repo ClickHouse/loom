@@ -118,13 +118,17 @@ async def test_a_row_link_lands_before_its_triple() -> None:
         ({"expires_at": datetime(2020, 1, 1)}, False),
         ({"expires_at": datetime(2020, 1, 1, tzinfo=UTC)}, False),
         ({"valid_to": datetime(2999, 1, 1)}, True),
+        ({"status": "conflicted"}, True),
+        ({"status": "proposed"}, False),
+        ({"tombstoned_at": datetime(2020, 1, 1)}, False),
     ],
 )
 async def test_a_point_write_states_relations_only_for_a_row_that_may_hold_them(
     monkeypatch, extra, written
 ) -> None:
     # The rule `GRAPH_HOLDER_SQL` keeps for the rows a fact stays open for: a row
-    # already expired or past its validity holds none, as a 'high' row holds none.
+    # already expired or past its validity holds none, as a 'high' row, a proposal or a
+    # deleted row holds none.
     from server.memory.app import entity_projections as ep
 
     seen: list = []
@@ -137,7 +141,8 @@ async def test_a_point_write_states_relations_only_for_a_row_that_may_hold_them(
 
     monkeypatch.setattr(ep, "_write_stated_relations", write)
     monkeypatch.setattr(ep, "reconcile_row_facts", reconcile)
-    row = {"org": "o", "namespace": "n", "agent": "a", "memory_id": "m1", **extra}
+    row = {"org": "o", "namespace": "n", "agent": "a", "memory_id": "m1", "status": "active"}
+    row.update(extra)
     await ep.project_stated_relations(
         row, "I live in Rome", [("user", "live_in", "rome")], revised=True, op="o", ch=None
     )

@@ -320,7 +320,7 @@ the value it was written or stated for (`carried`):
   row is gone.
 - **Rows that hold facts:** one rule decides whether a row's value may hold graph facts
   (`GRAPH_HOLDER_SQL`): live, not deleted, not expired, its `valid_to` not passed, and
-  not `high`. The follow's live end, the check for a live row still stating a fact, a
+  not `high`; a proposal is not live, so its `relations` are never graphed. The follow's live end, the check for a live row still stating a fact, a
   revision, an Undo and a replay all read it; a point write checks the same rule on the
   row it just wrote. A revision (`memory.set`, `memory.bulk_set`, `memory.update_by_id`)
   of a row that existed before the write closes the facts its row held that no row holds
@@ -450,7 +450,8 @@ the value it was written or stated for (`carried`):
 
 A facet edge (the agent's file, concept or topic) is no row's: it is never linked, and
 no retirement closes it. A triple another live row's links still state stays open; a
-row stored before migration 028 has none, so it keeps nothing open for other rows. A
+row stored before rows were linked to triples has no links, so it keeps open a triple
+its key is linked to (`entity_triple_memories`) while its value still names it. A
 cycle or a longer chain leaves the loser's triples open and logs a warning, and a write
 records the pair for `projection_repair`; a pair even the repair cannot read abandons
 its row (status `abandoned`, with `unfollowable_chain: N pair(s)` in `error_message`).
