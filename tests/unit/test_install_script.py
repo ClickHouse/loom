@@ -141,7 +141,10 @@ def test_a_rerun_for_the_same_server_keeps_the_saved_password(install) -> None:
     assert run("--clickhouse", "https://loom:first@h.example").returncode == 0
     rerun = run("--clickhouse", "https://loom@h.example", start_new_session=True)
     assert rerun.returncode == 0, rerun.stderr
+    assert "Using the ClickHouse password saved in .env" in rerun.stdout
     assert _env(target)["LOOM_CH_PASSWORD"] == "'first'"
+    other_port = run("--clickhouse", "https://loom@h.example:9440", start_new_session=True)
+    assert other_port.returncode == 1 and "no ClickHouse password" in other_port.stderr
     other = run("--clickhouse", "https://someone@h.example", start_new_session=True)
     assert other.returncode == 1 and "no ClickHouse password" in other.stderr
 

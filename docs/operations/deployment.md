@@ -58,7 +58,7 @@ Sizing (web replicas, uvicorn processes, the workers container) is in
   `loom.*` through `GRANT CURRENT GRANTS` (ClickHouse Cloud does not accept `GRANT ALL`),
   `SELECT` on the system tables Loom reads, and `READ ON REMOTE`, which
   `clusterAllReplicas` needs to ask every replica for its version (a self-managed server
-  stores it as full `REMOTE`). It creates the reader with `OR REPLACE`, so check that no
+  shows it as `REMOTE` in `SHOW GRANTS`; writes through `remote()` are still refused). It creates the reader with `OR REPLACE`, so check that no
   other account has that name: `ch-setup` running the SQL itself refuses one it did not
   make.
 - **The query log.** Loom reads `system.query_log` for each request's cost, so the Loom
@@ -73,9 +73,10 @@ Sizing (web replicas, uvicorn processes, the workers container) is in
 
 Every boot runs the same checks before it connects (the oldest replica's version, the
 database, the grants) and stops with one line naming the fix. A process that does not
-migrate (`LOOM_BOOT_MIGRATE=false`, a read replica) needs only `SELECT`, `INSERT`,
-`ALTER UPDATE` and `ALTER DELETE` on `loom.*`. `loom doctor` reports the checks as
-`clickhouse_preflight`.
+migrate (`LOOM_BOOT_MIGRATE=false`, a read replica) is checked only for `SELECT`, `INSERT`,
+`ALTER UPDATE` and `ALTER DELETE` on `loom.*`; one that runs the background workers also
+optimizes, truncates, drops and refreshes tables there, so give it everything on `loom.*`.
+`loom doctor` reports the checks as `clickhouse_preflight`.
 
 ### Local stack from a clone
 
@@ -116,7 +117,8 @@ The bundled ClickHouse starts with the files in `deploy/clickhouse-config/`:
   is `LOOM_CH_PASSWORD`. The bundled server defines it in `nlp_user_settings.xml`;
   `loom ch-setup` creates the same user and profile with SQL on any other server, from
   the current `LOOM_CH_CALLER_SHAPED_*` values. Raising one of those settings on the
-  bundled server needs the XML profile raised too; elsewhere, re-run `ch-setup`. The
+  bundled server needs the XML profile raised too; elsewhere, re-run `ch-setup`, as after
+  changing `LOOM_CH_PASSWORD`, which the reader shares. The
   server probes the user at boot; `/v1/health` and `loom doctor` report
   `ch_reader_user_failing` when ClickHouse refuses it. Unset, the reads run as
   `LOOM_CH_USER`.

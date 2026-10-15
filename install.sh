@@ -126,10 +126,13 @@ if [ -n "$CH_URL" ]; then
   if [ -z "$CH_PASSWORD_SET" ] && [ -n "${LOOM_CH_PASSWORD+set}" ]; then
     CH_PASSWORD=$LOOM_CH_PASSWORD CH_PASSWORD_SET=1
   fi
-  # A rerun for the same user and server keeps the password .env already holds.
-  if [ -z "$CH_PASSWORD_SET" ] && [ "$(get_env LOOM_CH_HOST)" = "$CH_HOST" ] \
-    && [ "$(get_env LOOM_CH_USER)" = "$CH_USER" ] && grep -q '^LOOM_CH_PASSWORD=' "$INSTALL_DIR/.env"; then
+  # Without a terminal, a rerun for the same server and user keeps the
+  # password .env holds; with one, it asks, so a wrong saved one can be fixed.
+  saved="$(get_env LOOM_CH_HOST):$(get_env LOOM_CH_PORT):$(get_env LOOM_CH_USER)"
+  if [ -z "$CH_PASSWORD_SET" ] && ! (: </dev/tty) 2>/dev/null \
+    && [ "$saved" = "$CH_HOST:$CH_PORT:$CH_USER" ] && grep -q '^LOOM_CH_PASSWORD=' "$INSTALL_DIR/.env"; then
     KEEP_PASSWORD=1
+    printf 'Using the ClickHouse password saved in .env; set LOOM_CH_PASSWORD to replace it\n'
   fi
   [ -n "$CH_PASSWORD_SET${KEEP_PASSWORD:-}" ] || read_password
   # .env holds it between single quotes, which take everything else literally.

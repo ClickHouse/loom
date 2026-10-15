@@ -181,7 +181,11 @@ def _set_up(ch: Any, user: str, reader: str) -> int:
         return 1
     elif owner == "unknown":
         # It may be someone else's account: replace nothing that cannot be seen.
-        print(f"✗ {user!r} may not list users, so cannot tell who owns {reader}", file=sys.stderr)
+        print(
+            f"✗ {user!r} may not read system.users or system.settings_profile_elements, "
+            f"so cannot tell who owns {reader}",
+            file=sys.stderr,
+        )
         _print_admin_sql(user, reader)
         return 1
     else:
