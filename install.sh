@@ -284,6 +284,10 @@ umask "$saved_umask"
 
 if [ "$SKIP_START" = 1 ]; then
   printf 'Installed Loom %s stack files in %s\n' "$version" "$INSTALL_DIR"
+  case ",$(get_env COMPOSE_PROFILES)," in
+    *,bundled,*) ;;
+    *) printf 'Before the first `up`, prepare your ClickHouse with:\n  docker compose --project-directory %s run --rm loom loom ch-setup\n' "$INSTALL_DIR" ;;
+  esac
   exit 0
 fi
 
@@ -309,7 +313,8 @@ port=$(get_env LOOM_PORT)
 port=${port:-7777}
 # Loom listens where it is published: loopback unless LOOM_BIND_HOST names an address.
 case $(get_env LOOM_BIND_HOST) in
-  '' | 0.0.0.0 | ::) host=127.0.0.1 ;;
+  '' | 0.0.0.0) host=127.0.0.1 ;;
+  ::) host='[::1]' ;; # Docker publishes [::] on IPv6 only
   *:*) host="[$(get_env LOOM_BIND_HOST)]" ;;
   *) host=$(get_env LOOM_BIND_HOST) ;;
 esac
@@ -318,7 +323,7 @@ attempt=0
 while [ "$attempt" -lt 90 ]; do
   if curl -fsS "$health" 2>/dev/null | grep -q '"status"[[:space:]]*:[[:space:]]*"ok"'; then
     printf '\nLoom is ready.\n'
-    printf 'Dashboard: http://127.0.0.1:%s/me\n' "$port"
+    printf 'Dashboard: http://%s:%s/me\n' "$host" "$port"
     printf 'Files:     %s\n' "$INSTALL_DIR"
     printf 'Logs:      docker compose --project-directory %s logs -f loom\n' "$INSTALL_DIR"
     printf 'Stop:      docker compose --project-directory %s --profile bundled down\n' "$INSTALL_DIR"

@@ -126,7 +126,9 @@ The bundled ClickHouse starts with the files in `deploy/clickhouse-config/`:
   is `LOOM_CH_PASSWORD`. The bundled server defines it in `nlp_user_settings.xml`;
   `loom ch-setup` creates the same user and profile with SQL on any other server, from
   the current `LOOM_CH_CALLER_SHAPED_*` values. Raising one of those settings on the
-  bundled server needs the XML profile raised too; elsewhere, re-run `ch-setup`. After
+  bundled server needs the XML profile raised too; elsewhere, change `.env`, re-run
+  `ch-setup`, then recreate Loom (`up -d --force-recreate loom`): caller-shaped reads in
+  between fail on the profile's bounds. After
   changing `LOOM_CH_PASSWORD`, which the reader shares, drop the reader
   (`DROP USER loom_reader; DROP SETTINGS PROFILE loom_reader`) and re-run `ch-setup`: it
   replaces only a reader that logs in with the current password. The server probes the

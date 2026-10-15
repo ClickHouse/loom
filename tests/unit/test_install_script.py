@@ -78,6 +78,7 @@ def test_a_default_install_runs_the_bundled_clickhouse(install) -> None:
     env = _env(target)
     assert env["COMPOSE_PROFILES"] == "bundled"
     assert "LOOM_CH_HOST" not in env
+    assert "ch-setup" not in result.stdout  # the bundled server needs none
     assert stat.S_IMODE((target / ".env").stat().st_mode) == 0o600
 
 
@@ -332,3 +333,39 @@ def test_a_setting_env_cannot_keep_is_refused(install, key: str, value: str) -> 
     result = run(**{key: value})
     assert result.returncode == 1 and key in result.stderr
     assert not (target / ".env").exists()
+
+
+@pytest.mark.parametrize(
+    ("bind_host", "polled"),
+    [
+        ("", "127.0.0.1"),
+        ("0.0.0.0", "127.0.0.1"),
+        ("::", "[::1]"),
+        ("::1", "[::1]"),
+        ("172.17.0.1", "172.17.0.1"),
+    ],
+)
+def test_the_health_check_polls_where_loom_is_published(
+    install, installer_env: dict[str, str], bind_host: str, polled: str
+) -> None:
+    run, target = install
+    seen = Path(installer_env["HOME"]) / "curl.log"
+    curl = Path(installer_env["PATH"].split(":")[0]) / "curl"
+    curl.write_text(f'#!/bin/sh\necho "$@" >> {seen}\necho \'{{"status":"ok"}}\'\n')
+    curl.chmod(0o755)
+    # Every compose call (pull, up) succeeds; only the version is asked for its output.
+    docker = curl.with_name("docker")
+    docker.write_text(
+        '#!/bin/sh\n[ "$1 $2 $3" = "compose version --short" ] && echo 2.29.1\nexit 0\n'
+    )
+    result = run(LOOM_SKIP_START="0", LOOM_PORT="28977", LOOM_BIND_HOST=bind_host)
+    assert result.returncode == 0, result.stderr
+    assert f"http://{polled}:28977/v1/health" in seen.read_text()
+    assert f"Dashboard: http://{polled}:28977/me" in result.stdout
+
+
+def test_a_prepared_install_on_an_outside_clickhouse_names_ch_setup(install) -> None:
+    run, target = install
+    result = run("--clickhouse", "https://loom:pw@h.example")
+    assert result.returncode == 0, result.stderr
+    assert "run --rm loom loom ch-setup" in result.stdout

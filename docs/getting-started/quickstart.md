@@ -70,7 +70,10 @@ LOOM_INSTALL_BUNDLE="$PWD/loom-stack.tar.gz" \
 `LOOM_PORT`, `LOOM_BIND_HOST` and `LOOM_IMAGE_REPOSITORY` given to the installer are
 written to the install directory's `.env`, so later `docker compose` commands there and
 later installer runs use the same port and image. An install made by an earlier release
-kept only the template's port in `.env`: pass `LOOM_PORT` once more on its upgrade.
+kept only the template's port in `.env`: pass `LOOM_PORT` once more on its upgrade. A
+`LOOM_BIND_HOST` other than loopback publishes Loom beyond this host, and the server
+refuses to start that way without `LOOM_PUBLIC_BASE_URL` and sign-in: install with
+`LOOM_SKIP_START=1`, set them in `.env` (below), then run the installer again.
 
 Each release runs the ClickHouse release that was latest when it was built, so rerunning
 the same Loom version keeps its ClickHouse; installing a newer Loom version moves it.
@@ -104,10 +107,11 @@ LOOM_SELF_SIGNUP=open
 ```
 
 Keep the generated `COMPOSE_PROJECT_NAME` and `LOOM_JWT_SECRET`. Then pull and start
-the stack:
+the stack (with your own ClickHouse, run `ch-setup` first, as the installer said):
 
 ```bash
 docker compose --project-directory "$HOME/.loom" pull
+docker compose --project-directory "$HOME/.loom" run --rm loom loom ch-setup  # your own ClickHouse only
 docker compose --project-directory "$HOME/.loom" up -d
 ```
 
