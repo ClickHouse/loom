@@ -753,7 +753,7 @@ requires-dist = [
     { name = "argon2-cffi", specifier = ">=23.1" },
     { name = "boto3", marker = "extra == 'ingest'", specifier = ">=1.34" },
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.0" },
-    { name = "clickhouse-connect", specifier = ">=1.2" },
+    { name = "clickhouse-connect", specifier = ">=1.7" },
     { name = "fastapi", specifier = ">=0.118" },
     { name = "fastembed", marker = "extra == 'local-embedder'", specifier = ">=0.4" },
     { name = "google-re2", specifier = ">=1.1" },
