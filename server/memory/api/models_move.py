@@ -25,7 +25,10 @@ class MemoryMoveInput(_Identity):
     confidence, validity and provenance pointer unless an override below says
     otherwise; the source row becomes a `status='duplicate'` redirect to it
     (`keep_redirect`, default) or is tombstoned. A source that is already a
-    redirect answers 409 `ALREADY_REDIRECTED`.
+    redirect answers 409 `ALREADY_REDIRECTED`; one with a change scheduled for later
+    (a `memory.amend` transition or a future `valid_at`) answers 409
+    `SCHEDULED_CHANGE` — move it once the change applies, or cancel the plan first
+    with `memory.amend change_kind='correct'`, the current value and no bounds.
     """
 
     from_key: str = Field(..., description="The key to rename.")

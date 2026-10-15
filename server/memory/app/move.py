@@ -20,7 +20,6 @@ from fastapi import HTTPException
 import server.memory.store as memory_repo
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
-from server.core.errors import PreconditionFailedError
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_crud import MemoryDeleteInput, MemorySetInput
@@ -39,6 +38,10 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 _PREVIEW_CHARS = 200
+_CANCEL_PLAN = (
+    "To move it now, cancel the plan: memory.amend change_kind='correct' with the "
+    "current value and no bounds."
+)
 
 
 def _refuse(status: int, code: str, message: str, **extra: Any) -> HTTPException:
@@ -158,8 +161,7 @@ async def _refuse_pending_plans(input: Any) -> None:
         raise _refuse(
             409,
             "SCHEDULED_CHANGE",
-            f"{input.from_key!r} has a scheduled change; move it once that applies, "
-            "or amend it first",
+            f"{input.from_key!r} has a scheduled change; move it once that applies. {_CANCEL_PLAN}",
         )
 
 
@@ -181,8 +183,14 @@ async def _redirect_source(source: MemoryRow, dest_id: str, ch: Any) -> None:
     if not await memory_repo.insert_over_heads(
         [(row, frozenset({"status", "duplicate_of", "updated_at"}))], ch=ch
     ):
-        raise PreconditionFailedError(
-            f"{source.memory_key!r} changed since it was read; re-read and retry"
+        # A plan landed on the source since `_refuse_pending_plans` (the publisher
+        # re-checks under its lock), or the row changed: the destination is written,
+        # the source is left as it was.
+        raise _refuse(
+            409,
+            "SCHEDULED_CHANGE",
+            f"{source.memory_key!r} changed or gained a scheduled change while it was "
+            f"moved; {dest_id!r} was written, the source left in place. {_CANCEL_PLAN}",
         )
     try:
         mirror = await memory_repo.embedding_mirror_for_keys(

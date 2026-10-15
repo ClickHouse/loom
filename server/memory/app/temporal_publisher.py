@@ -902,6 +902,8 @@ def _as_metadata(
         return "locked"
     if "expires_at" in fields and _locked_against(served, "expire", now):
         return "locked"
+    if row.get("duplicate_of") and "duplicate_of" in fields and _scheduled(served, now):
+        return "scheduled"  # a plan landed since the move checked: it would revive the key
     if not claims:
         # Nothing holds now: a removal of nothing restates; any other metadata write
         # (built from a read of what has since gone) changes nothing, never revives.
@@ -920,6 +922,11 @@ def _as_metadata(
         if c in r and c not in fields and c not in _NOT_REBASED:
             r[c] = v
     return ""
+
+
+def _scheduled(served: Sequence[tm.Assertion], now: datetime) -> bool:
+    """Does the key hold a claim that starts later (a plan not yet due)?"""
+    return any(a.valid_from is not None and a.valid_from > now for a in served)
 
 
 def _same_memory(row: Mapping[str, Any], current: Mapping[str, Served], now: datetime) -> bool:

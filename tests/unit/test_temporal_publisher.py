@@ -1410,3 +1410,17 @@ def test_a_precondition_holds_on_a_row_a_metadata_change_wrote(
     )
     with write_intent(intent):
         assert run(pub.publish_rows([b]))  # the caller checked its hash against this row
+
+
+def test_a_redirect_never_lands_on_a_key_with_a_plan(
+    journal: Journal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (head,) = run(
+        pub.publish_rows([mrow('"A"', valid_at=datetime(2026, 1, 1, tzinfo=UTC), **_LOCKLESS)])
+    )
+    plan = datetime.now(UTC) + timedelta(days=30)
+    assert run(pub.publish_rows([mrow('"B"', valid_at=plan, **_LOCKLESS)])) == []
+    _over(journal, monkeypatch, head)
+    moved = _copy(head, status="duplicate", duplicate_of="dest")
+    with _meta(moved, "status", "duplicate_of"):
+        assert run(pub.publish_rows([moved])) == []  # the plan would revive it behind the redirect
