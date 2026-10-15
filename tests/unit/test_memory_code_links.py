@@ -3781,3 +3781,20 @@ def test_the_settle_window_has_a_floor() -> None:
 
     with pytest.raises(ValidationError):
         Settings(memory_code_links_settle_seconds=5)
+
+
+@pytest.mark.asyncio
+async def test_elsewhere_finds_the_same_name_and_the_same_name_in_another_module(
+    monkeypatch,
+) -> None:
+    # the same qualified name; its path gives it another local name
+    same = Definition("lib/a.py", "pkg.a::fn", "fn")
+    moved = Definition("pkg/b.py", "pkg.b::fn", "fn")  # the same local name in another module
+    other = Definition("pkg/b.py", "pkg.b::gn", "gn")
+
+    async def candidates(org, cns, *, names=None, qualified_names=None):
+        return [same] if qualified_names else [moved, other]
+
+    monkeypatch.setattr(code_link_recheck.code, "candidates", candidates)
+    found = await code_link_recheck._elsewhere("o", "code-a", {"pkg.a::fn": "pkg/a.py"})
+    assert dict(found) == {"pkg.a::fn": [same, moved]}
