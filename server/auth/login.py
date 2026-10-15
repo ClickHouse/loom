@@ -27,7 +27,6 @@ from server.auth.attempts import Attempts, client_address
 from server.auth.jwt import mint_token
 from server.auth.passwords import hash_password, verify_password_off_loop
 from server.core.ch import get_client
-from server.core.naming import SSO_NAMESPACE_PREFIX
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -51,6 +50,9 @@ class LoginOutput(BaseModel):
     expires_at: datetime
 
 
+# A signed-in person: (subject, org, namespaces, roles).
+Identity = tuple[str, str, list[str], list[str]]
+
 # Generic auth-failure message — never leak whether the account exists.
 _BAD_CREDS = {"code": "AUTH_INVALID", "message": "Invalid email or password."}
 
@@ -64,6 +66,10 @@ class LoginThrottled(Exception):
     """Too many failed sign-ins for this identifier or address; retry later."""
 
 
+class SignInUnavailable(Exception):
+    """A sign-in could not read or write what it needs; retry later."""
+
+
 @functools.cache
 def _unknown_account_hash() -> str:
     """A real argon2id hash of a random secret, verified against when no
@@ -75,7 +81,7 @@ def _unknown_account_hash() -> str:
 
 async def resolve_user_credentials(
     identifier: str, password: str, *, address: str = ""
-) -> tuple[str, str, list[str], list[str]] | None:
+) -> Identity | None:
     """Verify (email-or-namespace + password) → (subject, org, namespaces, roles).
 
     Shared by /v1/auth/login and the OAuth /authorize endpoint so the two can't
@@ -97,9 +103,7 @@ async def resolve_user_credentials(
     return resolved
 
 
-async def _check_credentials(
-    ident: str, password: str
-) -> tuple[str, str, list[str], list[str]] | None:
+async def _check_credentials(ident: str, password: str) -> Identity | None:
     ch = get_client()
     # Email first (one email may own several namespaces → mint with all of them).
     rows = await ch.query_all(
@@ -144,8 +148,8 @@ async def _check_credentials(
 
 
 async def _with_restricted_grants(
-    identity: tuple[str, str, list[str], list[str]],
-) -> tuple[str, str, list[str], list[str]]:
+    identity: Identity,
+) -> Identity:
     """Add the restricted namespaces the person holds a grant on to a resolved
     identity (password and OIDC share it so the two never drift on the
     namespace set)."""
@@ -198,9 +202,7 @@ async def widen_with_restricted_grants(subject: str, org: str, namespaces: list[
     return own + extra
 
 
-def _identity_from_rows(
-    rows: list[dict[str, Any]], *, verified_email: str = ""
-) -> tuple[str, str, list[str], list[str]]:
+def _identity_from_rows(rows: list[dict[str, Any]], *, verified_email: str = "") -> Identity:
     """Map matched loom.namespaces rows → (subject, org, namespaces, roles).
 
     Shared by password login and OIDC so the two can't drift on identity /
@@ -262,7 +264,7 @@ async def refreshed_roles(subject: str, org: str, roles: list[str]) -> list[str]
 
 async def resolve_identity_for_email(
     email: str,
-) -> tuple[str, str, list[str], list[str]] | None:
+) -> Identity | None:
     """Map an externally-verified email (e.g. an OIDC id_token's) to a loom
     identity. No password — the IdP already authenticated the user. Matches
     active SSO-only accounts (no password) by contact_email. An account made
@@ -290,76 +292,6 @@ async def resolve_identity_for_email(
     if len({r["org"] for r in rows}) > 1:
         return None
     return await _with_restricted_grants(_identity_from_rows(rows, verified_email=ident))
-
-
-async def jit_provision_for_email(
-    email: str,
-) -> tuple[str, str, list[str], list[str]] | None:
-    """Just-in-time provisioning for OIDC: when enabled, a verified email with
-    no loom account gets a personal namespace auto-created (in oidc_jit_org),
-    then resolves like any other account. Returns None when JIT is off or the
-    email's domain isn't allowed (caller then rejects the login).
-    """
-    import hashlib
-
-    from server.auth.self_signup import provision_account
-    from server.observability import audit
-    from server.settings import settings as _settings
-
-    if not _settings.oidc_jit_provision:
-        return None
-    ident = email.strip().lower()
-    if "@" not in ident:
-        return None
-    domain = ident.rsplit("@", 1)[1]
-    allowed = _settings.oidc_jit_email_domains_set
-    if allowed and domain not in allowed:
-        return None
-    # Deterministic, unique-per-email namespace: a readable slug + an email
-    # hash so two different emails can never collide onto one account.
-    local = ident.split("@", 1)[0]
-    slug = "".join(c if c.isalnum() else "-" for c in local).strip("-")[:40] or "user"
-    ns = f"{SSO_NAMESPACE_PREFIX}{slug}-{hashlib.sha256(ident.encode()).hexdigest()[:8]}"
-    taken = await get_client().query_one(
-        "SELECT 1 FROM loom.namespaces FINAL "
-        "WHERE org = {org:String} AND namespace = {ns:String} LIMIT 1",
-        params={"org": _settings.oidc_jit_org, "ns": ns},
-    )
-    if taken is not None:
-        # This person's own first sign-in, a moment ago in another request?
-        mine = await resolve_identity_for_email(ident)
-        if mine is not None:
-            return mine
-        # Else someone else made it first, and their grants on it must not
-        # reach this person's data.
-        log.warning("oidc jit: namespace %r already exists; refusing the sign-in", ns)
-        await audit.emit(
-            "auth.signin_denied",
-            org=_settings.oidc_jit_org,
-            namespace=ns,
-            actor=ident,
-            subject={"provider": "oidc", "reason": "jit namespace taken"},
-        )
-        return None
-    await provision_account(
-        org=_settings.oidc_jit_org,
-        namespace=ns,
-        subject=ns,
-        contact_email=ident,
-        password_hash="",  # SSO-only account
-        description="Auto-provisioned via OIDC SSO.",
-    )
-    await audit.emit(
-        "auth.jit_provisioned",
-        org=_settings.oidc_jit_org,
-        namespace=ns,
-        actor=ident,
-        subject={"provider": "oidc", "namespace": ns},
-    )
-    # Re-resolve through the normal mapping (applies admin-promotion + the
-    # cross-org guard). A simultaneous first login for the same email
-    # writes the same (org, namespace) row — ReplacingMergeTree collapses it.
-    return await resolve_identity_for_email(ident)
 
 
 @router.post("/v1/auth/login", response_model=LoginOutput)

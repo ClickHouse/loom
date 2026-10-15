@@ -236,8 +236,8 @@ class ConversationSearchInput(BaseModel):
     role: ConversationRole | None = None  # optional: filter by speaker
     # At most this many hits (1-200).
     top_k: int = Field(default=20, ge=1, le=200)
-    # "all_mine" fans out across every namespace the caller belongs to —
-    # symmetric with memory.search / knowledge.search.
+    # "all_mine" also reads the caller's own namespaces, up to
+    # `memory_search_fanout_max_namespaces`, as knowledge.search does.
     namespace_scope: Literal["this", "all_mine"] = "all_mine"
 
 
@@ -253,6 +253,9 @@ class _ConversationHit(BaseModel):
 class ConversationSearchOutput(BaseModel):
     # Matching messages, most similar first; empty when none clears the similarity floor.
     hits: list[_ConversationHit]
+    # Namespaces of the caller an all_mine search did not read because it stops
+    # at `memory_search_fanout_max_namespaces`; address one by name to search it.
+    namespaces_skipped: list[str] = Field(default_factory=list)
 
 
 # conversation.threads — recent thread list (grouped over loom.conversations),

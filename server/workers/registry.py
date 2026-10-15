@@ -378,7 +378,7 @@ _WORKERS: tuple[_Worker, ...] = (
         "task_lease_sweep_interval_seconds",
         idle_interval="task_lease_sweep_idle_interval_seconds",
     ),
-    # oauth_claims_sweep: always-on; drops sign-in keys a month after their last change.
+    # oauth_claims_sweep: always-on; drops sign-in keys once their credential expired.
     _Worker(
         "oauth_claims_sweep",
         "server.auth.claims",

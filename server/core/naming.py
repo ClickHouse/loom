@@ -26,8 +26,11 @@ SENTINEL = "-"
 SSO_NAMESPACE_PREFIX = "u-"
 
 
-# The exact shape: `u-`, the email's local part (up to 40), 8 hex of its hash.
-_SSO_NAMESPACE_RE = re.compile(rf"{SSO_NAMESPACE_PREFIX}.{{1,40}}-[0-9a-f]{{8}}")
+# The names JIT tries (server/auth/jit.py): `u-`, the email's local part (up
+# to 40), 8 hex of its hash, then maybe `-2` to `-6` or 8 more random hex.
+_SSO_NAMESPACE_RE = re.compile(
+    rf"{SSO_NAMESPACE_PREFIX}.{{1,40}}-[0-9a-f]{{8}}(-[2-6]|-[0-9a-f]{{8}})?"
+)
 
 
 def reserved_for_sso(namespace: str) -> bool:

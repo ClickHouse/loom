@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 
+from server.auth.grant_claims import admins_change, grant_change
+from server.core.errors import GrantBusyError
 from server.identity.api.models_grants import (
     GrantsApproveInput,
     GrantsApproveOutput,
@@ -28,6 +31,10 @@ from server.operations.read_projection import project_rows
 log = logging.getLogger(__name__)
 
 
+# A revoke that finds the grant made admin under it starts over this many times.
+_REVOKE_TRIES = 3
+
+
 def _version() -> int:
     return time.time_ns()
 
@@ -44,8 +51,7 @@ async def adopt_namespace(
     if await grants_repo.count_active_admins(org, namespace, ch=ch) > 0:
         return None
     now = datetime.now(UTC).replace(tzinfo=None)
-    await ch.insert(
-        "loom.namespace_grants",
+    await grants_repo.insert_rows(
         [
             {
                 "org": org,
@@ -58,7 +64,7 @@ async def adopt_namespace(
                 "version": time.time_ns(),
             }
         ],
-        settings={"async_insert": 0, "wait_for_async_insert": 1},
+        ch=ch,
     )
     return now
 
@@ -110,6 +116,22 @@ async def _refuse_accidental_downgrade(input: GrantsCreateInput, subject: str) -
     return existing
 
 
+def _refuse_approval_below(current: str, target: str, input: GrantsApproveInput) -> None:
+    """Approving an elevation never lowers the base grant: lowering is
+    `grants.create replace=true`, done on purpose, never on the side."""
+    if grant_rank(target) >= grant_rank(current):
+        return
+    from server.core.errors import GrantWouldDowngradeError
+
+    raise GrantWouldDowngradeError(
+        f"{input.subject!r} is currently {current} on {input.namespace!r}; approving their "
+        f"request as {target} would lower them. Approve at {current} or above, or lower "
+        f"them with grants.create replace=true.",
+        current_role=current,
+        requested_role=target,
+    )
+
+
 async def handle_grants_create(input: GrantsCreateInput) -> GrantsCreateOutput:
     """Insert or raise a grant; lower one only on `replace=true`. Admin-issued grants are
     always active (the admin is the approver),
@@ -122,7 +144,36 @@ async def handle_grants_create(input: GrantsCreateInput) -> GrantsCreateOutput:
     from server.auth.aliases import canonical_subject
 
     subject = await canonical_subject(input.org, input.subject)
+
+    async def _write(_row: GrantState | None) -> datetime:
+        return await _write_grant(input, subject)
+
+    if input.replace and input.role != "admin":
+        # Only `replace=true` lowers a grant (else 409): it may take admin.
+        now = await _taking_admin(input, subject, _write, lowered_to=input.role)
+    else:
+        async with grant_change(input.org, input.namespace, subject):
+            now = await _write_grant(input, subject)
+    if input.role == "admin":
+        # A maintainer maintains every branch of the repository.
+        from server.code.app.index import maintainers
+
+        await maintainers.sync_quietly(input.org, input.namespace)
+    return GrantsCreateOutput(
+        org=input.org,
+        namespace=input.namespace,
+        subject=input.subject,
+        role=input.role,
+        granted_at=now,
+    )
+
+
+async def _write_grant(input: GrantsCreateInput, subject: str) -> datetime:
+    """`grants.create`'s read of the current grant and its write, under the
+    grant's claim."""
     existing = await _refuse_accidental_downgrade(input, subject)
+    if existing is not None and _active_admin(existing) and input.role != "admin":
+        await _refuse_last_admin(input)
     pending_role = existing.pending_role if existing is not None else None
     pending_since = existing.pending_since if existing is not None else None
     if pending_role is not None and grant_rank(input.role) >= grant_rank(str(pending_role)):
@@ -150,18 +201,7 @@ async def handle_grants_create(input: GrantsCreateInput) -> GrantsCreateOutput:
             "version": _version(),
         }
     )
-    if input.role == "admin":
-        # A maintainer maintains every branch of the repository.
-        from server.code.app.index import maintainers
-
-        await maintainers.sync_quietly(input.org, input.namespace)
-    return GrantsCreateOutput(
-        org=input.org,
-        namespace=input.namespace,
-        subject=input.subject,
-        role=input.role,
-        granted_at=now,
-    )
+    return now
 
 
 async def handle_grants_list(input: GrantsListInput) -> GrantsListOutput:
@@ -252,39 +292,23 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
     if row is None:
         return GrantsRevokeOutput(revoked=False)
 
-    # Only an active admin row is load-bearing for ownership.
-    if row.role == "admin" and (row.status or "active") == "active":
-        if await grants_repo.count_active_admins(input.org, input.namespace) <= 1:
-            from server.core.errors import PreconditionFailedError
+    async def _write(row: GrantState | None) -> tuple[GrantState, datetime] | None:
+        return None if row is None else (row, await _write_revoke(input, subject, row))
 
-            raise PreconditionFailedError(
-                f"{input.subject!r} is the only admin of "
-                f"{input.namespace!r}; promote another member to admin "
-                f"first (grants.create role=admin)"
-            )
-
-    now = datetime.now(UTC).replace(tzinfo=None)
-    await grants_repo.insert_row(
-        {
-            "org": input.org,
-            "namespace": input.namespace,
-            "subject": subject,
-            "role": row.role,
-            "status": row.status or "active",
-            "granted_at": now,
-            "granted_by": row.granted_by,
-            "revoked_at": now,
-            "version": _version(),
-        }
-    )
-    if row.role == "admin" and (row.status or "active") == "active":
-        # A revoked maintainer leaves every branch of the repository.
-        from server.code.app.index import maintainers
-
-        await maintainers.revoke_quietly(input.org, input.namespace, subject)
-    # The tokens this person minted lose their own grants here. Best-effort like the
-    # maintainer fan-out above: the person's revoke has landed; a failed cascade is logged,
-    # never a 500.
+    done = None
+    if not _active_admin(row):
+        # A reader's grant, or a request: only its own claim, unless it became admin.
+        async with grant_change(input.org, input.namespace, subject):
+            row = await grants_repo.find_any_grant(input.org, input.namespace, subject)
+            if row is None or not _active_admin(row):
+                done = await _write(row)
+    if done is None and row is not None and _active_admin(row):
+        done = await _taking_admin(input, subject, _write)
+    if done is None:
+        return GrantsRevokeOutput(revoked=False)
+    row, now = done
+    # The tokens this person minted lose their own grants here. Best-effort: the
+    # person's revoke has landed; a failed cascade is logged, never a 500.
     from server.identity.app import token_grants
 
     try:
@@ -300,9 +324,100 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
     return GrantsRevokeOutput(revoked=True, revoked_at=now)
 
 
+async def _taking_admin[T](
+    input: GrantsRevokeInput | GrantsCreateInput,
+    subject: str,
+    write: Callable[[GrantState | None], Awaitable[T]],
+    *,
+    lowered_to: str | None = None,
+) -> T:
+    """A change that may take admin from `subject` (a revoke, or a lowering to
+    `lowered_to`), under the repository's and the namespace's admins claims: a
+    maintainer is first taken off the other branches, so when one fails the
+    grant is still live and a retry redoes it all; then `write` runs under the
+    grant's own claim with the grant as read there."""
+    from server.code.app.index import maintainers
+
+    org, namespace = input.org, input.namespace
+    async with (
+        maintainers.repo_change(org, namespace, subject),
+        maintainers.repo_admins_change(org, namespace),
+        admins_change(org, namespace),
+    ):
+        fanned_out = False
+        for _ in range(_REVOKE_TRIES):
+            row = await grants_repo.find_any_grant(org, namespace, subject)
+            if row is not None and _active_admin(row) and not fanned_out:
+                await _refuse_last_admin(input)
+                await maintainers.revoke_repo_maintainer(
+                    org, namespace, subject, lowered_to=lowered_to
+                )
+                fanned_out = True
+            async with grant_change(org, namespace, subject):
+                # Read again under the claim: what was read before it may have changed.
+                row = await grants_repo.find_any_grant(org, namespace, subject)
+                if row is not None and _active_admin(row) and not fanned_out:
+                    continue  # made admin since the first read: fan out first
+                return await write(row)
+    raise GrantBusyError(f"{input.subject!r} on {org}/{namespace} keeps changing; retry shortly")
+
+
+def _active_admin(row: GrantState) -> bool:
+    # Only an active admin row is load-bearing for ownership.
+    return row.role == "admin" and (row.status or "active") == "active"
+
+
+async def _refuse_last_admin(input: GrantsRevokeInput | GrantsCreateInput) -> None:
+    """Refuse a change that would leave the namespace without an admin; it is
+    counted under `admins_change`."""
+    if await grants_repo.count_active_admins(input.org, input.namespace) <= 1:
+        from server.core.errors import PreconditionFailedError
+
+        raise PreconditionFailedError(
+            f"{input.subject!r} is the only admin of "
+            f"{input.namespace!r}; promote another member to admin "
+            f"first (grants.create role=admin)"
+        )
+
+
+async def _write_revoke(input: GrantsRevokeInput, subject: str, row: GrantState) -> datetime:
+    """`grants.revoke`'s write, under the grant's claim. Refuses to revoke a
+    namespace's last active admin."""
+    if _active_admin(row):
+        await _refuse_last_admin(input)
+    now = datetime.now(UTC).replace(tzinfo=None)
+    await grants_repo.insert_row(
+        {
+            "org": input.org,
+            "namespace": input.namespace,
+            "subject": subject,
+            "role": row.role,
+            "status": row.status or "active",
+            "granted_at": now,
+            "granted_by": row.granted_by,
+            "revoked_at": now,
+            "version": _version(),
+        }
+    )
+    return now
+
+
 async def handle_grants_approve(input: GrantsApproveInput) -> GrantsApproveOutput:
     """Approve or reject a pending grant. No-op if it doesn't exist."""
+    async with grant_change(input.org, input.namespace, input.subject):
+        out = await _decide_request(input)
+    if out.decision == "approve" and out.role == "admin":
+        # An approved maintainer maintains every branch.
+        from server.code.app.index import maintainers
 
+        await maintainers.sync_quietly(input.org, input.namespace)
+    return out
+
+
+async def _decide_request(input: GrantsApproveInput) -> GrantsApproveOutput:
+    """`grants.approve`'s read of the request and its write, under the grant's
+    claim: a promotion or revoke landing after the read would otherwise be
+    written over."""
     row = await grants_repo.find_any_grant(
         input.org,
         input.namespace,
@@ -331,6 +446,8 @@ async def handle_grants_approve(input: GrantsApproveInput) -> GrantsApproveOutpu
     # approved as reader"): `input.role` overrides what was asked; absent, the request is
     # approved as asked.
     target_role = input.role or pending_role or row.role
+    if input.decision == "approve" and not no_base_access:
+        _refuse_approval_below(row.role, str(target_role), input)
     await _enforce_code_ceiling(input.org, input.namespace, str(target_role))
     # granted_by on the new row is the approver, not the requester — the
     # audit trail and the "approved by …" notification need the right person.
@@ -354,11 +471,6 @@ async def handle_grants_approve(input: GrantsApproveInput) -> GrantsApproveOutpu
                 "version": _version(),
             }
         )
-        if str(target_role) == "admin":
-            # An approved maintainer maintains every branch.
-            from server.code.app.index import maintainers
-
-            await maintainers.sync_quietly(input.org, input.namespace)
     else:
         if no_base_access:
             # No base access → reject tombstones the whole row.

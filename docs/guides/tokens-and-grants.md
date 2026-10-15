@@ -206,14 +206,15 @@ answer to the user (the entity graph, conversation reads, exports, admin ops) is
 ## Give and take away grants
 
 `loom.namespace_grants` holds one row per `(org, namespace, subject)`: a role on one
-namespace above what the token carries. Grants only add.
+namespace above what the token carries. Grants add; where the subject holds one, a
+token's claim goes no further than it.
 
 | Op                      | Role   | Does                                                                                                                     |
 | ----------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------ |
 | `grants.create`         | admin  | Give `subject` a `role`. Below the subject's current role it answers 409 `GRANT_WOULD_DOWNGRADE` unless `replace: true`. |
 | `grants.revoke`         | admin  | Remove it; on a restricted namespace the grants of tokens the subject minted there go too.                               |
 | `grants.list`           | viewer | The namespace's grants.                                                                                                  |
-| `grants.approve`        | admin  | Activate a pending join request.                                                                                         |
+| `grants.approve`        | admin  | Activate a pending join request. Below the subject's current grant it answers 409: an approval never asks to lower one.  |
 | `grants.pending_for_me` | viewer | Requests waiting on the caller's approval.                                                                               |
 
 ```bash
@@ -222,12 +223,22 @@ curl -s "$LOOM_BASE_URL/v1/grants.create" -H "Authorization: Bearer $ADMIN_TOKEN
   -d '{"org":"acme","namespace":"team-shared","subject":"sa:triage","role":"viewer"}'
 ```
 
+- **A claim goes no further than the grant.** Where the subject holds a grant row on a
+  namespace the token names, of any status, the claim is capped at that grant: a
+  `grants.revoke`, a `replace: true` lowering, `namespace.leave`, `loom claim-release` or a
+  restore ends every older token's claim there at once on the server that made it and
+  within `LOOM_GRANT_CACHE_TTL_SECONDS` (10 s) on the others, and a pending or rejected
+  request caps it at no access. A scoped token keeps its own role there, capped at the
+  grant. A namespace an operator named at mint that was never granted to the subject keeps
+  its claim; revoke the token for that.
 - **Registering is owning.** `namespace.register` makes the caller the namespace's `admin`.
   With self-signup (`LOOM_IDENTITY_PROVIDER=trust-network`) the first principal to claim a
   name owns it; `loom claim-release --org <org> --namespace <ns>` revokes its grants,
-  clears the owner and deactivates it. The name stays reserved (its memories are kept, and
-  whoever claimed it next would own them); erasing the namespace removes the data but not
-  the reservation.
+  clears the owner and deactivates it. The name stays reserved
+  (its memories are kept, and whoever claimed it next would own them); erasing the
+  namespace removes the data but not the reservation.
+- **Restoring into a namespace needs its admin.** `namespace.restore` into an existing
+  namespace, active or soft-deleted, needs an admin of it.
 - **Service accounts inherit.** An `sa:` subject with no grant of its own on a namespace
   uses its creator's grant there, so a token minted from the dashboard follows the person
   who made it, including into namespaces they join later. Restricted namespaces are the
@@ -421,7 +432,22 @@ sign-in to an external IdP (`LOOM_OIDC_ISSUER`, `LOOM_OIDC_CLIENT_ID`,
 `LOOM_OIDC_CLIENT_SECRET`); Loom maps the verified email to an account and still mints its
 own token. `LOOM_OIDC_JIT_PROVISION=true` creates a personal namespace in `LOOM_OIDC_JIT_ORG`
 for a first sign-in with no account (`LOOM_OIDC_JIT_EMAIL_DOMAINS` restricts it); off, such
-a sign-in is refused.
+a sign-in is refused. A person who has an active account in that org, whatever its name, is
+signed in to it and never given another. JIT never rebuilds an existing name: a released,
+deleted or another account's one is skipped for the next free name, `<name>-2` and on,
+then a random suffix. Two first sign-ins of one person at the same moment are kept to one
+account on one server; on two servers, with every predictable name taken, each may pick a
+different random name, and an operator releases the extra one.
+
+To offboard a JIT user, revoke their subject (`loom revoke-token --subject <namespace>`)
+and delete their account: JIT refuses while any inactive account in the org still naming
+their email is revoked outright. Deleting alone is not offboarding (its owner can do it),
+and removing the domain from `LOOM_OIDC_JIT_EMAIL_DOMAINS` stops only new accounts from it,
+not the sign-in of an account that exists; removing the person at the IdP stops both. A
+revocation of a subject has no undo and lasts ten years: to let an offboarded person back
+in, `loom claim-release` the revoked account, which clears its contact so it names no one.
+That is also what a release does to an offboarded account tidied up later: it lets the
+person sign up again, under a new subject.
 
 **An aggregator acting for its users.** A subject listed in `LOOM_TRUSTED_CALLERS` may send
 `X-Loom-On-Behalf-Of: <subject>`: the call runs as that subject and every ledger row records

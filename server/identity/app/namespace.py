@@ -13,9 +13,10 @@ import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
+from server.core import grant_cache
 from server.core.ch import CHClient, get_client
 from server.core.datetimes import naive_utc_now_seconds
-from server.core.errors import ValidationError
+from server.core.errors import PreconditionFailedError, ValidationError
 from server.core.naming import SSO_NAMESPACE_PREFIX, reserved_for_sso
 from server.identity.api.models import (
     NamespaceBrowseInput,
@@ -32,6 +33,8 @@ from server.identity.api.models import (
     _NamespaceEntry,
 )
 from server.identity.domain import join_policy as _jp
+from server.identity.domain.account_ties import owner_moved
+from server.identity.store import grants as grants_repo
 from server.identity.store import namespaces as namespaces_repo
 from server.memory.app import namespace_retrieval_defaults as _rd
 from server.memory.domain import code_change
@@ -87,8 +90,7 @@ async def insert_admin_grant(ch: CHClient, org: str, namespace: str, subject: st
     Idempotent — re-inserting replaces the prior row on RMT merge.
     """
     now = datetime.now(UTC).replace(tzinfo=None)
-    await ch.insert(
-        "loom.namespace_grants",
+    await grants_repo.insert_rows(
         [
             {
                 "org": org,
@@ -101,7 +103,7 @@ async def insert_admin_grant(ch: CHClient, org: str, namespace: str, subject: st
                 "version": time.time_ns(),
             }
         ],
-        settings={"async_insert": 0, "wait_for_async_insert": 1},
+        ch=ch,
     )
 
 
@@ -226,6 +228,7 @@ def registry_row(
         # settings-only update wipes the user's login silently.
         "contact_email": ((existing or {}).get("contact_email") or ""),
         "password_hash": ((existing or {}).get("password_hash") or ""),
+        "released_aliases": list((existing or {}).get("released_aliases") or []),
         # Not on the form: a re-register keeps the namespace's own override and birth date.
         "duplicate_threshold": (existing or {}).get("duplicate_threshold"),
         "created_at": (existing or {}).get("created_at") or now,
@@ -274,10 +277,19 @@ def _is_auto_registered_owner(existing: dict[str, Any], caller: str) -> bool:
 
 
 async def require_admin_of_existing(
-    existing: dict[str, Any], org: str, namespace: str, caller: str, *, visibility: str | None
+    existing: dict[str, Any],
+    org: str,
+    namespace: str,
+    caller: str,
+    *,
+    visibility: str | None,
+    owner_may_complete: bool = True,
 ) -> None:
     """Refuse `caller` unless it may rewrite the registered (active or soft-deleted) row
-    `existing`: the check `namespace.register` and `namespace.restore` both apply."""
+    `existing`: the check `namespace.register` and `namespace.restore` both apply.
+    `owner_may_complete=False` (a restore, which writes grants) refuses the
+    auto-registered owner who holds no admin: completing the registration grants
+    nothing, a restore would grant them, and anyone else, any role."""
     from server.auth.context import current_auth
 
     auth = current_auth()
@@ -296,9 +308,8 @@ async def require_admin_of_existing(
             )
     # A row born from a bare first write names its writer as owner and carries no grant.
     # That owner may complete the registration with the form; anyone else needs admin.
-    if not _is_auto_registered_owner(existing, caller) and not await _is_admin(
-        auth, org, namespace, caller
-    ):
+    owner_completes = owner_may_complete and _is_auto_registered_owner(existing, caller)
+    if not owner_completes and not await _is_admin(auth, org, namespace, caller):
         from server.core.errors import AuthInsufficientError
 
         raise AuthInsufficientError(
@@ -329,12 +340,23 @@ async def handle_namespace_register(
         await require_admin_of_existing(
             existing, input.org, input.namespace, caller, visibility=input.visibility
         )
+        if owner_moved(existing, input.owner_email):
+            # The account's login signs in as its owner, and the claim cap ties the
+            # owner to the email: neither may move to someone else here.
+            raise PreconditionFailedError(
+                f"{input.namespace!r} is an account with a login, owned by "
+                f"{existing.get('owner_email')!r}: send that owner_email to update its "
+                "settings. To hand it to someone else, release it (loom claim-release), "
+                "which ends its grants and its login."
+            )
     else:
         refuse_sso_name(input.namespace)
 
     now = naive_utc_now_seconds()
     row = registry_row(input, existing, now)
     await ch.insert("loom.namespaces", [row])
+    # The claim cap reads which accounts tie a person's spellings from this table.
+    grant_cache.invalidate(input.org)
     # The class this row implies is what the next request in this process runs as — no
     # re-read.
     from server.identity.app.traffic_class_registry import note_registered
@@ -569,6 +591,8 @@ async def handle_namespace_delete(
     row["active"] = False
     row["updated_at"] = now
     await ch.insert("loom.namespaces", [row])
+    # The claim cap reads which accounts tie a person's spellings from this table.
+    grant_cache.invalidate(input.org)
     return NamespaceDeleteOutput(
         deleted=True,
         namespace=input.namespace,

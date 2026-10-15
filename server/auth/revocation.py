@@ -234,6 +234,34 @@ def _apply_locally(key: str, cutoff: int | None) -> None:
     _revoked_before = before
 
 
+async def subjects_revoked(subjects: list[str], *, issued_at: int) -> bool:
+    """`is_revoked` for any of `subjects`, read from ClickHouse in one query:
+    a token minting path cannot wait for this process's snapshot to see a
+    `revoke-token`."""
+    if not subjects:
+        return False
+    for r in await _read_revocations(sorted(set(subjects))):
+        cutoff = _cutoff_seconds(r.get("issued_before"))
+        if cutoff is None or issued_at < cutoff:
+            return True
+    return False
+
+
+async def _read_revocations(keys: list[str]) -> list[dict[str, Any]]:
+    """The unexpired revocation rows for `keys`, read as of every write that
+    landed, on whichever replica the read reaches."""
+    from server.core.ch import get_client, own_write_reads
+
+    with own_write_reads():
+        return await get_client().query_all(
+            """
+            SELECT jti, issued_before FROM loom.revoked_tokens FINAL
+            WHERE jti IN {keys:Array(String)} AND expires_at > now()
+            """,
+            params={"keys": keys},
+        )
+
+
 async def list_active() -> list[dict[str, Any]]:
     """The unexpired revocations, newest first — the same rows the refresh
     worker reads every `jwt_revocation_cache_ttl_seconds`, so this read is

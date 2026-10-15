@@ -16,12 +16,12 @@
 -- Do NOT hand-edit. Edit schemas/migrations/*.sql and re-dump.
 -- CI verifies this file matches what migrations would produce.
 --
--- Counts: 140 tables + 17 materialized views.
+-- Counts: 142 tables + 17 materialized views.
 
 CREATE DATABASE IF NOT EXISTS `loom`;
 
 -- ======================================================================
--- Tables (140)
+-- Tables (142)
 -- ======================================================================
 
 -- loom.agent_cost_rollup_daily
@@ -1574,6 +1574,16 @@ ORDER BY (org, namespace, kind, ts)
 TTL toDateTime(ts) + toIntervalDay(30)
 SETTINGS index_granularity = 8192;
 
+-- loom.grant_claims
+CREATE TABLE IF NOT EXISTS loom.grant_claims
+(
+    `claim_key` String,
+    `holder` String,
+    `claimed_at` DateTime64(3)
+)
+ENGINE = KeeperMap('/loom/grant_claims')
+PRIMARY KEY claim_key;
+
 -- loom.idempotency
 CREATE TABLE IF NOT EXISTS loom.idempotency
 (
@@ -2599,7 +2609,8 @@ CREATE TABLE IF NOT EXISTS loom.namespaces
     `join_policy` Enum8('inherit' = 0, 'open' = 1, 'approval' = 2, 'closed' = 3) DEFAULT 'inherit',
     `retrieval_defaults` String DEFAULT '',
     `proposal_policy` String DEFAULT '',
-    `code_change_policy` LowCardinality(String) DEFAULT ''
+    `code_change_policy` LowCardinality(String) DEFAULT '',
+    `released_aliases` Array(String) DEFAULT []
 )
 ENGINE = ReplacingMergeTree(updated_at)
 PARTITION BY org
@@ -2610,10 +2621,20 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS loom.oauth_claims
 (
     `claim_key` String,
+    `holder` String,
+    `claimed_at` DateTime64(3)
+)
+ENGINE = KeeperMap('/loom/oauth_claims')
+PRIMARY KEY claim_key;
+
+-- loom.oauth_signin_state
+CREATE TABLE IF NOT EXISTS loom.oauth_signin_state
+(
+    `claim_key` String,
     `value` String,
     `expires_at` UInt32
 )
-ENGINE = KeeperMap('/loom/oauth_claims', 500000)
+ENGINE = KeeperMap('/loom/oauth_signin_state', 500000)
 PRIMARY KEY claim_key;
 
 -- loom.oauth_state

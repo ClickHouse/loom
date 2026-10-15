@@ -1,6 +1,6 @@
 """Sign-in state against the real store: of several requests spending one
 credential or moving one device grant at the same moment, exactly one goes
-ahead. Needs a ClickHouse with a Keeper (loom.oauth_claims, migration 029)."""
+ahead. Needs a ClickHouse with a Keeper (loom.oauth_signin_state, migration 032)."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ async def store() -> Any:
     claims._atomic = None  # ask this server
     if not await claims._available(ch):
         await ch.disconnect()
-        pytest.skip("this ClickHouse has no Keeper: loom.oauth_claims is absent")
+        pytest.skip("this ClickHouse has no Keeper: loom.oauth_signin_state is absent")
     yield ClickHouseStore()
     await ch.disconnect()
 

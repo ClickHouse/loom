@@ -75,6 +75,35 @@ boot and refreshes it every `LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` (30 s), thro
 token on every fresh process, which is when an operator restarts the fleet after
 revoking a leaked token. The cost is a short 503 window at boot.
 
+**A claim goes no further than the grant.** A token names namespaces, and a flat token's
+claim on one would otherwise admit it with the token's own role. Where the subject holds a
+grant row on the namespace, of any status, the claim is capped at that grant instead
+(`authz.claim_cap`): a revoked or lowered grant ends every older token's claim there, a
+pending or rejected request caps it at no access, and a scoped token keeps its own role
+there capped at the live grant. A namespace the subject never held a grant on (a `loom
+mint-token` claim) keeps the claim; grant rows are never deleted, so a revocation is never
+forgotten.
+
+- The subject's rows, under every spelling the directory ties to it, are read in one
+  statement per (org, subject) into a per-process cache (`server/core/grant_cache.py`) kept
+  for `grant_cache_ttl_seconds` (10 s). A grant write in this process drops at once the
+  entries whose read covered the spelling it wrote, and any read in flight; a write to the
+  accounts that tie a person's spellings drops the org's. The server's other web processes
+  (`LOOM_WEB_WORKERS`) read again at once: the write marks a file in their runtime directory,
+  and an entry read before the mark is not served. Another server sees either within the TTL.
+- A failed re-read serves the cached entry while it is younger than
+  `jwt_revocation_max_stale_seconds`, the bound a token check already lives with, and
+  answers a retryable 503 past it.
+
+**One exchange per credential.** `/oauth/token` spends a code or refresh token by
+compare-and-set in Keeper, so of two concurrent presenters exactly one wins; see "Each
+credential is spent exactly once" below. A read that fails answers a retryable 503 and
+leaves the credential usable.
+
+Every token an OAuth exchange mints takes its issue time before it reads the subject's
+revocations from ClickHouse, so a `revoke-token --subject` that landed while it ran still
+postdates the token.
+
 ## Authorization
 
 ### Roles
@@ -234,7 +263,7 @@ every refresh. A stolen access token can mint machine tokens
 without touching the refresh token, so replay detection only covers a stolen refresh token.
 
 **Each credential is spent exactly once.** What a sign-in spends or moves lives in
-`loom.oauth_claims`, a KeeperMap table (`server/auth/claims.py`), one key each: a code, a
+`loom.oauth_signin_state`, a KeeperMap table (`server/auth/claims.py`), one key each: a code, a
 device grant, the id of each session's current refresh token, and a single-use mark for
 each finished IdP round trip. Every change is a compare-and-set, a strict-mode Keeper write
 applied only while the key still holds the value the request read: spending a refresh token
@@ -246,7 +275,7 @@ and read with sequential consistency. Each key carries its credential's expiry a
 once it passes. Starting a sign-in writes nothing on the server, so only an authenticated
 callback, a device sign-in start or a code adds a key. Sign-in starts are limited per
 address (an IPv6 /64 counts as one), and the table's key limit is the backstop: past it new
-sign-ins answer 503 and `/v1/health` reports `oauth_claims_full`. When Keeper fails
+sign-ins answer 503 and `/v1/health` reports `oauth_signin_state_full`. When Keeper fails
 mid-change, the change is undone before the client is told to retry, so its retry is not
 taken for a replay. A ClickHouse without a Keeper has no claims table: sign-in answers 503,
 `/v1/health` reports `oauth_signin_needs_keeper`, and minted tokens keep working. A refresh

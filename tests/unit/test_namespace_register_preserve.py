@@ -16,6 +16,7 @@ from server.identity.app.namespace_autoregister import AUTO_REGISTER_TAG
 
 STORED: dict[str, Any] = {
     "description": "the team's facts",
+    "released_aliases": ["mal", "victim@corp"],
     "active": False,
     "visibility": "public",
     "consolidation_enabled": True,
@@ -157,3 +158,49 @@ async def test_a_new_namespace_may_not_take_an_sso_account_name(monkeypatch) -> 
         await h.handle_namespace_register(
             NamespaceRegisterInput(org="o", namespace="u-bob-1234abcd", owner_email="m@x")
         )
+
+
+def test_the_same_owner_keeps_the_login() -> None:
+    existing = _existing(owner_email="o@x", contact_email="o@x.io", password_hash="h")
+    row = _row(existing)
+    assert (row["contact_email"], row["password_hash"]) == ("o@x.io", "h")
+
+
+@pytest.mark.parametrize(
+    ("login", "owner"),
+    [
+        ({"contact_email": "bob@x.io", "password_hash": "h"}, "eve"),
+        ({"contact_email": "bob@x.io", "password_hash": "h"}, "bob@x.io"),  # its own email
+        ({"contact_email": "", "password_hash": "claim"}, "eve"),  # an agent's claim code
+        # case too: the owner is the token subject, and revocations match it exactly
+        ({"contact_email": "bob@x.io", "password_hash": "h"}, "BOB"),
+    ],
+)
+def test_an_account_with_a_login_does_not_change_owner(
+    monkeypatch: pytest.MonkeyPatch, login: dict[str, str], owner: str
+) -> None:
+    import asyncio
+
+    from server.core.errors import PreconditionFailedError
+
+    existing = _existing(owner_email="bob", **login)
+    written: list[Any] = []
+
+    async def _fetch(*_a: Any, **_k: Any) -> dict[str, Any]:
+        return existing
+
+    async def _admin(*_a: Any, **_k: Any) -> None:
+        return None
+
+    class _CH:
+        async def insert(self, table: str, rows: list[Any], **_k: Any) -> None:
+            written.append(rows)
+
+    monkeypatch.setattr(h.namespaces_repo, "fetch_row", _fetch)
+    monkeypatch.setattr(h, "require_admin_of_existing", _admin)
+    monkeypatch.setattr(h, "get_client", lambda: _CH())
+    monkeypatch.setattr(h, "resolve_subject", lambda: "bob")
+    inp = NamespaceRegisterInput(org="o", namespace="n", owner_email=owner)
+    with pytest.raises(PreconditionFailedError, match="owned by 'bob': send that owner_email"):
+        asyncio.run(h.handle_namespace_register(inp))
+    assert written == []

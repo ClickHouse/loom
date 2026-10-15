@@ -126,6 +126,7 @@ _SERVER_CODE_CLASSES: dict[str, type[LoomError]] = {
     "CODED_WIDTH_MISMATCH": CodedWidthMismatch,
     "POLICY_FORBIDDEN": AuthInsufficient,
     "EMBED_TIMEOUT": BackendUnavailable,  # a 503 with no SDK class: mapped by status
+    "GRANT_BUSY": BackendUnavailable,
 }
 
 

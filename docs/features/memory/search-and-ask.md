@@ -100,7 +100,7 @@ weak-result fallback calls for them.
 | `entity_filter`                                                | Rows naming these entities.                                                                                                              |
 | `user_id`, `session_id`, `run_id`                              | Narrow to one end user, session or run.                                                                                                  |
 | `read_scope`                                                   | `own_user` or `own_session`. A token's `read_scope` claim is a ceiling a request can only narrow.                                        |
-| `namespace_scope`                                              | `this` (default) or `all_mine` (every namespace the caller belongs to).                                                                  |
+| `namespace_scope`                                              | `this` (default) or `all_mine` (also the caller's own namespaces, up to the fan-out cap; the rest come back in `namespaces_skipped`).    |
 | `exclude_keys`                                                 | Up to 200 keys the caller already holds, removed before the window is cut.                                                               |
 | `include_duplicates`, `include_superseded`, `include_proposed` | Serve rows the default hides.                                                                                                            |
 | `as_of`, `as_of_basis`                                         | Point-in-time replay: `valid_time` (default) or `knowledge_time`. See [validity time](./writing.md#validity-time-valid_at-and-valid_to). |
@@ -294,17 +294,18 @@ worker otherwise runs weekly).
 
 ## Settings
 
-| Setting                                       | Default    | Effect                                                                        |
-| --------------------------------------------- | ---------- | ----------------------------------------------------------------------------- |
-| `LOOM_MEMORY_SEARCH_DEFAULT_MODE`             | `semantic` | Mode for a request that sets neither mode nor recipe.                         |
-| `LOOM_MEMORY_SEARCH_DEFAULT_NAMESPACE_SCOPE`  | `this`     | `all_mine` searches every namespace the caller belongs to.                    |
-| `LOOM_ADAPTIVE_THRESHOLDS`                    | true       | Derive similarity gates from the live embedder.                               |
-| `LOOM_MEMORY_SEARCH_MIN_SIMILARITY`           | 0.22       | Scalar floor when adaptivity is off or the embedder is fake.                  |
-| `LOOM_MEMORY_SEARCH_ABSTAIN_THRESHOLD`        | 0.30       | Scalar abstain gate under the same conditions.                                |
-| `LOOM_MEMORY_SEARCH_REINFORCEMENT_WEIGHT`     | 0.15       | Weight of the decayed-use term. 0 disables.                                   |
-| `LOOM_MEMORY_SEARCH_TRUST_WEIGHT`             | 0          | Provenance term. 0 disables.                                                  |
-| `LOOM_SEARCH_TRACE_LOG_ENABLED`               | false      | Record each search in `loom.search_trace_log`.                                |
-| `LOOM_MEMORY_SEARCH_QUERY_SPELLING_MAX_WORDS` | 6          | Longest query whose lowercase words embed in the corpus spelling. 0 disables. |
+| Setting                                       | Default    | Effect                                                                              |
+| --------------------------------------------- | ---------- | ----------------------------------------------------------------------------------- |
+| `LOOM_MEMORY_SEARCH_DEFAULT_MODE`             | `semantic` | Mode for a request that sets neither mode nor recipe.                               |
+| `LOOM_MEMORY_SEARCH_DEFAULT_NAMESPACE_SCOPE`  | `this`     | `all_mine` also searches the caller's own namespaces.                               |
+| `LOOM_MEMORY_SEARCH_FANOUT_MAX_NAMESPACES`    | 32         | Cap on the caller's namespaces an `all_mine` search reads (plus the addressed one). |
+| `LOOM_ADAPTIVE_THRESHOLDS`                    | true       | Derive similarity gates from the live embedder.                                     |
+| `LOOM_MEMORY_SEARCH_MIN_SIMILARITY`           | 0.22       | Scalar floor when adaptivity is off or the embedder is fake.                        |
+| `LOOM_MEMORY_SEARCH_ABSTAIN_THRESHOLD`        | 0.30       | Scalar abstain gate under the same conditions.                                      |
+| `LOOM_MEMORY_SEARCH_REINFORCEMENT_WEIGHT`     | 0.15       | Weight of the decayed-use term. 0 disables.                                         |
+| `LOOM_MEMORY_SEARCH_TRUST_WEIGHT`             | 0          | Provenance term. 0 disables.                                                        |
+| `LOOM_SEARCH_TRACE_LOG_ENABLED`               | false      | Record each search in `loom.search_trace_log`.                                      |
+| `LOOM_MEMORY_SEARCH_QUERY_SPELLING_MAX_WORDS` | 6          | Longest query whose lowercase words embed in the corpus spelling. 0 disables.       |
 
 Per namespace, `namespace.register` sets `retrieval_defaults` (`search_mode`, `top_k`,
 `bodies`, `min_similarity`, `floor_mode`, `chunk_max_share`, `recency_pool_weight`,

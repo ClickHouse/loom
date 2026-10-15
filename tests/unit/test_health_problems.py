@@ -641,6 +641,21 @@ def test_sign_in_without_keeper_is_reported() -> None:
     assert _oauth_claim_problems(HealthState(oauth_signin_keeper=True)) == []
     assert _oauth_claim_problems(HealthState(oauth_signin_keeper=None)) == []
     (problem,) = _oauth_claim_problems(HealthState(oauth_signin_keeper=False))
-    assert problem.code == "oauth_signin_needs_keeper" and "029_oauth_claims.sql" in problem.fix
-    (full,) = _oauth_claim_problems(HealthState(oauth_signin_keeper=True, oauth_claims_full=True))
-    assert full.code == "oauth_claims_full"
+    assert (
+        problem.code == "oauth_signin_needs_keeper" and "032_oauth_signin_state.sql" in problem.fix
+    )
+    (full,) = _oauth_claim_problems(
+        HealthState(oauth_signin_keeper=True, oauth_signin_state_full=True)
+    )
+    assert full.code == "oauth_signin_state_full"
+
+
+def test_grant_changes_without_keeper_claims_are_a_warning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def codes(atomic: bool | None) -> list[str]:
+        problems = collect_problems(_settings(monkeypatch), HealthState(grant_claims_atomic=atomic))
+        return [p.severity for p in problems if p.code == "grant_changes_not_atomic"]
+
+    assert codes(None) == codes(True) == []
+    assert codes(False) == ["warn"]

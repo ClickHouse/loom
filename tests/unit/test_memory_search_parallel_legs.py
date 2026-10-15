@@ -215,7 +215,7 @@ async def test_graph_neighbor_gather_is_order_independent(
     # Patch namespace resolution so the handler fans out to both namespaces.
     import server.auth.context as auth_ctx
 
-    async def fake_my_ns(org: str) -> list[str]:
+    async def fake_my_ns(org: str, subject: str | None = None) -> list[str]:
         return ["ns_a", "ns_b"]
 
     monkeypatch.setattr(auth_ctx, "resolve_my_namespaces", fake_my_ns)
@@ -321,3 +321,67 @@ async def test_tier_stop_cutoff_is_setting_driven(env, monkeypatch: pytest.Monke
     await _run_scoped(auth, namespace="priv", namespace_scope="all_mine")
     queried = {q.namespace for q in env.search_queries}
     assert "pub" not in queried
+
+
+async def test_tier_waterfall_reads_an_addressed_namespace_first_when_the_token_lacks_it(
+    env,
+) -> None:
+    """A scoped token's own order is kept, but an addressed namespace its list
+    lacks (of a kind the fan-out does not sweep, or reached by name) leads the
+    waterfall, so a confident hit further down cannot keep it from being read."""
+    auth = _scoped_auth("o", priv="admin", pub="viewer")
+    env.hits_by_ns["mine"] = [_svc_hit("m1", sim=0.30)]
+    env.hits_by_ns["priv"] = [_svc_hit("p1", sim=0.55)]
+    await _run_scoped(auth, namespace="mine", namespace_scope="all_mine")
+    queried = list(dict.fromkeys(q.namespace for q in env.search_queries))
+    assert queried == ["mine", "priv"]
+
+
+async def test_the_output_names_the_namespaces_the_cap_left_out(
+    env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import server.auth.context as auth_ctx
+    import server.settings as settings_mod
+
+    async def mine(org: str, subject: str | None = None) -> list[str]:
+        return ["ns_a", "ns_b", "ns_c"]
+
+    monkeypatch.setattr(auth_ctx, "resolve_my_namespaces", mine)
+    monkeypatch.setattr(settings_mod.settings, "memory_search_fanout_max_namespaces", 1)
+    out = await _run(namespace="ns_b", namespace_scope="all_mine")
+    assert out.namespaces_searched == ["ns_b", "ns_a"]
+    assert out.namespaces_skipped == ["ns_c"]
+
+
+async def test_private_first_reads_an_addressed_public_namespace_in_the_first_pass(
+    env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A confident private hit skips the public pass, but never the namespace
+    the caller addressed: it joins the private pass whatever its visibility."""
+    import server.auth.context as auth_ctx
+    import server.identity.app.namespace_visibility as nv
+
+    async def mine(org: str, subject: str | None = None) -> list[str]:
+        return ["home", "team", "wiki"]
+
+    async def visibility(org: str, namespaces: list[str]) -> dict[str, str]:
+        return {"home": "private", "team": "public", "wiki": "public"}
+
+    monkeypatch.setattr(auth_ctx, "resolve_my_namespaces", mine)
+    monkeypatch.setattr(nv, "visibility_map", visibility)
+    env.hits_by_ns["home"] = [_svc_hit("h1", sim=0.80)]
+    env.hits_by_ns["team"] = [_svc_hit("t1", sim=0.45)]
+    out = await _run(namespace="team", namespace_scope="all_mine")
+    assert {q.namespace for q in env.search_queries} == {"team", "home"}
+    assert ("team", "t1") in {(r.namespace, r.memory_key) for r in out.results}
+
+
+async def test_tier_waterfall_reads_the_addressed_namespace_before_the_tokens_first(env) -> None:
+    """The token lists the addressed namespace second; a confident hit in the
+    first must not end the walk before the namespace the caller asked for."""
+    auth = _scoped_auth("o", team="viewer", mine="writer")
+    env.hits_by_ns["team"] = [_svc_hit("t1", sim=0.60)]
+    env.hits_by_ns["mine"] = [_svc_hit("m1", sim=0.35)]
+    await _run_scoped(auth, namespace="mine", namespace_scope="all_mine")
+    queried = list(dict.fromkeys(q.namespace for q in env.search_queries))
+    assert queried == ["mine", "team"]

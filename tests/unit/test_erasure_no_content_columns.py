@@ -34,7 +34,9 @@ _REVIEWED: dict[str, dict[str, str]] = {
     "loom.deployment_config": {"value": "the main Loom's operator settings, secrets stripped"},
     "loom.erasure_requests": {"scope_value": "the erasure ledger naming its own scope"},
     "loom.erasure_reversals": {"scope_value": "the reversal ledger naming its own scope"},
-    "loom.oauth_claims": {"value": "sign-in state: who signs in, for which client; swept monthly"},
+    "loom.oauth_signin_state": {
+        "value": "sign-in state: who signs in, for which client; swept monthly"
+    },
     "loom.policy_decisions": {"detail": "rule ids and error codes, no memory text"},
     "loom.qa_link_candidates": {"bm25_body": "titles of the public tracker record"},
     "loom.revoked_tokens": {"reason": "why a token was revoked"},

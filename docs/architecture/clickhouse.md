@@ -92,7 +92,7 @@ and file locks are listed in [system overview](system-overview.md#deployment-top
 | `MergeTree`                                        | Append-only logs: `events`, `agent_events`, `audit_log`, `conversations`, `task_events`, `entity_edges`, traces                                                                                         | Rows are facts about a moment.                                                        |
 | `SummingMergeTree`                                 | Counters: `entity_degree`, `memory_usage_totals`, `code_unit_signal`                                                                                                                                    | A counter is an INSERT of a delta, never a read-modify-write.                         |
 | `AggregatingMergeTree`                             | Non-additive rollups: `memory_term_freq`, `chunk_term_freq`, `code_term_freq`, `agent_cost_rollup_daily`, `memory_exposure_breadth_hourly`, `query_nodes`, `namespace_write_marks`, `subject_last_seen` | Partial aggregate states (a distinct count cannot be summed), finished with `-Merge`. |
-| `KeeperMap`                                        | `task_leases`, `agent_run_claims` and the migration lock `loom._migration_lock`                                                                                                                         | Linearizable compare-and-swap across processes.                                       |
+| `KeeperMap`                                        | `task_leases`, `agent_run_claims`, `oauth_signin_state`, `grant_claims` and the migration lock `loom._migration_lock`                                                                                   | Linearizable compare-and-swap across processes.                                       |
 
 **Why `ReplacingMergeTree` for mutable state.** `ALTER … UPDATE` rewrites whole parts
 asynchronously with no read-your-write guarantee. Lightweight `UPDATE` writes patch parts
@@ -405,6 +405,23 @@ with `purge=true` and runner state.
   takes the free claim reads the row and goes to a fresh id. `run.complete` and the
   erasure saga's `agent_runs.delete` step also drop claims, for a key a process that
   died mid-begin left behind. All are Keeper key drops, not MergeTree mutations.
+- **Sign-in state** (`loom.oauth_signin_state`, KeeperMap) holds each code, device
+  grant, finished IdP round trip and session's current refresh token. A value changes
+  only by a strict-mode compare-and-set: an `INSERT` for a new key, a versioned `ALTER …
+UPDATE` otherwise. Keys carry their credential's expiry, and a sweep every five
+  minutes drops the expired ones with one `ALTER … DELETE`; all are Keeper key
+  operations, not MergeTree mutations. `loom.oauth_claims` (migration 028) is no longer
+  used.
+- **Grant change claims** (`loom.grant_claims`, KeeperMap) work the same way, around one
+  grant change: an op that reads a grant and then writes it holds the grant's key from
+  the read to the write, so a concurrent change to the same grant waits for it. Its reads
+  are sequentially consistent, and it is cut off after 20 s (each statement after 10 s),
+  well before its claim may be taken over at 60 s. A repository maintainer's change across
+  branches (a revoke's fan-out, a sync's mirrors) first holds one claim per (repository,
+  subject), `repo:<owner/name>`, then its branches' claims in namespace order, and writes
+  the branches in one insert inside that bound. A change that may remove an admin first
+  holds the namespace's admins claim (the key with an empty subject) and counts the
+  admins under it.
 
 **Classification for erasure.** `server/erasure/store/census.py` puts every table in
 `schemas/schema.sql` in exactly one list, and `tests/unit/test_every_table_is_classified.py`

@@ -84,11 +84,14 @@ class HealthState:
     # Whether run.begin claims run ids in Keeper (loom.agent_run_claims exists):
     # None = no run.begin has asked yet in this process.
     run_claims_atomic: bool | None = None
-    # Whether sign-in state has its Keeper table (loom.oauth_claims exists):
+    # Whether sign-in state has its Keeper table (loom.oauth_signin_state exists):
     # None = not asked yet in this process.
     oauth_signin_keeper: bool | None = None
-    # Whether a sign-in lately found loom.oauth_claims at its key limit.
-    oauth_claims_full: bool = False
+    # Whether a sign-in lately found loom.oauth_signin_state at its key limit.
+    oauth_signin_state_full: bool = False
+    # Whether grant changes are claimed in Keeper (loom.grant_claims exists):
+    # None = no grant change or boot probe has asked yet.
+    grant_claims_atomic: bool | None = None
     env: Mapping[str, str] = field(default_factory=lambda: os.environ)
     # Saved keys take precedence over the environment, including explicit empty keys.
     saved_keys: Mapping[str, bool] = field(default_factory=saved_key_presence)
@@ -628,12 +631,12 @@ def _reader_user_problems(settings: Any, state: HealthState) -> list[Problem]:
 def _oauth_claim_problems(state: HealthState) -> list[Problem]:
     """No Keeper: sign-in cannot spend a credential exactly once, so it is off.
     A full claims table turns new sign-ins away until the sweep frees keys."""
-    if state.oauth_claims_full:
+    if state.oauth_signin_state_full:
         return [
             Problem(
-                "oauth_claims_full",
+                "oauth_signin_state_full",
                 "warn",
-                "loom.oauth_claims reached its key limit (seen by this process), so new "
+                "loom.oauth_signin_state reached its key limit (seen by this process), so new "
                 "codes, device sign-ins and sessions answer 503 until keys expire; they are "
                 "swept every five minutes.",
                 "Rate-limit /oauth/device_authorization, /oauth/device and /oauth/callback by "
@@ -647,11 +650,11 @@ def _oauth_claim_problems(state: HealthState) -> list[Problem]:
         Problem(
             "oauth_signin_needs_keeper",
             "warn",
-            "loom.oauth_claims is absent (no ClickHouse Keeper), so `loom login`, SSO and "
+            "loom.oauth_signin_state is absent (no ClickHouse Keeper), so `loom login`, SSO and "
             "MCP connect answer 503: their codes and refresh tokens could not be spent "
             "exactly once. Tokens from `loom mint-token` and service accounts still work.",
             "Run ClickHouse with a Keeper (deploy/clickhouse-config/keeper.xml), create the "
-            "table from schemas/migrations/029_oauth_claims.sql (the migration skipped it) "
+            "table from schemas/migrations/032_oauth_signin_state.sql (the migration skipped it) "
             "and restart Loom.",
             source="runtime",
         )
@@ -672,6 +675,26 @@ def _run_claim_problems(state: HealthState) -> list[Problem]:
             "Run ClickHouse with a Keeper (deploy/clickhouse-config/keeper.xml), create the "
             "table from schemas/migrations/025_agent_run_claims.sql (the migration skipped "
             "it) and restart Loom.",
+            source="runtime",
+        )
+    ]
+
+
+def _grant_claim_problems(state: HealthState) -> list[Problem]:
+    """No Keeper: two processes can change one grant at once, the later writing over
+    the earlier."""
+    if state.grant_claims_atomic is not False:
+        return []
+    return [
+        Problem(
+            "grant_changes_not_atomic",
+            "warn",
+            "loom.grant_claims is absent (no ClickHouse Keeper), so two changes of one grant "
+            "are kept apart only within each server process: across processes an approval "
+            "can still write over a promotion or a revoke that landed after its read.",
+            "Run ClickHouse with a Keeper (deploy/clickhouse-config/keeper.xml) and create the "
+            "table from schemas/migrations/029_grant_claims.sql (the migration skipped it); "
+            "a grant change within a minute finds it.",
             source="runtime",
         )
     ]
@@ -701,6 +724,7 @@ def collect_problems(settings: Any, state: HealthState | None = None) -> list[Pr
         + _reader_user_problems(settings, st)
         + _run_claim_problems(st)
         + _oauth_claim_problems(st)
+        + _grant_claim_problems(st)
     )
     return sorted(problems, key=lambda p: (SEVERITY_RANK.get(p.severity, 9), p.code))
 

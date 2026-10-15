@@ -20,7 +20,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import Response
 
 from server import __version__, boot
-from server.auth import claims as oauth_claims
+from server.auth import claims as signin_claims
 from server.auth.public_url import (
     cors_origin_list,
     host_header_allowed,
@@ -159,7 +159,10 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     revocation_loop = await boot.start_revocation(lease.held)
     await probe_reader_user(ch)
     await runs_store.probe_claims(ch)
-    await oauth_claims.probe(ch)
+    await signin_claims.probe(ch)
+    from server.auth import grant_claims
+
+    await grant_claims.CLAIMS.probe(ch)
     tracker_sources_loop = boot.start_tracker_sources_refresher(ch)
     await boot.probe_sandbox()
     lease_retry: asyncio.Task[None] | None = None

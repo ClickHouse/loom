@@ -1,7 +1,7 @@
 """Sign-in state that changes once, kept in ClickHouse Keeper.
 
 Whatever a sign-in spends or moves lives here, one key each, in
-loom.oauth_claims (KeeperMap, schemas/migrations/029_oauth_claims.sql): a
+loom.oauth_signin_state (KeeperMap, schemas/migrations/032_oauth_signin_state.sql): a
 code, an identity provider round trip in flight, a device grant, and the
 current refresh token of each session. Every change is a compare-and-set
 (`swap`): a strict-mode KeeperMap write that Keeper applies only while the key
@@ -32,12 +32,14 @@ from server.core.schema.migrate_lease import is_keeper_table, key_exists
 
 log = logging.getLogger(__name__)
 
-_TABLE = "loom.oauth_claims"
-_TABLE_SQL = "SELECT engine FROM system.tables WHERE database = 'loom' AND name = 'oauth_claims'"
+_TABLE = "loom.oauth_signin_state"
+TABLE_SQL = (
+    "SELECT engine FROM system.tables WHERE database = 'loom' AND name = 'oauth_signin_state'"
+)
 SWEEP_INTERVAL_SECONDS = 300
 _FULL_FOR_S = 900  # how long hitting the key limit stays a health problem
 
-# Whether loom.oauth_claims exists here: None until the boot probe or the
+# Whether loom.oauth_signin_state exists here: None until the boot probe or the
 # first sign-in asks.
 _atomic: bool | None = None
 # When an insert last found the table at its key limit (monotonic seconds).
@@ -69,7 +71,7 @@ def keeper_full() -> bool:
 async def _available(ch: Any) -> bool:
     global _atomic
     if _atomic is None:
-        _atomic = is_keeper_table(await ch.query_one(_TABLE_SQL))
+        _atomic = is_keeper_table(await ch.query_one(TABLE_SQL))
         if not _atomic:
             log.warning("sign-in: no %s (no Keeper); sign-in answers 503", _TABLE)
     return _atomic
@@ -85,7 +87,7 @@ async def probe(ch: Any) -> None:
 
 async def _require(ch: Any) -> None:
     if not await _available(ch):
-        raise Busy("sign-in needs a ClickHouse Keeper (loom.oauth_claims)")
+        raise Busy("sign-in needs a ClickHouse Keeper (loom.oauth_signin_state)")
 
 
 def _lost_race(e: BaseException) -> bool:

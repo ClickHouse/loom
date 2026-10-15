@@ -14,11 +14,11 @@
 -- loom: tolerate-error 999
 -- loom: tolerate-error 139
 -- loom: tolerate-error 36
-CREATE TABLE IF NOT EXISTS loom.oauth_claims
+CREATE TABLE IF NOT EXISTS loom.oauth_signin_state
 (
     `claim_key` String,
     `value` String,
     `expires_at` UInt32
 )
-ENGINE = KeeperMap('/loom/oauth_claims', 500000)
+ENGINE = KeeperMap('/loom/oauth_signin_state', 500000)
 PRIMARY KEY claim_key;

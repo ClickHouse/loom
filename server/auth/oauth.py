@@ -369,6 +369,10 @@ async def authorize_submit(request: Request) -> RedirectResponse:
         raise OAuthError("password_sign_in_disabled", 404)
     from server.auth.login import LoginThrottled, resolve_user_credentials
 
+    # The code's issue time is taken before the revocations are read at its
+    # exchange, so a revocation landing after that read postdates it. Its 60 s
+    # lifetime counts from here, so the password check comes out of it.
+    issued_at = int(time.time())
     try:
         resolved = await resolve_user_credentials(
             f.get("identifier", ""), f.get("password", ""), address=client_address(request)
@@ -383,6 +387,7 @@ async def authorize_submit(request: Request) -> RedirectResponse:
         resolved,
         upstream_refresh="",
         state=state,
+        issued_at=issued_at,
     )
 
 
@@ -392,6 +397,7 @@ async def _redirect_with_code(
     *,
     upstream_refresh: str,
     state: str,
+    issued_at: int,
 ) -> RedirectResponse:
     """Mint the MCP client's single-use code for a signed-in user and send the
     browser back to the client with it."""
@@ -407,7 +413,7 @@ async def _redirect_with_code(
             "org": org,
             "namespaces": namespaces,
             "roles": roles,
-            "exp": int(time.time()) + _CODE_TTL,
+            "exp": issued_at + _CODE_TTL,
             "family": new_jti(),
             "upstream_refresh": upstream_refresh,
         },
@@ -569,7 +575,8 @@ async def oidc_callback(request: Request) -> Response:
 
 async def _finish_oidc_login(request: Request) -> Response:
     from server.auth import device, oidc
-    from server.auth.login import jit_provision_for_email, resolve_identity_for_email
+    from server.auth.jit import finish_unfinished_account, jit_provision_for_email
+    from server.auth.login import SignInUnavailable, resolve_identity_for_email
 
     state = request.query_params.get("state", "")
     if not state:
@@ -615,8 +622,15 @@ async def _finish_oidc_login(request: Request) -> Response:
     email = oidc.verified_email(id_claims)
     resolved = None
     if email:
-        # No account — auto-provision one if JIT is on (else stay fail-closed).
-        resolved = await resolve_identity_for_email(email) or await jit_provision_for_email(email)
+        try:
+            await finish_unfinished_account(email)
+            # No account — auto-provision one if JIT is on (else stay fail-closed).
+            resolved = await resolve_identity_for_email(email) or await jit_provision_for_email(
+                email
+            )
+        except SignInUnavailable as e:
+            log.warning("oidc callback: the account could not be read: %s", e)
+            return _sign_in_unavailable()
     upstream = str(tokens.get("refresh_token") or "")
     if resolved is None:
         reason = "no loom account for this email" if email else "verified email required"
@@ -710,6 +724,7 @@ async def connect_approve(request: Request) -> Response:
         (subject, org, namespaces, roles),
         upstream_refresh=unseal(UPSTREAM_PURPOSE, pending["upstream_refresh"]),
         state=pending["mcp_state"],
+        issued_at=int(time.time()),
     )
 
 
@@ -748,15 +763,17 @@ def _invalid_grant(description: str = "") -> OAuthError:
     return OAuthError("invalid_grant", description=description)
 
 
-async def issue_tokens(grant: Grant | Device, client_id: str) -> dict[str, Any]:
+async def issue_tokens(grant: Grant | Device, client_id: str, since: int) -> dict[str, Any]:
     """An access token for the grant's session, and the next refresh token.
     Under OIDC a session with no IdP refresh token gets no Loom refresh token:
     nothing could tell Loom the user was deactivated, so the session ends with
-    its access token. A subject revoked outright gets nothing, however it
-    signed in."""
-    from server.auth.revocation import is_revoked
+    its access token. A subject revoked since `since` (when the grant was
+    issued) gets nothing; that is read from ClickHouse, not this process's
+    snapshot, and a failed read raises so the caller puts the credential back."""
+    from server.auth.revocation import subjects_revoked
 
-    if is_revoked(grant["subject"], issued_at=int(time.time())):
+    issued_at = int(time.time())  # before the read: a revocation after it postdates the tokens
+    if await subjects_revoked([grant["subject"]], issued_at=since):
         raise _invalid_grant("this account's tokens are revoked")
     access = mint_token(
         subject=grant["subject"],
@@ -766,6 +783,7 @@ async def issue_tokens(grant: Grant | Device, client_id: str) -> dict[str, Any]:
         ttl_seconds=_ACCESS_TTL,
         is_service_account=False,
         session_id=grant["family"] or None,
+        issued_at=issued_at,
     )
     body = {
         "access_token": access,
@@ -786,7 +804,7 @@ async def issue_tokens(grant: Grant | Device, client_id: str) -> dict[str, Any]:
             "org": grant["org"],
             "namespaces": list(grant["namespaces"]),
             "roles": list(grant["roles"]),
-            "exp": int(time.time()) + _REFRESH_TTL,
+            "exp": issued_at + _REFRESH_TTL,
             "family": grant["family"],
             "upstream_refresh": grant["upstream_refresh"],
             "held": grant.get("held", {}),  # a rotation swaps from the token it spent
@@ -884,12 +902,14 @@ async def _authorization_code_grant(f: dict[str, str]) -> dict[str, Any]:
     if grant is None:
         raise _invalid_grant()
     try:
-        return await issue_tokens(grant, client_id)
+        # exp is always saved as mint time + _CODE_TTL.
+        return await issue_tokens(grant, client_id, since=int(grant["exp"]) - _CODE_TTL)
     except OAuthError:
         raise
-    except Exception:  # Loom's own failure: unspend the code so the retry is no replay
+    except Exception as e:  # Loom's own failure: unspend the code so the retry is no replay
+        log.warning("oauth: issuing tokens for a code failed: %s", e)
         await store.save_code(code, grant)
-        raise
+        raise _unavailable() from e
 
 
 async def _ask_identity_provider(grant: Grant, refresh_token: str) -> str:
@@ -941,9 +961,10 @@ async def _refresh_token_grant(f: dict[str, str]) -> dict[str, Any]:
         return await _refresh_session(grant, refresh_token)
     except OAuthError:
         raise  # an answer: refused, or retry later with the token put back
-    except Exception:  # Loom's own failure: unspend the token so the retry is no replay
+    except Exception as e:  # Loom's own failure: unspend the token so the retry is no replay
+        log.warning("oauth: refreshing a session failed: %s", e)
         await store.save_refresh(refresh_token, grant)  # with the IdP token it may have rotated
-        raise
+        raise _unavailable() from e
 
 
 async def _refresh_session(grant: Grant, refresh_token: str) -> dict[str, Any]:
@@ -973,7 +994,7 @@ async def _refresh_session(grant: Grant, refresh_token: str) -> dict[str, Any]:
             await oidc.revoke(grant["upstream_refresh"])
         await end_session(grant, "account no longer active")
         raise _invalid_grant()
-    return await issue_tokens({**grant, "roles": roles}, grant["client_id"])
+    return await issue_tokens({**grant, "roles": roles}, grant["client_id"], since=issued_at)
 
 
 @router.post("/oauth/token")

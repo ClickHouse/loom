@@ -203,15 +203,16 @@ def _doctor_reader_probe(settings: Any) -> tuple[str, str]:
     return "ok", ""
 
 
-def _doctor_run_claims(settings: Any) -> bool | None:
-    """Whether run.begin claims run ids in Keeper here; None when ClickHouse
-    does not answer (`clickhouse_reachable` says so)."""
-    from server.core.schema.migrate_lease import RUN_CLAIMS_TABLE_SQL, is_keeper_table
+def _doctor_keeper_table(settings: Any, table_sql: str) -> bool | None:
+    """Whether the KeeperMap table `table_sql` asks for exists here (run.begin's
+    run id claims, /oauth/token's exchange claims, the grant change claims); None
+    when ClickHouse does not answer (`clickhouse_reachable` says so)."""
+    from server.core.schema.migrate_lease import is_keeper_table
 
     if not settings.ch_host:
         return None
     try:
-        rows = _doctor_ch_query(settings, RUN_CLAIMS_TABLE_SQL + " FORMAT JSONEachRow", {})
+        rows = _doctor_ch_query(settings, table_sql + " FORMAT JSONEachRow", {})
     except Exception:  # noqa: BLE001 — a doctor line must never crash the doctor
         return None
     return is_keeper_table(rows[0] if rows else None)
@@ -222,7 +223,10 @@ def _doctor_problems() -> list[Any]:
     only — no probed dim, breaker, lease or ledger before boot. Empty when
     settings do not load (the `settings_load` check already says so)."""
     try:
+        from server.auth.claims import TABLE_SQL as SIGNIN_STATE_TABLE_SQL
+        from server.auth.grant_claims import CLAIMS as GRANT_CLAIMS
         from server.code.app.index.sandbox import layout_refusal, sandbox_available
+        from server.core.schema.migrate_lease import RUN_CLAIMS_TABLE_SQL
         from server.observability.problems import HealthState, Problem, collect_problems
         from server.settings import settings
 
@@ -234,7 +238,9 @@ def _doctor_problems() -> list[Any]:
                 repo_sandbox_refusal=layout_refusal(),
                 ch_reader_ok={"ok": True, "failing": False}.get(status),
                 ch_reader_error=detail if status == "failing" else "",
-                run_claims_atomic=_doctor_run_claims(settings),
+                run_claims_atomic=_doctor_keeper_table(settings, RUN_CLAIMS_TABLE_SQL),
+                oauth_signin_keeper=_doctor_keeper_table(settings, SIGNIN_STATE_TABLE_SQL),
+                grant_claims_atomic=_doctor_keeper_table(settings, GRANT_CLAIMS.table_sql),
             ),
         )
         if status == "not_probed" and detail:

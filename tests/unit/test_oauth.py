@@ -21,6 +21,19 @@ from fastapi.testclient import TestClient
 from server.auth import login, oauth
 from tests.unit.oauth_store_fake import MemoryOAuthStore, oauth_app
 
+pytestmark = pytest.mark.usefixtures("subjects_not_revoked")
+
+
+def _revoke_subject(monkeypatch: pytest.MonkeyPatch, cutoff: int | None) -> None:
+    """`loom revoke-token --subject`, as the exchange reads it from ClickHouse:
+    every token, or those issued before `cutoff`."""
+    from server.auth import revocation
+
+    async def _revoked(subjects: list[str], *, issued_at: int) -> bool:
+        return cutoff is None or issued_at < cutoff
+
+    monkeypatch.setattr(revocation, "subjects_revoked", _revoked)
+
 
 def _challenge(verifier: str) -> str:
     return (
@@ -257,23 +270,17 @@ def test_store_keeps_token_hashes_not_tokens() -> None:
 def test_refresh_refused_for_subject_revoked_after_issue(monkeypatch) -> None:
     """`revoke-token --subject S --issued-before T` must not be undone by one
     refresh: a refresh token minted before T can no longer mint."""
-    from server.auth import revocation
-
     c = _client()
     rt = _refresh_token_for_alice(c)
-    monkeypatch.setattr(revocation, "_revoked_jtis", frozenset())
-    monkeypatch.setattr(revocation, "_revoked_before", {"alice@example.com": int(time.time()) + 5})
+    _revoke_subject(monkeypatch, int(time.time()) + 5)
     r = _refresh(c, rt)
     assert r.status_code == 400 and r.json()["error"] == "invalid_grant"
 
 
 def test_refresh_refused_for_fully_revoked_subject(monkeypatch) -> None:
-    from server.auth import revocation
-
     c = _client()
     rt = _refresh_token_for_alice(c)
-    monkeypatch.setattr(revocation, "_revoked_jtis", frozenset({"alice@example.com"}))
-    monkeypatch.setattr(revocation, "_revoked_before", {})
+    _revoke_subject(monkeypatch, None)
     r = _refresh(c, rt)
     assert r.status_code == 400 and r.json()["error"] == "invalid_grant"
 
@@ -291,17 +298,35 @@ def test_refresh_allowed_when_cutoff_predates_issue(monkeypatch) -> None:
     assert r.status_code == 200 and r.json()["access_token"]
 
 
-def test_refresh_waits_for_revocation_snapshot(monkeypatch) -> None:
-    """Before the revocation list has loaded, refresh refuses retryably and
-    does not burn the refresh token."""
+@pytest.mark.parametrize("grant_type", ["authorization_code", "refresh_token"])
+def test_a_failed_revocation_read_leaves_the_credential_for_the_retry(
+    monkeypatch: pytest.MonkeyPatch, grant_type: str
+) -> None:
+    """A 503 says retry, so the code or refresh token must still work once
+    the store is back; the exchange that succeeds uses it up."""
     from server.auth import revocation
 
+    async def _down(subjects: list[str], *, issued_at: int) -> bool:
+        raise RuntimeError("replica away")
+
     c = _client()
-    rt = _refresh_token_for_alice(c)
-    monkeypatch.setattr(revocation, "_loaded", False)
-    assert _refresh(c, rt).status_code == 503
-    monkeypatch.setattr(revocation, "_loaded", True)
-    assert _refresh(c, rt).status_code == 200
+    code, verifier = _seed_code()
+    if grant_type == "authorization_code":
+
+        def exchange():
+            return _exchange(c, code, verifier)
+    else:
+        rt = _exchange(c, code, verifier).json()["refresh_token"]
+
+        def exchange():
+            return _refresh(c, rt)
+
+    with monkeypatch.context() as outage:
+        outage.setattr(revocation, "subjects_revoked", _down)
+        failed = exchange()
+    assert failed.status_code == 503 and failed.headers["retry-after"] == "5"
+    assert exchange().status_code == 200
+    assert exchange().status_code == 400
 
 
 def test_unsupported_grant_rejected() -> None:
@@ -504,3 +529,83 @@ def test_a_code_spend_lost_to_an_undone_change_is_a_retry_not_a_replay(monkeypat
     with pytest.raises(claims.Changed):
         asyncio.run(store.take_code(code, "loom-test", lambda _g: True))
     assert asyncio.run(store.take_code(code, "loom-test", lambda _g: True)) is not None
+
+
+def _exchange(c: TestClient, code: str, verifier: str):
+    return c.post(
+        "/oauth/token",
+        data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": "http://127.0.0.1:9999/cb",
+            "client_id": "loom-test",
+            "code_verifier": verifier,
+        },
+    )
+
+
+def test_a_code_exchange_is_refused_for_a_subject_revoked_since(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.auth import revocation
+
+    async def _revoked(subjects: list[str], *, issued_at: int) -> bool:
+        return True
+
+    monkeypatch.setattr(revocation, "subjects_revoked", _revoked)
+    code, verifier = _seed_code()
+    r = _exchange(_client(), code, verifier)
+    assert r.status_code == 400 and r.json()["error"] == "invalid_grant"
+
+
+def test_an_unreadable_revocation_store_mints_nothing_and_keeps_the_code(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.auth import revocation
+
+    real = revocation.subjects_revoked
+
+    async def _down(subjects: list[str], *, issued_at: int) -> bool:
+        raise RuntimeError("replica away")
+
+    c = _client()
+    code, verifier = _seed_code()
+    with monkeypatch.context() as down:
+        down.setattr(revocation, "subjects_revoked", _down)
+        r = _exchange(c, code, verifier)
+    assert r.status_code == 503 and r.json()["error"] == "temporarily_unavailable"
+    monkeypatch.setattr(revocation, "subjects_revoked", real)
+    assert _exchange(c, code, verifier).status_code == 200  # put back for the retry
+
+
+@pytest.mark.parametrize("grant_type", ["authorization_code", "refresh_token"])
+def test_an_exchange_issues_its_tokens_at_the_time_before_its_revocation_read(
+    monkeypatch: pytest.MonkeyPatch, grant_type: str
+) -> None:
+    """A subject revocation can land while the exchange runs, after its read:
+    the tokens carry the time taken before the read, so it still postdates
+    them and cuts them."""
+    import jwt as pyjwt
+
+    from server.auth import revocation
+
+    c = _client()
+    code, verifier = _seed_code()
+    if grant_type == "refresh_token":
+        rt = _exchange(c, code, verifier).json()["refresh_token"]
+    before = int(time.time())
+    now = {"t": float(before)}
+    monkeypatch.setattr(time, "time", lambda: now["t"])
+
+    async def _slow(subjects: list[str], *, issued_at: int) -> bool:
+        now["t"] += 100  # the read takes 100 s on the fake clock
+        return False
+
+    monkeypatch.setattr(revocation, "subjects_revoked", _slow)
+    r = _exchange(c, code, verifier) if grant_type == "authorization_code" else _refresh(c, rt)
+    tok = r.json()
+    # Unverified: a verify would refuse an iat past the real clock first.
+    claims = pyjwt.decode(tok["access_token"], options={"verify_signature": False})
+    assert claims["iat"] == before
+    saved = oauth.store.refresh[oauth.token_id(tok["refresh_token"])]
+    assert int(saved["exp"]) - oauth._REFRESH_TTL == before

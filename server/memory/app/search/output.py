@@ -82,14 +82,13 @@ async def _serve_parked_page(input: MemorySearchInput) -> MemorySearchOutput:
         )
     if payload is None:
         return empty
-    rows, nxt = _pages.slice_page(payload, offset=offset, top_k=int(input.top_k))
-    hits: list[_MemorySearchHit] = []
-    for r in rows:
-        try:
-            hits.append(_MemorySearchHit.model_validate(r))
-        except Exception:  # noqa: BLE001 — a row this build cannot read is skipped
-            continue
-    total = int(payload.get("candidates_total") or 0)
+    readable = await _readable_namespaces(input.org, input.namespace, payload)
+    hits, nxt = _readable_slice(payload, offset, int(input.top_k), readable)
+    # Hits from a namespace the caller lost are neither served nor counted; the
+    # count is over the whole parked list, the same on every page while the
+    # caller's readable namespaces do not change.
+    withheld = sum(1 for h in payload.get("hits") or [] if h.get("namespace", "") not in readable)
+    total = max(0, int(payload.get("candidates_total") or 0) - withheld)
     # A parked page was serialised without tags unless the first call asked; fill on this
     # call's own switch.
     await _fill_hit_tags(hits, input)
@@ -98,6 +97,10 @@ async def _serve_parked_page(input: MemorySearchInput) -> MemorySearchOutput:
         results=hits,
         embedding_model=embedder_name,
         candidates_total=total,
+        namespaces_searched=[
+            ns for ns in payload.get("namespaces_searched") or [input.namespace] if ns in readable
+        ],
+        namespaces_skipped=[ns for ns in payload.get("namespaces_skipped") or [] if ns in readable],
         page_offset=int(offset),
         next_page=_pages.make_handle(blob_key, nxt) if nxt >= 0 else "",
         abstain=not hits,
@@ -107,6 +110,54 @@ async def _serve_parked_page(input: MemorySearchInput) -> MemorySearchOutput:
         score_explanation=(f"parked page served at offset {offset}; no retrieval ran"),
     )
     return out
+
+
+async def _readable_namespaces(org: str, namespace: str, payload: dict[str, Any]) -> set[str]:
+    """The namespaces of a parked page the caller may still read: the
+    addressed one, and the others while they are in the caller's fan-out now.
+    A page that names no other namespace skips the fan-out read."""
+    from server.auth.fanout import resolve_fanout
+
+    # Hits of the addressed namespace that carry no `namespace` (tier and
+    # anchor rows) count as the addressed one.
+    authorized = {"", namespace}
+    named = {str(h.get("namespace", "")) for h in payload.get("hits") or []}
+    named |= {
+        *(payload.get("namespaces_searched") or []),
+        *(payload.get("namespaces_skipped") or []),
+    }
+    if named <= authorized:
+        return authorized
+    try:
+        mine = (await resolve_fanout(org)).namespaces
+    except Exception as e:  # noqa: BLE001 — unresolved, the page narrows to the addressed namespace
+        log.warning("parked page: fan-out unresolved for %s/%s: %s", org, namespace, e)
+        return authorized
+    return (named & set(mine)) | authorized
+
+
+def _readable_slice(
+    payload: dict[str, Any], offset: int, top_k: int, readable: set[str]
+) -> tuple[list[_MemorySearchHit], int]:
+    """Up to `top_k` readable hits from `offset` on, and the offset after the
+    last row read (-1 at the end). Slices on past withheld rows, so a page is
+    short only when the list is."""
+    from server.memory.app import search_pages as _pages
+
+    hits: list[_MemorySearchHit] = []
+    nxt = offset
+    while len(hits) < top_k and nxt >= 0:
+        rows, nxt = _pages.slice_page(payload, offset=nxt, top_k=top_k - len(hits))
+        for r in rows:
+            if r.get("namespace", "") not in readable:
+                continue
+            try:
+                hits.append(_MemorySearchHit.model_validate(r))
+            except Exception:  # noqa: BLE001 — a row this build cannot read is skipped
+                continue
+        if not rows:
+            break
+    return hits, nxt
 
 
 async def _shape_final_hits(
@@ -140,11 +191,9 @@ async def _shape_final_hits(
     # consumer reads (the reader block, memory.ask's window, the wire).
     _resolve_relative_words(final_hits)
 
-    # Say which namespaces were read, and mark every hit that came from a namespace other than
-    # the addressed one.
-    _namespaces_searched = [input.namespace] + [
-        ns for ns in (namespaces or []) if ns and ns != input.namespace
-    ]
+    # Say which namespaces were in scope (they already lead with the addressed one), and mark
+    # every hit that came from a namespace other than the addressed one.
+    _namespaces_searched = list(namespaces or [input.namespace])
     for _h in final_hits:
         _hns = str(getattr(_h, "namespace", "") or "")
         if _hns and _hns != input.namespace:
@@ -188,6 +237,7 @@ def _build_search_output(
     _output = MemorySearchOutput(
         top_k_ceiling=run.top_k_ceiling,
         namespaces_searched=_namespaces_searched,
+        namespaces_skipped=run.namespaces_skipped,
         results=final_hits,
         chunk_share=_chunk_share(final_hits, int(getattr(input, "top_k", 0) or len(final_hits))),
         bodies_returned=_unit_bodies[0],
@@ -264,6 +314,8 @@ async def _finish_search_output(
                 top_k=int(input.top_k),
                 candidates_total=_output.candidates_total,
                 tail=ctx.page_tail,
+                namespaces_searched=_output.namespaces_searched,
+                namespaces_skipped=_output.namespaces_skipped,
             )
             _blob_key = await _pages.store_page(
                 get_client(),

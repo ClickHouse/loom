@@ -13,7 +13,7 @@ import jwt as pyjwt
 import pytest
 from fastapi.testclient import TestClient
 
-from server.auth import device, login, oauth, oidc, revocation
+from server.auth import device, jit, login, oauth, oidc, revocation
 from server.auth.jwt import mint_token
 from tests.unit.oauth_store_fake import MemoryOAuthStore, oauth_app
 
@@ -41,6 +41,11 @@ def _world(monkeypatch):
         return {}
 
     monkeypatch.setattr(revocation, "revoke", revoke)
+
+    async def subjects_revoked(subjects: list[str], *, issued_at: int) -> bool:
+        return any(revocation.is_revoked(s, issued_at=issued_at) for s in subjects)
+
+    monkeypatch.setattr(revocation, "subjects_revoked", subjects_revoked)
     events: list[tuple[str, dict[str, Any]]] = []
 
     async def emit(event_type: str, **kw: Any) -> str:
@@ -427,7 +432,7 @@ def sso(monkeypatch):
     monkeypatch.setattr(oidc, "check_callback_issuer", issuer_ok)
     monkeypatch.setattr(oidc, "refresh", refresh)
     monkeypatch.setattr(login, "resolve_identity_for_email", by_email)
-    monkeypatch.setattr(login, "jit_provision_for_email", no_jit)
+    monkeypatch.setattr(jit, "jit_provision_for_email", no_jit)
     return idp
 
 
@@ -873,8 +878,7 @@ def test_a_failed_issue_leaves_the_code_unspent(_world, monkeypatch) -> None:
         raise RuntimeError("insert failed")
 
     monkeypatch.setattr(_world["store"], "save_refresh", flaky)
-    with pytest.raises(RuntimeError):
-        _poll(c, grant["device_code"])
+    assert _poll(c, grant["device_code"]).status_code == 503  # told to retry
     assert "access_token" in _poll(c, grant["device_code"]).json()  # the retry is no replay
     assert _world["revoked"] == []
 
@@ -901,8 +905,7 @@ def test_a_loom_failure_during_refresh_leaves_the_token_usable(_world, monkeypat
         raise RuntimeError("ClickHouse unreachable")
 
     monkeypatch.setattr(login, "refreshed_roles", ch_down)
-    with pytest.raises(RuntimeError):
-        _refresh(c, tokens["refresh_token"])
+    assert _refresh(c, tokens["refresh_token"]).status_code == 503  # told to retry
 
     async def active(subject: str, org: str, roles: list[str]) -> list[str]:
         return roles
@@ -976,8 +979,7 @@ def test_a_failed_code_exchange_leaves_the_code_unspent(_world, monkeypatch) -> 
         raise RuntimeError("insert failed")
 
     monkeypatch.setattr(_world["store"], "save_refresh", flaky)
-    with pytest.raises(RuntimeError):
-        _exchange(c, client_id, code, verifier)
+    assert _exchange(c, client_id, code, verifier).status_code == 503  # told to retry
     assert _exchange(c, client_id, code, verifier).status_code == 200
     assert _world["revoked"] == []
 
