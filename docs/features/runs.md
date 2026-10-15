@@ -35,7 +35,9 @@ session (the SDK, plain HTTP) shares one per namespace and web process, so read 
 decide.
 
 A run's spend is its session's turns made while the run was open, by each turn's own time (`turn_at`, from the
-transcript), so `budget_usd` needs a `session_id` (a 422 otherwise). Two runs in one session each count their own
+transcript), so `budget_usd` needs a `session_id` (a 422 otherwise). Runs open at once in one session would see the
+same turns, so a second cost budget is refused (a 422 naming the open run) while one is open there: give each
+concurrent worker its own session. Two runs in one session each count their own
 turns, and a run nested in another counts toward both. The Stop hook posts a prompt's turns when the prompt ends,
 after any `run.complete` the agent called during it; those turns still count, and a re-sent turn keeps its time.
 The window compares the client's turn times with the server's run times, so it relies on the client's clock being

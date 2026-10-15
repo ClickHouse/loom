@@ -750,3 +750,31 @@ async def test_a_reopened_session_run_keeps_what_its_close_recalled(ch: Any) -> 
             "DELETE FROM loom.agent_runs WHERE org = {org:String} AND namespace = {ns:String}",
             params={"org": ORG, "ns": namespace},
         )
+
+
+@pytest.mark.asyncio
+async def test_the_run_cost_window_keeps_milliseconds(ch: Any) -> None:
+    # A driver that binds datetimes to whole seconds would read this window as
+    # 12:00:00 to 12:00:00 and miss the turn between.
+    namespace = f"ns-{uuid.uuid4().hex[:8]}"
+    await ch.insert(
+        "loom.agent_turn_usage",
+        [
+            {
+                "org": ORG,
+                "namespace": namespace,
+                "agent": AGENT,
+                "session_id": "s",
+                "message_id": "m1",
+                "model": "claude-opus-5-5",
+                "cost_usd": 2,
+                "priced": True,
+                "turn_at": datetime(2026, 1, 1, 12, 0, 0, 500000, tzinfo=UTC),
+            }
+        ],
+        settings={"async_insert": 0},
+    )
+    since = datetime(2026, 1, 1, 12, 0, 0, 100000)
+    until = datetime(2026, 1, 1, 12, 0, 0, 900000)
+    turns, cost = await run_handlers.runs_store.run_cost(ch, ORG, namespace, "s", since, until)
+    assert (turns, cost) == (1, 2.0)

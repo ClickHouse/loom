@@ -207,6 +207,27 @@ async def test_each_run_in_a_session_counts_only_its_own_turns(control_plane_url
 
 
 @pytest.mark.asyncio
+async def test_two_workers_cannot_share_a_session_under_cost_budgets(
+    control_plane_url: str,
+) -> None:
+    from loom import Agent
+    from loom.errors import ValidationError
+
+    ns = f"run-ledger-{uuid.uuid4().hex[:6]}"
+    async with Agent(org="run-test", namespace=ns, agent="a", base_url=control_plane_url) as a:
+        await a.run.begin(goal="worker a", session_id="shared", budget_usd=1.0)
+        # Both runs would count the session's turns, so worker b's run would be
+        # charged worker a's spend.
+        with pytest.raises(ValidationError):
+            await a.run.begin(goal="worker b", session_id="shared", budget_usd=1.0)
+        b = await a.run.begin(goal="worker b", session_id="worker-b", budget_usd=1.0)
+        a_cost = await _record_turn(a, "shared", "m1", turn_at=_now_iso())
+        assert a_cost > 0
+        got_b = await _get_with_turns(a, b["run_id"], 1, timeout_s=1.5)
+        assert got_b["turns"] == 0 and got_b["cost_usd"] == 0.0 and got_b["over_budget"] == []
+
+
+@pytest.mark.asyncio
 async def test_a_cost_budget_without_a_session_is_refused(control_plane_url: str) -> None:
     from loom import Agent
     from loom.errors import ValidationError

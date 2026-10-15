@@ -25,7 +25,12 @@ from typing import Any
 
 from server.core.ch import get_client, sequential_reads
 from server.core.datetimes import naive_utc_now as _now
-from server.core.errors import AuthInsufficientError, IdentityIncompleteError, NotFoundError
+from server.core.errors import (
+    AuthInsufficientError,
+    IdentityIncompleteError,
+    NotFoundError,
+    ValidationError,
+)
 from server.identity.app.request_scope import request_narrowed, request_scope
 from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters, row_in_read_scope
 from server.memory.app import run_feedback, run_retention
@@ -402,6 +407,17 @@ async def _open_run(
 ) -> RunBeginOutput:
     """Write the run's active row and answer with its id. A new row starts at
     `started_at` (default: now); `version` replaces the server's (a session run's first begin)."""
+    if input.budget_usd > 0:
+        # Runs open at once in one session see the same turns, so a second cost
+        # budget there would be charged the first one's spend.
+        other = await runs_store.open_cost_budgeted_run(
+            ch, input.org, input.namespace, input.session_id, run_id
+        )
+        if other:
+            raise ValidationError(
+                f"run {other} with a cost budget is still open in session "
+                f"{input.session_id!r}; give each budgeted run its own session_id"
+            )
     # The begin row in the ledger carries the run it opened, so begin and complete join
     # on `run_id` (the body names none; the transport's fallback is the header run, empty
     # for a bare client).

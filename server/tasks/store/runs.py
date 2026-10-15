@@ -333,6 +333,24 @@ async def observation_count(ch: Any, org: str, ns: str, run_id: str, *, scope: R
     return int((row or {}).get("n") or 0)
 
 
+async def open_cost_budgeted_run(
+    ch: Any, org: str, ns: str, session_id: str, other_than: str
+) -> str:
+    """The id of an active run with a cost budget in the session, other than
+    `other_than`; "" when there is none."""
+    with sequential_reads():
+        row = await ch.query_one(
+            """
+            SELECT run_id FROM loom.agent_runs FINAL
+            WHERE org = {org:String} AND namespace = {ns:String} AND session_id = {sid:String}
+              AND status = 'active' AND budget_usd > 0 AND run_id != {rid:String}
+            LIMIT 1
+            """,
+            params={"org": org, "ns": ns, "sid": session_id, "rid": other_than},
+        )
+    return str((row or {}).get("run_id") or "")
+
+
 async def active_runs_by_id(ch: Any, org: str, run_id: str) -> list[RunLedgerRow]:
     """The active MCP session runs under `run_id` in `org`, oldest first: one, or
     one per namespace when the subject's tokens default to different ones."""
@@ -491,6 +509,7 @@ __all__ = [
     "list_runs",
     "live_memories_by_key",
     "observation_count",
+    "open_cost_budgeted_run",
     "run_cost",
     "run_row",
     "runs_to_grade",

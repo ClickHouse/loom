@@ -18,6 +18,7 @@ import pytest
 from pydantic import ValidationError
 
 from server.core.errors import NotFoundError
+from server.core.errors import ValidationError as CoreValidationError
 from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters
 from server.tasks.api.models_run import RunBeginInput, RunCompleteInput, RunGetInput, RunListInput
 from server.tasks.store import runs as runs_store
@@ -377,6 +378,30 @@ def test_begin_stores_the_budget_and_complete_carries_it(env) -> None:
     closed = next(rows[0] for table, rows in fake.inserted if table == "loom.agent_runs")
     assert closed["status"] == "completed"
     assert closed["budget_usd"] == 1.5 and closed["budget_seconds"] == 600
+
+
+def test_a_second_cost_budget_in_an_open_session_is_refused(env) -> None:
+    fake, _, h = env
+    fake.one[:] = [{"run_id": "r-open"}]  # a budgeted run still open in s1
+    with pytest.raises(CoreValidationError, match="r-open"):
+        asyncio.run(
+            h.handle_run_begin(
+                RunBeginInput(
+                    org="o", namespace="n", agent="b", session_id="s1", goal="g", budget_usd=1
+                )
+            )
+        )
+    assert not fake.inserted
+    # A time budget alone overlaps freely: it counts nothing of the session's.
+    fake.one[:] = []
+    asyncio.run(
+        h.handle_run_begin(
+            RunBeginInput(
+                org="o", namespace="n", agent="b", session_id="s1", goal="g", budget_seconds=60
+            )
+        )
+    )
+    assert fake.inserted
 
 
 def test_a_resent_begin_without_a_budget_keeps_the_runs_budget(env) -> None:
