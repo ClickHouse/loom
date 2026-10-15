@@ -16,6 +16,7 @@ from server.memory.api.models_crud import (
 )
 from server.memory.app.provenance import writer_actor
 from server.memory.domain.excerpt import build_excerpt
+from server.memory.store import key_write_lock
 from server.memory.store.inserts import insert_memory_versions
 from server.memory.store.rows import next_version
 
@@ -25,9 +26,8 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryRestoreOutput:
+async def _read_restorable(input: MemoryRestoreInput) -> MemoryRow | None:
     import server.memory.store as memory_repo
-    from server.observability import audit
 
     identity = memory_repo.Identity(
         org=input.org,
@@ -36,7 +36,7 @@ async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryResto
         user_id=input.user_id,
         session_id=input.session_id,
     )
-    existing = await memory_repo.get_by_key(
+    return await memory_repo.get_by_key(
         identity,
         input.memory_key,
         include_tombstoned=True,
@@ -44,43 +44,62 @@ async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryResto
         strong=True,
         scope=WHOLE_NAMESPACE,
     )
-    if (
-        existing is None
-        or existing.tombstoned_at is not None
-        or str(existing.status) != "superseded"
-        or (input.if_superseded_by and existing.superseded_by != input.if_superseded_by)
+
+
+async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryRestoreOutput:
+    import server.memory.store as memory_repo
+    from server.observability import audit
+
+    existing = await _read_restorable(input)
+    if existing is None:
+        return MemoryRestoreOutput(restored=False)
+    # A conditional revision holds the key's write lock from its read to its insert; the
+    # Undo does too, or it could write the retired value back over that revision.
+    async with key_write_lock.key_write_locks.hold(
+        input.org,
+        existing.namespace,
+        existing.agent,
+        existing.user_id,
+        existing.session_id,
+        existing.memory_key,
     ):
+        existing = await _read_restorable(input)
         if existing is None:
             return MemoryRestoreOutput(restored=False)
-        return MemoryRestoreOutput(
-            restored=False, memory_id=str(existing.memory_id), version=int(existing.version)
+        if (
+            existing.tombstoned_at is not None
+            or str(existing.status) != "superseded"
+            or (input.if_superseded_by and existing.superseded_by != input.if_superseded_by)
+        ):
+            return MemoryRestoreOutput(
+                restored=False, memory_id=str(existing.memory_id), version=int(existing.version)
+            )
+        new_version = next_version()
+        restore_row = memory_repo.build_memory_version_row(
+            existing,
+            version=new_version,
+            updated_at=memory_repo.written_now(),
+            status="active",
+            superseded_by="",
+            invalid_at=None,
         )
-    new_version = next_version()
-    restore_row = memory_repo.build_memory_version_row(
-        existing,
-        version=new_version,
-        updated_at=memory_repo.written_now(),
-        status="active",
-        superseded_by="",
-        invalid_at=None,
-    )
-    await insert_memory_versions([restore_row], ch=ch)
-    try:
-        await memory_repo.unsupersede_embeddings(
-            input.org,
-            input.namespace,
-            input.agent,
-            input.user_id,
-            input.session_id,
-            input.memory_key,
-            ch=ch,
-        )
-    except Exception:
-        log.warning(
-            "memory.restore: embeddings re-emit failed for %s",
-            input.memory_key,
-            exc_info=True,
-        )
+        await insert_memory_versions([restore_row], ch=ch)
+        try:
+            await memory_repo.unsupersede_embeddings(
+                input.org,
+                input.namespace,
+                input.agent,
+                input.user_id,
+                input.session_id,
+                input.memory_key,
+                ch=ch,
+            )
+        except Exception:
+            log.warning(
+                "memory.restore: embeddings re-emit failed for %s",
+                input.memory_key,
+                exc_info=True,
+            )
     # The facts the retirement closed and the restored value still holds come back.
     from server.memory.app.entity_projections import reconcile_row_facts
 

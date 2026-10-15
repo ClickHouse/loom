@@ -320,7 +320,7 @@ the value it was written or stated for (`carried`):
   row is gone.
 - **Rows that hold facts:** one rule decides whether a row's value may hold graph facts
   (`GRAPH_HOLDER_SQL`): live, not deleted, not expired, its `valid_to` not passed, and
-  not `high`. The follow's live end, the check for a live row still stating a fact, a
+  not `high`; a proposal is not live, so its `relations` are never graphed. The follow's live end, the check for a live row still stating a fact, a
   revision, an Undo and a replay all read it; a point write checks the same rule on the
   row it just wrote. A revision (`memory.set`, `memory.bulk_set`, `memory.update_by_id`)
   of a row that existed before the write closes the facts its row held that no row holds
@@ -371,15 +371,16 @@ the value it was written or stated for (`carried`):
   asserted after the Undo, or starting on a later day, stays current. An Undo never
   retires a row. A replayed Undo reuses the restore's instant from the failure, not the
   replay's clock, so it keeps its place in the order: a value asserted after the Undo,
-  even in its second, stays current. Each Undo has an id (`restore_id`, migration 034),
+  even in its second, stays current. Each Undo has an id (`restore_id`),
   stored on every triple and edge marker it writes and recorded in its failure: a marker
   is this Undo's when it carries that id, open or closed since, so a replay adds none
   and restates each as stored, from its own start ("Berlin on Dec 1" still closes Rome
   on Dec 1), while a fact held only since gets its marker after those stored, and
   another Undo, even a microsecond apart, never takes them for its own. An edge marker
-  is written before its triple marker, so a replay after a failed triple insert finds
-  the edge by the id and does not repeat it. The failure records each
-  restored row's `content_sha256`; a replay skips a row revised since, whose revision
+  keeps its triple markers' end, open while any of them is, never the end of another
+  relation's row of the same two entities; it is written before its triple marker, so a
+  replay after a failed triple insert finds the edge by the id and does not repeat it.
+  The failure records each restored row's `content_sha256`; a replay skips a row revised since, whose revision
   reconciles its facts, so the revised value is never dated at the Undo.
   A failed interval repair records the triple write for replay too; when the triples
   landed before the repair failed, the replay does not insert them again and never
@@ -411,7 +412,7 @@ the value it was written or stated for (`carried`):
   current and the older closes when the newer starts. Every triple row is placed by one
   key, `(start day, seen_at, object)`: its start is its `valid_from`, or, undated, its
   `seen_at`, the arrival of the write that stored it to the microsecond, plus one
-  microsecond per triple stated before it in that write (migration 033; `last_seen`,
+  microsecond per triple stated before it in that write (the `seen_at` migration; `last_seen`,
   `invalid_at`, `valid_from` and `valid_to` stay whole seconds, the arrival's for the
   first two). Values on different days order by day: Rome from July, imported after London
   was stated undated in October, closes when London was seen, and London undated on Oct 5
@@ -450,7 +451,8 @@ the value it was written or stated for (`carried`):
 
 A facet edge (the agent's file, concept or topic) is no row's: it is never linked, and
 no retirement closes it. A triple another live row's links still state stays open; a
-row stored before migration 031 has none, so it keeps nothing open for other rows. A
+row stored before rows were linked to triples has no links, so it keeps open a triple
+its key is linked to (`entity_triple_memories`) while its value still names it. A
 cycle or a longer chain leaves the loser's triples open and logs a warning, and a write
 records the pair for `projection_repair`; a pair even the repair cannot read abandons
 its row (status `abandoned`, with `unfollowable_chain: N pair(s)` in `error_message`).

@@ -82,7 +82,8 @@ def served_status_sql(
 # A `loom.memory` row whose current value may hold graph facts: live, not deleted, not
 # expired, its validity not ended, and not 'high' (a 'high' row's content stays out of
 # the shared graph). Every path that keeps or reopens a row's facts asks this; a point
-# write applies the same rule in Python to the row it just wrote, which is live.
+# write asks its Python twin (`entity_projections.holds_graph_facts`) of the row it
+# just wrote.
 GRAPH_HOLDER_SQL = (
     f"tombstoned_at IS NULL AND status IN ({', '.join(repr(s) for s in LIVE_STATUSES)})"
     " AND (expires_at IS NULL OR expires_at > now())"

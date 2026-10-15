@@ -1169,6 +1169,16 @@ class _Graph:
         return row["tombstoned_at"] is None and row["status"] in LIVE_STATUSES
 
     async def query_all(self, sql, params):
+        if "WITH keyed AS" in sql:
+            # Live rows with no row link, of a key a triple is linked to.
+            linked = {link[0] for link in self.links}
+            return [
+                {"value": row["value"], "subject": s, "relation": r, "object": o}
+                for row in self.rows.values()
+                if self._holds(row) and row["id"] not in linked
+                for s, r, o, key in sorted(self.provenance)
+                if key == row["memory_key"] and (s, r, o) in params["triples"]
+            ]
         if "WITH links AS" in sql:
             live = {r["id"]: r for r in self.rows.values() if self._holds(r)}
             return [
@@ -1705,7 +1715,7 @@ async def test_an_undo_replay_without_its_id_or_instant_is_abandoned_unread(
     monkeypatch, payload
 ) -> None:
     # '' is every other row's restore id, and the clock would date the Undo at the replay.
-    from server.memory.app import entity_projections, projection_failures
+    from server.memory.app import graph_undo, projection_failures
 
     abandoned: list[str] = []
     called: list[str] = []
@@ -1718,7 +1728,7 @@ async def test_an_undo_replay_without_its_id_or_instant_is_abandoned_unread(
 
     monkeypatch.setattr(projection_failures, "mark_projection_failure_abandoned", mark_abandoned)
     monkeypatch.setattr(projection_failures, "_rows_still_holding", never)
-    monkeypatch.setattr(entity_projections, "reopen_held_facts", never)
+    monkeypatch.setattr(graph_undo, "reopen_held_facts", never)
     failure = projection_failures.ProjectionFailureRow(
         failure_id="f1",
         org="o",

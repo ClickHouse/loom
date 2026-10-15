@@ -222,7 +222,8 @@ edit to other fields keeps a live expiry. See
 
 `memory.set(proposed=true)` writes a fact on trial (`status='proposed'`). It is served
 only to reads that pass `include_proposed`, and never retires, supersedes or flags an
-established fact. A key that already holds a fact answers 409 `KEY_HOLDS_FACT`.
+established fact. The `relations` it names stay out of the fact graph, and accepting it
+does not add them: state them again once it is established. A key that already holds a fact answers 409 `KEY_HOLDS_FACT`.
 `memory.proposals` lists proposals with the graded runs that relied on each, and
 `memory.proposal_decide` accepts or rejects them. Loom decides only when the owner set
 `proposal_policy.mode` to `auto` (`min_passes`, `max_fails`, `reject_after_fails`). See

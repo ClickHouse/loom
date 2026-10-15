@@ -2,8 +2,8 @@
 
 These helpers keep graph write paths consistent without introducing a second
 graph database. They produce stable canonical entity text/IDs, normalize
-relation verbs, check namespace ontology membership, and encode the temporal
-invalidation rule used by graph repair/reconciliation code.
+relation verbs, check namespace ontology membership, and plan the interval
+repairs that close an older single-valued fact.
 """
 
 from __future__ import annotations
@@ -442,25 +442,6 @@ def canonical_relation(
     accepted = not accepted_set or verb in accepted_set
     confidence = float(default_confidence if accepted else min(default_confidence, 0.5))
     return CanonicalRelation(verb=verb, accepted=accepted, confidence=confidence)
-
-
-def should_invalidate_interval(
-    *,
-    existing_valid_at: datetime | None,
-    existing_valid_to: datetime | None,
-    new_valid_at: datetime | None,
-) -> bool:
-    """True when a newer fact should close an older open interval.
-
-    If the existing edge is already closed, or the new fact has no real-world
-    start time, there is nothing deterministic to invalidate.
-    """
-
-    if new_valid_at is None or existing_valid_to is not None:
-        return False
-    if existing_valid_at is None:
-        return True
-    return existing_valid_at < new_valid_at
 
 
 _SINGLE_VALUED_LEMMAS: set[str] | None = None

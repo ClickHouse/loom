@@ -306,8 +306,8 @@ def _later(a: Any, b: Any) -> Any:
 
 
 def still_states(text: str, triple: Triple) -> bool:
-    """A row's value names a successor written for it: the object, and the subject
-    too unless it is the writer (a first-person value never spells it)."""
+    """A row's value names `triple`: the object, and the subject too unless it is the
+    writer (a first-person value never spells it)."""
     return _still_named(_tokens(text), triple)
 
 

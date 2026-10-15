@@ -548,7 +548,8 @@ async def _retry_triples_reconcile(failure: ProjectionFailureRow, *, ch: Any) ->
     """Reconcile the facts of the rows a revision or an Undo changed, as it would have."""
     from types import SimpleNamespace
 
-    from server.memory.app.entity_projections import close_dropped_facts, reopen_held_facts
+    from server.memory.app.entity_projections import close_dropped_facts
+    from server.memory.app.graph_undo import reopen_held_facts
 
     ids = [str(i) for i in failure.payload.get("memory_ids") or []]
     if not ids:
@@ -812,7 +813,11 @@ async def _retry_graph_projection(
             "entries": [e.model_dump(mode="json") for e in bulk_input.entries],
             "results": [r.model_dump(mode="json") for r in bulk_results],
         }
-    with read_filters_bound(None, scope):
+    # Bound for the auth the replay runs under: the worker's none, or the admin's
+    # token when the ops op retries it.
+    from server.auth.context import current_auth
+
+    with read_filters_bound(current_auth(), scope):
         if failure.projection == "entity_vectors":
             await write_entity_vectors(bulk_input, bulk_results, get_embedder(), ch=ch)
         # entity_edges / entity_triples are plain MergeTree, one row per
