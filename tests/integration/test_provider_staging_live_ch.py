@@ -356,9 +356,8 @@ async def test_a_text_less_summary_card_rebuilds_verifies_and_publishes_as_a_pla
         )
         assert published["embedding_model"] == "rebuild-page-test"
         assert (published["embedding_dim"], published["pagerank"]) == (0, 0.5)
-        # Re-padded to the new width only where the live column is Quantized-coded.
-        assert len(published["embedding"]) in (0, 3)
-        assert not any(published["embedding"])
+        # Codec-free on the CI floor; a coded column re-pads to the new width.
+        assert published["embedding"] == []
     finally:
         for name, uuid in (
             (names.prepared, prepared_uuid),
