@@ -5,8 +5,10 @@ in server.memory.app.projections.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
+import time
 import unicodedata
 import uuid
 from collections.abc import Mapping
@@ -524,6 +526,39 @@ async def close_dropped_facts(input: Any, ids: list[str], *, ch: Any) -> None:
         await _write_follow_plan(input, tfr.FollowPlan(closes=dropped, inserts=[]), ch=ch)
 
 
+# How long an Undo waits for the namespace's pending closes before it fails for a replay.
+_GRAPH_CLOSES_WAIT_S = 5.0
+
+
+async def _await_graph_closes(org: str, namespace: str, *, ch: Any) -> None:
+    """Wait for the triple and edge closes pending in this namespace to land. A close is
+    an ALTER UPDATE, which only changes the rows that existed when it was issued: a row
+    read open before it lands is weighed as open, and the close still takes it. Only the
+    mutations pending at the first read are waited for. Past the bound it raises, so
+    the reconcile records a failure that a replay finishes."""
+    deadline = time.monotonic() + _GRAPH_CLOSES_WAIT_S
+    waiting: set[tuple[str, str]] | None = None
+    while True:
+        # The command carries its parameters inlined, so it names the org and namespace
+        # (a namespace whose name is part of another's only waits longer).
+        rows = await ch.query_all(
+            """
+            SELECT table, mutation_id FROM system.mutations
+            WHERE database = 'loom' AND table IN ('entity_triples', 'entity_edges')
+              AND NOT is_done
+              AND position(command, {org:String}) > 0 AND position(command, {ns:String}) > 0
+            """,
+            params={"org": org, "ns": namespace},
+        )
+        pending = {(str(r["table"]), str(r["mutation_id"])) for r in rows}
+        waiting = pending if waiting is None else waiting & pending
+        if not waiting:
+            return
+        if time.monotonic() > deadline:
+            raise TimeoutError(f"graph closes still pending: {sorted(waiting)}")
+        await asyncio.sleep(0.1)
+
+
 async def reopen_held_facts(
     input: Any, ids: list[str], *, ch: Any, restored_at: datetime | None = None
 ) -> None:
@@ -532,8 +567,9 @@ async def reopen_held_facts(
     An Undo is the newest assertion: each fact the rows hold, open or not, gets a new
     observation of its latest row starting at the restore (`restored_at`, now by
     default), and its edge one from the restore too, so later writes read the Undo's
-    date back from storage. It weighs 1 only when the fact (or edge) has no open
-    weighted row left, the usual Undo of a closed value, so readers still count it;
+    date back from storage. It weighs 1 only when the fact (or edge) has no weighted
+    row the readers count as current after the Undo, read once the namespace's pending
+    closes have landed: the usual Undo of a closed value, so readers still count it;
     otherwise 0, so Undoing back and forth adds no weight. Every one then
     goes through the interval repair dated at it as the newest value: another value
     of a single-valued relation closes, even one seen in the same second, unless it
@@ -547,13 +583,17 @@ async def reopen_held_facts(
     if not held:
         return
     now = (restored_at or naive_utc_now()).replace(microsecond=0)
+    # What is open is weighed below: a retirement's closes land first.
+    await _await_graph_closes(input.org, input.namespace, ch=ch)
     latest = await ch.query_all(
         """
         SELECT subject, relation, object, argMax(confidence, last_seen) AS confidence,
                argMax(provenance, last_seen) AS provenance,
                countIf(adapter_name = 'row-restore' AND valid_from = {at:DateTime}
                        AND valid_to IS NULL) AS restored,
-               countIf(co_occur > 0 AND valid_to IS NULL) AS weighted
+               -- What the readers count as current after the Undo's second.
+               countIf(co_occur > 0 AND (valid_to IS NULL OR valid_to > {at:DateTime}))
+                   AS weighted
         FROM loom.entity_triples
         WHERE org = {org:String} AND namespace = {ns:String}
           AND (subject, relation, object) IN {triples:Array(Tuple(String, String, String))}
@@ -598,7 +638,8 @@ async def reopen_held_facts(
         SELECT entity_a, entity_b,
                countIf(valid_from = {at:DateTime} AND last_seen = {at:DateTime}
                        AND valid_to IS NULL) AS restored,
-               countIf(co_occur > 0 AND valid_to IS NULL AND invalid_at IS NULL) AS weighted
+               countIf(co_occur > 0 AND (valid_to IS NULL OR valid_to > {at:DateTime})
+                       AND invalid_at IS NULL) AS weighted
         FROM loom.entity_edges
         WHERE org = {org:String} AND namespace = {ns:String}
           AND (entity_a, entity_b) IN {pairs:Array(Tuple(String, String))}

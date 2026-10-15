@@ -188,3 +188,57 @@ async def test_a_bulk_write_reconciles_only_the_rows_it_revised(monkeypatch) -> 
     ]
     await bulk_set._bulk_run_projections(None, write, state, None, None, {}, {})
     assert reconciled == [["id-old"]]
+
+
+async def test_an_undo_weighs_its_facts_only_after_pending_closes_land(monkeypatch) -> None:
+    # A retirement's closes are mutations: the Undo reads what is open only once
+    # the namespace's pending triple and edge mutations are done.
+    from types import SimpleNamespace
+
+    from server.memory.app import entity_projections as ep
+
+    class _MutatingCH(_CH):
+        def __init__(self) -> None:
+            super().__init__()
+            self.reads: list[str] = []
+            self.polls = [[{"table": "entity_triples", "mutation_id": "m1"}], []]
+
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            if "system.mutations" in sql:
+                self.reads.append("mutations")
+                return self.polls.pop(0)
+            self.reads.append("weights")
+            return []
+
+    async def held(*a: Any, **k: Any) -> list:
+        return [("user", "likes", "tea")]
+
+    async def nothing(*a: Any, **k: Any) -> list:
+        return []
+
+    monkeypatch.setattr(ep, "_linked_triples", held)
+    monkeypatch.setattr(ep, "_stated_by_live_rows", held)
+    monkeypatch.setattr(ep, "repair_intervals", nothing)
+    ch = _MutatingCH()
+    await ep.reopen_held_facts(SimpleNamespace(org="o", namespace="ns"), ["m1"], ch=ch)
+    assert ch.reads[:3] == ["mutations", "mutations", "weights"]
+
+
+async def test_an_undo_behind_closes_that_never_land_fails_for_a_replay(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from server.memory.app import entity_projections as ep
+
+    class _StuckCH(_CH):
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            assert "system.mutations" in sql, "nothing is weighed behind a pending close"
+            return [{"table": "entity_edges", "mutation_id": "m1"}]
+
+    async def held(*a: Any, **k: Any) -> list:
+        return [("user", "likes", "tea")]
+
+    monkeypatch.setattr(ep, "_linked_triples", held)
+    monkeypatch.setattr(ep, "_stated_by_live_rows", held)
+    monkeypatch.setattr(ep, "_GRAPH_CLOSES_WAIT_S", 0.2)
+    with pytest.raises(TimeoutError):
+        await ep.reopen_held_facts(SimpleNamespace(org="o", namespace="ns"), ["m1"], ch=_StuckCH())

@@ -717,10 +717,12 @@ def _one_session(
     return dated <= seen <= dated + timedelta(days=SESSION_DATE_TOLERANCE_DAYS)
 
 
-def _arrived_later(seen: object, obj: str, than_seen: datetime | None, than_obj: str) -> bool:
+def _arrived_later(
+    seen: datetime | None, obj: str, than_seen: datetime | None, than_obj: str
+) -> bool:
     # `last_seen` is in whole seconds, as the writers stamp it; two rows in one second
     # order by object.
-    if not isinstance(seen, datetime) or than_seen is None:
+    if seen is None or than_seen is None:
         return False
     return (seen, obj) > (than_seen, than_obj)
 
