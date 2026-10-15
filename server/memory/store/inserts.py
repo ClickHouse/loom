@@ -3,11 +3,58 @@ and the full-row check the loom.memory one applies."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+import asyncio
+import logging
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any
 
+from server.core.errors import PreconditionFailedError
 from server.core.repo_base import _CHClient, _default_client
 from server.memory.store.rows import MEMORY_PERSISTED_COLS
+
+log = logging.getLogger(__name__)
+
+# Runs on every loom.memory batch before it is inserted, may refuse it, and returns
+# the rows to insert: the temporal publisher (server/wiring.py registers it)
+# journals the change first, and leaves out a retry's row its key has moved past.
+Rows = Sequence[Mapping[str, Any]]
+_BEFORE_INSERT: list[Callable[..., Awaitable[Rows]]] = []
+
+
+# Runs on every loom.memory batch once its insert returned, even with an error (it
+# may have landed), and may take it back out (the publisher re-checks the erasure
+# fence) and refuse the write.
+_AFTER_INSERT: list[Callable[..., Awaitable[None]]] = []
+
+
+def before_memory_insert(fn: Callable[..., Awaitable[Rows]]) -> None:
+    """Register `fn(rows, ch=...) -> rows to insert` once."""
+    if fn not in _BEFORE_INSERT:
+        _BEFORE_INSERT.append(fn)
+
+
+def after_memory_insert(fn: Callable[..., Awaitable[None]]) -> None:
+    """Register `fn(rows, ch=...)` once."""
+    if fn not in _AFTER_INSERT:
+        _AFTER_INSERT.append(fn)
+
+
+def _ident(r: Mapping[str, Any]) -> tuple[Any, ...]:
+    return (r["agent"], r["user_id"], r["session_id"], r["memory_key"])
+
+
+def kept_embedding_rows(
+    kept: Rows, embedding_rows: Sequence[Mapping[str, Any]]
+) -> list[dict[str, Any]]:
+    """The embedding rows of the version rows the hooks kept, at the version and
+    with the expiry those were given (stamped by the publisher; a retry's are its
+    commit's)."""
+    kept_by = {_ident(r): r for r in kept}
+    return [
+        {**e, "version": kept_by[k]["version"], "expires_at": kept_by[k].get("expires_at")}
+        for e in embedding_rows
+        if (k := _ident(e)) in kept_by
+    ]
 
 
 def check_memory_rows(rows: Sequence[Mapping[str, Any]]) -> None:
@@ -35,21 +82,83 @@ async def insert_memory_versions(
     rows: Sequence[Mapping[str, Any]],
     *,
     ch: _CHClient | None = None,
+    alongside: Sequence[Callable[[Rows], Awaitable[Any]]] = (),
 ) -> int:
     """The one loom.memory write: every row is checked against
     MEMORY_PERSISTED_COLS before the insert (see `check_memory_rows`), and
-    the insert is committed. Returns the row count; an empty batch writes
-    nothing."""
+    the insert is committed. `alongside` (the rows' embedding writes) runs
+    concurrently with the insert, only once the hooks accepted the batch, and is
+    handed the rows they kept: a refused batch leaves nothing searchable.
+    Returns the rows inserted."""
     if not rows:
         return 0
     check_memory_rows(rows)
-    ch = ch or _default_client()
-    await ch.insert(
-        "loom.memory",
-        [dict(r) for r in rows],
-        settings={"async_insert": 0, "wait_for_async_insert": 1},
-    )
+    # A cancelled request must leave neither a commit without its row nor rows
+    # unfenced: the journal hook, the insert and the after-insert fence finish
+    # together in their own task whatever happens to the caller.
+    task = asyncio.ensure_future(_publish_insert_fence(rows, ch or _default_client(), alongside))
+    _FENCING.add(task)
+    task.add_done_callback(_fenced)
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        task.add_done_callback(_report_abandoned)  # nobody else will see its outcome
+        raise
+
+
+# Insert-and-fence tasks a cancelled caller left running (the loop holds tasks weakly).
+_FENCING: set[asyncio.Future[int]] = set()
+
+
+async def _publish_insert_fence(
+    rows: Rows, ch: _CHClient, alongside: Sequence[Callable[[Rows], Awaitable[Any]]]
+) -> int:
+    for hook in _BEFORE_INSERT:
+        rows = await hook(rows, ch=ch)
+    if not rows:
+        return 0
+    await _insert_then_fence(rows, ch, alongside)
     return len(rows)
+
+
+def _fenced(task: asyncio.Future[int]) -> None:
+    _FENCING.discard(task)
+    if not task.cancelled():
+        task.exception()  # retrieved: a caller that was cancelled never awaits it
+
+
+def _report_abandoned(task: asyncio.Future[int]) -> None:
+    e = None if task.cancelled() else task.exception()
+    if isinstance(e, PreconditionFailedError):
+        log.info("a cancelled write's rows were taken back out by the erasure fence")
+    elif e is not None or task.cancelled():
+        log.error("a cancelled write's loom.memory insert or its erasure fence failed: %r", e)
+
+
+async def drain(timeout_s: float) -> None:
+    """Let the inserts cancelled requests left running finish, fence included."""
+    if _FENCING:
+        await asyncio.wait(set(_FENCING), timeout=timeout_s)
+
+
+async def _insert_then_fence(
+    rows: Rows, ch: _CHClient, alongside: Sequence[Callable[[Rows], Awaitable[Any]]]
+) -> None:
+    outcomes = await asyncio.gather(
+        ch.insert(
+            "loom.memory",
+            [dict(r) for r in rows],
+            settings={"async_insert": 0, "wait_for_async_insert": 1},
+        ),
+        *(f(rows) for f in alongside),
+        return_exceptions=True,
+    )
+    # Whatever failed, the rows may be in: the hooks' fence holds for them first.
+    for after in _AFTER_INSERT:
+        await after(rows, ch=ch)
+    for outcome in outcomes:
+        if isinstance(outcome, BaseException):
+            raise outcome
 
 
 async def insert_embedding_rows(

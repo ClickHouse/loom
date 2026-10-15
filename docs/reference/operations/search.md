@@ -16,6 +16,10 @@ Search every plane of the caller's Loom content in one call.
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
+| `valid_as_of` | `datetime \| None` | `None` | World time V; None = now, or K when only `known_as_of` is given. |
+| `known_as_of` | `datetime \| None` | `None` | Knowledge time K: answer from the journal as committed at K; None = now. |
+| `read_token` | `str` | `''` | A write's `read_token`: the read waits (within budget) until the journal cutoff covers that write, and answers `projection_not_ready` otherwise. |
+| `validity_policy` | `Literal['compat', 'strict']` | `'compat'` | `compat` admits an assertion with an unknown or inferred validity bound and discloses it; `strict` excludes it. |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `agent` | `str` | `'-'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
@@ -36,5 +40,6 @@ Search every plane of the caller's Loom content in one call.
 | `profile` | `dict[str, Any]` | Profile sections whose label or text matches the query words, then by meaning. |
 | `conversations` | `dict[str, Any]` | The `conversation.search` hits under `results`. |
 | `withheld` | `dict[str, Any] \| None` | Counts of hits held back per section by the answer-first rules, with `reason`; absent when nothing was withheld or `explain` is set. |
+| `temporal_coverage` | `dict[str, str] \| None` | On a bi-temporal search: what each plane could answer for (V, K). |
 
 <!-- prettier-ignore-end -->

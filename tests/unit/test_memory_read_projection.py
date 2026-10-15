@@ -55,12 +55,15 @@ def _get_out(**kw: Any) -> MemoryGetOutput:
     )
 
 
+_ABSENT_ON_A_PLAIN_GET = {"canonical_key", "resolved_from", "temporal", "assertions", "disputed"}
+
+
 def test_get_payload_without_fields_is_unchanged() -> None:
     plain = _get_out().model_dump(mode="json")
     # every declared field is on the wire (`canonical_key` rides only on a
-    # duplicate row and `resolved_from` only on a followed read: the two
-    # exceptions)
-    assert set(plain) == set(MemoryGetOutput.model_fields) - {"canonical_key", "resolved_from"}
+    # duplicate row, `resolved_from` only on a followed read and the temporal
+    # block only on a bi-temporal read: the exceptions)
+    assert set(plain) == set(MemoryGetOutput.model_fields) - _ABSENT_ON_A_PLAIN_GET
     assert "_projection" not in plain
 
 
@@ -199,10 +202,9 @@ async def test_handle_memory_get_projects_and_validates_before_the_read(monkeypa
     full = await H.handle_memory_get(
         MemoryGetInput(org="o", namespace="n", agent="clickgap", memory_key="finding_1")
     )
-    assert set(full.model_dump(mode="json")) == set(MemoryGetOutput.model_fields) - {
-        "canonical_key",
-        "resolved_from",
-    }
+    assert set(full.model_dump(mode="json")) == set(MemoryGetOutput.model_fields) - (
+        _ABSENT_ON_A_PLAIN_GET
+    )
 
 
 @pytest.mark.asyncio

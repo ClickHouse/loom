@@ -18,6 +18,7 @@ from server.core.errors import LoomServerError
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import ReadFilters
 from server.knowledge.app.repo_docs import knowledge_with_repo_docs
+from server.memory.api.models_common import TemporalArgs
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.app.loom_search.answer_first import answer_first
 from server.memory.app.loom_search.tracker_leg import tracker_leg
@@ -199,6 +200,7 @@ async def search_sections(
     page: str,
     explain: bool,
     fanout_namespaces: list[str],
+    temporal: TemporalArgs | None = None,
 ) -> dict[str, Any]:
     """The assembled loom_search payload for `query` addressed to
     (`org`, `namespace`). `fanout_namespaces` are the caller's memory-kind
@@ -235,6 +237,8 @@ async def search_sections(
         # reads — dated, in ask order, whole excerpts — not key + 200 chars.
         render="reader",
     )
+    if temporal is not None and temporal.temporal_requested():
+        return await _historical_sections(mem_input, temporal, namespace, explain=explain)
     know_input = KnowledgeSearchInput(
         org=org,
         namespace=namespace,
@@ -290,6 +294,37 @@ async def search_sections(
 
     payload = answer_first(payload, namespace, explain=explain)
     return payload
+
+
+# Planes with no retained history a (V, K) read can use: they answer nothing
+# rather than today's state. Knowledge, conversations and the tracker keep partial
+# history (chunk supersessions, message times, observations) no leg reads yet.
+_NOT_HISTORICAL = ("knowledge", "profile", "conversations", "tracker")
+
+
+async def _historical_sections(
+    mem_input: MemorySearchInput, temporal: TemporalArgs, namespace: str, *, explain: bool
+) -> dict[str, Any]:
+    """loom_search at (V, K): the memory plane answers from its journal; every other
+    plane says it cannot."""
+    from server.memory.app.search import handle_memory_search
+
+    mem_input = mem_input.model_copy(
+        update={
+            "valid_as_of": temporal.valid_as_of,
+            "known_as_of": temporal.known_as_of,
+            "read_token": temporal.read_token,
+            "validity_policy": temporal.validity_policy,
+        }
+    )
+    payload: dict[str, Any] = {"memory": (await handle_memory_search(mem_input)).model_dump()}
+    for plane in _NOT_HISTORICAL:
+        payload[plane] = {"results": [], "coverage": "not_historical"}
+    payload["temporal_coverage"] = {
+        "memory": "bitemporal",
+        **dict.fromkeys(_NOT_HISTORICAL, "not_historical"),
+    }
+    return answer_first(payload, namespace, explain=explain)
 
 
 def _leg_error(e: Exception) -> str:

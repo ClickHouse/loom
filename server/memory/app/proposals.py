@@ -27,7 +27,6 @@ from typing import Any, Literal
 
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.domain.proposal_policy import ProposalPolicy, parse_policy
-from server.memory.store.inserts import insert_memory_versions
 
 log = logging.getLogger(__name__)
 
@@ -167,8 +166,7 @@ async def decide(
         ident, wanted, ch=ch, strong=True, scope=WHOLE_NAMESPACE
     )
     by_key = {r.memory_key: r for r in rows}
-    to_write: list[dict[str, Any]] = []
-    decided: list[Any] = []
+    to_write: list[tuple[dict[str, Any], Any]] = []
     out: list[DecideResult] = []
     for key in wanted:
         row = by_key.get(key)
@@ -190,15 +188,25 @@ async def decide(
         }
         if decision == "reject":
             overrides["rejection_reason"] = (reason or "proposal rejected")[:512]
-        to_write.append(memory_repo.build_memory_version_row(row, **overrides))
-        decided.append(row)
+        to_write.append((memory_repo.build_memory_version_row(row, **overrides), row))
         out.append(DecideResult(key, True, str(overrides["status"])))
     if not to_write:
         return out
-    await insert_memory_versions(to_write, ch=ch)
+    kept = {id(r) for r in await memory_repo.insert_over_heads(to_write, ch=ch)}
+    moved = {h.memory_key for r, h in to_write if id(r) not in kept}
+    out = [
+        DecideResult(d.memory_key, False, "", "changed since it was read; re-read and retry")
+        if d.memory_key in moved
+        else d
+        for d in out
+    ]
+    to_write = [(r, h) for r, h in to_write if id(r) in kept]
+    decided = [h for _, h in to_write]
+    if not to_write:
+        return out
     # Every decided row, `active` included: write_versions_by_ids mirrors only
     # non-active flips, and an accepted proposal's mirror still says proposed.
-    await memory_repo.mirror_status_to_embeddings(to_write, ch=ch)
+    await memory_repo.mirror_status_to_embeddings([r for r, _ in to_write], ch=ch)
     await _audit_decisions(org, namespace, decided, decision, actor=actor, reason=reason)
     if decision == "accept":
         await _surface_conflicts(org, decided)

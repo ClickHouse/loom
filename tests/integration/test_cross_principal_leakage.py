@@ -25,6 +25,7 @@ import re
 import sys
 import typing
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -840,21 +841,50 @@ def test_positive_control_tenant_a_finds_its_own_canary(control_plane_url, seed,
     assert r.status_code == 200 and r.json().get("found") is True
 
 
-@pytest.mark.parametrize("who", ["b_writer", "b_viewer", "other_org"])
-def test_every_read_op_against_namespace_a_leaks_nothing(
-    control_plane_url, seed, tokens, who
+@pytest.mark.parametrize("temporal", ["valid_as_of", "known_as_of"])
+def test_positive_control_tenant_a_reads_its_canary_through_the_journal(
+    control_plane_url, seed, tokens, temporal
 ) -> None:
+    now = datetime.now(UTC).isoformat()
+    base = {"org": seed.org, "namespace": seed.ns_a, "agent": "a", temporal: now}
+    got = _post(
+        control_plane_url, tokens["a_writer"], "memory.get", {**base, "memory_key": seed.keys[0]}
+    )
+    assert got.status_code == 200 and seed.leaked(got.text), got.text[:200]
+    hits = _post(
+        control_plane_url,
+        tokens["a_writer"],
+        "memory.search",
+        {**base, "query": seed.value_text, "top_k": 5},
+    )
+    assert hits.status_code == 200 and seed.leaked(hits.text), "the temporal walk would be vacuous"
+
+
+@pytest.mark.parametrize("who", ["b_writer", "b_viewer", "other_org"])
+@pytest.mark.parametrize("temporal", ["", "valid_as_of", "known_as_of"])
+def test_every_read_op_against_namespace_a_leaks_nothing(
+    control_plane_url, seed, tokens, who, temporal
+) -> None:
+    # The historical reads are their own path (the journal): each op that takes
+    # a temporal axis is walked again with it set.
     leaks: dict[str, list[str]] = {}
     bad_status: dict[str, int] = {}
     unbuildable: list[str] = []
     exercised: set[str] = set()
+    now = datetime.now(UTC).isoformat()
     for op in _read_ops():
+        if temporal and temporal not in op.input_model.model_fields:
+            continue
         payload = _synth_payload(op.input_model, seed=seed, namespace=seed.ns_a)
         if payload is None:
             unbuildable.append(op.name)
             continue
+        if temporal:
+            payload[temporal] = now
         r = _post(control_plane_url, tokens[who], op.name, payload)
         if r.status_code == 422:
+            # A temporal walk sends only what the op declares: a 422 there is a bug.
+            assert not temporal, f"{op.name} refused its own {temporal}: {r.text[:200]}"
             unbuildable.append(op.name)
             continue
         exercised.add(op.name)
@@ -867,6 +897,9 @@ def test_every_read_op_against_namespace_a_leaks_nothing(
     assert not bad_status, (
         f"{who}: unexpected statuses (a 5xx is a leak of a different kind): {bad_status}"
     )
+    if temporal:
+        assert exercised, f"{who}: no op takes {temporal}"
+        return
     missing_core = sorted(_CORE - exercised)
     assert not missing_core, (
         f"{who}: core surfaces not exercised (body shape moved?): {missing_core}; unbuildable={unbuildable}"
@@ -907,13 +940,15 @@ def test_search_from_own_namespace_with_the_canary_text_finds_nothing(
 def test_org_level_lookups_do_not_bypass_the_namespace(control_plane_url, seed, tokens) -> None:
     """Ops addressed by an org-wide id (memory_id) must still refuse or hide a
     row whose namespace the token cannot read."""
+    now = datetime.now(UTC).isoformat()
     for who in ("b_writer", "b_viewer", "other_org"):
-        for mid in seed.memory_ids:
+        axes = ({}, {"valid_as_of": now}, {"known_as_of": now})
+        for mid, extra in ((m, x) for m in seed.memory_ids for x in axes):
             r = _post(
                 control_plane_url,
                 tokens[who],
                 "memory.get_by_id",
-                {"org": seed.org, "memory_id": mid},
+                {"org": seed.org, "memory_id": mid, **extra},
             )
             assert r.status_code in _OK_STATUSES, r.text[:200]
             assert not seed.leaked(r.text), f"{who}: memory.get_by_id leaked {seed.leaked(r.text)}"

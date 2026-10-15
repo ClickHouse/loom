@@ -38,6 +38,8 @@ class MemoryAskResult:
     # The raw retrieved memories (MemorySearchOutput.results) so callers can
     # still inspect the sources behind the answer.
     results: list[Any] = dc_field(default_factory=list)
+    # A historical ask: the cutoff each namespace's evidence was read at.
+    temporal: list[Any] = dc_field(default_factory=list)
     embedding_model: str = ""
     # Synthesis routing (see memory.domain.synth_policy). Empty unless synthesized.
     synth_model: str = ""

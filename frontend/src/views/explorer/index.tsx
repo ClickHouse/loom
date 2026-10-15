@@ -365,7 +365,7 @@ export function Explorer() {
           max_hops: hops,
           top_k_per_hop: perHop,
           labeled: typed || hasEdgeFilters(f),
-          as_of: asOfInstant(asOf),
+          valid_as_of: asOfInstant(asOf),
           max_nodes: NODE_CAP,
           relations: f.relations.size ? [...f.relations] : undefined,
           signal,
@@ -411,7 +411,7 @@ export function Explorer() {
           max_hops: Math.max(hops, 3),
           top_k_per_hop: perHop,
           labeled: typed || hasEdgeFilters(f),
-          as_of: asOfInstant(asOf),
+          valid_as_of: asOfInstant(asOf),
           relations: f.relations.size ? [...f.relations] : undefined,
           signal,
         });
@@ -500,7 +500,7 @@ export function Explorer() {
       setNotice(null);
       relatedFacts({ org: identity.org, namespace: identity.namespace }, entity, {
         top_k: perHop,
-        as_of: asOfInstant(asOf),
+        valid_as_of: asOfInstant(asOf),
         signal: ctl.signal,
       })
         .then((r) => {

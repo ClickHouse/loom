@@ -904,6 +904,22 @@ Source: `server/settings/_memory_search.py`
 | `LOOM_MEMORY_SEARCH_FACT_CODES_FETCH_MULTIPLIER` | `float` | `3.0` | Over-fetch of the codes pass on the main leg; x1 is too low (it changes the top-10 on a quarter of queries). |
 | `LOOM_MEMORY_SEARCH_FACT_LEG_MAX_THREADS` | `int` | `0` | `max_threads` pin on the main fact statement; 0 = no pin (threads follow the marks); 4 bounds each statement to four threads. Unpinned costs more CPU and peak memory per statement. |
 
+## MemoryTemporal
+
+Bi-temporal memory: the commit journal, its publisher and its projections.
+
+Source: `server/settings/_memory_temporal.py`
+
+| Variable | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `LOOM_MEMORY_TEMPORAL_PUBLISHER` | `'auto' \| 'keeper' \| 'process'` | `'auto'` | Who serializes a namespace's commits. keeper = a KeeperMap lease in loom._migration_lock (every process and host takes it); process = the operator's statement that this server is the only process writing memory (web_workers = 1, no separate workers container), serialized by an in-process lock; auto = keeper when the server has one, else memory writes are refused. |
+| `LOOM_MEMORY_TEMPORAL_LOCK_WAIT_S` | `float` | `10.0` | Seconds a write waits for its namespace's publisher lock before failing. |
+| `LOOM_MEMORY_TEMPORAL_INSERT_RETRIES` | `int` | `3` | Times a journal insert with an uncertain result is reconciled and retried (same commit id, sequence and payload) before the write fails. |
+| `LOOM_MEMORY_TEMPORAL_READ_WAIT_MS` | `int` | `2000` | Milliseconds a read holding a `read_token` waits for the projection to cover its sequence before answering `projection_not_ready`. |
+| `LOOM_MEMORY_TEMPORAL_MAX_TAIL` | `int` | `5000` | Journal tail a reader reduces itself when the projection lags its cutoff; above it the read answers `projection_not_ready` instead. |
+| `LOOM_MEMORY_TEMPORAL_PROJECTION_WORKER_ENABLED` | `bool` | `True` | Replays journal commits the projection missed and fills historical-search vectors. |
+| `LOOM_MEMORY_TEMPORAL_PROJECTION_WORKER_INTERVAL_SECONDS` | `int` | `30` | Seconds between passes of the temporal projection worker. |
+
 ## Model
 
 Models: which model does each job.

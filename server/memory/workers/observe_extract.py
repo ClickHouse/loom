@@ -22,7 +22,6 @@ from server.memory.domain.observation_tags import (
     CRYSTALLIZE_READY_TAG,
     OBSERVATION_TAG,
 )
-from server.memory.store.rows import next_version
 from server.workers.status import record_pass
 
 log = logging.getLogger(__name__)
@@ -233,16 +232,15 @@ async def _distill_session(
     # Mark sources DONE. RMT: mirror every column, only tags + version change.
     from server.core.ch import get_client
 
-    version_rows = []
-    for existing in observations:
+    def _done(existing: Any) -> dict[str, Any]:
         new_tags = [t for t in (existing.tags or []) if t != CRYSTALLIZE_READY_TAG]
         if CRYSTALLIZE_DONE_TAG not in new_tags:
             new_tags.append(CRYSTALLIZE_DONE_TAG)
-        version_rows.append(
-            memory_repo.build_memory_version_row(existing, version=next_version(), tags=new_tags)
-        )
-    # One committed insert for the session's observations.
-    await memory_repo.insert_memory_versions(version_rows, ch=get_client())
+        return {"tags": new_tags}
+
+    # One committed insert for the session's observations, over their heads as they
+    # are now: a delete, lock or pin during the extraction is kept, not overwritten.
+    await memory_repo.rewrite_heads(observations, _done, ch=get_client())
 
     return DistilledSession(
         org=str(session["org"]),

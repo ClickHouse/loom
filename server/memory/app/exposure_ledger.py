@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 from server.core.datetimes import naive_utc_now
@@ -60,8 +61,10 @@ def build_row(
     below_floor: int = 0,
     auth: Any = None,
     request_id: str | None = None,
+    receipt: Receipt | None = None,
 ) -> dict[str, Any]:
     """Pure builder for one ledger row; unit-tested without ClickHouse."""
+    receipt = receipt or Receipt()
     return {
         "ts": naive_utc_now(),
         "org": org,
@@ -80,7 +83,26 @@ def build_row(
         "returned_keys": [str(k) for k in keys],
         "returned_count": len(keys),
         "below_floor_count": int(below_floor or 0),
+        "returned_ids": list(receipt.ids),
+        "returned_sha256": list(receipt.sha256),
+        "cutoff_seq": int(receipt.cutoff_seq),
+        "valid_as_of": receipt.valid_as_of,
+        "known_as_of": receipt.known_as_of,
     }
+
+
+@dataclass(frozen=True)
+class Receipt:
+    """What a bi-temporal read showed, beyond the keys: the exact revisions
+    (assertion ids and value hashes, in returned order) and the cutoff it read at,
+    so a past decision can be reconstructed from what was shown, not from what
+    was available."""
+
+    ids: tuple[str, ...] = ()
+    sha256: tuple[str, ...] = ()
+    cutoff_seq: int = 0
+    valid_as_of: Any = None
+    known_as_of: Any = None
 
 
 def enabled() -> bool:
@@ -103,6 +125,7 @@ def record_exposure(
     query: str | None = None,
     top_k: int = 0,
     below_floor: int = 0,
+    receipt: Receipt | None = None,
 ) -> dict[str, Any] | None:
     """Append one row for a read that returned `keys`. Returns the row it
     scheduled (or None when the ledger is off or nothing was returned) so a
@@ -130,6 +153,7 @@ def record_exposure(
         below_floor=below_floor,
         auth=current_auth(),
         request_id=request_id_var.get() or "",
+        receipt=receipt,
     )
 
     async def _bg() -> None:

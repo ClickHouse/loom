@@ -656,6 +656,10 @@ Raised in `server/tasks/app/transitions.py`.
 
 Raised in `server/code/app/member_writes.py`.
 
+#### `TEMPORAL_UNAVAILABLE`
+
+HTTP 503, raised as `server.core.errors.TemporalUnavailableError`. 503 — a memory write could not be published to its namespace's temporal journal (the publisher lock, or an insert whose outcome is still unknown).
+
 #### `TIMELINE_REQUIRES_FILTER`
 
 Raised in `server/memory/app/curation.py`.

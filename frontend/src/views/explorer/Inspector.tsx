@@ -280,7 +280,7 @@ export function Inspector({
       const timer = window.setTimeout(() => {
         keyRef.current = key;
         if (node) {
-          listFacts(id, { entity: node.entity, limit: 12, as_of: asOfInstant(asOf), provenance: prov, signal })
+          listFacts(id, { entity: node.entity, limit: 12, valid_as_of: asOfInstant(asOf), provenance: prov, signal })
             .then((r) => {
               if (live()) setFacts(r.rows || []);
             })
@@ -310,8 +310,22 @@ export function Inspector({
           const a = edge.parent;
           const b = edge.child.entity;
           Promise.all([
-            listFacts(id, { subject: a, object: b, limit: 12, as_of: asOfInstant(asOf), provenance: prov, signal }),
-            listFacts(id, { subject: b, object: a, limit: 12, as_of: asOfInstant(asOf), provenance: prov, signal }),
+            listFacts(id, {
+              subject: a,
+              object: b,
+              limit: 12,
+              valid_as_of: asOfInstant(asOf),
+              provenance: prov,
+              signal,
+            }),
+            listFacts(id, {
+              subject: b,
+              object: a,
+              limit: 12,
+              valid_as_of: asOfInstant(asOf),
+              provenance: prov,
+              signal,
+            }),
           ])
             .then(([ab, ba]) => {
               if (live()) setFacts([...(ab.rows || []), ...(ba.rows || [])]);

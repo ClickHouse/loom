@@ -8,10 +8,12 @@ than duplicating.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from server.core.naming import SENTINEL
+from server.operations.base import MCP_HIDDEN
 
 # Open string at the wire so operators can register custom taxonomies via
 # tag_registry. Core four (semantic/procedural/preference = searchable+embedded,
@@ -132,3 +134,102 @@ def set_next_hint(
             "write-time invariant."
         )
     return ""
+
+
+class TemporalArgs(BaseModel):
+    """The bi-temporal read contract, shared by the memory reads.
+
+    No argument: the current state as currently recorded. `valid_as_of=V`: the
+    latest recorded interpretation of the world at V. `known_as_of=K`: what loom
+    had recorded at K about the world at K. Both: what loom had recorded at K
+    about the world at V. Current permissions, blacklist and erasure apply at
+    every K: a historical read never authorizes an action today."""
+
+    # World time V; None = now, or K when only `known_as_of` is given.
+    valid_as_of: datetime | None = None
+    # Knowledge time K: answer from the journal as committed at K; None = now. A
+    # future K is a 422.
+    known_as_of: datetime | None = None
+    # A write's `read_token`: the read waits (within budget) until the journal
+    # cutoff covers that write, and answers `projection_not_ready` otherwise.
+    # Not in the MCP listing.
+    read_token: str = Field(default="", json_schema_extra=MCP_HIDDEN)
+    # `compat` admits an assertion with an unknown or inferred validity bound and
+    # discloses it; `strict` excludes it. Not in the MCP listing.
+    validity_policy: Literal["compat", "strict"] = Field(
+        default="compat", json_schema_extra=MCP_HIDDEN
+    )
+
+    def temporal_requested(self) -> bool:
+        return (
+            self.valid_as_of is not None
+            or self.known_as_of is not None
+            or bool(self.read_token)
+            or self.validity_policy != "compat"
+        )
+
+
+class TemporalCutoff(BaseModel):
+    """What a temporal read answered from. Namespace sequences are not a global
+    snapshot: a multi-namespace read lists one cutoff per namespace."""
+
+    namespace: str = ""
+    valid_as_of: datetime | None = None
+    known_as_of: datetime | None = None
+    # Highest journal sequence the answer includes; 0 = none.
+    cutoff_seq: int = 0
+    # The namespace's newest committed sequence when the read ran.
+    head_seq: int = 0
+    # True when nothing the read needed was missing: no projection lag left
+    # unreduced, no integrity break, no pending vector.
+    complete: bool = True
+    # Recording time of the namespace's first commit.
+    history_from: datetime | None = None
+    validity_policy: str = "compat"
+    # Named gaps: projection_not_ready, integrity_break_at:<seq>, ranking_current,
+    # vectors_pending:<n>, truncated:<n>, and for a plane read from a
+    # history mirror (shared memory) the mirror and its limits.
+    gaps: list[str] = Field(default_factory=list)
+
+
+class TemporalAssertion(BaseModel):
+    """One recorded assertion about a memory, with both of its times."""
+
+    assertion_id: str
+    origin_assertion_id: str = ""
+    parent_assertion_id: str | None = None
+    memory_key: str = ""
+    agent: str = ""
+    user_id: str = ""
+    session_id: str = ""
+    value: Any = None
+    # sha256 of the stored value text: what a receipt cites.
+    value_sha256: str = ""
+    memory_type: str = ""
+    # state | event | snapshot | rule
+    temporal_kind: str = "state"
+    # stated | extracted | inferred | recorded | unknown
+    validity_basis: str = "unknown"
+    # The valid-time span [valid_from, valid_to); None = open (or unknown, per basis).
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
+    valid_text: str = ""
+    valid_precision: str = ""
+    valid_tz: str = ""
+    # asserted | observed | planned | hypothetical | quoted | disputed
+    modality: str = "asserted"
+    status: str = "active"
+    confidence: float = 1.0
+    verified_by: str = ""
+    verified_at: datetime | None = None
+    source_class: str = ""
+    actor: str = ""
+    qualifiers: dict[str, str] = Field(default_factory=dict)
+    tags: list[str] = Field(default_factory=list)
+    evidence_ids: list[str] = Field(default_factory=list)
+    derived_from: list[str] = Field(default_factory=list)
+    # The commits that added and (if it is no longer served) retired it.
+    born_seq: int = 0
+    born_at: datetime | None = None
+    retired_seq: int | None = None
+    retired_at: datetime | None = None

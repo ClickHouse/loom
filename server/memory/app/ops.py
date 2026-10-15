@@ -3,7 +3,6 @@ server.memory.api.models_<group> modules."""
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -42,33 +41,25 @@ log = logging.getLogger(__name__)
 async def _quarantine_by_identity(
     ch: Any, org: str, ns: str, agent: str, uid: str, key: str, reason: str
 ) -> None:
-    """Flip status -> 'rejected' on both the memory and its embedding row
-    (keyed by the identity tuple), excluding it from search. Shared by
-    memory.reject and negative-outcome escalation."""
-    params = {
-        "org": org,
-        "ns": ns,
-        "agent": agent,
-        "uid": uid,
-        "key": key,
-        "reason": reason or "",
-    }
-    where = (
-        "org = {org:String} AND namespace = {ns:String} "
-        "AND agent = {agent:String} AND user_id = {uid:String} "
-        "AND memory_key = {key:String} AND tombstoned_at IS NULL"
+    """Flip status -> 'rejected' on the memory and its embedding row (keyed by the
+    identity tuple), excluding it from search. Shared by memory.reject and
+    negative-outcome escalation. A new version through the one loom.memory funnel,
+    so the journal retracts exactly the rows rejected."""
+    import server.memory.store as memory_repo
+
+    rows = await ch.query_all(
+        "SELECT toString(memory_id) AS memory_id FROM loom.memory FINAL "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND agent = {agent:String} "
+        "AND user_id = {uid:String} AND memory_key = {key:String} "
+        "AND tombstoned_at IS NULL AND status != 'rejected'",
+        params={"org": org, "ns": ns, "agent": agent, "uid": uid, "key": key},
     )
-    for table, columns in (
-        ("loom.memory", "status = 'rejected', rejection_reason = {reason:String}"),
-        ("loom.memory_embeddings", "status = 'rejected'"),
-    ):
-        try:
-            await ch.execute(f"UPDATE {table} SET {columns} WHERE {where}", params=params)
-        except Exception:  # noqa: BLE001 — lightweight UPDATE unsupported falls back to a mutation
-            await ch.execute(
-                f"ALTER TABLE {table} UPDATE {columns} WHERE {where} SETTINGS mutations_sync = 0",
-                params=params,
-            )
+    await memory_repo.write_versions_by_ids(
+        org,
+        [str(r["memory_id"]) for r in rows],
+        lambda _row: {"status": "rejected", "rejection_reason": reason or ""},
+        ch=ch,
+    )
 
 
 async def handle_memory_outcome(input: MemoryOutcomeInput) -> MemoryOutcomeOutput:
@@ -243,17 +234,12 @@ def _reindex_texts(r: dict[str, Any]) -> tuple[str, str, str]:
     builder over the stored value (the mirror row carries it as
     `content_excerpt`; a procedural value is parsed back to the dict its text
     comes from)."""
-    from server.memory.domain.embed_text import embedding_texts
+    from server.memory.domain.embed_text import stored_embedding_texts
 
-    serialized = str(r.get("content_excerpt") or "")
-    value: Any = serialized
-    if str(r.get("memory_type") or "") == "procedural":
-        try:
-            value = json.loads(serialized)
-        except ValueError:
-            value = serialized
-    return embedding_texts(
-        str(r.get("memory_type") or ""), value, serialized, str(r.get("memory_key") or "")
+    return stored_embedding_texts(
+        str(r.get("memory_type") or ""),
+        str(r.get("content_excerpt") or ""),
+        str(r.get("memory_key") or ""),
     )
 
 

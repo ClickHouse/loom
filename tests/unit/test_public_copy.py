@@ -4,7 +4,7 @@ The repository describes techniques, not products, people or its own history:
 
 1. Public copy (README, quickstart, memory) names no adjacent product, even as a
    category example.
-2. The whole source tree names no competitor memory or vector-store product, no
+2. The whole source tree names no adjacent memory or vector-store product, no
    person, contributor handle, personal address, internal host, repository,
    project or namespace, and not the tracker source's product name; it cites no
    paper and no design-decision record (the PR and the docs carry the why).
@@ -251,7 +251,7 @@ def _scanned() -> list[tuple[str, list[str]]]:
     return out
 
 
-def test_public_copy_uses_categories_not_competitor_names() -> None:
+def test_public_copy_uses_categories_not_product_names() -> None:
     for rel in PUBLIC_COPY_FILES:
         for i, line in enumerate((ROOT / rel).read_text().splitlines(), start=1):
             assert not _banned_in(line), f"{rel}:{i} names a product; use a category instead"

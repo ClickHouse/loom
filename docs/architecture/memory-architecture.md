@@ -11,13 +11,13 @@ obeys are in [ClickHouse](clickhouse.md).
 
 ## Goals and non-goals
 
-| Goals                                                                                          | Non-goals                                                                                                |
-| ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| A writer reads its own point write on the next call, search included.                          | Atomic multi-row writes. `memory.bulk_set` and promotion are not transactional.                          |
-| Every write is judged against its peers (merge, duplicate, conflict, refines, rejected).       | Loom deciding truth. Verdicts flag and link rows; the owner or caller resolves.                          |
-| Derived work (entities, chunks, summaries, statistics) never fails or slows the primary write. | Derived rows current at every instant. They converge within a worker interval.                           |
-| Every version is recoverable (`memory_versions`); every write leaves a hash receipt.           | Transaction-time queries. Validity (`valid_at`, `valid_to`, `invalid_at`) is valid-time only.            |
-| Search explains itself: per-component scores, an abstain code, a retrieval risk.               | One ranking formula for all corpora. Modes, recipes and namespace defaults exist because corpora differ. |
+| Goals                                                                                          | Non-goals                                                                                                                                          |
+| ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A writer reads its own point write on the next call, search included.                          | Atomic multi-row writes. `memory.bulk_set` and promotion are not transactional.                                                                    |
+| Every write is judged against its peers (merge, duplicate, conflict, refines, rejected).       | Loom deciding truth. Verdicts flag and link rows; the owner or caller resolves.                                                                    |
+| Derived work (entities, chunks, summaries, statistics) never fails or slows the primary write. | Derived rows current at every instant. They converge within a worker interval.                                                                     |
+| Every version is recoverable (`memory_versions`); every write leaves a hash receipt.           | Reconstructing history before a namespace's journal began: it is best effort, from `memory_versions` ([bi-temporal memory](bitemporal-memory.md)). |
+| Search explains itself: per-component scores, an abstain code, a retrieval risk.               | One ranking formula for all corpora. Modes, recipes and namespace defaults exist because corpora differ.                                           |
 
 ## Components
 

@@ -3,7 +3,6 @@ identity PREWHERE makes FINAL the cheaper plan), live and under replay."""
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any
 
 import pytest
@@ -50,15 +49,6 @@ def _fact_leg(ch: _CH) -> str:
 async def test_live_reads_keep_final() -> None:
     ch = _CH()
     await vector_search(_q(), ch=ch)  # type: ignore[arg-type]
-    sql = _fact_leg(ch)
-    assert "FROM loom.memory_embeddings AS e FINAL" in sql
-    assert "max(version)" not in sql
-
-
-@pytest.mark.asyncio
-async def test_replay_reads_keep_final() -> None:
-    ch = _CH()
-    await vector_search(_q(as_of=datetime(2026, 1, 1)), ch=ch)  # type: ignore[arg-type]
     sql = _fact_leg(ch)
     assert "FROM loom.memory_embeddings AS e FINAL" in sql
     assert "max(version)" not in sql

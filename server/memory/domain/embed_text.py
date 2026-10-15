@@ -3,6 +3,7 @@ and a procedure's situation."""
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -87,3 +88,18 @@ def embedding_texts(
         _build_embed_text(text_source, memory_key=memory_key),
         key_axis_text(memory_key),
     )
+
+
+def stored_embedding_texts(
+    memory_type: str, serialized: str, memory_key: str
+) -> tuple[str, str, str]:
+    """`embedding_texts` of a value as loom.memory stores it (serialized): what
+    memory.set embedded for it. A procedural value is parsed back to the dict its
+    text comes from; every reader of a stored value that hashes or embeds it uses this."""
+    value: Any = serialized
+    if memory_type == "procedural":
+        try:
+            value = json.loads(serialized)
+        except ValueError:
+            value = serialized
+    return embedding_texts(memory_type, value, serialized, memory_key)

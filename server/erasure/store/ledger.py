@@ -3,6 +3,8 @@ and the re-verify CLI read, and the checkpoint every step appends."""
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from datetime import datetime
 from typing import Any, cast
 
 from server.core.repo_base import _CHClient, _default_client
@@ -204,3 +206,90 @@ async def list_requests(
         """,
         params=params,
     )
+
+
+# The memory journal's erasure fence: a write, or a current-row repair, must not
+# bring back rows an erasure of its namespace or users is removing.
+# The erasure requests of a scope, and the ones that hold it: running, or failed and
+# still being retried (its content may be half deleted). An abandoned one is
+# escalated to an operator and no longer holds anything.
+_SCOPE = """
+    org = {org:String}
+    AND ((scope_type = 'namespace' AND scope_value = {ns:String})
+      OR (scope_type = 'namespace_list' AND position(scope_value, {quoted:String}) > 0)
+      OR (scope_type = 'user_id' AND scope_value IN {users:Array(String)}))"""
+_HOLDS = (
+    "(status = 'in_progress' "
+    "OR (status = 'failed' AND NOT startsWith(failure_reason, {abandoned:String})))"
+)
+
+
+def _scope_params(org: str, namespace: str, user_ids: Sequence[str]) -> dict[str, Any]:
+    return {
+        "org": org,
+        "ns": namespace,
+        "quoted": f'"{namespace}"',
+        "users": [u for u in user_ids if u and u != "-"],
+        "abandoned": ABANDONED_REASON_PREFIX,
+    }
+
+
+async def scope_erasures(
+    org: str,
+    namespace: str,
+    user_ids: Sequence[str],
+    since: datetime,
+    *,
+    ch: _CHClient | None = None,
+) -> tuple[int, int]:
+    """(erasure requests ever touching this namespace or these users, those
+    requested after `since` or holding the scope)."""
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        f"SELECT count() AS n, countIf(requested_at >= {{since:DateTime}} OR {_HOLDS}) AS late "
+        f"FROM loom.erasure_requests FINAL WHERE {_SCOPE}",
+        params={**_scope_params(org, namespace, user_ids), "since": since.replace(tzinfo=None)},
+    )
+    return int((row or {}).get("n") or 0), int((row or {}).get("late") or 0)
+
+
+async def scope_held(
+    org: str, namespace: str, user_ids: Sequence[str], *, ch: _CHClient | None = None
+) -> bool:
+    """Does an erasure hold this namespace or these users?"""
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        f"SELECT count() AS n FROM loom.erasure_requests FINAL WHERE {_SCOPE} AND {_HOLDS}",
+        params=_scope_params(org, namespace, user_ids),
+    )
+    return int((row or {}).get("n") or 0) > 0
+
+
+async def scope_erasure_times(
+    org: str, namespace: str, *, ch: _CHClient | None = None
+) -> tuple[int, list[tuple[str, int]]]:
+    """When erasures of this namespace, and of each erased user of the org, were
+    last requested (epoch µs, whatever their status): what was recorded before is
+    gone, so a read must never serve it. `requested_at` holds whole seconds; the
+    time is rounded up, so the second of the request counts as before it. Read
+    from the ledger alone: which users have content can change while a read runs.
+    ponytail: every erased user of the org rides each read's cut; past some
+    thousands, join the ledger inside the content query instead."""
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        """
+        SELECT scope_type, scope_value, (toUnixTimestamp(max(requested_at)) + 1) * 1000000 AS at
+        FROM loom.erasure_requests FINAL
+        WHERE org = {org:String}
+          AND ((scope_type = 'namespace' AND scope_value = {ns:String})
+            OR (scope_type = 'namespace_list' AND position(scope_value, {quoted:String}) > 0)
+            OR scope_type = 'user_id')
+        GROUP BY scope_type, scope_value
+        """,
+        params={"org": org, "ns": namespace, "quoted": f'"{namespace}"'},
+    )
+    ns_at = max((int(r["at"]) for r in rows if r["scope_type"] != "user_id"), default=0)
+    users = sorted(
+        (str(r["scope_value"]), int(r["at"])) for r in rows if r["scope_type"] == "user_id"
+    )
+    return ns_at, users

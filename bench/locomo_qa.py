@@ -1221,10 +1221,10 @@ async def answer_question(
                     # unless the run said --credit (merged into ask_json).
                     **measurement_fields("ask", credit=credit),
                     **(
-                        {"as_of": conv_asof(conversation)}
+                        {"valid_as_of": conv_asof(conversation)}
                         if os.environ.get("LOCOMO_AS_OF")
                         and conv_asof(conversation)
-                        and "as_of" not in (ask_json or {})
+                        and "valid_as_of" not in (ask_json or {})
                         else {}
                     ),
                     **(ask_json or {}),

@@ -37,7 +37,12 @@ from server.memory.api.models_records import (
 from server.memory.domain import record_constraints
 from server.memory.domain.record_values import _FIELD_RE, _check_record_fields, _coerce_record_value
 from server.memory.store import next_version
-from server.memory.store.record_query import _build_record_query
+from server.memory.store.record_query import (
+    REVISIONS_LIMIT,
+    _build_record_query,
+    record_revisions_at,
+    revisions_matching,
+)
 
 _FIELD_TYPES = {"string", "number", "integer", "boolean"}
 
@@ -581,6 +586,10 @@ async def handle_memory_record_write(
     # (valid_to := new fact's valid_at, or now() when world-time is unknown) so
     # as-of reads still see it. No-op for anonymous ("") records.
     await _supersede_active_record(ch, input, memory_key, version=version, now=now)
+    rows = _record_field_rows(input, field_map, record_id=record_id, version=version, now=now)
+    rows = await _carry_folded_fields(
+        input, rows, fold, record_id=record_id, version=version, now=now
+    )
 
     await get_client().insert(
         "loom.memory_records",
@@ -606,10 +615,6 @@ async def handle_memory_record_write(
                 "tombstoned_at": None,
             }
         ],
-    )
-    rows = _record_field_rows(input, field_map, record_id=record_id, version=version, now=now)
-    rows = await _carry_folded_fields(
-        input, rows, fold, record_id=record_id, version=version, now=now
     )
     await get_client().insert("loom.memory_record_fields", rows)
     if fold.conflict_rows:
@@ -701,6 +706,8 @@ async def _records_by_ids(
 async def handle_memory_record_query(
     input: MemoryRecordQueryInput,
 ) -> MemoryRecordQueryOutput:
+    if input.known_as_of is not None:
+        return await _record_query_known_at(input)
     sql, params = _build_record_query(input)
     # the caller's filters shape the statement: the caller-shaped ceilings apply
     with caller_shaped():
@@ -709,6 +716,50 @@ async def handle_memory_record_query(
     return MemoryRecordQueryOutput(
         rows=await _records_by_ids(input.org, input.namespace, ids),
         truncated=len(rows) > input.limit,
+    )
+
+
+async def _record_query_known_at(input: MemoryRecordQueryInput) -> MemoryRecordQueryOutput:
+    """The records as recorded at K: each record's newest revision at or before K,
+    active and valid at V (`valid_as_of`, else K), matched against its own fields."""
+    from server.memory.domain.temporal_reads import resolve_axes, to_epoch_ns
+
+    axes = resolve_axes(input.valid_as_of, input.known_as_of)
+    assert axes.known is not None
+    from server.memory.app.temporal_reads import erased
+
+    cut = await erased(input.org, input.namespace)
+    v = axes.valid.replace(tzinfo=None)
+    revisions = await record_revisions_at(
+        input.org,
+        input.namespace,
+        input.schema_name,
+        to_epoch_ns(axes.known),
+        v,
+        erased_ns_us=cut.namespace_us,
+        erased_users=cut.users,
+    )
+    # Each revision is matched on its own field rows, with the live query's terms.
+    matching = await revisions_matching(input, [str(r["record_id"]) for r in revisions])
+    rows: list[MemoryRecordRow] = []
+    for r in revisions:  # active and valid at V already
+        if str(r["record_id"]) not in matching:
+            continue
+        record = json.loads(r["record_json"] or "{}")
+        rows.append(
+            MemoryRecordRow(
+                record_id=str(r["record_id"]),
+                memory_key=str(r["memory_key"] or ""),
+                memory_id=str(r["memory_id"] or ""),
+                record=record,
+                valid_at=r.get("valid_at"),
+                valid_to=r.get("valid_to"),
+            )
+        )
+    # A full page of revisions may have left matching records out.
+    full = len(revisions) >= REVISIONS_LIMIT
+    return MemoryRecordQueryOutput(
+        rows=rows[: input.limit], truncated=full or len(rows) > input.limit
     )
 
 

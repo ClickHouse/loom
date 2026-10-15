@@ -58,7 +58,8 @@ _ONE_AT_A_TIME: list[tuple[str, Any]] = [
     ("demote_tags", ["noise"]),
     ("reinforcement_weight", 0.0),
     ("reinforcement_half_life_days", 7.0),
-    ("as_of", datetime(2026, 9, 15, 12, 30)),
+    ("valid_as_of", datetime(2026, 9, 15, 12, 30)),
+    ("known_as_of", datetime(2026, 9, 20, 8, 0)),
     ("include_tags", True),
     ("include_usage", True),
     ("include_duplicates", True),
@@ -66,7 +67,7 @@ _ONE_AT_A_TIME: list[tuple[str, Any]] = [
     ("exclude_keys", []),
     ("explain", False),
     ("explain", True),
-    ("as_of_basis", "knowledge_time"),  # a server field through **extra
+    ("validity_policy", "strict"),  # a server field through **extra
 ]
 _COMBOS: list[dict[str, Any]] = [
     {"tags": ["a"], "tags_soft": True, "tag_boost": 0.7},

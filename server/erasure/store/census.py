@@ -136,6 +136,25 @@ _CENSUS: tuple[Substrate, ...] = (
         "graph_links.delete",
     ),
     Substrate("loom.session_summaries", LIVE, UID, "summaries.tombstone", "summaries.tombstone"),
+    # The bi-temporal journal and its projections: every retained revision of a
+    # memory's content, deleted outright. Vectors have no user column; a user
+    # erasure deletes the ones its assertions name, before the assertions go.
+    Substrate(
+        "loom.memory_temporal_commits",
+        "1",
+        UID,
+        "memory_temporal.delete",
+        "memory_temporal.delete",
+        final=False,
+    ),
+    Substrate(
+        "loom.memory_temporal_assertions",
+        "1",
+        UID,
+        "memory_temporal.delete",
+        "memory_temporal.delete",
+    ),
+    Substrate("loom.memory_temporal_vectors", "1", None, "memory_temporal.delete", None),
     Substrate("loom.entity_summaries", LIVE, UID, "summaries.tombstone", "summaries.tombstone"),
     Substrate("loom.memory_records", LIVE, UID, "records.tombstone", "records.tombstone"),
     Substrate("loom.memory_record_versions", "1", UID, "records.tombstone", "records.tombstone"),
@@ -371,6 +390,10 @@ STEP_ONLY_TABLES: dict[str, tuple[str, ...]] = {
     "entity_canonical_map.tombstone": ("loom.entity_canonical_map",),
     "agent_events.scrub": ("loom.agent_events",),
     "shared.tombstone": ("loom.shared",),
+    # Shared history, like loom.shared, is counted through neither scope's census;
+    # the watermarks hold sequence numbers only.
+    "history_mirrors.delete": ("loom.shared_versions",),
+    "memory_temporal.delete": ("loom.memory_temporal_watermarks",),
     "shared_embeddings.tombstone": ("loom.memory_embeddings",),
     "consolidated.tombstone": ("loom.memory", "loom.memory_embeddings", "loom.memory_code_links"),
     "procedure_runs.delete": ("loom.procedure_runs",),

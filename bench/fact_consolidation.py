@@ -17,12 +17,10 @@ This directly exercises two invariants:
     key wins as-of now, and the historical value is recoverable via the
     as-of read path.
 
-Two planes, two as-of shapes (see bench/temporal_assertions.py):
-  • Triple plane: facts.list(as_of=…) is a full interval test.
-  • Memory plane: memory.get(as_of=…) is lower-bound only
-    (coalesce(valid_at, created_at) <= as_of), so we assert the latest
-    value wins NOW and the earlier value is recoverable at an as_of
-    that predates the later write.
+Two planes (see bench/temporal_assertions.py):
+  • Triple plane: facts.list(valid_as_of=…) is a full interval test.
+  • Memory plane: the latest value wins NOW; its history is the bi-temporal
+    journal (memory.get with valid_as_of / known_as_of).
 
 LLM-FREE write path: memory.bulk_set with explicit relations/valid_at/
 valid_to plus memory.set for the same-key memory-plane stream.
@@ -130,7 +128,7 @@ def _facts_objects(
 ) -> set[str]:
     body: dict[str, Any] = {**identity, "subject": subject, "relation": relation, "limit": 500}
     if as_of is not None:
-        body["as_of"] = as_of
+        body["valid_as_of"] = as_of
     deadline = time.monotonic() + poll_timeout_s
     last: set[str] = set()
     while time.monotonic() < deadline:

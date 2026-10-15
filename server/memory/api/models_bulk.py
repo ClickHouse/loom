@@ -304,6 +304,8 @@ class _BulkSetResult(BaseModel):
     conflict_verdict: str = ""
     peers: list[MemorySetPeer] = Field(default_factory=list)
     next: str = ""
+    # Why the entry wrote nothing (version 0): memory.set's `left_out` reasons.
+    left_out: str = ""
 
 
 class MemoryBulkSetOutput(BaseModel):

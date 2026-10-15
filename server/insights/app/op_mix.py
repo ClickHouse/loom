@@ -65,6 +65,9 @@ _READ = {
     "memory.backlinks",
     # The facts on trial and their graded counts
     "memory.proposals",
+    # A key's valid-time timeline and its changes, as recorded at K
+    "memory.intervals",
+    "memory.temporal_diff",
 }
 _UPDATE = {
     "memory.update",
@@ -77,6 +80,8 @@ _UPDATE = {
     "memory.move",
     # Accepting or rejecting a proposal revises its lifecycle
     "memory.proposal_decide",
+    # A bounded correction, transition or retraction over valid time
+    "memory.amend",
 }
 _ANNOTATE = {
     "memory.link",
@@ -114,6 +119,7 @@ _MAINTAIN = {
     "memory.search_trace_log",
     "memory.agents_list",
     "memory.digests",
+    "memory.temporal_status",
 }
 
 CLASSES: tuple[VerbClass, ...] = (

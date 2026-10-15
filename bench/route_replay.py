@@ -262,7 +262,7 @@ async def cmd_capture(a: argparse.Namespace) -> int:
                 "auto_touch": False,
             }
             if q.as_of:
-                body["as_of"] = q.as_of
+                body["valid_as_of"] = q.as_of
             if getattr(a, "search_mode", ""):
                 # Pin the retrieval mode of the frozen set: an unpinned capture runs the
                 # deployment default.

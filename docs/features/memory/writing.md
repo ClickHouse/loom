@@ -191,12 +191,18 @@ source (a path, document id or URL). The values are in
 `valid_to` when it stopped. Default reads drop a row past its `valid_to`. Extraction fills
 `valid_at` for past-tense state changes; most writers leave it unset.
 
-`as_of` on `memory.get`, `memory.search` and `memory.ask` replays one of two axes:
+`memory.get`, `memory.get_by_id`, `memory.search` and `memory.ask` take two times:
 
-| `as_of_basis`          | Returns                                                                                                                      |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `valid_time` (default) | What was true then: `valid_at`, else the event date the row carries, else `created_at`, at or before `as_of`.                |
-| `knowledge_time`       | What Loom knew then: `created_at` at or before `as_of`, and not retired (`invalid_at`) or deleted (`tombstoned_at`) by then. |
+| Argument      | Returns                                                                             |
+| ------------- | ----------------------------------------------------------------------------------- |
+| `valid_as_of` | What applied at V: the assertions whose `[valid_from, valid_to)` interval holds V.  |
+| `known_as_of` | What Loom had recorded at K, from the journal; alone, it also reads the world at K. |
+
+A plain `memory.set` revises what the key asserts. `change_kind="transition"` with
+`effective_at` (now or earlier) ends the old state at that time. `memory.set` writes what
+applies now, so a future transition or a correction of a past span is a `memory.amend`,
+which corrects, retracts or schedules one interval and keeps the rest
+([bi-temporal memory](../../architecture/bitemporal-memory.md)).
 
 `memory.timeline` orders by `coalesce(valid_at, created_at)`.
 
@@ -233,17 +239,17 @@ established fact. A key that already holds a fact answers 409 `KEY_HOLDS_FACT`.
 Records are rows with exact fields, for data that has identity (a ticket, a customer).
 They answer predicate questions without parsing text.
 
-| Operation                 | Role   | Does                                                               |
-| ------------------------- | ------ | ------------------------------------------------------------------ |
-| `memory_schema.register`  | admin  | Register a schema: up to 64 `fields`.                              |
-| `memory_schema.propose`   | writer | Suggest a schema (`status='proposed'`) for an admin to accept.     |
-| `memory_schema.approve`   | admin  | `decision` `approve` or `reject`.                                  |
-| `memory_schema.list`      | viewer | Schemas of the namespace.                                          |
-| `memory.record.write`     | writer | Write one record; constraint violations are rejected.              |
-| `memory.record.query`     | viewer | Filter by field values and typed predicates, optionally `as_of`.   |
-| `memory.record.history`   | viewer | Every version of one record, newest first.                         |
-| `memory.record.conflicts` | viewer | Field values that changed when a record superseded another.        |
-| `memory.aggregate`        | viewer | `count`, `sum`, `avg`, `min`, `max` over records, with `group_by`. |
+| Operation                 | Role   | Does                                                                                   |
+| ------------------------- | ------ | -------------------------------------------------------------------------------------- |
+| `memory_schema.register`  | admin  | Register a schema: up to 64 `fields`.                                                  |
+| `memory_schema.propose`   | writer | Suggest a schema (`status='proposed'`) for an admin to accept.                         |
+| `memory_schema.approve`   | admin  | `decision` `approve` or `reject`.                                                      |
+| `memory_schema.list`      | viewer | Schemas of the namespace.                                                              |
+| `memory.record.write`     | writer | Write one record; constraint violations are rejected.                                  |
+| `memory.record.query`     | viewer | Filter by field values and typed predicates, optionally `valid_as_of` / `known_as_of`. |
+| `memory.record.history`   | viewer | Every version of one record, newest first.                                             |
+| `memory.record.conflicts` | viewer | Field values that changed when a record superseded another.                            |
+| `memory.aggregate`        | viewer | `count`, `sum`, `avg`, `min`, `max` over records, with `group_by`.                     |
 
 - A field has a `type` (`string`, `number`, `integer`, `boolean`) and may be `required`,
   an `identity` field, an enum (`enum_values`), or constrained (`pattern`, `min_length`,

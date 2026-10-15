@@ -66,11 +66,7 @@ async def _run_graph_expansion(ctx: SearchContext) -> None:
         return
     from server.memory.app.retrieval import fetch_graph_neighbors
 
-    graph_query_date = (
-        input.as_of.isoformat()
-        if input.as_of is not None
-        else (ctx.query_anchor_iso or ctx.obs_date or None)
-    )
+    graph_query_date = ctx.query_anchor_iso or ctx.obs_date or None
 
     async def _neighbors_for(ns: str) -> list[str]:
         return await fetch_graph_neighbors(
@@ -151,7 +147,6 @@ async def _run_triple_matching(ctx: SearchContext) -> None:
             query_triples=ctx.query_triples,
             max_keys=50,
             expand_synonyms=True,
-            as_of=input.as_of,
             on_llm_call=ctx.search_budget.note_llm_call,
         )
         ctx.triple_matched_by_ns[ns] = matched

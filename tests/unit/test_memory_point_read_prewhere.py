@@ -10,7 +10,7 @@ as-of window, created_at, memory_id) stays in WHERE, after the FINAL merge.
 from __future__ import annotations
 
 import re
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 import pytest
@@ -68,21 +68,19 @@ async def test_get_by_key_puts_the_sort_key_in_prewhere_and_the_rest_in_where() 
 
 
 @pytest.mark.asyncio
-async def test_get_by_key_wildcard_agent_and_as_of_keep_non_key_filters_in_where() -> None:
+async def test_get_by_key_wildcard_agent_keeps_non_key_filters_in_where() -> None:
     ch = _CH()
     ident = Identity(org="o", namespace="n", agent="*", user_id="-", session_id="-")
     await memory_repo.get_by_key(
         ident,
         "k",
         ch=ch,
-        as_of=datetime(2026, 9, 13, tzinfo=UTC),
         include_tombstoned=True,
         scope=WHOLE_NAMESPACE,
     )
     sql = ch.sqls[0]
     pre, where = _split(sql)
     assert "agent = {" not in pre and "session_id = {" not in pre  # wildcard: namespace-wide
-    assert "valid_at" in where or "valid_time" in where or "as_of" in where, where
     assert "tombstoned_at" not in sql.split("LIMIT", 1)[0].split("PREWHERE", 1)[1].split("WHERE")[0]
     assert "ORDER BY version DESC" in sql
 

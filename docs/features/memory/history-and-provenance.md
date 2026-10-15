@@ -49,9 +49,9 @@ async with Agent(org="acme", namespace="support", agent="auditor") as agent:
 ```
 
 A tombstone is a version too, so a delete shows in history and `memory.restore` can
-revive the key within 14 days. For point-in-time reads of current state, use `as_of` on
-`memory.get`, `memory.search` and `memory.ask`
-([validity time](./writing.md#validity-time-valid_at-and-valid_to)).
+revive the key within 14 days. For point-in-time reads, use `valid_as_of` /
+`known_as_of` on `memory.get`, `memory.search` and `memory.ask`, and `memory.intervals`
+for a key's timeline ([validity time](./writing.md#validity-time-valid_at-and-valid_to)).
 
 ## Who wrote it: actor and source class
 
@@ -200,9 +200,6 @@ checkpoints chain the log. See [audit](../observability/audit.md).
   scrubbed either way.
 - **History is only as complete as the mirror.** A column added to `loom.memory` must be
   added to `loom.memory_versions` and its view in the same migration.
-- **Validity is valid-time only.** `knowledge_time` replays `created_at` against the
-  retirement (`invalid_at`) and deletion (`tombstoned_at`) stamps; there is no separate
-  transaction-time table.
 - **`thread_exists=false` is not an error.**
 - **A rollback does not restore hard-deleted keys** (`skipped_no_head`).
 

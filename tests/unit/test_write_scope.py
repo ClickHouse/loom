@@ -96,13 +96,15 @@ def store(monkeypatch):
 
     async def insert_versions(rows, **kw):
         calls["writes"].extend(rows)
+        for f in kw.get("alongside", ()):
+            await f(rows)
+        return len(rows)
 
     monkeypatch.setattr(memory_repo, "get_by_key", get_by_key)
     monkeypatch.setattr(memory_repo, "get_by_id", get_by_id)
     monkeypatch.setattr(memory_repo, "get_many_by_keys", get_many_by_keys)
     monkeypatch.setattr(memory_repo, "record_usage_event", record_usage_event)
-    monkeypatch.setattr("server.memory.app.handlers.insert_memory_versions", insert_versions)
-    monkeypatch.setattr("server.memory.app.lock.insert_memory_versions", insert_versions)
+    monkeypatch.setattr("server.memory.store.lifecycle.insert_memory_versions", insert_versions)
     return calls
 
 

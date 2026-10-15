@@ -107,7 +107,7 @@ def test_compute_alters_per_namespace_override_uses_multiif() -> None:
         ],
     )
     # Override applies to every managed table — one ALTER per table.
-    assert len(out) == 7
+    assert len(out) == 9
     audit_alter = next(s for t, s, _ in out if t.table == "loom.audit_log")
     assert "multiIf" in audit_alter
     assert "org = 'clickhouse'" in audit_alter
@@ -222,6 +222,8 @@ def test_compute_alters_per_namespace_applies_to_all_tables() -> None:
         "loom.documents",
         "loom.memory",
         "loom.memory_embeddings",
+        "loom.memory_temporal_assertions",
+        "loom.memory_temporal_commits",
     ]
 
 
@@ -272,7 +274,7 @@ async def test_apply_per_namespace_emits_alters_for_all_tables() -> None:
         ],
         leader=True,
     )
-    assert n == 7
+    assert n == 9
 
 
 @pytest.mark.asyncio
@@ -351,9 +353,9 @@ async def test_unchanged_ttl_issues_no_alter_and_changed_ttl_does() -> None:
         {"audit_log": _planned_ttl("loom.audit_log"), "memory": "created_at + toIntervalDay(7)"}
     )
     n = await retention_overrides.apply(settings_obj, ch=ch, namespace_overrides=[], leader=True)
-    assert n == 1
-    assert all("loom.memory " in c for c in ch.execute_calls), ch.execute_calls  # audit_log skipped
-    assert ch.lookups == 2
+    assert n == 3  # loom.memory and the two journal tables that follow it
+    assert not any("loom.audit_log " in c for c in ch.execute_calls), ch.execute_calls
+    assert ch.lookups == 4
 
 
 @pytest.mark.asyncio
@@ -471,8 +473,8 @@ async def test_alter_is_deferred_while_the_table_has_unfinished_mutations() -> N
         namespace_overrides=[],
         leader=True,
     )
-    assert n == 1
-    assert all("loom.memory " in c for c in ch.execute_calls), ch.execute_calls
+    assert n == 3
+    assert not any("loom.audit_log " in c for c in ch.execute_calls), ch.execute_calls
 
 
 @pytest.mark.asyncio
@@ -490,15 +492,35 @@ async def test_mutation_queue_read_failure_is_fail_open() -> None:
     assert n == 1
 
 
+def test_the_journal_keeps_what_loom_memory_keeps() -> None:
+    """A caller's expires_at outlives the backstop on an assertion as on its row,
+    and a commit outlives every assertion it added."""
+    alters = {
+        t.table: sql
+        for t, sql, _ in retention_overrides.compute_alters(_FakeSettings(retention_memory_days=30))
+    }
+    assert "coalesce(expires_at, created_at + INTERVAL 30 DAY)" in alters["loom.memory"]
+    assert (
+        "coalesce(expires_at, born_at + INTERVAL 30 DAY)"
+        in alters["loom.memory_temporal_assertions"]
+    )
+    assert "ifNull(retain_until, recorded_at)" in alters["loom.memory_temporal_commits"]
+
+
 def test_every_managed_table_reads_its_own_retention_and_tiering_settings() -> None:
-    """Each target's accessors read the settings named after its table: set
-    one table's pair alone and the plan alters that table only."""
+    """Each target's accessors read the settings named after its table (the
+    journal tables read loom.memory's): set one pair alone and the plan alters
+    those tables only."""
     from server.settings import Settings
 
+    journal = [t.table for t in retention_overrides.TARGETS if "memory_temporal" in t.table]
     assert retention_overrides.compute_alters(Settings()) == []
     for target in retention_overrides.TARGETS:
+        if target.table in journal:
+            continue
         leaf = target.table.removeprefix("loom.")
         fake = _FakeSettings(**{f"retention_{leaf}_days": 30, f"tiering_{leaf}_warm_days": 7})
         plan = retention_overrides.compute_alters(fake)
-        assert [t.table for t, _, _ in plan] == [target.table]
+        want = [target.table] + (journal if leaf == "memory" else [])
+        assert [t.table for t, _, _ in plan] == want
         assert plan[0][2]["retention_global"] == 30 and plan[0][2]["tiering_global"] == 7

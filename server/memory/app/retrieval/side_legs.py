@@ -163,7 +163,7 @@ def _record_identity_where(q: SearchQuery, params: dict[str, Any]) -> list[str]:
     """The records leg's identity and validity terms, binding their parameters into
     `params`: agent (a record written without one stays readable), user, the read's
     session bound (an own_session read scope, the caller's session pick — as on the
-    fact, chunk and digest legs) and the `as_of` window."""
+    fact, chunk and digest legs)."""
     where: list[str] = []
     if q.scope == "private" and q.agent not in ("*", "-"):
         where.append("r.identity_agent IN {record_agents:Array(String)}")
@@ -177,12 +177,6 @@ def _record_identity_where(q: SearchQuery, params: dict[str, Any]) -> list[str]:
     if q.session_ids:
         where.append("r.session_id IN {session_ids:Array(String)}")
         params["session_ids"] = [str(x) for x in q.session_ids]
-    if q.as_of is not None:
-        where.append(
-            "(r.valid_at IS NULL OR r.valid_at <= {as_of:DateTime}) "
-            "AND (r.valid_to IS NULL OR r.valid_to >= {as_of:DateTime})"
-        )
-        params["as_of"] = q.as_of
     return where
 
 

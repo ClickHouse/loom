@@ -126,6 +126,44 @@ def _apply_top_k_ceiling(input: Any) -> tuple[Any, int]:
     return input.model_copy(update={"top_k": ceiling}), ceiling
 
 
+def resolve_search_scope(input: MemorySearchInput) -> MemorySearchInput:
+    """Who and where a search reads: the agent, namespace_scope and read_scope
+    defaults. Every search path applies them, the historical one included."""
+    # Membership is the read boundary: the default agent "*" reads ALL agents
+    # in the accessible namespaces (the WHERE builders treat "*"/"-" as "drop
+    # the per-agent filter"). Normalize an empty agent to "*" too. An explicit
+    # agent still narrows to that author.
+    if not input.agent:
+        input = input.model_copy(update={"agent": "*"})
+    # An unset namespace_scope takes the deployment default; downstream code compares the
+    # resolved value only.
+    if input.namespace_scope is None:
+        from server.settings import settings as _scope_settings
+
+        input = input.model_copy(
+            update={"namespace_scope": _scope_settings.memory_search_default_namespace_scope}
+        )
+    # Read scope: resolve the request's read_scope against the token's claim and turn it into
+    # the user/session predicates every leg's WHERE carries. Runs before the fan-out so the
+    # recursive passes (the iterative retry, the read-your-writes rereads) inherit the narrowed
+    # input.
+    from server.auth.context import current_auth
+    from server.identity.domain.read_scope import pin_read_filters
+
+    input, _ = pin_read_filters(input, current_auth())
+    return input
+
+
+def resolve_historical_input(input: MemorySearchInput) -> MemorySearchInput:
+    """The settling a historical search shares with a current one: the query
+    sanitised, the role tags, who and where it reads, and the top_k ceiling."""
+    query = _sanitize_agent_query(input.query)
+    if query != input.query:
+        input = input.model_copy(update={"query": query})
+    input, _ = _apply_k_defaults(resolve_search_scope(_apply_role_tags(input)))
+    return input
+
+
 async def _resolve_search_input(
     input: MemorySearchInput,
 ) -> tuple[MemorySearchInput, bool, int, SearchBudget]:
@@ -150,31 +188,7 @@ async def _resolve_search_input(
     sanitized_query = _sanitize_agent_query(input.query)
     if sanitized_query != input.query:
         input = input.model_copy(update={"query": sanitized_query})
-    input = _apply_role_tags(input)
-
-    # Membership is the read boundary: the default agent "*" reads ALL agents
-    # in the accessible namespaces (the WHERE builders treat "*"/"-" as "drop
-    # the per-agent filter"). Normalize an empty agent to "*" too. An explicit
-    # agent still narrows to that author.
-    if not input.agent:
-        input = input.model_copy(update={"agent": "*"})
-    # An unset namespace_scope takes the deployment default; downstream code compares the
-    # resolved value only.
-    if input.namespace_scope is None:
-        from server.settings import settings as _scope_settings
-
-        input = input.model_copy(
-            update={"namespace_scope": _scope_settings.memory_search_default_namespace_scope}
-        )
-
-    # Read scope: resolve the request's read_scope against the token's claim and turn it into
-    # the user/session predicates every leg's WHERE carries. Runs before the fan-out so the
-    # recursive passes (the iterative retry, the read-your-writes rereads) inherit the narrowed
-    # input.
-    from server.auth.context import current_auth
-    from server.identity.domain.read_scope import pin_read_filters
-
-    input, _ = pin_read_filters(input, current_auth())
+    input = resolve_search_scope(_apply_role_tags(input))
     input, _top_k_ceiling = _apply_k_defaults(input)
 
     # One budget object bounds the whole recursive fallback cascade; minted

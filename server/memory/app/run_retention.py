@@ -2,7 +2,7 @@
 
 The notes a task produced are the task's, not the agent's. loom keeps the rows
 — on interdependent multi-session tasks the next task needs what the last one
-wrote — but a completed run's working facts should stop competing at full standing with
+wrote — but a completed run's working facts should stop ranking at full standing with
 durable memory. Three retentions:
 
     keep    nothing happens (the default)

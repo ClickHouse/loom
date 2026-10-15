@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -30,6 +31,13 @@ from server.core.datetimes import naive_utc_now
 log = logging.getLogger(__name__)
 
 TTL = timedelta(hours=24)
+
+# The scoped key of the request being served ("" without one). The memory journal
+# keeps it on each commit, past this cache's TTL, so a retry days later is still
+# recognised and a reused key with another body is still refused.
+request_key_var: ContextVar[str] = ContextVar("loom_idempotency_key", default="")
+# The body hash that key was sent with: the journal compares it on a retry.
+request_body_var: ContextVar[str] = ContextVar("loom_idempotency_body", default="")
 
 
 @dataclass(frozen=True)

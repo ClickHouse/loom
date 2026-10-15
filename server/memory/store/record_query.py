@@ -3,45 +3,22 @@ predicates over the typed field rows, one row per record."""
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from datetime import datetime
 from typing import Any
 
 from fastapi import HTTPException
 
 from server.memory.domain.record_values import _FIELD_RE
+from server.memory.domain.temporal_sql import record_validity_predicate
 
 _OP_SQL = {"eq": "=", "ne": "!=", "gt": ">", "gte": ">=", "lt": "<", "lte": "<="}
 
 
-def _build_record_query(input: Any) -> tuple[str, dict[str, Any]]:
-    """Build (sql, params) for memory.record.query. Pure (no I/O) so the
-    predicate logic is unit-testable. Every value is parameterized; field names
-    are validated against _FIELD_RE; ops and states come from fixed allowlists,
-    so no caller input is interpolated into SQL.
-
-    Predicates are AND-composed as one `sumIf(...) > 0` HAVING term each over a
-    single record/fields JOIN. A `ne` predicate requires the field to be present
-    with a concrete value that differs from the target (absent/unknown does not
-    satisfy `ne`)."""
-    where = [
-        "r.org = {org:String}",
-        "r.namespace = {ns:String}",
-        "r.schema_name = {schema:String}",
-        "r.status = 'active'",
-        "r.tombstoned_at IS NULL",
-    ]
-    params: dict[str, Any] = {
-        "org": input.org,
-        "ns": input.namespace,
-        "schema": input.schema_name,
-        "lim": input.limit + 1,
-    }
-    if input.as_of is not None:
-        where.append(
-            "(r.valid_at IS NULL OR r.valid_at <= {as_of:DateTime}) "
-            "AND (r.valid_to IS NULL OR r.valid_to >= {as_of:DateTime})"
-        )
-        params["as_of"] = input.as_of
-
+def _record_predicates(input: Any, params: dict[str, Any]) -> list[str]:
+    """The query's filters and predicates as `sumIf(...) > 0` HAVING terms over the
+    record's field rows (alias `f`), their values added to `params`. The live and
+    the historical query share them, so a revision matches as the record would."""
     having: list[str] = []
 
     def _add_positive(field_param: str, value_clause: str) -> None:
@@ -129,6 +106,38 @@ def _build_record_query(input: Any) -> tuple[str, dict[str, Any]]:
             )
         i += 1
 
+    return having
+
+
+def _build_record_query(input: Any) -> tuple[str, dict[str, Any]]:
+    """Build (sql, params) for memory.record.query. Pure (no I/O) so the
+    predicate logic is unit-testable. Every value is parameterized; field names
+    are validated against _FIELD_RE; ops and states come from fixed allowlists,
+    so no caller input is interpolated into SQL.
+
+    Predicates are AND-composed as one `sumIf(...) > 0` HAVING term each over a
+    single record/fields JOIN. A `ne` predicate requires the field to be present
+    with a concrete value that differs from the target (absent/unknown does not
+    satisfy `ne`)."""
+    where = [
+        "r.org = {org:String}",
+        "r.namespace = {ns:String}",
+        "r.schema_name = {schema:String}",
+        "r.status = 'active'",
+        "r.tombstoned_at IS NULL",
+    ]
+    params: dict[str, Any] = {
+        "org": input.org,
+        "ns": input.namespace,
+        "schema": input.schema_name,
+        "lim": input.limit + 1,
+    }
+    if input.valid_as_of is not None:
+        where.append(record_validity_predicate("r"))
+        params["valid_as_of"] = input.valid_as_of
+
+    having = _record_predicates(input, params)
+
     if not having:
         # Zero predicates: plain record scan, no JOIN / GROUP BY needed.
         sql = (
@@ -153,3 +162,84 @@ def _build_record_query(input: Any) -> tuple[str, dict[str, Any]]:
         "LIMIT {lim:UInt32}"
     )
     return sql, params
+
+
+# Record revisions a query at K reads; past it the answer says it is truncated.
+REVISIONS_LIMIT = 10_000
+
+
+async def record_revisions_at(
+    org: str,
+    namespace: str,
+    schema_name: str,
+    known_ns: int,
+    valid_at: datetime,
+    *,
+    erased_ns_us: int = 0,
+    erased_users: Sequence[tuple[str, int]] = (),
+    limit: int = REVISIONS_LIMIT,
+) -> list[dict[str, Any]]:
+    """Each record's newest revision written at or before K (`version` is the
+    write's epoch ns), from the append-only mirror, kept when it is active and
+    valid at V (`valid_at`, naive UTC): the limit counts only those. A revision
+    written before an erasure of its namespace or user is never served."""
+    from server.core.ch import caller_shaped, get_client
+
+    with caller_shaped():
+        return await get_client().query_all(
+            """
+            SELECT * FROM (
+                SELECT record_id, memory_key, memory_id, record_json, status, valid_at,
+                       valid_to, tombstoned_at, updated_at
+                FROM loom.memory_record_versions
+                WHERE org = {org:String} AND namespace = {ns:String}
+                  AND schema_name = {schema:String} AND version <= {k:UInt64}
+                  AND version >= {er:UInt64}
+                  AND NOT arrayExists(x -> x.1 = user_id AND version < x.2 * 1000,
+                                      {er_users:Array(Tuple(String, Int64))})
+                ORDER BY version DESC LIMIT 1 BY record_id
+            )
+            WHERE status = 'active' AND tombstoned_at IS NULL
+              AND (valid_at IS NULL OR valid_at <= {v:DateTime})
+              AND (valid_to IS NULL OR valid_to > {v:DateTime})
+            LIMIT {lim:UInt32}
+            """,
+            params={
+                "org": org,
+                "ns": namespace,
+                "schema": schema_name,
+                "k": known_ns,
+                "v": valid_at,
+                "er": erased_ns_us * 1000,
+                "er_users": list(erased_users),
+                "lim": limit,
+            },
+        )
+
+
+async def revisions_matching(input: Any, record_ids: Sequence[str]) -> set[str]:
+    """Of these revisions, the ones whose own field rows (written under the
+    revision's record_id, never changed after) meet the query's filters and
+    predicates, with the live query's terms."""
+    if not record_ids:
+        return set()
+    params: dict[str, Any] = {
+        "org": input.org,
+        "ns": input.namespace,
+        "schema": input.schema_name,
+        "ids": list(record_ids),
+    }
+    having = _record_predicates(input, params)
+    if not having:
+        return set(record_ids)
+    from server.core.ch import caller_shaped, get_client
+
+    with caller_shaped():
+        rows = await get_client().query_all(
+            "SELECT toString(f.record_id) AS rid FROM loom.memory_record_fields AS f FINAL "
+            "WHERE f.org = {org:String} AND f.namespace = {ns:String} "
+            "AND f.schema_name = {schema:String} AND f.record_id IN {ids:Array(UUID)} "
+            f"GROUP BY f.record_id HAVING {' AND '.join(having)}",
+            params=params,
+        )
+    return {str(r["rid"]) for r in rows}

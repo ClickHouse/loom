@@ -458,7 +458,11 @@ async def drain_writes() -> None:
     the service-side tasks, then the drop ledger (last of the services: the
     side effects before it record their drops too), the events stream and
     the buffered write marks."""
-    # In-flight deferred conflict judges settle first.
+    # A cancelled request's loom.memory insert and its erasure fence finish first.
+    from server.memory.store import inserts
+
+    await inserts.drain(timeout_s=10.0)
+    # In-flight deferred conflict judges settle next.
     from server.memory.app import conflict_deferred, drops
 
     await conflict_deferred.drain(timeout_s=15.0)

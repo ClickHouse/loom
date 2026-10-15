@@ -26,6 +26,7 @@ from server.settings._mcp import McpSettings
 from server.settings._memory import MemorySettings
 from server.settings._memory_ask import MemoryAskSettings
 from server.settings._memory_search import MemorySearchSettings
+from server.settings._memory_temporal import MemoryTemporalSettings
 from server.settings._models import ModelSettings
 from server.settings._namespaces import NamespaceSettings
 from server.settings._observability import ObservabilitySettings
@@ -49,6 +50,7 @@ class Settings(
     McpSettings,
     MemorySearchSettings,
     MemoryAskSettings,
+    MemoryTemporalSettings,
     ExtractionSettings,
     CodeSettings,
     TrackerSettings,

@@ -15,7 +15,7 @@ from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any
 
-from server.core.errors import PreconditionFailedError
+from server.core.errors import BackendUnavailableError, PreconditionFailedError
 from server.core.repo_base import _CHClient, _default_client
 from server.core.schema.migrate_lease import (
     LOCK_INSERT,
@@ -65,6 +65,7 @@ class KeyWriteLocks:
         self._ttl_s = ttl_s
         self._poll_s = poll_s
         self._local: dict[str, tuple[asyncio.Lock, int]] = {}
+        self._mine: dict[str, str] = {}
         self._keeper: bool | None = None
 
     def __len__(self) -> int:
@@ -85,13 +86,30 @@ class KeyWriteLocks:
         memory_key: str,
     ) -> AsyncIterator[None]:
         name = lock_name(org, namespace, agent, user_id, session_id, memory_key)
+        async with self.hold_name(name):
+            yield
+
+    @asynccontextmanager
+    async def hold_name(self, name: str, *, keeper_required: bool = False) -> AsyncIterator[bool]:
+        """Hold `name` in this process and, when the server has a Keeper, across
+        processes; yields whether the Keeper lease is held. `keeper_required`
+        refuses (BackendUnavailableError) instead of degrading to the process lock."""
         me, until = default_holder(), time.monotonic() + self._wait_s
         async with self._process_lock(name, until):
             try:  # released however it ends: a cancelled insert may have landed
-                await self._keeper_acquire(name, me, until)
-                yield
+                held = await self._keeper_acquire(name, me, until, required=keeper_required)
+                if held:
+                    self._mine[name] = me
+                yield held
             finally:
+                self._mine.pop(name, None)
                 await self._keeper_release(name, me)
+
+    async def still_held(self, name: str) -> bool:
+        """This process still holds `name`'s Keeper lease (not lapsed or taken over)."""
+        me = self._mine.get(name)
+        holder = await self._holder(name) if me else None
+        return holder is not None and holder[0] == me and not holder[1]
 
     @asynccontextmanager
     async def lease(self, name: str, *, wait_s: float | None = None) -> AsyncIterator[None]:
@@ -174,14 +192,29 @@ class KeyWriteLocks:
             else:
                 self._local[name] = (lock, users - 1)
 
-    async def _keeper_acquire(self, name: str, me: str, until: float) -> bool:
-        """True once held; False without a usable Keeper."""
+    async def _keeper_acquire(
+        self, name: str, me: str, until: float, *, required: bool = False
+    ) -> bool:
+        """True once held; False without a usable Keeper (unless `required`)."""
         try:
-            return await self._acquire(name, me, until) is not None
-        except PreconditionFailedError:
+            if await self._acquire(name, me, until) is not None:
+                return True
+            if required:
+                raise BackendUnavailableError("no Keeper for the cross-process lock")
+            return False
+        except (PreconditionFailedError, BackendUnavailableError):
             raise
-        except Exception as e:  # noqa: BLE001 — Keeper trouble must not fail the write
+        except Exception as e:
+            if required:
+                raise BackendUnavailableError("the cross-process lock is unavailable") from e
             degradations.note("memory_key_lock", "process_lock_only", e)
+            return False
+
+    async def has_keeper(self) -> bool:
+        try:
+            return await self._has_keeper()
+        except Exception as e:  # noqa: BLE001 — no answer reads as no Keeper
+            degradations.note("memory_key_lock", "keeper_probe_failed", e)
             return False
 
     async def _acquire(self, name: str, me: str, until: float) -> float | None:

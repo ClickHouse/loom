@@ -13,6 +13,7 @@ from fastapi import HTTPException
 from server.code.app.member_writes import assert_own_row
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
+from server.core.errors import LoomServerError, ValidationError
 from server.core.hashing import sha256_value as _content_sha256
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
 from server.core.vectors import codes_state
@@ -26,6 +27,7 @@ from server.memory.app import conflict_deferred as _cd
 from server.memory.app import provenance as app_provenance
 from server.memory.app.set_commit import (
     _count_write,
+    _replayed_answer,
     _set_after_write,
     _set_conflict_verdict,
     _set_dry_run_answer,
@@ -40,6 +42,7 @@ from server.memory.domain import provenance as _prov
 from server.memory.domain.files import files_for_set
 from server.memory.domain.graph_quality import canonical_entities
 from server.memory.domain.procedural_contract import retype_for as _procedural_retype
+from server.memory.domain.temporal_capture import current_intent, intent_for, write_intent
 from server.memory.domain.value_shape import value_shape_advisories
 from server.memory.store import key_write_lock
 from server.memory.store.rows import next_version
@@ -140,6 +143,31 @@ def _pinned_dry_run_output(
     )
 
 
+def _check_applies_now(input: MemorySetInput) -> None:
+    """memory.set writes the value that applies now: its row is the current state.
+    A change that takes effect later, or corrects only another span, is a
+    memory.amend, which keeps the current row on what applies now."""
+    from server.memory.domain import temporal_model as tm
+
+    now = datetime.now(UTC)
+    lo, hi = tm.utc(input.valid_at), tm.utc(input.valid_to)
+    if lo is not None and hi is not None and hi <= lo:
+        raise ValidationError("valid_to must be after valid_at")
+    if input.change_kind == "transition":
+        at = tm.utc(input.effective_at)
+        if at is None:
+            raise ValidationError("change_kind=transition needs effective_at")
+        if at > now:
+            raise ValidationError("a future transition is scheduled with memory.amend")
+    if input.change_kind == "correct":
+        lo, hi = tm.utc(input.valid_at), tm.utc(input.valid_to)
+        if (lo is not None and lo > now) or (hi is not None and hi <= now):
+            raise ValidationError(
+                "memory.set corrects the span that applies now; correct another span "
+                "with memory.amend"
+            )
+
+
 async def handle_memory_set(input: MemorySetInput) -> MemorySetOutput:
     """Count the write outcome for every terminal shape, then delegate.
 
@@ -149,9 +177,26 @@ async def handle_memory_set(input: MemorySetInput) -> MemorySetOutput:
     unmapped 4xx is a `rejected` refusal, and anything else — including the
     non-HTTPException failures a ClickHouse outage actually raises — is `error`.
     """
+    _check_applies_now(input)
+    if input.change_kind == "transition" and input.valid_at is None:
+        # The row states the bound the journal records for the new state.
+        input = input.model_copy(update={"valid_at": input.effective_at})
+    intent = input.write_intent()
     try:
-        out = await _handle_memory_set(input)
-    except HTTPException as e:
+        if intent is None:
+            out = await _handle_memory_set(input)
+        else:
+            with write_intent(intent):
+                out = await _handle_memory_set(input)
+    except (HTTPException, LoomServerError) as e:
+        # A guard for a new write refused it: a retry of a set this request's client
+        # key already committed is answered from that commit instead.
+        if 400 <= e.status_code < 500 and (replayed := await _durable_replay(input)) is not None:
+            return replayed
+        if isinstance(e, LoomServerError):
+            ok_4xx = 400 <= e.status_code < 500
+            _count_write(input.namespace, "rejected" if ok_4xx else _WRITE_OUTCOME_UNMAPPED)
+            raise
         code = e.detail.get("code", "") if isinstance(e.detail, dict) else ""
         outcome = _WRITE_OUTCOME_BY_ERROR_CODE.get(str(code))
         if outcome is None:
@@ -506,7 +551,8 @@ def _set_build_memory_row(w: _SetWrite) -> None:
     memory_id = (
         existing.memory_id
         if existing is not None and bool(getattr(existing, "memory_id", ""))
-        else str(_uuid.uuid4())
+        else intent_for({"memory_key": input.memory_key}, current_intent()).memory_id
+        or str(_uuid.uuid4())
     )
     # Captured here because `existing` is rebound inside the merge branch below. It
     # distinguishes a first write to this key from a new version of one that already
@@ -613,6 +659,20 @@ async def _handle_memory_set(input: MemorySetInput) -> MemorySetOutput:
         return await _memory_set_phases(input)
 
 
+async def _durable_replay(input: MemorySetInput) -> MemorySetOutput | None:
+    """A retry of a set this request's client key already committed: its original
+    answer, before a lock, pin or precondition meant for a new write refuses it."""
+    from server.memory.app import temporal_publisher as tp
+
+    ident = (input.agent, input.user_id, input.session_id, input.memory_key)
+    r = await tp.durable_replay(input.org, input.namespace, ident)
+    if r is None:
+        return None
+    from server.memory.app.set_commit import receipt_answer
+
+    return await receipt_answer(input, r, None)
+
+
 async def _memory_set_phases(input: MemorySetInput) -> MemorySetOutput:
     """memory.set, as its phases in order (each `_set_*` above says what it does).
 
@@ -630,7 +690,7 @@ async def _memory_set_phases(input: MemorySetInput) -> MemorySetOutput:
     # anything is embedded.
     _restated, _pin_refusal = _guard_existing_row(existing, input, retyped_from)
     if _pin_refusal is not None:
-        return _pin_refusal
+        return await _durable_replay(input) or _pin_refusal
 
     expires_at = await _set_expiry(input, existing, _cfg_task, resolved_memory_type)
 
@@ -677,7 +737,8 @@ async def _memory_set_phases(input: MemorySetInput) -> MemorySetOutput:
         # happened), no write tick. The version is 0 so nothing can mistake it for one.
         return _set_dry_run_answer(w, conflict_result, peers_out, duplicate_of_id)
 
-    await _set_dual_write(w, ch, _cfg, conflict_result)
+    if not await _set_dual_write(w, ch, _cfg, conflict_result):
+        return await _replayed_answer(w)
 
     return await _set_after_write(w, ch, _cfg, conflict_result, duplicate_of_id, peers_out)
 

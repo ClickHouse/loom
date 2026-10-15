@@ -1,0 +1,920 @@
+"""The namespace publisher against an in-memory journal: order, projection,
+uncertain inserts, durable retry identity, strict-mode fencing."""
+
+from __future__ import annotations
+
+import asyncio
+import itertools
+import json
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
+import pytest
+
+from server.core import idempotency, request_work
+from server.core.errors import PreconditionFailedError, TemporalUnavailableError
+from server.memory.app import temporal_publisher as pub
+from server.memory.app import temporal_rows as rows
+from server.memory.domain import temporal_model as tm
+from server.memory.store import temporal as store
+
+pytestmark = pytest.mark.temporal_journal
+
+
+class Journal:
+    """The store functions the publisher calls, over lists."""
+
+    def __init__(self) -> None:
+        self.commits: list[dict[str, Any]] = []
+        self.assertions: dict[str, dict[str, Any]] = {}
+        self.watermark = 0
+        self.fail_inserts = 0
+        self.land_failed = False
+        self.erasures_late = 0
+        self.published = 0
+        self.published_at = None
+
+    async def head(self, org, ns, **_):
+        if not self.commits:
+            return self.published, None, 0
+        last = max(self.commits, key=lambda c: c["commit_seq"])
+        payloads: dict[int, set] = {}
+        for c in self.commits:
+            payloads.setdefault(c["commit_seq"], set()).add(c["payload_sha256"])
+        broken = min((q for q, p in payloads.items() if len(p) > 1), default=0)
+        at = max(t for t in (last["recorded_at"], self.published_at) if t is not None)
+        return max(last["commit_seq"], self.published), at, broken
+
+    async def publish_mark(self, org, ns, seq, recorded_at=None, **_):
+        if seq >= self.published:
+            self.published, self.published_at = seq, recorded_at
+
+    async def repair(self, org, ns, **_):
+        # The list is landing order: keep the first commit at each sequence.
+        seen: set[int] = set()
+        kept = []
+        for c in self.commits:
+            if c["commit_seq"] not in seen:
+                seen.add(c["commit_seq"])
+                kept.append(c)
+        self.commits = kept
+        return []
+
+    async def others(self, org, ns, seqs, ids, **_):
+        return [
+            c["commit_seq"]
+            for c in self.commits
+            if c["commit_seq"] in seqs and c["commit_id"] not in ids
+        ]
+
+    async def withdraw(self, org, ns, ids, **_):
+        self.commits = [c for c in self.commits if c["commit_id"] not in ids]
+
+    async def insert_commits(self, rows, **_):
+        store._check(rows, store.COMMIT_COLS, store.COMMITS)
+        if self.fail_inserts:
+            self.fail_inserts -= 1
+            if self.land_failed:
+                self.commits.extend(dict(r) for r in rows)
+            raise ConnectionError("reset by peer")
+        self.commits.extend(dict(r) for r in rows)
+
+    async def commits_by_id(self, org, ns, ids, **_):
+        return [c for c in self.commits if c["commit_id"] in ids]
+
+    async def insert_assertions(self, rows, **_):
+        store._check(rows, store.ASSERTION_COLS, store.ASSERTIONS)
+        for r in rows:
+            cur = self.assertions.get(r["assertion_id"])
+            if cur is None or cur["projected_seq"] <= r["projected_seq"]:
+                self.assertions[r["assertion_id"]] = dict(r)
+
+    async def watermark_of(self, *_a, **_k):
+        return self.watermark
+
+    async def advance(self, org, ns, seq, *_a, **_k):
+        self.watermark = max(self.watermark, seq)
+
+    async def served_for_keys(self, org, ns, keys, **_):
+        return [
+            r
+            for r in self.assertions.values()
+            if r["retired_seq"] is None
+            and (r["agent"], r["user_id"], r["session_id"], r["memory_key"]) in set(keys)
+        ]
+
+    async def none(self, *_a, **_k):
+        return [] if not _k.get("one") else None
+
+    async def erasures(self, *_a, **_k):
+        return 0, self.erasures_late
+
+    async def idem(self, org, ns, key, keys, **_):
+        out: dict = {}
+        for c in self.commits:
+            ident = (c["agent"], c["user_id"], c["session_id"], c["memory_key"])
+            if c["idempotency_key"] == key and ident in keys:
+                out.setdefault(ident, []).append(c)
+        return out
+
+    async def row_versions(self, org, ns, keys, **_):
+        out: dict = {}
+        for c in self.commits:
+            ident = (c["agent"], c["user_id"], c["session_id"], c["memory_key"])
+            if ident in set(keys):
+                out[ident] = max(out.get(ident, 0), int(c.get("row_version") or 0))
+        return out
+
+    async def parents(self, org, ns, keys, **_):
+        out: dict = {}
+        for c in sorted(self.commits, key=lambda c: c["commit_seq"]):
+            ident = (c["agent"], c["user_id"], c["session_id"], c["memory_key"])
+            if ident in set(keys):
+                out[ident] = c["commit_id"]
+        return out
+
+    async def between(self, org, ns, lo, hi, **_):
+        return [c for c in self.commits if lo < c["commit_seq"] <= hi]
+
+
+@pytest.fixture
+def journal(monkeypatch: pytest.MonkeyPatch) -> Journal:
+    j = Journal()
+    for name, fn in {
+        "head": j.head,
+        "insert_commits": j.insert_commits,
+        "commits_by_id": j.commits_by_id,
+        "insert_assertions": j.insert_assertions,
+        "watermark": j.watermark_of,
+        "advance_watermark": j.advance,
+        "served_for_keys": j.served_for_keys,
+        "memory_heads": j.none,
+        "commits_for_idempotency_key": j.idem,
+        "last_commits": j.parents,
+        "newest_row_versions": j.row_versions,
+        "commits_between": j.between,
+        "other_commits_at": j.others,
+        "withdraw_commits": j.withdraw,
+        "repair_namespace": j.repair,
+        "mark_published": j.publish_mark,
+    }.items():
+        monkeypatch.setattr(store, name, fn)
+
+    monkeypatch.setattr(pub.fence, "scope_erasures", j.erasures)
+
+    async def not_erased(*_a: Any, **_k: Any) -> Any:
+        return store.NOT_ERASED
+
+    async def on_time(*_a: Any, **_k: Any) -> bool:
+        return False
+
+    async def clock(*_a: Any, **_k: Any) -> datetime:
+        return datetime.now(UTC)
+
+    monkeypatch.setattr(pub, "erased", not_erased)
+    monkeypatch.setattr(store, "landed_late", on_time)
+    monkeypatch.setattr(store, "server_now", clock)
+
+    async def no_keeper() -> bool:
+        return False
+
+    monkeypatch.setattr(pub._locks, "has_keeper", no_keeper)
+    monkeypatch.setattr(pub.settings, "memory_temporal_publisher", "process")
+    monkeypatch.setattr(pub, "_serving", True)
+    return j
+
+
+_VERSIONS = itertools.count(1_000)
+
+
+def mrow(value: str, **kw: Any) -> dict[str, Any]:
+    r = {
+        "org": "o",
+        "namespace": "n",
+        "agent": "a",
+        "user_id": "-",
+        "session_id": "-",
+        "memory_key": "k",
+        "memory_id": "00000000-0000-0000-0000-000000000001",
+        "memory_type": "semantic",
+        "value": value,
+        "content_sha256": value,
+        "status": "active",
+        "tombstoned_at": None,
+        "redacted_at": None,
+        "valid_at": None,
+        "valid_to": None,
+        "temporal_anchor": None,
+        "version": next(_VERSIONS),  # drawn at write time: each write later than the last
+        "actor": "human:x",
+        "source_class": "asserted",
+    }
+    r.update(kw)
+    return r
+
+
+def run(coro: Any) -> Any:
+    return asyncio.run(coro)
+
+
+def test_commits_get_the_next_sequence_and_a_rising_recording_time(journal: Journal) -> None:
+    run(pub.publish_rows([mrow('"A"')]))
+    run(pub.publish_rows([mrow('"B"')]))
+    seqs = [c["commit_seq"] for c in journal.commits]
+    assert seqs == [1, 2]
+    assert journal.commits[0]["recorded_at"] < journal.commits[1]["recorded_at"]
+    assert [c["change_kind"] for c in journal.commits] == ["assert", "assert"]
+    # The second commit retired the first one's assertion in the projection.
+    first = json.loads(journal.commits[0]["assertions"])[0]["assertion_id"]
+    assert journal.assertions[first]["retired_seq"] == 2
+    assert journal.watermark == 2
+
+
+def test_a_restatement_commits_nothing_but_its_version(journal: Journal) -> None:
+    # Its row's version orders the key's next write, so it is journaled: empty.
+    run(pub.publish_rows([mrow('"A"')]))
+    (row,) = run(pub.publish_rows([mrow('"A"', recall_count=4)]))
+    restate = journal.commits[-1]
+    assert [c["change_kind"] for c in journal.commits] == ["assert", "restate"]
+    assert json.loads(restate["assertions"]) == [] and list(restate["retired_assertion_ids"]) == []
+    assert restate["row_version"] == row["version"]
+
+
+def test_an_uncertain_insert_that_landed_is_reconciled_not_republished(journal: Journal) -> None:
+    journal.fail_inserts, journal.land_failed = 1, True
+    run(pub.publish_rows([mrow('"A"')]))
+    assert [c["commit_seq"] for c in journal.commits] == [1]
+
+
+def test_an_insert_that_never_lands_fails_the_write(journal: Journal, monkeypatch) -> None:
+    monkeypatch.setattr(pub.settings, "memory_temporal_insert_retries", 1)
+    journal.fail_inserts = 5
+    with pytest.raises(TemporalUnavailableError):
+        run(pub.publish_rows([mrow('"A"')]))
+    assert journal.commits == []
+
+
+def test_a_write_needs_a_cross_process_publisher_or_a_declared_single_writer(
+    journal: Journal, monkeypatch
+) -> None:
+    monkeypatch.setattr(pub.settings, "memory_temporal_publisher", "auto")
+    with pytest.raises(TemporalUnavailableError, match="cross-process"):
+        run(pub.publish_rows([mrow('"A"')]))
+
+
+def test_a_retry_under_the_same_key_reuses_the_commit_and_a_different_body_is_refused(
+    journal: Journal,
+) -> None:
+    async def write(value: str, body: str) -> list[pub.Receipt]:
+        request_work.begin()
+        idempotency.request_key_var.set("idem-1")
+        idempotency.request_body_var.set(body)
+        with pub.collect_receipts() as bag:
+            await pub.publish_rows([mrow(value)])
+        return bag
+
+    async def scenario() -> None:
+        # Each attempt is its own request (its own task context), as over HTTP.
+        first = await asyncio.create_task(write('"A"', "body-A"))
+        # The retry is recognised by key and body, whatever the key serves now: a
+        # journal whose projection lost the key still answers it.
+        journal.assertions.clear()
+        journal.watermark = 0
+        again = await asyncio.create_task(write('"A"', "body-A"))
+        assert again and again[0].commit_seq == first[0].commit_seq
+        # The retry reports the committed change, not the (empty) re-plan.
+        assert again[0].amendment == first[0].amendment and first[0].amendment.added
+        # The same key with another body is refused, even one that would change nothing.
+        for value in ('"B"', '"A"'):
+            with pytest.raises(PreconditionFailedError, match="Idempotency-Key"):
+                await asyncio.create_task(write(value, "body-B"))
+
+    run(scenario())
+    assert len(journal.commits) == 1
+
+
+def test_a_second_change_in_child_tasks_of_one_request_is_not_a_retry(journal: Journal) -> None:
+    # A handler that gathers its writes commits from child tasks; the request's
+    # record of what it committed must survive them.
+    async def scenario() -> None:
+        request_work.begin()
+        idempotency.request_key_var.set("idem-2")
+        await asyncio.create_task(pub.publish_rows([mrow('"A"')]))
+        await asyncio.create_task(pub.publish_rows([mrow('"B"')]))
+
+    run(scenario())
+    assert len(journal.commits) == 2
+
+
+def test_a_lost_sequence_race_withdraws_this_batch(journal: Journal, monkeypatch) -> None:
+    # Another publisher wrote the same sequence between our head read and insert.
+    real_insert = journal.insert_commits
+
+    async def racing_insert(rows, **kw):
+        await real_insert(rows, **kw)
+        journal.commits.append(
+            {
+                **rows[0],
+                "commit_id": "00000000-0000-0000-0000-00000000beef",
+                "payload_sha256": "f" * 64,
+            }
+        )
+
+    monkeypatch.setattr(store, "insert_commits", racing_insert)
+    with pytest.raises(TemporalUnavailableError, match="another publisher"):
+        run(pub.publish_rows([mrow('"A"')]))
+    assert [c["commit_id"] for c in journal.commits] == ["00000000-0000-0000-0000-00000000beef"]
+
+
+def test_a_break_left_by_a_failed_withdrawal_is_repaired_by_the_next_write(
+    journal: Journal, monkeypatch
+) -> None:
+    real_insert = journal.insert_commits
+
+    async def racing_insert(rows, **kw):
+        await real_insert(rows, **kw)
+        journal.commits.append(
+            {
+                **rows[0],
+                "commit_id": "00000000-0000-0000-0000-00000000beef",
+                "payload_sha256": "f" * 64,
+            }
+        )
+
+    async def failing_withdraw(*_a, **_k):
+        raise RuntimeError("Code: 999. transient")
+
+    monkeypatch.setattr(store, "insert_commits", racing_insert)
+    monkeypatch.setattr(store, "withdraw_commits", failing_withdraw)
+    with pytest.raises(TemporalUnavailableError, match="another publisher"):
+        run(pub.publish_rows([mrow('"A"')]))
+    first = journal.commits[0]["commit_id"]
+    monkeypatch.setattr(store, "insert_commits", real_insert)
+    run(pub.publish_rows([mrow('"B"', memory_key="k2")]))
+    # The first-landed commit stays; the later one at its sequence is gone.
+    assert [(c["commit_seq"], c["commit_id"]) for c in journal.commits][:1] == [(1, first)]
+    assert [c["commit_seq"] for c in journal.commits] == [1, 2]
+
+
+def test_a_commit_to_the_same_key_between_plan_and_lock_replans(
+    journal: Journal, monkeypatch
+) -> None:
+    run(pub.publish_rows([mrow('"A"')]))
+    real_head = journal.head
+    calls = {"n": 0}
+
+    async def head(*a, **k):
+        calls["n"] += 1
+        if calls["n"] == 2:  # the head read under the lock: someone else wrote k meanwhile
+            await real_insert_other()
+        return await real_head(*a, **k)
+
+    async def real_insert_other():
+        other = dict(
+            journal.commits[-1], commit_seq=2, commit_id="00000000-0000-0000-0000-0000000000b2"
+        )
+        journal.commits.append(other)
+
+    monkeypatch.setattr(store, "head", head)
+    run(pub.publish_rows([mrow('"B"')]))
+    assert calls["n"] >= 3  # planned twice
+    assert [c["commit_seq"] for c in journal.commits] == [1, 2, 3]
+
+
+def test_a_write_begun_before_an_erasure_is_fenced(journal: Journal) -> None:
+    async def scenario() -> None:
+        request_work.begin()
+        journal.erasures_late = 1
+        with pytest.raises(PreconditionFailedError, match="erasure"):
+            await pub.publish_rows([mrow('"A"')])
+
+    run(scenario())
+
+
+def test_a_lagging_projection_is_reduced_from_the_journal(journal: Journal) -> None:
+    run(pub.publish_rows([mrow('"A"')]))
+    journal.assertions.clear()  # the projection lost its rows
+    journal.watermark = 0
+    run(pub.publish_rows([mrow('"B"')]))
+    first = json.loads(journal.commits[0]["assertions"])[0]["assertion_id"]
+    assert [str(x) for x in journal.commits[1]["retired_assertion_ids"]] == [first]
+
+
+def test_projection_rows_carry_every_column() -> None:
+    """A loom.memory_temporal_assertions version row is a ReplacingMergeTree re-emit:
+    every column, or FINAL serves a DDL default over the real value."""
+    a = tm.first('"A"', valid_from=datetime(2026, 1, 1, tzinfo=UTC))
+    row = rows.projection_row(
+        "o", "n", "private", ("a", "-", "-", "k"), rows.Served(a, "m", 1, datetime.now(UTC)), 1
+    )
+    assert set(row) == set(store.ASSERTION_COLS)
+
+
+def test_an_erased_head_sequence_is_never_allocated_again(journal: Journal) -> None:
+    # Erasure deleted the newest commit; its sequence stays published.
+    async def scenario() -> None:
+        await pub.publish_rows([mrow('"A"')])
+        await pub.publish_rows([mrow('"B"', memory_key="k2")])
+        journal.commits = [c for c in journal.commits if c["memory_key"] != "k2"]
+        await pub.publish_rows([mrow('"C"', memory_key="k3")])
+
+    run(scenario())
+    assert [c["commit_seq"] for c in journal.commits] == [1, 3]
+
+
+def test_a_write_waits_out_a_running_erasure(journal: Journal) -> None:
+    # A worker pass binds no request: it is fenced all the same.
+    journal.erasures_late = 1
+    with pytest.raises(PreconditionFailedError, match="erasure"):
+        run(pub.publish_rows([mrow('"A"')]))
+    assert journal.commits == []
+
+
+def test_a_refused_batch_writes_no_embedding_and_a_moved_on_retry_no_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.store import inserts
+
+    inserted: list[str] = []
+    embedded: list[Any] = []
+
+    class Ch:
+        async def insert(self, table: str, rows: Any, **_: Any) -> None:
+            inserted.extend(r["memory_key"] for r in rows)
+
+    async def embed(kept: Any) -> None:
+        embedded.append([r["memory_key"] for r in kept])
+
+    monkeypatch.setattr(inserts, "check_memory_rows", lambda rows: None)
+    monkeypatch.setattr(inserts, "_AFTER_INSERT", [])
+    rows = [{"memory_key": "a"}, {"memory_key": "b"}]
+
+    async def refuse(rows: Any, **_: Any) -> Any:
+        raise TemporalUnavailableError("journal down")
+
+    monkeypatch.setattr(inserts, "_BEFORE_INSERT", [refuse])
+    with pytest.raises(TemporalUnavailableError):
+        run(inserts.insert_memory_versions(rows, ch=Ch(), alongside=[embed]))
+    assert inserted == [] and embedded == []
+
+    async def drop_a(rows: Any, **_: Any) -> Any:
+        return [r for r in rows if r["memory_key"] != "a"]
+
+    monkeypatch.setattr(inserts, "_BEFORE_INSERT", [drop_a])
+    assert run(inserts.insert_memory_versions(rows, ch=Ch(), alongside=[embed])) == 1
+    assert inserted == ["b"] and embedded == [["b"]]
+
+
+def test_a_retry_after_the_key_moved_on_replays_without_rewriting(journal: Journal) -> None:
+    async def write(value: str, key: str = "", body: str = "") -> list[Any]:
+        request_work.begin()
+        idempotency.request_key_var.set(key)
+        idempotency.request_body_var.set(body)
+        return await pub.publish_rows([mrow(value)])
+
+    async def scenario() -> None:
+        assert await asyncio.create_task(write('"A"', "idem-9", "body-A"))
+        assert await asyncio.create_task(write('"B"'))
+        # The first request retried after B: answered from its commit, row left out.
+        with pub.collect_receipts() as bag:
+            kept = await asyncio.create_task(write('"A"', "idem-9", "body-A"))
+        assert kept == [] and bag[0].commit_seq == 1 and bag[0].moved_on
+
+    run(scenario())
+    assert [c["commit_seq"] for c in journal.commits] == [1, 2]
+
+
+def test_late_evidence_is_journaled_but_does_not_replace_the_current_row(
+    journal: Journal,
+) -> None:
+    feb = datetime(2026, 2, 1, tzinfo=UTC)
+    jan = datetime(2026, 1, 1, tzinfo=UTC)
+
+    async def scenario() -> None:
+        assert await pub.publish_rows([mrow('"B"', valid_at=feb)])
+        with pub.collect_receipts() as bag:
+            kept = await pub.publish_rows([mrow('"A"', valid_at=jan)])
+        assert kept == [] and bag[-1].past_only  # the present is still B
+        assert await pub.publish_rows([mrow('"C"')])  # an undated write replaces
+
+    run(scenario())
+    assert len(journal.commits) == 3
+
+
+def test_a_retry_is_written_with_the_expiry_its_commit_recorded(journal: Journal) -> None:
+    first = datetime(2026, 1, 1, tzinfo=UTC)
+
+    async def write(expires_at: datetime) -> list[Any]:
+        request_work.begin()
+        idempotency.request_key_var.set("idem-ttl")
+        idempotency.request_body_var.set("body")
+        return await pub.publish_rows([mrow('"A"', expires_at=expires_at)])
+
+    async def scenario() -> None:
+        await asyncio.create_task(write(first))
+        # The retry recomputed its TTL from a later clock: the journal kept the first.
+        (row,) = await asyncio.create_task(write(first + timedelta(hours=1)))
+        assert row["expires_at"] == first
+
+    run(scenario())
+    assert len(journal.commits) == 1
+
+
+def test_an_assertion_retired_in_its_own_batch_keeps_its_real_birth(journal: Journal) -> None:
+    run(pub.publish_rows([mrow('"X"', memory_key="other")]))
+    run(pub.publish_rows([mrow('"A"'), mrow('"B"')]))
+    a = next(r for r in journal.assertions.values() if r["value"] == '"A"')
+    assert (a["born_seq"], a["retired_seq"]) == (2, 3)
+    assert a["born_at"].year > 1970
+
+
+def test_a_retraction_is_kept_as_long_as_what_it_retracts(journal: Journal) -> None:
+    until = datetime(2050, 1, 1)
+    run(pub.publish_rows([mrow('"A"', expires_at=until)]))
+    run(pub.publish_rows([mrow('"A"', expires_at=until, tombstoned_at=datetime(2026, 1, 1))]))
+    retraction = journal.commits[-1]
+    assert retraction["assertions"] == "[]"
+    assert tm.utc(retraction["retain_until"]) == tm.utc(until)
+
+
+def test_a_retried_batch_keeps_each_identitys_committed_id(journal: Journal) -> None:
+    # One key under two users, as a namespace rollback batches it.
+    ids = ("00000000-0000-0000-0000-00000000000a", "00000000-0000-0000-0000-00000000000b")
+
+    async def write(fresh: bool) -> list[Any]:
+        request_work.begin()
+        idempotency.request_key_var.set("idem-ids")
+        idempotency.request_body_var.set("body")
+        return await pub.publish_rows(
+            [
+                mrow('"A"', user_id=u, memory_id="f" * 8 + mid[8:] if fresh else mid)
+                for u, mid in zip(("u1", "u2"), ids, strict=True)
+            ]
+        )
+
+    async def scenario() -> list[Any]:
+        await asyncio.create_task(write(False))
+        return await asyncio.create_task(write(True))
+
+    again = run(scenario())
+    assert [(r["user_id"], r["memory_id"]) for r in again] == list(
+        zip(("u1", "u2"), ids, strict=True)
+    )
+
+
+def test_a_clock_behind_the_journal_refuses_to_stamp(journal: Journal) -> None:
+    # An allocation whose insert outcome stayed unknown was stamped by a clock ahead
+    # of ours. Stamping past the clock would date the batch after an erasure
+    # requested once the fence passed, and the erasure cut would not hide it.
+    run(pub.publish_rows([mrow('"A"')]))
+    journal.published, journal.published_at = 2, datetime.now(UTC) + timedelta(seconds=30)
+    with pytest.raises(TemporalUnavailableError, match="clock"):
+        run(pub.publish_rows([mrow('"B"')]))
+    assert len(journal.commits) == 1
+
+
+def test_a_failed_embedding_write_still_runs_the_after_insert_fence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.store import inserts
+
+    fenced: list[Any] = []
+
+    class Ch:
+        async def insert(self, table: str, rows: Any, **_: Any) -> None:
+            pass
+
+    async def embed(kept: Any) -> None:
+        raise ConnectionError("embedding insert failed")
+
+    async def keep(rows: Any, **_: Any) -> Any:
+        return rows
+
+    async def fence(rows: Any, **_: Any) -> None:
+        fenced.append(rows)
+
+    monkeypatch.setattr(inserts, "check_memory_rows", lambda rows: None)
+    monkeypatch.setattr(inserts, "_BEFORE_INSERT", [keep])
+    monkeypatch.setattr(inserts, "_AFTER_INSERT", [fence])
+    with pytest.raises(ConnectionError):
+        run(inserts.insert_memory_versions([{"memory_key": "a"}], ch=Ch(), alongside=[embed]))
+    assert fenced == [[{"memory_key": "a"}]]
+
+
+def test_a_cancelled_request_still_runs_the_after_insert_fence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.store import inserts
+
+    fenced: list[Any] = []
+    sent = asyncio.Event()
+
+    class Ch:
+        async def insert(self, table: str, rows: Any, **_: Any) -> None:
+            sent.set()
+            await asyncio.sleep(0.05)  # the insert is on the wire when the client goes
+
+    async def keep(rows: Any, **_: Any) -> Any:
+        return rows
+
+    async def fence(rows: Any, **_: Any) -> None:
+        fenced.append(rows)
+
+    monkeypatch.setattr(inserts, "check_memory_rows", lambda rows: None)
+    monkeypatch.setattr(inserts, "_BEFORE_INSERT", [keep])
+    monkeypatch.setattr(inserts, "_AFTER_INSERT", [fence])
+
+    async def scenario() -> None:
+        write = asyncio.create_task(inserts.insert_memory_versions([{"memory_key": "a"}], ch=Ch()))
+        await sent.wait()
+        write.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await write
+        assert fenced == []  # the caller is gone, the insert is not done yet
+        await asyncio.sleep(0.1)  # the insert returns, with nobody waiting on it
+
+    run(scenario())
+    assert fenced == [[{"memory_key": "a"}]]
+
+
+def test_a_clock_a_moment_behind_the_journal_is_waited_out(journal: Journal, monkeypatch) -> None:
+    # Replicas' clocks differ by milliseconds: the next write waits, not refuses.
+    run(pub.publish_rows([mrow('"A"')]))
+    ahead = datetime.now(UTC) + timedelta(milliseconds=50)
+    journal.published, journal.published_at = 2, ahead
+    run(pub.publish_rows([mrow('"B"')]))
+    assert journal.commits[-1]["recorded_at"] > ahead
+
+
+async def _attempt(rows: list[Any], intent: Any = None) -> tuple[list[Any], list[Any]]:
+    from server.memory.domain.temporal_capture import write_intent
+
+    request_work.begin()
+    idempotency.request_key_var.set("idem-r")
+    idempotency.request_body_var.set("body")
+    with pub.collect_receipts() as bag:
+        if intent is None:
+            return await pub.publish_rows(rows), bag
+        with write_intent(intent):
+            return await pub.publish_rows(rows), bag
+
+
+def test_a_transitions_retry_takes_the_new_values_expiry(journal: Journal) -> None:
+    from server.memory.domain.temporal_capture import WriteIntent
+
+    old, new, at = (datetime(y, 1, 1, tzinfo=UTC) for y in (2027, 2030, 2026))
+
+    async def scenario() -> None:
+        await pub.publish_rows(
+            [mrow('"A"', expires_at=old, valid_at=datetime(2025, 1, 1, tzinfo=UTC))]
+        )
+        intent = WriteIntent(memory_key="k", change_kind="transition", effective_at=at)
+        row = mrow('"B"', expires_at=new, valid_at=at, content_sha256='"B"')
+        await asyncio.create_task(_attempt([row], intent))
+        (kept,), _ = await asyncio.create_task(_attempt([row], intent))
+        assert kept["expires_at"] == new  # not the kept segment of A's
+
+    run(scenario())
+
+
+def test_a_retry_of_two_rows_for_one_key_writes_both(journal: Journal) -> None:
+    rows = [mrow('"A"'), mrow('"A"', status="conflicted")]
+
+    async def scenario() -> None:
+        first, _ = await asyncio.create_task(_attempt(rows))
+        again, bag = await asyncio.create_task(_attempt(rows))
+        assert len(first) == len(again) == 2 and not any(r.moved_on for r in bag)
+
+    run(scenario())
+
+
+def test_a_cancelled_requests_failed_fence_is_logged_and_drained(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from server.memory.store import inserts
+
+    sent = asyncio.Event()
+
+    class Ch:
+        async def insert(self, table: str, rows: Any, **_: Any) -> None:
+            sent.set()
+            await asyncio.sleep(0.05)
+
+    async def keep(rows: Any, **_: Any) -> Any:
+        return rows
+
+    async def fence(rows: Any, **_: Any) -> None:
+        raise RuntimeError("fence down")
+
+    monkeypatch.setattr(inserts, "check_memory_rows", lambda rows: None)
+    monkeypatch.setattr(inserts, "_BEFORE_INSERT", [keep])
+    monkeypatch.setattr(inserts, "_AFTER_INSERT", [fence])
+
+    async def scenario() -> None:
+        write = asyncio.create_task(inserts.insert_memory_versions([{"memory_key": "a"}], ch=Ch()))
+        await sent.wait()
+        write.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await write
+        await inserts.drain(timeout_s=1.0)
+        await asyncio.sleep(0)  # done callbacks run on the next loop turn
+
+    run(scenario())
+    assert "fence down" in caplog.text
+
+
+def test_an_already_journaled_row_is_fenced_too(
+    journal: Journal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The reconciler's and amend's current-row writes: their commit was fenced when it
+    # published, but an erasure can begin before the row itself lands.
+    import server.memory.store as memory_repo
+    from server.memory.domain.temporal_capture import WriteIntent, write_intent
+
+    undone: list[Any] = []
+
+    async def _insert(rows: Any, **_: Any) -> int:
+        undone.extend(rows)
+        return len(rows)
+
+    async def _retire(*_a: Any, **_k: Any) -> int:
+        return 0
+
+    monkeypatch.setattr(memory_repo, "insert_memory_versions", _insert)
+    monkeypatch.setattr(memory_repo, "retire_vectors_for_keys", _retire)
+    journal.erasures_late = 1
+
+    async def scenario() -> None:
+        request_work.begin()
+        with write_intent(WriteIntent(memory_key="k", journaled=True)):
+            with pytest.raises(PreconditionFailedError, match="erasure"):
+                await pub.refence_rows([mrow('"A"')])
+
+    run(scenario())
+    assert [r["tombstoned_at"] is not None for r in undone] == [True]
+
+
+def test_a_write_drawn_before_one_its_key_committed_is_superseded(journal: Journal) -> None:
+    # B drew its version later but committed first; A and a delete, both drawn
+    # earlier, follow. The later draw wins, in the journal as in loom.memory's merge.
+    run(pub.publish_rows([mrow('"B"', version=20)]))
+    with pub.collect_receipts() as bag:
+        a = run(pub.publish_rows([mrow('"A"', version=10)]))
+        gone = run(pub.publish_rows([mrow('"A"', version=5, tombstoned_at=datetime(2026, 1, 1))]))
+    assert a == gone == [] and [r.left_out for r in bag] == ["superseded", "superseded"]
+    assert [c["row_version"] for c in journal.commits] == [20]
+
+
+def test_an_amendment_commit_records_who_made_it(journal: Journal) -> None:
+    from server.auth.context import set_current_auth
+    from server.auth.jwt import AuthInfo
+    from server.operations.base import Role
+
+    set_current_auth(
+        AuthInfo(
+            subject="ann",
+            org="o",
+            namespaces=("n",),
+            roles=(Role.WRITER,),
+            is_service_account=False,
+        )
+    )
+    try:
+        run(
+            pub.publish_amendment(
+                "o", "n", ("a", "-", "-", "k"), "m", tm.retract, operation="memory.amend"
+            )
+        )
+        run(pub.publish_rows([mrow('"A"')]))  # something to retract
+        run(
+            pub.publish_amendment(
+                "o", "n", ("a", "-", "-", "k"), "m", tm.retract, operation="memory.amend"
+            )
+        )
+    finally:
+        set_current_auth(None)
+    retraction = journal.commits[-1]
+    assert retraction["change_kind"] == "retract"
+    assert retraction["actor"] == "human:ann" and retraction["source_class"]
+
+
+def test_a_durable_retry_is_recognised_before_any_new_write_guard(journal: Journal) -> None:
+    async def first() -> None:
+        request_work.begin()
+        idempotency.request_key_var.set("idem-old")
+        idempotency.request_body_var.set("body-A")
+        await pub.publish_rows([mrow('"A"')])
+
+    async def retry(body: str) -> Any:
+        request_work.begin()
+        idempotency.request_key_var.set("idem-old")
+        idempotency.request_body_var.set(body)
+        return await pub.durable_replay("o", "n", ("a", "-", "-", "k"))
+
+    async def scenario() -> None:
+        await asyncio.create_task(first())
+        # Not moved on: the normal path rewrites its row under the commit.
+        assert await asyncio.create_task(retry("body-A")) is None
+        await pub.publish_rows([mrow('"B"')])  # the key moved on (pinned B, say)
+        got = await asyncio.create_task(retry("body-A"))
+        assert (
+            got is not None
+            and got.commit_seq == 1
+            and pub.row_assertion(got.amendment).value == '"A"'
+        )
+        with pytest.raises(PreconditionFailedError, match="different request"):
+            await asyncio.create_task(retry("body-other"))
+
+    run(scenario())
+
+
+def test_a_removal_of_a_key_locked_since_it_was_read_is_refused_with_its_row(
+    journal: Journal,
+) -> None:
+    run(pub.publish_rows([mrow('"A"', lock_mode="no_delete")]))
+    with pub.collect_receipts() as bag:
+        kept = run(pub.publish_rows([mrow('"A"', tombstoned_at=datetime(2026, 1, 1))]))
+    assert (
+        kept == [] and len(journal.commits) == 1 and bag[-1].left_out == "locked"
+    )  # the journal still serves it, as the row does
+
+
+def test_a_key_written_before_the_journal_is_seeded_then_removed(
+    journal: Journal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    head = mrow('"old"', memory_id="00000000-0000-0000-0000-0000000000aa")
+
+    async def heads(*_a: Any, **_k: Any) -> list[dict[str, Any]]:
+        return [head]
+
+    monkeypatch.setattr(store, "memory_heads", heads)
+    (row,) = run(pub.publish_rows([mrow('"old"', tombstoned_at=datetime.now(UTC))]))
+    seed, gone = journal.commits
+    assert (seed["operation"], seed["idempotency_key"]) == ("memory.journal_seed", "")
+    assert json.loads(seed["assertions"])[0]["value"] == '"old"'
+    assert gone["change_kind"] == "retract" and gone["parent_commit_id"] == seed["commit_id"]
+    assert row["tombstoned_at"] is not None
+
+
+def test_a_copy_of_an_older_read_keeps_what_was_committed_since(
+    journal: Journal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory.domain.temporal_capture import read_bases, row_key
+
+    base = mrow('"A"', lock_mode="")
+    run(pub.publish_rows([base]))
+    locked = {**base, "lock_mode": "no_delete", "version": next(_VERSIONS)}
+    run(pub.publish_rows([locked]))
+
+    async def heads(*_a: Any, **_k: Any) -> list[dict[str, Any]]:
+        return [locked]
+
+    monkeypatch.setattr(store, "memory_heads", heads)
+    # A status flip built from the head read before the lock: it keeps the lock.
+    flip = {**base, "status": "conflicted", "version": next(_VERSIONS)}
+    with read_bases({row_key(flip): base}):
+        (row,) = run(pub.publish_rows([flip]))
+    assert (row["status"], row["lock_mode"]) == ("conflicted", "no_delete")
+    (a,) = json.loads(journal.commits[-1]["assertions"])
+    assert (a["status"], a["lock_mode"]) == ("conflicted", "no_delete")
+    # A delete built from that read is refused by the lock it never saw.
+    gone = {**base, "tombstoned_at": datetime.now(UTC), "version": next(_VERSIONS)}
+    with read_bases({row_key(gone): base}):
+        assert run(pub.publish_rows([gone])) == []
+
+
+def test_late_evidence_leaves_the_key_writable(journal: Journal) -> None:
+    from server.memory.domain.temporal_capture import read_bases, row_key
+
+    present = mrow('"present"', valid_at=datetime(2026, 6, 1, tzinfo=UTC), lock_mode="")
+    run(pub.publish_rows([present]))
+    old = datetime(2024, 6, 1, tzinfo=UTC)
+    assert (
+        run(pub.publish_rows([mrow('"older"', valid_at=old, valid_to=old + timedelta(days=30))]))
+        == []
+    )
+    lock = {**present, "lock_mode": "no_delete", "version": next(_VERSIONS)}
+    with read_bases({row_key(lock): present}):
+        assert run(pub.publish_rows([lock])) == [lock]
+
+
+def test_resending_a_plan_with_new_tags_keeps_it_out_of_the_current_row(journal: Journal) -> None:
+    run(pub.publish_rows([mrow('"now"', valid_at=datetime(2026, 1, 1, tzinfo=UTC))]))
+    plan = datetime.now(UTC) + timedelta(days=400)
+    assert run(pub.publish_rows([mrow('"plan"', valid_at=plan)])) == []
+    assert run(pub.publish_rows([mrow('"plan"', valid_at=plan, tags=["x"])])) == []
+    assert journal.commits[-1]["change_kind"] == "assess"
+
+
+def test_late_evidence_of_the_current_value_leaves_the_row_alone(journal: Journal) -> None:
+    jan = datetime(2026, 1, 1, tzinfo=UTC)
+    run(pub.publish_rows([mrow('"v"', valid_at=jan, sensitivity="high")]))
+    late = mrow(
+        '"v"', valid_at=datetime(2025, 1, 1, tzinfo=UTC), valid_to=datetime(2025, 6, 1, tzinfo=UTC)
+    )
+    assert run(pub.publish_rows([late])) == []
+
+
+def test_values_compare_as_canonical_json() -> None:
+    assert pub._same_value('{"v":1}', '{"v": 1}')
+    assert not pub._same_value("1", "true") and not pub._same_value("1", "1.0")

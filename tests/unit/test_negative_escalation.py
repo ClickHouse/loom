@@ -6,6 +6,8 @@ stub CH; the threshold is a settings knob (default 0 = off)."""
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 import server.memory.app.ops as ops
@@ -40,6 +42,9 @@ class _StubCH:
     async def execute(self, sql, params=None):
         self.executes.append((sql, params))
 
+    async def query_all(self, sql, params=None):
+        return [{"memory_id": "mid-1"}]
+
 
 async def test_negative_escalation_quarantines_at_threshold(monkeypatch):
     from server.settings import settings
@@ -53,6 +58,15 @@ async def test_negative_escalation_quarantines_at_threshold(monkeypatch):
         ]
     )
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    import server.memory.store as memory_repo
+
+    written: list = []
+
+    async def _versions(org, ids, update, **_k):
+        written.append((ids, update(SimpleNamespace())))
+        return len(ids)
+
+    monkeypatch.setattr(memory_repo, "write_versions_by_ids", _versions)
 
     out = await ops.handle_memory_outcome(
         MemoryOutcomeInput(
@@ -64,10 +78,8 @@ async def test_negative_escalation_quarantines_at_threshold(monkeypatch):
         )
     )
     assert out.quarantined is True
-    # Quarantine flips status on BOTH the memory and its embedding row.
-    joined = " ".join(sql for sql, _ in ch.executes)
-    assert "loom.memory" in joined and "rejected" in joined
-    assert "loom.memory_embeddings" in joined
+    # Quarantine writes a rejected version (the funnel mirrors it onto the embedding row).
+    assert [(ids, u["status"]) for ids, u in written] == [(["mid-1"], "rejected")]
 
 
 async def test_negative_below_threshold_does_not_quarantine(monkeypatch):

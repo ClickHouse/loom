@@ -13,8 +13,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, SerializerFunctionWrapHandler, model_serializer
 
+from server.memory.api.models_common import TemporalArgs
 
-class SearchInput(BaseModel):
+
+class SearchInput(TemporalArgs):
     """Search every plane of the caller's Loom content in one call.
 
     `namespace` is the namespace the search addresses (and is authorized
@@ -57,7 +59,7 @@ class SearchOutput(BaseModel):
     @model_serializer(mode="wrap")
     def _drop_absent_sections(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         data: dict[str, Any] = handler(self)
-        for key in ("tracker", "withheld"):
+        for key in ("tracker", "withheld", "temporal_coverage"):
             if data.get(key) is None:
                 data.pop(key, None)
         return data
@@ -78,3 +80,7 @@ class SearchOutput(BaseModel):
     # Counts of hits held back per section by the answer-first rules, with `reason`;
     # absent when nothing was withheld or `explain` is set.
     withheld: dict[str, Any] | None = None
+    # On a bi-temporal search: what each plane could answer for (V, K). `bitemporal`
+    # planes answered from their history; `not_historical` planes returned nothing
+    # rather than today's state.
+    temporal_coverage: dict[str, str] | None = None

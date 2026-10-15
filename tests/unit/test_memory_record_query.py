@@ -137,6 +137,6 @@ def test_bad_predicate_field_name_rejected() -> None:
 def test_as_of_adds_validity_window() -> None:
     from datetime import UTC, datetime
 
-    sql, params = _build_record_query(_inp(as_of=datetime(2026, 1, 1, tzinfo=UTC)))
-    assert "r.valid_at <= {as_of:DateTime}" in sql
-    assert "as_of" in params
+    sql, params = _build_record_query(_inp(valid_as_of=datetime(2026, 1, 1, tzinfo=UTC)))
+    assert "r.valid_at <= {valid_as_of:DateTime}" in sql
+    assert "valid_as_of" in params

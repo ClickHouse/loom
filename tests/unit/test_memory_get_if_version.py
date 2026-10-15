@@ -74,7 +74,7 @@ def env(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     monkeypatch.setattr(audit, "emit", emit)
     monkeypatch.setattr(
         "server.memory.app.query._record_read_exposure",
-        lambda op, inp, keys: e.exposures.append(keys),
+        lambda op, inp, keys, receipt=None: e.exposures.append(keys),
     )
     return e
 

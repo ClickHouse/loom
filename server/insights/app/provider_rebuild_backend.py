@@ -9,6 +9,7 @@ from server.embedding.embedder import Embedder
 from server.insights.app.provider_rebuild_page import rebuild_snapshot_page
 from server.insights.app.provider_rebuild_runner import BatchCheckpoint
 from server.insights.app.provider_rebuild_snapshot import snapshot_rebuild_manifest
+from server.insights.domain.provider_rebuild import INVALIDATE_TABLES
 from server.insights.domain.provider_rebuild_manifest import RebuildManifest, RebuildTablePlan
 from server.insights.domain.provider_views import RebuildView
 from server.insights.store.provider_cache import verify_staged_cache
@@ -98,7 +99,7 @@ class ClickHouseRebuildBackend:
     async def _verify_table(self, manifest: RebuildManifest, table: RebuildTablePlan) -> int:
         names = StagingNames(manifest.job_id, table.table)
         args = (names, _schema(table), table.snapshot_uuid, table.target_uuid, self.fingerprint)
-        if table.table == "embedding_cache":
+        if table.table in INVALIDATE_TABLES:
             return await verify_staged_cache(*args, ch=self.ch)
         if table.table == "code_chunks_prefix":
             return await verify_staged_prefixes(

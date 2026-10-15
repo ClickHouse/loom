@@ -1,0 +1,113 @@
+"""Erasure steps for the bi-temporal journal and the version mirrors it reads.
+
+History is the point of these tables, so an erasure removes the rows outright:
+a tombstone would leave the content in every retained slice a historical read
+can reach."""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from typing import Any
+
+from server.core.repo_base import _CHClient, _default_client
+from server.erasure.store.mutations import count_then_mutate
+
+_NS = "org = {org:String} AND namespace = {ns:String}"
+_UID = "org = {org:String} AND user_id = {uid:String}"
+# Vectors carry no user column: a user's are the ones its assertions pointed at,
+# collected before anything is deleted, and that no other assertion still uses
+# (another user may hold the same text).
+_USER_VECTORS = (
+    "org = {org:String} AND (namespace, toString(embed_input_sha256)) "
+    "IN {pairs:Array(Tuple(String, String))} "
+    "AND (namespace, embed_input_sha256) NOT IN (SELECT namespace, embed_input_sha256 "
+    "FROM loom.memory_temporal_assertions WHERE org = {org:String})"
+)
+_PAIRS_PER_DELETE = 1000
+_PROMOTED_FROM_USER = (
+    "org = {org:String} AND arrayExists(x -> splitByChar('/', x)[4] = {uid:String}, promoted_from)"
+)
+
+# The journal first, then what is derived from it. A projection writer re-checks
+# its commits after it writes (replay, the current-row reconciler, the vector
+# fill) and removes what one landing after this delete left; reads never serve
+# such leftovers either way (the erasure cut, `memory.store.temporal.Erased`).
+_TEMPORAL_TABLES = (
+    "loom.memory_temporal_commits",
+    "loom.memory_temporal_assertions",
+    "loom.memory_temporal_vectors",
+)
+# The projection watermarks go; the `published` row, a bare sequence number, stays
+# so the namespace never hands out a sequence a token or receipt already names.
+_WATERMARKS = f"{_NS} AND projection != 'published'"
+
+
+async def _delete(table: str, where: str, params: dict[str, Any], ch: _CHClient | None) -> int:
+    return await count_then_mutate(
+        table,
+        count_where=where,
+        mutation="DELETE",
+        mutation_where=where,
+        params=params,
+        final=False,
+        ch=ch,
+    )
+
+
+async def delete_temporal_by_namespace(
+    org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
+) -> int:
+    """The namespace's journal, assertions and vectors. Its projection watermarks
+    restart at the published head (nothing below it survives), so the next write
+    projects and is reconciled inline rather than waiting on a gap; the `erased`
+    row keeps that head, below which no missing sequence can still land."""
+    params: dict[str, Any] = {"org": org, "ns": namespace}
+    n = 0
+    for t in _TEMPORAL_TABLES:
+        n += await _delete(t, _NS, params, ch)
+    n += await _delete("loom.memory_temporal_watermarks", _WATERMARKS, params, ch)
+    nss = [namespace] if isinstance(namespace, str) else list(namespace)
+    await (ch or _default_client()).execute(
+        "INSERT INTO loom.memory_temporal_watermarks (org, namespace, projection, applied_seq) "
+        "SELECT org, namespace, p, max(applied_seq) FROM loom.memory_temporal_watermarks "
+        "ARRAY JOIN ['assertions', 'current', 'erased'] AS p "
+        "WHERE org = {org:String} AND namespace IN {nss:Array(String)} "
+        "AND projection = 'published' GROUP BY org, namespace, p",
+        params={"org": org, "nss": nss},
+    )
+    return n
+
+
+async def delete_temporal_by_user(org: str, user_id: str, *, ch: _CHClient | None = None) -> int:
+    """A user's journal commits, assertions and vectors, in that order."""
+    params: dict[str, Any] = {"org": org, "uid": user_id}
+    rows = await (ch or _default_client()).query_all(
+        "SELECT DISTINCT namespace, toString(embed_input_sha256) AS sha "
+        f"FROM loom.memory_temporal_assertions WHERE {_UID}",
+        params=params,
+    )
+    n = 0
+    for t in ("loom.memory_temporal_commits", "loom.memory_temporal_assertions"):
+        n += await _delete(t, _UID, params, ch)
+    pairs = [(str(r["namespace"]), str(r["sha"])) for r in rows]
+    for i in range(0, len(pairs), _PAIRS_PER_DELETE):
+        chunk = pairs[i : i + _PAIRS_PER_DELETE]
+        n += await _delete(
+            "loom.memory_temporal_vectors", _USER_VECTORS, {**params, "pairs": chunk}, ch
+        )
+    return n
+
+
+async def delete_history_mirrors_by_namespace(
+    org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
+) -> int:
+    """The shared-memory version mirror."""
+    return await _delete("loom.shared_versions", _NS, {"org": org, "ns": namespace}, ch)
+
+
+async def delete_history_mirrors_by_user(
+    org: str, user_id: str, *, ch: _CHClient | None = None
+) -> int:
+    """The shared versions promoted from the user's rows."""
+    params: dict[str, Any] = {"org": org, "uid": user_id}
+    return await _delete("loom.shared_versions", _PROMOTED_FROM_USER, params, ch)

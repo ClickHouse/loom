@@ -1276,6 +1276,14 @@ class MemoryOps:
             await self._agent.call("memory.aggregate", body, **options),
         )
 
+    async def amend(
+        self, body: _ops.MemoryAmendBody | None = None, /, **options: Any
+    ) -> _ops.MemoryAmendOutput:
+        """`memory.amend`."""
+        return cast(
+            "_ops.MemoryAmendOutput", await self._agent.call("memory.amend", body, **options)
+        )
+
     async def apply(
         self, body: _ops.MemoryApplyBody | None = None, /, **options: Any
     ) -> _ops.MemoryApplyOutput:
@@ -1515,6 +1523,15 @@ class MemoryOps:
         return cast(
             "_ops.MemoryImportEvidenceOutput",
             await self._agent.call("memory.import_evidence", body, **options),
+        )
+
+    async def intervals(
+        self, body: _ops.MemoryIntervalsBody | None = None, /, **options: Any
+    ) -> _ops.MemoryIntervalsOutput:
+        """`memory.intervals`."""
+        return cast(
+            "_ops.MemoryIntervalsOutput",
+            await self._agent.call("memory.intervals", body, **options),
         )
 
     async def lineage(
@@ -1773,6 +1790,24 @@ class MemoryOps:
         return cast(
             "_ops.MemorySweepExpiredOutput",
             await self._agent.call("memory.sweep_expired", body, **options),
+        )
+
+    async def temporal_diff(
+        self, body: _ops.MemoryTemporalDiffBody | None = None, /, **options: Any
+    ) -> _ops.MemoryTemporalDiffOutput:
+        """`memory.temporal_diff`."""
+        return cast(
+            "_ops.MemoryTemporalDiffOutput",
+            await self._agent.call("memory.temporal_diff", body, **options),
+        )
+
+    async def temporal_status(
+        self, body: _ops.MemoryTemporalStatusBody | None = None, /, **options: Any
+    ) -> _ops.MemoryTemporalStatusOutput:
+        """`memory.temporal_status`."""
+        return cast(
+            "_ops.MemoryTemporalStatusOutput",
+            await self._agent.call("memory.temporal_status", body, **options),
         )
 
     async def timeline(

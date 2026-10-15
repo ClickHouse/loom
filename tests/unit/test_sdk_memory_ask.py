@@ -77,8 +77,8 @@ async def test_ask_forwards_the_optional_knobs(agent: Agent) -> None:
         user_id="u",
         session_id="s",
         run_id="r1",
-        as_of=when,
-        as_of_basis="knowledge_time",
+        valid_as_of=when,
+        known_as_of=when,
         timeout_s=90.0,
     )
     op, p, timeout = t.calls[-1]
@@ -88,8 +88,8 @@ async def test_ask_forwards_the_optional_knobs(agent: Agent) -> None:
     assert p["bodies"] == "unit" and p["body_budget_tokens"] == 800
     assert p["search_mode"] == "rrf" and p["namespace_scope"] == "all_mine"
     assert p["read_scope"] == "own_user" and p["user_id"] == "u" and p["session_id"] == "s"
-    assert p["run_id"] == "r1" and p["as_of"] == when.isoformat()
-    assert p["as_of_basis"] == "knowledge_time"
+    assert p["run_id"] == "r1" and p["valid_as_of"] == when.isoformat()
+    assert p["known_as_of"] == when.isoformat()
 
 
 async def test_ask_inside_a_run_scope_credits_the_cited_keys(agent: Agent) -> None:

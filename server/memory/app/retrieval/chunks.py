@@ -60,66 +60,38 @@ def _chunk_candidates_sql(agent_pred: str) -> str:
 
 
 def _chunk_parent_pred(q: SearchQuery, params: dict[str, Any]) -> str:
-    """The read's hard tag filter, `as_of` anchor and served-status set,
-    carried into the chunk leg through the parent row.
+    """The read's hard tag filter and served-status set, carried into the chunk
+    leg through the parent row.
 
-    `memory_chunks` has no `tags`, `valid_at` or `status` column; the parent
-    in `memory_embeddings` has all three. A search that names `tags` admits
-    a chunk only when its parent passes the fact leg's own predicates —
-    `tag_predicate`, `as_of_predicate`, `status_predicate`, the same helpers
-    with the same parameter names, so the two legs cannot drift. A search
-    that names only `as_of` excludes the chunks whose parent is known and
-    was not valid then; a chunk whose parent is a session (no embeddings
-    row) keeps its session date and stays. Without either filter the leg is
-    unchanged. Returns "" when nothing applies; binds its parameters into
-    `params` (the chunk statement's, both stages read them)."""
+    `memory_chunks` has no `tags` or `status` column; the parent in
+    `memory_embeddings` has both. A search that names `tags` admits a chunk only
+    when its parent passes the fact leg's own predicates — `tag_predicate` and
+    `served_status_sql`, the same helpers with the same parameter names, so the
+    two legs cannot drift. Returns "" without a hard tag filter; binds its
+    parameters into `params` (the chunk statement's, both stages read them)."""
     from server.memory.domain.search_sql import hard_tag_filter, tag_predicate
-    from server.memory.domain.temporal_sql import (
-        as_of_predicate,
-        status_predicate,
-        tombstone_predicate,
-    )
+    from server.memory.domain.temporal_sql import served_status_sql
 
     hard_tags = hard_tag_filter(q.tags, q.tags_soft)
-    replaying = q.as_of is not None
-    if not hard_tags and not replaying:
+    if not hard_tags:
         return ""
-    identity = ["org = {org:String}", "namespace = {ns:String}"]
+    where = ["org = {org:String}", "namespace = {ns:String}"]
     if q.scope == "private" and q.agent not in ("*", "-"):
-        identity.append("agent = {agent:String}")
+        where.append("agent = {agent:String}")
         params["agent"] = q.agent
-    if replaying:
-        params["as_of"] = q.as_of
-    if hard_tags:
-        params["tags"] = hard_tags
-        where = [
-            *identity,
-            tombstone_predicate(q.as_of_basis, replaying=replaying),
-            status_predicate(
-                q.as_of_basis,
-                replaying=replaying,
-                include_duplicates=q.include_duplicates,
-                include_superseded=q.include_superseded,
-                include_proposed=q.include_proposed,
-            ),
-            tag_predicate(""),
-        ]
-        if replaying:
-            where.append(
-                as_of_predicate(q.as_of_basis, invalid_col="invalid_at", tomb_col="tombstoned_at")
-            )
-        return (
-            "AND c.parent_memory_key IN (SELECT memory_key FROM loom.memory_embeddings FINAL"
-            " WHERE " + " AND ".join(where) + ")"
-        )
-    # `as_of` alone: the parents that exist and fail the anchor are excluded;
-    # an orphan chunk (session parent) is dated by its session, not here.
-    not_valid = "NOT " + as_of_predicate(
-        q.as_of_basis, invalid_col="invalid_at", tomb_col="tombstoned_at"
-    )
+    params["tags"] = hard_tags
+    where += [
+        "tombstoned_at IS NULL",
+        served_status_sql(
+            include_duplicates=q.include_duplicates,
+            include_superseded=q.include_superseded,
+            include_proposed=q.include_proposed,
+        ),
+        tag_predicate(""),
+    ]
     return (
-        "AND c.parent_memory_key NOT IN (SELECT memory_key FROM loom.memory_embeddings FINAL"
-        " WHERE " + " AND ".join([*identity, not_valid]) + ")"
+        "AND c.parent_memory_key IN (SELECT memory_key FROM loom.memory_embeddings FINAL"
+        " WHERE " + " AND ".join(where) + ")"
     )
 
 
@@ -672,7 +644,7 @@ async def _search_memory_chunks(
         # Over-fetch for anchors + neighbor-expansion headroom.
         "chunk_limit": min(200, int(q.top_k) * 3),
     }
-    # Identity terms here; the read's tag filter, `as_of` and served statuses
+    # Identity terms here; the read's tag filter and served statuses
     # are carried through the parent row.
     chunk_agent_pred = _chunk_identity_pred(q, chunk_params)
     if parent_pred := _chunk_parent_pred(q, chunk_params):
@@ -854,7 +826,7 @@ def _chunk_neighbor_sql(
         "model": base_params["model"],
     }
     # Every parameter the leg's identity and parent predicates name (agent, run_id, user,
-    # session, session set, tags, as_of) — bound from the stage statements' own params.
+    # session, session set, tags) — bound from the stage statements' own params.
     for k in set(re.findall(r"\{(\w+):", chunk_agent_pred)):
         neighbor_params[k] = base_params[k]
     for i, (sess, idx) in enumerate(anchor_keys):

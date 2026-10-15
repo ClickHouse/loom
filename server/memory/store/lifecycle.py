@@ -7,13 +7,16 @@ tombstone cascades.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from contextlib import AbstractContextManager
 from datetime import datetime
 from typing import Any
 
 from server.core.datetimes import naive_utc_now
+from server.core.errors import PreconditionFailedError
 from server.core.repo_base import _CHClient, _default_client
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
+from server.memory.domain.temporal_capture import left_out_reasons, read_bases, row_key
 from server.memory.store.embeddings import (
     mirror_status_to_embeddings,
     reemit_embedding_rows_for_keys,
@@ -51,30 +54,121 @@ async def write_versions_by_ids(
     if not memory_ids:
         return 0
     ch = ch or _default_client()
-    rows: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for memory_id in memory_ids:
-        mid = str(memory_id)
-        if not mid or mid in seen:
-            continue
-        seen.add(mid)
+    heads: list[MemoryRow] = []
+    for mid in dict.fromkeys(str(m) for m in memory_ids if m):
         existing = await get_by_id(mid, org=org, ch=ch, scope=WHOLE_NAMESPACE)
-        if existing is None or (skip is not None and skip(existing)):
-            continue
-        overrides = dict(update(existing))
-        overrides.setdefault("version", next_version())
-        rows.append(build_memory_version_row(existing, **overrides))
+        if existing is not None:
+            heads.append(existing)
+    written, _ = await write_versions_of_rows(heads, update, ch=ch, skip=skip)
+    return written
 
-    if rows:
-        await insert_memory_versions(rows, ch=ch)
-        # A status change on loom.memory is mirrored onto the row
-        # memory.search actually reads: the pool filters and penalises on
-        # memory_embeddings.status, so without the mirror it would keep
-        # admitting superseded and unpenalised conflicted rows.
-        status_changes = [r for r in rows if r.get("status") and r.get("status") != "active"]
-        if status_changes:
-            await mirror_status_to_embeddings(status_changes, ch=ch)
-    return len(rows)
+
+async def write_versions_of_rows(
+    heads: list[MemoryRow],
+    update: Callable[[MemoryRow], dict[str, Any]],
+    *,
+    ch: _CHClient | None = None,
+    skip: Callable[[MemoryRow], bool] | None = None,
+) -> tuple[int, int]:
+    """`write_versions_by_ids` for heads already read. Returns (version rows the
+    journal kept, embedding rows mirrored); a row it left out (a retry the key
+    has moved past) is neither counted nor mirrored."""
+    ch = ch or _default_client()
+    kept = await rewrite_heads(heads, update, ch=ch, skip=skip)
+    # A status change on loom.memory is mirrored onto the row memory.search actually
+    # reads: the pool filters and penalises on memory_embeddings.status, so without
+    # the mirror it would keep admitting superseded and unpenalised conflicted rows.
+    status_changes = [r for r in kept if r.get("status") and r.get("status") != "active"]
+    mirrored = await mirror_status_to_embeddings(status_changes, ch=ch) if status_changes else 0
+    return len(kept), mirrored
+
+
+async def rewrite_heads(
+    heads: Sequence[MemoryRow],
+    update: Callable[[MemoryRow], dict[str, Any]],
+    *,
+    ch: _CHClient | None = None,
+    skip: Callable[[MemoryRow], bool] | None = None,
+    reasons: dict[str, str] | None = None,
+) -> list[Any]:
+    """A new version of each head with `update(head)` over it; returns the rows the
+    journal kept. Each row is declared as built from its head (`reading`): what
+    the update did not change is taken from the journal as it stands, so a
+    change never carries a stale lock, pin, expiry or value over a newer one.
+    `reasons` receives, per memory_key, why a row was left out."""
+    ch = ch or _default_client()
+    kept: list[Any] = []
+
+    async def _keep(rows: Any) -> None:
+        kept.extend(rows)
+
+    written = [
+        (build_memory_version_row(h, **_with_version(update(h))), h)
+        for h in heads
+        if skip is None or not skip(h)
+    ]
+    if not written:
+        return kept
+    with reading([h for _, h in written]), left_out_reasons() as why:
+        await insert_memory_versions([r for r, _ in written], ch=ch, alongside=[_keep])
+    if reasons is not None:
+        landed = {id(r) for r in kept}
+        reasons.update(
+            {
+                str(r["memory_key"]): why.get(row_key(r), "")
+                for r, _ in written
+                if id(r) not in landed
+            }
+        )
+    return kept
+
+
+def not_written(memory_key: str, op: str, reasons: dict[str, str]) -> PreconditionFailedError:
+    """The refusal for a metadata write the journal left out, naming why."""
+    why = reasons.get(memory_key) or "left out"
+    return PreconditionFailedError(f"{memory_key!r}: {op} not written ({why}); re-read and retry")
+
+
+async def insert_over_heads(
+    pairs: Sequence[tuple[dict[str, Any], MemoryRow]], *, ch: _CHClient | None = None
+) -> list[Any]:
+    """Insert version rows built from heads a writer read; returns the rows the
+    journal kept. A row whose head another write moved (or removed) since is
+    left out, never written over the newer state."""
+    kept: list[Any] = []
+
+    async def _keep(rows: Any) -> None:
+        kept.extend(rows)
+
+    if pairs:
+        with reading([h for _, h in pairs]):
+            await insert_memory_versions([r for r, _ in pairs], ch=ch, alongside=[_keep])
+    return kept
+
+
+def reading(heads: Sequence[MemoryRow]) -> AbstractContextManager[None]:
+    """Declare the heads a write's rows were built from: a column a row kept as
+    its head had it is taken from the journal as it stands when the row is planned
+    (another write may have changed it since the read)."""
+    return read_bases(
+        {
+            tuple(
+                str(getattr(h, c, ""))
+                for c in ("org", "namespace", "agent", "user_id", "session_id", "memory_key")
+            ): build_memory_version_row(h, version=_version_of(h))
+            for h in heads
+            if isinstance(h, MemoryRow)
+        }
+    )
+
+
+def _with_version(overrides: dict[str, Any]) -> dict[str, Any]:
+    return {"version": next_version(), **overrides}
+
+
+def _version_of(head: MemoryRow) -> int:
+    """The version a head was read at (0 for a row built without one)."""
+    return int(getattr(head, "version", 0) or 0)
 
 
 async def supersede_duplicates(
@@ -251,25 +345,18 @@ async def downgrade_consolidated_dependents(
     return len(to_tomb), len(to_down)
 
 
-async def bulk_tombstone_scope(
+async def live_unlocked_identities(
     *,
     org: str,
     namespace: str,
     user_id: str | None = None,
     agent: str | None = None,
     ch: _CHClient | None = None,
-) -> dict[str, int]:
-    """`memory.clear`: bulk-tombstone every live memory row matching
-    (org, namespace, user_id?, agent?), plus the loom.memory_embeddings rows.
+) -> list[tuple[tuple[str, str, str, str], str]]:
+    """The (identity, memory_id) of every live, unlocked row `memory.clear` clears."""
+    from server.memory.domain.lock import unlocked_predicate
 
-    The handler enforces that at least one of `user_id` / `agent` is set; the
-    repo runs the query as-given (a scope-less call would clear the whole
-    namespace — that's `erasure.request_namespace`'s job).
-
-    Returns {table_name: rows_tombstoned}.
-    """
     ch = ch or _default_client()
-
     where = ["org = {org:String}", "namespace = {ns:String}", "tombstoned_at IS NULL"]
     params: dict[str, Any] = {"org": org, "ns": namespace}
     if user_id is not None:
@@ -278,50 +365,47 @@ async def bulk_tombstone_scope(
     if agent is not None:
         where.append("agent = {agent:String}")
         params["agent"] = agent
-    scope_sql = " AND ".join(where)
-    # Locked rows survive a clear: the memory table filters
-    # on the lock in force; memory_embeddings has no lock columns, so it
-    # excludes the locked keys by subquery. What was left behind is reported
-    # under the `locked_skipped` key (the handler lifts it out of the
-    # per-table counts).
-    from server.memory.domain.lock import locked_predicate, unlocked_predicate
-
-    locked_row = await ch.query_one(
-        f"SELECT count() AS n FROM loom.memory FINAL WHERE {scope_sql} AND {locked_predicate()}",
+    rows = await ch.query_all(
+        "SELECT agent, user_id, session_id, memory_key, toString(memory_id) AS memory_id "
+        f"FROM loom.memory FINAL WHERE {' AND '.join(where)} AND {unlocked_predicate()}",
         params=params,
     )
-    locked_n = int((locked_row or {}).get("n", 0) or 0)
-    where_by_table = {
-        "loom.memory": f"{scope_sql} AND {unlocked_predicate()}",
-        "loom.memory_embeddings": scope_sql,
-    }
-    if locked_n:
-        where_by_table["loom.memory_embeddings"] = (
-            f"{scope_sql} AND memory_key NOT IN (SELECT memory_key FROM loom.memory FINAL "
-            f"WHERE {scope_sql} AND {locked_predicate()})"
+    return [
+        (
+            (str(r["agent"]), str(r["user_id"]), str(r["session_id"]), str(r["memory_key"])),
+            str(r["memory_id"]),
         )
-    counts: dict[str, int] = {}
-    for table in ("loom.memory", "loom.memory_embeddings"):
-        where_sql = where_by_table[table]
-        count_row = await ch.query_one(
-            f"SELECT count() AS n FROM {table} FINAL WHERE {where_sql}",
-            params=params,
-        )
-        n = int((count_row or {}).get("n", 0) or 0)
-        counts[table] = n
-        if n == 0:
-            continue
-        await ch.execute(
-            f"""
-            ALTER TABLE {table}
-            UPDATE tombstoned_at = now()
-            WHERE {where_sql}
-            SETTINGS mutations_sync = 2
-            """,
-            params=params,
-        )
-    counts["locked_skipped"] = locked_n
-    return counts
+        for r in rows
+    ]
+
+
+async def locked_in_scope(
+    *,
+    org: str,
+    namespace: str,
+    user_id: str | None = None,
+    agent: str | None = None,
+    ch: _CHClient | None = None,
+) -> int:
+    """Live rows in (org, namespace, user_id?, agent?) under a lock in force: what
+    a `memory.clear` leaves behind."""
+    from server.memory.domain.lock import locked_predicate
+
+    ch = ch or _default_client()
+    where = ["org = {org:String}", "namespace = {ns:String}", "tombstoned_at IS NULL"]
+    params: dict[str, Any] = {"org": org, "ns": namespace}
+    if user_id is not None:
+        where.append("user_id = {uid:String}")
+        params["uid"] = user_id
+    if agent is not None:
+        where.append("agent = {agent:String}")
+        params["agent"] = agent
+    row = await ch.query_one(
+        f"SELECT count() AS n FROM loom.memory FINAL WHERE {' AND '.join(where)} "
+        f"AND {locked_predicate()}",
+        params=params,
+    )
+    return int((row or {}).get("n") or 0)
 
 
 async def tombstone_cascade_by_ids(

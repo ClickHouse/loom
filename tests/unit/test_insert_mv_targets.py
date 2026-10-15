@@ -25,6 +25,7 @@ INSERT_VIEWS = {
     "memory_usage_totals_mv": "memory_usage_totals",
     "memory_versions_mv": "memory_versions",
     "session_brief_revisions_mv": "session_brief_revisions",
+    "shared_versions_mv": "shared_versions",
 }
 
 _TO = re.compile(r"^CREATE MATERIALIZED VIEW IF NOT EXISTS loom\.\w+ TO loom\.(\w+)$", re.M)

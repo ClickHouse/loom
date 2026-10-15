@@ -397,6 +397,8 @@ async def idempotency_check(
         operation=op.name,
     )
     body_hash = idempotency.request_hash(input_obj, unset=unset)
+    idempotency.request_key_var.set(scope.key)
+    idempotency.request_body_var.set(body_hash)
     cached = await idempotency.check(scope.key, body_hash)
     return Replay(scope=scope, body_hash=body_hash, conflict=cached.conflict, hit=cached.hit)
 

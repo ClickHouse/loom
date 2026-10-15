@@ -39,14 +39,14 @@ async def _ch_client_connected():
     await ch.disconnect()
 
 
-async def _objects(org: str, ns: str, as_of: datetime | None) -> set[str]:
+async def _objects(org: str, ns: str, valid_as_of: datetime | None) -> set[str]:
     out = await handle_facts_list(
         FactsListInput(
             org=org,
             namespace=ns,
             subject="user",
             relation="works_at",
-            as_of=as_of,
+            valid_as_of=valid_as_of,
             limit=10,
         )
     )
@@ -81,12 +81,12 @@ async def test_later_contradicting_write_closes_prior_interval() -> None:
     # The closure is an ALTER UPDATE mutation — poll until it lands.
     now_objs: set[str] = set()
     for _ in range(50):
-        now_objs = await _objects(org, ns, as_of=None)
+        now_objs = await _objects(org, ns, valid_as_of=None)
         if now_objs == {"clickhouse"}:
             break
         await asyncio.sleep(0.3)
     assert now_objs == {"clickhouse"}, f"stale interval leaked: {now_objs}"
 
     # The old fact stays queryable inside its own validity window.
-    hist = await _objects(org, ns, as_of=datetime(2021, 6, 1))
+    hist = await _objects(org, ns, valid_as_of=datetime(2021, 6, 1))
     assert "acme" in hist, hist

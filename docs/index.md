@@ -117,6 +117,7 @@ client sees one the server no longer reads.
 [Server layout](architecture/server-layout.md) ·
 [ClickHouse](architecture/clickhouse.md) ·
 [Memory architecture](architecture/memory-architecture.md) ·
+[Bi-temporal memory](architecture/bitemporal-memory.md) ·
 [Code-index architecture](architecture/code-index-architecture.md) ·
 [LLM and embeddings](architecture/llm-architecture.md) ·
 [Security](architecture/security.md) ·

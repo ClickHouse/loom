@@ -40,7 +40,7 @@ async def test_facts_list_defaults_to_current_validity(
 
     sql, params = ch.query_all_calls[0]
     assert "(valid_to IS NULL OR valid_to >= now())" in sql
-    assert "as_of" not in params
+    assert "valid_as_of" not in params
 
 
 @pytest.mark.asyncio
@@ -52,21 +52,21 @@ async def test_facts_related_as_of_uses_interval_containment(
 
     ch = StubCH()
     monkeypatch.setattr(facts_handlers, "get_client", lambda: ch)
-    as_of = datetime(2024, 6, 1, tzinfo=UTC)
+    valid_as_of = datetime(2024, 6, 1, tzinfo=UTC)
 
     await facts_handlers.handle_facts_related(
         FactsRelatedInput(
             org="clickhouse",
             namespace="ns",
             entity="user",
-            as_of=as_of,
+            valid_as_of=valid_as_of,
         )
     )
 
     sql, params = ch.query_all_calls[0]
-    assert "valid_from IS NULL OR valid_from <= {as_of:DateTime}" in sql
-    assert "valid_to IS NULL OR valid_to >= {as_of:DateTime}" in sql
-    assert params["as_of"] == as_of
+    assert "valid_from IS NULL OR valid_from <= {valid_as_of:DateTime}" in sql
+    assert "valid_to IS NULL OR valid_to >= {valid_as_of:DateTime}" in sql
+    assert params["valid_as_of"] == valid_as_of
 
 
 @pytest.mark.asyncio
@@ -89,7 +89,7 @@ async def test_facts_traverse_defaults_edges_to_current_validity(
 
     sql, params = ch.query_all_calls[0]
     assert "valid_to IS NULL OR valid_to >= now()" in sql
-    assert "as_of" not in params
+    assert "valid_as_of" not in params
 
 
 @pytest.mark.asyncio
@@ -148,22 +148,22 @@ async def test_facts_traverse_aggregation_preserves_as_of_window(
 
     ch = StubCH()
     monkeypatch.setattr(facts_handlers, "get_client", lambda: ch)
-    as_of = datetime(2024, 6, 1, tzinfo=UTC)
+    valid_as_of = datetime(2024, 6, 1, tzinfo=UTC)
 
     await facts_handlers.handle_facts_traverse(
         FactsTraverseInput(
             org="clickhouse",
             namespace="ns",
             seed_entity="user",
-            as_of=as_of,
+            valid_as_of=valid_as_of,
         )
     )
 
     sql, params = ch.query_all_calls[0]
-    assert params["as_of"] == as_of
+    assert params["valid_as_of"] == valid_as_of
     inner = sql.split("GROUP BY src, dst")[0]
-    assert inner.count("valid_from IS NULL OR valid_from <= {as_of:DateTime}") == 2
-    assert inner.count("valid_to IS NULL OR valid_to >= {as_of:DateTime}") == 2
+    assert inner.count("valid_from IS NULL OR valid_from <= {valid_as_of:DateTime}") == 2
+    assert inner.count("valid_to IS NULL OR valid_to >= {valid_as_of:DateTime}") == 2
 
 
 @pytest.mark.asyncio

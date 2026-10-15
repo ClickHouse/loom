@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from server.core.datetimes import naive_utc_now, parse_iso_dt
@@ -184,6 +184,7 @@ async def write_entity_edges(
                         # is never born superseded; _repair_contradictory_edges
                         # stamps it on the OLDER pair. NULL = current.
                         "invalid_at": None,
+                        "recorded_at": _recorded_now(),
                     }
                 )
                 edge_memories.append(
@@ -240,6 +241,7 @@ def entity_triple_row(
     last_seen: datetime,
     valid_from: Any = None,
     valid_to: Any = None,
+    recorded_at: datetime | None = None,
 ) -> dict[str, Any]:
     """One `loom.entity_triples` row as every triple writer inserts it. A fresh
     triple is never born superseded (`invalid_at` NULL): the contradiction
@@ -258,6 +260,7 @@ def entity_triple_row(
         "valid_from": valid_from,
         "valid_to": valid_to,
         "invalid_at": None,
+        "recorded_at": recorded_at or _recorded_now(),
     }
 
 
@@ -498,7 +501,9 @@ async def close_triples(
             continue
         keys = [_GRAPH_KEY_SEP.join((s, r, o)) for s, r, o, _, _ in group]
         idx = f"indexOf({{keys:Array(String)}}, {_TRIPLE_KEY_EXPR})"
-        set_cols = f"valid_to = arrayElement({{valid_tos:Array(DateTime)}}, {idx})"
+        set_cols = (
+            f"valid_to = arrayElement({{valid_tos:Array(DateTime)}}, {idx}), closed_at = now()"
+        )
         params: dict[str, Any] = {
             "org": org,
             "ns": namespace,
@@ -787,7 +792,7 @@ async def _repair_contradictory_edges(
         keys = [_edge_key(a, b, vf) for a, b, vf, _, _ in group]
         idx = f"indexOf({{keys:Array(String)}}, {_EDGE_KEY_EXPR})"
         own_valid_to = f"arrayElement({{valid_tos:Array(DateTime)}}, {idx})"
-        set_cols = f"valid_to = {own_valid_to}"
+        set_cols = f"valid_to = {own_valid_to}, closed_at = now()"
         params: dict[str, Any] = {
             "org": input.org,
             "ns": input.namespace,
@@ -885,3 +890,9 @@ async def write_entity_vectors(
         rows,
         settings={"async_insert": 0, "wait_for_async_insert": 1},
     )
+
+
+def _recorded_now() -> datetime:
+    """When loom recorded a graph row: aware UTC, since the driver reads a naive
+    datetime as the host's local time and would shift every knowledge-time read."""
+    return datetime.now(UTC)

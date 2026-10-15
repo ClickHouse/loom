@@ -24,6 +24,4 @@ def read_filters(input: MemorySearchInput) -> dict[str, Any]:
         "tags_soft": bool(input.tags_soft),
         "category": input.category or "",
         "category_soft": bool(input.category_soft),
-        "as_of": input.as_of,
-        "as_of_basis": input.as_of_basis,
     }

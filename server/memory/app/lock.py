@@ -13,7 +13,7 @@ edit: memory.history shows who locked what, when, and why.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
 
@@ -29,8 +29,7 @@ from server.memory.api.models_lock import (
 )
 from server.memory.domain import lock as _lock
 from server.memory.domain import trust as _trust
-from server.memory.store.inserts import insert_memory_versions
-from server.memory.store.rows import next_version
+from server.memory.domain.temporal_capture import WriteIntent, write_intent
 
 if TYPE_CHECKING:
     from server.memory.store import MemoryRow
@@ -79,32 +78,25 @@ async def handle_memory_lock(input: MemoryLockInput) -> MemoryLockOutput:
             detail={"code": "VALIDATION", "message": "lock `until` must be in the future"},
         )
     previous = _lock.effective_mode(existing, now=now)
-    if previous:
-        prev_until = to_naive_utc(getattr(existing, "lock_until", None))
-        loosens_mode = not _lock.is_stricter_or_equal(input.mode, previous)
-        # An open-ended lock (NULL) is the longest; a shorter `until` loosens.
-        loosens_until = (until is not None) and (prev_until is None or until < prev_until)
-        if loosens_mode or loosens_until:
-            exc = _lock.refusal(existing, "loosen", op="memory.lock", mode=previous)
-            exc.detail["message"] = (  # type: ignore[index]
-                f"memory.lock refused: {input.memory_key!r} is already locked "
-                f"{previous}; a WRITER may only tighten a lock. "
-                "Only the user can loosen it (the memory's Lock control at /me); "
-                "ask them rather than looking for another route or credential."
-            )
-            raise exc
-    version = next_version()
-    row = memory_repo.build_memory_version_row(
-        existing,
-        version=version,
-        updated_at=memory_repo.written_now(),
-        lock_mode=input.mode,
-        lock_reason=input.reason.strip()[:512],
-        lock_until=until,
-        locked_by=_actor(input.locked_by),
-        locked_at=now,
-    )
-    await insert_memory_versions([row], ch=get_client())
+
+    def _locked(head: Any) -> dict[str, Any]:
+        _refuse_loosening(head, input, until, now)
+        return {
+            "updated_at": memory_repo.written_now(),
+            "lock_mode": input.mode,
+            "lock_reason": input.reason.strip()[:512],
+            "lock_until": until,
+            "locked_by": _actor(input.locked_by),
+            "locked_at": now,
+        }
+
+    why: dict[str, str] = {}
+    with write_intent(WriteIntent(memory_key=existing.memory_key, existing=True)):
+        kept = await memory_repo.rewrite_heads([existing], _locked, ch=get_client(), reasons=why)
+    if not kept:
+        raise memory_repo.not_written(existing.memory_key, "lock", why)
+    row = kept[0]
+    version = int(row["version"])
     return MemoryLockOutput(
         locked=True,
         memory_id=str(existing.memory_id),
@@ -114,6 +106,29 @@ async def handle_memory_lock(input: MemoryLockInput) -> MemoryLockOutput:
         locked_by=row.get("locked_by", "") or "",
         previous_mode=previous,
     )
+
+
+def _refuse_loosening(
+    head: Any, input: MemoryLockInput, until: datetime | None, now: datetime
+) -> None:
+    """A writer may only tighten a lock in force: a weaker mode or a shorter `until`
+    is the user's to set."""
+    previous = _lock.effective_mode(head, now=now)
+    if not previous:
+        return
+    prev_until = to_naive_utc(getattr(head, "lock_until", None))
+    loosens_mode = not _lock.is_stricter_or_equal(input.mode, previous)
+    # An open-ended lock (NULL) is the longest; a shorter `until` loosens.
+    loosens_until = (until is not None) and (prev_until is None or until < prev_until)
+    if loosens_mode or loosens_until:
+        exc = _lock.refusal(head, "loosen", op="memory.lock", mode=previous)
+        exc.detail["message"] = (  # type: ignore[index]
+            f"memory.lock refused: {input.memory_key!r} is already locked "
+            f"{previous}; a WRITER may only tighten a lock. "
+            "Only the user can loosen it (the memory's Lock control at /me); "
+            "ask them rather than looking for another route or credential."
+        )
+        raise exc
 
 
 async def handle_memory_unlock(input: MemoryUnlockInput) -> MemoryUnlockOutput:
@@ -131,18 +146,24 @@ async def handle_memory_unlock(input: MemoryUnlockInput) -> MemoryUnlockOutput:
             previous_mode="",
             reason="not_locked",
         )
-    version = next_version()
-    row = memory_repo.build_memory_version_row(
-        existing,
-        version=version,
-        updated_at=memory_repo.written_now(),
-        lock_mode="",
-        lock_reason="",
-        lock_until=None,
-        locked_by="",
-        locked_at=None,
-    )
-    await insert_memory_versions([row], ch=get_client())
+    why: dict[str, str] = {}
+    with write_intent(WriteIntent(memory_key=existing.memory_key, existing=True)):
+        kept = await memory_repo.rewrite_heads(
+            [existing],
+            lambda _h: {
+                "updated_at": memory_repo.written_now(),
+                "lock_mode": "",
+                "lock_reason": "",
+                "lock_until": None,
+                "locked_by": "",
+                "locked_at": None,
+            },
+            ch=get_client(),
+            reasons=why,
+        )
+    if not kept:
+        raise memory_repo.not_written(existing.memory_key, "unlock", why)
+    version = int(kept[0]["version"])
     return MemoryUnlockOutput(
         unlocked=True,
         memory_id=str(existing.memory_id),

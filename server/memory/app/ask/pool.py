@@ -384,7 +384,7 @@ async def _order_pool(run: _AskRun) -> None:
         run.ranked,
         run.window,
         question,
-        getattr(search_input, "observation_date", None) or getattr(search_input, "as_of", None),
+        getattr(search_input, "observation_date", None) or _reference_time(search_input),
     )
     run.results = run.ranked[: run.target_k]
     run.synth_pool = run.ranked[: run.window]
@@ -766,7 +766,7 @@ def _read_time(run: _AskRun) -> tuple[str, bool, Any]:
         evidence_order(run.memories, run.intent, run.query_text) if run.memories else ([], "")
     )
     temporal_question = looks_temporal(run.query_text, run.intent, _order_mode0)
-    as_of = getattr(search_input, "as_of", None)
+    as_of = _reference_time(search_input)
     if temporal_question and run.memories:
         from server.memory.domain import ask_timeline as _atl
 
@@ -810,3 +810,10 @@ async def _tag_belt(ranked: list[Any], search_input: Any) -> list[Any]:
             work["tag_filter_dropped"],
         )
     return ranked
+
+
+def _reference_time(search_input: Any) -> Any:
+    """The synthesis "now": the instant a time-anchored ask is about."""
+    from server.memory.domain.temporal_reads import reference_time
+
+    return reference_time(search_input)

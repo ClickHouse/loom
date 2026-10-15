@@ -144,6 +144,19 @@ class BackendUnavailableError(LoomServerError):
         )
 
 
+class TemporalUnavailableError(LoomServerError):
+    """503 — a memory write could not be published to its namespace's temporal
+    journal (the publisher lock, or an insert whose outcome is still unknown).
+    Retry with the same Idempotency-Key: a commit that did land is recognised
+    and returned, never published twice."""
+
+    code = "TEMPORAL_UNAVAILABLE"
+    status_code = 503
+
+    def __init__(self, message: str = "", *, retry_after_s: int = 1) -> None:
+        super().__init__(message, retry_after_s=retry_after_s)
+
+
 class BackendTimeoutError(LoomServerError):
     """504 — a ClickHouse statement ran past its class deadline (reads 30 s,
     writes 60 s, DDL 300 s). The slot is released and the

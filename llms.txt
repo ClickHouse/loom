@@ -99,6 +99,7 @@ Start with docs/index.md (the map) and docs/getting-started/connect-a-coding-age
 
 ## Architecture
 
+- [Bi-temporal memory](docs/architecture/bitemporal-memory.md): Loom answers two time questions about a memory: which assertions applied at a valid time V (when something was true in the world), and what Loom had recorded by a knowledge time K.
 - [ClickHouse](docs/architecture/clickhouse.md): All durable Loom state lives in one ClickHouse database, `loom`.
 - [Code index architecture](docs/architecture/code-index-architecture.md): This page is the inside view of the code index: how files become chunks, symbols and edges, and how the two tiers stay current.
 - [Failure and recovery](docs/architecture/failure-and-recovery.md): The primary write and every access decision fail closed.

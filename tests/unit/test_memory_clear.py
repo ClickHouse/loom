@@ -2,71 +2,79 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
 import pytest
 from fastapi import HTTPException
 
+A = (("a", "alice", "-", "k1"), "m1")
+B = (("a", "alice", "-", "k2"), "m2")
 
-@pytest.mark.asyncio
-async def test_clear_with_user_id_tombstones_across_tables(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+
+def _row(mode: str = "", until: datetime | None = None) -> Any:
+    return type("Row", (), {"lock_mode": mode, "lock_until": until})()
+
+
+@pytest.fixture
+def clear(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """The scope's live rows, the tombstones written and the locked count."""
     from server.memory import store as memory_repo
-    from server.memory.api.models_crud import MemoryClearInput
-    from server.memory.app.handlers import handle_memory_clear
 
-    captured: dict[str, object] = {}
+    seen: dict[str, Any] = {"live": [], "locked": 0, "written": [], "scope": None, "skip": None}
 
-    async def fake_bulk(*, org, namespace, user_id=None, agent=None, ch=None):
-        captured.update(
-            org=org,
-            namespace=namespace,
-            user_id=user_id,
-            agent=agent,
-        )
-        return {
-            "loom.memory": 47,
-            "loom.memory_embeddings": 42,
-        }
+    async def _live(**k: Any) -> list:
+        seen["scope"] = (k["user_id"], k["agent"])
+        return seen["live"]
 
-    monkeypatch.setattr(memory_repo, "bulk_tombstone_scope", fake_bulk)
+    async def _heads(keys: list, **_k: Any) -> dict:
+        return {k: k[-1] for k in keys}  # the head "row" is its key, for the assertions
 
-    out = await handle_memory_clear(
-        MemoryClearInput(
-            org="clickhouse",
-            namespace="finance",
-            user_id="alice",
-            confirm_subject="alice",
-        )
-    )
-    assert out.total == 47 + 42
-    assert out.rows_affected["loom.memory"] == 47
-    assert out.rows_affected["loom.memory_embeddings"] == 42
-    assert captured["user_id"] == "alice"
-    assert captured["agent"] is None
+    async def _write(heads: list, update: Any, *, skip: Any, ch: Any = None) -> tuple[int, int]:
+        assert update(_row())["status"] == "tombstoned"
+        seen["skip"] = skip
+        seen["written"].extend(heads)
+        return len(heads), len(heads)
+
+    async def _locked(**_k: Any) -> int:
+        return seen["locked"]
+
+    monkeypatch.setattr(memory_repo, "live_unlocked_identities", _live)
+    monkeypatch.setattr(memory_repo, "memory_rows_by_identity_keys", _heads)
+    monkeypatch.setattr(memory_repo, "write_versions_of_rows", _write)
+    monkeypatch.setattr(memory_repo, "locked_in_scope", _locked)
+    return seen
 
 
 @pytest.mark.asyncio
-async def test_clear_with_agent_only(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from server.memory import store as memory_repo
+async def test_clear_writes_a_versioned_tombstone_for_each_listed_row(clear) -> None:
     from server.memory.api.models_crud import MemoryClearInput
     from server.memory.app.handlers import handle_memory_clear
 
-    async def fake_bulk(*, org, namespace, user_id=None, agent=None, ch=None):
-        return {"loom.memory": 3, "loom.memory_embeddings": 0}
-
-    monkeypatch.setattr(memory_repo, "bulk_tombstone_scope", fake_bulk)
-
+    clear["live"], clear["locked"] = [A, B], 1
     out = await handle_memory_clear(
-        MemoryClearInput(
-            org="clickhouse",
-            namespace="finance",
-            agent="research-bot",
-            confirm_subject="research-bot",
-        )
+        MemoryClearInput(org="o", namespace="n", user_id="alice", confirm_subject="alice")
     )
-    assert out.total == 3
+    # The rows written are the rows the journal retracts: one funnel for both.
+    assert clear["written"] == ["k1", "k2"] and clear["scope"] == ("alice", None)
+    affected = {"loom.memory": 2, "loom.memory_embeddings": 2}
+    assert (out.total, out.rows_affected, out.locked_skipped) == (4, affected, 1)
+    # A row locked since it was listed is skipped; a lapsed lock is not a lock.
+    skip = clear["skip"]
+    assert skip(_row("no_delete")) and not skip(_row())
+    assert not skip(_row("read_only", datetime.now(UTC) - timedelta(days=1)))
+
+
+@pytest.mark.asyncio
+async def test_clear_with_agent_only(clear) -> None:
+    from server.memory.api.models_crud import MemoryClearInput
+    from server.memory.app.handlers import handle_memory_clear
+
+    clear["live"] = [A]
+    out = await handle_memory_clear(
+        MemoryClearInput(org="o", namespace="n", agent="bot", confirm_subject="bot")
+    )
+    assert out.total == 2 and clear["scope"] == (None, "bot")
 
 
 @pytest.mark.asyncio
@@ -76,11 +84,7 @@ async def test_clear_refuses_scopeless_call() -> None:
 
     with pytest.raises(HTTPException) as exc:
         await handle_memory_clear(
-            MemoryClearInput(
-                org="clickhouse",
-                namespace="finance",
-                confirm_subject="anything",
-            )
+            MemoryClearInput(org="clickhouse", namespace="finance", confirm_subject="anything")
         )
     assert exc.value.status_code == 400
     assert exc.value.detail["code"] == "MISSING_SCOPE"
@@ -95,10 +99,7 @@ async def test_clear_refuses_wrong_confirm_subject() -> None:
     with pytest.raises(HTTPException) as exc:
         await handle_memory_clear(
             MemoryClearInput(
-                org="clickhouse",
-                namespace="finance",
-                user_id="alice",
-                confirm_subject="bob",  # mismatch
+                org="clickhouse", namespace="finance", user_id="alice", confirm_subject="bob"
             )
         )
     assert exc.value.status_code == 400
@@ -106,75 +107,32 @@ async def test_clear_refuses_wrong_confirm_subject() -> None:
 
 
 @pytest.mark.asyncio
-async def test_clear_both_scope_args_accepts_either_confirm(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """When both user_id and agent are set, confirm_subject must match
-    one of them (either is OK)."""
-    from server.memory import store as memory_repo
+async def test_clear_both_scope_args_accepts_either_confirm(clear) -> None:
+    """When both user_id and agent are set, confirm_subject must match one of them."""
     from server.memory.api.models_crud import MemoryClearInput
     from server.memory.app.handlers import handle_memory_clear
 
-    async def fake_bulk(**_kw):
-        return {"loom.memory": 0, "loom.memory_embeddings": 0}
-
-    monkeypatch.setattr(memory_repo, "bulk_tombstone_scope", fake_bulk)
-
-    # confirm_subject matches user_id → OK
-    await handle_memory_clear(
-        MemoryClearInput(
-            org="a",
-            namespace="n",
-            user_id="alice",
-            agent="bot",
-            confirm_subject="alice",
+    for who in ("alice", "bot"):
+        await handle_memory_clear(
+            MemoryClearInput(
+                org="a", namespace="n", user_id="alice", agent="bot", confirm_subject=who
+            )
         )
-    )
-    # confirm_subject matches agent → also OK
-    await handle_memory_clear(
-        MemoryClearInput(
-            org="a",
-            namespace="n",
-            user_id="alice",
-            agent="bot",
-            confirm_subject="bot",
-        )
-    )
-    # confirm_subject matches neither → REJECT
     with pytest.raises(HTTPException):
         await handle_memory_clear(
             MemoryClearInput(
-                org="a",
-                namespace="n",
-                user_id="alice",
-                agent="bot",
-                confirm_subject="charlie",
+                org="a", namespace="n", user_id="alice", agent="bot", confirm_subject="charlie"
             )
         )
 
 
 @pytest.mark.asyncio
-async def test_clear_zero_rows_is_well_formed(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Clearing a scope with no matching rows returns total=0 without
-    raising — same semantics as memory.delete on a missing key."""
-    from server.memory import store as memory_repo
+async def test_clear_zero_rows_is_well_formed(clear) -> None:
+    """Clearing a scope with no matching rows returns total=0 without raising."""
     from server.memory.api.models_crud import MemoryClearInput
     from server.memory.app.handlers import handle_memory_clear
 
-    async def fake_bulk(**_kw):
-        return {"loom.memory": 0, "loom.memory_embeddings": 0}
-
-    monkeypatch.setattr(memory_repo, "bulk_tombstone_scope", fake_bulk)
-
     out = await handle_memory_clear(
-        MemoryClearInput(
-            org="clickhouse",
-            namespace="ns",
-            user_id="ghost",
-            confirm_subject="ghost",
-        )
+        MemoryClearInput(org="o", namespace="ns", user_id="ghost", confirm_subject="ghost")
     )
-    assert out.total == 0
-    assert all(v == 0 for v in out.rows_affected.values())
+    assert out.total == 0 and clear["written"] == []

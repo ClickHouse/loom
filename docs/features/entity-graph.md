@@ -21,7 +21,7 @@ it. Use it for questions vector search cannot answer, such as "what is connected
 | `memory.link` edges                                | Edges an agent or person asserts (`supports`, `depends_on`, `caused`, …); read by graph-mode search. |
 
 Edges and triples carry `valid_from` / `valid_to` (from the source memory's `valid_at` / `valid_to`) and an
-`invalid_at` stamp that retires them. A read with `as_of` sums only observations valid at that instant.
+`invalid_at` stamp that retires them. A read with `valid_as_of` sums only observations valid at that instant; `known_as_of` reads the graph as Loom had recorded it then.
 
 The graph lives in ClickHouse so that edges are written in the same request as their row, erased by the same saga,
 and joined against memory without a network hop. The cost: a walk is a series of bounded aggregate queries, so every
@@ -75,7 +75,7 @@ Unfiltered, it returns the top triples by `co_occur`; `sort_by="recency"` orders
 | `include_sources`       | Adds up to about ten source memory keys per triple.                                                  |
 | `include_source_status` | Reads each source row; marks a triple `stale` when it is open but every row behind it is superseded. |
 | `provenance`            | `extracted` (both ends in the source text), `inferred`, or `facet` (a navigation edge Loom minted).  |
-| `as_of`                 | Keeps triples valid at that instant.                                                                 |
+| `valid_as_of`           | Keeps triples valid at that instant.                                                                 |
 
 ### `facts.traverse`
 
@@ -93,7 +93,7 @@ namespace a three-hop walk can exceed the ClickHouse memory limit. Trimming per 
 | `top_k_per_hop`         | 20 (up to 100)                           | Children kept per parent per hop.                                                                              |
 | `min_co_occur`          | 1                                        | Minimum observations per pair.                                                                                 |
 | `max_nodes`             | 400 (up to 5,000)                        | Hard bound; `truncated=true` when hit.                                                                         |
-| `as_of`                 | unset                                    | Keep observations valid at that instant.                                                                       |
+| `valid_as_of`           | unset                                    | Keep observations valid at that instant.                                                                       |
 | `labeled` / `relations` | false / unset                            | Walk typed triples (all, or only these verbs); nodes carry `via_relation`, `via_direction`, `via_provenance`.  |
 | `hub_degree`            | 0 (off)                                  | A node with total degree at least this is a hub.                                                               |
 | `hub_share`             | `LOOM_FACTS_TRAVERSE_HUB_SHARE` (0.01)   | A node is a hub when the edge that reached it is at most this share of its degree.                             |
@@ -138,7 +138,7 @@ Over HTTP, a walk as the graph stood at a past instant:
 ```bash
 curl -s localhost:7777/v1/facts.traverse -H "Authorization: Bearer $LOOM_API_KEY" \
   -H 'content-type: application/json' \
-  -d '{"org":"dev","namespace":"local","seed_entity":"billing service","max_hops":2,"as_of":"'"$AS_OF"'"}'
+  -d '{"org":"dev","namespace":"local","seed_entity":"billing service","max_hops":2,"valid_as_of":"'"$AS_OF"'"}'
 ```
 
 Over MCP, call `loom_op` with `op="facts.traverse"`.
@@ -175,7 +175,7 @@ walked in the last `LOOM_ENTITY_COMMUNITIES_WALKED_DAYS` (14). It drops the high
   worker reaches them.
 - **Walks are bounded.** Read `truncated` before concluding two entities are not connected.
 - **Edges can lag a superseded row.** `facts.list(include_source_status=true)` shows triples still open.
-- **Validity is valid time.** `as_of` reads when a fact held, not when Loom learned it.
+- **Two times.** `valid_as_of` reads when a fact held; `known_as_of` reads what Loom had recorded by then.
 
 ## Related
 

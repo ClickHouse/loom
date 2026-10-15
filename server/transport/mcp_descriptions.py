@@ -674,7 +674,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "ARGS: `seed_entity` is required. `max_hops` (default 2, max 4) "
         "controls walk depth. `top_k_per_hop` (default 20) caps the "
         "frontier per step so a hub entity doesn't blow up the walk. "
-        "`as_of` walks only edges valid at that instant. A hub — an entity "
+        "`valid_as_of` walks only edges valid at that instant. A hub — an entity "
         "the walk reports (`hub: true`, listed in `hubs`) but does not walk "
         "on from — is one the reaching edge barely explains: `hub_share` "
         "(default from the server) holds a node when via_co_occur / degree "
@@ -701,7 +701,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "ARGS: `entity_a` and `entity_b` required (canonicalised like the "
         "write path, so casing and possessives do not matter). `max_hops` "
         "(default 3, max 4) bounds the TOTAL path length. `top_k_per_hop`, "
-        "`min_co_occur`, `as_of`, `relations` / `labeled` mean what they mean "
+        "`min_co_occur`, `valid_as_of`, `relations` / `labeled` mean what they mean "
         "on facts.traverse. `found=false, truncated=false` means not "
         "connected within the budget on qualifying edges; `truncated=true` "
         "means the budget or the per-hop trim may have hidden a path."
@@ -1169,7 +1169,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "conflicts.list": (
         "List unresolved conflicts where two memories contradict each "
         "other. Use when the user wants to review and reconcile "
-        "competing facts."
+        "contradicting facts."
     ),
     "conflicts.resolve": (
         "Pick the winner of a conflict (keep A, keep B, keep both, "

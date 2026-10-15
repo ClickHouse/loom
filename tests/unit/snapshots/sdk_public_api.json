@@ -798,6 +798,10 @@
               "body",
               "options"
             ],
+            "amend": [
+              "body",
+              "options"
+            ],
             "apply": [
               "body",
               "options"
@@ -911,6 +915,10 @@
               "options"
             ],
             "import_evidence": [
+              "body",
+              "options"
+            ],
+            "intervals": [
               "body",
               "options"
             ],
@@ -1039,6 +1047,14 @@
               "options"
             ],
             "sweep_expired": [
+              "body",
+              "options"
+            ],
+            "temporal_diff": [
+              "body",
+              "options"
+            ],
+            "temporal_status": [
               "body",
               "options"
             ],
@@ -2059,7 +2075,8 @@
           "max_hops",
           "top_k_per_hop",
           "min_co_occur",
-          "as_of",
+          "valid_as_of",
+          "known_as_of",
           "labeled",
           "relations"
         ],
@@ -2072,7 +2089,8 @@
           "max_hops",
           "top_k_per_hop",
           "min_co_occur",
-          "as_of",
+          "valid_as_of",
+          "known_as_of",
           "labeled",
           "relations",
           "hub_degree",
@@ -2227,8 +2245,8 @@
           "user_id",
           "session_id",
           "run_id",
-          "as_of",
-          "as_of_basis",
+          "valid_as_of",
+          "known_as_of",
           "tags",
           "tags_soft",
           "tag_boost",
@@ -2301,14 +2319,16 @@
           "session_id",
           "run_id",
           "agent_id",
-          "as_of",
+          "valid_as_of",
+          "known_as_of",
           "if_version",
           "fields",
           "follow"
         ],
         "get_by_id": [
           "memory_id",
-          "as_of"
+          "valid_as_of",
+          "known_as_of"
         ],
         "history": [
           "memory_key",
@@ -2345,7 +2365,8 @@
           "session_id",
           "sort_by",
           "quotas",
-          "as_of",
+          "valid_as_of",
+          "known_as_of",
           "include_duplicates",
           "tags",
           "fields"
@@ -2487,7 +2508,8 @@
           "demote_tags",
           "reinforcement_weight",
           "reinforcement_half_life_days",
-          "as_of",
+          "valid_as_of",
+          "known_as_of",
           "include_tags",
           "include_usage",
           "include_duplicates",
@@ -2638,7 +2660,8 @@
               "schema_name",
               "filters",
               "predicates",
-              "as_of",
+              "valid_as_of",
+              "known_as_of",
               "limit",
               "namespace"
             ],

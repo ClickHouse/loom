@@ -17,6 +17,7 @@ from server.erasure.store import census as erasure_census
 from server.erasure.store import steps_graph as graph_steps
 from server.erasure.store import steps_ledgers as ledger_steps
 from server.erasure.store import steps_memory as memory_steps
+from server.erasure.store import steps_temporal as temporal_steps
 from server.memory.app.code_links import queue_lease
 from server.workers.registry import DEADLINE_CAP_SECONDS
 
@@ -164,9 +165,13 @@ _UNCOUNTED_STEPS_USER: tuple[UserStep, ...] = (
 # The step names are stored in the ledger's `steps_completed`: renaming one
 # makes a resumed saga run it again.
 USER_STEPS: tuple[UserStep, ...] = (
+    # The journal first: the projection worker rewrites a current row the journal
+    # still serves, so the journal must never outlive it.
+    ("memory_temporal.delete", temporal_steps.delete_temporal_by_user),
     ("memory.tombstone", memory_steps.tombstone_memory_by_user),
     ("memory_embeddings.tombstone", memory_steps.tombstone_embeddings_by_user),
     ("memory_versions.delete", memory_steps.delete_memory_versions_by_user),
+    ("history_mirrors.delete", temporal_steps.delete_history_mirrors_by_user),
     ("code_links.delete", _step_delete_code_links_by_user),
     ("working_memory.tombstone", memory_steps.tombstone_working_memory_by_user),
     ("shared.tombstone", memory_steps.tombstone_shared_by_user),
@@ -198,9 +203,13 @@ USER_STEPS: tuple[UserStep, ...] = (
 # The loom-side steps of a namespace erasure over (org, namespace or list), in
 # saga order. Names as for USER_STEPS.
 NAMESPACE_STEPS: tuple[NamespaceStep, ...] = (
+    # The journal first: the projection worker rewrites a current row the journal
+    # still serves, so the journal must never outlive it.
+    ("memory_temporal.delete", temporal_steps.delete_temporal_by_namespace),
     ("memory.tombstone", memory_steps.tombstone_memory_by_namespace),
     ("memory_embeddings.tombstone", memory_steps.tombstone_embeddings_by_namespace),
     ("memory_versions.delete", memory_steps.delete_memory_versions_by_namespace),
+    ("history_mirrors.delete", temporal_steps.delete_history_mirrors_by_namespace),
     ("code_links.delete", _step_delete_code_links_by_ns),
     ("working_memory.tombstone", memory_steps.tombstone_working_memory_by_namespace),
     (

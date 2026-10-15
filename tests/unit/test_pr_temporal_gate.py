@@ -18,7 +18,8 @@ class _M:
 
 class _SI:
     def __init__(self, as_of, ns="code-clickhouse", org="clickhouse"):
-        self.as_of = as_of
+        self.valid_as_of = as_of
+        self.known_as_of = None
         self.code_namespace = ns
         self.code_org = org
         self.namespace = "demo"

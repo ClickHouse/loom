@@ -212,6 +212,103 @@ class _SetWrite:
     key_text: str = ""
 
 
+async def _audit_past_only(w: _SetWrite, content_sha256: str) -> None:
+    """A past-only write is a write: it leaves its hash in the chained audit log."""
+    from server.observability import audit as _audit_mod
+
+    i = w.input
+    try:
+        await _audit_mod.emit(
+            event_type="memory.set",
+            org=i.org,
+            namespace=i.namespace,
+            actor=w.writer_actor,
+            subject={
+                "memory_key": i.memory_key,
+                "memory_id": w.memory_id,
+                "content_sha256": content_sha256,
+                "source_class": w.source_class,
+                "verdict": "past_only",
+                "pinned": bool(i.pinned),
+            },
+        )
+    except Exception as e:  # noqa: BLE001 — the audit row never fails the write
+        log.warning("memory.set: audit emit failed (non-fatal): %s", e)
+
+
+def _committed_id(w: _SetWrite) -> str:
+    """Once the row is in: it holds the version the publisher stamped, and a
+    retry's the id its first commit recorded; everything after the write (links,
+    audit, answer) names those."""
+    from server.memory.app.temporal_publisher import committed_memory_id
+
+    i = w.input
+    w.version = int(w.memory_row["version"])
+    mid = committed_memory_id(i.namespace, (i.agent, i.user_id, i.session_id, i.memory_key))
+    if mid:
+        w.memory_id = w.memory_row["memory_id"] = mid
+    return w.memory_id
+
+
+def _reading(w: _SetWrite) -> Any:
+    """The set's row is built over the head it read: what it does not change (a
+    lock, a pin another write set since) is the journal's when it is planned."""
+    import server.memory.store as memory_repo
+
+    return memory_repo.reading([w.existing] if w.existing is not None else [])
+
+
+async def _replayed_answer(w: _SetWrite) -> MemorySetOutput:
+    """A write whose row was not written, answered from its commit: a retry whose
+    key has changed since, or late evidence that only filled the past (that one is
+    a write, so it leaves its audit hash). Nothing after the write runs."""
+    from server.memory.app.temporal_publisher import replayed, row_assertion
+
+    i = w.input
+    r = replayed(i.namespace, (i.agent, i.user_id, i.session_id, i.memory_key))
+    own = row_assertion(r.amendment if r is not None else None, w.serialized_value)
+    if r is not None and r.past_only and own is not None:
+        await _audit_past_only(w, own.content_sha256)
+    return await receipt_answer(i, r, w.serialized_value, fallback_memory_id=w.memory_id)
+
+
+async def receipt_answer(
+    i: Any, r: Any, value: str | None, *, fallback_memory_id: str = ""
+) -> MemorySetOutput:
+    """memory.set's answer from the commit a receipt names (a retry's, read back, or
+    one left out): its own assertion, else, for a restatement (a commit with no
+    assertion), the row the history mirror kept at the commit's version."""
+    from server.memory.app.temporal_publisher import row_assertion
+
+    own = row_assertion(r.amendment if r is not None else None, value)
+    if own is None and r is not None and r.row_version:
+        from server.memory.store import temporal as temporal_store
+
+        was = await temporal_store.version_row(i.org, i.namespace, r.ident, r.row_version)
+        if was is not None:
+            return MemorySetOutput(
+                version=r.row_version,
+                pinned=bool(was.get("pinned")),
+                memory_id=r.retried_memory_id or str(was.get("memory_id") or fallback_memory_id),
+                content_sha256=str(was.get("content_sha256") or ""),
+                status=str(was.get("status") or ""),
+                namespace=i.namespace,
+                memory_key=i.memory_key,
+            )
+    return MemorySetOutput(
+        version=own.source_version if own is not None else 0,
+        pinned=bool(own is not None and own.pinned),
+        memory_id=(r.retried_memory_id if r is not None else "") or fallback_memory_id,
+        content_sha256=own.content_sha256 if own is not None else "",
+        status=own.status if own is not None else "",
+        namespace=i.namespace,
+        memory_key=i.memory_key,
+        past_only=bool(r is not None and r.past_only),
+        noop=bool(r is not None and r.left_out),
+        left_out=r.left_out if r is not None else "",
+    )
+
+
 async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
     """Phase 7 of memory.set: the non-embedded write — one loom.memory row, no peers.
 
@@ -222,7 +319,7 @@ async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
     from server.observability import degradations as _degradations
     from server.observability.otel import traced
 
-    input, retyped_from, version = w.input, w.retyped_from, w.version
+    input, retyped_from = w.input, w.retyped_from
     memory_id, new_sha, memory_row = w.memory_id, w.new_sha, w.memory_row
     had_existing_row = w.had_existing_row
 
@@ -242,7 +339,11 @@ async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
             dry_run=True,
         )
     with traced("ch.insert.memory", table="loom.memory"):
-        await insert_memory_versions([memory_row], ch=ch)
+        with _reading(w):
+            written = await insert_memory_versions([memory_row], ch=ch)
+        if not written:
+            return await _replayed_answer(w)  # the commit answers: no row was written
+    memory_id = _committed_id(w)
     # The version this replaces may have been embedded (re-set as 'high', or retyped).
     try:
         await memory_repo.tombstone_vectors_of(w.existing, version=memory_row["version"], ch=ch)
@@ -257,7 +358,7 @@ async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
     _count_write(input.namespace, "updated" if had_existing_row else "created")
     return MemorySetOutput(
         retyped_from=retyped_from,
-        version=version,
+        version=w.version,
         pinned=input.pinned,
         memory_id=memory_id,
         content_sha256=new_sha,
@@ -537,7 +638,7 @@ def _set_dry_run_answer(
     )
 
 
-async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any) -> None:
+async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any) -> bool:
     """Phase 12 of memory.set: the version row and its embedding row, then the peer links.
 
     Builds the full-column embedding row, inserts both rows concurrently,
@@ -606,11 +707,7 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
         ),
     )
 
-    async def _insert_memory() -> None:
-        with traced("ch.insert.memory", table="loom.memory"):
-            await insert_memory_versions([memory_row], ch=ch)
-
-    async def _insert_embedding() -> None:
+    async def _insert_embedding(kept: Any) -> None:
         with traced(
             "ch.insert.memory_embeddings",
             table="loom.memory_embeddings",
@@ -618,10 +715,20 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
         ):
             import server.memory.store as memory_repo
 
-            await memory_repo.insert_embedding_rows([embedding_row], ch=ch)
+            # A retry's row carries its commit's expiry; its vector row must too.
+            rows = memory_repo.kept_embedding_rows(kept, [embedding_row])
+            await memory_repo.insert_embedding_rows(rows, ch=ch)
 
+    # The embedding row lands only once the journal accepted the version row.
     with traced("ch.insert.dual_write", concurrent=2):
-        await asyncio.gather(_insert_memory(), _insert_embedding())
+        with _reading(w):
+            written = await insert_memory_versions(
+                [memory_row], ch=ch, alongside=[_insert_embedding]
+            )
+        if not written:
+            return False  # a retry its key has moved past: nothing was written
+    memory_id = _committed_id(w)
+    embedding_row["version"] = w.version  # the stamped version, as its insert carried it
     # Its version was drawn when the write began: a slow write indexes its own BM25 stats.
     await memory_repo.index_late_rows([embedding_row], ch=ch)
     _cd.schedule_settle(input, conflict_result, memory_id=memory_id, cfg=_cfg)
@@ -650,6 +757,7 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
                 ch=ch,
                 relation=conflict_result.refine_relation,
             )
+    return True
 
 
 async def _set_after_write(

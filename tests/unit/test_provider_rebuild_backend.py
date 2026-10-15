@@ -10,7 +10,7 @@ import pytest
 
 from server.insights.app import provider_rebuild_backend as storage
 from server.insights.app import provider_rebuild_runner as runner
-from server.insights.domain.provider_rebuild import REBUILD_TABLES
+from server.insights.domain.provider_rebuild import INVALIDATE_TABLES, REBUILD_TABLES
 from server.insights.domain.provider_rebuild_manifest import RebuildManifest, RebuildTablePlan
 
 
@@ -83,8 +83,11 @@ async def test_runner_connects_storage_actions_and_journals_before_publication(s
             break
     assert current["state"] == "active"
     assert effects["rebuild_snapshot_page"].await_count == len(REBUILD_TABLES)
-    assert effects["verify_reembedded_target"].await_count == len(REBUILD_TABLES) - 2
-    effects["verify_staged_cache"].assert_awaited_once()
+    # every invalidated table, and the prefix twin, verify their own way
+    assert effects["verify_reembedded_target"].await_count == (
+        len(REBUILD_TABLES) - len(INVALIDATE_TABLES) - 1
+    )
+    assert effects["verify_staged_cache"].await_count == len(INVALIDATE_TABLES)
     effects["verify_staged_prefixes"].assert_awaited_once()
     assert effects["prepare_live_table"].await_count == len(REBUILD_TABLES)
     assert effects["publish_prepared_table"].await_count == len(REBUILD_TABLES)

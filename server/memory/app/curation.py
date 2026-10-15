@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from datetime import datetime
 from typing import Any
@@ -16,6 +17,7 @@ from fastapi import HTTPException
 
 from server.core.ch import CHClient, get_client
 from server.core.datetimes import naive_utc_now
+from server.core.errors import TemporalUnavailableError, ValidationError
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import (
@@ -52,7 +54,7 @@ from server.memory.api.models_temporal import (
     _OutlineHub,
     _OutlineSession,
 )
-from server.memory.domain.temporal_sql import status_predicate
+from server.memory.domain.temporal_sql import served_status_sql
 from server.memory.store.rows import MemoryRow
 
 _CURATED_KEY_SLUG = re.compile(r"[^a-z0-9]+")
@@ -441,7 +443,7 @@ async def fetch_timeline(
         # the only thing that says it is gone.
         "tombstoned_at IS NULL",
         "(expires_at IS NULL OR expires_at > now())",
-        status_predicate(),
+        served_status_sql(),
     ]
     params: dict[str, Any] = {
         "org": org,
@@ -533,14 +535,23 @@ async def handle_memory_timeline(input: MemoryTimelineInput) -> MemoryTimelineOu
 
 
 async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
-    """Scrub the text of a historical memory version in place, and every
-    derived copy of it (see `memory_repo.redaction` for the columns).
+    """Scrub a historical value, wherever it was kept: every loom.memory version
+    and journal assertion of the memory that held it, and every derived copy (see
+    `memory_repo.redaction` for the columns). `version` names the value by a
+    historical row, `assertion_id` by a journal assertion (text only the journal
+    holds: an amend, a correction's segment).
 
-    Refuses the live head — the caller must memory.delete first, so this
+    Refuses a value still served — the live head, or a valid-time span the
+    journal still applies: the caller deletes or corrects it first, so this
     audit-time op can't silently lose live data.
     """
     import server.memory.store as memory_repo
+    from server.memory.app import temporal_publisher
+    from server.memory.store import temporal as temporal_store
+    from server.memory.store.redaction import REDACTED_VALUE
 
+    if bool(input.version) == bool(input.assertion_id):
+        raise ValidationError("memory.redact takes one of version or assertion_id")
     target = await memory_repo.find_history_target(input.org, input.memory_id)
     if target is None:
         return MemoryRedactOutput(redacted=False)
@@ -551,10 +562,7 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
 
     if not await row_in_scope(input.org, target.namespace, _Role.ADMIN):
         return MemoryRedactOutput(redacted=False)
-
-    # All versions of a memory share one memory_id, so "is this the live head"
-    # is a VERSION comparison, not a memory_id one. Refuse only when the caller
-    # targets the head's version — scrubbing that would destroy live data.
+    ident = (target.agent, target.user_id, target.session_id, target.memory_key)
     head = await memory_repo.get_by_key(
         memory_repo.Identity(
             org=input.org,
@@ -568,38 +576,80 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
         strong=True,  # ... and so must its latest version
         scope=WHOLE_NAMESPACE,
     )
-    if head is not None and head.version == input.version:
-        return MemoryRedactOutput(redacted=False, refused_head=True)
     if head is not None:
-        # Scrubbing a historical version of a locked key is a deletion of its
-        # evidence: both lock modes refuse it.
+        # Scrubbing a historical value of a locked key is a deletion of its
+        # evidence: both lock modes refuse it, by either address.
         from server.memory.domain import lock as _lock
 
         _lock.assert_unlocked(head, "delete", op="memory.redact")
-
-    now = naive_utc_now()
-    reason_blob = (input.reason or "")[:512]
-    by_blob = (input.redacted_by or "")[:128]
-    await memory_repo.redact_row(
-        input.org,
-        input.memory_id,
-        input.version,
-        when=now,
-        reason_blob=f"{reason_blob}|{by_blob}",
-    )
-    # The key's embedding and chunk rows are per key, not per version: scrub every
-    # one whose text is not the live head's (all of them once the key is deleted).
-    scrubs = await memory_repo.key_derivative_scrubs(
-        input.org,
-        target.namespace,
-        target.agent,
-        target.user_id,
-        target.session_id,
-        target.memory_key,
-        head_live=head is not None,
-        live_link_inputs=await _live_link_inputs(input.org, head),
-    )
-    await memory_repo.run_scrubs(scrubs, apply=True)
+    head_version = head.version if head is not None else 0
+    if input.version and input.version == head_version:
+        return MemoryRedactOutput(redacted=False, refused_head=True)
+    versions = await memory_repo.version_values(input.org, input.memory_id)
+    if input.version:
+        if input.version not in versions:
+            return MemoryRedactOutput(redacted=False)
+        sha = hashlib.sha256(versions[input.version].encode()).hexdigest()
+    else:
+        sha = await temporal_store.assertion_value_sha(
+            input.org, target.namespace, ident, input.assertion_id
+        )
+        if not sha:
+            return MemoryRedactOutput(redacted=False)
+    if sha == hashlib.sha256(REDACTED_VALUE.encode()).hexdigest():
+        return MemoryRedactOutput(redacted=False)  # already scrubbed: nothing to redact
+    # The journal is the authority on what is served; refuse before any scrub. Under
+    # the publisher lock, so no write can serve the value again between the two.
+    async with temporal_publisher.namespace_lock(input.org, target.namespace) as still_held:
+        if await temporal_store.value_served(input.org, target.namespace, ident, sha):
+            return MemoryRedactOutput(redacted=False, refused_head=True)
+        # What is live is decided here, where no write can commit: the head row must
+        # carry what the journal serves, or a write is still landing its row.
+        head = await memory_repo.get_by_key(
+            memory_repo.Identity(
+                org=input.org,
+                namespace=target.namespace,
+                agent=target.agent,
+                user_id=target.user_id,
+                session_id=target.session_id,
+            ),
+            target.memory_key,
+            fresh=True,
+            strong=True,
+            scope=WHOLE_NAMESPACE,
+        )
+        served = await temporal_store.served_contents(input.org, target.namespace, ident)
+        if (head is None) != (not served) or (
+            head is not None and head.content_sha256 not in served
+        ):
+            raise TemporalUnavailableError("a write to this memory is landing; retry the redaction")
+        now = naive_utc_now()
+        reason_blob = f"{(input.reason or '')[:512]}|{(input.redacted_by or '')[:128]}"
+        await _still(still_held)
+        await temporal_store.redact_value(input.org, target.namespace, ident, sha)
+        # The key's embedding and chunk rows are per key, not per version: scrub every
+        # one whose text is not the live head's (all of them once the key is deleted).
+        scrubs = await memory_repo.key_derivative_scrubs(
+            input.org,
+            target.namespace,
+            target.agent,
+            target.user_id,
+            target.session_id,
+            target.memory_key,
+            head_live=head is not None,
+            live_link_inputs=await _live_link_inputs(input.org, head),
+        )
+        await _still(still_held)
+        await memory_repo.run_scrubs(scrubs, apply=True)
+        # The version rows the request addresses go last: a redaction that failed
+        # partway still finds its value there, and a retry redoes the rest (each
+        # scrub above is idempotent).
+        for v, value in versions.items():
+            if v != head_version and hashlib.sha256(value.encode()).hexdigest() == sha:
+                await _still(still_held)
+                await memory_repo.redact_row(
+                    input.org, input.memory_id, v, when=now, reason_blob=reason_blob
+                )
     # A redacted value may already be quoted in a cached answer (7-day TTL) or a precedent
     # (30 days); both carry the keys of the window they rendered, so the text leaves with the
     # row it quoted. A failure here is reported, not swallowed: an ADMIN scrub that left the
@@ -612,6 +662,13 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
         cache_rows_deleted=cache_rows,
         precedent_rows_deleted=precedent_rows,
     )
+
+
+async def _still(still_held: Any) -> None:
+    """The publisher lock a redaction holds can lapse (its lease is not renewed): a
+    scrub stops before it runs unguarded."""
+    if not await still_held():
+        raise TemporalUnavailableError("the redaction lost its namespace lock; retry")
 
 
 async def _live_link_inputs(org: str, head: MemoryRow | None) -> str:

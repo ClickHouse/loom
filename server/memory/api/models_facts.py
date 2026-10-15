@@ -48,7 +48,11 @@ class FactsListInput(BaseModel):
     # Drop triples observed fewer than this many times (summed over their rows).
     min_co_occur: int = Field(default=1, ge=1)
     # Only triples whose (valid_from, valid_to) interval contains this timestamp.
-    as_of: datetime | None = None
+    valid_as_of: datetime | None = None
+    # Knowledge time: read the graph as loom had recorded it at K (edges
+    # recorded by K, closes recorded after K not yet applied). With no
+    # `valid_as_of`, the world is read at K too. None = as recorded now.
+    known_as_of: datetime | None = None
     # Provenance tiers to keep: any of "extracted", "inferred",
     # "facet". None = every tier. Older rows carry ''
     # and are read as inferred.
@@ -80,7 +84,7 @@ class SourceRef(BaseModel):
 
 
 class FactsListOutput(BaseModel):
-    # The matching triples in `sort_by` order. Without `as_of`, only triples still valid now.
+    # The matching triples in `sort_by` order. Without `valid_as_of`, only triples still valid now.
     rows: list[FactRow]
     # True when more triples matched than `limit`.
     truncated: bool = False
@@ -99,7 +103,11 @@ class FactsRelatedInput(BaseModel):
     # At most this many neighbours; the server caps it at 200.
     top_k: int = Field(default=20, ge=1, le=200)
     # Only edges valid at this time; `None` keeps the edges still valid now.
-    as_of: datetime | None = None
+    valid_as_of: datetime | None = None
+    # Knowledge time: read the graph as loom had recorded it at K (edges
+    # recorded by K, closes recorded after K not yet applied). With no
+    # `valid_as_of`, the world is read at K too. None = as recorded now.
+    known_as_of: datetime | None = None
 
 
 class _RelatedEntity(BaseModel):
@@ -146,7 +154,11 @@ class FactsTraverseInput(BaseModel):
     # stops; the output reports `truncated=True`.
     max_nodes: int = Field(default=400, ge=1, le=5000)
     # Only edges valid at this time; `None` keeps the edges still valid now.
-    as_of: datetime | None = None
+    valid_as_of: datetime | None = None
+    # Knowledge time: read the graph as loom had recorded it at K (edges
+    # recorded by K, closes recorded after K not yet applied). With no
+    # `valid_as_of`, the world is read at K too. None = as recorded now.
+    known_as_of: datetime | None = None
     # Walk the TYPED graph (loom.entity_triples: subject -relation-> object,
     # with provenance in entity_triple_memories) instead of the co-occurrence
     # table. `relations` restricts the walk to those labels (canonical,
@@ -256,7 +268,11 @@ class FactsPathInput(BaseModel):
     # Ignore edges whose summed observation count is below this.
     min_co_occur: int = Field(default=1, ge=1)
     # Only edges valid at this time; `None` keeps the edges still valid now.
-    as_of: datetime | None = None
+    valid_as_of: datetime | None = None
+    # Knowledge time: read the graph as loom had recorded it at K (edges
+    # recorded by K, closes recorded after K not yet applied). With no
+    # `valid_as_of`, the world is read at K too. None = as recorded now.
+    known_as_of: datetime | None = None
     # Typed graph (loom.entity_triples) instead of co-occurrence: `relations`
     # restricts to those labels, `labeled=True` walks every typed edge. Each
     # returned edge then carries `relation` and `direction` ("out" = entity_a

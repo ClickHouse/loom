@@ -80,9 +80,10 @@ async def test_full_page_does_not_prematurely_finish_table(plan):
 
 
 @pytest.mark.asyncio
-async def test_cache_uses_invalidation_without_embedding_or_row_copy(plan, monkeypatch):
+@pytest.mark.parametrize("table", ["embedding_cache", "memory_temporal_vectors"])
+async def test_cache_uses_invalidation_without_embedding_or_row_copy(plan, monkeypatch, table):
     args, read, embed, write = plan
-    args = (StagingNames(args[0].job_id, "embedding_cache"), *args[1:])
+    args = (StagingNames(args[0].job_id, table), *args[1:])
     invalidate = AsyncMock()
     monkeypatch.setattr(page, "invalidate_staged_cache", invalidate)
     result = await page.rebuild_snapshot_page(*args, after=0)

@@ -273,7 +273,9 @@ async def test_redact_handler_reports_the_cache_and_precedent_rows_it_deleted(mo
         return HistoryTarget.from_row(target)
 
     async def _head(identity, key, *, fresh=False, strong=False, scope=None):
-        return SimpleNamespace(version=9, pinned=False, locked_until=None, lock_mode="")
+        return SimpleNamespace(
+            version=9, pinned=False, locked_until=None, lock_mode="", content_sha256="h9"
+        )
 
     async def _scope(org, ns, role):
         return True
@@ -316,16 +318,49 @@ async def test_redact_handler_reports_the_cache_and_precedent_rows_it_deleted(mo
     monkeypatch.setattr("server.memory.domain.lock.assert_unlocked", lambda *a, **kw: None)
     monkeypatch.setattr(memory_repo, "delete_llm_response_cache_by_key", _cache)
     monkeypatch.setattr(memory_repo, "delete_ask_precedents_by_key", _prec)
+
+    async def _versions(org, mid, **_):
+        return {7: '"old"', 9: '"new"'}
+
+    held: list[str] = []
+
+    async def _served(*_a, **_k):
+        held.append("check")
+        return False
+
+    from contextlib import asynccontextmanager
+
+    from server.memory.app import temporal_publisher
+    from server.memory.store import temporal as temporal_store
+
+    @asynccontextmanager
+    async def _lock(*_a: Any) -> Any:
+        async def _held() -> bool:
+            return True
+
+        held.append("lock")
+        yield _held
+        held.append("unlock")
+
+    async def _served_contents(*_a: Any, **_k: Any) -> set[str]:
+        return {"h9"}  # the head carries what the journal serves
+
+    monkeypatch.setattr(memory_repo, "version_values", _versions)
+    monkeypatch.setattr(temporal_store, "value_served", _served)
+    monkeypatch.setattr(temporal_publisher, "namespace_lock", _lock)
+    monkeypatch.setattr(temporal_store, "served_contents", _served_contents)
     inp = SimpleNamespace(
         org="o",
         memory_id="11111111-1111-1111-1111-111111111111",
         version=7,
+        assertion_id="",
         reason="leak",
         redacted_by="ops",
     )
     out = await cur.handle_memory_redact(inp)
     assert out.redacted is True and out.cache_rows_deleted == 2 and out.precedent_rows_deleted == 1
     assert redacted == [("o", inp.memory_id, 7)]
+    assert held == ["lock", "check", "unlock"]  # no commit can land between check and scrub
     # The key's derived rows are scrubbed too; the head is live, so its text stays.
     assert scrubbed == [("o", "n", "a", "u", "s", "user_employer", True, "head-inputs")]
     assert deleted == [

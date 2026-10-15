@@ -60,7 +60,14 @@ async def _restore_superseded(
         superseded_by="",
         invalid_at=None,
     )
-    await insert_memory_versions([restore_row], ch=ch)
+    # Over the head read here: a write committed since keeps what it set.
+    with memory_repo.reading([existing]):
+        if not await insert_memory_versions([restore_row], ch=ch):
+            return MemoryRestoreOutput(
+                restored=False,
+                memory_id=str(row.get("memory_id") or ""),
+                version=int(row.get("version") or 0),
+            )
     try:
         await memory_repo.unsupersede_embeddings(
             input.org,
@@ -303,7 +310,14 @@ async def handle_memory_restore(input: MemoryRestoreInput) -> MemoryRestoreOutpu
         tombstoned_at=None,
         expires_at=None,
     )
-    await insert_memory_versions([restore_row], ch=ch)
+    # Over the head read here: a write committed since keeps what it set.
+    with memory_repo.reading([existing]):
+        if not await insert_memory_versions([restore_row], ch=ch):
+            return MemoryRestoreOutput(
+                restored=False,
+                memory_id=str(row.get("memory_id") or ""),
+                version=int(row.get("version") or 0),
+            )
     if existing.sensitivity == "high":
         # The key is high again: a plain write still embedding lands below the fence.
         from server.memory.app.high_fence import fence_high

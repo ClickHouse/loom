@@ -349,17 +349,16 @@ The links are read where the code is:
 | `tombstoned_at`   | record | When the writer deleted it.                                                             |
 | `expires_at`      | record | When the row leaves the served set, if its writer or the namespace owner set an expiry. |
 
-An `as_of` read replays one axis. `as_of_basis="valid_time"` (the default) asks what was
-true at T: rows whose best world date (`valid_at`, else `temporal_anchor`, else
-`created_at`) is at or before T. `as_of_basis="knowledge_time"` asks what Loom had
-learned by T: rows written by T and not retired, deleted or invalidated by T.
+Memory is bi-temporal. Every write is a commit in the namespace's journal, which
+records each fact as assertions over valid-time intervals. A read with `valid_as_of=V`
+and `known_as_of=K` returns the assertions that applied at V as Loom had recorded them
+at K (either alone fills the other). `memory.amend` corrects or ends an interval
+without rewriting what Loom believed before. See
+[bi-temporal memory](../architecture/bitemporal-memory.md).
 
 Under `newest_wins`, a judged contradiction retires the peer only if the peer's
 `valid_at` is not later than the new row's, so a backfill of old facts does not retire
-current ones. This is valid time plus a retirement stamp, not a bi-temporal model:
-supersession, not exclusion by date, decides which of two rows is current. A full
-interval model would need every writer to state when each fact ended, which agents
-rarely know.
+current ones.
 
 ## Versions and history
 
@@ -444,8 +443,8 @@ In March a user says "I live in Delhi"; in June, "I moved to Berlin."
   Delhi row close but different and marks both `conflicted`, linked by `conflict_with`.
   The namespace policy decides what follows (see
   [how a write is judged](#how-a-write-is-judged)).
-- **"Where did they live in April?"** An `as_of` read answers it, by when the fact was
-  true or by what Loom knew at that date ([time](#time)).
+- **"Where did they live in April?"** `valid_as_of` answers it; `known_as_of` answers
+  what Loom believed then ([time](#time)).
 - **"Who said so?"** `actor` and `source_class` record the writer and how the fact
   arrived; `memory.evidence` returns the turns an extracted fact came from.
 - **A bad import.** `namespace.rollback` returns every head in the namespace to its

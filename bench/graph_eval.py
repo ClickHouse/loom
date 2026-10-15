@@ -72,7 +72,7 @@ def _facts_for_case(
     deadline = time.monotonic() + timeout_s
     body: dict[str, Any] = {**identity, "limit": 500}
     if as_of:
-        body["as_of"] = as_of
+        body["valid_as_of"] = as_of
     while time.monotonic() < deadline:
         out = _post(client, base_url, "facts.list", body, token)
         rows = list(out.get("rows") or [])

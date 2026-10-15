@@ -260,6 +260,12 @@ _WORKERS: tuple[_Worker, ...] = (
         "memory_expiry_sweep_interval_seconds",
     ),
     _Worker(
+        "memory_temporal_projection",
+        "server.memory.workers.temporal_projection",
+        "memory_temporal_projection_worker_enabled",
+        "memory_temporal_projection_worker_interval_seconds",
+    ),
+    _Worker(
         "observe_extract",
         "server.memory.workers.observe_extract",
         "observe_extract_enabled",

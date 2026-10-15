@@ -173,8 +173,19 @@ async def _first_pass(ch: RecordingCH, c: dict[str, Any]) -> None:
         await fp.held_namespaces(owned, [(ORG, NS)], ch=ch)
 
 
+async def _temporal_worker(ch: RecordingCH, c: dict[str, Any]) -> None:
+    """The temporal projection worker's namespace-wide reads (a mocked test
+    accepts any string; these run nowhere else before staging)."""
+    from server.memory.store import temporal as t
+
+    await t.missing_vectors("fake-ngram-1024", ch=ch)
+    await t.namespaces_broken(ch=ch)
+    await t.namespaces_behind(ch=ch)
+
+
 def cases() -> list[Case]:
     return [
+        Case("temporal.worker", "server.memory.store.temporal", _temporal_worker, {}),
         Case("workers.first_pass", "server.workers.first_pass", _first_pass, {}),
         Case(
             "builders.pure",

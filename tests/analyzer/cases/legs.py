@@ -19,7 +19,7 @@ HS = "server.memory.app.search.sql"
 MR = "server.memory.store"
 DE = "server.memory.app.deep_evidence"
 
-_AS_OF = datetime(2026, 1, 1, tzinfo=UTC)
+_SINCE = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 def _stage2_row(session: str, index: int) -> dict[str, Any]:
@@ -45,7 +45,6 @@ async def _chunks(ch: RecordingCH, c: dict[str, Any]) -> None:
         query_text="binoculars trip" if c["words"] else "42",
         top_k=5,
         session_ids=["s1"] if c["session_ids"] else [],
-        as_of=_AS_OF if c["as_of"] else None,
         user_id="alice" if c["user_id"] else None,
     )
     await _search_memory_chunks(ch, q, {"q": q.query_vec})
@@ -181,7 +180,6 @@ async def _graph_legs(ch: RecordingCH, c: dict[str, Any]) -> None:
         namespace=NS,
         query_triples=[("user", "likes", "tea")],
         expand_synonyms=c["triples"],
-        as_of=_AS_OF if c["accessible"] else None,
     )
     await fetch_derived_aggregate(
         ch,
@@ -192,7 +190,7 @@ async def _graph_legs(ch: RecordingCH, c: dict[str, Any]) -> None:
         category="food" if c["hops"] == 2 else None,
         object_like="tea" if c["triples"] else None,
         subject_canonical_expanded=["user", "me"] if c["accessible"] else None,
-        since=_AS_OF if c["accessible"] else None,
+        since=_SINCE if c["accessible"] else None,
     )
 
 
@@ -205,7 +203,6 @@ async def _summary_legs(ch: RecordingCH, c: dict[str, Any]) -> None:
     )
 
     user = "alice" if c["user_id"] else None
-    as_of = _AS_OF if c["as_of"] else None
     await fetch_session_summaries(
         ch,
         org=ORG,
@@ -214,8 +211,6 @@ async def _summary_legs(ch: RecordingCH, c: dict[str, Any]) -> None:
         user_id=user,
         query_vec=VEC,
         embedding_model=MODEL,
-        as_of=as_of,
-        as_of_basis=c["basis"],
         run_id="run-1" if c["user_id"] else None,
     )
     await fetch_entity_summaries(
@@ -227,8 +222,6 @@ async def _summary_legs(ch: RecordingCH, c: dict[str, Any]) -> None:
         query_vec=VEC,
         embedding_model=MODEL,
         entity_filter=["nate"],
-        as_of=as_of,
-        as_of_basis=c["basis"],
     )
     await fetch_current_state_observation(
         ch,
@@ -239,8 +232,6 @@ async def _summary_legs(ch: RecordingCH, c: dict[str, Any]) -> None:
         query_vec=VEC,
         embedding_model=MODEL,
         entity_filter=["nate"],
-        as_of=as_of,
-        as_of_basis=c["basis"],
     )
     await fetch_temporal_diff(
         ch,
@@ -250,8 +241,8 @@ async def _summary_legs(ch: RecordingCH, c: dict[str, Any]) -> None:
         user_id=user,
         operand_vecs=[VEC, VEC],
         embedding_model=MODEL,
-        observation_date="2026-01-01" if c["as_of"] else None,
-        to_observation=c["as_of"],
+        observation_date="2026-01-01" if c["observed"] else None,
+        to_observation=c["observed"],
         run_id="run-1" if c["user_id"] else "",
     )
 
@@ -261,49 +252,45 @@ async def _memory_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
     from server.memory.store import Identity
 
     ident = Identity(org=ORG, namespace=NS, agent=c["agent"], user_id=c["user_id"], session_id="-")
-    as_of = _AS_OF if c["as_of"] else None
+    since = _SINCE if c["filters"] else None
     await M.get_many_by_keys(ident, ["k1", "k2"], ch=ch, scope=WHOLE_NAMESPACE)
     await M.get_by_key(
         ident,
         "k1",
         ch=ch,
-        as_of=as_of,
-        include_tombstoned=c["as_of"],
-        include_usage_totals=c["as_of"],
+        include_tombstoned=c["filters"],
+        include_usage_totals=c["filters"],
         scope=WHOLE_NAMESPACE,
     )
     await M.get_by_id(
         "00000000-0000-0000-0000-000000000001",
         org=ORG,
         ch=ch,
-        as_of=as_of,
-        include_usage_totals=c["as_of"],
+        include_usage_totals=c["filters"],
         scope=WHOLE_NAMESPACE,
     )
     await M.list_by_namespace(
         ident,
-        memory_type="preference" if c["as_of"] else None,
-        pinned_only=c["as_of"],
-        key_prefix="user_" if c["as_of"] else None,
+        memory_type="preference" if c["filters"] else None,
+        pinned_only=c["filters"],
+        key_prefix="user_" if c["filters"] else None,
         order_by=c["order_by"],
-        as_of=as_of,
-        tags=["kind:lesson"] if c["as_of"] else None,
-        include_tombstoned=c["as_of"],
-        exclude_high_sensitivity=c["as_of"],
+        tags=["kind:lesson"] if c["filters"] else None,
+        include_tombstoned=c["filters"],
+        exclude_high_sensitivity=c["filters"],
         ch=ch,
-        include_duplicates=c["as_of"],
+        include_duplicates=c["filters"],
         scope=WHOLE_NAMESPACE,
     )
     await M.count_by_namespace(
         ident,
-        memory_type="preference" if c["as_of"] else None,
-        key_prefix="user_" if c["as_of"] else None,
-        source_trace="s" if c["as_of"] else None,
-        tags=["kind:lesson"] if c["as_of"] else None,
-        as_of=as_of,
-        created_since=as_of,
+        memory_type="preference" if c["filters"] else None,
+        key_prefix="user_" if c["filters"] else None,
+        source_trace="s" if c["filters"] else None,
+        tags=["kind:lesson"] if c["filters"] else None,
+        created_since=since,
         ch=ch,
-        include_duplicates=c["as_of"],
+        include_duplicates=c["filters"],
         scope=WHOLE_NAMESPACE,
     )
     await M.list_history(ident, "k1", ch=ch, scope=WHOLE_NAMESPACE)
@@ -509,7 +496,6 @@ def cases() -> list[Case]:
                 "words": (True, False),
                 "entities": (False, True),
                 "session_ids": (False, True),
-                "as_of": (False, True),
                 "user_id": (False, True),
             },
             rows=_CHUNK_ROWS,
@@ -564,8 +550,7 @@ def cases() -> list[Case]:
             _summary_legs,
             {
                 "user_id": (False, True),
-                "as_of": (False, True),
-                "basis": ("valid_time", "knowledge_time"),
+                "observed": (False, True),
             },
         ),
         Case(
@@ -575,7 +560,7 @@ def cases() -> list[Case]:
             {
                 "agent": ("*", "bot"),
                 "user_id": ("-", "alice"),
-                "as_of": (False, True),
+                "filters": (False, True),
                 "order_by": ("created_at_desc", "created_at_asc"),
             },
         ),

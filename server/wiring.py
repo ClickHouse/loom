@@ -22,12 +22,15 @@ def wire() -> None:
     from server.core.ch import add_insert_observer
     from server.identity.app.directory import IdentityDirectory
     from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
-    from server.memory.app import recent_writes
+    from server.memory.app import recent_writes, temporal_publisher
+    from server.memory.store.inserts import after_memory_insert, before_memory_insert
     from server.memory.store.usage import AGENT_LABEL_EVENT_TYPES
     from server.observability.state_inputs import StateInputs, use_state_inputs
 
     add_insert_observer(recent_writes.observe_insert)
     add_insert_observer(namespace_write_marks.observe_insert)
+    before_memory_insert(temporal_publisher.publish_rows)
+    after_memory_insert(temporal_publisher.refence_rows)
     use_directory(IdentityDirectory())
     use_state_inputs(
         StateInputs(

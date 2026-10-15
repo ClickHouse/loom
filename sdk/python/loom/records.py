@@ -110,7 +110,8 @@ class MemoryRecordClient:
         *,
         filters: Mapping[str, str] | None = None,
         predicates: Sequence[Mapping[str, Any]] | None = None,
-        as_of: datetime | str | None = None,
+        valid_as_of: datetime | str | None = None,
+        known_as_of: datetime | str | None = None,
         limit: int = 100,
         namespace: str | None = None,
     ) -> dict[str, Any]:
@@ -118,7 +119,9 @@ class MemoryRecordClient:
         equality per field; `predicates` are typed comparisons
         (`{"field", "op": eq|ne|gt|gte|lt|lte, "number"|"boolean"|"string"}`)
         or state questions (`{"field", "value_state": unknown|absent|…}`);
-        `as_of` reads the records valid at that instant. Returns `rows`
+        `valid_as_of` reads the records valid at that instant; `known_as_of`
+        reads each record's revision recorded at K (the world at K too, unless
+        `valid_as_of` says otherwise). Returns `rows`
         (each with `record`, `field_states`, `record_id`, `memory_key`) and
         `truncated`."""
         body: dict[str, Any] = self._scope(namespace)
@@ -127,8 +130,10 @@ class MemoryRecordClient:
             body["filters"] = {str(k): str(v) for k, v in filters.items()}
         if predicates:
             body["predicates"] = [dict(p) for p in predicates]
-        if as_of is not None:
-            body["as_of"] = _iso(as_of)
+        if valid_as_of is not None:
+            body["valid_as_of"] = _iso(valid_as_of)
+        if known_as_of is not None:
+            body["known_as_of"] = _iso(known_as_of)
         return await self._agent.transport.post("/v1/memory.record.query", body)
 
     async def history(

@@ -45,7 +45,6 @@ from server.memory.app.write import handle_memory_set
 from server.memory.domain import lock as _lock
 from server.memory.domain import trust as _trust
 from server.memory.domain.entity_sentinels import public_entities
-from server.memory.store.inserts import insert_memory_versions
 from server.memory.store.rows import next_version
 from server.settings import settings
 
@@ -55,6 +54,7 @@ log = logging.getLogger(__name__)
 # Leaf module (no internal imports) shared with memory.app.retrieval to
 # avoid a circular import.
 from server.memory.domain.memory_types import is_embedded, is_searchable_type  # noqa: E402
+from server.memory.domain.temporal_capture import WriteIntent, write_intent  # noqa: E402
 
 
 def existing_context_limit(msgs: list[dict[str, str]], limit: int) -> int:
@@ -283,7 +283,6 @@ async def _point_lookup(identity: Any, input: MemoryGetInput) -> Any:
         row = await memory_repo.get_by_key(
             identity,
             input.memory_key,
-            as_of=input.as_of,
             include_usage_totals=True,
             fresh=True,  # the SDK pattern is set → get; a miss re-reads once
             strong=strong,
@@ -303,7 +302,6 @@ async def _point_lookup(identity: Any, input: MemoryGetInput) -> Any:
         row = await memory_repo.get_by_key(
             wide,
             input.memory_key,
-            as_of=input.as_of,
             include_usage_totals=True,
             fresh=True,
             strong=strong,
@@ -350,7 +348,7 @@ async def handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
     if out.found and not out.unchanged:  # an unchanged poll exposes no body
         from server.memory.app.query import _record_read_exposure
 
-        _record_read_exposure("memory.get", input, [input.memory_key])
+        _record_read_exposure("memory.get", input, [input.memory_key], _receipt_of(out))
     return out
 
 
@@ -361,6 +359,10 @@ async def _handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
     # loom.memory_chunks (with ±1 neighbors), not loom.memory.
     if input.memory_key.startswith("chunk:"):
         return await _get_chunk_with_neighbors(input)
+    if input.temporal_requested():
+        from server.memory.app import temporal_ops
+
+        return await temporal_ops.get(input)
 
     identity = memory_repo.Identity(
         org=input.org,
@@ -571,18 +573,20 @@ async def handle_memory_unpin(input: MemoryUnpinInput) -> MemoryUnpinOutput:
             reason="not_pinned",
             memory_id=str(existing.memory_id),
         )
-    version = next_version()
-    row = memory_repo.build_memory_version_row(
-        existing,
-        version=version,
-        updated_at=memory_repo.written_now(),
-        pinned=False,
-    )
-    await insert_memory_versions([row], ch=ch)
+    why: dict[str, str] = {}
+    with write_intent(WriteIntent(memory_key=existing.memory_key, existing=True)):
+        kept = await memory_repo.rewrite_heads(
+            [existing],
+            lambda _h: {"updated_at": memory_repo.written_now(), "pinned": False},
+            ch=ch,
+            reasons=why,
+        )
+    if not kept:
+        raise memory_repo.not_written(existing.memory_key, "unpin", why)
     return MemoryUnpinOutput(
         unpinned=True,
         memory_id=str(existing.memory_id),
-        version=version,
+        version=int(kept[0]["version"]),
     )
 
 
@@ -635,17 +639,43 @@ async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
     # silent column loss); only the tombstone deltas override. The version is drawn
     # here, right before the insert: the vector retire below skips rows at or above
     # it, so the later it is drawn the fewer late vector writes it leaves live.
-    version = next_version()
-    tombstone_row = memory_repo.build_memory_version_row(
-        existing,
-        version=version,
-        updated_at=memory_repo.written_now(),
-        tombstoned_at=now,
-        source_trace="",
-        expires_at=None,
-    )
+    # The tombstone carries the head as it is when it lands (what another write
+    # committed since the read included), so a restore never brings back a value read
+    # before.
+    why: dict[str, str] = {}
     with traced("ch.insert.memory.tombstone", table="loom.memory"):
-        await insert_memory_versions([tombstone_row], ch=ch)
+        kept = await memory_repo.rewrite_heads(
+            [existing],
+            lambda _h: {
+                "updated_at": memory_repo.written_now(),
+                "tombstoned_at": now,
+                "source_trace": "",
+                "expires_at": None,
+            },
+            ch=ch,
+            reasons=why,
+        )
+    version = int(kept[0]["version"]) if kept else 0
+    if not kept:
+        # The journal refused it (a lock landed since the read, or a later-drawn
+        # write committed first): nothing was removed, so nothing after runs.
+        own = memory_repo.Identity(
+            org=input.org,
+            namespace=input.namespace,
+            agent=existing.agent,
+            user_id=existing.user_id,
+            session_id=existing.session_id,
+        )
+        head = await memory_repo.get_by_key(
+            own, input.memory_key, fresh=True, strong=True, scope=request_scope()
+        )
+        _lock.assert_unlocked(head, "delete", op="memory.delete")
+        return MemoryDeleteOutput(
+            tombstoned=False,
+            found=head is not None,
+            version=0,
+            left_out=why.get(input.memory_key, ""),
+        )
 
     # Propagate the tombstone to memory_embeddings — search reads that table, so without it
     # soft-deleted memories keep surfacing. Each live row of the key (one per scope and
@@ -716,6 +746,10 @@ async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
     )
 
 
+# Keys tombstoned per publication of a memory.clear.
+_CLEAR_CHUNK = 1000
+
+
 async def handle_memory_clear(input: MemoryClearInput) -> MemoryClearOutput:
     """Bulk-tombstone for `memory.clear`.
 
@@ -754,13 +788,33 @@ async def handle_memory_clear(input: MemoryClearInput) -> MemoryClearOutput:
             },
         )
 
-    counts = await memory_repo.bulk_tombstone_scope(
-        org=input.org,
-        namespace=input.namespace,
-        user_id=input.user_id,
-        agent=input.agent,
+    from server.memory.domain import lock as _lock
+
+    live = await memory_repo.live_unlocked_identities(
+        org=input.org, namespace=input.namespace, user_id=input.user_id, agent=input.agent
     )
-    locked_skipped = int(counts.pop("locked_skipped", 0) or 0)
+    now = naive_utc_now()
+
+    def _tombstone(_row: Any) -> dict[str, Any]:
+        return {"status": "tombstoned", "tombstoned_at": now, "expires_at": None}
+
+    # Versioned tombstones through the one loom.memory funnel: the journal retracts
+    # exactly the rows written, and a write that lands later wins on both. A row
+    # locked since it was listed is skipped.
+    cleared = mirrored = 0
+    for i in range(0, len(live), _CLEAR_CHUNK):
+        heads = await memory_repo.memory_rows_by_identity_keys(
+            [(input.org, input.namespace, *ident) for ident, _ in live[i : i + _CLEAR_CHUNK]],
+            sequential=True,
+        )
+        n, m = await memory_repo.write_versions_of_rows(
+            list(heads.values()), _tombstone, skip=lambda row: bool(_lock.effective_mode(row))
+        )
+        cleared, mirrored = cleared + n, mirrored + m
+    counts = {"loom.memory": cleared, "loom.memory_embeddings": mirrored}
+    locked_skipped = await memory_repo.locked_in_scope(
+        org=input.org, namespace=input.namespace, user_id=input.user_id, agent=input.agent
+    )
     return MemoryClearOutput(
         cleared_at=naive_utc_now(),
         rows_affected=counts,
@@ -809,23 +863,33 @@ async def handle_memory_touch(input: MemoryTouchInput) -> MemoryTouchOutput:
     if not input.clear_expiry:
         new_expires_at = datetime.now(UTC) + timedelta(seconds=input.ttl_seconds or 0)
     naive_expiry = new_expires_at.replace(tzinfo=None) if new_expires_at else None
-    touch_rows: list[dict[str, Any]] = []
+    overrides: dict[str, Any] = {"expires_at": new_expires_at}
+    if input.on_expire:
+        overrides["on_expire"] = input.on_expire
+    if input.expire_reason:
+        overrides["expire_reason"] = input.expire_reason[:512]
+    heads = [by_key[k] for k in wanted if k in by_key]
     versions: dict[str, int] = {}
-    for key in wanted:
-        existing = by_key.get(key)
-        if existing is None:
-            continue
-        version = next_version()
-        versions[key] = version
-        # Mirror every persisted column; only the touch deltas override.
-        overrides: dict[str, Any] = {"version": version, "expires_at": new_expires_at}
-        if input.on_expire:
-            overrides["on_expire"] = input.on_expire
-        if input.expire_reason:
-            overrides["expire_reason"] = input.expire_reason[:512]
-        touch_rows.append(memory_repo.build_memory_version_row(existing, **overrides))
-    if touch_rows:
-        await insert_memory_versions(touch_rows, ch=ch)
+    left_out: dict[str, str] = {}
+    if heads:
+
+        def _locked_since(head: Any) -> bool:
+            # Every key was checked above; one locked between attempts is reported,
+            # not refused after the others were written.
+            try:
+                _lock.assert_unlocked(head, "expire", op="memory.touch")
+            except HTTPException:
+                left_out[head.memory_key] = "locked"
+                return True
+            return False
+
+        # Mirror every persisted column; only the touch deltas override. A key
+        # another write keeps changing is not touched.
+        with write_intent(WriteIntent(existing=True)):
+            kept = await memory_repo.rewrite_heads(
+                heads, lambda _h: dict(overrides), ch=ch, skip=_locked_since, reasons=left_out
+            )
+        versions = {str(r["memory_key"]): int(r["version"]) for r in kept}
         # search filters on the denormalized memory_embeddings.expires_at, so mirror the new
         # expiry there or a touched row vanishes from search at its old expiry. A versioned
         # re-emit of the keys' live embedding rows, not an in-place UPDATE (which would leave
@@ -856,12 +920,15 @@ async def handle_memory_touch(input: MemoryTouchInput) -> MemoryTouchOutput:
             touched=k in versions,
             version=versions.get(k),
             expires_at=naive_expiry if k in versions else None,
+            left_out="" if k in versions else left_out.get(k, ""),
         )
         for k in wanted
     ]
     if not input.memory_keys:
         r0 = results[0]
-        return MemoryTouchOutput(touched=r0.touched, version=r0.version, expires_at=r0.expires_at)
+        return MemoryTouchOutput(
+            touched=r0.touched, version=r0.version, expires_at=r0.expires_at, left_out=r0.left_out
+        )
     return MemoryTouchOutput(
         touched=bool(versions),
         expires_at=naive_expiry if versions else None,
@@ -875,10 +942,13 @@ async def handle_memory_get_by_id(input: MemoryGetByIdInput) -> MemoryGetByIdOut
     non-tombstoned). Returns found=False if no row matches."""
     import server.memory.store as memory_repo
 
+    if input.temporal_requested():
+        from server.memory.app import temporal_ops
+
+        return await temporal_ops.get_by_id(input)
     row = await memory_repo.get_by_id(
         input.memory_id,
         org=input.org,
-        as_of=getattr(input, "as_of", None),
         include_usage_totals=True,
         fresh=True,
         scope=request_scope(),
@@ -939,4 +1009,19 @@ async def handle_memory_get_by_id(input: MemoryGetByIdInput) -> MemoryGetByIdOut
         verification=_trust.verification_state(
             getattr(row, "verified_by", ""), getattr(row, "verified_sha256", ""), sha
         ),
+    )
+
+
+def _receipt_of(out: MemoryGetOutput) -> Any:
+    """The exposure receipt of a bi-temporal get (None for a current-state one)."""
+    if out.temporal is None:
+        return None
+    from server.memory.app.exposure_ledger import Receipt
+
+    return Receipt(
+        ids=tuple(a.assertion_id for a in out.assertions),
+        sha256=tuple(a.value_sha256 for a in out.assertions),
+        cutoff_seq=out.temporal.cutoff_seq,
+        valid_as_of=out.temporal.valid_as_of,
+        known_as_of=out.temporal.known_as_of,
     )

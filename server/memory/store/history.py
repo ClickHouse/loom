@@ -240,6 +240,19 @@ async def find_history_target(
     return None if r is None else HistoryTarget.from_row(r)
 
 
+async def version_values(
+    org: str, memory_id: str, *, ch: _CHClient | None = None
+) -> dict[int, str]:
+    """Every recorded version of a memory and its stored value, from the mirror."""
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        "SELECT version, any(value) AS value FROM loom.memory_versions "
+        "WHERE org = {org:String} AND memory_id = {mid:UUID} GROUP BY version",
+        params={"org": org, "mid": memory_id},
+    )
+    return {int(r["version"]): str(r["value"]) for r in rows}
+
+
 async def rollback_change_rows(
     org: str,
     namespace: str,

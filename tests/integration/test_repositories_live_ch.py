@@ -349,10 +349,10 @@ async def test_retention_apply_emits_multiif_with_per_namespace_overrides(
                 namespace_overrides=overrides,
                 leader=True,
             )
-            if n >= 8:
+            if n >= len(managed):
                 break
             await _drain()
-        assert n == 7  # one ALTER per managed table
+        assert n == len(managed)  # one ALTER per managed table
 
         row = await ch.query_one(
             "SELECT engine_full FROM system.tables WHERE database='loom' AND name='audit_log'",

@@ -220,8 +220,13 @@ class MemoryRecordQueryInput(BaseModel):
     filters: dict[str, str] = Field(default_factory=dict)
     # Typed comparisons or state checks, AND-composed with `filters`.
     predicates: list[RecordPredicate] = Field(default_factory=list)
-    # Only records whose `valid_at`..`valid_to` interval covers this instant; None = no bound.
-    as_of: datetime | None = None
+    # Only records whose `[valid_at, valid_to)` interval covers this instant; None = no bound
+    # (or K, under `known_as_of`).
+    valid_as_of: datetime | None = None
+    # Knowledge time: query the record revisions recorded at or before K, each matched
+    # against its own fields (field states other than value / absent are not
+    # versioned, so a `unknown` or `rejected` state predicate matches none). None = now.
+    known_as_of: datetime | None = None
     # At most this many records (1–1000), most recently updated first.
     limit: int = Field(default=100, ge=1, le=1000)
 

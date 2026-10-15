@@ -45,7 +45,8 @@ Subject-relation-object triples from the entity graph, filtered by subject / obj
 | `include_sources` | `bool` | `False` | Fan out each triple to source memory_keys — extra CH round-trip, off by default. |
 | `include_source_status` | `bool` | `False` | With the keys, read each source row's status (one more round-trip) and flag a triple that is open while every row behind it is superseded — the triple plane lagging a row update (writes close these at write time; this read shows any that… |
 | `min_co_occur` | `int` | `1` | Drop triples observed fewer than this many times (summed over their rows). |
-| `as_of` | `datetime \| None` | `None` | Only triples whose (valid_from, valid_to) interval contains this timestamp. |
+| `valid_as_of` | `datetime \| None` | `None` | Only triples whose (valid_from, valid_to) interval contains this timestamp. |
+| `known_as_of` | `datetime \| None` | `None` | Knowledge time: read the graph as loom had recorded it at K (edges recorded by K, closes recorded after K not yet applied). |
 | `provenance` | `list[Literal['extracted', 'inferred', 'facet']] \| None` | `None` | Provenance tiers to keep: any of "extracted", "inferred", "facet". |
 
 | Output field | Type | Meaning |
@@ -68,7 +69,8 @@ Find how two entities are connected: a bounded bidirectional breadth-first searc
 | `max_hops` | `int` | `3` | Longest path to look for, counted end to end (1–4). |
 | `top_k_per_hop` | `int` | `20` | Neighbours each frontier entity keeps per hop, strongest first (1–100). |
 | `min_co_occur` | `int` | `1` | Ignore edges whose summed observation count is below this. |
-| `as_of` | `datetime \| None` | `None` | Only edges valid at this time; `None` keeps the edges still valid now. |
+| `valid_as_of` | `datetime \| None` | `None` | Only edges valid at this time; `None` keeps the edges still valid now. |
+| `known_as_of` | `datetime \| None` | `None` | Knowledge time: read the graph as loom had recorded it at K (edges recorded by K, closes recorded after K not yet applied). |
 | `relations` | `list[str]` | *(computed)* | Typed graph (loom.entity_triples) instead of co-occurrence: `relations` restricts to those labels, `labeled=True` walks every typed edge. |
 | `labeled` | `bool` | `False` | True walks every typed edge (see `relations` above); False walks co-occurrence. |
 
@@ -94,7 +96,8 @@ Return the entities that co-occur with `input.entity` via any relation, ranked b
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `entity` | `str` | required | The entity whose neighbours to list (lowercased; matched as subject or object). |
 | `top_k` | `int` | `20` | At most this many neighbours; the server caps it at 200. |
-| `as_of` | `datetime \| None` | `None` | Only edges valid at this time; `None` keeps the edges still valid now. |
+| `valid_as_of` | `datetime \| None` | `None` | Only edges valid at this time; `None` keeps the edges still valid now. |
+| `known_as_of` | `datetime \| None` | `None` | Knowledge time: read the graph as loom had recorded it at K (edges recorded by K, closes recorded after K not yet applied). |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -116,7 +119,8 @@ Walk the entity co-occurrence graph N hops out from a seed, one bounded query pe
 | `top_k_per_hop` | `int` | `20` | Neighbours each frontier entity keeps per hop, strongest first (1–100). |
 | `min_co_occur` | `int` | `1` | Ignore edges whose summed observation count is below this. |
 | `max_nodes` | `int` | `400` | Hard ceiling on returned nodes across all hops. |
-| `as_of` | `datetime \| None` | `None` | Only edges valid at this time; `None` keeps the edges still valid now. |
+| `valid_as_of` | `datetime \| None` | `None` | Only edges valid at this time; `None` keeps the edges still valid now. |
+| `known_as_of` | `datetime \| None` | `None` | Knowledge time: read the graph as loom had recorded it at K (edges recorded by K, closes recorded after K not yet applied). |
 | `relations` | `list[str]` | *(computed)* | Walk the TYPED graph (loom.entity_triples: subject -relation-> object, with provenance in entity_triple_memories) instead of the co-occurrence table. |
 | `labeled` | `bool` | `False` | True walks every typed edge (see `relations` above); False walks co-occurrence. |
 | `hub_degree` | `int \| None` | `None` | Hub-expansion policy. |

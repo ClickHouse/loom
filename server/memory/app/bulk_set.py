@@ -290,26 +290,34 @@ async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
     rows — gathered, each a committed insert."""
     import server.memory.store as memory_repo
 
-    # The two core writes are independent rows of two tables and each is a ~260 ms committed
-    # insert on ClickHouse Cloud, so they are gathered, as on the point path (`memory.set`).
-    async def _insert_memory_rows() -> None:
-        # Full version rows (revision or first version), so the typed insert checks them.
-        await memory_repo.insert_memory_versions(state.memory_rows, ch=ch)
-
     retire = _vectors_to_retire(state)
     # A key whose winning row is unembedded keeps no vector, not even one of this batch.
     state.embedding_rows = [
         r for r in state.embedding_rows if str(r.get("memory_key")) not in retire
     ]
-    await asyncio.gather(
-        _insert_memory_rows(),
-        memory_repo.insert_embedding_rows(state.embedding_rows, ch=ch),
-    )
+    # Each is a ~260 ms committed insert on ClickHouse Cloud, so the embedding rows
+    # go with the version rows, once the journal accepted them (as `memory.set`).
+    # A row it left out (a moved-on retry, late evidence) touches no vector.
+    kept_keys: set[str] = set()
+    written: list[dict[str, Any]] = []
+
+    async def _embed(kept: Any) -> None:
+        kept_keys.update(str(r["memory_key"]) for r in kept)
+        written.extend(memory_repo.kept_embedding_rows(kept, state.embedding_rows))
+        await memory_repo.insert_embedding_rows(written, ch=ch)
+
+    # Each revision is built over the live row read for its key: a lock or pin
+    # another write committed since is the journal's, never undone by this copy.
+    with memory_repo.reading(list(state.existing_rows.values())):
+        await memory_repo.insert_memory_versions(state.memory_rows, ch=ch, alongside=[_embed])
+    _drop_left_out(state, kept_keys)
     # The entries' versions were drawn before the batch embedded: a slow batch indexes
     # its own BM25 stats.
-    await memory_repo.index_late_rows(state.embedding_rows, ch=ch)
-    await memory_repo.retire_vectors_for_keys(list(retire.values()), ch=ch)
-    fences = _high_winners(state)
+    await memory_repo.index_late_rows(written, ch=ch)
+    await memory_repo.retire_vectors_for_keys(
+        [v for k, v in retire.items() if k in kept_keys], ch=ch
+    )
+    fences = _high_winners(state, kept_keys)
     if fences:
         await fence_high(fences, ch=ch)
 
@@ -324,15 +332,38 @@ def _winners(state: _BulkWriteState) -> dict[str, dict[str, Any]]:
     return winners
 
 
-def _high_winners(state: _BulkWriteState) -> list[tuple[Any, int]]:
-    """(identity key, version) of each key whose winning row is 'high': the fence an
-    older write's late vector lands under."""
+def _drop_left_out(state: _BulkWriteState, kept: set[str]) -> None:
+    """Rows the journal left out (a retry its key moved past, late evidence) were
+    not written: nothing after the insert runs for them, and each entry answers
+    with the version its commit holds."""
+    from server.memory.app.temporal_publisher import replayed, row_assertion
+
+    gone = {str(r["memory_key"]): r for r in state.memory_rows if str(r["memory_key"]) not in kept}
+    if not gone:
+        return
+    state.memory_rows = [r for r in state.memory_rows if str(r["memory_key"]) in kept]
+    state.left_out = set(gone)
+    for res in state.results:
+        r = gone.get(res.memory_key)
+        if r is not None:
+            ident = (r["agent"], r["user_id"], r["session_id"], r["memory_key"])
+            receipt = replayed(str(r["namespace"]), ident)
+            own = row_assertion(getattr(receipt, "amendment", None))
+            res.version = own.source_version if own is not None else 0
+            res.left_out = receipt.left_out if receipt is not None else ""
+            if receipt is not None and receipt.past_only:
+                state.past_only_rows.append(r)  # journaled: a write, so it is audited
+
+
+def _high_winners(state: _BulkWriteState, kept: set[str]) -> list[tuple[Any, int]]:
+    """(identity key, version) of each written key whose winning row is 'high': the
+    fence an older write's late vector lands under."""
     import server.memory.store as memory_repo
 
     return [
         (memory_repo.embedding_key(r), int(r["version"]))
-        for r in _winners(state).values()
-        if str(r.get("sensitivity") or "") == "high"
+        for key, r in _winners(state).items()
+        if key in kept and str(r.get("sensitivity") or "") == "high"
     ]
 
 
@@ -487,7 +518,7 @@ async def _bulk_audit(
     # Every write lands in the hash-chained audit log as hashes, not text: what was written,
     # by whom, with which verdict.
     try:
-        await _audit_bulk_write(input, state.memory_rows, plan)
+        await _audit_bulk_write(input, [*state.memory_rows, *state.past_only_rows], plan)
     except Exception as e:  # noqa: BLE001 — the ledger row is best-effort
         log.warning("bulk_set: audit row failed (non-fatal): %s", e)
 
@@ -537,7 +568,10 @@ async def _bulk_run_projections(
     four graph projections — gathered."""
 
     # Graph/entity projections (entity_vectors / edges / triples / derived).
-    # Each leg is fail-open + records a replayable projection_failure.
+    # Each leg is fail-open + records a replayable projection_failure. Entries the
+    # journal left out were not written: they project nothing.
+    results = [r for r in state.results if r.memory_key not in state.left_out]
+
     def _projection(name: str, write: Any) -> Any:
         async def _run() -> None:
             try:
@@ -548,8 +582,8 @@ async def _bulk_run_projections(
                     input,
                     projection=name,
                     error=e,
-                    memory_keys=[r.memory_key for r in state.results],
-                    payload=bulk_projection_payload(input, state.results),
+                    memory_keys=[r.memory_key for r in results],
+                    payload=bulk_projection_payload(input, results),
                     source_operation="memory.bulk_set",
                     source_resource_id=bulk_source_resource_id(input),
                 )
@@ -569,7 +603,7 @@ async def _bulk_run_projections(
             "entity_vectors",
             lambda: write_entity_vectors(
                 input,
-                state.results,
+                results,
                 embedder,
                 ch=ch,
                 entity_map=entity_resolution,
@@ -578,15 +612,15 @@ async def _bulk_run_projections(
         ),
         _projection(
             "entity_edges",
-            lambda: write_entity_edges(input, state.results, ch=ch, entity_map=entity_resolution),
+            lambda: write_entity_edges(input, results, ch=ch, entity_map=entity_resolution),
         ),
         _projection(
             "entity_triples",
-            lambda: write_entity_triples(input, state.results, ch=ch, entity_map=entity_resolution),
+            lambda: write_entity_triples(input, results, ch=ch, entity_map=entity_resolution),
         ),
         _projection(
             "derived_facts",
-            lambda: _write_derived_facts(input, state.results, ch=ch, entity_map=entity_resolution),
+            lambda: _write_derived_facts(input, results, ch=ch, entity_map=entity_resolution),
         ),
     ]
     await asyncio.gather(*(leg() for leg in _legs))

@@ -117,7 +117,7 @@ def test_bulk_close_write_against_a_pinned_peer_is_refused(ctx) -> None:
     out = r.json()
     # Either the pinned short-circuit (rejected) or, if the embedder rates the
     # pair above the duplicate threshold, a duplicate — never a silent
-    # unchecked insert of a competing policy.
+    # unchecked insert of a contradicting policy.
     assert out["rejected_pinned"] == ["deploy_policy_v2"] or out["duplicates"] == [
         "deploy_policy_v2"
     ], out

@@ -262,9 +262,10 @@ def test_roster_sizes_derive_from_the_registry():
 def test_listing_budget_chars_over_four():
     """The ceilings sit a little above the current listings; a new tool or a
     long description pays for itself here."""
-    assert _tok({"tools": _listing("core", True)}) <= 13_700
+    # +~140 for the bi-temporal read pair (valid_as_of / known_as_of) on get and search.
+    assert _tok({"tools": _listing("core", True)}) <= 13_900
     assert _tok({"tools": _listing("core", False)}) <= 11_000
-    assert _tok({"tools": _listing("coding", False)}) <= 8_850
+    assert _tok({"tools": _listing("coding", False)}) <= 9_050
     assert _tok({"tools": _listing("atomic", False)}) <= 4_500
     # The coding tier's gate is the saving it makes on the
     # core + code listing — every coding tool is a core or code tool, so a

@@ -32,6 +32,7 @@ from server.memory.domain import lock as _lock
 from server.memory.domain.embed_text import _build_embed_text, key_axis_text
 from server.memory.domain.excerpt import build_excerpt
 from server.memory.domain.memory_types import is_embedded
+from server.memory.domain.temporal_capture import WriteIntent, write_intent
 from server.memory.store import key_write_lock
 from server.memory.store.inserts import insert_memory_versions
 from server.memory.store.rows import next_version
@@ -566,6 +567,22 @@ async def _update_live_row(
         return await _write_revision(input, head, ch, op=op)
 
 
+def _replayed_revision(existing: MemoryRow) -> MemoryUpdateByIdOutput:
+    """No row was written (a retry whose key has moved on): answered from the commit
+    its first attempt made; nothing after the write runs."""
+    from server.memory.app.temporal_publisher import replayed, row_assertion
+
+    ident = (existing.agent, existing.user_id, existing.session_id, existing.memory_key)
+    r = replayed(existing.namespace, ident)
+    own = row_assertion(r.amendment if r is not None else None)
+    return MemoryUpdateByIdOutput(
+        updated=own is not None,
+        new_version=own.source_version if own is not None else 0,
+        content_sha256=own.content_sha256 if own is not None else "",
+        left_out=r.left_out if r is not None else "",
+    )
+
+
 async def _write_revision(
     input: Any, existing: MemoryRow, ch: Any, *, op: str
 ) -> MemoryUpdateByIdOutput:
@@ -671,21 +688,46 @@ async def _write_revision(
         if embedder is not None
         else []
     )
+    written = -1  # unknown until the insert returns
     try:
-        await asyncio.gather(
-            insert_memory_versions([memory_row], ch=ch),
-            *([memory_repo.insert_embedding_rows(emb_rows, ch=ch)] if emb_rows else []),
-            *(
-                []
-                if searchable
-                else [memory_repo.tombstone_vectors_of(existing, version=new_version, ch=ch)]
-            ),
-        )
+        # The vector writes go with the version row, once the journal accepted it; a
+        # revision of a memory removed since it was read is refused, not re-asserted.
+        with (
+            write_intent(WriteIntent(memory_key=existing.memory_key, existing=True)),
+            memory_repo.reading([existing]),
+        ):
+            written = await insert_memory_versions(
+                [memory_row],
+                ch=ch,
+                alongside=[
+                    *(
+                        [
+                            lambda kept: memory_repo.insert_embedding_rows(
+                                memory_repo.kept_embedding_rows(kept, emb_rows), ch=ch
+                            )
+                        ]
+                        if emb_rows
+                        else []
+                    ),
+                    *(
+                        []
+                        if searchable
+                        else [
+                            lambda _kept: memory_repo.tombstone_vectors_of(
+                                existing, version=new_version, ch=ch
+                            )
+                        ]
+                    ),
+                ],
+            )
     finally:
-        if sensitivity == "high":
+        new_version = int(memory_row["version"])  # as the publisher stamped it
+        if sensitivity == "high" and written:
             # After the retire (at the same version, the later insert wins the tie),
             # and even when the gather failed: the version row may be in.
             await fence_high([(memory_repo.embedding_key(existing), new_version)], ch=ch)
+    if not written:
+        return _replayed_revision(existing)
     # Its version was drawn when the write began: a slow write indexes its own BM25 stats.
     await memory_repo.index_late_rows(emb_rows, ch=ch)
     cfg = await cfg_task

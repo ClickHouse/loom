@@ -31,16 +31,17 @@ class RetentionTarget:
     """One table's retention configuration.
 
     `ttl_column_expr` is the SQL expression the TTL is keyed on —
-    usually a column name (`ts`, `created_at`, `ingested_at`), but
-    for loom.memory it's `coalesce(expires_at, created_at)` so caller
-    expires_at wins over the operator backstop. `retention_days` and
-    `warm_days` read the table's two global settings.
+    usually a column name (`ts`, `created_at`, `ingested_at`). `delete_expr`,
+    when set, is the delete time with `{days}` for the backstop: loom.memory's
+    lets a caller's expires_at win over it. `retention_days` and `warm_days`
+    read the table's two global settings.
     """
 
     table: str
     ttl_column_expr: str
     retention_days: Callable[[Any], int]
     warm_days: Callable[[Any], int]
+    delete_expr: str = ""
 
 
 # Tables this module manages; each reads its retention_<t>_days and
@@ -63,6 +64,28 @@ TARGETS: tuple[RetentionTarget, ...] = (
         "coalesce(expires_at, created_at)",
         lambda s: s.retention_memory_days,
         lambda s: s.tiering_memory_warm_days,
+        # caller expires_at wins; operator N-day backstops rows without one
+        "coalesce(expires_at, created_at + INTERVAL {days} DAY)",
+    ),
+    # The bi-temporal journal holds every value loom.memory held and follows its
+    # rule, so a namespace's retention covers its history. An assertion expires as
+    # its row would; a commit outlives every assertion it added, so the journal
+    # stays a superset of the projection. Vectors go with their last assertion
+    # (the projection worker's orphan sweep).
+    RetentionTarget(
+        "loom.memory_temporal_assertions",
+        "toDateTime(born_at)",
+        lambda s: s.retention_memory_days,
+        lambda s: s.tiering_memory_warm_days,
+        "toDateTime(coalesce(expires_at, born_at + INTERVAL {days} DAY))",
+    ),
+    RetentionTarget(
+        "loom.memory_temporal_commits",
+        "toDateTime(recorded_at)",
+        lambda s: s.retention_memory_days,
+        lambda s: s.tiering_memory_warm_days,
+        "greatest(toDateTime(recorded_at) + INTERVAL {days} DAY, "
+        "toDateTime(ifNull(retain_until, recorded_at)))",
     ),
     RetentionTarget(
         "loom.memory_embeddings",
@@ -153,9 +176,8 @@ def _retention_clause(
     """DELETE-side TTL expression; None if nothing should expire."""
 
     def per_row_expr(days: int) -> str:
-        if target.table == "loom.memory":
-            # caller expires_at wins; operator N-day backstops rows without one
-            return f"coalesce(expires_at, created_at + INTERVAL {days} DAY)"
+        if target.delete_expr:
+            return target.delete_expr.format(days=days)
         return f"{target.ttl_column_expr} + INTERVAL {days} DAY"
 
     expr = _per_namespace(

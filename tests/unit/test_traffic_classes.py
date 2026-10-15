@@ -134,7 +134,7 @@ def test_context_var_and_header() -> None:
 
 def test_background_is_a_bound_class_with_its_own_ch_settings(monkeypatch) -> None:
     """Worker passes and operator CLIs are classified: unclassified they would
-    share the base bucket, priority 0, competing with production reads on equal
+    share the base bucket, priority 0, contending with production reads on equal
     terms during a heal's large scans. `bind_background` classes the task; every
     read statement then carries the class's settings, writes carry none;
     nothing resolves to it from a request."""

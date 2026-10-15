@@ -49,6 +49,7 @@ from server.memory.app.handlers import (
 )
 from server.memory.app.query import handle_memory_list
 from server.memory.app.restore import handle_memory_restore
+from server.memory.app.temporal_publisher import with_read_token
 from server.memory.app.update import handle_memory_update, handle_memory_update_by_id
 from server.memory.app.verify import handle_memory_verify
 from server.memory.app.write import handle_memory_set
@@ -73,7 +74,7 @@ memory_set = Operation(
     name="memory.set",
     input_model=MemorySetInput,
     output_model=MemorySetOutput,
-    handler=handle_memory_set,
+    handler=with_read_token(handle_memory_set),
     idempotent=True,  # idempotent on (identity tuple, memory_key)
     # A set is five committed inserts plus the conflict and dedup reads: p50
     # 1,062 ms and p99 3.7 s on ClickHouse Cloud. 200 ms at the x20 multiplier
@@ -113,7 +114,7 @@ memory_delete = Operation(
     name="memory.delete",
     input_model=MemoryDeleteInput,
     output_model=MemoryDeleteOutput,
-    handler=handle_memory_delete,
+    handler=with_read_token(handle_memory_delete),
     idempotent=True,
     budget_p99_ms=30,
     required_role=Role.WRITER,
@@ -209,7 +210,7 @@ memory_update_by_id = Operation(
     name="memory.update_by_id",
     input_model=MemoryUpdateByIdInput,
     output_model=MemoryUpdateByIdOutput,
-    handler=handle_memory_update_by_id,
+    handler=with_read_token(handle_memory_update_by_id),
     idempotent=True,
     budget_p99_ms=80,
     required_role=Role.WRITER,

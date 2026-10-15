@@ -211,13 +211,8 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
                     "expired_at": row.expires_at,
                 }
             )
-        if action == "tombstone":
-            res.tombstoned += 1
-        elif action == "demote":
-            res.demoted += 1
-        else:
-            res.anonymized += 1
         if cfg.dry_run:
+            _count(res, action)
             continue
         # One version for the memory row and its vector retire, so a late copy of an
         # older read (read + 1) stays below the retire.
@@ -227,8 +222,15 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
 
     if version_rows:
         ch = get_client()
+        kept: set[tuple[str, ...]] = set()
+
+        async def _keep(rows: Any) -> None:
+            kept.update(_ident(r) for r in rows)
+
         try:
-            await insert_memory_versions(version_rows, ch=ch)
+            # Declared as read: a key touched or locked since is left out, not swept.
+            with memory_repo.reading([m[1] for m in mirrors]):
+                await insert_memory_versions(version_rows, ch=ch, alongside=[_keep])
         except Exception as e:  # the pass records a failure; the rows expire next pass
             log.exception("memory_expiry_sweep: version insert failed")
             res.failures.append(f"insert: {type(e).__name__}: {e}")
@@ -238,6 +240,10 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
                 error=f"{type(e).__name__}: {e}",
             )
             return res
+        # A row the journal left out (a key locked since, a later write) changed nothing.
+        mirrors = [m for m in mirrors if _ident(m[1]) in kept]
+        for action, _row, _v in mirrors:
+            _count(res, action)
         try:
             await _mirror_embeddings_batch(mirrors, cfg=cfg)
         except Exception as e:  # noqa: BLE001 — the memory rows are authoritative
@@ -257,6 +263,22 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
         outcome=outcome,
     )
     return res
+
+
+def _count(res: Any, action: str) -> None:
+    """One expiry the pass made (or, dry, would make)."""
+    if action == "tombstone":
+        res.tombstoned += 1
+    elif action == "demote":
+        res.demoted += 1
+    else:
+        res.anonymized += 1
+
+
+def _ident(r: Any) -> tuple[str, ...]:
+    """A row's full identity: one sweep spans organizations and namespaces."""
+    cols = ("org", "namespace", "agent", "user_id", "session_id", "memory_key")
+    return tuple(str(r[c] if isinstance(r, dict) else getattr(r, c)) for c in cols)
 
 
 def _demote_overrides(row: Any, cfg: ExpiryConfig) -> dict[str, Any]:

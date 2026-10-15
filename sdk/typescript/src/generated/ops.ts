@@ -2627,7 +2627,8 @@ export interface FactsListInput {
   include_sources?: boolean;
   include_source_status?: boolean;
   min_co_occur?: number;
-  as_of?: string | null;
+  valid_as_of?: string | null;
+  known_as_of?: string | null;
   provenance?: Array<"extracted" | "inferred" | "facet"> | null;
 }
 
@@ -2661,7 +2662,8 @@ export interface FactsPathInput {
   max_hops?: number;
   top_k_per_hop?: number;
   min_co_occur?: number;
-  as_of?: string | null;
+  valid_as_of?: string | null;
+  known_as_of?: string | null;
   relations?: string[];
   labeled?: boolean;
 }
@@ -2691,7 +2693,8 @@ export interface FactsRelatedInput {
   namespace: string;
   entity: string;
   top_k?: number;
-  as_of?: string | null;
+  valid_as_of?: string | null;
+  known_as_of?: string | null;
 }
 
 export interface RelatedEntity {
@@ -2713,7 +2716,8 @@ export interface FactsTraverseInput {
   top_k_per_hop?: number;
   min_co_occur?: number;
   max_nodes?: number;
-  as_of?: string | null;
+  valid_as_of?: string | null;
+  known_as_of?: string | null;
   relations?: string[];
   labeled?: boolean;
   hub_degree?: number | null;
@@ -3387,6 +3391,79 @@ export interface MemoryAggregateOutput {
   sql_executed?: string;
 }
 
+export interface MemoryAmendInput {
+  org: string;
+  namespace: string;
+  agent: string;
+  user_id?: string;
+  session_id?: string;
+  run_id?: string;
+  memory_key: string;
+  change_kind: "correct" | "transition" | "retract";
+  value?: Record<string, unknown> | unknown[] | string | number | boolean | null;
+  valid_from?: string | null;
+  valid_to?: string | null;
+  effective_at?: string | null;
+  temporal_kind?: "" | "state" | "event" | "snapshot" | "rule";
+  validity_basis?: "stated" | "extracted" | "inferred";
+  valid_text?: string;
+  valid_precision?: "" | "instant" | "day" | "month" | "year" | "approximate";
+  valid_tz?: string;
+  modality?: "" | "asserted" | "observed" | "planned" | "hypothetical" | "quoted" | "disputed";
+  qualifiers?: Record<string, string>;
+  evidence_ids?: string[];
+  expected_revision?: string;
+  confidence?: number;
+}
+
+export interface TemporalAssertion {
+  assertion_id: string;
+  origin_assertion_id?: string;
+  parent_assertion_id?: string | null;
+  memory_key?: string;
+  agent?: string;
+  user_id?: string;
+  session_id?: string;
+  value?: unknown;
+  value_sha256?: string;
+  memory_type?: string;
+  temporal_kind?: string;
+  validity_basis?: string;
+  valid_from?: string | null;
+  valid_to?: string | null;
+  valid_text?: string;
+  valid_precision?: string;
+  valid_tz?: string;
+  modality?: string;
+  status?: string;
+  confidence?: number;
+  verified_by?: string;
+  verified_at?: string | null;
+  source_class?: string;
+  actor?: string;
+  qualifiers?: Record<string, string>;
+  tags?: string[];
+  evidence_ids?: string[];
+  derived_from?: string[];
+  born_seq?: number;
+  born_at?: string | null;
+  retired_seq?: number | null;
+  retired_at?: string | null;
+}
+
+export interface MemoryAmendOutput {
+  memory_key: string;
+  commit_id?: string;
+  commit_seq?: number;
+  recorded_at?: string | null;
+  read_token?: string;
+  change_kind?: string;
+  retired?: string[];
+  added?: TemporalAssertion[];
+  current_value?: unknown;
+  current_row_error?: string;
+}
+
 export interface ApplyTarget {
   keys?: string[] | null;
   filter?: ApplyFilter | null;
@@ -3483,6 +3560,10 @@ export interface RecentMessage {
 }
 
 export interface MemoryAskInput {
+  valid_as_of?: string | null;
+  known_as_of?: string | null;
+  read_token?: string;
+  validity_policy?: "compat" | "strict";
   org: string;
   namespace: string;
   agent?: string;
@@ -3509,8 +3590,6 @@ export interface MemoryAskInput {
   summary_cap?: number | null;
   rrf_adaptive_lexical?: boolean | null;
   personalization?: "full" | "none";
-  as_of?: string | null;
-  as_of_basis?: "valid_time" | "knowledge_time";
   include_superseded?: boolean;
   precedents?: boolean | null;
   llm_cache?: boolean | null;
@@ -3536,6 +3615,18 @@ export interface MemoryAskInput {
   recent_messages?: RecentMessage[];
   observation_date?: string;
   gh_items_fallback?: boolean | null;
+}
+
+export interface TemporalCutoff {
+  namespace?: string;
+  valid_as_of?: string | null;
+  known_as_of?: string | null;
+  cutoff_seq?: number;
+  head_seq?: number;
+  complete?: boolean;
+  history_from?: string | null;
+  validity_policy?: string;
+  gaps?: string[];
 }
 
 export interface MemorySearchHit {
@@ -3581,10 +3672,13 @@ export interface MemorySearchHit {
   derived_from?: string[];
   score_components?: Record<string, number>;
   resolved_from?: string | null;
+  assertion_id?: string;
+  value_sha256?: string;
 }
 
 export interface MemoryAskOutput {
   answer?: string;
+  temporal?: TemporalCutoff[];
   source?: "synthesized" | "retrieval_only" | "abstained" | "record" | "precedent";
   abstain?: boolean;
   abstain_reason?: string;
@@ -3795,6 +3889,9 @@ export interface MemoryGetOutput {
   locked_by?: string;
   recall_by_agent?: RecallByAgent[];
   sensitivity?: string;
+  temporal?: TemporalCutoff | null;
+  assertions?: TemporalAssertion[];
+  disputed?: boolean;
 }
 
 export interface CodeLink {
@@ -3862,6 +3959,7 @@ export interface BulkSetResult {
   conflict_verdict?: string;
   peers?: MemorySetPeer[];
   next?: string;
+  left_out?: string;
 }
 
 export interface MemorySetPeer {
@@ -4070,6 +4168,9 @@ export interface MemoryDeleteOutput {
   found?: boolean;
   dependents_tombstoned?: number;
   dependents_downgraded?: number;
+  left_out?: string;
+  commit_seq?: number;
+  read_token?: string;
 }
 
 export interface MemoryDemonstrateInput {
@@ -4326,6 +4427,10 @@ export interface MemoryForFileOutput {
 }
 
 export interface MemoryGetInput {
+  valid_as_of?: string | null;
+  known_as_of?: string | null;
+  read_token?: string;
+  validity_policy?: "compat" | "strict";
   org: string;
   namespace: string;
   agent: string;
@@ -4335,15 +4440,17 @@ export interface MemoryGetInput {
   memory_key: string;
   if_version?: number | null;
   include_recall_breakdown?: boolean;
-  as_of?: string | null;
   fields?: string[];
   follow?: boolean;
 }
 
 export interface MemoryGetByIdInput {
+  valid_as_of?: string | null;
+  known_as_of?: string | null;
+  read_token?: string;
+  validity_policy?: "compat" | "strict";
   org: string;
   memory_id: string;
-  as_of?: string | null;
 }
 
 export interface MemoryGetByIdOutput {
@@ -4376,6 +4483,9 @@ export interface MemoryGetByIdOutput {
   locked_by?: string;
   on_expire?: string;
   expire_reason?: string;
+  temporal?: TemporalCutoff | null;
+  assertions?: TemporalAssertion[];
+  disputed?: boolean;
 }
 
 export interface MemoryHealthInput {
@@ -4525,6 +4635,31 @@ export interface MemoryImportEvidenceOutput {
   skipped?: number;
 }
 
+export interface MemoryIntervalsInput {
+  valid_as_of?: string | null;
+  known_as_of?: string | null;
+  read_token?: string;
+  validity_policy?: "compat" | "strict";
+  org: string;
+  namespace: string;
+  agent: string;
+  user_id?: string;
+  session_id?: string;
+  run_id?: string;
+  memory_key: string;
+  include_retired?: boolean;
+  limit?: number;
+}
+
+export interface MemoryIntervalsOutput {
+  memory_key: string;
+  assertions?: TemporalAssertion[];
+  retired?: TemporalAssertion[];
+  at_valid?: string[];
+  disputed?: boolean;
+  temporal: TemporalCutoff;
+}
+
 export interface MemoryLineageInput {
   org: string;
   namespace: string;
@@ -4606,6 +4741,10 @@ export interface MemoryLinkOutput {
 }
 
 export interface MemoryListInput {
+  valid_as_of?: string | null;
+  known_as_of?: string | null;
+  read_token?: string;
+  validity_policy?: "compat" | "strict";
   org: string;
   namespace: string;
   agent: string;
@@ -4625,7 +4764,6 @@ export interface MemoryListInput {
   include_duplicates?: boolean;
   include_superseded?: boolean;
   include_proposed?: boolean;
-  as_of?: string | null;
   tags?: string[];
   contains?: string | null;
   fields?: string[];
@@ -4670,6 +4808,7 @@ export interface MemoryListOutput {
   unchanged?: boolean;
   hidden?: number;
   hidden_hint?: string;
+  temporal?: TemporalCutoff | null;
 }
 
 export interface MemoryLockInput {
@@ -4889,6 +5028,15 @@ export interface MemorySetInput {
   dry_run?: boolean;
   await_verdict?: boolean;
   proposed?: boolean;
+  change_kind?: "" | "transition" | "correct";
+  effective_at?: string | null;
+  temporal_kind?: "" | "state" | "event" | "snapshot" | "rule";
+  modality?: "" | "asserted" | "observed" | "planned" | "hypothetical" | "quoted" | "disputed";
+  valid_text?: string;
+  valid_precision?: "" | "instant" | "day" | "month" | "year" | "approximate";
+  valid_tz?: string;
+  qualifiers?: Record<string, string>;
+  expected_revision?: string;
 }
 
 export interface MemorySetOutput {
@@ -4897,6 +5045,8 @@ export interface MemorySetOutput {
   memory_id?: string;
   content_sha256?: string;
   status?: string;
+  past_only?: boolean;
+  left_out?: string;
   duplicate_of?: string;
   namespace?: string;
   memory_key?: string;
@@ -4911,6 +5061,8 @@ export interface MemorySetOutput {
   dry_run?: boolean;
   advisories?: string[];
   chunks_written?: number;
+  commit_seq?: number;
+  read_token?: string;
 }
 
 export interface MemoryPromoteInput {
@@ -5141,7 +5293,8 @@ export interface MemoryRecordQueryInput {
   schema_name: string;
   filters?: Record<string, string>;
   predicates?: RecordPredicate[];
-  as_of?: string | null;
+  valid_as_of?: string | null;
+  known_as_of?: string | null;
   limit?: number;
 }
 
@@ -5183,7 +5336,8 @@ export interface MemoryRecordWriteOutput {
 export interface MemoryRedactInput {
   org: string;
   memory_id: string;
-  version: number;
+  version?: number;
+  assertion_id?: string;
   reason?: string;
   redacted_by?: string;
 }
@@ -5285,6 +5439,10 @@ export interface MemoryRestoreOutput {
 }
 
 export interface MemorySearchInput {
+  valid_as_of?: string | null;
+  known_as_of?: string | null;
+  read_token?: string;
+  validity_policy?: "compat" | "strict";
   org: string;
   namespace: string;
   agent?: string;
@@ -5362,12 +5520,11 @@ export interface MemorySearchInput {
   rerank?: string;
   retrieval_budget?: "fast" | "standard" | "deep";
   hyde?: boolean;
-  as_of?: string | null;
-  as_of_basis?: "valid_time" | "knowledge_time";
 }
 
 export interface MemorySearchOutput {
   results: MemorySearchHit[];
+  temporal?: TemporalCutoff[];
   reader_block?: string;
   reader_instructions?: string;
   bodies_returned?: number;
@@ -5410,6 +5567,10 @@ export interface MemorySearchOutput {
 }
 
 export interface MemorySearchTraceInput {
+  valid_as_of?: string | null;
+  known_as_of?: string | null;
+  read_token?: string;
+  validity_policy?: "compat" | "strict";
   org: string;
   namespace: string;
   agent?: string;
@@ -5487,8 +5648,6 @@ export interface MemorySearchTraceInput {
   rerank?: string;
   retrieval_budget?: "fast" | "standard" | "deep";
   hyde?: boolean;
-  as_of?: string | null;
-  as_of_basis?: "valid_time" | "knowledge_time";
 }
 
 export interface SearchTraceHit {
@@ -5660,6 +5819,54 @@ export interface MemorySweepExpiredOutput {
   failures?: string[];
 }
 
+export interface MemoryTemporalDiffInput {
+  org: string;
+  namespace: string;
+  agent: string;
+  user_id?: string;
+  session_id?: string;
+  run_id?: string;
+  memory_key: string;
+  mode: "world" | "belief";
+  start?: string | null;
+  end?: string | null;
+  at?: string | null;
+  limit?: number;
+}
+
+export interface TemporalChange {
+  at?: string | null;
+  kind: string;
+  commit_seq?: number;
+  before?: unknown[];
+  after?: unknown[];
+  before_assertions?: TemporalAssertion[];
+  after_assertions?: TemporalAssertion[];
+  assertion?: TemporalAssertion | null;
+}
+
+export interface MemoryTemporalDiffOutput {
+  memory_key: string;
+  mode: string;
+  changes?: TemporalChange[];
+  temporal: TemporalCutoff;
+}
+
+export interface MemoryTemporalStatusInput {
+  org: string;
+  namespace: string;
+}
+
+export interface MemoryTemporalStatusOutput {
+  namespace: string;
+  publisher: string;
+  head_seq?: number;
+  projection_seq?: number;
+  first_recorded_at?: string | null;
+  integrity_break_at?: number;
+  write_blockers?: string[];
+}
+
 export interface MemoryTimelineInput {
   org: string;
   namespace: string;
@@ -5710,6 +5917,7 @@ export interface MemoryTouchResult {
   touched: boolean;
   version?: number | null;
   expires_at?: string | null;
+  left_out?: string;
 }
 
 export interface MemoryTouchOutput {
@@ -5718,6 +5926,7 @@ export interface MemoryTouchOutput {
   expires_at?: string | null;
   results?: MemoryTouchResult[];
   touched_count?: number;
+  left_out?: string;
 }
 
 export interface MemoryUnlockInput {
@@ -5815,6 +6024,9 @@ export interface MemoryUpdateByIdOutput {
   conflict_verdict?: string;
   conflict_peers?: number;
   duplicate_of?: string;
+  commit_seq?: number;
+  read_token?: string;
+  left_out?: string;
 }
 
 export interface MemoryVerifyInput {
@@ -7316,6 +7528,10 @@ export interface RunListOutput {
 }
 
 export interface SearchQueryInput {
+  valid_as_of?: string | null;
+  known_as_of?: string | null;
+  read_token?: string;
+  validity_policy?: "compat" | "strict";
   org: string;
   namespace: string;
   agent?: string;
@@ -7336,6 +7552,7 @@ export interface SearchQueryOutput {
   profile?: Record<string, unknown>;
   conversations?: Record<string, unknown>;
   withheld?: Record<string, unknown> | null;
+  temporal_coverage?: Record<string, string> | null;
 }
 
 export interface SessionBriefDeleteInput {
@@ -8479,6 +8696,7 @@ export type OpName =
   | "llm.complete"
   | "memory.agents_list"
   | "memory.aggregate"
+  | "memory.amend"
   | "memory.apply"
   | "memory.ask"
   | "memory.assign_category"
@@ -8508,6 +8726,7 @@ export type OpName =
   | "memory.history"
   | "memory.import_curated"
   | "memory.import_evidence"
+  | "memory.intervals"
   | "memory.lineage"
   | "memory.link"
   | "memory.list"
@@ -8540,6 +8759,8 @@ export type OpName =
   | "memory.set_from_messages"
   | "memory.stack"
   | "memory.sweep_expired"
+  | "memory.temporal_diff"
+  | "memory.temporal_status"
   | "memory.timeline"
   | "memory.touch"
   | "memory.unlock"
@@ -8786,6 +9007,7 @@ export interface OpMap {
   "llm.complete": { input: LlmCompleteInput; output: LlmCompleteOutput };
   "memory.agents_list": { input: MemoryAgentsListInput; output: MemoryAgentsListOutput };
   "memory.aggregate": { input: MemoryAggregateInput; output: MemoryAggregateOutput };
+  "memory.amend": { input: MemoryAmendInput; output: MemoryAmendOutput };
   "memory.apply": { input: MemoryApplyInput; output: MemoryApplyOutput };
   "memory.ask": { input: MemoryAskInput; output: MemoryAskOutput };
   "memory.assign_category": { input: MemoryAssignCategoryInput; output: MemoryAssignCategoryOutput };
@@ -8815,6 +9037,7 @@ export interface OpMap {
   "memory.history": { input: MemoryHistoryInput; output: MemoryHistoryOutput };
   "memory.import_curated": { input: MemoryImportCuratedInput; output: MemoryImportCuratedOutput };
   "memory.import_evidence": { input: MemoryImportEvidenceInput; output: MemoryImportEvidenceOutput };
+  "memory.intervals": { input: MemoryIntervalsInput; output: MemoryIntervalsOutput };
   "memory.lineage": { input: MemoryLineageInput; output: MemoryLineageOutput };
   "memory.link": { input: MemoryLinkInput; output: MemoryLinkOutput };
   "memory.list": { input: MemoryListInput; output: MemoryListOutput };
@@ -8847,6 +9070,8 @@ export interface OpMap {
   "memory.set_from_messages": { input: MemorySetFromMessagesInput; output: MemorySetFromMessagesOutput };
   "memory.stack": { input: MemoryStackInput; output: MemoryStackOutput };
   "memory.sweep_expired": { input: MemorySweepExpiredInput; output: MemorySweepExpiredOutput };
+  "memory.temporal_diff": { input: MemoryTemporalDiffInput; output: MemoryTemporalDiffOutput };
+  "memory.temporal_status": { input: MemoryTemporalStatusInput; output: MemoryTemporalStatusOutput };
   "memory.timeline": { input: MemoryTimelineInput; output: MemoryTimelineOutput };
   "memory.touch": { input: MemoryTouchInput; output: MemoryTouchOutput };
   "memory.unlock": { input: MemoryUnlockInput; output: MemoryUnlockOutput };
@@ -9093,6 +9318,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "llm.complete", group: "llm", method: "complete", idempotent: false, role: "viewer", maturity: "experimental", budgetP99Ms: 120000, audit: false },
   { name: "memory.agents_list", group: "memory", method: "agentsList", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 80, audit: false },
   { name: "memory.aggregate", group: "memory", method: "aggregate", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 250, audit: false },
+  { name: "memory.amend", group: "memory", method: "amend", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 600, audit: true },
   { name: "memory.apply", group: "memory", method: "apply", idempotent: false, role: "writer", maturity: "experimental", budgetP99Ms: 3000, audit: true },
   { name: "memory.ask", group: "memory", method: "ask", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 8000, audit: false },
   { name: "memory.assign_category", group: "memory", method: "assignCategory", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 60, audit: true },
@@ -9122,6 +9348,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "memory.history", group: "memory", method: "history", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: false },
   { name: "memory.import_curated", group: "memory", method: "importCurated", idempotent: false, role: "writer", maturity: "experimental", budgetP99Ms: 30000, audit: true },
   { name: "memory.import_evidence", group: "memory", method: "importEvidence", idempotent: false, role: "writer", maturity: "stable", budgetP99Ms: 30000, audit: true },
+  { name: "memory.intervals", group: "memory", method: "intervals", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 150, audit: false },
   { name: "memory.lineage", group: "memory", method: "lineage", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 150, audit: false },
   { name: "memory.link", group: "memory", method: "link", idempotent: false, role: "writer", maturity: "stable", budgetP99Ms: 60, audit: true },
   { name: "memory.list", group: "memory", method: "list", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 150, audit: false },
@@ -9154,6 +9381,8 @@ export const OPS: readonly OpSpec[] = [
   { name: "memory.set_from_messages", group: "memory", method: "setFromMessages", idempotent: false, role: "writer", maturity: "stable", budgetP99Ms: 2500, audit: false },
   { name: "memory.stack", group: "memory", method: "stack", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 200, audit: false },
   { name: "memory.sweep_expired", group: "memory", method: "sweepExpired", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 2000, audit: true },
+  { name: "memory.temporal_diff", group: "memory", method: "temporalDiff", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 200, audit: false },
+  { name: "memory.temporal_status", group: "memory", method: "temporalStatus", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 150, audit: false },
   { name: "memory.timeline", group: "memory", method: "timeline", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 120, audit: false },
   { name: "memory.touch", group: "memory", method: "touch", idempotent: false, role: "writer", maturity: "experimental", budgetP99Ms: 40, audit: false },
   { name: "memory.unlock", group: "memory", method: "unlock", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 40, audit: true },
@@ -9276,4 +9505,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 304;
+export const GENERATED_OP_COUNT = 308;

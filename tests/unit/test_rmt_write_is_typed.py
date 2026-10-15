@@ -110,8 +110,9 @@ _BUILDER_NAMES = {
     # loom.shared's own column set, checked by `shared_repo.insert_shared_row`
     "SHARED_PERSISTED_COLS",
 }
-# The one raw loom.memory insert: the checked funnel itself.
-_MEMORY_FUNNEL = ("server/memory/store/inserts.py", "insert_memory_versions")
+# The one raw loom.memory insert: the checked funnel's own insert-and-fence task
+# (`insert_memory_versions` checks the rows, then runs it).
+_MEMORY_FUNNEL = ("server/memory/store/inserts.py", "_insert_then_fence")
 
 
 def _names_in(node: ast.AST) -> set[str]:
@@ -207,9 +208,13 @@ _EMBEDDING_BUILDER_NAMES = {"build_embedding_row", "EMBEDDING_PERSISTED_COLS"}
 _EMBEDDING_ALLOW: dict[tuple[str, str], str] = {
     # The funnel every other write goes through: it inserts what it is handed.
     ("server/memory/store/inserts.py", "insert_embedding_rows"): "the funnel",
-    ("server/memory/app/bulk_set.py", "_bulk_insert"): (
+    ("server/memory/app/temporal_projection.py", "_rewrite_current"): (
+        "its one row is namespace_rollback.stub_embedding_row's, built with build_embedding_row"
+    ),
+    ("server/memory/app/bulk_set.py", "_embed"): (
         "bulk_set's embed phase builds each row with build_embedding_row into "
-        "_BulkWriteState.embedding_rows; this phase only inserts them"
+        "_BulkWriteState.embedding_rows; this inserts the ones whose version row the "
+        "journal kept (kept_embedding_rows copies each whole, with the kept expiry)"
     ),
 }
 

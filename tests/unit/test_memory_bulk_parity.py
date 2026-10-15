@@ -375,8 +375,9 @@ async def test_bulk_insert_decides_a_keys_vectors_by_the_row_that_wins(
     inserted: list[dict[str, Any]] = []
     retire_calls: list[Any] = []
 
-    async def _noop(rows: Any, *, ch: Any = None) -> None:
-        return None
+    async def _noop(rows: Any, *, ch: Any = None, alongside: Any = ()) -> None:
+        for f in alongside:
+            await f(rows)
 
     async def _emb(rows: list[dict[str, Any]], *, ch: Any = None) -> None:
         inserted.extend(rows)
@@ -415,6 +416,51 @@ async def test_bulk_insert_decides_a_keys_vectors_by_the_row_that_wins(
     else:
         assert retire_calls == []
         assert len(inserted) == sum(1 for s, _ in entries if s != "high")
+
+
+@pytest.mark.asyncio
+async def test_a_row_the_journal_left_out_touches_no_vector(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A moved-on retry or late evidence: the key's current vectors are someone
+    # else's, so nothing is retired, fenced or indexed for it.
+    import server.memory.store as memory_repo
+    from server.memory.app import high_fence
+
+    calls: list[str] = []
+
+    async def _kept_nothing(rows: Any, *, ch: Any = None, alongside: Any = ()) -> int:
+        return 0  # the hooks kept no row, so the embedding write never runs
+
+    async def _record(name: str) -> Any:
+        async def f(items: Any, **_k: Any) -> int:
+            calls.extend([name] * len(list(items)))
+            return 0
+
+        return f
+
+    monkeypatch.setattr(memory_repo, "insert_memory_versions", _kept_nothing)
+    for name in (
+        "insert_embedding_rows",
+        "retire_vectors_for_keys",
+        "fence_vectors",
+        "index_late_rows",
+    ):
+        monkeypatch.setattr(memory_repo, name, await _record(name))
+    monkeypatch.setattr(high_fence, "tombstone_set_chunks", await _record("chunks"))
+    await _bulk_set_mod._bulk_insert(object(), _vec_state([("", 1), ("high", 2)]))
+    assert calls == []
+
+
+def test_an_entry_the_journal_left_out_runs_nothing_after_the_insert() -> None:
+    from server.memory.api.models_bulk import _BulkSetResult
+
+    state = _vec_state([("", 1)])
+    state.memory_rows.append({**state.memory_rows[0], "memory_key": "gone", "version": 2})
+    state.results = [_BulkSetResult(memory_key=k, version=v) for k, v in (("k", 1), ("gone", 2))]
+    _bulk_set_mod._drop_left_out(state, {"k"})
+    assert [r["memory_key"] for r in state.memory_rows] == ["k"] and state.left_out == {"gone"}
+    assert [(r.memory_key, r.version) for r in state.results] == [("k", 1), ("gone", 0)]
 
 
 @pytest.mark.asyncio

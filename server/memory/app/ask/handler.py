@@ -92,10 +92,12 @@ def _ask_search_input(
         personalization=input.personalization,
         sensitivity_penalty=input.sensitivity_penalty,
         reinforcement_weight=input.reinforcement_weight,
-        # As-of replay: scope retrieval to memories known by the anchor so the
-        # synthesizer never sees a later fact. search_sql applies the filter.
-        as_of=input.as_of,
-        as_of_basis=input.as_of_basis,
+        # A bi-temporal ask retrieves what applied at (V, K), so the synthesizer
+        # never sees a fact recorded or true later.
+        valid_as_of=input.valid_as_of,
+        known_as_of=input.known_as_of,
+        read_token=input.read_token,
+        validity_policy=input.validity_policy,
         observation_date=input.observation_date,
         # Recall telemetry belongs to explicit memory.search calls; don't
         # double-count auto-touch for the retrieval leg of an ask.
@@ -252,11 +254,17 @@ async def handle_memory_ask(input: MemoryAskInput) -> MemoryAskOutput:
         input, settings
     )
 
-    precedent_key, precedent_shape = _ask_precedent(input, llm, settings)
+    # A historical ask reads only what the journal held at its cutoff: no precedent,
+    # knowledge passage, record fallback, run notes or source-turn pass, all of
+    # which read today's rows.
+    historical = input.temporal_requested()
+    precedent_key, precedent_shape = (
+        ("", "") if historical else _ask_precedent(input, llm, settings)
+    )
 
     # The run's own notes precede the memories in the prompt.
     scratchpad = ""
-    if rid:
+    if rid and not historical:
         from server.memory.app.working_memory import render_run_blocks
 
         scratchpad = await render_run_blocks(input.org, input.namespace, rid)
@@ -272,21 +280,21 @@ async def handle_memory_ask(input: MemoryAskInput) -> MemoryAskOutput:
         llm_mid=llm_mid,
         mid_routes=(input.mid_routes or None),
         budget_ratio=budget_ratio,
-        depth=input.depth or "auto",
+        depth="excerpt" if historical else (input.depth or "auto"),
         **_deep_overrides(input),
         recount=input.recount,
         token_budget=input.token_budget,
         personalize=input.personalize,
         window_rel_floor=input.window_rel_floor,
         decompose=(input.decompose or None),
-        gh_items_fallback=input.gh_items_fallback,
+        gh_items_fallback=False if historical else input.gh_items_fallback,
         precedent_key=precedent_key,
         precedent_shape=precedent_shape,
         world_knowledge=(input.world_knowledge or None),
         recent_messages=[m.model_dump() for m in (input.recent_messages or [])],
         presupposition_rule=input.presupposition_rule,
         set_window=input.set_window,
-        knowledge=input.knowledge,
+        knowledge=False if historical else input.knowledge,
         scratchpad=scratchpad,
         consistency_mode=(input.consistency or None),
         route_prior=(input.route_prior or None),
@@ -301,6 +309,7 @@ async def handle_memory_ask(input: MemoryAskInput) -> MemoryAskOutput:
     _grounding = _grounding_for(res, retrieval_query, input)
     return MemoryAskOutput(
         answer=res.answer,
+        temporal=res.temporal,
         source=res.source,  # type: ignore[arg-type]
         abstain=res.abstain,
         abstain_reason=res.abstain_reason,
@@ -383,8 +392,8 @@ async def _maybe_route_to_synthesize(input: MemoryAskInput) -> MemoryAskOutput |
     from server.settings import settings
 
     # The route is a synthesis over today's documents: `allow_synthesis=False` asked
-    # for no model answer, and an `as_of` replay must not see a later document.
-    if not input.allow_synthesis or input.as_of is not None:
+    # for no model answer, and a bi-temporal ask must not see a later document.
+    if not input.allow_synthesis or input.temporal_requested():
         return None
     from server.memory.domain import ask_routing
 
@@ -577,7 +586,7 @@ def _precedents_namespace_allowed(namespace: str, globs: str) -> bool:
 
 
 # Fields that identify WHO asks or WHAT text, not the shape of the ask. The
-# shape is every other non-default field: search mode, top_k, scope, as_of,
+# shape is every other non-default field: search mode, top_k, scope, the temporal pair,
 # depth, budgets, gates... Two asks with the same text and the same shape
 # read the same window, which is what a precedent needs.
 _ASK_SHAPE_EXCLUDE = frozenset({"query", "org", "namespace", "run_id", "precedents"})

@@ -17,21 +17,14 @@ from server.memory.api.models_crud import MemoryGetInput, MemoryGetOutput, Memor
 from server.memory.api.models_graph import MemoryDedupCollapseInput
 from server.memory.api.models_search import MemorySearchInput, _MemorySearchHit
 from server.memory.app import served_duplicates as sd
-from server.memory.domain.temporal_sql import served_status_sql, status_predicate
+from server.memory.domain.temporal_sql import served_status_sql
 from server.memory.store.dedup import CanonicalRow, DuplicatePair, DuplicateStatus
 
 # ---------------------------------------------------------------- predicate
 
 
 def test_status_predicate_hides_duplicates_by_default_and_restores_them_on_request() -> None:
-    assert status_predicate(alias="e") == "e.status IN ('active', 'conflicted')"
-    assert (
-        status_predicate(alias="e", include_duplicates=True)
-        == "e.status IN ('active', 'duplicate', 'conflicted')"
-    )
-    # knowledge_time replay keeps its superseded clause around the served set.
-    kt = status_predicate("knowledge_time", alias="e", replaying=True)
-    assert kt.startswith("(e.status IN ('active', 'conflicted') OR (e.status = 'superseded'")
+    assert served_status_sql(alias="e") == "e.status IN ('active', 'conflicted')"
     assert served_status_sql() == "status IN ('active', 'conflicted')"
     assert served_status_sql(alias="e", include_duplicates=True) == (
         "e.status IN ('active', 'duplicate', 'conflicted')"
@@ -218,7 +211,7 @@ async def test_a_key_with_an_active_row_elsewhere_is_served(truth: SimpleNamespa
 
 
 @pytest.mark.asyncio
-async def test_include_duplicates_and_as_of_and_failures(
+async def test_include_duplicates_and_failures(
     truth: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     truth.status = {"dup_a": _dup("c-1")}
@@ -227,12 +220,6 @@ async def test_include_duplicates_and_as_of_and_failures(
     ctx = _ctx([_hit("dup_a", rank=0.9)], include_duplicates=True)
     await sd.hide_pool_duplicates(ctx)
     assert [h.memory_key for h in ctx.all_hits] == ["dup_a"] and truth.status_calls == 0
-    # as_of: hidden, not substituted (the canonical's window was not checked at the anchor).
-    ctx = _ctx(
-        [_hit("dup_a", rank=0.9), _hit("b", rank=0.5)], as_of=datetime(2026, 9, 1, tzinfo=UTC)
-    )
-    await sd.hide_pool_duplicates(ctx)
-    assert [h.memory_key for h in ctx.all_hits] == ["b"] and truth.canon_calls == 0
     # a failed truth read leaves the pool as ranked.
     from server.memory import store as memory_repo
 

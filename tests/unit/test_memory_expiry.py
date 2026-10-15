@@ -427,3 +427,24 @@ async def test_rows_whose_lock_refuses_their_expiry_are_left_out_before_the_limi
     for action in ACTIONS:
         assert _LOCK_CLASS[action] in memory_lock.REFUSES["read_only"]
         assert (_LOCK_CLASS[action] in memory_lock.REFUSES["no_delete"]) == (action == "tombstone")
+
+
+@pytest.mark.asyncio
+async def test_a_row_left_out_in_one_namespace_is_not_mirrored_from_another(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = [
+        _row(namespace="ns1"),
+        _row(namespace="ns2", memory_id="33333333-3333-3333-3333-333333333333"),
+    ]
+    _ch, tomb_keys = _stub(monkeypatch, rows)
+
+    async def _insert(version_rows, *, ch=None, alongside=()) -> int:
+        kept = [r for r in version_rows if r["namespace"] == "ns1"]  # the journal kept one
+        for f in alongside:
+            await f(kept)
+        return len(kept)
+
+    monkeypatch.setattr(X, "insert_memory_versions", _insert)
+    await X.run_pass(X.ExpiryConfig())
+    assert [k for k, _v in retired] == ["churn_note"]  # ns1's only

@@ -3,6 +3,7 @@
 from uuid import UUID
 
 from server.core.repo_base import _CHClient, _default_client
+from server.insights.domain.provider_rebuild import INVALIDATE_TABLES
 from server.insights.store.provider_staging import (
     SourceSchema,
     StagingNames,
@@ -20,7 +21,7 @@ async def _owned_cache(
     fingerprint: str,
     client: _CHClient,
 ) -> None:
-    if names.table != "embedding_cache":
+    if names.table not in INVALIDATE_TABLES:
         raise ValueError("Cache invalidation cannot target a content table")
     source = await _owned_snapshot(names, schema.table_uuid, client)
     if UUID(str(source["uuid"])) != snapshot_uuid or source["comment"] != completion_marker(

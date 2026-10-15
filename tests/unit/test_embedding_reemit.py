@@ -465,8 +465,10 @@ def _patch_memory_io(mp: pytest.MonkeyPatch, ch: Any, row: Any) -> None:
     async def get_by_id(*_a, **_k):
         return row
 
-    async def no_insert(*_a, **_k):
-        return None
+    async def no_insert(rows, *_a, alongside=(), **_k):
+        for f in alongside:  # the funnel hands the rows it kept on
+            await f(rows)
+        return len(rows)
 
     mp.setattr("server.memory.store.lifecycle.get_by_id", get_by_id)
     mp.setattr("server.memory.store.lifecycle.insert_memory_versions", no_insert)

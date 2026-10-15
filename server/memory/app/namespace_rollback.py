@@ -53,13 +53,9 @@ async def apply_rollback(
     carry the value into search. Its key's live vectors are retired instead."""
     from server.embedding import get_embedder
     from server.memory.app.high_fence import fence_high
-    from server.memory.domain.excerpt import build_excerpt
     from server.memory.domain.memory_types import is_embedded
-    from server.memory.domain.trust import attests
 
     embedder = get_embedder()
-    # Empty: the insert gives it the width its coded column takes.
-    stub_vector: list[float] = []
 
     memory_rows: list[dict[str, Any]] = []
     embedding_rows: list[dict[str, Any]] = []
@@ -72,53 +68,6 @@ async def apply_rollback(
         retire.append((store.embedding_key(row), version))
         if row.sensitivity == "high":
             fence.append((store.embedding_key(row), version))
-
-    def _stub(
-        row: store.MemoryRow, *, version: int, tombstoned_at: datetime | None
-    ) -> dict[str, Any]:
-        serialized = row.value if isinstance(row.value, str) else json.dumps(row.value, default=str)
-        return store.build_embedding_row(
-            org=row.org,
-            namespace=row.namespace,
-            agent=row.agent,
-            user_id=row.user_id,
-            session_id=row.session_id,
-            run_id=row.run_id or "-",
-            memory_key=row.memory_key,
-            memory_type=row.memory_type,
-            scope="private",
-            content_excerpt=build_excerpt(serialized, memory_key=row.memory_key),
-            embedding_model=embedder.model_name,
-            embedding_dim=0,
-            embedding=stub_vector,
-            tombstoned_at=tombstoned_at,
-            created_at=applied_at,
-            # The new memory row's version, so a concurrent high write's fence outranks it.
-            version=version,
-            tags=list(row.tags or []),
-            entities=list(row.entities or []),
-            status=str(row.status or "active"),
-            confidence=float(row.confidence),
-            temporal_anchor=row.temporal_anchor,
-            temporal_confidence=float(row.temporal_confidence or 0.0),
-            valid_at=row.valid_at,
-            valid_to=row.valid_to,
-            invalid_at=row.invalid_at,
-            reinforcement_count=int(getattr(row, "reinforcement_count", 1) or 1),
-            source_resource_id=getattr(row, "source_resource_id", "") or "",
-            source_class=getattr(row, "source_class", "") or "",
-            expires_at=row.expires_at,
-            files=list(getattr(row, "files", None) or []),
-            concepts=list(getattr(row, "concepts", None) or []),
-            # The reinstated version's attestation, if it still binds its content.
-            verified=int(
-                attests(
-                    getattr(row, "verified_by", ""),
-                    getattr(row, "verified_sha256", ""),
-                    getattr(row, "content_sha256", ""),
-                )
-            ),
-        )
 
     # --- reinstate: the historical row becomes the head again ---------------
     pairs = [(a.memory_key, a.version_to) for a in plan.reinstate]
@@ -137,7 +86,15 @@ async def apply_rollback(
                 store.build_memory_version_row(h, version=new_version, updated_at=applied_at)
             )
             if is_embedded(h.memory_type, h.sensitivity):
-                embedding_rows.append(_stub(h, version=new_version, tombstoned_at=h.tombstoned_at))
+                embedding_rows.append(
+                    stub_embedding_row(
+                        h,
+                        embedder,
+                        version=new_version,
+                        tombstoned_at=h.tombstoned_at,
+                        created_at=applied_at,
+                    )
+                )
             else:
                 _retire(h, new_version)
 
@@ -167,7 +124,15 @@ async def apply_rollback(
             )
         )
         if is_embedded(head.memory_type, head.sensitivity):
-            embedding_rows.append(_stub(head, version=new_version, tombstoned_at=applied_at))
+            embedding_rows.append(
+                stub_embedding_row(
+                    head,
+                    embedder,
+                    version=new_version,
+                    tombstoned_at=applied_at,
+                    created_at=applied_at,
+                )
+            )
         else:
             _retire(head, new_version)
 
@@ -186,4 +151,62 @@ async def apply_rollback(
         namespace,
         len(plan.reinstate),
         len(plan.remove),
+    )
+
+
+def stub_embedding_row(
+    row: store.MemoryRow,
+    embedder: Any,
+    *,
+    version: int,
+    tombstoned_at: datetime | None,
+    created_at: datetime,
+) -> dict[str, Any]:
+    """A dimensionless embedding row for a re-emitted version row: the embedding
+    worker fills its vector. `version` is the new memory row's, so a concurrent
+    'high' write's fence outranks it."""
+    from server.memory.domain.excerpt import build_excerpt
+    from server.memory.domain.trust import attests
+
+    serialized = row.value if isinstance(row.value, str) else json.dumps(row.value, default=str)
+    return store.build_embedding_row(
+        org=row.org,
+        namespace=row.namespace,
+        agent=row.agent,
+        user_id=row.user_id,
+        session_id=row.session_id,
+        run_id=row.run_id or "-",
+        memory_key=row.memory_key,
+        memory_type=row.memory_type,
+        scope="private",
+        content_excerpt=build_excerpt(serialized, memory_key=row.memory_key),
+        embedding_model=embedder.model_name,
+        embedding_dim=0,
+        embedding=[0.0] * int(embedder.dim),
+        tombstoned_at=tombstoned_at,
+        created_at=created_at,
+        version=version,
+        tags=list(row.tags or []),
+        entities=list(row.entities or []),
+        status=str(row.status or "active"),
+        confidence=float(row.confidence),
+        temporal_anchor=row.temporal_anchor,
+        temporal_confidence=float(row.temporal_confidence or 0.0),
+        valid_at=row.valid_at,
+        valid_to=row.valid_to,
+        invalid_at=row.invalid_at,
+        reinforcement_count=int(getattr(row, "reinforcement_count", 1) or 1),
+        source_resource_id=getattr(row, "source_resource_id", "") or "",
+        source_class=getattr(row, "source_class", "") or "",
+        expires_at=row.expires_at,
+        files=list(getattr(row, "files", None) or []),
+        concepts=list(getattr(row, "concepts", None) or []),
+        # The version's attestation, if it still binds its content.
+        verified=int(
+            attests(
+                getattr(row, "verified_by", ""),
+                getattr(row, "verified_sha256", ""),
+                getattr(row, "content_sha256", ""),
+            )
+        ),
     )

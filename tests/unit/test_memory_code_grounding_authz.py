@@ -35,7 +35,9 @@ def _settings() -> Settings:
 
 
 def _input() -> SimpleNamespace:
-    return SimpleNamespace(org=ORG, namespace="mem", code_namespace="", code_org="", as_of=None)
+    return SimpleNamespace(
+        org=ORG, namespace="mem", code_namespace="", code_org="", temporal_requested=lambda: False
+    )
 
 
 @pytest.fixture
@@ -173,7 +175,7 @@ async def test_each_leg_authorizes_when_called_alone(legs, monkeypatch) -> None:
         await g._gate_future_prs(
             pool,
             SimpleNamespace(
-                **{**vars(_input()), "as_of": __import__("datetime").datetime(2026, 1, 1)}
+                **{**vars(_input()), "valid_as_of": __import__("datetime").datetime(2026, 1, 1)}
             ),
             _settings(),
         )

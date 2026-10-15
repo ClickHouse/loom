@@ -85,14 +85,7 @@ async def handle_facts_list(input: FactsListInput) -> FactsListOutput:
     if input.min_co_occur > 1:
         having = "HAVING co_occur >= {min_co:UInt32}"
         params["min_co"] = int(input.min_co_occur)
-    if input.as_of is not None:
-        where.append(
-            "(valid_from IS NULL OR valid_from <= {as_of:DateTime}) "
-            "AND (valid_to IS NULL OR valid_to >= {as_of:DateTime})"
-        )
-        params["as_of"] = input.as_of
-    else:
-        where.append("(valid_to IS NULL OR valid_to >= now())")
+    where.append(_graph_validity(input, params))
     if input.provenance:
         # An empty provenance reads as inferred.
         tiers: set[str] = set(input.provenance)
@@ -264,16 +257,7 @@ async def handle_facts_related(input: FactsRelatedInput) -> FactsRelatedOutput:
         "ent": entity,
         "lim": input.top_k * 2,  # widen so we can collapse role=both
     }
-    if input.as_of is not None:
-        validity_predicate = """
-              AND (valid_from IS NULL OR valid_from <= {as_of:DateTime})
-              AND (valid_to IS NULL OR valid_to >= {as_of:DateTime})
-        """
-        params["as_of"] = input.as_of
-    else:
-        validity_predicate = """
-              AND (valid_to IS NULL OR valid_to >= now())
-        """
+    validity_predicate = "AND " + _graph_validity(input, params)
     rows = await ch.query_all(
         f"""
         SELECT neighbor, role, sum(co_occur) AS co_occur
@@ -403,7 +387,8 @@ def _traverse_key(input: FactsTraverseInput) -> tuple[Any, ...]:
         int(input.top_k_per_hop),
         int(input.min_co_occur),
         int(input.max_nodes),
-        input.as_of.isoformat() if input.as_of is not None else "",
+        input.valid_as_of.isoformat() if input.valid_as_of is not None else "",
+        input.known_as_of.isoformat() if input.known_as_of is not None else "",
         tuple(sorted(_query_relation(r) for r in (input.relations or []) if r.strip())),
         bool(input.labeled),
         # The EFFECTIVE hub thresholds: a request that leaves them unset must not read a walk
@@ -448,7 +433,7 @@ async def _handle_facts_traverse_uncached(input: FactsTraverseInput) -> FactsTra
     pair's observation total, `via_co_occur` reports that total. The
     validity filter applies to the raw rows BEFORE the sum — valid_from /
     valid_to vary per row, so an engine-level merge could not honor the
-    `as_of` window.
+    `valid_as_of` window.
 
     The visited set is global to the walk (an entity is reported once, at
     the first hop that reaches it, via its strongest parent), so `path` is
@@ -471,16 +456,7 @@ async def _handle_facts_traverse_uncached(input: FactsTraverseInput) -> FactsTra
         "top_k_per_hop": int(input.top_k_per_hop),
         "min_co": int(input.min_co_occur),
     }
-    if input.as_of is not None:
-        validity_predicate = """
-                  AND (valid_from IS NULL OR valid_from <= {as_of:DateTime})
-                  AND (valid_to IS NULL OR valid_to >= {as_of:DateTime})
-        """
-        params["as_of"] = input.as_of
-    else:
-        validity_predicate = """
-                  AND (valid_to IS NULL OR valid_to >= now())
-        """
+    validity_predicate = "AND " + _graph_validity(input, params)
     # Typed walk: the edge set comes from entity_triples, carrying the
     # relation and its direction, with an optional label filter. Same
     # aggregation, same trim — only the edge source changes.
@@ -734,7 +710,7 @@ async def handle_facts_path(input: FactsPathInput) -> FactsPathOutput:
     each side explores at most ceil(max_hops / 2) hops: the explored set is
     ~2·b^(d/2) instead of b^d.
 
-    Validity mirrors facts.traverse exactly: `as_of` = interval containment;
+    Validity mirrors facts.traverse exactly: `valid_as_of` = interval containment;
     default = edges whose valid_to is open or in the future. Both entities are
     canonicalised the way the write path stores them (canonical_entity_text),
     so "Alice's" finds "alice".
@@ -762,16 +738,7 @@ async def handle_facts_path(input: FactsPathInput) -> FactsPathOutput:
         "top_k_per_hop": int(input.top_k_per_hop),
         "min_co": int(input.min_co_occur),
     }
-    if input.as_of is not None:
-        validity_predicate = """
-                  AND (valid_from IS NULL OR valid_from <= {as_of:DateTime})
-                  AND (valid_to IS NULL OR valid_to >= {as_of:DateTime})
-        """
-        params["as_of"] = input.as_of
-    else:
-        validity_predicate = """
-                  AND (valid_to IS NULL OR valid_to >= now())
-        """
+    validity_predicate = "AND " + _graph_validity(input, params)
     typed = bool(input.labeled or input.relations)
     relation_predicate = ""
     if input.relations:
@@ -915,3 +882,19 @@ async def handle_facts_expire_by_adapter(
         expired_triples=t_count,
         expired_triple_memories=tm_count,
     )
+
+
+def _graph_validity(input: Any, params: dict[str, Any]) -> str:
+    """The graph interval test for this read's `valid_as_of` and
+    `known_as_of` (knowledge time), with their params bound."""
+    from server.memory.domain.temporal_reads import resolve_axes
+    from server.memory.domain.temporal_sql import graph_validity_predicate
+
+    known = getattr(input, "known_as_of", None)
+    axes = resolve_axes(input.valid_as_of, known)  # a future K is a 422
+    # Both times in UTC, an offset converted, never dropped.
+    if axes.known is not None:
+        params["known_as_of"] = axes.known.replace(tzinfo=None)
+    if input.valid_as_of is not None:
+        params["valid_as_of"] = axes.valid
+    return graph_validity_predicate(valid=input.valid_as_of is not None, known=known is not None)

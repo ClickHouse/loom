@@ -129,7 +129,7 @@ async def test_path_found_meeting_in_the_middle(monkeypatch: pytest.MonkeyPatch)
     # default validity and aggregation.
     (sql0, p0), (sql1, p1) = ch.calls
     assert p0["frontier"] == ["alice"] and p1["frontier"] == ["retry storm"]
-    assert "(valid_to IS NULL OR valid_to >= now())" in sql0 and "as_of" not in p0
+    assert "(valid_to IS NULL OR valid_to >= now())" in sql0 and "valid_as_of" not in p0
     assert "toUInt32(sum(co_occur)) AS pair_co_occur" in sql0
     assert "HAVING pair_co_occur >= {min_co:UInt32}" in sql0
     assert "loom.entity_edges" in sql0 and "loom.entity_triples" not in sql0
@@ -193,15 +193,15 @@ async def test_as_of_and_typed_relations_mirror_traverse(monkeypatch: pytest.Mon
         ]
     )
     monkeypatch.setattr(facts_handlers, "get_client", lambda: ch)
-    as_of = datetime(2024, 6, 1, tzinfo=UTC)
+    valid_as_of = datetime(2024, 6, 1, tzinfo=UTC)
     out = await facts_handlers.handle_facts_path(
-        _input(as_of=as_of, relations=["works at", "Causes"])
+        _input(valid_as_of=valid_as_of, relations=["works at", "Causes"])
     )
     sql, params = ch.calls[0]
     assert "loom.entity_triples" in sql and "loom.entity_edges" not in sql
-    assert "valid_from IS NULL OR valid_from <= {as_of:DateTime}" in sql
-    assert "valid_to IS NULL OR valid_to >= {as_of:DateTime}" in sql
-    assert params["as_of"] == as_of
+    assert "valid_from IS NULL OR valid_from <= {valid_as_of:DateTime}" in sql
+    assert "valid_to IS NULL OR valid_to >= {valid_as_of:DateTime}" in sql
+    assert params["valid_as_of"] == valid_as_of
     assert params["rels"] == ["work_at", "caus"]  # normalised like the write path
     assert out.found
     assert [(e.relation, e.direction) for e in out.edges] == [("work_at", "out"), ("caus", "in")]

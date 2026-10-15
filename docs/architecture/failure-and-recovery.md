@@ -46,6 +46,7 @@ data catches up:
 | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | BM25 statistics               | Refreshable views every minute; search reads a live tail, so ranking stays exact (`LOOM_MEMORY_SEARCH_BM25_LIVE_TAIL`).                                                                     |
 | Usage counters, reinforcement | One `usage_fold` pass (every 300 s).                                                                                                                                                        |
+| Temporal assertion projection | Inline after the journal commit; on a failure readers reduce the journal tail and the `memory_temporal_projection` worker replays it ([bi-temporal memory](bitemporal-memory.md)).          |
 | Entity-graph projection       | Shortly after the response. A `facts.traverse` of the same namespace waits for it, across every process that shares the write marks (`LOOM_GRAPH_WRITE_MARKS_DIR`), else within the writer. |
 
 **Why not transactions:** ClickHouse has none across tables, and emulating them adds a

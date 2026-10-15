@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime
 from typing import Any
 
 from server.memory.app.search_llm import expand_verb_synonyms
@@ -243,12 +242,10 @@ async def fetch_triple_matched_memories(
     query_triples: list[tuple[str, str, str]],
     max_keys: int = 50,
     expand_synonyms: bool = False,
-    as_of: datetime | None = None,
     on_llm_call: Any = None,
 ) -> list[str]:
     """For each query triple, look up memory_keys in
-    loom.entity_triple_memories whose stored triple is currently valid
-    (or valid at `as_of`).
+    loom.entity_triple_memories whose stored triple is currently valid.
 
     '?' wildcards on subject or object are translated to "any value"
     via omitted WHERE clauses.
@@ -276,14 +273,7 @@ async def fetch_triple_matched_memories(
         verb_sets = [[v] for (_, v, _) in query_triples[:6]]
 
     params: dict[str, Any] = {"org": org, "ns": namespace}
-    if as_of is not None:
-        validity_predicate = (
-            "AND (t.valid_from IS NULL OR t.valid_from <= {as_of:DateTime}) "
-            "AND (t.valid_to IS NULL OR t.valid_to >= {as_of:DateTime})"
-        )
-        params["as_of"] = as_of
-    else:
-        validity_predicate = "AND (t.valid_to IS NULL OR t.valid_to >= now())"
+    validity_predicate = "AND (t.valid_to IS NULL OR t.valid_to >= now())"
     selects: list[str] = []
     for i, ((s, _v, o), vset) in enumerate(
         zip(query_triples[:6], verb_sets, strict=True),

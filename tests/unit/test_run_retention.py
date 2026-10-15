@@ -1,4 +1,4 @@
-"""A run's rows stop competing at full standing when the run completes
+"""A run's rows stop ranking at full standing when the run completes
 (they are demoted, not reset)."""
 
 from __future__ import annotations

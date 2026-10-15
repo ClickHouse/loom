@@ -105,6 +105,10 @@ class _BulkWriteState:
     memory_rows: list[dict[str, Any]] = field(default_factory=list)
     embedding_rows: list[dict[str, Any]] = field(default_factory=list)
     results: list[_BulkSetResult] = field(default_factory=list)
+    # Keys whose rows the journal left out of the insert (nothing after it runs for them).
+    left_out: set[str] = field(default_factory=set)
+    # Of those, late evidence the journal took (it is audited like a written row).
+    past_only_rows: list[dict[str, Any]] = field(default_factory=list)
     # (row_idx, embed_text, excerpt, key_text) per searchable kept entry.
     pending: list[tuple[int, str, str, str]] = field(default_factory=list)
     # (entry, serialized_value, tags, entities, expires_at) per kept entry.

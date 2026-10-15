@@ -288,6 +288,31 @@ def _no_copy_head_check(request: pytest.FixtureRequest) -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _no_temporal_journal(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Every loom.memory insert journals first (server/memory/app/temporal_publisher.py);
+    unit fakes answer statements by count and shape, so the journal is off unless a
+    test is marked `temporal_journal`."""
+    if request.node.get_closest_marker("temporal_journal"):
+        yield
+        return
+    from server.memory.store import inserts
+    from server.memory.store import temporal as temporal_store
+
+    async def _skip(*_a: object, **_k: object) -> None:
+        return None
+
+    hooks, after = list(inserts._BEFORE_INSERT), list(inserts._AFTER_INSERT)
+    redact = temporal_store.redact_value
+    inserts._BEFORE_INSERT.clear()
+    inserts._AFTER_INSERT.clear()
+    temporal_store.redact_value = _skip  # type: ignore[assignment]
+    yield
+    inserts._BEFORE_INSERT[:] = hooks
+    inserts._AFTER_INSERT[:] = after
+    temporal_store.redact_value = redact  # type: ignore[assignment]
+
+
+@pytest.fixture(autouse=True)
 def _no_run_claims() -> Iterator[None]:
     """run.begin sees no Keeper unless a test says otherwise: the claims-table
     check is cached per process, so without this the first test to ask decides

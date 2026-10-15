@@ -30,7 +30,9 @@ def _settings(**over: Any) -> Settings:
 
 
 def _input() -> SimpleNamespace:
-    return SimpleNamespace(org="o", namespace="ns", code_namespace="", code_org="", as_of=None)
+    return SimpleNamespace(
+        org="o", namespace="ns", code_namespace="", code_org="", temporal_requested=lambda: False
+    )
 
 
 def _unit(path: str, line: int, symbol: str) -> SimpleNamespace:

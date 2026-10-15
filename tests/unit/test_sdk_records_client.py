@@ -98,7 +98,7 @@ async def test_query_history_conflicts_wire_fields() -> None:
         "customer",
         filters={"account_id": "acc-7"},
         predicates=[{"field": "seats", "op": "gte", "number": 10}],
-        as_of="2026-09-01T00:00:00Z",
+        valid_as_of="2026-09-01T00:00:00Z",
         limit=5,
     )
     op, body = ag.transport.calls[0]
@@ -110,7 +110,7 @@ async def test_query_history_conflicts_wire_fields() -> None:
         "limit": 5,
         "filters": {"account_id": "acc-7"},
         "predicates": [{"field": "seats", "op": "gte", "number": 10}],
-        "as_of": "2026-09-01T00:00:00Z",
+        "valid_as_of": "2026-09-01T00:00:00Z",
     }
     await c.query("customer")
     assert ag.transport.calls[1][1] == {

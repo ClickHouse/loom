@@ -8,14 +8,13 @@ from typing import Any
 from server.memory.app.search_tag_filter import request_hard_tags as _request_hard_tags
 from server.memory.app.served_superseded import served_flags as _served
 from server.memory.domain.search_sql import agent_filter, agent_or_shared_predicate, tag_predicate
-from server.memory.domain.temporal_sql import as_of_predicate, served_status_sql
+from server.memory.domain.temporal_sql import served_status_sql
 
 
 def _read_scope_where(input: Any, params: dict[str, Any], alias: str = "e") -> list[str]:
-    """The read-scope and replay predicates the fact leg applies (`memory/domain/search_sql`):
-    the caller's user, session or session set, and the as-of cut. Without them an additive
-    arm would serve rows of another user or session to a `read_scope=user|session` read, or
-    rows written after an as-of replay's instant."""
+    """The read-scope predicates the fact leg applies (`memory/domain/search_sql`): the
+    caller's user, session or session set. Without them an additive arm would serve rows of
+    another user or session to a `read_scope=user|session` read."""
     col = f"{alias}." if alias else ""
     parts: list[str] = []
     user_id = getattr(input, "user_id", None)
@@ -30,31 +29,18 @@ def _read_scope_where(input: Any, params: dict[str, Any], alias: str = "e") -> l
     if session_ids:
         parts.append(f"{col}session_id IN {{rs_session_ids:Array(String)}}")
         params["rs_session_ids"] = session_ids
-    as_of = getattr(input, "as_of", None)
-    if as_of is not None:
-        parts.append(
-            as_of_predicate(
-                getattr(input, "as_of_basis", "valid_time"),
-                alias=alias,
-                param="rs_as_of",
-                invalid_col="invalid_at",
-                tomb_col="tombstoned_at",
-            )
-        )
-        params["rs_as_of"] = as_of
     return parts
 
 
 def _live_window_where(input: Any, alias: str = "e") -> list[str]:
     """The fact leg's liveness window (`memory/domain/search_sql._build_where`): an expired row
-    is never served, and a row whose stated validity has ended (`valid_to`) is not current;
-    under an as-of replay the as-of predicate owns the validity window instead. Without them
-    an additive arm would serve a fact the dense leg already stopped serving."""
+    is never served, and a row whose stated validity has ended (`valid_to`) is not current.
+    Without them an additive arm would serve a fact the dense leg already stopped serving."""
     col = f"{alias}." if alias else ""
-    parts = [f"({col}expires_at IS NULL OR {col}expires_at > now())"]
-    if getattr(input, "as_of", None) is None:
-        parts.append(f"({col}valid_to IS NULL OR {col}valid_to > now())")
-    return parts
+    return [
+        f"({col}expires_at IS NULL OR {col}expires_at > now())",
+        f"({col}valid_to IS NULL OR {col}valid_to > now())",
+    ]
 
 
 def _anchor_pool_where(input: Any, params: dict[str, Any]) -> list[str]:

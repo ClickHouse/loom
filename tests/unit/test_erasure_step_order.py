@@ -140,9 +140,17 @@ _CODE_LINKS = (
 )
 
 USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
+    (
+        "memory_temporal.delete",
+        (
+            (D, "loom.memory_temporal_commits"),
+            (D, "loom.memory_temporal_assertions"),
+        ),
+    ),
     ("memory.tombstone", ((U, "loom.memory"),)),
     ("memory_embeddings.tombstone", ((U, "loom.memory_embeddings"),)),
     ("memory_versions.delete", ((D, "loom.memory_versions"),)),
+    ("history_mirrors.delete", ((D, "loom.shared_versions"),)),
     ("code_links.delete", _CODE_LINKS),
     ("working_memory.tombstone", ((U, "loom.working_memory"),)),
     ("shared.tombstone", ((U, "loom.shared"),)),
@@ -196,9 +204,20 @@ USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
 ]
 
 NS_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
+    (
+        "memory_temporal.delete",
+        (
+            (D, "loom.memory_temporal_commits"),
+            (D, "loom.memory_temporal_assertions"),
+            (D, "loom.memory_temporal_vectors"),
+            (D, "loom.memory_temporal_watermarks"),
+            ("OTHER", "INSERT"),
+        ),
+    ),
     ("memory.tombstone", ((U, "loom.memory"),)),
     ("memory_embeddings.tombstone", ((U, "loom.memory_embeddings"),)),
     ("memory_versions.delete", ((D, "loom.memory_versions"),)),
+    ("history_mirrors.delete", ((D, "loom.shared_versions"),)),
     ("code_links.delete", _CODE_LINKS),
     ("working_memory.tombstone", ((U, "loom.working_memory"),)),
     ("entity_canonical_map.tombstone", ((U, "loom.entity_canonical_map"),)),
@@ -274,9 +293,20 @@ NS_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
 ]
 
 NS_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
+    (
+        "memory_temporal.delete",
+        (
+            (D, "loom.memory_temporal_commits"),
+            (D, "loom.memory_temporal_assertions"),
+            (D, "loom.memory_temporal_vectors"),
+            (D, "loom.memory_temporal_watermarks"),
+            ("OTHER", "INSERT"),
+        ),
+    ),
     ("memory.tombstone", ((D, "loom.memory"),)),
     ("memory_embeddings.tombstone", ((L, "loom.memory_embeddings"),)),
     ("memory_versions.delete", ((D, "loom.memory_versions"),)),
+    ("history_mirrors.delete", ((D, "loom.shared_versions"),)),
     ("code_links.delete", _CODE_LINKS),
     ("working_memory.tombstone", ((D, "loom.working_memory"),)),
     ("entity_canonical_map.tombstone", ((D, "loom.entity_canonical_map"),)),

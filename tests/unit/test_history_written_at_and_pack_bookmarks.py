@@ -50,16 +50,17 @@ def test_every_intended_edit_stamps_updated_at() -> None:
     import server.memory.app.write as write
 
     stamp = "updated_at=memory_repo.written_now()"
-    assert inspect.getsource(lock).count(stamp) >= 2  # lock + unlock rows
+    assert inspect.getsource(lock).count('"updated_at": memory_repo.written_now()') >= 2
     msrc = (
         inspect.getsource(mem)
         + inspect.getsource(write)
         + inspect.getsource(update)
         + inspect.getsource(restore)
     )
-    for marker in ("tombstoned_at=now,", 'status="active",', "run_id=revision_run_id,"):
+    stamps = (stamp, '"updated_at": memory_repo.written_now()')
+    for marker in ('"tombstoned_at": now,', 'status="active",', "run_id=revision_run_id,"):
         i = msrc.index(marker)
-        assert stamp in msrc[max(0, i - 200) : i], marker
+        assert any(st in msrc[max(0, i - 200) : i] for st in stamps), marker
     assert inspect.getsource(app).count("updated_at=memory_repo.written_now()") == 2
 
 

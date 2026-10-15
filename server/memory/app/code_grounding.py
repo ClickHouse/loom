@@ -23,6 +23,7 @@ import re
 from typing import Any
 
 from server.code.domain.anchor import local_name
+from server.memory.domain.temporal_reads import reference_time
 from server.memory.store.code_links import LinkRow
 
 logger = logging.getLogger(__name__)
@@ -417,8 +418,8 @@ async def _inject_pr_facts(
     except Exception as e:  # noqa: BLE001 — additive, never fatal
         _warn_once("pr-fact grounding failed: %s", e)
         return []
-    as_of = getattr(search_input, "as_of", None)
-    as_of_date = as_of.date() if (as_of is not None and hasattr(as_of, "date")) else None
+    as_of = reference_time(search_input)
+    as_of_date = as_of.date() if as_of is not None else None
     hits: list[Any] = []
     # Numbers the merged-PR plane does not know — issues, open or abandoned
     # PRs — come from loom.code_gh_items: kind, opener and
@@ -498,7 +499,7 @@ async def _gate_future_prs(
     code_target: tuple[str, str] | None = None,
 ) -> list[Any]:
     """Drop grounding memories that reference a PR which did NOT EXIST as of the
-    query's `as_of` anchor — the dominant residual hard-false class.
+    query's time anchor (`valid_as_of` / `known_as_of`) — the dominant residual hard-false class.
 
     Retrieval already excludes memories DATED after
     the anchor. But a bulk-ingested memory can carry a valid_at <= anchor while
@@ -506,14 +507,11 @@ async def _gate_future_prs(
     the date filter can't see it and synthesis then cites a PR that did not yet
     exist. This gate resolves each referenced PR's GitHub open date from loom's
     own code_pr_history (opened_at) and drops any memory citing a PR with
-    opened_at > as_of. No-op without as_of or a bound code index; additive/fail-open. A PR
+    opened_at after the anchor. No-op without one or a bound code index; additive/fail-open. A PR
     whose open date is unknown is never gated (conservative).
     """
-    as_of = getattr(search_input, "as_of", None)
-    if as_of is None or not memories:
-        return memories
-    as_of_dt = as_of if hasattr(as_of, "date") else None
-    if as_of_dt is None:
+    as_of_dt = reference_time(search_input)
+    if as_of_dt is None or not memories:
         return memories
     numbers = _referenced_pr_numbers("", memories, cap=64)
     if not numbers:
@@ -656,7 +654,7 @@ async def apply_code_grounding(
     query: str, search_input: Any, synth_pool: list[Any], settings: Any
 ) -> list[Any]:
     """Reconcile the synthesis pool against the code plane, in a fixed order:
-      1. PR-temporal gate — drop memories citing a PR opened after `as_of`;
+      1. PR-temporal gate — drop memories citing a PR opened after the time anchor;
       2. code enrichment  — append authoritative file:line / symbol facts;
       3. PR-fact grounding — prepend authoritative PR author/merge records;
       4. staleness oracle  — prepend a note for memories whose linked code moved,
@@ -687,6 +685,12 @@ async def apply_code_grounding(
     target = await _authorized_code_target(search_input, settings)
     if not target[1]:
         return synth_pool
+    if search_input.temporal_requested():
+        # A historical ask keeps only the PR gate (it honours the reference time):
+        # enrichment, PR facts and the staleness note read today's code index.
+        if not settings.memory_ask_pr_temporal_gate:
+            return synth_pool
+        return await _gate_future_prs(synth_pool, search_input, settings, code_target=target)
 
     gated, code_hits = await asyncio.gather(
         _gate_future_prs(synth_pool, search_input, settings, code_target=target)

@@ -144,8 +144,10 @@ def test_affect_question_does_not_abstain_on_similarity_when_results_exist(monke
         top_k: int = 3
         query: str = "What is the most likely user sentiment around '2024-10-02 07:40' Wednesday"
         observation_date: Any = None
-        as_of: Any = None
         run_id: Any = None
+
+        def temporal_requested(self) -> bool:
+            return False
 
     async def _search(_inp):
         return _Retrieval()

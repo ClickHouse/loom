@@ -75,13 +75,17 @@ from server.memory.api.ops_search import (
     memory_search_trace_log,
 )
 from server.memory.api.ops_temporal import (
+    memory_amend,
     memory_backlinks,
     memory_digests,
     memory_history,
+    memory_intervals,
     memory_outcome,
     memory_outcome_run,
     memory_outline,
     memory_recall,
+    memory_temporal_diff,
+    memory_temporal_status,
     memory_timeline,
 )
 from server.operations.base import Operation
@@ -126,6 +130,10 @@ OPERATIONS: list[Operation] = [
     memory_outline,
     memory_backlinks,
     memory_history,
+    memory_intervals,
+    memory_temporal_diff,
+    memory_amend,
+    memory_temporal_status,
     memory_recall,
     memory_export_evidence,
     memory_import_evidence,

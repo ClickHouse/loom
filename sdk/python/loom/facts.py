@@ -102,7 +102,8 @@ class FactsClient:
         max_hops: int = 2,
         top_k_per_hop: int = 20,
         min_co_occur: int = 1,
-        as_of: datetime | None = None,
+        valid_as_of: datetime | None = None,
+        known_as_of: datetime | None = None,
         labeled: bool = False,
         relations: Sequence[str] | None = None,
         hub_degree: int | None = None,
@@ -113,7 +114,8 @@ class FactsClient:
 
         Frontier expansion, bidirectional neighbor union, cycle dedup,
         and cumulative weighting happen server-side in a single
-        round-trip. `as_of` walks only edges valid at that instant;
+        round-trip. `valid_as_of` walks only edges valid at that instant (`known_as_of`:
+        as Loom had recorded them at K);
         `labeled` / `relations` switch to the typed triple graph.
         `hub_degree` reports an entity whose total
         co-occurrence degree is at or above it but does not expand it;
@@ -139,8 +141,10 @@ class FactsClient:
             "min_co_occur": min_co_occur,
             "labeled": labeled,
         }
-        if as_of is not None:
-            payload["as_of"] = as_of.isoformat()
+        if valid_as_of is not None:
+            payload["valid_as_of"] = valid_as_of.isoformat()
+        if known_as_of is not None:
+            payload["known_as_of"] = known_as_of.isoformat()
         if relations:
             payload["relations"] = list(relations)
         if hub_degree is not None:
@@ -159,7 +163,8 @@ class FactsClient:
         max_hops: int = 3,
         top_k_per_hop: int = 20,
         min_co_occur: int = 1,
-        as_of: datetime | None = None,
+        valid_as_of: datetime | None = None,
+        known_as_of: datetime | None = None,
         labeled: bool = False,
         relations: Sequence[str] | None = None,
     ) -> dict[str, Any]:
@@ -183,8 +188,10 @@ class FactsClient:
             "min_co_occur": min_co_occur,
             "labeled": labeled,
         }
-        if as_of is not None:
-            payload["as_of"] = as_of.isoformat()
+        if valid_as_of is not None:
+            payload["valid_as_of"] = valid_as_of.isoformat()
+        if known_as_of is not None:
+            payload["known_as_of"] = known_as_of.isoformat()
         if relations:
             payload["relations"] = list(relations)
         return await self._agent.transport.post("/v1/facts.path", payload)

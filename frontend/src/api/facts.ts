@@ -46,7 +46,7 @@ export async function traverseFacts(
     max_hops?: number;
     top_k_per_hop?: number;
     labeled?: boolean;
-    as_of?: string;
+    valid_as_of?: string;
     max_nodes?: number;
     relations?: string[];
   } & RequestOpts = {},
@@ -63,7 +63,7 @@ export async function traverseFacts(
       labeled: opts.labeled ?? false,
       max_nodes: opts.max_nodes ?? 200,
       ...(opts.relations && opts.relations.length ? { relations: opts.relations } : {}),
-      ...(opts.as_of ? { as_of: opts.as_of } : {}),
+      ...(opts.valid_as_of ? { valid_as_of: opts.valid_as_of } : {}),
     },
     opts.signal,
   );
@@ -80,7 +80,7 @@ export interface RelatedEntity {
 export async function relatedFacts(
   id: { org: string; namespace: string },
   entity: string,
-  opts: { top_k?: number; as_of?: string } & RequestOpts = {},
+  opts: { top_k?: number; valid_as_of?: string } & RequestOpts = {},
 ): Promise<{ entity: string; related: RelatedEntity[] }> {
   return post(
     "/v1/facts.related",
@@ -89,7 +89,7 @@ export async function relatedFacts(
       namespace: id.namespace,
       entity,
       top_k: opts.top_k ?? 12,
-      ...(opts.as_of ? { as_of: opts.as_of } : {}),
+      ...(opts.valid_as_of ? { valid_as_of: opts.valid_as_of } : {}),
     },
     opts.signal,
   );
@@ -125,7 +125,7 @@ export async function pathFacts(
     max_hops?: number;
     top_k_per_hop?: number;
     labeled?: boolean;
-    as_of?: string;
+    valid_as_of?: string;
     relations?: string[];
   } & RequestOpts = {},
 ): Promise<PathResponse> {
@@ -141,7 +141,7 @@ export async function pathFacts(
       min_co_occur: 1,
       labeled: opts.labeled ?? false,
       ...(opts.relations && opts.relations.length ? { relations: opts.relations } : {}),
-      ...(opts.as_of ? { as_of: opts.as_of } : {}),
+      ...(opts.valid_as_of ? { valid_as_of: opts.valid_as_of } : {}),
     },
     opts.signal,
   );
@@ -174,7 +174,7 @@ export async function listFacts(
     subject?: string;
     object?: string;
     limit?: number;
-    as_of?: string;
+    valid_as_of?: string;
     provenance?: Array<"extracted" | "inferred" | "facet">;
   } & RequestOpts = {},
 ): Promise<{ rows: FactRow[]; truncated: boolean }> {
@@ -190,7 +190,7 @@ export async function listFacts(
       include_sources: true,
       include_source_status: true,
       ...(opts.provenance && opts.provenance.length ? { provenance: opts.provenance } : {}),
-      ...(opts.as_of ? { as_of: opts.as_of } : {}),
+      ...(opts.valid_as_of ? { valid_as_of: opts.valid_as_of } : {}),
     },
     opts.signal,
   );

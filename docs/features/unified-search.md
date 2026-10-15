@@ -128,14 +128,14 @@ out = await bot.call("search.query", {"query": "when can we deploy?", "top_k": 5
 
 ## `loom_search` or `memory.search`
 
-| You need                                        | Call                                                                          |
-| ----------------------------------------------- | ----------------------------------------------------------------------------- |
-| An agent answering a user's question            | `loom_search`                                                                 |
-| One namespace, one plane, explicit filters      | `memory.search` (`namespace_scope` defaults to `this`), `knowledge.search`, … |
-| Ranking knobs (`search_mode`, weights, `as_of`) | `memory.search`, or `memory.search_trace` for the breakdown                   |
-| An answer written from memory, with citations   | `memory.ask`                                                                  |
-| Code                                            | `code.search` and the other [code tools](./code-index/overview.md)            |
-| The all-plane search from HTTP or an SDK        | `search.query`                                                                |
+| You need                                      | Call                                                                          |
+| --------------------------------------------- | ----------------------------------------------------------------------------- |
+| An agent answering a user's question          | `loom_search`                                                                 |
+| One namespace, one plane, explicit filters    | `memory.search` (`namespace_scope` defaults to `this`), `knowledge.search`, … |
+| Ranking knobs (`search_mode`, weights)        | `memory.search`, or `memory.search_trace` for the breakdown                   |
+| An answer written from memory, with citations | `memory.ask`                                                                  |
+| Code                                          | `code.search` and the other [code tools](./code-index/overview.md)            |
+| The all-plane search from HTTP or an SDK      | `search.query`                                                                |
 
 `memory.search`, `knowledge.search` and `conversation.search` are hidden from MCP: neither listed nor callable through
 `loom_op`. Call them over HTTP or the SDKs. MCP serves `search.query` only as `loom_search`.

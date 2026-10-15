@@ -153,3 +153,55 @@ async def test_record_history_keeps_both_versions_after_a_merge(ch_client) -> No
         MemoryRecordHistoryInput(org=org, namespace=ns, record_id=first.record_id)
     )
     assert len(hist.rows) >= 2, hist.rows
+
+
+async def test_a_query_at_k_matches_typed_values_and_states_as_today() -> None:
+    # The probes that matched today and not at K: a boolean filter on "true", a
+    # number accepted as "10", and an explicit rejected state.
+    import asyncio
+    from datetime import UTC, datetime
+
+    org, ns = unique_org("rec-at-k"), "rec-at-k"
+    await handle_memory_schema_register(
+        MemorySchemaRegisterInput(
+            org=org,
+            namespace=ns,
+            name="probe",
+            fields=[
+                SchemaFieldInput(name="active", type="boolean"),
+                SchemaFieldInput(name="count", type="number"),
+                SchemaFieldInput(name="source", type="string"),
+            ],
+        )
+    )
+    await handle_memory_record_write(
+        MemoryRecordWriteInput(
+            org=org,
+            namespace=ns,
+            schema_name="probe",
+            memory_key="p1",
+            agent="records-at-k-test",
+            fields={
+                "active": RecordFieldInput(value=True),  # stored as "true", raw JSON true
+                "count": RecordFieldInput(value="10"),
+                "source": RecordFieldInput(value=None, state="rejected"),
+            },
+        )
+    )
+    await asyncio.sleep(0.05)
+    k = datetime.now(UTC)
+    probes: list[tuple[dict[str, str], list[RecordPredicate]]] = [
+        ({"active": "true"}, []),
+        ({}, [RecordPredicate(field="count", op="gte", number=10)]),
+        ({}, [RecordPredicate(field="source", value_state="rejected")]),
+    ]
+    for filters, predicates in probes:
+        args = dict(
+            org=org, namespace=ns, schema_name="probe", filters=filters, predicates=predicates
+        )
+        now = await handle_memory_record_query(MemoryRecordQueryInput(**args))
+        then = await handle_memory_record_query(MemoryRecordQueryInput(**args, known_as_of=k))
+        assert [r.memory_key for r in now.rows] == [r.memory_key for r in then.rows] == ["p1"], (
+            filters,
+            predicates,
+        )

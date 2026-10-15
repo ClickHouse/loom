@@ -392,6 +392,11 @@ with `purge=true` and runner state.
   only the row mask: rows vanish from every read at once and bytes leave at the next merge.
   Narrow tables keep `ALTER TABLE … DELETE`. The
   saga polls each mutation by an embedded tag, and a residue census checks the result.
+- **The temporal journal is append-only** except in three places. `memory.redact` rewrites the
+  text of every retired assertion that held the redacted value in `memory_temporal_assertions`
+  and in its commits' payloads (hashes stay). A publisher that lost a sequence race deletes its
+  own unacknowledged commits. The integrity repair (the next write, or the projection worker)
+  deletes the later-landed commits at a sequence that still holds two payloads.
 - **Remaining `ALTER … UPDATE/DELETE` call sites** are listed in
   `tests/unit/test_clickhouse_mutation_inventory.py`, which fails on a new one until it is
   classified there.

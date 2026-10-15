@@ -9,28 +9,18 @@ Loom actually returned. Keeping the oracle here (not inline in each
 harness) means the boundary semantics are unit-testable without a live
 CH, and every harness agrees on what "visible as-of T" means.
 
-Two as-of shapes exist in Loom and they are NOT the same:
+The triple / facts plane (`facts.list`, `loom.entity_triples`) is a true
+interval test against `(valid_from, valid_to)`:
+    (valid_from IS NULL OR valid_from <= valid_as_of)
+    AND (valid_to IS NULL OR valid_to >= valid_as_of)
+— see server/memory/app/facts.py (handle_facts_list). BOTH bounds are
+inclusive, so at exactly valid_as_of == valid_to the closed interval is still
+considered visible (the closing fact's valid_from == the closed fact's
+valid_to). Forgetting must therefore be asserted *strictly after* the close
+instant, which `forgetting_violation` enforces by construction.
 
-  • Triple / facts plane (`facts.list`, `loom.entity_triples`) is a true
-    interval test against `(valid_from, valid_to)`:
-        (valid_from IS NULL OR valid_from <= as_of)
-        AND (valid_to IS NULL OR valid_to >= as_of)
-    — see server/memory/app/facts.py (handle_facts_list). BOTH bounds
-    are inclusive, so at exactly as_of == valid_to the closed interval
-    is still considered visible (the closing fact's valid_from == the
-    closed fact's valid_to). Forgetting must therefore be asserted
-    *strictly after* the close instant, which `forgetting_violation`
-    enforces by construction.
-
-  • Memory plane (`memory.search` / `memory.get` / `memory.list`) only
-    has a lower bound: `coalesce(valid_at, temporal_anchor, created_at)
-    <= as_of` under the default valid_time basis (the event date beats the
-    ingest clock; see server/server/memory/domain/temporal_sql.py), or
-    `created_at <= as_of AND (invalid_at IS NULL OR invalid_at > as_of)`
-    under knowledge_time — see MemorySearchInput.as_of. There is no
-    upper-bound `valid_to` on the memory row, so "invalidated never
-    resurfaces" is a *triple-plane* invariant; on the memory plane the
-    disambiguator is supersession + recency, not interval exclusion.
+The memory plane answers point-in-time reads from its bi-temporal journal
+(`valid_as_of` / `known_as_of`, docs/architecture/bitemporal-memory.md).
 """
 
 from __future__ import annotations

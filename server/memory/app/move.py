@@ -20,6 +20,7 @@ from fastapi import HTTPException
 import server.memory.store as memory_repo
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
+from server.core.errors import PreconditionFailedError
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_crud import MemoryDeleteInput, MemorySetInput
@@ -143,7 +144,10 @@ async def _redirect_source(source: MemoryRow, dest_id: str, ch: Any) -> None:
         duplicate_of=dest_id,
         updated_at=now,
     )
-    await memory_repo.insert_memory_versions([row], ch=ch)
+    if not await memory_repo.insert_over_heads([(row, source)], ch=ch):
+        raise PreconditionFailedError(
+            f"{source.memory_key!r} changed since it was read; re-read and retry"
+        )
     try:
         mirror = await memory_repo.embedding_mirror_for_keys(
             source.org, source.namespace, [source.memory_key], ch=ch

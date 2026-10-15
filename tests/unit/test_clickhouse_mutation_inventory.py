@@ -47,6 +47,10 @@ _EXPECTED_MUTATIONS = Counter(
         # memory_versions_mv).
         ("server/memory/store/redaction.py", "memory", "UPDATE"): 1,
         ("server/memory/store/redaction.py", "memory_versions", "UPDATE"): 1,
+        # ...and on the bi-temporal journal: the retired assertions that held its value,
+        # in the projection and in their commits' payloads (hashes stay).
+        ("server/memory/store/temporal.py", "memory_temporal_assertions", "UPDATE"): 1,
+        ("server/memory/store/temporal.py", "memory_temporal_commits", "UPDATE"): 1,
         # a deleted code link's suggestion, a rewrite of the redacted text
         ("server/memory/store/redaction.py", "memory_code_links", "UPDATE"): 1,
         # Expiry sweep `demote`: clears expires_at and lowers

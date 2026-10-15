@@ -12,7 +12,7 @@ from pydantic import (
     model_serializer,
 )
 
-from server.memory.api.models_common import MemoryType, _Identity
+from server.memory.api.models_common import MemoryType, TemporalArgs, TemporalCutoff, _Identity
 from server.memory.domain.code_change import CodeState
 from server.memory.domain.rerank_names import RerankName
 from server.operations.base import MCP_HIDDEN
@@ -22,7 +22,7 @@ from server.operations.base import MCP_HIDDEN
 # ============================================================
 
 
-class MemorySearchInput(BaseModel):
+class MemorySearchInput(TemporalArgs):
     """Semantic search over the agent's own memory.
 
     Only `semantic`, `procedural`, and `preference` memories are embedded
@@ -419,14 +419,6 @@ class MemorySearchInput(BaseModel):
     # on deep/quality calls or a weak-result fallback. An explicit True opts in;
     # hyde=False forces vector-only.
     hyde: bool = True
-    # As-of replay filter (coalesce(valid_at, created_at) <= as_of), denormalized
-    # onto memory_embeddings so vector_search applies it without joining loom.memory.
-    as_of: datetime | None = None
-    # Which time axis `as_of` replays: "valid_time" (default; what was true as of
-    # then) or "knowledge_time" (what loom had learned by then — created_at only,
-    # ignoring valid_at; the incremental-ingest knowledge cutoff). No effect when
-    # as_of is unset.
-    as_of_basis: Literal["valid_time", "knowledge_time"] = "valid_time"
     # Internal: 1 inside a pass memory.search re-entered itself (the iterative retry, a
     # read-your-writes re-read after the first pass); such a pass never re-enters again.
     _pass_depth: int = 0
@@ -486,6 +478,10 @@ class _MemorySearchHit(BaseModel):
         for name in ("superseded_by", "superseded_at"):
             if getattr(self, name, None) is None:
                 data.pop(name, None)
+        # The cited revision rides only on a bi-temporal hit.
+        if not self.assertion_id:
+            data.pop("assertion_id", None)
+            data.pop("value_sha256", None)
         # The fields the handler elided for this response
         # (`explanation` / `score_components` above the excerpt k without
         # `explain: true`). Empty for every response that pinned nothing.
@@ -640,6 +636,10 @@ class _MemorySearchHit(BaseModel):
     # `duplicate` row the legs ranked, the duplicate's memory_key; absent
     # otherwise (None = not on the wire).
     resolved_from: str | None = None
+    # On a bi-temporal search: the assertion this hit cites (a revision, not
+    # only a key) and the sha256 of its value; "" otherwise.
+    assertion_id: str = ""
+    value_sha256: str = ""
 
 
 class MemorySearchOutput(BaseModel):
@@ -650,10 +650,16 @@ class MemorySearchOutput(BaseModel):
         data: dict[str, Any] = handler(self)
         if self.reinforcement is None:
             data.pop("reinforcement", None)
+        # The cutoffs ride only on a bi-temporal search.
+        if not self.temporal:
+            data.pop("temporal", None)
         return data
 
     # The ranked hits, best first; empty when nothing passed the noise floor.
     results: list[_MemorySearchHit]
+    # On a bi-temporal search (`valid_as_of` / `known_as_of` / `read_token`): one
+    # cutoff per namespace searched — sequences are not a cross-namespace snapshot.
+    temporal: list[TemporalCutoff] = Field(default_factory=list)
     # render="reader" only: the results as one prompt block ("[date] [key]
     # (type) excerpt", ordered as memory.ask would read them) and the
     # synthesizer's instructions, so an external reader scores what the ask

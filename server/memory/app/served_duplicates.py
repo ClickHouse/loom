@@ -119,9 +119,7 @@ async def hide_pool_duplicates(ctx: Any) -> None:
     window is cut (after `exclude_keys`), so the window stays
     `top_k` long. One statement over the served keys; a second, over the
     canonical ids, only when a duplicate was in the pool. Fail-open: a failed
-    read leaves the pool as the legs ranked it. Under `as_of` a duplicate is
-    hidden but not substituted — the canonical's own validity window was not
-    checked at the anchor."""
+    read leaves the pool as the legs ranked it."""
     input = ctx.input
     if not hide_duplicates(input):
         return
@@ -146,14 +144,13 @@ async def hide_pool_duplicates(ctx: Any) -> None:
     if not dups:
         return
     canon: _Canon = {}
-    if getattr(input, "as_of", None) is None:
-        ids = [truth[(_hit_ns(h, ns_default), str(h.memory_key))].canonical_id for h in dups]
-        try:
-            canon = await _canonicals(
-                input.org, sorted({_hit_ns(h, ns_default) for h in dups}), ids, scope
-            )
-        except Exception as e:  # noqa: BLE001 — hiding is a filter, never a failure
-            log.warning("memory.search: canonical read failed: %s", e)
+    ids = [truth[(_hit_ns(h, ns_default), str(h.memory_key))].canonical_id for h in dups]
+    try:
+        canon = await _canonicals(
+            input.org, sorted({_hit_ns(h, ns_default) for h in dups}), ids, scope
+        )
+    except Exception as e:  # noqa: BLE001 — hiding is a filter, never a failure
+        log.warning("memory.search: canonical read failed: %s", e)
     ctx.all_hits = _rewrite_pool(ctx.all_hits, dups, truth, canon, ns_default, ctx.actual_work)
 
 

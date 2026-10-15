@@ -120,8 +120,6 @@ def _launch_summary_leg(ctx: SearchContext) -> asyncio.Task[Any]:
                         user_id=input.user_id,
                         query_vec=ctx.query_vec,
                         embedding_model=embedder.model_name,
-                        as_of=input.as_of,
-                        as_of_basis=getattr(input, "as_of_basis", "valid_time"),
                         # The digest leg keeps to the run and the read's session bound the
                         # way the fact and chunk legs do.
                         run_id=input.run_id,
@@ -192,8 +190,6 @@ async def _launch_entity_summary_leg(ctx: SearchContext) -> asyncio.Task[Any] | 
                         embedding_model=embedder.model_name,
                         entity_filter=_es_entities,
                         n=_entity_summary_top_n,
-                        as_of=input.as_of,
-                        as_of_basis=getattr(input, "as_of_basis", "valid_time"),
                     )
                     for ns in ctx.namespaces
                 ]
@@ -232,8 +228,6 @@ def _launch_observation_leg(ctx: SearchContext) -> asyncio.Task[Any] | None:
                         query_vec=ctx.query_vec,
                         embedding_model=embedder.model_name,
                         entity_filter=ctx.effective_entity_filter,
-                        as_of=input.as_of,
-                        as_of_basis=getattr(input, "as_of_basis", "valid_time"),
                     )
                     for ns in ctx.namespaces
                 ]

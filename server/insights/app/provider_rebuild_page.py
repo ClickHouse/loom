@@ -8,6 +8,7 @@ from server.embedding.embedder import Embedder
 from server.insights.app.provider_rebuild_batch import rebuild_batch
 from server.insights.app.provider_rebuild_runner import BatchCheckpoint
 from server.insights.app.provider_tracker_text import reconcile_tracker_page
+from server.insights.domain.provider_rebuild import INVALIDATE_TABLES
 from server.insights.domain.provider_rebuild_manifest import RebuildManifest
 from server.insights.store.provider_cache import invalidate_staged_cache
 from server.insights.store.provider_prefix import derive_staged_prefixes
@@ -65,7 +66,7 @@ async def rebuild_snapshot_page(
             ch=ch,
         )
         return BatchCheckpoint(cursor=0, rows_written=count, done=True)
-    if names.table == "embedding_cache":
+    if names.table in INVALIDATE_TABLES:
         if type(after) is not int or after != 0:
             raise ValueError("Cache invalidation has no row cursor")
         await invalidate_staged_cache(

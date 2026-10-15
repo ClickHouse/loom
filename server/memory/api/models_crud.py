@@ -17,14 +17,21 @@ from pydantic import (
     model_validator,
 )
 
-from server.memory.api.models_common import MemorySetPeer, MemoryType, _Identity
+from server.memory.api.models_common import (
+    MemorySetPeer,
+    MemoryType,
+    TemporalArgs,
+    TemporalAssertion,
+    TemporalCutoff,
+    _Identity,
+)
 from server.memory.domain.code_change import CodeState
 from server.operations.base import MCP_HIDDEN
 from server.operations.read_projection import ProjectedRow
 from server.operations.read_projection import project as _project_fields
 
 
-class MemoryGetInput(_Identity):
+class MemoryGetInput(_Identity, TemporalArgs):
     # The key to read: tried under this identity, then the same user's row under any
     # agent. A `chunk:<session_id>:<index>` key returns that chunk and its neighbours.
     memory_key: str
@@ -35,9 +42,6 @@ class MemoryGetInput(_Identity):
     if_version: int | None = None
     # Opt-in per-agent recall breakdown; off by default to keep get cheap.
     include_recall_breakdown: bool = False
-    # As-of replay filter: restrict to rows with coalesce(valid_at, created_at) <= as_of.
-    # None = current row.
-    as_of: datetime | None = None
     # A whitelist of output field names (`value`, `tags`,
     # `status`, `memory_type`, `recall_count`, `created_at`, …). The response
     # carries only those plus `found` / `unchanged`; an unknown name is a 422.
@@ -94,6 +98,10 @@ class MemoryGetOutput(ProjectedRow):
         # `resolved_from` only on a followed read.
         if self.resolved_from is None:
             data.pop("resolved_from", None)
+        # The cutoff and assertions only on a bi-temporal read.
+        if self.temporal is None:
+            for name in ("temporal", "assertions", "disputed"):
+                data.pop(name, None)
         # Then the caller's field whitelist, when one was sent.
         return _project_fields(data, self._projection)
 
@@ -208,6 +216,14 @@ class MemoryGetOutput(ProjectedRow):
     recall_by_agent: list[_RecallByAgent] = Field(default_factory=list)
     # '' | low | medium | high. A 'high' read is audited.
     sensitivity: str = ""
+    # Set on a bi-temporal read (`valid_as_of` / `known_as_of` / `read_token`):
+    # the cutoff it answered from and its coverage.
+    temporal: TemporalCutoff | None = None
+    # On a bi-temporal read: every assertion of the key that applies at V (more
+    # than one when sources disagree, see `disputed`).
+    assertions: list[TemporalAssertion] = Field(default_factory=list)
+    # True when more than one value applies at V under the same qualifiers.
+    disputed: bool = False
 
 
 class MemorySetInput(_Identity):
@@ -295,6 +311,60 @@ class MemorySetInput(_Identity):
     # that already holds one is refused (409 KEY_HOLDS_FACT) — propose under a
     # new key.
     proposed: bool = False
+    # What this write means on the valid-time axis. '' (default): a plain write
+    # revises what the key asserts, without claiming the world changed now.
+    # `transition`: the served state ends at `effective_at` (now or earlier) and
+    # this value holds from then on. `correct`: this value replaces
+    # `[valid_at, valid_to)`, a span that includes now, and the supported segments
+    # around it are kept. memory.set writes what applies now; a future transition
+    # or a correction of another span is a memory.amend (422 here).
+    change_kind: Literal["", "transition", "correct"] = ""
+    # When a `transition` takes effect.
+    effective_at: datetime | None = None
+    # state | event | snapshot | rule: an event or snapshot never becomes an
+    # open-ended state. '' keeps the key's (state for a new key).
+    temporal_kind: Literal["", "state", "event", "snapshot", "rule"] = ""
+    # asserted | observed | planned | hypothetical | quoted | disputed. '' keeps the key's.
+    modality: Literal[
+        "", "asserted", "observed", "planned", "hypothetical", "quoted", "disputed"
+    ] = ""
+    # The validity date as the source wrote it ("last spring"), its precision and zone.
+    valid_text: str = Field(default="", max_length=256)
+    valid_precision: Literal["", "instant", "day", "month", "year", "approximate"] = ""
+    valid_tz: str = Field(default="", max_length=64)
+    # Qualifiers that keep two claims of one key apart (role, project, …).
+    qualifiers: dict[str, str] = Field(default_factory=dict, max_length=16)
+    # The assertion id the writer read (memory.intervals / a temporal memory.get);
+    # 409 when the key no longer serves it.
+    expected_revision: str = ""
+
+    def write_intent(self) -> Any:
+        """The temporal intent this write declares, or None for a plain write."""
+        from server.memory.domain.temporal_capture import WriteIntent
+
+        if not (
+            self.change_kind
+            or self.temporal_kind
+            or self.modality
+            or self.valid_text
+            or self.valid_precision
+            or self.valid_tz
+            or self.qualifiers
+            or self.expected_revision
+        ):
+            return None
+        return WriteIntent(
+            memory_key=self.memory_key,
+            change_kind=self.change_kind,
+            effective_at=self.effective_at,
+            temporal_kind=self.temporal_kind,
+            valid_text=self.valid_text,
+            valid_precision=self.valid_precision,
+            valid_tz=self.valid_tz,
+            modality=self.modality,
+            qualifiers=dict(self.qualifiers),
+            expected_revision=self.expected_revision,
+        )
 
 
 class MemorySetOutput(BaseModel):
@@ -308,6 +378,16 @@ class MemorySetOutput(BaseModel):
     # The written row's lifecycle status (`active`, `duplicate`, `proposed`);
     # "" on a write that stored no row (merge, dry run).
     status: str = ""
+    # True when the write was late evidence: journaled for the past span it names,
+    # while the key's current value (and the row `memory.get` reads) is unchanged.
+    # `version` / `content_sha256` are then the journal's, not the current row's,
+    # and what the write set on the row (pin, tags) applies to that assertion only.
+    past_only: bool = False
+    # Why the write changed nothing (`noop` is then true): `superseded` (a write to
+    # the key drawn later committed first), `locked` (the key's lock in force refuses
+    # the change), `restated` (nothing new, and the value is not what applies now).
+    # "" when it was written.
+    left_out: str = ""
     # Set when this write was tagged status='duplicate': memory_id of the
     # canonical semantically-identical row. Empty for non-duplicate writes.
     duplicate_of: str = ""
@@ -358,6 +438,11 @@ class MemorySetOutput(BaseModel):
     # a merge or a dry run). Chunks are a second way to find the row, not a
     # condition of the write: a chunk failure leaves the row in and this 0.
     chunks_written: int = 0
+    # The temporal journal commit this write published (0 / "" when the
+    # namespace keeps no journal or the write changed no assertion), and the
+    # token a read passes as `read_token` to see it.
+    commit_seq: int = 0
+    read_token: str = ""
 
 
 class MemoryDeleteInput(_Identity):
@@ -395,7 +480,7 @@ class MemoryDeleteOutput(BaseModel):
     # True when a live row was found and a tombstone version written over it.
     tombstoned: bool
     # Nanosecond version of the tombstone row; when nothing was found, a fresh
-    # number that no row carries.
+    # number that no row carries; 0 when the journal left the delete out.
     version: int
     # False when no live row of this key exists in the
     # namespace under ANY identity — already deleted, or never written. The
@@ -406,6 +491,12 @@ class MemoryDeleteOutput(BaseModel):
     dependents_tombstoned: int = 0
     # Summaries built from this row that keep a live source: set to `conflicted`.
     dependents_downgraded: int = 0
+    # Why a found memory was not removed: memory.set's `left_out` reasons (version is
+    # then 0). "" when it was removed, or not found.
+    left_out: str = ""
+    # The journal commit of the retraction, and its read token ("" when none).
+    commit_seq: int = 0
+    read_token: str = ""
 
 
 class MemoryRestoreInput(_Identity):
@@ -493,6 +584,9 @@ class MemoryTouchResult(BaseModel):
     touched: bool  # False when the key doesn't exist (or is tombstoned)
     version: int | None = None
     expires_at: datetime | None = None
+    # Why an existing key was not touched: memory.set's `left_out` reasons. "" when
+    # touched or not found.
+    left_out: str = ""
 
 
 class MemoryTouchOutput(BaseModel):
@@ -506,9 +600,11 @@ class MemoryTouchOutput(BaseModel):
     results: list[MemoryTouchResult] = Field(default_factory=list)
     # With `memory_keys`, how many keys were touched; 0 for one key.
     touched_count: int = 0
+    # Single key: why it was not touched (see MemoryTouchResult.left_out).
+    left_out: str = ""
 
 
-class MemoryListInput(_Identity):
+class MemoryListInput(_Identity, TemporalArgs):
     """List memory keys under this identity, optionally filtered.
 
     No cursor pagination (capped at 1000 entries per call). `sort_by`:
@@ -554,7 +650,6 @@ class MemoryListInput(_Identity):
     # `status='proposed'` rows (facts on trial) are skipped
     # unless asked for; `memory.proposals` lists them with their graded counts.
     include_proposed: bool = False
-    as_of: datetime | None = None  # see MemoryGetInput.as_of
     # Hard OR-filter on the row's tags — the same
     # `hasAny(tags, …)` predicate memory.search applies — so a tagged subset
     # (`kind:false_positive`, `subsystem:Storages`) is one list call, not a
@@ -645,6 +740,8 @@ class MemoryListOutput(BaseModel):
     hidden: int = 0
     # A sentence naming those hidden rows and the flag that lists them; '' otherwise.
     hidden_hint: str = ""
+    # On a bi-temporal list: the cutoff it answered from.
+    temporal: TemporalCutoff | None = None
 
 
 # ============================================================
@@ -652,14 +749,23 @@ class MemoryListOutput(BaseModel):
 # ============================================================
 
 
-class MemoryGetByIdInput(BaseModel):
+class MemoryGetByIdInput(TemporalArgs):
     org: str
     memory_id: str  # UUID returned by memory.set
-    # As-of replay filter — see MemoryGetInput.as_of.
-    as_of: datetime | None = None
 
 
 class MemoryGetByIdOutput(BaseModel):
+    @model_serializer(mode="wrap")
+    def _omit_current_state_temporal(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, Any]:
+        # The cutoff and assertions only on a bi-temporal read.
+        data: dict[str, Any] = handler(self)
+        if self.temporal is None:
+            for name in ("temporal", "assertions", "disputed"):
+                data.pop(name, None)
+        return data
+
     # False when no live row carries this id in the org, or the caller cannot read
     # its namespace.
     found: bool
@@ -719,6 +825,11 @@ class MemoryGetByIdOutput(BaseModel):
     on_expire: str = ""
     # Why the expiry was set, as the writer gave it; '' when none.
     expire_reason: str = ""
+    # On a bi-temporal read: the cutoff, the assertions that apply at V and
+    # whether they disagree (see MemoryGetOutput).
+    temporal: TemporalCutoff | None = None
+    assertions: list[TemporalAssertion] = Field(default_factory=list)
+    disputed: bool = False
 
 
 class MemoryUpdateByIdInput(BaseModel):
@@ -758,6 +869,12 @@ class MemoryUpdateByIdOutput(BaseModel):
     # Set when the new value restates or near-duplicates another row: that
     # row's memory_id (mirrors MemorySetOutput.duplicate_of).
     duplicate_of: str = ""
+    # The journal commit of the revision, and its read token ("" when none).
+    commit_seq: int = 0
+    read_token: str = ""
+    # Why a found memory was not updated: memory.set's `left_out` reasons. "" when
+    # it was updated, or not found.
+    left_out: str = ""
 
 
 class MemoryUpdateInput(BaseModel):
@@ -857,9 +974,16 @@ class MemoryRedactInput(BaseModel):
     """
 
     org: str
-    # The id every version of the memory shares; `version` picks the historical row.
+    # The id every version of the memory shares; `version` or `assertion_id` picks
+    # what to scrub.
     memory_id: str
-    version: int  # target row's version (from memory.set / memory.history)
+    # The historical row's version (from memory.set / memory.history): scrubs that
+    # row and every retired journal assertion that held its value. 0 = none.
+    version: int = 0
+    # A retired journal assertion (from memory.intervals), for text only the journal
+    # holds — a memory.amend or a correction's segment. Scrubs every retired
+    # assertion of the memory that held its value.
+    assertion_id: str = ""
     reason: str = ""  # short justification recorded in the audit log
     redacted_by: str = ""  # actor for the audit row (caller-supplied)
 

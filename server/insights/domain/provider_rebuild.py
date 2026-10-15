@@ -39,6 +39,10 @@ EMBEDDING_SURFACES = (
     EmbeddingSurface("memory_chunks", "embedding", "reembed"),
     EmbeddingSurface("memory_embeddings", "embedding", "reembed"),
     EmbeddingSurface("memory_embeddings", "memory_key_embedding", "reembed"),
+    # Keyed by model like the cache, and holding no text to re-embed: emptied, then
+    # the temporal projection worker fills the new model's vectors for recent
+    # assertions; older ones rank lexically and say so, as after a model change.
+    EmbeddingSurface("memory_temporal_vectors", "embedding", "invalidate_cache"),
     EmbeddingSurface("qa_item_embeddings", "embedding", "reembed"),
     EmbeddingSurface("query_nodes", "embedding", "reembed"),
     EmbeddingSurface("session_summaries", "summary_embedding", "reembed"),
@@ -48,6 +52,11 @@ REBUILD_TABLES = tuple(
     dict.fromkeys(
         surface.table for surface in EMBEDDING_SURFACES if surface.action != "preserve_history"
     )
+)
+
+# Tables a rebuild empties instead of re-embedding: keyed by model, no source text.
+INVALIDATE_TABLES = frozenset(
+    surface.table for surface in EMBEDDING_SURFACES if surface.action == "invalidate_cache"
 )
 
 # Tables whose rows a model change must rewrite; the cache is keyed by model.

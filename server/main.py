@@ -53,6 +53,11 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     _instance_mod.require_instance_label(
         _instance_mod.instance_label(), deployment=bool(settings.deployment)
     )
+    from server.memory.app import temporal_publisher
+
+    # This process is the server: the one that may publish memory without a Keeper
+    # when LOOM_MEMORY_TEMPORAL_PUBLISHER=process says it is the only writer.
+    temporal_publisher.serve()
     from server.auth.jwt import require_real_signing_secret
 
     require_real_signing_secret(

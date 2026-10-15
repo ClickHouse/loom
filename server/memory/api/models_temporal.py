@@ -7,7 +7,13 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from server.memory.api.models_common import MemoryType, _Identity
+from server.memory.api.models_common import (
+    MemoryType,
+    TemporalArgs,
+    TemporalAssertion,
+    TemporalCutoff,
+    _Identity,
+)
 
 # ============================================================
 # memory.history — list version history for a memory_key
@@ -409,3 +415,151 @@ class MemoryRecallOutput(BaseModel):
     query_tokens: list[str] = Field(default_factory=list)
     # Estimated prompt tokens of the returned content (chars / 4).
     tokens_returned: int = 0
+
+
+# ============================================================
+# Bi-temporal ops: memory.amend, memory.intervals, memory.temporal_diff,
+# memory.temporal_status
+# ============================================================
+
+
+class MemoryAmendInput(_Identity):
+    """A bounded change to what one key asserted over valid time, without
+    rewriting what loom believed before.
+
+    `correct` replaces `[valid_from, valid_to)` with `value` and keeps every
+    supported segment outside it; `transition` ends the served state at
+    `effective_at` and starts `value` there (a future effective time records a
+    plan); `retract` removes `[valid_from, valid_to)` (or the whole key) from the
+    served set without saying the world changed. Each is one journal commit."""
+
+    memory_key: str
+    change_kind: Literal["correct", "transition", "retract"]
+    # The new content (correct, transition); ignored for retract.
+    value: dict[str, Any] | list[Any] | str | int | float | bool | None = None
+    # The interval a correct or retract covers; None = unbounded on that side.
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
+    # When a transition takes effect.
+    effective_at: datetime | None = None
+    # The temporal shape of the new assertion; '' keeps the key's.
+    temporal_kind: Literal["", "state", "event", "snapshot", "rule"] = ""
+    # How the interval was learned: stated by the writer, extracted from a
+    # source, or inferred.
+    validity_basis: Literal["stated", "extracted", "inferred"] = "stated"
+    # The date as the source wrote it ("spring 2024"), its precision and zone.
+    valid_text: str = Field(default="", max_length=256)
+    valid_precision: Literal["", "instant", "day", "month", "year", "approximate"] = ""
+    valid_tz: str = Field(default="", max_length=64)
+    # asserted | observed | planned | hypothetical | quoted | disputed; '' keeps the key's.
+    modality: Literal[
+        "", "asserted", "observed", "planned", "hypothetical", "quoted", "disputed"
+    ] = ""
+    # Qualifiers that make a claim distinct (role, project, …): claims under
+    # different qualifiers never supersede each other.
+    qualifiers: dict[str, str] = Field(default_factory=dict, max_length=16)
+    # The evidence items the change rests on.
+    evidence_ids: list[str] = Field(default_factory=list, max_length=64)
+    # The assertion id the caller read (from memory.intervals); refused with
+    # 409 when the key no longer serves it.
+    expected_revision: str = ""
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+
+
+class MemoryAmendOutput(BaseModel):
+    memory_key: str
+    # The journal commit; "" when the change was a no-op.
+    commit_id: str = ""
+    commit_seq: int = 0
+    recorded_at: datetime | None = None
+    # Pass to a read's `read_token` to read this change back.
+    read_token: str = ""
+    change_kind: str = ""
+    # Assertion ids the commit retired, and the assertions it added.
+    retired: list[str] = Field(default_factory=list)
+    added: list[TemporalAssertion] = Field(default_factory=list)
+    # The value the current-state row now serves ("" when none applies now).
+    current_value: Any = None
+    # Set when the current-state row could not follow the commit (a pinned or
+    # locked peer, a merge into another key): the commit stands, and the
+    # projection worker brings the row in line within a few minutes.
+    current_row_error: str = ""
+
+
+class MemoryIntervalsInput(_Identity, TemporalArgs):
+    """The valid-time timeline of one key as recorded at K: every assertion
+    served at the cutoff, each with its interval and the commits that added (and
+    retired) it. `include_retired` adds every assertion the key ever had."""
+
+    memory_key: str
+    include_retired: bool = False
+    limit: int = Field(default=200, ge=1, le=2000)
+
+
+class MemoryIntervalsOutput(BaseModel):
+    memory_key: str
+    # Served at the cutoff, earliest valid_from first.
+    assertions: list[TemporalAssertion] = Field(default_factory=list)
+    # With include_retired: assertions no longer served at the cutoff.
+    retired: list[TemporalAssertion] = Field(default_factory=list)
+    # The assertions that apply at V, and whether they disagree.
+    at_valid: list[str] = Field(default_factory=list)
+    disputed: bool = False
+    temporal: TemporalCutoff
+
+
+class MemoryTemporalDiffInput(_Identity):
+    """What changed for one key. `world`: at a fixed knowledge time K (None =
+    now), which assertions began or ended in valid time between `start` and
+    `end`. `belief`: at a fixed valid time V, how loom's answer changed between
+    knowledge times `start` and `end` (corrections, retractions, verifications)."""
+
+    memory_key: str
+    mode: Literal["world", "belief"]
+    start: datetime | None = None
+    end: datetime | None = None
+    # world: the knowledge time; belief: the valid time. None = now.
+    at: datetime | None = None
+    limit: int = Field(default=200, ge=1, le=2000)
+
+
+class _TemporalChange(BaseModel):
+    # world: the valid time a state began or ended; belief: the commit's recording time.
+    at: datetime | None = None
+    # world: began | ended | occurred; belief: the commit's change kind.
+    kind: str
+    commit_seq: int = 0
+    # belief: the values that applied at V before and after the commit, and the
+    # assertions carrying them (validity, verification and other assessments: a
+    # commit that changed only those is a change too).
+    before: list[Any] = Field(default_factory=list)
+    after: list[Any] = Field(default_factory=list)
+    before_assertions: list[TemporalAssertion] = Field(default_factory=list)
+    after_assertions: list[TemporalAssertion] = Field(default_factory=list)
+    assertion: TemporalAssertion | None = None
+
+
+class MemoryTemporalDiffOutput(BaseModel):
+    memory_key: str
+    mode: str
+    changes: list[_TemporalChange] = Field(default_factory=list)
+    temporal: TemporalCutoff
+
+
+class MemoryTemporalStatusInput(BaseModel):
+    org: str
+    namespace: str
+
+
+class MemoryTemporalStatusOutput(BaseModel):
+    namespace: str
+    # keeper | process: who serializes the namespace's commits in this deployment.
+    publisher: str
+    head_seq: int = 0
+    # Highest sequence the assertion projection has applied with no gap below.
+    projection_seq: int = 0
+    first_recorded_at: datetime | None = None
+    # The lowest sequence holding two different payloads; 0 = none.
+    integrity_break_at: int = 0
+    # Why memory writes to the namespace would fail now; empty when they publish.
+    write_blockers: list[str] = Field(default_factory=list)

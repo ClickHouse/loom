@@ -55,10 +55,15 @@ def cascade_spy(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     ):
         return rows.get(mid)
 
-    async def fake_insert(built: list[dict[str, Any]], *, ch: Any = None) -> None:
+    async def fake_insert(
+        built: list[dict[str, Any]], *, ch: Any = None, alongside: Any = ()
+    ) -> int:
         for r in built:
             spy["versions"].append(str(r["memory_id"]))
             spy["overrides"].append(r)
+        for f in alongside:  # the funnel hands the rows it kept on
+            await f(built)
+        return len(built)
 
     async def fake_mirror(built: list[dict[str, Any]], *, ch: Any = None) -> int:
         for r in built:

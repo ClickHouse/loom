@@ -8,10 +8,9 @@ surfaces the invalidated memory — while a query *inside* the interval
 still does.
 
 It exercises the triple/facts plane, where Loom keeps a true
-`(valid_from, valid_to)` interval and `facts.list(as_of=…)` filters on
+`(valid_from, valid_to)` interval and `facts.list(valid_as_of=…)` filters on
 it (server/memory/app/facts.py handle_facts_list). The memory plane's
-as-of is lower-bound only, so "invalidated never resurfaces" is a
-triple-plane invariant — see bench/temporal_assertions.py.
+history is the bi-temporal journal — see bench/temporal_assertions.py.
 
 Write path is deterministic and LLM-FREE: we drive memory.bulk_set
 with explicit `relations` + `valid_at` / `valid_to`, which lands typed
@@ -149,7 +148,7 @@ def _facts_objects(
         **identity,
         "subject": subject,
         "relation": relation,
-        "as_of": as_of,
+        "valid_as_of": as_of,
         "limit": 500,
     }
     last: set[str] = set()

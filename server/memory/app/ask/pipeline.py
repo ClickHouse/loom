@@ -167,6 +167,7 @@ def _synthesized_result(
     return MemoryAskResult(
         answer=ans.answer,
         source="synthesized",
+        temporal=list(getattr(run.retrieval, "temporal", None) or []),
         pool_facts=_pool_facts,
         pool_chunks=_pool_chunks,
         when_evidence_turns=ans.when_turns_used,
@@ -257,15 +258,18 @@ async def _fill_pool(
     synthesis pool. Returns the reader notes the question's shape switched on
     (inference, temporal derive, chain)."""
     await _retrieve(run)
-    notes = await _widen_by_question(run, llm=llm, llm_cheap=llm_cheap, decompose=decompose)
-    await _order_pool(run)
-
-    await _inject_named_evidence(run)
-    await _complete_options(run)
-
-    await _complete_bridges(run)
-
-    await _complete_facets(run)
+    if run.search_input.temporal_requested():
+        # A historical ask's pool is the search at its cutoff, nothing else: the
+        # widening and completion legs read today's rows.
+        await _order_pool(run)
+        notes: tuple[bool, bool, bool] = (False, False, False)
+    else:
+        notes = await _widen_by_question(run, llm=llm, llm_cheap=llm_cheap, decompose=decompose)
+        await _order_pool(run)
+        await _inject_named_evidence(run)
+        await _complete_options(run)
+        await _complete_bridges(run)
+        await _complete_facets(run)
 
     # The hard tag belt, after the last leg that adds a row.
     run.ranked = await _tag_belt(run.ranked, run.search_input)
@@ -380,7 +384,7 @@ async def ask(
             gh_items_fallback=gh_items_fallback,
         )
         if early is not None:
-            return early
+            return _with_cutoffs(early, run)
 
         await _ground_and_cut(run, window_rel_floor)
 
@@ -474,3 +478,10 @@ async def ask(
         )
     finally:
         _knowledge_not_needed(_knowledge_task)
+
+
+def _with_cutoffs(result: MemoryAskResult, run: Any) -> MemoryAskResult:
+    """A historical ask's answer carries the cutoffs its evidence was read at."""
+    retrieval = getattr(run, "retrieval", None)
+    result.temporal = list(getattr(retrieval, "temporal", None) or [])
+    return result

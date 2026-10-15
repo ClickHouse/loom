@@ -138,7 +138,7 @@ def test_point_set_input_accepts_valid_to() -> None:
     assert inp.valid_to == END
 
 
-def test_search_where_drops_a_fact_past_its_valid_to_unless_replaying() -> None:
+def test_search_where_drops_a_fact_past_its_valid_to() -> None:
     from server.memory.domain.search_sql import SearchQuery, _build_where
 
     base: dict[str, Any] = dict(
@@ -152,6 +152,3 @@ def test_search_where_drops_a_fact_past_its_valid_to_unless_replaying() -> None:
     )
     live, _ = _build_where(SearchQuery(**base))
     assert any("e.valid_to IS NULL OR e.valid_to > now()" in w for w in live)
-    replay, _ = _build_where(SearchQuery(**base, as_of=datetime(2023, 6, 1)))
-    # as_of owns the window: a closed interval stays readable at a date inside it.
-    assert not any("e.valid_to > now()" in w for w in replay)

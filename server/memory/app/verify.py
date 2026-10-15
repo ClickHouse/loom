@@ -27,7 +27,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
 
@@ -35,12 +35,12 @@ from server.auth.authz import row_in_scope
 from server.auth.context import current_auth
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
+from server.core.errors import PreconditionFailedError
 from server.core.hashing import sha256_value_json
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_crud import MemoryVerifyInput, MemoryVerifyOutput
 from server.memory.domain import trust
-from server.memory.store.inserts import insert_memory_versions
-from server.memory.store.rows import next_version
+from server.memory.domain.temporal_capture import WriteIntent, write_intent
 from server.operations.base import Role
 
 if TYPE_CHECKING:
@@ -163,18 +163,28 @@ async def handle_memory_verify(input: MemoryVerifyInput) -> MemoryVerifyOutput:
             content_sha256=sha,
         )
 
-    version = next_version()
-    new_row = memory_repo.build_memory_version_row(
-        row,
-        version=version,
-        verified_by=actor,
-        verified_at=verified_at,
-        verified_sha256=verified_sha,
-        # Populate the stored hash on the way past so the row's own column
-        # agrees with the attestation (a row holding the DEFAULT reads '0').
-        content_sha256=sha,
-    )
-    await insert_memory_versions([new_row], ch=get_client())
+    def _attested(head: Any) -> dict[str, Any]:
+        # An attestation binds the content it was asked about: a head whose value
+        # changed since is not attested (its other columns may move freely).
+        if current_content_sha256(head) != sha:
+            raise PreconditionFailedError(
+                f"{row.memory_key!r} changed since it was read; re-read and retry"
+            )
+        return {
+            "verified_by": actor,
+            "verified_at": verified_at,
+            "verified_sha256": verified_sha,
+            # Populate the stored hash on the way past so the row's own column
+            # agrees with the attestation (a row holding the DEFAULT reads '0').
+            "content_sha256": sha,
+        }
+
+    why: dict[str, str] = {}
+    with write_intent(WriteIntent(memory_key=row.memory_key, existing=True)):
+        kept = await memory_repo.rewrite_heads([row], _attested, ch=get_client(), reasons=why)
+    if not kept:
+        raise memory_repo.not_written(row.memory_key, "verify", why)
+    version = int(kept[0]["version"])
     # The caller waits for the durable attestation, not for the ranking signal. The
     # embeddings mirror (a FINAL read of the row's vector plus a second committed insert,
     # best-effort by contract) runs after this answer on the request's loop, and the next

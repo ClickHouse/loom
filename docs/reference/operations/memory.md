@@ -52,6 +52,50 @@ Templated SQL aggregation over typed records in loom.memory.
 | `rows` | `list[_AggregateRow]` | One row per group (a single row when `group_by` is empty). |
 | `sql_executed` | `str` | the exact SQL run, for debugging without trace logs |
 
+## `memory.amend`
+
+A bounded change to what one key asserted over valid time, without rewriting what loom believed before.
+
+`POST /v1/memory.amend` · MCP `loom_memory_amend` · role `writer` · idempotent · audited · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `agent` | `str` | required | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
+| `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
+| `session_id` | `str` | `'-'` | The session or conversation the row belongs to; `'-'` for none. |
+| `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
+| `memory_key` | `str` | required |  |
+| `change_kind` | `Literal['correct', 'transition', 'retract']` | required |  |
+| `value` | `dict[str, Any] \| list[Any] \| str \| int \| float \| bool \| None` | `None` | The new content (correct, transition); ignored for retract. |
+| `valid_from` | `datetime \| None` | `None` | The interval a correct or retract covers; None = unbounded on that side. |
+| `valid_to` | `datetime \| None` | `None` |  |
+| `effective_at` | `datetime \| None` | `None` | When a transition takes effect. |
+| `temporal_kind` | `Literal['', 'state', 'event', 'snapshot', 'rule']` | `''` | The temporal shape of the new assertion; '' keeps the key's. |
+| `validity_basis` | `Literal['stated', 'extracted', 'inferred']` | `'stated'` | How the interval was learned: stated by the writer, extracted from a source, or inferred. |
+| `valid_text` | `str` | `''` | The date as the source wrote it ("spring 2024"), its precision and zone. |
+| `valid_precision` | `Literal['', 'instant', 'day', 'month', 'year', 'approximate']` | `''` |  |
+| `valid_tz` | `str` | `''` |  |
+| `modality` | `Literal['', 'asserted', 'observed', 'planned', 'hypothetical', 'quoted', 'disputed']` | `''` | asserted \| observed \| planned \| hypothetical \| quoted \| disputed; '' keeps the key's. |
+| `qualifiers` | `dict[str, str]` | *(computed)* | Qualifiers that make a claim distinct (role, project, …): claims under different qualifiers never supersede each other. |
+| `evidence_ids` | `list[str]` | *(computed)* | The evidence items the change rests on. |
+| `expected_revision` | `str` | `''` | The assertion id the caller read (from memory.intervals); refused with 409 when the key no longer serves it. |
+| `confidence` | `float` | `1.0` |  |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `memory_key` | `str` |  |
+| `commit_id` | `str` | The journal commit; "" when the change was a no-op. |
+| `commit_seq` | `int` |  |
+| `recorded_at` | `datetime \| None` |  |
+| `read_token` | `str` | Pass to a read's `read_token` to read this change back. |
+| `change_kind` | `str` |  |
+| `retired` | `list[str]` | Assertion ids the commit retired, and the assertions it added. |
+| `added` | `list[TemporalAssertion]` |  |
+| `current_value` | `Any` | The value the current-state row now serves ("" when none applies now). |
+| `current_row_error` | `str` | Set when the current-state row could not follow the commit (a pinned or locked peer, a merge into another key): the commit stands, and the projection worker brings the row in line within a few minutes. |
+
 ## `memory.apply`
 
 One scope grammar for every write that can touch more than one row.
@@ -98,6 +142,10 @@ Ask a question and get a grounded answer synthesized from the caller's recalled 
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
+| `valid_as_of` | `datetime \| None` | `None` | World time V; None = now, or K when only `known_as_of` is given. |
+| `known_as_of` | `datetime \| None` | `None` | Knowledge time K: answer from the journal as committed at K; None = now. |
+| `read_token` | `str` | `''` | A write's `read_token`: the read waits (within budget) until the journal cutoff covers that write, and answers `projection_not_ready` otherwise. |
+| `validity_policy` | `Literal['compat', 'strict']` | `'compat'` | `compat` admits an assertion with an unknown or inferred validity bound and discloses it; `strict` excludes it. |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `agent` | `str` | `'*'` | Read ALL agents in the accessible namespaces by default (membership is the read boundary; agent is authorship metadata), matching memory.search. |
@@ -124,8 +172,6 @@ Ask a question and get a grounded answer synthesized from the caller's recalled 
 | `summary_cap` | `int \| None` | `None` | Digest rows admitted to the synthesis window; None = the deployment setting, 0 = unbounded. |
 | `rrf_adaptive_lexical` | `bool \| None` | `None` | Forwarded to memory.search only when pinned. |
 | `personalization` | `Literal['full', 'none']` | `'full'` | Same semantics as memory.search.personalization; the retrieval leg of an ask runs with it so the answer can be compared with and without priors. |
-| `as_of` | `datetime \| None` | `None` | As-of temporal anchor. |
-| `as_of_basis` | `Literal['valid_time', 'knowledge_time']` | `'valid_time'` | Which time axis `as_of` replays: "valid_time" (default) = state true as of the anchor; "knowledge_time" = only what loom had learned by the anchor (created_at cutoff, incremental-ingest knowledge-cutoff semantics). |
 | `include_superseded` | `bool` | `False` | Forwarded to the retrieval leg; the retired rows then stay in the synthesis window, each line labelled `[superseded <date>; replaced by <key>]`, so the answer can say what a value was before and what replaced it. |
 | `precedents` | `bool \| None` | `None` | Precedent reuse: serve the earlier synthesized answer to this question+shape when the synthesis window is byte-identical (same keys, same content hashes) to the one it was written from; no LLM call. |
 | `llm_cache` | `bool \| None` | `None` | Exact-prompt LLM response cache: every synthesis-path call is read from loom.llm_response_cache by the sha256 of its full prompt before the provider is called. |
@@ -155,6 +201,7 @@ Ask a question and get a grounded answer synthesized from the caller's recalled 
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `answer` | `str` | The synthesized answer; empty when the ask abstained or ran retrieval_only. |
+| `temporal` | `list[TemporalCutoff]` | A historical ask (valid_as_of / known_as_of): the cutoff each namespace's evidence was read at, and what it could not cover. |
 | `source` | `Literal['synthesized', 'retrieval_only', 'abstained', 'record', 'precedent']` | "record": answered from an exact record (the GitHub-items index or the tracker) instead of LLM synthesis. "precedent": the earlier synthesized answer to this question+shape, served because its evidence is byte-identical. |
 | `abstain` | `bool` | True when retrieval abstained and no record answered: `answer` is empty. |
 | `abstain_reason` | `str` | Carries the retrieval abstain reason, or "budget_capped" when synthesis was skipped because the namespace is over its cost cap. |
@@ -538,10 +585,13 @@ WHAT: Tombstone a memory by key (14-day recovery via /me).
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `tombstoned` | `bool` | True when a live row was found and a tombstone version written over it. |
-| `version` | `int` | Nanosecond version of the tombstone row; when nothing was found, a fresh number that no row carries. |
+| `version` | `int` | Nanosecond version of the tombstone row; when nothing was found, a fresh number that no row carries; 0 when the journal left the delete out. |
 | `found` | `bool` | False when no live row of this key exists in the namespace under ANY identity — already deleted, or never written. |
 | `dependents_tombstoned` | `int` | Consolidated summaries built from this row (tag `src:<key>`): retired when none of their sources survive, else downgraded to `conflicted`. |
 | `dependents_downgraded` | `int` | Summaries built from this row that keep a live source: set to `conflicted`. |
+| `left_out` | `str` | Why a found memory was not removed: memory.set's `left_out` reasons (version is then 0). "" when it was removed, or not found. |
+| `commit_seq` | `int` | The journal commit of the retraction, and its read token ("" when none). |
+| `read_token` | `str` |  |
 
 ## `memory.demonstrate`
 
@@ -744,6 +794,10 @@ WHAT: Fetch one memory by exact `memory_key`.
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
+| `valid_as_of` | `datetime \| None` | `None` | World time V; None = now, or K when only `known_as_of` is given. |
+| `known_as_of` | `datetime \| None` | `None` | Knowledge time K: answer from the journal as committed at K; None = now. |
+| `read_token` | `str` | `''` | A write's `read_token`: the read waits (within budget) until the journal cutoff covers that write, and answers `projection_not_ready` otherwise. |
+| `validity_policy` | `Literal['compat', 'strict']` | `'compat'` | `compat` admits an assertion with an unknown or inferred validity bound and discloses it; `strict` excludes it. |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `agent` | `str` | required | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
@@ -753,7 +807,6 @@ WHAT: Fetch one memory by exact `memory_key`.
 | `memory_key` | `str` | required | The key to read: tried under this identity, then the same user's row under any agent. |
 | `if_version` | `int \| None` | `None` | Version precondition: the version the caller already holds. |
 | `include_recall_breakdown` | `bool` | `False` | Opt-in per-agent recall breakdown; off by default to keep get cheap. |
-| `as_of` | `datetime \| None` | `None` | As-of replay filter: restrict to rows with coalesce(valid_at, created_at) <= as_of. |
 | `fields` | `list[str]` | *(computed)* | A whitelist of output field names (`value`, `tags`, `status`, `memory_type`, `recall_count`, `created_at`, …). |
 | `follow` | `bool` | `False` | Serve the live canonical a `status='duplicate'` row points to (its `duplicate_of`, same org and namespace, up to three hops) instead of the exact row; the response then carries `resolved_from` = the key asked for and `canonical_key` = the… |
 
@@ -801,6 +854,9 @@ WHAT: Fetch one memory by exact `memory_key`.
 | `locked_by` | `str` | Who set the lock (`human:<subject>` / `process:<subject>` under auth); '' when unlocked. |
 | `recall_by_agent` | `list[_RecallByAgent]` | Per-agent recall breakdown (last 30 days); populated only when include_recall_breakdown=True. |
 | `sensitivity` | `str` | '' \| low \| medium \| high. |
+| `temporal` | `TemporalCutoff \| None` | Set on a bi-temporal read (`valid_as_of` / `known_as_of` / `read_token`): the cutoff it answered from and its coverage. |
+| `assertions` | `list[TemporalAssertion]` | On a bi-temporal read: every assertion of the key that applies at V (more than one when sources disagree, see `disputed`). |
+| `disputed` | `bool` | True when more than one value applies at V under the same qualifiers. |
 
 ## `memory.get_by_id`
 
@@ -810,9 +866,12 @@ Fetch a memory by its UUID (not memory_key).
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
+| `valid_as_of` | `datetime \| None` | `None` | World time V; None = now, or K when only `known_as_of` is given. |
+| `known_as_of` | `datetime \| None` | `None` | Knowledge time K: answer from the journal as committed at K; None = now. |
+| `read_token` | `str` | `''` | A write's `read_token`: the read waits (within budget) until the journal cutoff covers that write, and answers `projection_not_ready` otherwise. |
+| `validity_policy` | `Literal['compat', 'strict']` | `'compat'` | `compat` admits an assertion with an unknown or inferred validity bound and discloses it; `strict` excludes it. |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `memory_id` | `str` | required | UUID returned by memory.set |
-| `as_of` | `datetime \| None` | `None` | As-of replay filter — see MemoryGetInput.as_of. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -845,6 +904,9 @@ Fetch a memory by its UUID (not memory_key).
 | `locked_by` | `str` | Who set the lock (`human:<subject>` / `process:<subject>` under auth); '' when unlocked. |
 | `on_expire` | `str` | What the expiry sweep does when `expires_at` passes: tombstone \| demote \| anonymize; '' = tombstone. |
 | `expire_reason` | `str` | Why the expiry was set, as the writer gave it; '' when none. |
+| `temporal` | `TemporalCutoff \| None` | On a bi-temporal read: the cutoff, the assertions that apply at V and whether they disagree (see MemoryGetOutput). |
+| `assertions` | `list[TemporalAssertion]` |  |
+| `disputed` | `bool` |  |
 
 ## `memory.health`
 
@@ -948,6 +1010,37 @@ Write exported evidence chunks and digests into a namespace, re-embedded here an
 | `edited` | `list[str]` | Chunks whose body did not hash to the content_sha256 they arrived with. |
 | `skipped` | `int` | Items not written: empty, unembeddable, or refused by a blacklist pattern (Refuse). |
 
+## `memory.intervals`
+
+The valid-time timeline of one key as recorded at K: every assertion served at the cutoff, each with its interval and the commits that added (and retired) it.
+
+`POST /v1/memory.intervals` · MCP `loom_memory_intervals` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `valid_as_of` | `datetime \| None` | `None` | World time V; None = now, or K when only `known_as_of` is given. |
+| `known_as_of` | `datetime \| None` | `None` | Knowledge time K: answer from the journal as committed at K; None = now. |
+| `read_token` | `str` | `''` | A write's `read_token`: the read waits (within budget) until the journal cutoff covers that write, and answers `projection_not_ready` otherwise. |
+| `validity_policy` | `Literal['compat', 'strict']` | `'compat'` | `compat` admits an assertion with an unknown or inferred validity bound and discloses it; `strict` excludes it. |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `agent` | `str` | required | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
+| `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
+| `session_id` | `str` | `'-'` | The session or conversation the row belongs to; `'-'` for none. |
+| `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
+| `memory_key` | `str` | required |  |
+| `include_retired` | `bool` | `False` |  |
+| `limit` | `int` | `200` |  |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `memory_key` | `str` |  |
+| `assertions` | `list[TemporalAssertion]` | Served at the cutoff, earliest valid_from first. |
+| `retired` | `list[TemporalAssertion]` | With include_retired: assertions no longer served at the cutoff. |
+| `at_valid` | `list[str]` | The assertions that apply at V, and whether they disagree. |
+| `disputed` | `bool` |  |
+| `temporal` | `TemporalCutoff` |  |
+
 ## `memory.lineage`
 
 Assemble the provenance chain for a SHARED memory.
@@ -1020,6 +1113,10 @@ List memory keys under this identity, optionally filtered.
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
+| `valid_as_of` | `datetime \| None` | `None` | World time V; None = now, or K when only `known_as_of` is given. |
+| `known_as_of` | `datetime \| None` | `None` | Knowledge time K: answer from the journal as committed at K; None = now. |
+| `read_token` | `str` | `''` | A write's `read_token`: the read waits (within budget) until the journal cutoff covers that write, and answers `projection_not_ready` otherwise. |
+| `validity_policy` | `Literal['compat', 'strict']` | `'compat'` | `compat` admits an assertion with an unknown or inferred validity bound and discloses it; `strict` excludes it. |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `agent` | `str` | required | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
@@ -1039,7 +1136,6 @@ List memory keys under this identity, optionally filtered.
 | `include_duplicates` | `bool` | `False` | `status='duplicate'` rows are skipped (their canonical is in the same scan) unless asked for. |
 | `include_superseded` | `bool` | `False` | `status='superseded'` rows (a later write replaced them) are skipped unless asked for; a served entry carries its `status`. |
 | `include_proposed` | `bool` | `False` | `status='proposed'` rows (facts on trial) are skipped unless asked for; `memory.proposals` lists them with their graded counts. |
-| `as_of` | `datetime \| None` | `None` | see MemoryGetInput.as_of |
 | `tags` | `list[str]` | *(computed)* | Hard OR-filter on the row's tags — the same `hasAny(tags, …)` predicate memory.search applies — so a tagged subset (`kind:false_positive`, `subsystem:Storages`) is one list call, not a recency page followed by a get per key. |
 | `contains` | `str \| None` | `None` | Only rows whose value or key holds this text, any case — the keyword filter of a browse page's search box, which must find every row that names a word (a ranked search returns its top k and misses the rest). |
 | `fields` | `list[str]` | *(computed)* | Whitelist of entry field names; every entry carries only those plus `memory_key`. |
@@ -1055,6 +1151,7 @@ List memory keys under this identity, optionally filtered.
 | `unchanged` | `bool` | True when `known_version` matched: entries, total and today were not read and are their defaults. |
 | `hidden` | `int` | When a `prefix` listing is empty, how many rows under the prefix it left out as `duplicate`/`superseded`, and the flag that serves them. 0 / "" otherwise. |
 | `hidden_hint` | `str` | A sentence naming those hidden rows and the flag that lists them; '' otherwise. |
+| `temporal` | `TemporalCutoff \| None` | On a bi-temporal list: the cutoff it answered from. |
 
 ## `memory.lock`
 
@@ -1262,6 +1359,15 @@ WHAT: Save a standing fact and protect it.
 | `dry_run` | `bool` | `False` | Run the conflict check and return its verdict, peers and `next` WITHOUT writing — no loom.memory row, no embedding row, no audit hash, no usage event, no supersession. |
 | `await_verdict` | `bool` | `False` | The conflict judge runs AFTER the row is written and the response says `conflict_verdict: pending`; pass true to wait for it in the response (one LLM call, ~+1 s). |
 | `proposed` | `bool` | `False` | Write the fact as a PROPOSAL (`status='proposed'`): not served by default, served to a read that passes `include_proposed`, and accepted or rejected on the graded outcomes of the runs that used it (`run.grade`, `memory.proposals`… |
+| `change_kind` | `Literal['', 'transition', 'correct']` | `''` | What this write means on the valid-time axis. '' (default): a plain write revises what the key asserts, without claiming the world changed now. |
+| `effective_at` | `datetime \| None` | `None` | When a `transition` takes effect. |
+| `temporal_kind` | `Literal['', 'state', 'event', 'snapshot', 'rule']` | `''` | state \| event \| snapshot \| rule: an event or snapshot never becomes an open-ended state. '' keeps the key's (state for a new key). |
+| `modality` | `Literal['', 'asserted', 'observed', 'planned', 'hypothetical', 'quoted', 'disputed']` | `''` | asserted \| observed \| planned \| hypothetical \| quoted \| disputed. '' keeps the key's. |
+| `valid_text` | `str` | `''` | The validity date as the source wrote it ("last spring"), its precision and zone. |
+| `valid_precision` | `Literal['', 'instant', 'day', 'month', 'year', 'approximate']` | `''` |  |
+| `valid_tz` | `str` | `''` |  |
+| `qualifiers` | `dict[str, str]` | *(computed)* | Qualifiers that keep two claims of one key apart (role, project, …). |
+| `expected_revision` | `str` | `''` | The assertion id the writer read (memory.intervals / a temporal memory.get); 409 when the key no longer serves it. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -1270,6 +1376,8 @@ WHAT: Save a standing fact and protect it.
 | `memory_id` | `str` | UUID assigned to this insert; usable with memory.get_by_id |
 | `content_sha256` | `str` | SHA-256 of the just-written value; usable as if_match_sha256 on next write. |
 | `status` | `str` | The written row's lifecycle status (`active`, `duplicate`, `proposed`); "" on a write that stored no row (merge, dry run). |
+| `past_only` | `bool` | True when the write was late evidence: journaled for the past span it names, while the key's current value (and the row `memory.get` reads) is unchanged. |
+| `left_out` | `str` | Why the write changed nothing (`noop` is then true): `superseded` (a write to the key drawn later committed first), `locked` (the key's lock in force refuses the change), `restated` (nothing new, and the value is not what applies now). ""… |
 | `duplicate_of` | `str` | Set when this write was tagged status='duplicate': memory_id of the canonical semantically-identical row. |
 | `namespace` | `str` | Echoed so a tool-call response carries citable factual data. |
 | `memory_key` | `str` | The key the request named; on a `merge` see `merged_into_key`. |
@@ -1284,6 +1392,8 @@ WHAT: Save a standing fact and protect it.
 | `dry_run` | `bool` | Echo of the request's dry_run so a tool-call transcript is unambiguous. |
 | `advisories` | `list[str]` | One line per thing the server noticed about the VALUE that the agent should fix on its side — currently only "base64-encoded". |
 | `chunks_written` | `int` | Verbatim chunk rows this write added to the chunk plane for a long searchable value (0 for a short value, a non-searchable type, a merge or a dry run). |
+| `commit_seq` | `int` | The temporal journal commit this write published (0 / "" when the namespace keeps no journal or the write changed no assertion), and the token a read passes as `read_token` to see it. |
+| `read_token` | `str` |  |
 
 ## `memory.promote`
 
@@ -1474,7 +1584,8 @@ Typed records of one schema by field filters and predicates, as of a time.
 | `schema_name` | `str` | required | The schema whose active records are read. |
 | `filters` | `dict[str, str]` | *(computed)* | Field name → exact string value (state `value`); all must match. |
 | `predicates` | `list[RecordPredicate]` | *(computed)* | Typed comparisons or state checks, AND-composed with `filters`. |
-| `as_of` | `datetime \| None` | `None` | Only records whose `valid_at`..`valid_to` interval covers this instant; None = no bound. |
+| `valid_as_of` | `datetime \| None` | `None` | Only records whose `[valid_at, valid_to)` interval covers this instant; None = no bound (or K, under `known_as_of`). |
+| `known_as_of` | `datetime \| None` | `None` | Knowledge time: query the record revisions recorded at or before K, each matched against its own fields (field states other than value / absent are not versioned, so a `unknown` or `rejected` state predicate matches none). |
 | `limit` | `int` | `100` | At most this many records (1–1000), most recently updated first. |
 
 | Output field | Type | Meaning |
@@ -1521,8 +1632,9 @@ Scrub the value of a historical memory row, preserving its audit entry.
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
-| `memory_id` | `str` | required | The id every version of the memory shares; `version` picks the historical row. |
-| `version` | `int` | required | target row's version (from memory.set / memory.history) |
+| `memory_id` | `str` | required | The id every version of the memory shares; `version` or `assertion_id` picks what to scrub. |
+| `version` | `int` | `0` | The historical row's version (from memory.set / memory.history): scrubs that row and every retired journal assertion that held its value. 0 = none. |
+| `assertion_id` | `str` | `''` | A retired journal assertion (from memory.intervals), for text only the journal holds — a memory.amend or a correction's segment. |
 | `reason` | `str` | `''` | short justification recorded in the audit log |
 | `redacted_by` | `str` | `''` | actor for the audit row (caller-supplied) |
 
@@ -1652,6 +1764,10 @@ Semantic search over the agent's own memory.
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
+| `valid_as_of` | `datetime \| None` | `None` | World time V; None = now, or K when only `known_as_of` is given. |
+| `known_as_of` | `datetime \| None` | `None` | Knowledge time K: answer from the journal as committed at K; None = now. |
+| `read_token` | `str` | `''` | A write's `read_token`: the read waits (within budget) until the journal cutoff covers that write, and answers `projection_not_ready` otherwise. |
+| `validity_policy` | `Literal['compat', 'strict']` | `'compat'` | `compat` admits an assertion with an unknown or inferred validity bound and discloses it; `strict` excludes it. |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `agent` | `str` | `'*'` | Defaults to "*" = read ALL agents in the accessible namespaces: membership is the read boundary, agent is authorship metadata. |
@@ -1725,12 +1841,11 @@ Semantic search over the agent's own memory.
 | `rerank` | `str` | `''` | Per-request reranker override. |
 | `retrieval_budget` | `Literal['fast', 'standard', 'deep']` | `'standard'` | Cost posture. "standard" stages cheap recall first, spending expensive LLM/graph/rerank legs only when the planner or fallback gates justify them. "fast" minimizes LLM/fan-out; "deep" allows upfront expensive recall. |
 | `hyde` | `bool` | `True` | HyDE: embed an LLM-generated hypothetical answer instead of the raw query to close the question/stored-phrasing vocabulary gap. |
-| `as_of` | `datetime \| None` | `None` | As-of replay filter (coalesce(valid_at, created_at) <= as_of), denormalized onto memory_embeddings so vector_search applies it without joining loom.memory. |
-| `as_of_basis` | `Literal['valid_time', 'knowledge_time']` | `'valid_time'` | Which time axis `as_of` replays: "valid_time" (default; what was true as of then) or "knowledge_time" (what loom had learned by then — created_at only, ignoring valid_at; the incremental-ingest knowledge cutoff). |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `results` | `list[_MemorySearchHit]` | The ranked hits, best first; empty when nothing passed the noise floor. |
+| `temporal` | `list[TemporalCutoff]` | On a bi-temporal search (`valid_as_of` / `known_as_of` / `read_token`): one cutoff per namespace searched — sequences are not a cross-namespace snapshot. |
 | `reader_block` | `str` | render="reader" only: the results as one prompt block ("[date] [key] (type) excerpt", ordered as memory.ask would read them) and the synthesizer's instructions, so an external reader scores what the ask reader scores on the same hits. |
 | `reader_instructions` | `str` | render="reader" only: the synthesizer instructions memory.ask pairs with `reader_block`; empty otherwise. |
 | `bodies_returned` | `int` | bodies="unit" accounting: whole values served / withheld for budget, and the estimated tokens those bodies added (len/4). |
@@ -1779,6 +1894,10 @@ Same shape as memory.search; returns the per-candidate scoring breakdown instead
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
+| `valid_as_of` | `datetime \| None` | `None` | World time V; None = now, or K when only `known_as_of` is given. |
+| `known_as_of` | `datetime \| None` | `None` | Knowledge time K: answer from the journal as committed at K; None = now. |
+| `read_token` | `str` | `''` | A write's `read_token`: the read waits (within budget) until the journal cutoff covers that write, and answers `projection_not_ready` otherwise. |
+| `validity_policy` | `Literal['compat', 'strict']` | `'compat'` | `compat` admits an assertion with an unknown or inferred validity bound and discloses it; `strict` excludes it. |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `agent` | `str` | `'*'` | Defaults to "*" = read ALL agents in the accessible namespaces: membership is the read boundary, agent is authorship metadata. |
@@ -1852,8 +1971,6 @@ Same shape as memory.search; returns the per-candidate scoring breakdown instead
 | `rerank` | `str` | `''` | Per-request reranker override. |
 | `retrieval_budget` | `Literal['fast', 'standard', 'deep']` | `'standard'` | Cost posture. "standard" stages cheap recall first, spending expensive LLM/graph/rerank legs only when the planner or fallback gates justify them. "fast" minimizes LLM/fan-out; "deep" allows upfront expensive recall. |
 | `hyde` | `bool` | `True` | HyDE: embed an LLM-generated hypothetical answer instead of the raw query to close the question/stored-phrasing vocabulary gap. |
-| `as_of` | `datetime \| None` | `None` | As-of replay filter (coalesce(valid_at, created_at) <= as_of), denormalized onto memory_embeddings so vector_search applies it without joining loom.memory. |
-| `as_of_basis` | `Literal['valid_time', 'knowledge_time']` | `'valid_time'` | Which time axis `as_of` replays: "valid_time" (default; what was true as of then) or "knowledge_time" (what loom had learned by then — created_at only, ignoring valid_at; the incremental-ingest knowledge cutoff). |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -1920,6 +2037,15 @@ Save a fact to Loom — shared across every AI tool the user runs; native memory
 | `dry_run` | `bool` | `False` | Run the conflict check and return its verdict, peers and `next` WITHOUT writing — no loom.memory row, no embedding row, no audit hash, no usage event, no supersession. |
 | `await_verdict` | `bool` | `False` | The conflict judge runs AFTER the row is written and the response says `conflict_verdict: pending`; pass true to wait for it in the response (one LLM call, ~+1 s). |
 | `proposed` | `bool` | `False` | Write the fact as a PROPOSAL (`status='proposed'`): not served by default, served to a read that passes `include_proposed`, and accepted or rejected on the graded outcomes of the runs that used it (`run.grade`, `memory.proposals`… |
+| `change_kind` | `Literal['', 'transition', 'correct']` | `''` | What this write means on the valid-time axis. '' (default): a plain write revises what the key asserts, without claiming the world changed now. |
+| `effective_at` | `datetime \| None` | `None` | When a `transition` takes effect. |
+| `temporal_kind` | `Literal['', 'state', 'event', 'snapshot', 'rule']` | `''` | state \| event \| snapshot \| rule: an event or snapshot never becomes an open-ended state. '' keeps the key's (state for a new key). |
+| `modality` | `Literal['', 'asserted', 'observed', 'planned', 'hypothetical', 'quoted', 'disputed']` | `''` | asserted \| observed \| planned \| hypothetical \| quoted \| disputed. '' keeps the key's. |
+| `valid_text` | `str` | `''` | The validity date as the source wrote it ("last spring"), its precision and zone. |
+| `valid_precision` | `Literal['', 'instant', 'day', 'month', 'year', 'approximate']` | `''` |  |
+| `valid_tz` | `str` | `''` |  |
+| `qualifiers` | `dict[str, str]` | *(computed)* | Qualifiers that keep two claims of one key apart (role, project, …). |
+| `expected_revision` | `str` | `''` | The assertion id the writer read (memory.intervals / a temporal memory.get); 409 when the key no longer serves it. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -1928,6 +2054,8 @@ Save a fact to Loom — shared across every AI tool the user runs; native memory
 | `memory_id` | `str` | UUID assigned to this insert; usable with memory.get_by_id |
 | `content_sha256` | `str` | SHA-256 of the just-written value; usable as if_match_sha256 on next write. |
 | `status` | `str` | The written row's lifecycle status (`active`, `duplicate`, `proposed`); "" on a write that stored no row (merge, dry run). |
+| `past_only` | `bool` | True when the write was late evidence: journaled for the past span it names, while the key's current value (and the row `memory.get` reads) is unchanged. |
+| `left_out` | `str` | Why the write changed nothing (`noop` is then true): `superseded` (a write to the key drawn later committed first), `locked` (the key's lock in force refuses the change), `restated` (nothing new, and the value is not what applies now). ""… |
 | `duplicate_of` | `str` | Set when this write was tagged status='duplicate': memory_id of the canonical semantically-identical row. |
 | `namespace` | `str` | Echoed so a tool-call response carries citable factual data. |
 | `memory_key` | `str` | The key the request named; on a `merge` see `merged_into_key`. |
@@ -1942,6 +2070,8 @@ Save a fact to Loom — shared across every AI tool the user runs; native memory
 | `dry_run` | `bool` | Echo of the request's dry_run so a tool-call transcript is unambiguous. |
 | `advisories` | `list[str]` | One line per thing the server noticed about the VALUE that the agent should fix on its side — currently only "base64-encoded". |
 | `chunks_written` | `int` | Verbatim chunk rows this write added to the chunk plane for a long searchable value (0 for a short value, a non-searchable type, a merge or a dry run). |
+| `commit_seq` | `int` | The temporal journal commit this write published (0 / "" when the namespace keeps no journal or the write changed no assertion), and the token a read passes as `read_token` to see it. |
+| `read_token` | `str` |  |
 
 ## `memory.set_from_messages`
 
@@ -2061,6 +2191,53 @@ Run one expiry-sweep pass now — the same pass the `memory_expiry_sweep` worker
 | `sample` | `list[dict[str, Any]]` | Up to 20 handled rows: memory_key, namespace, agent, action, expired_at. |
 | `failures` | `list[str]` | Errors of the pass (`scan:`, `insert:`, `mirror:`); empty on a clean run. |
 
+## `memory.temporal_diff`
+
+What changed for one key.
+
+`POST /v1/memory.temporal_diff` · MCP `loom_memory_temporal_diff` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `agent` | `str` | required | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
+| `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
+| `session_id` | `str` | `'-'` | The session or conversation the row belongs to; `'-'` for none. |
+| `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
+| `memory_key` | `str` | required |  |
+| `mode` | `Literal['world', 'belief']` | required |  |
+| `start` | `datetime \| None` | `None` |  |
+| `end` | `datetime \| None` | `None` |  |
+| `at` | `datetime \| None` | `None` | world: the knowledge time; belief: the valid time. |
+| `limit` | `int` | `200` |  |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `memory_key` | `str` |  |
+| `mode` | `str` |  |
+| `changes` | `list[_TemporalChange]` |  |
+| `temporal` | `TemporalCutoff` |  |
+
+## `memory.temporal_status`
+
+`POST /v1/memory.temporal_status` · MCP `loom_memory_temporal_status` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `namespace` | `str` | The namespace the op reads or writes. |
+| `publisher` | `str` | keeper \| process: who serializes the namespace's commits in this deployment. |
+| `head_seq` | `int` |  |
+| `projection_seq` | `int` | Highest sequence the assertion projection has applied with no gap below. |
+| `first_recorded_at` | `datetime \| None` |  |
+| `integrity_break_at` | `int` | The lowest sequence holding two different payloads; 0 = none. |
+| `write_blockers` | `list[str]` | Why memory writes to the namespace would fail now; empty when they publish. |
+
 ## `memory.timeline`
 
 Return memories about an entity (or matching a tag filter) in strict temporal order — newest first, with optional since/until windows.
@@ -2116,6 +2293,7 @@ Change only a memory's expiry: set a new TTL (`ttl_seconds`) or clear it (`clear
 | `expires_at` | `datetime \| None` | The new expiry of the touched rows; None when cleared or none touched. |
 | `results` | `list[MemoryTouchResult]` | With `memory_keys`, one row per asked key. |
 | `touched_count` | `int` | With `memory_keys`, how many keys were touched; 0 for one key. |
+| `left_out` | `str` | Single key: why it was not touched (see MemoryTouchResult.left_out). |
 
 ## `memory.unlock`
 
@@ -2228,6 +2406,9 @@ Update a memory by UUID with an optimistic concurrency check.
 | `conflict_verdict` | `str` | The semantic conflict verdict on the new value, as memory.set computes it — "" when the check did not run (flag off or a non-searchable type), else clear \| duplicate \| merge \| conflict \| refines. |
 | `conflict_peers` | `int` | How many existing rows the conflict check matched the new value to. |
 | `duplicate_of` | `str` | Set when the new value restates or near-duplicates another row: that row's memory_id (mirrors MemorySetOutput.duplicate_of). |
+| `commit_seq` | `int` | The journal commit of the revision, and its read token ("" when none). |
+| `read_token` | `str` |  |
+| `left_out` | `str` | Why a found memory was not updated: memory.set's `left_out` reasons. "" when it was updated, or not found. |
 
 ## `memory.verify`
 

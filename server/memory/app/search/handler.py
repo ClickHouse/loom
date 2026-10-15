@@ -158,9 +158,22 @@ async def _run_retrieval_stages(
     _clock.mark("iterative_retry")
 
 
-async def handle_memory_search(input: MemorySearchInput) -> MemorySearchOutput:
+async def _answered_elsewhere(input: MemorySearchInput) -> MemorySearchOutput | None:
+    """A parked page, or a bi-temporal search (its own eligible-set path)."""
     if getattr(input, "page", ""):
         return await _serve_parked_page(input)
+    if input.temporal_requested():
+        from server.memory.app import temporal_search
+        from server.memory.app.search.request import resolve_historical_input
+
+        return await temporal_search.search(resolve_historical_input(input))
+    return None
+
+
+async def handle_memory_search(input: MemorySearchInput) -> MemorySearchOutput:
+    early = await _answered_elsewhere(input)
+    if early is not None:
+        return early
 
     input, caller_hyde_explicit, _top_k_ceiling, search_budget = await _resolve_search_input(input)
 

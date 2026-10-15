@@ -101,7 +101,7 @@ async def test_handler_routes_only_when_flag_on_and_documents_concentrate(monkey
     )
     assert await h._maybe_route_to_synthesize(no_synth) is None
     replay = MemoryAskInput(
-        org="o", namespace="n", query="summarize the report", as_of="2026-01-01T00:00:00Z"
+        org="o", namespace="n", query="summarize the report", valid_as_of="2026-01-01T00:00:00Z"
     )
     assert await h._maybe_route_to_synthesize(replay) is None
     assert calls == []

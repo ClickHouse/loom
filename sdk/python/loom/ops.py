@@ -165,6 +165,7 @@ OpName = Literal[
     "llm.complete",
     "memory.agents_list",
     "memory.aggregate",
+    "memory.amend",
     "memory.apply",
     "memory.ask",
     "memory.assign_category",
@@ -194,6 +195,7 @@ OpName = Literal[
     "memory.history",
     "memory.import_curated",
     "memory.import_evidence",
+    "memory.intervals",
     "memory.lineage",
     "memory.link",
     "memory.list",
@@ -226,6 +228,8 @@ OpName = Literal[
     "memory.set_from_messages",
     "memory.stack",
     "memory.sweep_expired",
+    "memory.temporal_diff",
+    "memory.temporal_status",
     "memory.timeline",
     "memory.touch",
     "memory.unlock",
@@ -472,6 +476,7 @@ OP_NAMES: tuple[str, ...] = (
     "llm.complete",
     "memory.agents_list",
     "memory.aggregate",
+    "memory.amend",
     "memory.apply",
     "memory.ask",
     "memory.assign_category",
@@ -501,6 +506,7 @@ OP_NAMES: tuple[str, ...] = (
     "memory.history",
     "memory.import_curated",
     "memory.import_evidence",
+    "memory.intervals",
     "memory.lineage",
     "memory.link",
     "memory.list",
@@ -533,6 +539,8 @@ OP_NAMES: tuple[str, ...] = (
     "memory.set_from_messages",
     "memory.stack",
     "memory.sweep_expired",
+    "memory.temporal_diff",
+    "memory.temporal_status",
     "memory.timeline",
     "memory.touch",
     "memory.unlock",
@@ -2049,6 +2057,17 @@ OPS: dict[str, OpSpec] = {
         250,
         False,
     ),
+    "memory.amend": OpSpec(
+        "memory.amend",
+        "MemoryAmendInput",
+        "MemoryAmendBody",
+        "MemoryAmendOutput",
+        True,
+        "writer",
+        "experimental",
+        600,
+        True,
+    ),
     "memory.apply": OpSpec(
         "memory.apply",
         "MemoryApplyInput",
@@ -2367,6 +2386,17 @@ OPS: dict[str, OpSpec] = {
         "stable",
         30000,
         True,
+    ),
+    "memory.intervals": OpSpec(
+        "memory.intervals",
+        "MemoryIntervalsInput",
+        "MemoryIntervalsBody",
+        "MemoryIntervalsOutput",
+        True,
+        "viewer",
+        "experimental",
+        150,
+        False,
     ),
     "memory.lineage": OpSpec(
         "memory.lineage",
@@ -2719,6 +2749,28 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         2000,
         True,
+    ),
+    "memory.temporal_diff": OpSpec(
+        "memory.temporal_diff",
+        "MemoryTemporalDiffInput",
+        "MemoryTemporalDiffBody",
+        "MemoryTemporalDiffOutput",
+        True,
+        "viewer",
+        "experimental",
+        200,
+        False,
+    ),
+    "memory.temporal_status": OpSpec(
+        "memory.temporal_status",
+        "MemoryTemporalStatusInput",
+        "MemoryTemporalStatusBody",
+        "MemoryTemporalStatusOutput",
+        True,
+        "viewer",
+        "experimental",
+        150,
+        False,
     ),
     "memory.timeline": OpSpec(
         "memory.timeline",
@@ -7978,7 +8030,8 @@ class FactsListInput(TypedDict, total=False):
     include_sources: NotRequired[bool]
     include_source_status: NotRequired[bool]
     min_co_occur: NotRequired[int]
-    as_of: NotRequired[Optional[str]]
+    valid_as_of: NotRequired[Optional[str]]
+    known_as_of: NotRequired[Optional[str]]
     provenance: NotRequired[Optional[list[Literal["extracted", "inferred", "facet"]]]]
 
 
@@ -7994,7 +8047,8 @@ class FactsListBody(TypedDict, total=False):
     include_sources: NotRequired[bool]
     include_source_status: NotRequired[bool]
     min_co_occur: NotRequired[int]
-    as_of: NotRequired[Optional[str]]
+    valid_as_of: NotRequired[Optional[str]]
+    known_as_of: NotRequired[Optional[str]]
     provenance: NotRequired[Optional[list[Literal["extracted", "inferred", "facet"]]]]
 
 
@@ -8030,7 +8084,8 @@ class FactsPathInput(TypedDict, total=False):
     max_hops: NotRequired[int]
     top_k_per_hop: NotRequired[int]
     min_co_occur: NotRequired[int]
-    as_of: NotRequired[Optional[str]]
+    valid_as_of: NotRequired[Optional[str]]
+    known_as_of: NotRequired[Optional[str]]
     relations: NotRequired[list[str]]
     labeled: NotRequired[bool]
 
@@ -8045,7 +8100,8 @@ class FactsPathBody(TypedDict, total=False):
     max_hops: NotRequired[int]
     top_k_per_hop: NotRequired[int]
     min_co_occur: NotRequired[int]
-    as_of: NotRequired[Optional[str]]
+    valid_as_of: NotRequired[Optional[str]]
+    known_as_of: NotRequired[Optional[str]]
     relations: NotRequired[list[str]]
     labeled: NotRequired[bool]
 
@@ -8075,7 +8131,8 @@ class FactsRelatedInput(TypedDict, total=False):
     namespace: Required[str]
     entity: Required[str]
     top_k: NotRequired[int]
-    as_of: NotRequired[Optional[str]]
+    valid_as_of: NotRequired[Optional[str]]
+    known_as_of: NotRequired[Optional[str]]
 
 
 class FactsRelatedBody(TypedDict, total=False):
@@ -8083,7 +8140,8 @@ class FactsRelatedBody(TypedDict, total=False):
     namespace: NotRequired[str]
     entity: Required[str]
     top_k: NotRequired[int]
-    as_of: NotRequired[Optional[str]]
+    valid_as_of: NotRequired[Optional[str]]
+    known_as_of: NotRequired[Optional[str]]
 
 
 class FactsRelatedOutput(TypedDict, total=False):
@@ -8107,7 +8165,8 @@ class FactsTraverseInput(TypedDict, total=False):
     top_k_per_hop: NotRequired[int]
     min_co_occur: NotRequired[int]
     max_nodes: NotRequired[int]
-    as_of: NotRequired[Optional[str]]
+    valid_as_of: NotRequired[Optional[str]]
+    known_as_of: NotRequired[Optional[str]]
     relations: NotRequired[list[str]]
     labeled: NotRequired[bool]
     hub_degree: NotRequired[Optional[int]]
@@ -8125,7 +8184,8 @@ class FactsTraverseBody(TypedDict, total=False):
     top_k_per_hop: NotRequired[int]
     min_co_occur: NotRequired[int]
     max_nodes: NotRequired[int]
-    as_of: NotRequired[Optional[str]]
+    valid_as_of: NotRequired[Optional[str]]
+    known_as_of: NotRequired[Optional[str]]
     relations: NotRequired[list[str]]
     labeled: NotRequired[bool]
     hub_degree: NotRequired[Optional[int]]
@@ -9149,6 +9209,114 @@ class AggregateRow(TypedDict, total=False):
     metric: Required[float]
 
 
+class MemoryAmendInput(TypedDict, total=False):
+    "A bounded change to what one key asserted over valid time, without"
+
+    org: Required[str]
+    namespace: Required[str]
+    agent: Required[str]
+    user_id: NotRequired[str]
+    session_id: NotRequired[str]
+    run_id: NotRequired[str]
+    memory_key: Required[str]
+    change_kind: Required[Literal["correct", "transition", "retract"]]
+    value: NotRequired[Union[dict[str, Any], list[Any], str, int, float, bool, None]]
+    valid_from: NotRequired[Optional[str]]
+    valid_to: NotRequired[Optional[str]]
+    effective_at: NotRequired[Optional[str]]
+    temporal_kind: NotRequired[Literal["", "state", "event", "snapshot", "rule"]]
+    validity_basis: NotRequired[Literal["stated", "extracted", "inferred"]]
+    valid_text: NotRequired[str]
+    valid_precision: NotRequired[Literal["", "instant", "day", "month", "year", "approximate"]]
+    valid_tz: NotRequired[str]
+    modality: NotRequired[
+        Literal["", "asserted", "observed", "planned", "hypothetical", "quoted", "disputed"]
+    ]
+    qualifiers: NotRequired[dict[str, str]]
+    evidence_ids: NotRequired[list[str]]
+    expected_revision: NotRequired[str]
+    confidence: NotRequired[float]
+
+
+class MemoryAmendBody(TypedDict, total=False):
+    "A bounded change to what one key asserted over valid time, without"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    agent: NotRequired[str]
+    user_id: NotRequired[str]
+    session_id: NotRequired[str]
+    run_id: NotRequired[str]
+    memory_key: Required[str]
+    change_kind: Required[Literal["correct", "transition", "retract"]]
+    value: NotRequired[Union[dict[str, Any], list[Any], str, int, float, bool, None]]
+    valid_from: NotRequired[Optional[str]]
+    valid_to: NotRequired[Optional[str]]
+    effective_at: NotRequired[Optional[str]]
+    temporal_kind: NotRequired[Literal["", "state", "event", "snapshot", "rule"]]
+    validity_basis: NotRequired[Literal["stated", "extracted", "inferred"]]
+    valid_text: NotRequired[str]
+    valid_precision: NotRequired[Literal["", "instant", "day", "month", "year", "approximate"]]
+    valid_tz: NotRequired[str]
+    modality: NotRequired[
+        Literal["", "asserted", "observed", "planned", "hypothetical", "quoted", "disputed"]
+    ]
+    qualifiers: NotRequired[dict[str, str]]
+    evidence_ids: NotRequired[list[str]]
+    expected_revision: NotRequired[str]
+    confidence: NotRequired[float]
+
+
+class MemoryAmendOutput(TypedDict, total=False):
+    memory_key: Required[str]
+    commit_id: NotRequired[str]
+    commit_seq: NotRequired[int]
+    recorded_at: NotRequired[Optional[str]]
+    read_token: NotRequired[str]
+    change_kind: NotRequired[str]
+    retired: NotRequired[list[str]]
+    added: NotRequired[list["TemporalAssertion"]]
+    current_value: NotRequired[Any]
+    current_row_error: NotRequired[str]
+
+
+class TemporalAssertion(TypedDict, total=False):
+    "One recorded assertion about a memory, with both of its times."
+
+    assertion_id: Required[str]
+    origin_assertion_id: NotRequired[str]
+    parent_assertion_id: NotRequired[Optional[str]]
+    memory_key: NotRequired[str]
+    agent: NotRequired[str]
+    user_id: NotRequired[str]
+    session_id: NotRequired[str]
+    value: NotRequired[Any]
+    value_sha256: NotRequired[str]
+    memory_type: NotRequired[str]
+    temporal_kind: NotRequired[str]
+    validity_basis: NotRequired[str]
+    valid_from: NotRequired[Optional[str]]
+    valid_to: NotRequired[Optional[str]]
+    valid_text: NotRequired[str]
+    valid_precision: NotRequired[str]
+    valid_tz: NotRequired[str]
+    modality: NotRequired[str]
+    status: NotRequired[str]
+    confidence: NotRequired[float]
+    verified_by: NotRequired[str]
+    verified_at: NotRequired[Optional[str]]
+    source_class: NotRequired[str]
+    actor: NotRequired[str]
+    qualifiers: NotRequired[dict[str, str]]
+    tags: NotRequired[list[str]]
+    evidence_ids: NotRequired[list[str]]
+    derived_from: NotRequired[list[str]]
+    born_seq: NotRequired[int]
+    born_at: NotRequired[Optional[str]]
+    retired_seq: NotRequired[Optional[int]]
+    retired_at: NotRequired[Optional[str]]
+
+
 class MemoryApplyInput(TypedDict, total=False):
     "One scope grammar for every write that can touch more than one row."
 
@@ -9268,6 +9436,10 @@ class ApplyRow(TypedDict, total=False):
 class MemoryAskInput(TypedDict, total=False):
     "Ask a question and get a grounded answer synthesized from the caller's"
 
+    valid_as_of: NotRequired[Optional[str]]
+    known_as_of: NotRequired[Optional[str]]
+    read_token: NotRequired[str]
+    validity_policy: NotRequired[Literal["compat", "strict"]]
     org: Required[str]
     namespace: Required[str]
     agent: NotRequired[str]
@@ -9300,8 +9472,6 @@ class MemoryAskInput(TypedDict, total=False):
     summary_cap: NotRequired[Optional[int]]
     rrf_adaptive_lexical: NotRequired[Optional[bool]]
     personalization: NotRequired[Literal["full", "none"]]
-    as_of: NotRequired[Optional[str]]
-    as_of_basis: NotRequired[Literal["valid_time", "knowledge_time"]]
     include_superseded: NotRequired[bool]
     precedents: NotRequired[Optional[bool]]
     llm_cache: NotRequired[Optional[bool]]
@@ -9341,6 +9511,10 @@ class RecentMessage(TypedDict, total=False):
 class MemoryAskBody(TypedDict, total=False):
     "Ask a question and get a grounded answer synthesized from the caller's"
 
+    valid_as_of: NotRequired[Optional[str]]
+    known_as_of: NotRequired[Optional[str]]
+    read_token: NotRequired[str]
+    validity_policy: NotRequired[Literal["compat", "strict"]]
     org: NotRequired[str]
     namespace: NotRequired[str]
     agent: NotRequired[str]
@@ -9373,8 +9547,6 @@ class MemoryAskBody(TypedDict, total=False):
     summary_cap: NotRequired[Optional[int]]
     rrf_adaptive_lexical: NotRequired[Optional[bool]]
     personalization: NotRequired[Literal["full", "none"]]
-    as_of: NotRequired[Optional[str]]
-    as_of_basis: NotRequired[Literal["valid_time", "knowledge_time"]]
     include_superseded: NotRequired[bool]
     precedents: NotRequired[Optional[bool]]
     llm_cache: NotRequired[Optional[bool]]
@@ -9404,6 +9576,7 @@ class MemoryAskBody(TypedDict, total=False):
 
 class MemoryAskOutput(TypedDict, total=False):
     answer: NotRequired[str]
+    temporal: NotRequired[list["TemporalCutoff"]]
     source: NotRequired[
         Literal["synthesized", "retrieval_only", "abstained", "record", "precedent"]
     ]
@@ -9473,6 +9646,20 @@ class MemoryAskOutput(TypedDict, total=False):
     count_recomputed: NotRequired[bool]
 
 
+class TemporalCutoff(TypedDict, total=False):
+    "What a temporal read answered from. Namespace sequences are not a global"
+
+    namespace: NotRequired[str]
+    valid_as_of: NotRequired[Optional[str]]
+    known_as_of: NotRequired[Optional[str]]
+    cutoff_seq: NotRequired[int]
+    head_seq: NotRequired[int]
+    complete: NotRequired[bool]
+    history_from: NotRequired[Optional[str]]
+    validity_policy: NotRequired[str]
+    gaps: NotRequired[list[str]]
+
+
 class MemorySearchHit(TypedDict, total=False):
     memory_key: Required[str]
     memory_type: Required[str]
@@ -9518,6 +9705,8 @@ class MemorySearchHit(TypedDict, total=False):
     derived_from: NotRequired[list[str]]
     score_components: NotRequired[dict[str, float]]
     resolved_from: NotRequired[Optional[str]]
+    assertion_id: NotRequired[str]
+    value_sha256: NotRequired[str]
 
 
 class MemoryAssignCategoryInput(TypedDict, total=False):
@@ -9728,6 +9917,9 @@ class MemoryGetOutput(TypedDict, total=False):
     locked_by: NotRequired[str]
     recall_by_agent: NotRequired[list["RecallByAgent"]]
     sensitivity: NotRequired[str]
+    temporal: NotRequired[Optional["TemporalCutoff"]]
+    assertions: NotRequired[list["TemporalAssertion"]]
+    disputed: NotRequired[bool]
 
 
 class CodeLink(TypedDict, total=False):
@@ -9823,6 +10015,7 @@ class BulkSetResult(TypedDict, total=False):
     conflict_verdict: NotRequired[str]
     peers: NotRequired[list["MemorySetPeer"]]
     next: NotRequired[str]
+    left_out: NotRequired[str]
 
 
 class MemorySetPeer(TypedDict, total=False):
@@ -10114,6 +10307,9 @@ class MemoryDeleteOutput(TypedDict, total=False):
     found: NotRequired[bool]
     dependents_tombstoned: NotRequired[int]
     dependents_downgraded: NotRequired[int]
+    left_out: NotRequired[str]
+    commit_seq: NotRequired[int]
+    read_token: NotRequired[str]
 
 
 class MemoryDemonstrateInput(TypedDict, total=False):
@@ -10469,6 +10665,10 @@ class MemoryForFileHit(TypedDict, total=False):
 
 
 class MemoryGetInput(TypedDict, total=False):
+    valid_as_of: NotRequired[Optional[str]]
+    known_as_of: NotRequired[Optional[str]]
+    read_token: NotRequired[str]
+    validity_policy: NotRequired[Literal["compat", "strict"]]
     org: Required[str]
     namespace: Required[str]
     agent: Required[str]
@@ -10478,12 +10678,15 @@ class MemoryGetInput(TypedDict, total=False):
     memory_key: Required[str]
     if_version: NotRequired[Optional[int]]
     include_recall_breakdown: NotRequired[bool]
-    as_of: NotRequired[Optional[str]]
     fields: NotRequired[list[str]]
     follow: NotRequired[bool]
 
 
 class MemoryGetBody(TypedDict, total=False):
+    valid_as_of: NotRequired[Optional[str]]
+    known_as_of: NotRequired[Optional[str]]
+    read_token: NotRequired[str]
+    validity_policy: NotRequired[Literal["compat", "strict"]]
     org: NotRequired[str]
     namespace: NotRequired[str]
     agent: NotRequired[str]
@@ -10493,21 +10696,26 @@ class MemoryGetBody(TypedDict, total=False):
     memory_key: Required[str]
     if_version: NotRequired[Optional[int]]
     include_recall_breakdown: NotRequired[bool]
-    as_of: NotRequired[Optional[str]]
     fields: NotRequired[list[str]]
     follow: NotRequired[bool]
 
 
 class MemoryGetByIdInput(TypedDict, total=False):
+    valid_as_of: NotRequired[Optional[str]]
+    known_as_of: NotRequired[Optional[str]]
+    read_token: NotRequired[str]
+    validity_policy: NotRequired[Literal["compat", "strict"]]
     org: Required[str]
     memory_id: Required[str]
-    as_of: NotRequired[Optional[str]]
 
 
 class MemoryGetByIdBody(TypedDict, total=False):
+    valid_as_of: NotRequired[Optional[str]]
+    known_as_of: NotRequired[Optional[str]]
+    read_token: NotRequired[str]
+    validity_policy: NotRequired[Literal["compat", "strict"]]
     org: NotRequired[str]
     memory_id: Required[str]
-    as_of: NotRequired[Optional[str]]
 
 
 class MemoryGetByIdOutput(TypedDict, total=False):
@@ -10540,6 +10748,9 @@ class MemoryGetByIdOutput(TypedDict, total=False):
     locked_by: NotRequired[str]
     on_expire: NotRequired[str]
     expire_reason: NotRequired[str]
+    temporal: NotRequired[Optional["TemporalCutoff"]]
+    assertions: NotRequired[list["TemporalAssertion"]]
+    disputed: NotRequired[bool]
 
 
 class MemoryHealthInput(TypedDict, total=False):
@@ -10742,6 +10953,51 @@ class MemoryImportEvidenceOutput(TypedDict, total=False):
     skipped: NotRequired[int]
 
 
+class MemoryIntervalsInput(TypedDict, total=False):
+    "The valid-time timeline of one key as recorded at K: every assertion"
+
+    valid_as_of: NotRequired[Optional[str]]
+    known_as_of: NotRequired[Optional[str]]
+    read_token: NotRequired[str]
+    validity_policy: NotRequired[Literal["compat", "strict"]]
+    org: Required[str]
+    namespace: Required[str]
+    agent: Required[str]
+    user_id: NotRequired[str]
+    session_id: NotRequired[str]
+    run_id: NotRequired[str]
+    memory_key: Required[str]
+    include_retired: NotRequired[bool]
+    limit: NotRequired[int]
+
+
+class MemoryIntervalsBody(TypedDict, total=False):
+    "The valid-time timeline of one key as recorded at K: every assertion"
+
+    valid_as_of: NotRequired[Optional[str]]
+    known_as_of: NotRequired[Optional[str]]
+    read_token: NotRequired[str]
+    validity_policy: NotRequired[Literal["compat", "strict"]]
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    agent: NotRequired[str]
+    user_id: NotRequired[str]
+    session_id: NotRequired[str]
+    run_id: NotRequired[str]
+    memory_key: Required[str]
+    include_retired: NotRequired[bool]
+    limit: NotRequired[int]
+
+
+class MemoryIntervalsOutput(TypedDict, total=False):
+    memory_key: Required[str]
+    assertions: NotRequired[list["TemporalAssertion"]]
+    retired: NotRequired[list["TemporalAssertion"]]
+    at_valid: NotRequired[list[str]]
+    disputed: NotRequired[bool]
+    temporal: Required["TemporalCutoff"]
+
+
 class MemoryLineageInput(TypedDict, total=False):
     "Assemble the provenance chain for a SHARED memory."
 
@@ -10862,6 +11118,10 @@ class MemoryLinkOutput(TypedDict, total=False):
 class MemoryListInput(TypedDict, total=False):
     "List memory keys under this identity, optionally filtered."
 
+    valid_as_of: NotRequired[Optional[str]]
+    known_as_of: NotRequired[Optional[str]]
+    read_token: NotRequired[str]
+    validity_policy: NotRequired[Literal["compat", "strict"]]
     org: Required[str]
     namespace: Required[str]
     agent: Required[str]
@@ -10881,7 +11141,6 @@ class MemoryListInput(TypedDict, total=False):
     include_duplicates: NotRequired[bool]
     include_superseded: NotRequired[bool]
     include_proposed: NotRequired[bool]
-    as_of: NotRequired[Optional[str]]
     tags: NotRequired[list[str]]
     contains: NotRequired[Optional[str]]
     fields: NotRequired[list[str]]
@@ -10891,6 +11150,10 @@ class MemoryListInput(TypedDict, total=False):
 class MemoryListBody(TypedDict, total=False):
     "List memory keys under this identity, optionally filtered."
 
+    valid_as_of: NotRequired[Optional[str]]
+    known_as_of: NotRequired[Optional[str]]
+    read_token: NotRequired[str]
+    validity_policy: NotRequired[Literal["compat", "strict"]]
     org: NotRequired[str]
     namespace: NotRequired[str]
     agent: NotRequired[str]
@@ -10910,7 +11173,6 @@ class MemoryListBody(TypedDict, total=False):
     include_duplicates: NotRequired[bool]
     include_superseded: NotRequired[bool]
     include_proposed: NotRequired[bool]
-    as_of: NotRequired[Optional[str]]
     tags: NotRequired[list[str]]
     contains: NotRequired[Optional[str]]
     fields: NotRequired[list[str]]
@@ -10926,6 +11188,7 @@ class MemoryListOutput(TypedDict, total=False):
     unchanged: NotRequired[bool]
     hidden: NotRequired[int]
     hidden_hint: NotRequired[str]
+    temporal: NotRequired[Optional["TemporalCutoff"]]
 
 
 class MemoryListEntry(TypedDict, total=False):
@@ -11265,6 +11528,17 @@ class MemorySetInput(TypedDict, total=False):
     dry_run: NotRequired[bool]
     await_verdict: NotRequired[bool]
     proposed: NotRequired[bool]
+    change_kind: NotRequired[Literal["", "transition", "correct"]]
+    effective_at: NotRequired[Optional[str]]
+    temporal_kind: NotRequired[Literal["", "state", "event", "snapshot", "rule"]]
+    modality: NotRequired[
+        Literal["", "asserted", "observed", "planned", "hypothetical", "quoted", "disputed"]
+    ]
+    valid_text: NotRequired[str]
+    valid_precision: NotRequired[Literal["", "instant", "day", "month", "year", "approximate"]]
+    valid_tz: NotRequired[str]
+    qualifiers: NotRequired[dict[str, str]]
+    expected_revision: NotRequired[str]
 
 
 class MemorySetBody(TypedDict, total=False):
@@ -11298,6 +11572,17 @@ class MemorySetBody(TypedDict, total=False):
     dry_run: NotRequired[bool]
     await_verdict: NotRequired[bool]
     proposed: NotRequired[bool]
+    change_kind: NotRequired[Literal["", "transition", "correct"]]
+    effective_at: NotRequired[Optional[str]]
+    temporal_kind: NotRequired[Literal["", "state", "event", "snapshot", "rule"]]
+    modality: NotRequired[
+        Literal["", "asserted", "observed", "planned", "hypothetical", "quoted", "disputed"]
+    ]
+    valid_text: NotRequired[str]
+    valid_precision: NotRequired[Literal["", "instant", "day", "month", "year", "approximate"]]
+    valid_tz: NotRequired[str]
+    qualifiers: NotRequired[dict[str, str]]
+    expected_revision: NotRequired[str]
 
 
 class MemorySetOutput(TypedDict, total=False):
@@ -11306,6 +11591,8 @@ class MemorySetOutput(TypedDict, total=False):
     memory_id: NotRequired[str]
     content_sha256: NotRequired[str]
     status: NotRequired[str]
+    past_only: NotRequired[bool]
+    left_out: NotRequired[str]
     duplicate_of: NotRequired[str]
     namespace: NotRequired[str]
     memory_key: NotRequired[str]
@@ -11320,6 +11607,8 @@ class MemorySetOutput(TypedDict, total=False):
     dry_run: NotRequired[bool]
     advisories: NotRequired[list[str]]
     chunks_written: NotRequired[int]
+    commit_seq: NotRequired[int]
+    read_token: NotRequired[str]
 
 
 class MemoryPromoteInput(TypedDict, total=False):
@@ -11638,7 +11927,8 @@ class MemoryRecordQueryInput(TypedDict, total=False):
     schema_name: Required[str]
     filters: NotRequired[dict[str, str]]
     predicates: NotRequired[list["RecordPredicate"]]
-    as_of: NotRequired[Optional[str]]
+    valid_as_of: NotRequired[Optional[str]]
+    known_as_of: NotRequired[Optional[str]]
     limit: NotRequired[int]
 
 
@@ -11659,7 +11949,8 @@ class MemoryRecordQueryBody(TypedDict, total=False):
     schema_name: Required[str]
     filters: NotRequired[dict[str, str]]
     predicates: NotRequired[list["RecordPredicate"]]
-    as_of: NotRequired[Optional[str]]
+    valid_as_of: NotRequired[Optional[str]]
+    known_as_of: NotRequired[Optional[str]]
     limit: NotRequired[int]
 
 
@@ -11717,7 +12008,8 @@ class MemoryRedactInput(TypedDict, total=False):
 
     org: Required[str]
     memory_id: Required[str]
-    version: Required[int]
+    version: NotRequired[int]
+    assertion_id: NotRequired[str]
     reason: NotRequired[str]
     redacted_by: NotRequired[str]
 
@@ -11727,7 +12019,8 @@ class MemoryRedactBody(TypedDict, total=False):
 
     org: NotRequired[str]
     memory_id: Required[str]
-    version: Required[int]
+    version: NotRequired[int]
+    assertion_id: NotRequired[str]
     reason: NotRequired[str]
     redacted_by: NotRequired[str]
 
@@ -11894,6 +12187,10 @@ class MemoryRestoreOutput(TypedDict, total=False):
 class MemorySearchInput(TypedDict, total=False):
     "Semantic search over the agent's own memory."
 
+    valid_as_of: NotRequired[Optional[str]]
+    known_as_of: NotRequired[Optional[str]]
+    read_token: NotRequired[str]
+    validity_policy: NotRequired[Literal["compat", "strict"]]
     org: Required[str]
     namespace: Required[str]
     agent: NotRequired[str]
@@ -11975,13 +12272,15 @@ class MemorySearchInput(TypedDict, total=False):
     rerank: NotRequired[str]
     retrieval_budget: NotRequired[Literal["fast", "standard", "deep"]]
     hyde: NotRequired[bool]
-    as_of: NotRequired[Optional[str]]
-    as_of_basis: NotRequired[Literal["valid_time", "knowledge_time"]]
 
 
 class MemorySearchBody(TypedDict, total=False):
     "Semantic search over the agent's own memory."
 
+    valid_as_of: NotRequired[Optional[str]]
+    known_as_of: NotRequired[Optional[str]]
+    read_token: NotRequired[str]
+    validity_policy: NotRequired[Literal["compat", "strict"]]
     org: NotRequired[str]
     namespace: NotRequired[str]
     agent: NotRequired[str]
@@ -12063,12 +12362,11 @@ class MemorySearchBody(TypedDict, total=False):
     rerank: NotRequired[str]
     retrieval_budget: NotRequired[Literal["fast", "standard", "deep"]]
     hyde: NotRequired[bool]
-    as_of: NotRequired[Optional[str]]
-    as_of_basis: NotRequired[Literal["valid_time", "knowledge_time"]]
 
 
 class MemorySearchOutput(TypedDict, total=False):
     results: Required[list["MemorySearchHit"]]
+    temporal: NotRequired[list["TemporalCutoff"]]
     reader_block: NotRequired[str]
     reader_instructions: NotRequired[str]
     bodies_returned: NotRequired[int]
@@ -12122,6 +12420,10 @@ class MemorySearchOutput(TypedDict, total=False):
 class MemorySearchTraceInput(TypedDict, total=False):
     "Same shape as memory.search; returns the per-candidate scoring"
 
+    valid_as_of: NotRequired[Optional[str]]
+    known_as_of: NotRequired[Optional[str]]
+    read_token: NotRequired[str]
+    validity_policy: NotRequired[Literal["compat", "strict"]]
     org: Required[str]
     namespace: Required[str]
     agent: NotRequired[str]
@@ -12203,13 +12505,15 @@ class MemorySearchTraceInput(TypedDict, total=False):
     rerank: NotRequired[str]
     retrieval_budget: NotRequired[Literal["fast", "standard", "deep"]]
     hyde: NotRequired[bool]
-    as_of: NotRequired[Optional[str]]
-    as_of_basis: NotRequired[Literal["valid_time", "knowledge_time"]]
 
 
 class MemorySearchTraceBody(TypedDict, total=False):
     "Same shape as memory.search; returns the per-candidate scoring"
 
+    valid_as_of: NotRequired[Optional[str]]
+    known_as_of: NotRequired[Optional[str]]
+    read_token: NotRequired[str]
+    validity_policy: NotRequired[Literal["compat", "strict"]]
     org: NotRequired[str]
     namespace: NotRequired[str]
     agent: NotRequired[str]
@@ -12291,8 +12595,6 @@ class MemorySearchTraceBody(TypedDict, total=False):
     rerank: NotRequired[str]
     retrieval_budget: NotRequired[Literal["fast", "standard", "deep"]]
     hyde: NotRequired[bool]
-    as_of: NotRequired[Optional[str]]
-    as_of_basis: NotRequired[Literal["valid_time", "knowledge_time"]]
 
 
 class MemorySearchTraceOutput(TypedDict, total=False):
@@ -12540,6 +12842,78 @@ class MemorySweepExpiredOutput(TypedDict, total=False):
     failures: NotRequired[list[str]]
 
 
+class MemoryTemporalDiffInput(TypedDict, total=False):
+    "What changed for one key. `world`: at a fixed knowledge time K (None ="
+
+    org: Required[str]
+    namespace: Required[str]
+    agent: Required[str]
+    user_id: NotRequired[str]
+    session_id: NotRequired[str]
+    run_id: NotRequired[str]
+    memory_key: Required[str]
+    mode: Required[Literal["world", "belief"]]
+    start: NotRequired[Optional[str]]
+    end: NotRequired[Optional[str]]
+    at: NotRequired[Optional[str]]
+    limit: NotRequired[int]
+
+
+class MemoryTemporalDiffBody(TypedDict, total=False):
+    "What changed for one key. `world`: at a fixed knowledge time K (None ="
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    agent: NotRequired[str]
+    user_id: NotRequired[str]
+    session_id: NotRequired[str]
+    run_id: NotRequired[str]
+    memory_key: Required[str]
+    mode: Required[Literal["world", "belief"]]
+    start: NotRequired[Optional[str]]
+    end: NotRequired[Optional[str]]
+    at: NotRequired[Optional[str]]
+    limit: NotRequired[int]
+
+
+class MemoryTemporalDiffOutput(TypedDict, total=False):
+    memory_key: Required[str]
+    mode: Required[str]
+    changes: NotRequired[list["TemporalChange"]]
+    temporal: Required["TemporalCutoff"]
+
+
+class TemporalChange(TypedDict, total=False):
+    at: NotRequired[Optional[str]]
+    kind: Required[str]
+    commit_seq: NotRequired[int]
+    before: NotRequired[list[Any]]
+    after: NotRequired[list[Any]]
+    before_assertions: NotRequired[list["TemporalAssertion"]]
+    after_assertions: NotRequired[list["TemporalAssertion"]]
+    assertion: NotRequired[Optional["TemporalAssertion"]]
+
+
+class MemoryTemporalStatusInput(TypedDict, total=False):
+    org: Required[str]
+    namespace: Required[str]
+
+
+class MemoryTemporalStatusBody(TypedDict, total=False):
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+
+
+class MemoryTemporalStatusOutput(TypedDict, total=False):
+    namespace: Required[str]
+    publisher: Required[str]
+    head_seq: NotRequired[int]
+    projection_seq: NotRequired[int]
+    first_recorded_at: NotRequired[Optional[str]]
+    integrity_break_at: NotRequired[int]
+    write_blockers: NotRequired[list[str]]
+
+
 class MemoryTimelineInput(TypedDict, total=False):
     "Return memories about an entity (or matching a tag filter) in strict"
 
@@ -12630,6 +13004,7 @@ class MemoryTouchOutput(TypedDict, total=False):
     expires_at: NotRequired[Optional[str]]
     results: NotRequired[list["MemoryTouchResult"]]
     touched_count: NotRequired[int]
+    left_out: NotRequired[str]
 
 
 class MemoryTouchResult(TypedDict, total=False):
@@ -12637,6 +13012,7 @@ class MemoryTouchResult(TypedDict, total=False):
     touched: Required[bool]
     version: NotRequired[Optional[int]]
     expires_at: NotRequired[Optional[str]]
+    left_out: NotRequired[str]
 
 
 class MemoryUnlockInput(TypedDict, total=False):
@@ -12792,6 +13168,9 @@ class MemoryUpdateByIdOutput(TypedDict, total=False):
     conflict_verdict: NotRequired[str]
     conflict_peers: NotRequired[int]
     duplicate_of: NotRequired[str]
+    commit_seq: NotRequired[int]
+    read_token: NotRequired[str]
+    left_out: NotRequired[str]
 
 
 class MemoryVerifyInput(TypedDict, total=False):
@@ -14963,6 +15342,10 @@ class RunListOutput(TypedDict, total=False):
 class SearchQueryInput(TypedDict, total=False):
     "Search every plane of the caller's Loom content in one call."
 
+    valid_as_of: NotRequired[Optional[str]]
+    known_as_of: NotRequired[Optional[str]]
+    read_token: NotRequired[str]
+    validity_policy: NotRequired[Literal["compat", "strict"]]
     org: Required[str]
     namespace: Required[str]
     agent: NotRequired[str]
@@ -14981,6 +15364,10 @@ class SearchQueryInput(TypedDict, total=False):
 class SearchQueryBody(TypedDict, total=False):
     "Search every plane of the caller's Loom content in one call."
 
+    valid_as_of: NotRequired[Optional[str]]
+    known_as_of: NotRequired[Optional[str]]
+    read_token: NotRequired[str]
+    validity_policy: NotRequired[Literal["compat", "strict"]]
     org: NotRequired[str]
     namespace: NotRequired[str]
     agent: NotRequired[str]
@@ -15005,6 +15392,7 @@ class SearchQueryOutput(TypedDict, total=False):
     profile: NotRequired[dict[str, Any]]
     conversations: NotRequired[dict[str, Any]]
     withheld: NotRequired[Optional[dict[str, Any]]]
+    temporal_coverage: NotRequired[Optional[dict[str, str]]]
 
 
 class SessionBriefDeleteInput(TypedDict, total=False):

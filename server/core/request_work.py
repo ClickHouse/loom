@@ -30,6 +30,9 @@ _MAX_SKIPPED = 16
 @dataclass
 class RequestWork:
     began: float = field(default_factory=time.perf_counter)
+    # Wall clock at the start, for comparing with server-side times (an erasure
+    # requested after this request read its rows fences its writes).
+    began_at: float = field(default_factory=time.time)
     last_mark: float = field(default_factory=time.perf_counter)
     # Ask-side stage partition: wall charged to named stages
     # from one origin, the way `StageClock` does for memory.search.
@@ -48,6 +51,12 @@ class RequestWork:
     # Schema guard: tables a pending migration creates that a
     # leg of this request tried to read; the leg continued without them.
     schema_skipped: list[str] = field(default_factory=list)
+    # Journal keys this request committed under its client retry key: a second
+    # change to one is not a retry. On the bag so gathered child tasks share it.
+    temporal_commits: set[tuple[str, tuple[str, str, str, str]]] = field(default_factory=set)
+    # The journal's receipts for this request's writes (temporal_publisher.Receipt):
+    # how a handler learns that a row it wrote was left out, and why.
+    temporal_receipts: list[Any] = field(default_factory=list)
 
     def mark(self, name: str) -> float:
         now = time.perf_counter()

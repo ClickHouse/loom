@@ -69,8 +69,13 @@ async def test_the_bulk_insert_and_the_worker_fill_index_their_late_rows(monkeyp
     async def _noop(*_a: Any, **_k: Any) -> Any:
         return 0
 
+    async def _insert(rows: Any, *, alongside: Any = (), **_k: Any) -> int:
+        for f in alongside:  # the funnel hands the rows it kept to the embedding write
+            await f(rows)
+        return len(rows)
+
     monkeypatch.setattr(memory_repo, "index_late_rows", _index)
-    monkeypatch.setattr(memory_repo, "insert_memory_versions", _noop)
+    monkeypatch.setattr(memory_repo, "insert_memory_versions", _insert)
     monkeypatch.setattr(memory_repo, "insert_embedding_rows", _noop)
     monkeypatch.setattr(memory_repo, "retire_vectors_for_keys", _noop)
     state = _BulkWriteState()

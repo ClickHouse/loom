@@ -153,7 +153,7 @@ def _facts_objects(
     (first-non-empty returns the pre-mutation superset and flakes)."""
     body: dict[str, Any] = {**identity, "subject": subject, "relation": relation, "limit": 500}
     if as_of is not None:
-        body["as_of"] = as_of
+        body["valid_as_of"] = as_of
     deadline = time.monotonic() + poll_timeout_s
     last: set[str] = set()
     while time.monotonic() < deadline:

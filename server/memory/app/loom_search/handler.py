@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 
+from server.memory.api.models_common import TemporalArgs
 from server.memory.api.models_loom_search import SearchInput, SearchOutput
 from server.memory.app.loom_search.fanout import search_sections
 
@@ -39,5 +40,10 @@ async def handle_search(input: SearchInput) -> SearchOutput:
         page=input.page.strip(),
         explain=input.explain,
         fanout_namespaces=fanout,
+        temporal=(
+            TemporalArgs(**input.model_dump(include=set(TemporalArgs.model_fields)))
+            if input.temporal_requested()
+            else None
+        ),
     )
     return SearchOutput.model_validate(payload)
