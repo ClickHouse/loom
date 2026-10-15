@@ -1060,8 +1060,8 @@ async def _stated_by_live_rows(
     return held_triples.union(*holds.values())
 
 
-# The migration that started linking rows to triples: a row last written before it was
-# applied has no links of its own.
+# The migration that started linking rows to triples: a value first written before it
+# was applied has no links of its own.
 _ROW_LINKS_MIGRATION = "031_entity_triple_rows.sql"
 
 
@@ -1092,7 +1092,11 @@ async def _held_by_unlinked_rows(
               AND (memory_id, content_sha256) NOT IN (
                   SELECT memory_id, content_sha256 FROM loom.memory_versions
                   WHERE org = {{org:String}} AND namespace = {{ns:String}}
-                    AND memory_key IN (SELECT memory_key FROM keyed)
+                    AND memory_id IN (
+                        SELECT memory_id FROM loom.memory
+                        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                          AND memory_key IN (SELECT memory_key FROM keyed)
+                    )
                   GROUP BY memory_id, content_sha256
                   HAVING min(updated_at) >= (
                       SELECT min(applied_at) FROM loom._migrations
