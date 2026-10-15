@@ -153,6 +153,12 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
 
 ### Fixed
 
+- In sandboxed repository jobs, git refused a local repository another uid owns (one the
+  host operator cloned, not the container's `loom` user) with `detected dubious ownership`:
+  a compiler tier's fetch from its bare clone failed every pass, and so did the fetches,
+  `ls-remote` and first clone of an entry whose `git_remote` is a local path. The
+  `safe.directory` a job passes in its environment does not reach the upload-pack a local
+  fetch starts; it now gets it on its own command line.
 - Choosing a new embedding model in **Settings → Models & keys** failed with
   `source_text_missing` on a freshly indexed repository: the rebuild took the zero vector
   that pads a text-less row (a file's structural summary card before its summary is
