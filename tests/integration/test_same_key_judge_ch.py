@@ -232,8 +232,8 @@ async def test_undo_restores_only_the_retirement_it_lists(ch, org, judge) -> Non
     assert (await handle_memory_restore(_undo(org, korean))).restored is True
 
 
-# The revision lands just before the Undo takes the key's write lock, or starts during
-# its read under the lock and waits for it: either way the revision is never written over.
+# The revision lands just before the Undo takes the key's write lock, and the Undo
+# refuses; or it starts during the Undo's read under the lock, and waits for the Undo.
 @pytest.mark.parametrize("revised", ["before_the_lock", "under_the_lock"])
 async def test_an_undo_never_overwrites_a_conditional_revision_made_while_it_ran(
     ch, org, judge, monkeypatch, revised
@@ -266,8 +266,10 @@ async def test_an_undo_never_overwrites_a_conditional_revision_made_while_it_ran
 
     @contextlib.asynccontextmanager
     async def revise_then_hold(*args: Any) -> Any:
-        revising.append(asyncio.create_task(handle_memory_update_by_id(revision)))
-        await asyncio.wait(revising, timeout=5)
+        # Only the Undo's call starts the revision; the revision's own goes straight on.
+        if not revising:
+            revising.append(asyncio.create_task(handle_memory_update_by_id(revision)))
+            await asyncio.wait(revising, timeout=5)
         async with hold(*args):
             yield
 
@@ -290,6 +292,8 @@ async def test_an_undo_never_overwrites_a_conditional_revision_made_while_it_ran
     assert "Brazilian" in str(head.value)
     if revised == "under_the_lock":
         assert undone.restored and undone.version < head.version
+    else:  # the revision made the row live again: nothing to undo
+        assert undone.restored is False
     assert not undone.restored or undone.version < head.version
 
 
@@ -1021,6 +1025,42 @@ async def test_a_fact_a_row_predating_row_links_states_survives_a_revision(
 ) -> None:
     jazz, rock = ("user", "like", "jazz"), ("user", "like", "rock")
     await _legacy_stated(ch, org, legacy, jazz, "legacy")
+    linked = await _stated(ch, org, "s1", "I like jazz", jazz, memory_key="r1")
+    await _revise("memory.update_by_id", org, linked, "I like rock", (rock,))
+    await _mutations_done(ch, org)
+    assert await _open_facts(ch, org, want) == want
+
+
+@pytest.mark.parametrize("changed", ["pinned", "revised"])
+async def test_a_row_predating_row_links_holds_by_when_its_value_was_first_written(
+    ch, org, changed
+) -> None:
+    # A pin, a lock, a tag or an Undo writes a new version of the same value: the row
+    # still holds what its value stated before rows were linked.
+    from server.memory import store as M
+
+    jazz, rock = ("user", "like", "jazz"), ("user", "like", "rock")
+    want = {("like", "jazz"), ("like", "rock")}
+    await _legacy_stated(ch, org, "I like jazz", jazz, "legacy")
+    (old,) = await ch.query_all(
+        "SELECT memory_id FROM loom.memory FINAL WHERE org = {org:String}"
+        " AND memory_key = 'legacy'",
+        params={"org": org},
+    )
+    head = await M.get_by_id(str(old["memory_id"]), org=org, ch=ch, scope=WHOLE_NAMESPACE)
+    if changed == "pinned":
+        again = {"pinned": True}
+    else:  # a value written since links, which states no fact, holds none
+        retraction = "I no longer like jazz"
+        again = {
+            "value": json.dumps(retraction),
+            "content_sha256": hashlib.sha256(retraction.encode()).hexdigest(),
+        }
+        want = {("like", "rock")}
+    rewritten = M.build_memory_version_row(
+        head, version=M.next_version(), updated_at=naive_utc_now(), **again
+    )
+    await M.insert_memory_versions([rewritten], ch=ch)
     linked = await _stated(ch, org, "s1", "I like jazz", jazz, memory_key="r1")
     await _revise("memory.update_by_id", org, linked, "I like rock", (rock,))
     await _mutations_done(ch, org)

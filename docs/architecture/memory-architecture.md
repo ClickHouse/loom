@@ -450,27 +450,31 @@ the value it was written or stated for (`carried`):
   total.
 
 A facet edge (the agent's file, concept or topic) is no row's: it is never linked, and
-no retirement closes it. A triple another live row's links still state stays open; a
-row stored before rows were linked to triples has no links, so it keeps open a triple
-its key is linked to (`entity_triple_memories`) while its value still names it. A
-cycle or a longer chain leaves the loser's triples open and logs a warning, and a write
-records the pair for `projection_repair`; a pair even the repair cannot read abandons
-its row (status `abandoned`, with `unfollowable_chain: N pair(s)` in `error_message`).
-An end that holds no facts states nothing, so the loser's triples close with no
-successor, and a triple another pair's live end still states stays open. A closed
-triple ends when its own row was replaced (the latest such date, if several rows close
-it), never before it started; all of a write's closes are one mutation, issued after
-its successors are in, so a replay of a follow that failed midway still finds the
+no retirement closes it. A triple another live row's links still state stays open; a row
+whose value was first written before rows were linked to triples (by the row-links
+migration's applied time, read from `loom.memory_versions`, so a pin, a lock or an Undo
+of the same value keeps it one) has no links, and keeps open a triple its key is linked
+to (`entity_triple_memories`) while its value still names it. A value written since that
+stated no fact has no link and holds none; during a rolling deploy, a replica still on
+the previous build writes key links only, so its rows hold nothing until the fact is
+stated again. A cycle or a longer chain leaves the loser's triples open and logs a
+warning, and a write records the pair for `projection_repair`; a pair even the repair
+cannot read abandons its row (status `abandoned`, with `unfollowable_chain: N pair(s)`
+in `error_message`). An end that holds no facts states nothing, so the loser's triples
+close with no successor, and a triple another pair's live end still states stays open. A
+closed triple ends when its own row was replaced (the latest such date, if several rows
+close it), never before it started; all of a write's closes are one mutation, issued
+after its successors are in, so a replay of a follow that failed midway still finds the
 loser's triples open. A row written while the follow runs may state a triple it closes,
 and the close takes that write's triple too: every writer inserts a triple's row links
 before the triple, so once the close is queued the follow reads which closed triples a
 live row holds and undoes the close for those, with a second mutation matched on the
-close's `invalid_at` and each triple's `valid_to` (mutations run in order, and no row
-is copied). The links are a few rows a write, inserted synchronously as the client
-inserts by default, so a write still waits on one async-insert flush, its triples'. The
-re-check is one more read (two or three when a holding row was revised) on every follow
-that closes anything. If that re-check fails, the closed triples and the close's time
-are recorded (`triples_reopen`) for `projection_repair`.
+close's `invalid_at` and each triple's `valid_to` (mutations run in order, and no row is
+copied). The links are a few rows a write, inserted synchronously as the client inserts
+by default, so a write still waits on one async-insert flush, its triples'. The re-check
+is one more read (two or three when a holding row was revised) on every follow that
+closes anything. If that re-check fails, the closed triples and the close's time are
+recorded (`triples_reopen`) for `projection_repair`.
 
 A write follows up to 1,024 pairs itself and records the rest, or all of them if the
 follow fails, for `projection_repair` to follow; a replay dates an undated winner by its

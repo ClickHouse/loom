@@ -607,3 +607,11 @@ async def test_another_undos_marker_is_not_taken_for_this_ones(monkeypatch) -> N
     written = {m["object"]: m["restore_id"] for m in ch.inserts["loom.entity_triples"]}
     assert written == {"rome": _UNDO_ID, "berlin": _UNDO_ID}
     assert {e["restore_id"] for e in ch.inserts["loom.entity_edges"]} == {_UNDO_ID}
+
+
+def test_the_row_links_migration_the_legacy_check_names_exists() -> None:
+    # Renumbered and missed, the check would find no applied time and drop legacy rows.
+    from server.core.paths import MIGRATIONS_DIR
+    from server.memory.app.entity_projections import _ROW_LINKS_MIGRATION
+
+    assert (MIGRATIONS_DIR / _ROW_LINKS_MIGRATION).exists()

@@ -1069,9 +1069,10 @@ async def _held_by_unlinked_rows(
     org: str, namespace: str, triples: list[tfr.Triple], *, ch: Any
 ) -> frozenset[tfr.Triple]:
     """Of `triples`, those a row written before rows were linked to triples holds: a
-    live row last written before the row-links migration, of a key the triple is linked
-    to (`entity_triple_memories`), whose value still names it (`tfr.still_states`). A
-    row written since with no link stated no fact, and holds none."""
+    live row whose value was first written before the row-links migration, of a key the
+    triple is linked to (`entity_triple_memories`), that still names it
+    (`tfr.still_states`). A value written since with no link stated no fact, and holds
+    none."""
     found = await ch.query_all(
         f"""
         WITH keyed AS (
@@ -1086,9 +1087,17 @@ async def _held_by_unlinked_rows(
             WHERE org = {{org:String}} AND namespace = {{ns:String}}
               AND memory_key IN (SELECT memory_key FROM keyed)
               AND {GRAPH_HOLDER_SQL}
-              AND updated_at < (
-                  SELECT min(applied_at) FROM loom._migrations
-                  WHERE filename = {{row_links:String}}
+              -- Its current value was first written before rows were linked: a pin, a
+              -- lock or an Undo writes the same value again and keeps it a legacy row.
+              AND (memory_id, content_sha256) NOT IN (
+                  SELECT memory_id, content_sha256 FROM loom.memory_versions
+                  WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                    AND memory_key IN (SELECT memory_key FROM keyed)
+                  GROUP BY memory_id, content_sha256
+                  HAVING min(updated_at) >= (
+                      SELECT min(applied_at) FROM loom._migrations
+                      WHERE filename = {{row_links:String}}
+                  )
               )
         )
         SELECT l.value AS value, k.subject AS subject, k.relation AS relation,
