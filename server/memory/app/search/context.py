@@ -63,9 +63,10 @@ class SearchContext:
     prompt_template: str
 
     # True when `namespaces` order is authoritative (a scoped token carrying
-    # an `ns_roles` claim): the search fans out in this exact order as strict
-    # priority tiers. False for unscoped/wildcard tokens (order is not meaningful;
-    # the visibility-based fallback applies instead).
+    # an `ns_roles` claim; the addressed namespace leads, then the token's
+    # order): the search fans out in this order as strict priority tiers.
+    # False for unscoped/wildcard tokens (order is not meaningful; the
+    # visibility-based fallback applies instead).
     namespace_order_authoritative: bool = False
 
     # The set-question instance phrases (plan phase 6); each runs as a supplemental leg.

@@ -1,5 +1,5 @@
 """Table settings Loom needs from any ClickHouse, carried by the tables
-themselves rather than by server config (028_table_settings.sql)."""
+themselves rather than by server config (031_table_settings.sql)."""
 
 from __future__ import annotations
 

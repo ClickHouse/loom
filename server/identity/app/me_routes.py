@@ -247,9 +247,9 @@ def _fold_sharing_agent_rows(
     """One row per agent × namespace, and the same summed per agent.
 
     A cross-namespace recall is a read whose recorded `namespace_scope` was `all_mine` — it
-    spanned every namespace the caller could read, not only the one it was addressed to.
-    Rows logged without the argument are not claimed as cross-namespace; code reads never
-    are, a repository is one namespace.
+    spanned the caller's own namespaces (the all_mine fan-out), not only the one it was
+    addressed to. Rows logged without the argument are not claimed as cross-namespace; code
+    reads never are, a repository is one namespace.
     """
     per_ns: list[dict[str, Any]] = []
     by_agent: dict[str, dict[str, int]] = {}

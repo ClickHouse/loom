@@ -9,7 +9,6 @@ from server.memory.app.search.budget import SearchBudget
 from server.memory.app.search.evidence import (
     _apply_min_similarity_floor,
     _derived_evidence_hit,
-    _merge_namespace_scope,
 )
 from server.memory.app.search.scoring import (
     _anchor_rank_score,
@@ -246,22 +245,6 @@ def test_derived_evidence_flags_broadened_category() -> None:
     agg = {"op": "count", "count": 1, "items": [], "category_broadened": True}
     row = _derived_evidence_hit(agg, [], namespace="ns")
     assert "[category filter broadened]" in row.content_excerpt
-
-
-def test_all_mine_always_includes_explicit_namespace() -> None:
-    assert _merge_namespace_scope("mine", ["other-grant"]) == ["mine", "other-grant"]
-
-
-def test_all_mine_no_duplicate_when_already_granted() -> None:
-    assert _merge_namespace_scope("mine", ["team", "mine"]) == ["team", "mine"]
-
-
-def test_all_mine_falls_back_to_explicit_when_no_grants() -> None:
-    assert _merge_namespace_scope("mine", []) == ["mine"]
-
-
-def test_all_mine_drops_empty_grant_entries() -> None:
-    assert _merge_namespace_scope("mine", ["", "team"]) == ["mine", "team"]
 
 
 def test_note_llm_call_meters_without_consuming_fallback_budget() -> None:

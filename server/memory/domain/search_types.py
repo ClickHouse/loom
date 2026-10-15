@@ -51,7 +51,7 @@ class SearchQuery:
     # Tag filter — rows whose `tags` column intersects with this list
     # are eligible. Empty = no filter. Applied per-namespace in the
     # cross-namespace fan-out, so multi-workspace search honors the
-    # filter uniformly across every namespace the caller is a member of.
+    # filter uniformly across every namespace the search reads.
     tags: list[str] = field(default_factory=list)
     # Soft-metadata ranking. When *_soft is set, the corresponding filter
     # (tags / category) is dropped from WHERE and instead contributes an

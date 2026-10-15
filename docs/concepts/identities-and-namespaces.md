@@ -152,9 +152,20 @@ operation's role, or a live grant does.
   ```
 
 - **Grants** (`loom.namespace_grants`, one row per `(org, namespace, subject)`) add a role
-  on one namespace above what the token carries. Grants only add. A service account with
-  no grant of its own on a namespace uses its creator's grant there, so a token minted
-  from the dashboard follows the person who made it, except on a restricted namespace.
+  on one namespace above what the token carries.
+  - **A claim goes no further than the grant.** Where the subject holds a grant row on a
+    namespace the token names, of any status, the claim reaches no further than that grant:
+    a revoked or lowered grant (`grants.revoke`, `grants.create` with `replace=true`,
+    `namespace.leave`, a released claim, a restore) ends every older token's claim there,
+    and a pending or rejected request caps it at no access. A scoped token keeps its own
+    role there, capped at the live grant.
+  - **What is not touched.** A namespace the subject never held a grant on keeps its
+    claim; revoke the token to take that away.
+  - **When it applies.** The server that changed the grant applies it at once, every other
+    within `LOOM_GRANT_CACHE_TTL_SECONDS` (default 10 s).
+- **Service accounts inherit.** A service account with no grant of its own on a namespace
+  uses its creator's grant there, so a token minted from the dashboard follows the person
+  who made it, except on a restricted namespace.
 - **Operations addressed by an org-wide id** (`memory.get_by_id`, `memory.update_by_id`,
   `memory.redact`) check the fetched row's namespace after the read and answer
   `found=false` on refusal, so a refusal never confirms that the id exists.
@@ -166,11 +177,47 @@ within the revocation cache interval.
 
 ## Reading several namespaces
 
-A token that names several namespaces can search them together: `namespace_scope` is
-`this` (the addressed namespace, the default) or `all_mine` (every namespace the caller
-reads), and the response lists `namespaces_searched`. The token's `namespaces` order is
-the search priority, and private namespaces are searched before public ones. The
-`loom_search` MCP tool and `context.pack` use the same fan-out.
+A search can read several namespaces at once: `namespace_scope` is `this` (the addressed
+namespace, the default) or `all_mine` (the addressed namespace plus the caller's own).
+The `loom_search` MCP tool and `context.pack` use the same fan-out. Memory search lists the
+namespaces in scope in `namespaces_searched` (a tiered search can stop before the last of
+them) and the ones the cap left out in `namespaces_skipped`.
+
+The caller's own namespaces depend on the token:
+
+| Token                                              | Namespaces `all_mine` adds                                                                     |
+| -------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Flat (most tokens; `loom mint-token`, self-signup) | The namespaces the token names, plus every namespace the subject holds a grant on              |
+| Scoped (`ns_roles`; the dashboard's Tokens tab)    | Exactly the namespaces the token lists, in that order; grants added later do not join          |
+| Delegated with `*` (the dashboard's Setup tab)     | The creator's live grants, so a namespace the person joins later is searched too               |
+| Delegated naming namespaces                        | The ones it names where the creator still holds a grant                                        |
+| None, auth off (`single-user`)                     | The namespaces the single user holds a grant on: the default one and every one they registered |
+
+Then the list is narrowed:
+
+- **Kinds.** Only namespaces of the kinds in `LOOM_MEMORY_SEARCH_FANOUT_KINDS` (default
+  `memory`) are swept. Code and benchmark namespaces are read by name or with their own
+  tools.
+- **Restricted namespaces** stay only when the caller passes the restricted check.
+- **The cap.** Besides the addressed namespace, at most
+  `LOOM_MEMORY_SEARCH_FANOUT_MAX_NAMESPACES` (default 32) are read, in the caller's list
+  order: a scoped token's order, or a delegated token's named list; otherwise by name. A
+  scoped token keeps its first ones; for anyone else the cut drops public namespaces
+  before private ones. Memory, knowledge and conversation search name the rest in
+  `namespaces_skipped` (every page of a paged memory search too), and `loom_search` says
+  so in its text; address one by name to read it.
+
+The addressed namespace is always searched, and first: the fan-out only widens a search.
+Memory search then reads in tiers. For a scoped token the other namespaces follow in its
+order, and the search stops at the first with a confident match. For anyone else the
+addressed namespace and the private ones are read first, and the public ones only when
+that first pass comes up short.
+
+Some namespaces a caller can read are not its own and are never swept: those reached
+through a `*` claim or an org or platform role, public namespaces it has not joined, and
+namespaces it created by writing into them (they get an owner row but no grant, so a
+harness that writes a namespace per task does not widen every later search). Address
+them by name. A search covers one org, the token's own.
 
 ## Read scope inside a namespace
 
@@ -282,9 +329,10 @@ owner's decision and an audit trail. Promotion is that decision.
 How a caller gets a token at all is the deployment's identity mode
 (`LOOM_IDENTITY_PROVIDER`):
 
-- **`single-user`**: no authentication; every call resolves to one namespace
+- **`single-user`**: no authentication; a call that names no namespace resolves to one
   (`LOOM_DEFAULT_NAMESPACE`, default `local`, in the org `LOOM_SELF_SIGNUP_ORG`, default
-  `dev`). For a laptop only.
+  `dev`), and an `all_mine` search also reads the namespaces the user registered. For a
+  laptop only.
 - **`trust-network`**: self-signup with email and password; the first principal to
   claim a namespace name owns it. An agent can sign itself up (`loom init --agent`) and a
   person claims it later with a one-time code.

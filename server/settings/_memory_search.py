@@ -11,8 +11,9 @@ from server.settings._env import CaseFolded
 
 class MemorySearchSettings(BaseModel):
     # Default `namespace_scope` when a request leaves it unset. "this" reads
-    # the addressed namespace only; "all_mine" fans out over every namespace
-    # the subject holds a grant on (the MCP loom_search asks for it by name).
+    # the addressed namespace only; "all_mine" also reads the caller's own
+    # namespaces (the MCP loom_search asks for it by name), see
+    # docs/concepts/identities-and-namespaces.md#reading-several-namespaces.
     memory_search_default_namespace_scope: Literal["this", "all_mine"] = "this"
     # Namespace kinds an all_mine fan-out spans (memory.search,
     # knowledge.search, conversation.search, MCP loom_search): comma list over
@@ -20,6 +21,12 @@ class MemorySearchSettings(BaseModel):
     # kind. Code and QA indexes are reached by name or their own tools
     # (measured sweep of 24 namespaces: 6.2 s).
     memory_search_fanout_kinds: str = "memory"
+    # Upper bound on how many of the caller's namespaces an all_mine fan-out
+    # reads besides the addressed one; a search names the rest in
+    # `namespaces_skipped`. Every leg issues at least one statement per
+    # namespace. A guard, not a tuning knob: set well above what one person
+    # holds, so it bounds a runaway sweep rather than trimming normal ones.
+    memory_search_fanout_max_namespaces: int = Field(default=32, ge=1)
     # Key-embedding axis on the fact leg: "on" scores least(value_dist,
     # key_dist) and reads both vector columns (measured 399 vs 203 MB/query on
     # a 30k-row namespace); "off" reads the value vector only; "auto" turns it

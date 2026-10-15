@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from server.auth.fanout import Fanout
 from server.observability import capture_consent, genai
 
 
@@ -457,12 +458,12 @@ async def _loom_search_capture_levels_seen(
     async def _defaults(auth: Any, client_name: str | None = None) -> dict[str, str]:
         return {"org": "o", "namespace": "personal-alice", "agent": "cursor"}
 
-    async def _fanout(org: str) -> list[str]:
-        return list(accessible)
+    async def _fanout(org: str) -> Fanout:
+        return Fanout(org=org, namespaces=tuple(accessible), cap=32)
 
     monkeypatch.setattr(llm_client, "get_llm_client", lambda: _Client())
     monkeypatch.setattr(mcp_call, "_caller_defaults", _defaults)
-    monkeypatch.setattr("server.auth.context.resolve_fanout_namespaces", _fanout)
+    monkeypatch.setattr("server.auth.fanout.resolve_fanout", _fanout)
     monkeypatch.setattr("server.memory.app.search.handle_memory_search", _search_leg)
     monkeypatch.setattr(
         "server.knowledge.app.conversations.handle_conversation_search", _search_leg

@@ -116,7 +116,8 @@ connect by browser sign-in instead of a pasted token (`server/auth/oauth.py`):
   (`ORG_MISMATCH`): a token acts in its own org, an org-wide (`*`) token or a
   platform admin in any org, the same rule as over HTTP (`authz.may_act_in_org`).
   A restricted namespace still refuses every other org, platform admins included. `loom_search` takes no `namespace` argument: it
-  searches the memory-kind namespaces the caller can read.
+  searches the caller's home namespace and its other memory-kind namespaces, up to the
+  fan-out cap.
 - **Code scope.** A client may send `X-Loom-Code-Scope: <org>/<namespace>` (the
   Claude Code plugin sends the repository its checkout resolved to). It applies
   to every `code.*` call that names no namespace, and authorization then runs on

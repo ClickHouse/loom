@@ -412,7 +412,10 @@ async def test_a_claim_release_disables_the_creator(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(delegation, "_account_active", {})
     assert await delegation.creator_account_active(ORG, "alice") is True
     await release_claim(org=ORG, namespace="a", reason="", actor_subject="op", ch=ch)
-    assert ch.namespaces[(ORG, "a")]["owner_email"] == ""
+    released = ch.namespaces[(ORG, "a")]
+    assert released["owner_email"] == ""
+    # The handle-to-email binding the claim cap reads is kept, for that cap alone.
+    assert released["released_aliases"] == ["a@x", "alice"]
     monkeypatch.setattr(delegation, "_account_active", {})
     assert await delegation.creator_account_active(ORG, "alice") is False
 

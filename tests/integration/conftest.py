@@ -208,7 +208,9 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]) ->
 def _purge_minted_orgs() -> Iterator[None]:
     yield
     orgs = minted_orgs()
-    if not orgs or not _server_used or os.environ.get("LOOM_IT_KEEP_ROWS") == "1":
+    # Tests that write to ClickHouse directly use no server, and leave rows too.
+    wrote = _server_used or ch_target_configured()
+    if not orgs or not wrote or os.environ.get("LOOM_IT_KEEP_ROWS") == "1":
         return
     if not ch_target_configured():
         # HTTP-only tests may run against a remote server without a store to
