@@ -160,9 +160,8 @@ without the CLI and runs:
 docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml --profile bundled up -d --build
 ```
 
-`--env-file .env` is required. Without it the `${VAR:-default}` substitutions ignore
-the repository root's `.env` and fall back to the compose file's defaults (auth on, an OpenAI provider with no
-key). `loom down` stops the stack and preserves its volumes. `loom down --delete-data`
+With `compose.yaml` first, Compose reads the repository root's `.env` for the
+`${VAR:-default}` substitutions; `--env-file .env` only says so explicitly. `loom down` stops the stack and preserves its volumes. `loom down --delete-data`
 permanently deletes this installation's named volumes only after you type the generated
 Compose project name; `--yes` is the non-interactive confirmation. The Makefile targets
 do the same: `make down` preserves data and `make down-all` deletes it.

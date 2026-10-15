@@ -21,7 +21,7 @@ import argparse
 import os
 import re
 import sys
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 
 from server.core.ch_errors import error_code
 from server.core.schema import preflight
@@ -40,40 +40,42 @@ def _number(value: float) -> str:
     return str(int(value)) if value.is_integer() else str(value)
 
 
-def _caps() -> dict[str, float]:
-    """The reader profile's caps: the caller-shaped ceilings Loom applies."""
+class Setting(NamedTuple):
+    """One setting of the reader's profile: its value as SQL, its MIN and MAX
+    (None for none) and whether it is CONST."""
+
+    value: str
+    low: float | None = None
+    high: float | None = None
+    const: bool = False
+
+
+def _profile() -> dict[str, Setting]:
+    """The reader's settings profile, with the caller-shaped caps Loom applies
+    as ceilings. `reader_sql` writes it and `reader_status` checks the reader
+    runs under exactly this."""
+    from server.code.domain.deadline import STATEMENT_FLOOR_S
     from server.core.ch import caller_shaped_ceilings
 
-    return caller_shaped_ceilings()
-
-
-def _profile() -> dict[str, tuple[str, float | None, float | None, bool]]:
-    """The reader's settings profile: each setting's value (as SQL), its MIN
-    and MAX (None for none) and whether it is CONST. `reader_sql` writes it and
-    `reader_status` checks the reader runs under exactly this."""
-    from server.code.domain.deadline import STATEMENT_FLOOR_S
-
-    profile: dict[str, tuple[str, float | None, float | None, bool]] = {
-        "readonly": ("2", None, None, False)
-    }
-    for name, cap in _caps().items():
+    profile = {"readonly": Setting("2")}
+    for name, cap in caller_shaped_ceilings().items():
         # The floor keeps a statement from sending 0, which ClickHouse reads as no limit.
         floor = STATEMENT_FLOOR_S if name == "max_execution_time" else 1.0
-        profile[name] = (_number(cap), floor, cap, False) if cap else ("0", None, None, False)
-    profile["read_overflow_mode"] = ("'throw'", None, None, True)
+        profile[name] = Setting(_number(cap), floor, cap) if cap else Setting("0")
+    profile["read_overflow_mode"] = Setting("'throw'", const=True)
     return profile
 
 
 def reader_sql(reader: str, password: str) -> list[str]:
     """The reader's profile, user and grant; `password` is an SQL literal."""
     settings = []
-    for name, (value, low, high, const) in _profile().items():
+    for name, s in _profile().items():
         bounds = (
-            f" MIN {_number(low)} MAX {_number(high)}"
-            if low is not None and high is not None
+            f" MIN {_number(s.low)} MAX {_number(s.high)}"
+            if s.low is not None and s.high is not None
             else ""
         )
-        settings.append(f"{name} = {value}{bounds}{' CONST' if const else ''}")
+        settings.append(f"{name} = {s.value}{bounds}{' CONST' if s.const else ''}")
     return [
         f"CREATE SETTINGS PROFILE OR REPLACE `{reader}` SETTINGS {', '.join(settings)}",
         f"CREATE USER OR REPLACE `{reader}` IDENTIFIED BY {password} SETTINGS PROFILE '{reader}'",
@@ -103,9 +105,7 @@ def admin_sql(user: str, reader: str | None) -> list[str]:
     ]
 
 
-def _setting(
-    value: str, low: str | None, high: str | None, readonly: int
-) -> tuple[str, float | None, float | None, bool]:
+def _setting(value: str, low: str | None, high: str | None, readonly: int) -> Setting:
     """A reader's `system.settings` row in `_profile`'s shape."""
     try:
         shown = _number(float(value))
@@ -113,14 +113,14 @@ def _setting(
         shown = f"'{value}'"
     lower = None if low is None else float(low)
     upper = None if high is None else float(high)
-    return (shown, lower, upper, readonly == 1)
+    return Setting(shown, lower, upper, readonly == 1)
 
 
 def reader_status(reader: str) -> tuple[bool | None, str]:
     """Whether `reader` logs in with LOOM_CH_PASSWORD (None when the probe
     failed for another reason, which proves nothing), and why it is not ready
-    ('' when it is): it must read `loom.*` and run under exactly `_profile`, the
-    constraints included."""
+    ('' when it is): its only grant is SELECT on `loom.*`, and it runs under
+    exactly `_profile`, the constraints included."""
     import clickhouse_connect
 
     from server.core.ch_target import connection_kwargs
@@ -137,7 +137,7 @@ def reader_status(reader: str) -> tuple[bool | None, str]:
                 "WHERE name IN {names:Array(String)}",
                 parameters={"names": list(profile)},
             ).result_rows
-            granted = str(ch.command(f"CHECK GRANT SELECT ON {preflight.DATABASE}.*")) == "1"
+            grants = [str(row[0]).replace("`", "") for row in ch.query("SHOW GRANTS").result_rows]
         finally:
             ch.close()
     except Exception as e:  # noqa: BLE001 — every failure is a reason the reader is not ready
@@ -146,11 +146,11 @@ def reader_status(reader: str) -> tuple[bool | None, str]:
         return None, str(e).splitlines()[0][:160]
     actual = {row[0]: _setting(*row[1:]) for row in rows}
     # `readonly` cannot be changed under readonly anyway, so only its value counts.
-    actual["readonly"] = (actual["readonly"][0], None, None, False)
+    actual["readonly"] = Setting(actual["readonly"].value)
     if name != reader or actual != profile:
         return True, "its profile does not match the current caps and constraints"
-    if not granted:
-        return True, f"it lacks SELECT on {preflight.DATABASE}.*"
+    if grants != [f"GRANT SELECT ON {preflight.DATABASE}.* TO {reader}"]:
+        return True, f"its grants are not SELECT on {preflight.DATABASE}.* alone"
     return True, ""
 
 
@@ -238,7 +238,8 @@ def _refuse(message: str) -> bool:
 
 def _ensure_reader(ch: Any, user: str, reader: str) -> bool:
     """Create or rebuild the reader where it is provably Loom's; say why not
-    otherwise. Who owns it is settled before logging in as it."""
+    otherwise. Who owns it is settled before anything is replaced; a login that
+    may not list users only checks it."""
     found = reader_objects(ch, reader)
     drop_hint = (
         f"If it is Loom's reader from an earlier setup (the password changed, or a setup "
@@ -270,7 +271,7 @@ def _ensure_reader(ch: Any, user: str, reader: str) -> bool:
             return _refuse(
                 f"{reader} is defined by the server's config and {problem}: change its profile "
                 "in deploy/clickhouse-config/nlp_user_settings.xml to match "
-                "LOOM_CH_CALLER_SHAPED_*"
+                "LOOM_CH_CALLER_SHAPED_*, with SELECT on loom.* its only grant"
             )
         print(f"✓ {reader} is defined by the server's config")
         return True

@@ -66,7 +66,7 @@ make migrate-dry      # what would apply
 
 Settings are read once at startup from the environment and from the dotenv file named by `LOOM_ENV_FILE` (default `.env` in the working directory; empty reads none). `make bootstrap` creates `.env` from `.env.example`: `single-user` mode with fake providers, so no auth, no network, no key. The [configuration reference](../reference/configuration.md) lists every setting; [deployment](../operations/deployment.md) covers the essentials.
 
-Compose reads a root `.env` only with `--env-file .env`; its default lookup is the first `-f` file's directory (`dev/`). The make targets pass the flag. Pass it yourself when you run compose by hand.
+Compose reads the `.env` in the first `-f` file's directory. With `compose.yaml` first that is the root one; the cloud stack, whose first file is under `dev/`, needs `--env-file .env`. The make targets pass the flag everywhere.
 
 ## Running the server from source
 

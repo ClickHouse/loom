@@ -648,13 +648,10 @@ def _vector_read_state_not_probed() -> Iterator[None]:
     async def _not_probed(_client: Any) -> None:
         return None
 
-    async def _cache_left_alone(_client: Any) -> None:
-        return None
-
     before = ch_mod._probe_vector_state
     guard = ch_mod._turn_off_unsafe_condition_cache
     ch_mod._probe_vector_state = _not_probed  # type: ignore[assignment]
-    ch_mod._turn_off_unsafe_condition_cache = _cache_left_alone  # type: ignore[assignment]
+    ch_mod._turn_off_unsafe_condition_cache = _not_probed  # type: ignore[assignment]
     vector_codes_state.reset()
     patch_parts.reset()
     yield

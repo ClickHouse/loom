@@ -691,3 +691,40 @@ def test_an_unset_reader_user_means_the_default_reader(
     monkeypatch.setattr(settings, "ch_reader_user", "")
     ch_setup._cmd_ch_setup(argparse.Namespace(print_sql=True))
     assert "CREATE USER OR REPLACE `loom_reader`" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("grants", "problem"),
+    [
+        (["GRANT SELECT ON loom.* TO loom_reader"], ""),
+        (
+            ["GRANT SELECT ON loom.* TO loom_reader", "GRANT SELECT ON *.* TO loom_reader"],
+            "its grants are not SELECT on loom.* alone",
+        ),
+    ],
+)
+def test_the_reader_s_only_grant_is_select_on_loom(
+    monkeypatch: pytest.MonkeyPatch, grants: list[str], problem: str
+) -> None:
+    import clickhouse_connect
+
+    def row(name: str, s: ch_setup.Setting) -> tuple[Any, ...]:
+        value = s.value.strip("'")
+        low = None if s.low is None else str(s.low)
+        high = None if s.high is None else str(s.high)
+        return (name, value, low, high, int(s.const))
+
+    class Reader:
+        def command(self, sql: str) -> Any:
+            return "loom_reader"
+
+        def query(self, sql: str, **_: Any) -> SimpleNamespace:
+            if sql == "SHOW GRANTS":
+                return SimpleNamespace(result_rows=[(g,) for g in grants])
+            return SimpleNamespace(result_rows=[row(n, s) for n, s in ch_setup._profile().items()])
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(clickhouse_connect, "get_client", lambda **_: Reader())
+    assert ch_setup.reader_status("loom_reader") == (True, problem)

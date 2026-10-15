@@ -91,9 +91,9 @@ docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml --p
 ```
 
 The override builds the image from the checkout and pins Loom to the bundled ClickHouse,
-because a checkout's `.env` also serves `make server` on the host. `--env-file .env`
-matters: compose resolves its own `.env` relative to the first `-f` file, so without the
-flag the compose file's fallbacks apply.
+because a checkout's `.env` also serves `make server` on the host. Compose reads the
+`.env` beside the first `-f` file, here the root one; `--env-file .env` only says so
+explicitly.
 
 | Service      | Container     | Ports                          | Role                                                                                     |
 | ------------ | ------------- | ------------------------------ | ---------------------------------------------------------------------------------------- |

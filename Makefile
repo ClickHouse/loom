@@ -25,9 +25,9 @@ bootstrap:
 # image and silently runs stale code. Docker layer caching keeps a no-change
 # `make dev` fast. (For a tight backend loop, `make server` runs from source
 # with --reload and skips the image entirely.)
-# --env-file: compose's own default .env lookup is relative to the first -f
-# file's directory; passing it keeps the root .env in charge of the
-# ${VAR:-default} substitutions. --profile bundled starts the ClickHouse
+# --env-file: compose reads the .env beside the first -f file, the root one
+# here; the flag says so explicitly, and the cloud stack below (first file
+# under dev/) needs it. --profile bundled starts the ClickHouse
 # container whatever COMPOSE_PROFILES an older .env says.
 dev: bootstrap
 	LOOM_BUILD_COMMIT="$$(git rev-parse --short HEAD 2>/dev/null || echo unknown)" \
