@@ -177,29 +177,25 @@ def _doctor_preflight_check() -> tuple[str, str, str]:
         return ("clickhouse_preflight", FAIL, str(e))
     except Exception as e:  # noqa: BLE001 — a doctor line must never crash the doctor
         return ("clickhouse_preflight", FAIL, f"{type(e).__name__}: {e}")
-    warnings = [
-        f"the next boot with a migration to apply will refuse: {gap}"
-        for gap in server.next_migration
-    ]
+    warnings = []
+    if server.next_migration:
+        reasons = "; ".join(gap.reason for gap in server.next_migration)
+        warnings.append(f"the next boot with a migration to apply will refuse: {reasons}")
     if server.unreadable:
         tables = ", ".join(f"system.{t}" for t in server.unreadable)
-        warnings.append(
-            f"may not read {tables}, so the telemetry from these tables stays empty "
-            "(`loom ch-setup --print-sql` has the grant)"
-        )
+        warnings.append(f"may not read {tables}, so the telemetry from these tables stays empty")
     if not server.database:
         warnings.append(f"database {preflight.DATABASE} does not exist yet; boot will create it")
-    if warnings:
+    if not warnings:
         return (
             "clickhouse_preflight",
-            WARN,
-            f"ClickHouse {server.version}: " + "; ".join(warnings),
+            PASS,
+            f"ClickHouse {server.version}, database {preflight.DATABASE} and its grants in place",
         )
-    return (
-        "clickhouse_preflight",
-        PASS,
-        f"ClickHouse {server.version}, database {preflight.DATABASE} and its grants in place",
-    )
+    detail = f"ClickHouse {server.version}: " + "; ".join(warnings)
+    if server.unreadable or any(gap.needs_admin for gap in server.next_migration):
+        detail += " (`loom ch-setup --print-sql` prints the SQL)"
+    return ("clickhouse_preflight", WARN, detail)
 
 
 _GRADE_BY_SEVERITY = {"error": FAIL, "warn": WARN, "info": PASS}

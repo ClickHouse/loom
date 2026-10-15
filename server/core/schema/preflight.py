@@ -96,8 +96,8 @@ class Server:
     # Telemetry tables this user may not read: their views stay empty.
     unreadable: tuple[str, ...] = ()
     # What the next boot with a migration to apply will refuse, passed now
-    # only because nothing is pending; each names its fix.
-    next_migration: tuple[str, ...] = ()
+    # only because nothing is pending.
+    next_migration: tuple[PreflightError, ...] = ()
 
 
 def version_key(version: str) -> tuple[int, ...]:
@@ -250,13 +250,13 @@ def check(
     # Strict where DDL is about to run: a restart with nothing pending is
     # checked like a process that only serves.
     migrating = need == "migrate" and (strict or not database or _migrations_pending(ch, journal))
-    later: list[str] = []
+    later: list[PreflightError] = []
     try:
         version = oldest_version(ch, strict=need == "migrate")
     except PreflightError as e:
         if migrating:
             raise
-        later.append(str(e))
+        later.append(e)
         version = str(ch.command("SELECT version()"))
     if version_key(version)[:2] < MIN_VERSION:
         floor = ".".join(map(str, MIN_VERSION))
@@ -300,9 +300,11 @@ def check(
             )
             if migrating:
                 raise error
-            later.append(str(error))
+            later.append(error)
     if later:
-        log.warning("nothing to migrate now; the next migration will refuse: %s", "; ".join(later))
+        log.warning(
+            "nothing to migrate now; the next migration will refuse: %s", "; ".join(map(str, later))
+        )
     unreadable = tuple(t for t in TELEMETRY_SYSTEM_TABLES if not _readable(ch, f"system.{t}"))
     if unreadable:
         log.warning(

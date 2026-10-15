@@ -109,8 +109,9 @@ def _setting(
     return (shown, lower, upper, readonly == 1)
 
 
-def reader_status(reader: str) -> tuple[bool, str]:
-    """Whether `reader` logs in with LOOM_CH_PASSWORD, and why it is not ready
+def reader_status(reader: str) -> tuple[bool | None, str]:
+    """Whether `reader` logs in with LOOM_CH_PASSWORD (None when the probe
+    failed for another reason, which proves nothing), and why it is not ready
     ('' when it is): it must read `loom.*` and run under exactly `_profile`, the
     constraints included."""
     import clickhouse_connect
@@ -135,7 +136,7 @@ def reader_status(reader: str) -> tuple[bool, str]:
     except Exception as e:  # noqa: BLE001 — every failure is a reason the reader is not ready
         if error_code(e) in preflight.AUTH_FAILED:
             return False, "it does not accept LOOM_CH_PASSWORD"
-        return False, str(e).splitlines()[0][:160]
+        return None, str(e).splitlines()[0][:160]
     actual = {row[0]: _setting(*row[1:]) for row in rows}
     # `readonly` cannot be changed under readonly anyway, so only its value counts.
     actual["readonly"] = (actual["readonly"][0], None, None, False)
@@ -188,11 +189,11 @@ def reader_objects(ch: Any, reader: str) -> str:
 
 def _drop_reader(ch: Any, reader: str) -> None:
     """Undo a reader made halfway, so a rerun starts from nothing."""
-    try:
-        ch.command(f"DROP USER IF EXISTS `{reader}`")
-        ch.command(f"DROP SETTINGS PROFILE IF EXISTS `{reader}`")
-    except Exception:  # noqa: BLE001 — the error that led here is the one to report
-        pass
+    for stmt in (f"DROP USER IF EXISTS `{reader}`", f"DROP SETTINGS PROFILE IF EXISTS `{reader}`"):
+        try:
+            ch.command(stmt)
+        except Exception:  # noqa: BLE001 — the error that led here is the one to report
+            pass
 
 
 def _print_admin_sql(user: str, reader: str) -> None:
@@ -254,6 +255,9 @@ def _set_up(ch: Any, user: str, reader: str) -> int:
             file=sys.stderr,
         )
         return 1
+    elif found == "user" and logged_in is None:
+        print(f"✗ could not check {reader}: {problem}; run this again", file=sys.stderr)
+        return 1
     elif found == "profile" or (found == "user" and not logged_in):
         why = "is a settings profile with no user" if found == "profile" else f"exists: {problem}"
         print(
@@ -274,7 +278,11 @@ def _set_up(ch: Any, user: str, reader: str) -> int:
                 _drop_reader(ch, reader)
             if error_code(e) != preflight.ACCESS_DENIED:
                 raise
-            print(f"✗ {user!r} may not create users or settings profiles", file=sys.stderr)
+            print(
+                f"✗ {user!r} may not create the reader or grant it SELECT on "
+                f"{preflight.DATABASE}.*",
+                file=sys.stderr,
+            )
             _print_admin_sql(user, reader)
             return 1
         print(f"✓ {reader}: SELECT on {preflight.DATABASE}.* only, caps pinned")

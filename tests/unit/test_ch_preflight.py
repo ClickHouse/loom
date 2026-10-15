@@ -127,7 +127,7 @@ def test_a_restart_with_nothing_pending_is_not_strict(monkeypatch: pytest.Monkey
     ch = FakeCH(replica_error="Code: 497. DB::Exception: Not enough privileges. (ACCESS_DENIED)")
     server = preflight.check(ch, need="migrate")
     assert server.version == "26.5.1.882"
-    assert "clusterAllReplicas" in server.next_migration[0]
+    assert "clusterAllReplicas" in server.next_migration[0].reason
 
 
 def test_what_the_next_migration_needs_is_reported_while_nothing_is_pending(
@@ -136,7 +136,7 @@ def test_what_the_next_migration_needs_is_reported_while_nothing_is_pending(
     monkeypatch.setattr(preflight, "_migrations_pending", lambda ch, journal: False)
     ch = FakeCH(denied=("SELECT * FROM system.mutations",))
     (gap,) = preflight.check(ch, need="migrate").next_migration
-    assert "system.mutations" in gap
+    assert "system.mutations" in gap.reason and gap.needs_admin
     assert preflight.check(ch, need="serve").next_migration == ()
 
 
@@ -145,15 +145,23 @@ def test_the_doctor_warns_of_what_the_next_migration_will_refuse(
 ) -> None:
     from server.cli import doctor
 
-    gap = "'loom' may not read system.mutations, which the migrations need"
-    server = preflight.Server("26.5.1.882", keeper=True, lightweight_updates=True)
+    gaps = (
+        preflight.PreflightError("may not read system.mutations", needs_admin=True),
+        preflight.PreflightError("may not ask every replica", needs_admin=True),
+    )
+    server = preflight.Server(
+        "26.5.1.882", keeper=True, lightweight_updates=True, unreadable=("query_log",)
+    )
     monkeypatch.setattr(preflight, "needed_at_boot", lambda: "migrate")
     monkeypatch.setattr(
-        preflight, "require_ready", lambda **_: dataclasses.replace(server, next_migration=(gap,))
+        preflight, "require_ready", lambda **_: dataclasses.replace(server, next_migration=gaps)
     )
     name, grade, detail = doctor._doctor_preflight_check()
     assert (name, grade) == ("clickhouse_preflight", doctor.WARN)
-    assert "next boot with a migration" in detail and gap in detail
+    assert "will refuse: may not read system.mutations; may not ask every replica" in detail
+    assert "system.query_log" in detail
+    # One pointer to the SQL for the whole line.
+    assert detail.count("--print-sql") == 1 and detail.count("will refuse") == 1
 
 
 def test_a_refused_telemetry_table_is_a_warning_not_a_stop() -> None:
@@ -358,8 +366,8 @@ def test_the_reader_must_not_be_the_loom_user(monkeypatch: pytest.MonkeyPatch) -
     [
         # A same-named user that does not log in with Loom's password: an analyst's account.
         ("user", False, "it does not accept LOOM_CH_PASSWORD", "DROP USER IF EXISTS"),
-        # A probe that failed for another reason proves nothing either.
-        ("user", False, "Read timed out", "exists: Read timed out"),
+        # A probe that failed for another reason proves nothing: no advice to drop it.
+        ("user", None, "Read timed out", "could not check analyst: Read timed out"),
         # No password, not on its own profile, or a shared profile.
         ("foreign", True, "its profile does not match", "is not one ch-setup made"),
         # A profile with no user: Loom's own after DROP USER, or someone else's.
@@ -370,7 +378,7 @@ def test_an_account_ch_setup_cannot_prove_is_loom_s_is_left_alone(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     found: str,
-    logged_in: bool,
+    logged_in: bool | None,
     problem: str,
     refusal: str,
 ) -> None:
@@ -427,7 +435,8 @@ def test_a_reader_left_halfway_is_dropped_so_a_rerun_starts_clean(
 ) -> None:
     monkeypatch.setattr(ch_setup, "reader_status", lambda reader: (False, "missing"))
     monkeypatch.setattr(ch_setup, "reader_objects", lambda ch, reader: "")
-    ch = FakeCH(denied=("CREATE USER",))
+    # ClickHouse checks the DROP USER privilege even for a user that does not exist.
+    ch = FakeCH(denied=("CREATE USER", "DROP USER"))
     assert ch_setup._set_up(ch, "loom_app", "loom_reader") == 1
     assert "DROP SETTINGS PROFILE IF EXISTS `loom_reader`" in ch.ran
 
@@ -494,7 +503,7 @@ def test_a_user_who_may_not_create_the_reader_gets_the_admin_sql(
     ch = FakeCH(denied=("CREATE SETTINGS PROFILE",))
     assert ch_setup._set_up(ch, "loom_app", "loom_reader") == 1
     captured = capsys.readouterr()
-    assert "may not create users or settings profiles" in captured.err
+    assert "may not create the reader or grant it SELECT on loom.*" in captured.err
     assert "CREATE USER OR REPLACE `loom_reader`" in captured.err
     assert "s3cret-value" not in captured.out + captured.err
 

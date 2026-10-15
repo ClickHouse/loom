@@ -33,7 +33,7 @@ dev: bootstrap
 	LOOM_BUILD_COMMIT="$$(git rev-parse --short HEAD 2>/dev/null || echo unknown)" \
 		docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml --profile bundled up -d --build
 	@echo "✓ Loom:        http://localhost:7777/me"
-	@ch_port=$$(docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml port clickhouse 8123 2>/dev/null | cut -d: -f2); \
+	@ch_port=$$(docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml --profile bundled port clickhouse 8123 2>/dev/null | cut -d: -f2); \
 	echo "✓ ClickHouse:  http://localhost:$${ch_port:-8123} (user=loom, pwd=loomdev)"
 	@echo "  Migrations applied automatically by the Loom server on boot (FastAPI lifespan)."
 
