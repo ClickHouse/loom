@@ -106,21 +106,23 @@ and a Task created before its Workspace starts with an empty one. The task is
 created suspended, so the policy is in place before it first runs. Substrate
 denies all egress from an actor with no policy, and AX creates none.
 
-## Known gaps
+## The Workspace's git clone on AX `22954f6`
 
-Tested on a kind cluster with AX `22954f6` and Substrate `f6a1dc72` (the
-commit AX pins). The task ran in the sandbox and, through the gateway-injected
-token, wrote its run, budget and memories to Loom, before and after a
-suspend and resume. Two things did not work:
+Substrate turns on an actor's egress only once the actor's wakeup probe
+passes, and AX `22954f6` probes `/readyz`, which waits for workspace setup.
+So the clone runs before the sandbox has a network: git fails with a TLS
+handshake error after five tries, the runner marks the workspace ready
+anyway, egress comes up, and the agent's own calls to Loom succeed. The task
+runs, but without its repository.
 
-- **The Workspace's git clone.** The connection to `github.com` was closed
-  during the TLS handshake despite the `tlsPassthrough` rule, while an ordinary
-  pod in the same cluster reached GitHub. This is a Substrate egress problem,
-  not Loom's; check `kubectl ate get egress-policy` and the `atenet-egress`
-  logs on your version.
-- **AX reports `WorkspaceReady=True` when a clone fails.** The runner logs
-  `setup completed with errors` and starts the command anyway, so read the
-  task's logs, not only its conditions.
+An AX change that probes `/healthz` instead, reports a failed clone as not
+ready, and keeps `ax resume` inside its deadline while the workspace is not
+ready fixes this. Tested on a kind cluster with Substrate `f6a1dc72` (the
+commit AX pins): the repository cloned on the first try, the run, budget and
+memories reached Loom through the injected token, and a suspend and resume
+did it again. On an AX without that change, leave `spec.git` empty and have
+the agent clone the repository itself; egress is up by the time the command
+starts.
 
 ## Budgets
 
