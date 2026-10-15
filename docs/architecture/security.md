@@ -234,26 +234,28 @@ every refresh. A stolen access token can mint machine tokens
 without touching the refresh token, so replay detection only covers a stolen refresh token.
 
 **Each credential is spent exactly once.** What a sign-in spends or moves lives in
-`loom.oauth_claims`, a KeeperMap table (`server/auth/claims.py`), one key each: a code, an
-IdP round trip in flight, a device grant, and the id of each session's current refresh
-token. Every change is a compare-and-set, a strict-mode Keeper write applied only while the
-key still holds the value the request read: spending a refresh token swaps its session's
-key from that token's id, so of two requests presenting it one wins and the other finds it
-spent. The guarantee is Keeper's, not a lease's: no timing or replica lag can let two
-requests through. Ephemeral state (codes, device grants, IdP round trips) is the Keeper
-value itself; a refresh token's grant is a `loom.oauth_state` row written before the token
-is handed out and read with sequential consistency. Each key carries its credential's
-expiry and is swept once it passes. Sign-in starts are limited per address (an IPv6 /64
-counts as one), and the table's key limit is the backstop: past it new sign-ins answer 503
-and `/v1/health` reports `oauth_claims_full`. When Keeper fails mid-change, the change is
-undone before the client is told to retry, so its retry is not taken for a replay. A
-ClickHouse without a Keeper has no claims table: sign-in answers 503, `/v1/health` reports
-`oauth_signin_needs_keeper`, and minted tokens keep working. A refresh token issued before
-sessions had a family is refused, so its owner signs in once more.
+`loom.oauth_claims`, a KeeperMap table (`server/auth/claims.py`), one key each: a code, a
+device grant, the id of each session's current refresh token, and a single-use mark for
+each finished IdP round trip. Every change is a compare-and-set, a strict-mode Keeper write
+applied only while the key still holds the value the request read: spending a refresh token
+swaps its session's key from that token's id, so of two requests presenting it one wins and
+the other finds it spent. The guarantee is Keeper's, not a lease's: no timing or replica
+lag can let two requests through. Codes and device grants are the Keeper value itself; a
+refresh token's grant is a `loom.oauth_state` row written before the token is handed out
+and read with sequential consistency. Each key carries its credential's expiry and is swept
+once it passes. Starting a sign-in writes nothing on the server, so only an authenticated
+callback, a device sign-in start or a code adds a key. Sign-in starts are limited per
+address (an IPv6 /64 counts as one), and the table's key limit is the backstop: past it new
+sign-ins answer 503 and `/v1/health` reports `oauth_claims_full`. When Keeper fails
+mid-change, the change is undone before the client is told to retry, so its retry is not
+taken for a replay. A ClickHouse without a Keeper has no claims table: sign-in answers 503,
+`/v1/health` reports `oauth_signin_needs_keeper`, and minted tokens keep working. A refresh
+token issued before sessions had a family is refused, so its owner signs in once more.
 
-**The IdP round trip is bound to its browser.** Starting a sign-in gives the browser a
-random secret in an HttpOnly cookie and keeps its hash with the round trip; the callback
-finishes it only with that cookie, checked before the round trip is spent. The callback URL
+**The IdP round trip is bound to its browser.** What the callback needs (the nonce, the
+PKCE verifier, where to send the result) travels sealed in an HttpOnly cookie of the
+browser that started the sign-in, never stored on the server. The callback finishes a
+sign-in only with that cookie, once: its state is marked used in Keeper. The callback URL
 alone (from a log, browser history or a screenshot) finishes nothing.
 
 **A revocation that cannot be written is owed.** When ending a session cannot write

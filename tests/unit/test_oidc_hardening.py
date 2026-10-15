@@ -80,12 +80,24 @@ def test_one_jwk_client_per_jwks_uri(monkeypatch: pytest.MonkeyPatch) -> None:
     assert built == ["https://idp/jwks"]
 
 
+_PENDING = {
+    "kind": "mcp",
+    "nonce": "n",
+    "code_verifier": "v",
+    "client_id": "c",
+    "redirect_uri": "r",
+    "code_challenge": "x",
+    "state": "s",
+    "exp": 2**31 - 1,
+}
+
+
 class _Req:
-    """A callback from the browser that started the sign-in (its state cookie set)."""
+    """A callback from the browser that started the sign-in (its cookie set)."""
 
     def __init__(self) -> None:
         self.query_params = {"code": "c", "state": "s"}
-        self.cookies = {oauth._state_cookie("s"): "browser-secret"}
+        self.cookies = {oauth._state_cookie("s"): oauth.seal_pending(_PENDING)}
 
 
 @pytest.mark.parametrize(
@@ -99,18 +111,6 @@ async def test_a_failed_callback_does_not_echo_the_idp(
     monkeypatch: pytest.MonkeyPatch, exc: Exception, status: int, error: str
 ) -> None:
     store = MemoryOAuthStore()
-    await store.save_pending(
-        "s",
-        {
-            "kind": "mcp",
-            "nonce": "n",
-            "code_verifier": "v",
-            "client_id": "c",
-            "redirect_uri": "r",
-            "code_challenge": "x",
-            "browser": oauth.token_id("browser-secret"),
-        },
-    )
     monkeypatch.setattr(oauth, "store", store)
 
     async def boom(**kw: Any) -> Any:
@@ -127,18 +127,6 @@ async def test_an_unverified_email_is_refused_at_the_callback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = MemoryOAuthStore()
-    await store.save_pending(
-        "s",
-        {
-            "kind": "mcp",
-            "nonce": "n",
-            "code_verifier": "v",
-            "client_id": "c",
-            "redirect_uri": "r",
-            "code_challenge": "x",
-            "browser": oauth.token_id("browser-secret"),
-        },
-    )
     monkeypatch.setattr(oauth, "store", store)
 
     async def exchange(**kw: Any) -> dict[str, str]:
@@ -209,13 +197,35 @@ async def test_a_callback_url_alone_does_not_finish_the_sign_in(
     """The cookie's value is a secret the starting browser was given, not
     something the state in the callback URL lets anyone else compute."""
     store = MemoryOAuthStore()
-    await store.save_pending("s", {"kind": "dashboard", "browser": oauth.token_id("secret")})
     monkeypatch.setattr(oauth, "store", store)
     forged = _Req()
     forged.cookies = {oauth._state_cookie("s"): oauth.token_id("s")}  # all the URL gives
     page = await oauth.oidc_callback(forged)  # type: ignore[arg-type]
     assert page.status_code == 400
-    assert not store.records("pending")["s"]["spent"]  # still the starting browser's
+    assert store.keeper == {}  # nothing spent, nothing written
+
+
+async def test_a_sign_in_start_writes_nothing_and_its_callback_works_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = MemoryOAuthStore()
+    monkeypatch.setattr(oauth, "store", store)
+
+    async def authorize_url(**kw: Any) -> str:
+        return "https://idp/authorize"
+
+    monkeypatch.setattr(oidc, "build_authorize_url", authorize_url)
+    await oauth.start_oidc_login("dashboard", "203.0.113.5")
+    assert store.keeper == {}  # an unauthenticated start costs the server nothing
+
+    async def boom(**kw: Any) -> Any:
+        raise ValueError("stop after the single-use check")
+
+    monkeypatch.setattr(oidc, "exchange_code", boom)
+    with pytest.raises(oauth.OAuthError):
+        await oauth.oidc_callback(_Req())  # type: ignore[arg-type]
+    replayed = await oauth.oidc_callback(_Req())  # type: ignore[arg-type]
+    assert replayed.status_code == 400
 
 
 async def test_sign_in_starts_are_limited_per_address_and_ipv6_net(
@@ -231,3 +241,11 @@ async def test_sign_in_starts_are_limited_per_address_and_ipv6_net(
         assert (await oauth.start_oidc_login("dashboard", host)).status_code == 302
     assert (await oauth.start_oidc_login("dashboard", "2001:db8::3")).status_code == 429
     assert (await oauth.start_oidc_login("dashboard", "2001:db9::1")).status_code == 302
+
+
+def test_an_ipv4_client_of_a_dual_stack_socket_counts_as_itself() -> None:
+    from server.auth.attempts import address_key
+
+    assert address_key("::ffff:203.0.113.5") == "203.0.113.5"
+    assert address_key("::ffff:203.0.113.5") != address_key("::ffff:198.51.100.7")
+    assert address_key("2001:db8::1") == address_key("2001:db8::2") == "2001:db8::/64"

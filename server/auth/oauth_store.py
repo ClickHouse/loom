@@ -103,9 +103,8 @@ class OAuthStore(Protocol):
     async def save_refresh(self, token: str, g: Grant) -> None: ...
     async def take_refresh(self, token: str, client_id: str) -> Grant | None: ...
     async def save_pending(self, state: str, data: dict[str, Any]) -> None: ...
-    async def take_pending(
-        self, state: str, accept: Callable[[dict[str, Any]], bool] = ...
-    ) -> dict[str, Any] | None: ...
+    async def take_pending(self, state: str) -> dict[str, Any] | None: ...
+    async def use_once(self, key: str, expires_at: int) -> bool: ...
     async def save_device(self, d: Device) -> None: ...
     async def device(self, device_id: str) -> Device | None: ...
     async def device_by_user_code(self, user_code_id: str) -> Device | None: ...
@@ -322,17 +321,13 @@ class ClickHouseStore:
         record = {"data": data, "exp": exp, "spent": False, "nonce": claims.nonce()}
         await self._put(f"pending:{state}", None, record)
 
-    async def take_pending(
-        self, state: str, accept: Callable[[dict[str, Any]], bool] = lambda _data: True
-    ) -> dict[str, Any] | None:
-        """`accept` (the callback came from the browser that started it) is
-        checked before the spend: a callback from elsewhere leaves it unspent."""
+    async def take_pending(self, state: str) -> dict[str, Any] | None:
         key = f"pending:{state}"
         loaded = await self._load(key)
         if loaded is None:
             return None
         record, value = loaded
-        if record["spent"] or record["exp"] < int(time.time()) or not accept(record["data"]):
+        if record["spent"] or record["exp"] < int(time.time()):
             return None
         try:
             await self._put(key, value, {**record, "spent": True, "nonce": claims.nonce()})
@@ -340,6 +335,11 @@ class ClickHouseStore:
             return None  # the same callback twice: the other one finishes it
         data: dict[str, Any] = record["data"]
         return data
+
+    async def use_once(self, key: str, expires_at: int) -> bool:
+        """Mark `key` used until `expires_at`; False if it already was."""
+        mark = f"used:{claims.nonce()}"
+        return await self._swap(key, None, mark, expires_at) == mark
 
     async def owe_revocation(self, family: str, reason: str) -> None:
         """Record that the session must be revoked: the revocation itself did

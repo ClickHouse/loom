@@ -9,6 +9,7 @@ against an in-process fake IdP.
 
 from __future__ import annotations
 
+import json
 import sys
 import time
 from pathlib import Path
@@ -26,6 +27,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from server.auth import login, oauth, oidc, self_signup  # noqa: E402
+from server.core.secrets_at_rest import unseal  # noqa: E402
 from server.settings import settings  # noqa: E402
 
 _ISS = "https://idp.example.com"
@@ -347,8 +349,9 @@ async def test_authorize_redirects_to_idp(monkeypatch) -> None:
     )
     assert r.status_code == 307 or r.status_code == 302, r.text
     assert r.headers["location"].startswith(f"{_ISS}/authorize")
-    # The pending record carries the MCP client's params + nonce, keyed by state.
-    pend = oauth.store.records("pending")[captured["state"]]["data"]
+    # The browser's sealed cookie carries the MCP client's params and the nonce.
+    sealed = r.cookies[oauth._state_cookie(captured["state"])]
+    pend = json.loads(unseal(oauth._PENDING_PURPOSE, sealed))
     assert pend["client_id"] == cid and pend["mcp_state"] == "mcp-state"
     assert pend["nonce"] == captured["nonce"]
     # PKCE on the IdP leg: the challenge sent is the S256 of the kept verifier.

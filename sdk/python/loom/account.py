@@ -58,7 +58,7 @@ class AccountClient:
         persist: bool = False,
     ) -> dict[str, Any]:
         """A fresh token and the config block to paste into an MCP client
-        (`claude-code`, `codex`, `cursor`, …), as the Setup tab makes it."""
+        (one of the Setup tab's client keys), as the Setup tab makes it."""
         body: dict[str, Any] = {"client": client, "persist": persist}
         if namespace is not None:
             body["namespace"] = namespace

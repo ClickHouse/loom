@@ -108,7 +108,7 @@ def test_account_and_admin_clients_reach_the_routes_outside_the_registry(wire) -
         agent = Agent("acme", "support", "t", base_url="http://loom.test", api_key="k")
         try:
             await agent.account.create_service_account("ci", ["support"], role="viewer")
-            await agent.account.mcp_config("cursor", namespace="support")
+            await agent.account.mcp_config("my-client", namespace="support")
             await agent.account.set_default_namespace("support")
             await agent.deployment.workers_status()
             await agent.deployment.reset_models("7")
@@ -126,7 +126,7 @@ def test_account_and_admin_clients_reach_the_routes_outside_the_registry(wire) -
         (
             "POST",
             "/v1/me/setup/mcp_config",
-            {"client": "cursor", "persist": False, "namespace": "support"},
+            {"client": "my-client", "persist": False, "namespace": "support"},
         ),
         ("POST", "/v1/me/set-default-namespace", {"namespace": "support"}),
         ("GET", "/v1/admin/workers.status", None),

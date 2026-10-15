@@ -599,7 +599,8 @@ def test_a_strangers_failed_sign_in_does_not_end_someone_elses_grant(sso) -> Non
     assert "access_token" in _poll(c, grant["device_code"]).json()
 
 
-def test_dashboard_sso_starts_are_throttled_per_address(sso) -> None:
+def test_dashboard_sso_starts_are_throttled_per_address(sso, monkeypatch) -> None:
+    monkeypatch.setattr(oauth, "_starts_by_address", oauth.Attempts(30, 900))
     c = _client()
     for _ in range(30):
         assert c.get("/oauth/sso", follow_redirects=False).status_code == 302

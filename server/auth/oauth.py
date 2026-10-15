@@ -14,6 +14,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import html
+import json
 import logging
 import secrets
 import time
@@ -157,7 +158,9 @@ _PAGE_HEADERS = {
 }
 
 
-def html_page(title: str, body: str, status_code: int = 200) -> HTMLResponse:
+def html_page(
+    title: str, body: str, status_code: int = 200, headers: dict[str, str] | None = None
+) -> HTMLResponse:
     """One of the server-rendered sign-in pages. `body` is trusted HTML: every
     value in it must already be escaped."""
     return HTMLResponse(
@@ -170,7 +173,7 @@ border-radius:6px}} button.secondary{{background:#eee;color:#111}}
 code{{font-size:1.4rem;letter-spacing:.15rem}} .error{{color:#b00020}}
 </style></head><body>{body}</body></html>""",
         status_code=status_code,
-        headers=_PAGE_HEADERS,
+        headers={**_PAGE_HEADERS, **(headers or {})},
     )
 
 
@@ -431,40 +434,57 @@ def _oidc_callback_url() -> str:
 # account by sending them a callback link. One cookie per sign-in, so two
 # tabs signing in at once don't undo each other.
 def _state_cookie(state: str) -> str:
-    """The cookie holding one IdP sign-in's browser secret."""
+    """The cookie carrying one IdP sign-in in flight."""
     return f"loom_oidc_{token_id(state)[:16]}"
 
 
-_starts_by_address = Attempts(30, 900)
+_PENDING_PURPOSE = "oidc sign-in in flight"
+_COOKIE_MAX = 3800  # browsers drop a cookie past 4 KB
+_starts_by_address = Attempts(300, 900)
+
+
+def seal_pending(record: dict[str, Any]) -> str:
+    return seal(_PENDING_PURPOSE, json.dumps(record))
+
+
+def _pending_from(request: Request, state: str) -> dict[str, Any] | None:
+    """The sign-in this browser started under `state`: sealed in its cookie,
+    so a callback URL without the starting browser finishes nothing."""
+    raw = unseal(_PENDING_PURPOSE, request.cookies.get(_state_cookie(state), ""))
+    record: dict[str, Any] | None = json.loads(raw) if raw else None
+    if record is None or record.get("state") != state or record["exp"] < int(time.time()):
+        return None
+    return record
 
 
 async def start_oidc_login(kind: str, address: str, **data: str) -> Response:
     """Send the browser to the IdP; `data` comes back to the callback. The
-    browser keeps a secret in a cookie, and only a callback carrying it
-    finishes the sign-in: the callback URL alone (a log line, a screenshot)
-    does not."""
+    round trip rides the browser's own cookie, sealed, so starting a sign-in
+    writes nothing on the server: only a callback the IdP sent back does."""
     from server.auth import oidc
 
     if not _starts_by_address.allow(address_key(address)):
+        _log_refused_start(address)
         return html_page(
             "Sign in to Loom",
             "<h2>Too many sign-ins from here</h2><p>Try again in 15 minutes.</p>",
             429,
+            headers={"Retry-After": "900"},
         )
     oidc_state = secrets.token_urlsafe(32)
     nonce = secrets.token_urlsafe(32)
     verifier = secrets.token_urlsafe(48)
-    browser = secrets.token_urlsafe(32)
-    await store.save_pending(
-        oidc_state,
-        {
-            **data,
-            "kind": kind,
-            "nonce": nonce,
-            "code_verifier": verifier,
-            "browser": token_id(browser),
-        },
-    )
+    record = {
+        **data,
+        "kind": kind,
+        "nonce": nonce,
+        "code_verifier": verifier,
+        "state": oidc_state,
+        "exp": int(time.time()) + PENDING_TTL,
+    }
+    cookie = seal_pending(record)
+    if len(cookie) > _COOKIE_MAX:
+        raise OAuthError("invalid_request", description="sign-in parameters too long")
     url = await oidc.build_authorize_url(
         redirect_uri=_oidc_callback_url(),
         state=oidc_state,
@@ -475,7 +495,7 @@ async def start_oidc_login(kind: str, address: str, **data: str) -> Response:
     response = RedirectResponse(url=url, status_code=302)
     response.set_cookie(
         _state_cookie(oidc_state),
-        browser,
+        cookie,
         max_age=PENDING_TTL,
         path="/oauth/callback",
         secure=settings.oauth_issuer.startswith("https://"),
@@ -483,6 +503,17 @@ async def start_oidc_login(kind: str, address: str, **data: str) -> Response:
         samesite="lax",  # sent on the IdP's top-level redirect back
     )
     return response
+
+
+_refused_logged_at = 0.0
+
+
+def _log_refused_start(address: str) -> None:
+    """At most once a minute, so a flood shows up without filling the log."""
+    global _refused_logged_at
+    if time.monotonic() - _refused_logged_at > 60:
+        _refused_logged_at = time.monotonic()
+        log.warning("oauth: too many sign-in starts from %s; refused", address)
 
 
 @router.get("/oauth/sso")
@@ -543,16 +574,14 @@ async def _finish_oidc_login(request: Request) -> Response:
     state = request.query_params.get("state", "")
     if not state:
         return _expired_sign_in()
-    browser = request.cookies.get(_state_cookie(state), "")
-
-    def same_browser(p: dict[str, Any]) -> bool:
-        return bool(browser) and secrets.compare_digest(p.get("browser", ""), token_id(browser))
-
+    pending = _pending_from(request, state)
+    if pending is None:
+        return _expired_sign_in()
     try:
-        pending = await store.take_pending(state, same_browser)  # single-use
+        first = await store.use_once(f"pending:{state}", pending["exp"])  # single-use
     except claims.Busy:  # Keeper cannot answer right now
         return _sign_in_unavailable()
-    if pending is None:
+    if not first:
         return _expired_sign_in()
     kind = pending["kind"]
     user_code = device.unseal_user_code(pending["user_code"]) if kind == "device" else ""

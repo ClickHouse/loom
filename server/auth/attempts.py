@@ -70,6 +70,8 @@ def address_key(address: str) -> str:
         ip = ipaddress.ip_address(address)
     except ValueError:
         return address
+    if ip.version == 6 and ip.ipv4_mapped:  # an IPv4 client of a dual-stack socket
+        return str(ip.ipv4_mapped)
     if ip.version == 6:
         return str(ipaddress.ip_network(f"{ip}/64", strict=False))
     return address

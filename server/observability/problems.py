@@ -633,10 +633,11 @@ def _oauth_claim_problems(state: HealthState) -> list[Problem]:
             Problem(
                 "oauth_claims_full",
                 "warn",
-                "loom.oauth_claims reached its key limit, so new sign-ins answer 503. "
-                "Unfinished sign-in starts are swept as they expire (ten minutes).",
-                "Look for one address starting sign-ins over and over (the server log names "
-                "each refused one) and block it at the proxy.",
+                "loom.oauth_claims reached its key limit (seen by this process), so new "
+                "codes, device sign-ins and sessions answer 503 until keys expire; they are "
+                "swept every five minutes.",
+                "Rate-limit /oauth/device_authorization, /oauth/device and /oauth/callback by "
+                "network at the proxy; the server log names addresses it refused.",
                 source="runtime",
             )
         ]
