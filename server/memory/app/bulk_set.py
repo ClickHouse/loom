@@ -617,15 +617,13 @@ async def _record_intra_batch_retirements(
         key = str(r.get("memory_key") or "")
         if key not in kept or int(r.get("version") or 0) >= int(kept[key].get("version") or 0):
             kept[key] = r
-    newer_of = dict(pairs)
+    # The kept version names the row it retired behind: one id can be the older row of
+    # two pairs.
+    older = {o for o, _n in pairs}
     retired = [
-        {
-            **r,
-            "superseded_by": newer_of[mid],
-            "superseded_by_key": key_of.get(newer_of[mid]),
-        }
+        {**r, "superseded_by_key": key_of.get(str(r.get("superseded_by") or ""))}
         for r in kept.values()
-        if (mid := str(r.get("memory_id") or "")) in newer_of and r.get("status") == "superseded"
+        if str(r.get("memory_id") or "") in older and r.get("status") == "superseded"
     ]
     await record_auto_supersessions(
         org=input.org,

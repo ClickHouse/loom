@@ -58,7 +58,8 @@ async def reopen_held_facts(
     held = await stated_by_live_rows(input.org, input.namespace, linked, ch=ch, rows=ids)
     # A row written before rows were linked has no links: what its value names of
     # its key's facts, which the follow closed by the same rule.
-    held |= await held_by_unlinked_rows(input.org, input.namespace, None, ch=ch, rows=ids)
+    if not linked:
+        held |= await held_by_unlinked_rows(input.org, input.namespace, None, ch=ch, rows=ids)
     if not held:
         return
     now = restored_at.replace(microsecond=0)  # as the DateTime columns store it

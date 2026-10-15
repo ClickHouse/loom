@@ -1666,10 +1666,18 @@ async def test_an_undo_keeps_its_edge_open_past_another_relations_end(ch, org) -
     assert await _walked(org, ["london"], labeled=False, as_of=later) == ["london"]
 
 
+def _date_undos_at(monkeypatch: Any, clock: Any) -> None:
+    """Date the next Undo by `clock`: the restore reads its own clock, and a direct
+    reconcile reads the projections'."""
+    from server.memory.app import entity_projections, restore
+
+    monkeypatch.setattr(restore, "naive_utc_now", clock)
+    monkeypatch.setattr(entity_projections, "naive_utc_now", clock)
+
+
 async def _undo_in_the_second_of(ch: Any, org: str, city: str, monkeypatch: Any) -> datetime:
     """Date the next Undo a microsecond after `city`'s fact was last seen (in its second,
     but for the last microsecond of one), and return it."""
-    from server.memory.app import entity_projections
 
     (row,) = await ch.query_all(
         "SELECT max(seen_at) AS seen FROM loom.entity_triples WHERE org = {org:String}"
@@ -1677,7 +1685,7 @@ async def _undo_in_the_second_of(ch: Any, org: str, city: str, monkeypatch: Any)
         params={"org": org, "city": city},
     )
     at = row["seen"] + timedelta(microseconds=1)
-    monkeypatch.setattr(entity_projections, "naive_utc_now", lambda: at)
+    _date_undos_at(monkeypatch, lambda: at)
     return at
 
 
@@ -2229,7 +2237,6 @@ async def test_two_undos_a_microsecond_apart_each_keep_their_own_markers(
     # Two rows say "I lived in Rome. I now live in Berlin." and retire behind Paris.
     # Undone a microsecond apart, the second must not take the first's Berlin marker
     # for its own: Berlin, stated after Rome, stays current.
-    from server.memory.app import entity_projections
     from server.memory.app.restore import handle_memory_restore
 
     live = ("user", "live_in")
@@ -2246,7 +2253,7 @@ async def test_two_undos_a_microsecond_apart_each_keep_their_own_markers(
     at = datetime.now(UTC).replace(tzinfo=None)
     undo_second = _undo_of(paris).model_copy(update={"session_id": "s3", "memory_key": "k3"})
     for undo, instant in ((_undo_of(paris), at), (undo_second, at + timedelta(microseconds=1))):
-        monkeypatch.setattr(entity_projections, "naive_utc_now", lambda t=instant: t)
+        _date_undos_at(monkeypatch, lambda t=instant: t)
         assert (await handle_memory_restore(undo)).restored
     await _mutations_done(ch, org)
     assert await _open_cities(ch, org, {"berlin"}) == {"berlin"}
@@ -2322,7 +2329,7 @@ async def test_undo_of_an_open_fact_keeps_its_date_for_later_writes(ch, org, mon
     from types import SimpleNamespace
 
     from server.memory.api.models_crud import MemoryRestoreInput
-    from server.memory.app import entity_projections, graph_undo
+    from server.memory.app import graph_undo
     from server.memory.app.restore import handle_memory_restore
 
     live = ("user", "live_in")
@@ -2340,7 +2347,7 @@ async def test_undo_of_an_open_fact_keeps_its_date_for_later_writes(ch, org, mon
     assert await _open_cities(ch, org, {"london"}) == {"london"}
     await _edges_like_triples(ch, org)
     restored_at = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
-    monkeypatch.setattr(entity_projections, "naive_utc_now", lambda: restored_at)
+    _date_undos_at(monkeypatch, lambda: restored_at)
     out = await handle_memory_restore(
         MemoryRestoreInput(
             org=org,
@@ -3292,7 +3299,7 @@ async def test_a_second_undo_in_the_second_of_the_first_makes_its_value_current(
 ) -> None:
     # Undo London, Rome supersedes it, Undo London again: all in one stored second.
     # The second Undo has its own instant: its own assertion, not a replay of the first.
-    from server.memory.app import entity_projections, projections
+    from server.memory.app import projections
     from server.memory.app.restore import handle_memory_restore
 
     live = ("user", "live_in")
@@ -3301,14 +3308,14 @@ async def test_a_second_undo_in_the_second_of_the_first_makes_its_value_current(
     await _follow_retirement(ch, org, london, paris)
     second = datetime.now(UTC).replace(tzinfo=None, microsecond=0) + timedelta(seconds=1)
     first_undo, rome_at, second_undo = (second.replace(microsecond=us) for us in (1, 2, 3))
-    monkeypatch.setattr(entity_projections, "naive_utc_now", lambda: first_undo)
+    _date_undos_at(monkeypatch, lambda: first_undo)
     monkeypatch.setattr(projections, "naive_utc_now", lambda: rome_at)
     assert (await handle_memory_restore(_undo_of(paris))).restored
     await _mutations_done(ch, org)
     rome = await _stated(ch, org, "s3", "I moved to Rome", (*live, "rome"), memory_key="k3")
     await _follow_retirement(ch, org, london, rome)
     assert await _open_cities(ch, org, {"rome"}) == {"rome"}
-    monkeypatch.setattr(entity_projections, "naive_utc_now", lambda: second_undo)
+    _date_undos_at(monkeypatch, lambda: second_undo)
     assert (await handle_memory_restore(_undo_of(rome))).restored
     await _mutations_done(ch, org)
     assert await _open_cities(ch, org, {"london"}) == {"london"}
@@ -3406,7 +3413,7 @@ async def test_a_replayed_undo_leaves_a_value_asserted_later_in_its_second_curre
     # The Undo of London at T lands, then fails. Rome, dated T, is asserted later in
     # the same second and is current. Replayed with its own instant, the Undo keeps
     # its place: before Rome, so Rome stays current.
-    from server.memory.app import entity_projections, graph_undo, projections
+    from server.memory.app import graph_undo, projections
     from server.memory.app.projection_failures import retry_projection_failure
     from server.memory.app.restore import handle_memory_restore
 
@@ -3416,7 +3423,7 @@ async def test_a_replayed_undo_leaves_a_value_asserted_later_in_its_second_curre
     await _follow_retirement(ch, org, london, paris)
     second = datetime.now(UTC).replace(tzinfo=None, microsecond=0) + timedelta(seconds=1)
     undo_at, rome_at = second.replace(microsecond=100), second.replace(microsecond=200)
-    monkeypatch.setattr(entity_projections, "naive_utc_now", lambda: undo_at)
+    _date_undos_at(monkeypatch, lambda: undo_at)
     repair = graph_undo.repair_intervals
 
     async def _lands_then_fails(*a: Any, **k: Any) -> Any:

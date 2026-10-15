@@ -453,7 +453,7 @@ async def test_intra_batch_newest_wins_records_the_earlier_row(emitted) -> None:
 
     state = _BulkWriteState()
     state.memory_rows = [
-        {**_live("old", "capital_a"), "status": "superseded"},
+        {**_live("old", "capital_a"), "status": "superseded", "superseded_by": "new"},
         {**_live("new", "capital_b"), "status": "active"},
     ]
 
@@ -500,6 +500,25 @@ async def test_intra_batch_records_nothing_when_an_existing_key_is_revised_twice
     ]
     await bulk_set._record_intra_batch_retirements(_Input(), state, [("a", "b")])
     assert emitted == []
+
+
+async def test_intra_batch_records_the_row_its_kept_version_retired_behind(emitted) -> None:
+    from server.memory.app import bulk_set
+    from server.memory.app.bulk_rows import _BulkWriteState
+
+    # Both versions of "x" are the older row of a pair; FINAL keeps v2, which retired
+    # behind "z". The record names z, as the Undo's precondition will.
+    state = _BulkWriteState()
+    state.memory_rows = [
+        {**_live("x", "capital_a"), "version": 1, "status": "superseded", "superseded_by": "y"},
+        {**_live("x", "capital_a"), "version": 2, "status": "superseded", "superseded_by": "z"},
+        {**_live("z", "capital_c"), "version": 3, "status": "active"},
+        {**_live("y", "capital_b"), "version": 4, "status": "active"},
+    ]
+    await bulk_set._record_intra_batch_retirements(_Input(), state, [("x", "z"), ("x", "y")])
+    (ev,) = emitted
+    (entry,) = ev["subject"]["retired"]
+    assert (entry["memory_id"], entry["superseded_by"]) == ("x", "z")
 
 
 async def test_a_bulk_writes_one_record_for_all_its_refines_verdicts(monkeypatch, emitted) -> None:
