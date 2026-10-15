@@ -144,6 +144,18 @@ def remote_access(remote: str) -> RemoteAccess:
     return {"network": True, "allow_remote_port": remote_port(remote)}
 
 
+# A local fetch, ls-remote or clone starts upload-pack in the source repository with
+# the environment's config cleared, so auth_env's safe.directory does not reach it
+# and a repository another uid owns (one the host operator made) is refused as
+# dubious. It gets the setting on its own command line instead.
+_LOCAL_UPLOAD_PACK = "git -c 'safe.directory=*' upload-pack"
+
+
+def upload_pack_args(remote: str) -> list[str]:
+    """The `--upload-pack` a fetch, ls-remote or clone from `remote` needs."""
+    return [f"--upload-pack={_LOCAL_UPLOAD_PACK}"] if is_local_remote(remote) else []
+
+
 def remote_port(remote: str) -> int | None:
     """The port a network remote is reached on: an explicit `:port`, else 443
     for https and 22 for ssh. None for a local path."""
@@ -208,10 +220,14 @@ async def _git(
     runs as a repository job (sandbox.run_job): the network only through the egress
     proxy, the clone the one writable path, `token` for the remote's host. A local
     command reads and writes `index_file` as its index when given."""
-    argv = ["git", *UNQUOTED_PATHS, "--git-dir", git_dir, *args]
+    extra = upload_pack_args(remote)
+    argv = ["git", *UNQUOTED_PATHS, "--git-dir", git_dir, args[0], *extra, *args[1:]]
+    label = " ".join(args[:2])
     returncode: int | None
     if remote:
-        returncode, out, err = await _network_git(argv, git_dir, remote, token, stdin, timeout_s)
+        returncode, out, err = await _network_git(
+            argv, label, git_dir, remote, token, stdin, timeout_s
+        )
     else:
         env = auth_env()
         if index_file:
@@ -226,7 +242,7 @@ async def _git(
         try:
             out, err = await communicate_or_kill(proc, stdin, timeout_s=timeout_s)
         except TimeoutError:
-            raise GitError(f"git {' '.join(args[:2])} timed out after {timeout_s}s") from None
+            raise GitError(f"git {label} timed out after {timeout_s}s") from None
         returncode = proc.returncode
     if returncode != 0:
         raise GitError(
@@ -237,7 +253,13 @@ async def _git(
 
 
 async def _network_git(
-    argv: list[str], git_dir: str, remote: str, token: str, stdin: bytes | None, timeout_s: float
+    argv: list[str],
+    label: str,
+    git_dir: str,
+    remote: str,
+    token: str,
+    stdin: bytes | None,
+    timeout_s: float,
 ) -> tuple[int, bytes, bytes]:
     from server.code.app.index.sandbox import run_job
 
@@ -252,7 +274,7 @@ async def _network_git(
             **remote_access(remote),
         )
     except TimeoutError:
-        raise GitError(f"git {' '.join(argv[5:7])} timed out after {timeout_s}s") from None
+        raise GitError(f"git {label} timed out after {timeout_s}s") from None
     return done.returncode, done.stdout, done.stderr
 
 

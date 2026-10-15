@@ -99,7 +99,11 @@ def test_fetch_shas_pins_each_commit_under_refs_loom_merges(monkeypatch) -> None
         return sandbox.JobResult(0, b"", b"")
 
     monkeypatch.setattr(sandbox, "run_job", _job)
-    n = asyncio.run(gitrepo.fetch_shas("/x.git", "r", [SHA_A.upper(), SHA_A, "nope", SHA_B]))
+    n = asyncio.run(
+        gitrepo.fetch_shas(
+            "/x.git", "https://github.com/o/r.git", [SHA_A.upper(), SHA_A, "nope", SHA_B]
+        )
+    )
     assert n == 2 and _subcommand(seen["argv"])[:2] == ("fetch", "--stdin")
     assert seen["stdin"] == (
         f"{SHA_A}:refs/loom/merges/{SHA_A}\n{SHA_B}:refs/loom/merges/{SHA_B}\n".encode()
