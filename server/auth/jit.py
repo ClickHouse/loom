@@ -27,7 +27,7 @@ async def _registry_row(org: str, namespace: str) -> dict[str, Any] | None:
     with own_write_reads():
         row = await get_client().query_one(
             """
-            SELECT active, toString(contact_email) AS contact_email
+            SELECT active, toString(contact_email) AS contact_email, password_hash = '' AS sso
             FROM loom.namespaces FINAL
             WHERE org = {org:String} AND namespace = {ns:String}
             LIMIT 1
@@ -46,7 +46,8 @@ async def _accounts_naming(org: str, ident: str) -> list[dict[str, Any]]:
     with own_write_reads():
         rows = await get_client().query_all(
             """
-            SELECT namespace, toString(owner_email) AS owner, active, tags
+            SELECT namespace, toString(owner_email) AS owner, active, tags,
+                   password_hash = '' AS sso
             FROM loom.namespaces FINAL
             WHERE org = {org:String} AND contact_email = {ident:String}
             """,
@@ -163,7 +164,9 @@ async def _provision_jit(org: str, ident: str, base: str) -> login.Identity | No
     from server.observability import audit
 
     accounts = await _accounts_naming(org, ident)
-    if any(a["active"] for a in accounts):
+    # A password account naming the email is no proof the person owns it
+    # (self-signup never verified the address), so it is not theirs here.
+    if any(a["active"] and a["sso"] for a in accounts):
         return await _resolve_as_written(ident)  # their account, whatever its name
     if await _any_revoked(accounts):
         # Offboarded: a fresh name would be a new subject past the revoke.
@@ -207,7 +210,7 @@ async def _free_name(org: str, ident: str, base: str) -> tuple[_Name, str]:
         row = await _registry_row(org, ns)
         if row is None:
             return _Name.FREE, ns
-        if row["active"] and row["contact_email"] == ident:
+        if row["active"] and row["sso"] and row["contact_email"] == ident:
             return _Name.THEIRS, ns
     return _Name.NONE_FREE, ""
 

@@ -70,6 +70,7 @@ async def device_authorization(request: Request) -> JSONResponse:
         raise oauth.OAuthError("invalid_client")
     address = client_address(request)
     if not _requests_by_address.allow(address_key(address)):
+        oauth._log_refused("device start", address)
         raise oauth.OAuthError("slow_down", 429, headers={"Retry-After": "900"})
     device_code = secrets.token_urlsafe(32)
     user_code = _new_user_code()
@@ -149,7 +150,6 @@ async def device_sign_in(request: Request) -> Response:
         _wrong_codes_by_address.record(address_key(address))
         return _code_form(typed, "That code is wrong or has expired.", 400)
     if settings.oauth_login_provider == "oidc":
-        # Sealed: the pending row must not hold a usable user code.
         return await oauth.start_oidc_login(
             "device",
             address,
@@ -191,8 +191,7 @@ def _busy_page() -> Response:
 
 async def _revoke_all(*tokens: str) -> None:
     for token in tokens:
-        if token:
-            await oidc.revoke(token)
+        await oidc.revoke(token)  # a no-op for ''
 
 
 async def signed_in(

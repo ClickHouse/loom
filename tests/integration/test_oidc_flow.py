@@ -223,7 +223,7 @@ def test_jit_provisions_unknown_email(oidc_stack) -> None:
 
 def test_callback_rejects_unknown_state(oidc_stack) -> None:
     """A callback with a state that was never issued (forged/replayed) is
-    refused — the pending record is the CSRF guard. (Unknown-email rejection is
+    refused — the browser's sealed round-trip cookie is the CSRF guard. (Unknown-email rejection is
     covered by the unit test on resolve_identity_for_email.)"""
     _user_email, _ns, base = oidc_stack
     bad = httpx.get(

@@ -743,7 +743,8 @@ def test_denying_after_sso_revokes_the_idp_token(sso, monkeypatch) -> None:
     revoked: list[str] = []
 
     async def revoke(token: str) -> None:
-        revoked.append(token)
+        if token:  # as the real one, which does nothing for ''
+            revoked.append(token)
 
     monkeypatch.setattr(oidc, "revoke", revoke)
     c = _client()
@@ -835,7 +836,8 @@ def test_a_refused_sso_sign_in_revokes_the_idp_token_it_got(sso, monkeypatch) ->
     revoked: list[str] = []
 
     async def revoke(token: str) -> None:
-        revoked.append(token)
+        if token:  # as the real one, which does nothing for ''
+            revoked.append(token)
 
     monkeypatch.setattr(oidc, "revoke", revoke)
     sso["email"] = "stranger@elsewhere.example"
@@ -1119,3 +1121,14 @@ def test_a_refresh_after_logout_is_refused_without_a_replay_verdict(_world) -> N
     assert "other hands" not in r.json()["error_description"]
     reasons = [kw["subject"]["reason"] for n, kw in _world["events"] if n == "auth.session_revoked"]
     assert reasons == ["logout"]
+
+
+def test_a_keeper_outage_at_the_first_step_is_a_retryable_503(_world, monkeypatch) -> None:
+    from server.auth import claims
+
+    async def down(d: dict[str, Any]) -> None:
+        raise claims.Busy("Keeper away")
+
+    monkeypatch.setattr(_world["store"], "save_device", down)
+    r = _client().post("/oauth/device_authorization", data={"client_id": device.DEVICE_CLIENT_ID})
+    assert r.status_code == 503 and r.json()["error"] == "temporarily_unavailable"

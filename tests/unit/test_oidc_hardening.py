@@ -244,7 +244,7 @@ async def test_only_a_callback_the_idp_vouched_for_writes_and_only_once(
     monkeypatch.setattr(oauth.audit, "emit", emit)
     monkeypatch.setattr(login, "resolve_identity_for_email", no_account)
     assert (await oauth.oidc_callback(_Req())).status_code == 403  # type: ignore[arg-type]
-    assert list(store.keeper) == ["pending:s"]
+    assert list(store.keeper) == ["callback:s"]
     replayed = await oauth.oidc_callback(_Req())  # type: ignore[arg-type]
     assert replayed.status_code == 400
 
@@ -293,7 +293,7 @@ async def test_a_code_the_idp_refuses_starts_again_and_its_outage_retries(
     request = httpx.Request("POST", "https://idp/token")
 
     async def answered(**kw: Any) -> Any:
-        response = httpx.Response(idp_status, request=request)
+        response = httpx.Response(idp_status, request=request, json={"error": "invalid_grant"})
         raise httpx.HTTPStatusError("refused", request=request, response=response)
 
     monkeypatch.setattr(oauth, "store", MemoryOAuthStore())
@@ -301,3 +301,33 @@ async def test_a_code_the_idp_refuses_starts_again_and_its_outage_retries(
     page = await oauth.oidc_callback(_Req())  # type: ignore[arg-type]
     assert page.status_code == status
     assert (b"has expired" in page.body) is (idp_status == 400)
+
+
+async def test_error_callbacks_count_toward_the_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def emit(event_type: str, **kw: Any) -> str:
+        return ""
+
+    monkeypatch.setattr(oauth, "store", MemoryOAuthStore())
+    monkeypatch.setattr(oauth.audit, "emit", emit)
+    monkeypatch.setattr(oauth, "_failed_callbacks_by_address", oauth.Attempts(2, 900))
+    cancelled = _Req()
+    cancelled.query_params = {"error": "access_denied", "state": "s"}
+    for _ in range(2):
+        assert (await oauth.oidc_callback(cancelled)).status_code == 403  # type: ignore[arg-type]
+    assert (await oauth.oidc_callback(cancelled)).status_code == 429  # type: ignore[arg-type]
+
+
+async def test_a_rejected_client_secret_is_the_servers_fault_not_the_users(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = httpx.Request("POST", "https://idp/token")
+
+    async def rejected(**kw: Any) -> Any:
+        response = httpx.Response(401, request=request, json={"error": "invalid_client"})
+        raise httpx.HTTPStatusError("rejected", request=request, response=response)
+
+    monkeypatch.setattr(oauth, "store", MemoryOAuthStore())
+    monkeypatch.setattr(oidc, "exchange_code", rejected)
+    monkeypatch.setattr(oauth, "_failed_callbacks_by_address", oauth.Attempts(1, 900))
+    for _ in range(3):  # never counted against the person's address
+        assert (await oauth.oidc_callback(_Req())).status_code == 502  # type: ignore[arg-type]

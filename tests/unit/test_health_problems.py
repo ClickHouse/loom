@@ -635,17 +635,20 @@ def test_run_ids_without_keeper_claims_are_an_info_problem(monkeypatch: pytest.M
     assert [p.severity for p in found] == ["info"]
 
 
-def test_sign_in_without_keeper_is_reported() -> None:
+def test_sign_in_without_keeper_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
     from server.observability.problems import HealthState, _oauth_claim_problems
 
-    assert _oauth_claim_problems(HealthState(oauth_signin_keeper=True)) == []
-    assert _oauth_claim_problems(HealthState(oauth_signin_keeper=None)) == []
-    (problem,) = _oauth_claim_problems(HealthState(oauth_signin_keeper=False))
+    on = _settings(monkeypatch, LOOM_OAUTH_ENABLED="true")
+    assert _oauth_claim_problems(on, HealthState(oauth_signin_keeper=True)) == []
+    assert _oauth_claim_problems(on, HealthState(oauth_signin_keeper=None)) == []
+    off = _settings(monkeypatch, LOOM_OAUTH_ENABLED="false", LOOM_AUTH_REQUIRED="false")
+    assert _oauth_claim_problems(off, HealthState(oauth_signin_keeper=False)) == []
+    (problem,) = _oauth_claim_problems(on, HealthState(oauth_signin_keeper=False))
     assert (
         problem.code == "oauth_signin_needs_keeper" and "032_oauth_signin_state.sql" in problem.fix
     )
     (full,) = _oauth_claim_problems(
-        HealthState(oauth_signin_keeper=True, oauth_signin_state_full=True)
+        on, HealthState(oauth_signin_keeper=True, oauth_signin_state_full=True)
     )
     assert full.code == "oauth_signin_state_full"
 

@@ -628,9 +628,12 @@ def _reader_user_problems(settings: Any, state: HealthState) -> list[Problem]:
     ]
 
 
-def _oauth_claim_problems(state: HealthState) -> list[Problem]:
+def _oauth_claim_problems(settings: Any, state: HealthState) -> list[Problem]:
     """No Keeper: sign-in cannot spend a credential exactly once, so it is off.
-    A full claims table turns new sign-ins away until the sweep frees keys."""
+    A full claims table turns new sign-ins away until the sweep frees keys.
+    Nothing to say where sign-in is not mounted (auth off, no MCP connect)."""
+    if not (settings.auth_actually_required() or settings.oauth_enabled):
+        return []
     if state.oauth_signin_state_full:
         return [
             Problem(
@@ -723,7 +726,7 @@ def collect_problems(settings: Any, state: HealthState | None = None) -> list[Pr
         + _sandbox_problems(settings, st)
         + _reader_user_problems(settings, st)
         + _run_claim_problems(st)
-        + _oauth_claim_problems(st)
+        + _oauth_claim_problems(settings, st)
         + _grant_claim_problems(st)
     )
     return sorted(problems, key=lambda p: (SEVERITY_RANK.get(p.severity, 9), p.code))

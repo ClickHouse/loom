@@ -143,7 +143,7 @@ async def refresh(refresh_token: str) -> str:
                 {"grant_type": "refresh_token", "refresh_token": refresh_token}
             )
     except httpx.HTTPStatusError as e:
-        if e.response.status_code == 400 and _error_code(e.response) == "invalid_grant":
+        if e.response.status_code == 400 and error_code(e.response) == "invalid_grant":
             raise UpstreamRefused from e
         raise UpstreamUnavailable(f"HTTP {e.response.status_code}") from e
     except (httpx.HTTPError, ValueError, KeyError, TimeoutError) as e:
@@ -151,7 +151,7 @@ async def refresh(refresh_token: str) -> str:
     return str(tokens.get("refresh_token") or refresh_token)
 
 
-def _error_code(response: httpx.Response) -> str:
+def error_code(response: httpx.Response) -> str:
     try:
         body = response.json()
     except ValueError:

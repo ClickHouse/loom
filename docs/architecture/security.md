@@ -285,7 +285,10 @@ token issued before sessions had a family is refused, so its owner signs in once
 PKCE verifier, where to send the result) travels sealed in an HttpOnly cookie of the
 browser that started the sign-in, never stored on the server. The callback finishes a
 sign-in only with that cookie, once: its state is marked used in Keeper. The callback URL
-alone (from a log, browser history or a screenshot) finishes nothing.
+alone (from a log, browser history or a screenshot) finishes nothing. The cookie is scoped
+to `/oauth/callback`, not `__Host-`, so it is not sent on every request; a site on a
+sibling subdomain could therefore plant its own sign-in for the victim to finish (login
+CSRF), which serving Loom on a host of its own rules out.
 
 **A revocation that cannot be written is owed.** When ending a session cannot write
 `loom.revoked_tokens`, a `revocation_owed` row in `loom.oauth_state` stands in for it for

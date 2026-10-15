@@ -13,7 +13,7 @@ from typing import Any
 
 from fastapi import FastAPI
 
-from server.auth import device, oauth
+from server.auth import claims, device, oauth
 from server.auth.oauth_store import ClickHouseStore, Grant
 
 
@@ -21,6 +21,7 @@ def oauth_app() -> FastAPI:
     """Every OAuth route: sign-in, the device grant and MCP connect."""
     app = FastAPI()
     app.add_exception_handler(oauth.OAuthError, oauth.oauth_error_response)
+    app.add_exception_handler(claims.Busy, oauth._busy_response)
     app.include_router(oauth.router)
     app.include_router(device.router)
     app.include_router(oauth.connect_router)

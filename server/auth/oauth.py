@@ -472,7 +472,7 @@ async def start_oidc_login(kind: str, address: str, **data: str) -> Response:
     from server.auth import oidc
 
     if not _starts_by_address.allow(address_key(address)):
-        _log_refused_start(address)
+        _log_refused("start", address)
         return html_page(
             "Sign in to Loom",
             "<h2>Too many sign-ins from here</h2><p>Try again in 15 minutes.</p>",
@@ -516,12 +516,12 @@ async def start_oidc_login(kind: str, address: str, **data: str) -> Response:
 _refused_logged_at = 0.0
 
 
-def _log_refused_start(address: str) -> None:
+def _log_refused(what: str, address: str) -> None:
     """At most once a minute, so a flood shows up without filling the log."""
     global _refused_logged_at
     if time.monotonic() - _refused_logged_at > 60:
         _refused_logged_at = time.monotonic()
-        log.warning("oauth: too many sign-in starts from %s; refused", address)
+        log.warning("oauth: too many sign-in %ss from %s; refused", what, address)
 
 
 @router.get("/oauth/sso")
@@ -578,11 +578,23 @@ async def oidc_callback(request: Request) -> Response:
     return response
 
 
+class _StartAgain(Exception):
+    """The IdP refused the code: a stale one, so the person starts again."""
+
+
+# States whose code is being exchanged in this process: an IdP code is spent
+# once, so a second callback of the same sign-in waits for nothing.
+_exchanging: set[str] = set()
+
+
 async def _exchange_at_idp(
     request: Request, code: str, pending: dict[str, Any], address: str
-) -> tuple[dict[str, Any], dict[str, Any]] | Response:
-    """The IdP's tokens and verified id_token claims for `code`, or the page
-    to answer. A code it refuses counts against `address`."""
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """The IdP's tokens and verified id_token claims for `code`. A code it
+    refuses raises _StartAgain and counts against `address`; a fault on its
+    side (its outage, a rejected client secret) answers 502 and counts not."""
+    import jwt
+
     from server.auth import oidc
 
     try:
@@ -600,11 +612,11 @@ async def _exchange_at_idp(
     except httpx.HTTPStatusError as e:
         # Its response body stays in the log, not the browser.
         log.warning("oidc callback: the identity provider answered %s", e.response.status_code)
-        if e.response.is_server_error:
-            raise OAuthError("temporarily_unavailable", 502) from e
-        _failed_callbacks_by_address.record(address)
-        return _expired_sign_in()  # a stale or made-up code: start again
-    except httpx.TransportError as e:  # the IdP is unreachable: not the user's fault
+        if e.response.status_code == 400 and oidc.error_code(e.response) == "invalid_grant":
+            _failed_callbacks_by_address.record(address)
+            raise _StartAgain from e  # a stale or made-up code
+        raise OAuthError("temporarily_unavailable", 502) from e
+    except (httpx.TransportError, jwt.PyJWKClientConnectionError) as e:  # the IdP is away
         log.warning("oidc callback: identity provider exchange failed: %s", type(e).__name__)
         raise OAuthError("temporarily_unavailable", 502) from e
     except Exception as e:  # any other verify failure refuses the login (re-raised)
@@ -626,31 +638,38 @@ async def _finish_oidc_login(request: Request) -> Response:
     if pending is None:
         return _expired_sign_in()
     kind, user_code = pending["kind"], pending.get("user_code", "")
-    if request.query_params.get("error"):
-        # Cancelled at the IdP, or refused there. A device grant stays pending:
-        # who cancelled is unknown, so it is no reason to end anyone's sign-in.
-        await _signin_denied("", "cancelled at the identity provider")
-        return _denied_page("The identity provider did not sign you in; try again")
-    code = request.query_params.get("code", "")
-    if not code:
-        raise OAuthError("invalid_request")
     address = address_key(client_address(request))
     if _failed_callbacks_by_address.blocked(address):
+        _log_refused("callback", address)
         return html_page(
             "Sign in to Loom",
             "<h2>Too many failed sign-ins from here</h2><p>Try again in 15 minutes.</p>",
             429,
             headers={"Retry-After": "900"},
         )
-    asked = await _exchange_at_idp(request, code, pending, address)
-    if isinstance(asked, Response):
-        return asked
-    tokens, id_claims = asked
+    if request.query_params.get("error"):
+        # Cancelled at the IdP, or refused there. A device grant stays pending:
+        # who cancelled is unknown, so it is no reason to end anyone's sign-in.
+        _failed_callbacks_by_address.record(address)
+        await _signin_denied("", "cancelled at the identity provider")
+        return _denied_page("The identity provider did not sign you in; try again")
+    code = request.query_params.get("code", "")
+    if not code:
+        raise OAuthError("invalid_request")
+    if state in _exchanging:  # the same callback twice at once: an IdP code is spent once
+        return _expired_sign_in()
+    _exchanging.add(state)
+    try:
+        tokens, id_claims = await _exchange_at_idp(request, code, pending, address)
+    except _StartAgain:
+        return _expired_sign_in()
+    finally:
+        _exchanging.discard(state)
     upstream = str(tokens.get("refresh_token") or "")
     # The IdP vouched for this person: only now is the round trip marked used,
     # so a callback nobody signed in for writes nothing.
     try:
-        first = await store.use_once(f"pending:{state}", pending["exp"])
+        first = await store.use_once(f"callback:{state}", pending["exp"])
     except claims.Busy:  # Keeper cannot answer right now
         await oidc.revoke(upstream)
         return _sign_in_unavailable()
@@ -673,8 +692,7 @@ async def _finish_oidc_login(request: Request) -> Response:
     if resolved is None:
         reason = "no loom account for this email" if email else "verified email required"
         await _signin_denied(str(id_claims.get("email") or ""), reason)
-        if upstream:
-            await oidc.revoke(upstream)
+        await oidc.revoke(upstream)
         if kind == "device":
             await device.deny(user_code)
         return _denied_page(f"{reason}; ask your Loom operator for access")
@@ -706,6 +724,7 @@ async def _connect_consent(
             "code_challenge": pending["code_challenge"],
             "mcp_state": pending["mcp_state"],
             "identity": list(identity),
+            "issued_at": int(time.time()),  # the identity was resolved now
             "upstream_refresh": seal(UPSTREAM_PURPOSE, upstream_refresh),
         },
     )
@@ -749,11 +768,9 @@ async def connect_approve(request: Request) -> Response:
         "code_challenge": pending["code_challenge"],
     }
     if not approved:
-        upstream = unseal(UPSTREAM_PURPOSE, pending["upstream_refresh"])
-        if upstream:
-            from server.auth import oidc
+        from server.auth import oidc
 
-            await oidc.revoke(upstream)
+        await oidc.revoke(unseal(UPSTREAM_PURPOSE, pending["upstream_refresh"]))
         return _back_to_client(
             client["redirect_uri"], {"error": "access_denied"}, pending["mcp_state"]
         )
@@ -762,7 +779,7 @@ async def connect_approve(request: Request) -> Response:
         (subject, org, namespaces, roles),
         upstream_refresh=unseal(UPSTREAM_PURPOSE, pending["upstream_refresh"]),
         state=pending["mcp_state"],
-        issued_at=int(time.time()),
+        issued_at=pending["issued_at"],
     )
 
 
@@ -973,15 +990,6 @@ async def _ask_identity_provider(grant: Grant, refresh_token: str) -> str:
 
 
 async def _refresh_token_grant(f: dict[str, str]) -> dict[str, Any]:
-    from server.auth.revocation import loaded
-
-    # A refresh mints a token with a fresh iat, which would pass any
-    # `revoke-token --issued-before` cutoff — so the revocation check must
-    # run here, against the refresh token's own issue time. Before the
-    # first snapshot load that check can't be answered: refuse without
-    # consuming the token so the client can retry.
-    if not loaded():
-        raise OAuthError("temporarily_unavailable", 503, headers={"Retry-After": "5"})
     # A public client identifies itself on refresh (RFC 6749 §6), and the
     # token refreshes only for the client it was issued to; a mismatch is
     # refused unconsumed.
@@ -1008,12 +1016,9 @@ async def _refresh_token_grant(f: dict[str, str]) -> dict[str, Any]:
 async def _refresh_session(grant: Grant, refresh_token: str) -> dict[str, Any]:
     """The refresh grant's checks and new tokens, once the old token is spent."""
     from server.auth.login import refreshed_roles
-    from server.auth.revocation import is_revoked
 
     # exp is always saved as mint time + _REFRESH_TTL.
     issued_at = int(grant["exp"]) - _REFRESH_TTL
-    if is_revoked(str(grant["subject"]), issued_at=issued_at):
-        raise _invalid_grant()
     # Read from storage, not this process's snapshot: a session ended a moment
     # ago on another process (or owed its revocation) mints nothing more.
     if await store.session_ended(grant["family"]):
@@ -1048,10 +1053,7 @@ async def token(request: Request) -> JSONResponse:
     }
     if grant_type not in grants:
         raise OAuthError("unsupported_grant_type")
-    try:
-        body = await grants[grant_type](f)
-    except claims.Busy:
-        raise _unavailable() from None  # Keeper cannot answer right now: retry
+    body = await grants[grant_type](f)  # Keeper not answering is _busy_response's
     return JSONResponse(body, headers={"Cache-Control": "no-store"})
 
 
@@ -1086,8 +1088,6 @@ async def revoke_token(request: Request) -> Response:
         # Spent already: a logout retried, or an old copy. Still a logout,
         # but the audit keeps the difference.
         grant, reason = e.grant, "logout (token already spent)"
-    except claims.Busy:
-        raise _unavailable() from None
     if grant is not None:
         try:
             await end_session(grant, reason)
@@ -1123,6 +1123,12 @@ async def revoke_token(request: Request) -> Response:
     return Response(status_code=200)
 
 
+def _busy_response(request: Request, exc: Exception) -> JSONResponse:
+    """Keeper could not answer a sign-in step: retryable, wherever it was."""
+    log.warning("oauth: %s answered 503: Keeper: %s", request.url.path, exc)
+    return oauth_error_response(request, _unavailable())
+
+
 def attach(app: Any) -> None:
     """Mount sign-in wherever there is something to sign in to, and MCP
     connect (dynamic client registration, an opt-in surface) only when enabled."""
@@ -1131,6 +1137,7 @@ def attach(app: Any) -> None:
     if settings.auth_actually_required() or settings.oauth_enabled:
         oidc.validate_config()  # fail fast if provider=oidc but IdP config missing
         app.add_exception_handler(OAuthError, oauth_error_response)
+        app.add_exception_handler(claims.Busy, _busy_response)
         app.include_router(router)
         app.include_router(device.router)
     if settings.oauth_enabled:

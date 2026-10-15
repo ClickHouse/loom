@@ -253,7 +253,7 @@ def _jit_on(monkeypatch) -> dict[str, Any]:
     [
         {"active": False, "contact_email": ""},  # released: claim-release clears the contact
         {"active": False, "contact_email": "bob@acme.com"},  # deleted, by its owner perhaps
-        {"active": True, "contact_email": "mallory@acme.com"},  # another's
+        {"active": True, "sso": True, "contact_email": "mallory@acme.com"},  # another's
     ],
 )
 async def test_jit_never_rebuilds_a_taken_name_and_takes_the_next(
@@ -284,8 +284,13 @@ async def test_jit_refuses_a_person_whose_account_was_revoked(monkeypatch) -> No
 
     async def accounts(org: str, ident: str) -> list[dict[str, Any]]:
         return [
-            {"namespace": "u-bob-1234abcd-9f3e", "owner": "u-bob-1234abcd-9f3e", "active": False},
-            {"namespace": "bob", "owner": "bob", "active": False},
+            {
+                "namespace": "u-bob-1234abcd-9f3e",
+                "owner": "u-bob-1234abcd-9f3e",
+                "active": False,
+                "sso": True,
+            },
+            {"namespace": "bob", "owner": "bob", "active": False, "sso": True},
         ]
 
     async def revoked(subjects: list[str], *, issued_at: int) -> bool:
@@ -304,7 +309,9 @@ async def test_a_deleted_account_alone_is_no_offboarding(monkeypatch) -> None:
     provisioned = _jit_on(monkeypatch)
 
     async def accounts(org: str, ident: str) -> list[dict[str, Any]]:
-        return [{"namespace": "u-bob-1234abcd", "owner": "u-bob-1234abcd", "active": False}]
+        return [
+            {"namespace": "u-bob-1234abcd", "owner": "u-bob-1234abcd", "active": False, "sso": True}
+        ]
 
     async def not_revoked(subjects: list[str], *, issued_at: int) -> bool:
         return False
@@ -334,7 +341,7 @@ async def test_jit_takes_a_random_name_once_the_predictable_ones_are_taken(
     async def registry_row(org: str, namespace: str) -> dict[str, Any] | None:
         tried.append(namespace)
         if len(tried) <= jit._JIT_SUFFIX_TRIES + 2:  # the predictable ones, then one random
-            return {"active": True, "contact_email": "mallory@acme.com"}
+            return {"active": True, "sso": True, "contact_email": "mallory@acme.com"}
         return None
 
     monkeypatch.setattr(jit, "_registry_row", registry_row)
@@ -359,6 +366,7 @@ async def test_an_active_account_of_the_person_is_resolved_never_provisioned_aga
                 "namespace": "u-bob-1234abcd-9f3e",
                 "owner": "u-bob-1234abcd-9f3e",
                 "active": True,
+                "sso": True,
                 "tags": [],
             }
         ]
@@ -383,7 +391,7 @@ async def test_jit_signs_in_to_its_own_account_another_process_just_wrote(monkey
     provisioned = _jit_on(monkeypatch)
 
     async def registry_row(org: str, namespace: str) -> dict[str, Any] | None:
-        return {"active": True, "contact_email": "bob@acme.com"}
+        return {"active": True, "sso": True, "contact_email": "bob@acme.com"}
 
     monkeypatch.setattr(jit, "_registry_row", registry_row)
     assert await jit.jit_provision_for_email("bob@acme.com") is not None
@@ -406,7 +414,11 @@ async def test_two_first_sign_ins_in_one_process_make_one_account(monkeypatch) -
     async def provision(**kw: Any) -> None:
         await asyncio.sleep(0.01)  # the insert takes a moment
         made.append(kw["namespace"])
-        written[kw["namespace"]] = {"active": True, "contact_email": kw["contact_email"]}
+        written[kw["namespace"]] = {
+            "active": True,
+            "sso": True,
+            "contact_email": kw["contact_email"],
+        }
 
     monkeypatch.setattr(jit, "_registry_row", registry_row)
     monkeypatch.setattr(jit, "_accounts_naming", accounts)
@@ -553,7 +565,15 @@ async def test_signing_in_finishes_a_jit_account_whose_owner_grant_never_landed(
     pending = {"kind": "dashboard", "nonce": "n", "code_verifier": "v", "state": "s"}
 
     async def accounts(org: str, ident: str) -> list[dict[str, Any]]:
-        return [{"namespace": "u-bob", "owner": "u-bob", "active": True, "tags": [jit.JIT_TAG]}]
+        return [
+            {
+                "namespace": "u-bob",
+                "owner": "u-bob",
+                "active": True,
+                "sso": True,
+                "tags": [jit.JIT_TAG],
+            }
+        ]
 
     async def ever_granted(org: str, account: dict[str, Any]) -> bool:
         return granted_before
@@ -581,3 +601,20 @@ async def test_signing_in_finishes_a_jit_account_whose_owner_grant_never_landed(
     monkeypatch.setattr(self_signup, "insert_owner_grant", grant)
     assert (await oauth.oidc_callback(_Req())).status_code == 302  # type: ignore[arg-type]
     assert granted == ([] if granted_before else [("u-bob", "u-bob")])
+
+
+async def test_a_password_account_with_the_email_does_not_stop_an_sso_one(monkeypatch) -> None:
+    # Self-signup never verified the address, so a password account naming it
+    # is no proof it is this person's: they get their own SSO account.
+    provisioned = _jit_on(monkeypatch)
+
+    async def accounts(org: str, ident: str) -> list[dict[str, Any]]:
+        return [{"namespace": "bob", "owner": "bob", "active": True, "sso": False, "tags": []}]
+
+    async def none_registered(org: str, namespace: str) -> None:
+        return None
+
+    monkeypatch.setattr(jit, "_accounts_naming", accounts)
+    monkeypatch.setattr(jit, "_registry_row", none_registered)
+    assert await jit.jit_provision_for_email("bob@acme.com") is not None
+    assert provisioned["namespace"].startswith("u-bob-")
