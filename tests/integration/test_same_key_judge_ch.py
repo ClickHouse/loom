@@ -502,10 +502,18 @@ async def _follow_retirement(
     await _mutations_done(ch, org)
 
 
-async def _mutations_done(ch: Any, org: str) -> None:
+async def _mutations_done(ch: Any, org: str, kill_after: int | None = None) -> None:
     """Wait for the org's triple and edge closes to land: a check that nothing closed
-    cannot poll."""
-    for _ in range(100):
+    cannot poll. With `kill_after`, kill what is still running after that many polls
+    instead of failing, so no mutation stays behind on the shared server."""
+    for attempt in range(100):
+        if attempt == kill_after:
+            await ch.execute(
+                "KILL MUTATION WHERE database = 'loom'"
+                " AND table IN ('entity_triples', 'entity_edges')"
+                f" AND position(command, '{org}') > 0"
+            )
+            return
         (row,) = await ch.query_all(
             "SELECT countIf(NOT is_done) AS running,"
             " maxIf(latest_fail_reason, NOT is_done) AS failed FROM system.mutations"
@@ -1422,6 +1430,39 @@ async def test_an_undo_weighs_its_fact_after_the_retirements_closes_land(ch, org
     assert await _open_weights(ch, org, "london") == {"triples": 1, "edges": 1}
 
 
+async def test_an_undo_succeeds_while_another_orgs_subquery_mutation_is_pending(ch, org) -> None:
+    # A user erasure in another org deletes with a subquery, and while it is pending
+    # ClickHouse refuses every on-the-fly read of the table. The Undo still lands.
+    from server.memory.app.restore import handle_memory_restore
+
+    london = await _stated(ch, org, "s1", "My favourite city is London")
+    paris = await _stated(ch, org, "s2", "My favourite city is Paris")
+    await _edges_like_triples(ch, org)
+    await _follow_retirement(ch, org, london, paris)
+    other = unique_org("same-key-erasure")
+    tables = ("loom.entity_triples", "loom.entity_edges")
+    for table in tables:
+        await ch.execute(f"SYSTEM STOP MERGES {table}")
+    try:
+        for table in tables:
+            # Matches nothing: only its subquery matters.
+            await ch.execute(
+                f"ALTER TABLE {table} DELETE WHERE org = '{other}'"
+                f" AND namespace IN (SELECT namespace FROM loom.entity_triple_memories"
+                f" WHERE org = '{other}')"
+            )
+        out = await handle_memory_restore(_undo_of(paris))
+    finally:
+        for table in tables:
+            await ch.execute(f"SYSTEM START MERGES {table}")
+        await _mutations_done(ch, other, kill_after=50)
+    assert out.restored
+    await _mutations_done(ch, org)
+    assert "london" in await _open_cities(ch, org, {"london"})
+    weights = await _open_weights(ch, org, "london")
+    assert weights["triples"] >= 1 and weights["edges"] >= 1
+
+
 async def test_an_undo_of_a_fact_open_until_later_adds_no_weight(ch, org) -> None:
     # "I live in London until next year": the readers count that row as current, so
     # the Undo's own row of it weighs nothing.
@@ -1451,6 +1492,44 @@ async def test_an_undo_of_a_fact_open_until_later_adds_no_weight(ch, org) -> Non
         ("edges", until),
         ("triples", until),
     ]
+
+
+async def test_an_undo_keeps_no_end_a_supersession_set(ch, org) -> None:
+    # London undated; Berlin from next month closes London when Berlin begins; Berlin's
+    # fact then closes. That end was Berlin's, not London's: an Undo of London leaves
+    # London open.
+    from types import SimpleNamespace
+
+    from server.memory.app import entity_projections
+    from server.memory.app.projections import close_triples
+
+    live = ("user", "live_in")
+    london = await _stated(ch, org, "s1", "I live in London", (*live, "london"))
+    starts = datetime.now(UTC).replace(tzinfo=None, microsecond=0) + timedelta(days=45)
+    await _stated(
+        ch, org, "s2", "I move to Berlin", (*live, "berlin"), memory_key="k2", valid_at=starts
+    )
+    await _mutations_done(ch, org)
+    await _edges_like_triples(ch, org)
+    now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+    await close_triples(ch, org=org, namespace=NS, closes=[(*live, "berlin", now, now)])
+    await _mutations_done(ch, org)
+    scope = SimpleNamespace(org=org, namespace=NS, agent="bot")
+    await entity_projections.reopen_held_facts(scope, [str(london["memory_id"])], ch=ch)
+    await _mutations_done(ch, org)
+    ends = await ch.query_all(
+        "SELECT 'triples' AS plane, valid_to FROM loom.entity_triples WHERE org = {org:String}"
+        " AND adapter_name = 'row-restore'"
+        " UNION ALL SELECT 'edges', valid_to FROM loom.entity_edges WHERE org = {org:String}"
+        " AND entity_a = 'london' AND valid_from >= {now:DateTime}"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org, "now": now},
+    )
+    assert sorted((str(e["plane"]), e["valid_to"]) for e in ends) == [
+        ("edges", None),
+        ("triples", None),
+    ]
+    assert await _open_cities(ch, org, {"london"}) == {"london"}
 
 
 async def test_undo_of_an_open_fact_keeps_its_date_for_later_writes(ch, org, monkeypatch) -> None:
@@ -2349,9 +2428,9 @@ async def test_a_dated_and_an_undated_writer_racing_leave_one_current_value(
 async def test_three_values_each_repaired_against_all_three_leave_one_current(
     ch, org, monkeypatch
 ) -> None:
-    # The reviewer's cycle: A dated Oct 13 noon, B undated, C dated Oct 14, arriving
-    # in the order C, B, A. Each repair reads all three open before any close lands;
-    # by (start day, seen_at) all three agree that B is current.
+    # A cycle under the old pairwise rules: A dated Oct 13 noon, B undated, C dated
+    # Oct 14, arriving in the order C, B, A. Each repair reads all three open before
+    # any close lands; by (start day, seen_at) all three agree that B is current.
     from types import SimpleNamespace
 
     from server.memory.app import projections

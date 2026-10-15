@@ -581,8 +581,8 @@ def triple_interval_repairs(
     closes when the new one starts.
 
     * `earlier_batch_objects` — values stated earlier in this same write. Their rows
-      of this write share its `seen_at`, so they are older whatever their day: within
-      one write the later-stated value wins.
+      of this write share its `seen_at`, so on the same start day the later-stated
+      value wins, in place of the object-text tie-break; a later start day still wins.
     * `later_batch_objects` — objects that a LATER triple in the same write
       asserts for this subject + relation. Those rows are skipped here (the
       later write's own repair closes this one).
@@ -629,7 +629,12 @@ def triple_interval_repairs(
             (valid_from, seen)
             for valid_from, seen in rows
             if observation_key(valid_from, seen, old_object) > new_key
-            and not (old_object in earlier and seen == new_seen_at)
+            # Earlier in this write and on the same day: older, whatever its text.
+            and not (
+                old_object in earlier
+                and seen == new_seen_at
+                and observation_key(valid_from, seen, old_object)[0] == new_key[0]
+            )
         ]
         if newer:
             # The row being written is already superseded: close the NEW row.

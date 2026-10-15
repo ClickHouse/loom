@@ -15,6 +15,7 @@ from types import SimpleNamespace
 from typing import Any, NamedTuple
 
 from server.core.ch import get_client
+from server.core.ch_errors import error_code
 from server.core.datetimes import naive_utc_now, parse_iso_dt
 from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry, _BulkSetResult
 from server.memory.app.projection_errors import (
@@ -531,14 +532,15 @@ async def reopen_held_facts(
     them by): an Undo brings a retired row's facts back with it.
     An Undo is an assertion made at the restore (`restored_at`, now by default, to the
     microsecond): each fact the rows hold, open or not, gets a new observation of its
-    latest row starting at the restore, ending where that row's stated end is still to
-    come, and its edge one from the restore too, so later writes read the Undo's date
-    back from storage. It weighs 1 only when the fact (or edge) has no weighted row the
-    readers count as current after the Undo, the usual Undo of a closed value, so
-    readers still count it; otherwise 0, so Undoing back and forth adds no weight.
-    Every one then goes through the interval repair as a value seen at the restore,
-    by the usual rule: it beats the retirement it undoes, which arrived earlier, and
-    loses to a value asserted after it or starting on a later day. No row retires.
+    latest row starting at the restore, ending where that row's stated end (not one a
+    close set) is still to come, and its edge one from the restore too, so later writes
+    read the Undo's date back from storage. It weighs 1 only when the fact (or edge)
+    has no weighted row the readers count as current after the Undo, the usual Undo of
+    a closed value, so readers still count it; otherwise 0, so Undoing back and forth
+    adds no weight. Every one then goes through the interval repair as a value seen at
+    the restore, by the usual rule: it beats the retirement it undoes, which arrived
+    earlier, and loses to a value asserted after it or starting on a later day. No row
+    retires.
     A replay passes the restore's time: it finds the observations written, by that
     instant, and repairs again as of the Undo."""
     # Only what the restored rows' values hold now: another row's claim keeps a fact
@@ -551,12 +553,14 @@ async def reopen_held_facts(
     now = restored.replace(microsecond=0)  # as the DateTime columns store it
     # On the fly: a retirement's closes are mutations, and a row they will close is
     # weighed as closed already (the close expressions are deterministic).
-    latest = await ch.query_all(
+    latest = await _read_closes_applied(
+        ch,
         """
         SELECT subject, relation, object, argMax(confidence, seen_at) AS confidence,
                argMax(provenance, seen_at) AS provenance,
-               -- A tuple keeps a NULL (open) end, which argMax would skip.
-               argMax(tuple(valid_to), seen_at).1 AS ends,
+               -- A tuple keeps a NULL (open) end, which argMax would skip. Only an
+               -- end the fact stated: a supersession close stamps `invalid_at`.
+               argMaxIf(tuple(valid_to), seen_at, invalid_at IS NULL).1 AS ends,
                countIf(adapter_name = 'row-restore' AND seen_at = {seen:DateTime64(6)})
                    AS restored,
                -- What the readers count as current after the Undo's second.
@@ -566,9 +570,9 @@ async def reopen_held_facts(
         WHERE org = {org:String} AND namespace = {ns:String}
           AND (subject, relation, object) IN {triples:Array(Tuple(String, String, String))}
         GROUP BY subject, relation, object
-        SETTINGS select_sequential_consistency = 1, apply_mutations_on_fly = 1
+        SETTINGS select_sequential_consistency = 1
         """,
-        params={
+        {
             "org": input.org,
             "ns": input.namespace,
             "triples": sorted(held),
@@ -587,10 +591,11 @@ async def reopen_held_facts(
     # for it: a replay after the markers failed to land does not add a second one.
     pairs = sorted({canonical_edge_pair(r["subject"], r["object"]) for r in fresh})
     edges = (
-        await ch.query_all(
+        await _read_closes_applied(
+            ch,
             """
             SELECT entity_a, entity_b,
-                   argMax(tuple(valid_to), last_seen).1 AS ends,
+                   argMaxIf(tuple(valid_to), last_seen, invalid_at IS NULL).1 AS ends,
                    countIf(valid_from = {at:DateTime} AND last_seen = {at:DateTime}
                            AND invalid_at IS NULL) AS restored,
                    countIf(co_occur > 0 AND (valid_to IS NULL OR valid_to > {at:DateTime})
@@ -599,9 +604,9 @@ async def reopen_held_facts(
             WHERE org = {org:String} AND namespace = {ns:String}
               AND (entity_a, entity_b) IN {pairs:Array(Tuple(String, String))}
             GROUP BY entity_a, entity_b
-            SETTINGS select_sequential_consistency = 1, apply_mutations_on_fly = 1
+            SETTINGS select_sequential_consistency = 1
             """,
-            params={"org": input.org, "ns": input.namespace, "pairs": pairs, "at": now},
+            {"org": input.org, "ns": input.namespace, "pairs": pairs, "at": now},
         )
         if pairs
         else []
@@ -649,6 +654,30 @@ async def reopen_held_facts(
         for s, r, o in sorted(held)
     ]
     await repair_intervals(input, restated, ch=ch, at=restored)
+
+
+# The refusal: Code 36, "... with subquery may be nondeterministic and cannot be
+# applied on fly".
+_BAD_ARGUMENTS = 36
+_ON_FLY_REFUSED = "cannot be applied on fly"
+
+
+async def _read_closes_applied(ch: Any, sql: str, params: dict[str, Any]) -> list[Any]:
+    """The weight read `sql` (ending in its SETTINGS) with pending closes applied.
+    ClickHouse refuses that for the whole table while any pending mutation on it has a
+    subquery, as a user erasure's delete does. Then it reads the rows as stored and
+    counts none as weighted: the restored fact may count twice in ranking for a while,
+    but it never vanishes from the graph."""
+    try:
+        rows: list[Any] = await ch.query_all(
+            sql.rstrip() + ", apply_mutations_on_fly = 1", params=params
+        )
+        return rows
+    except Exception as e:  # only the on-the-fly refusal is handled
+        if error_code(e) != _BAD_ARGUMENTS or _ON_FLY_REFUSED not in str(e):
+            raise
+    rows = await ch.query_all(sql, params=params)
+    return [{**r, "weighted": 0} for r in rows]
 
 
 def _still_ahead(end: datetime | None, now: datetime) -> datetime | None:
@@ -1206,8 +1235,8 @@ async def _write_follow_plan(input: Any, plan: tfr.FollowPlan, *, ch: Any) -> tu
     """Write the plan's successors, then close its triples: a close that lands after
     a failed insert would leave a replay nothing open to follow. Returns (closed,
     inserted), not counting a triple opened again after its close."""
-    # Whole seconds, as `invalid_at` stores it: a reopen finds this close by it.
     arrived = naive_utc_now()
+    # Whole seconds, as `invalid_at` stores it: a reopen finds this close by it.
     now = arrived.replace(microsecond=0)
     # The plan read open triples by their raw text and so can miss a successor a
     # failed close left open ("Berlin, Germany" is `berlin germany`): look it up.

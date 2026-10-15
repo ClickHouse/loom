@@ -339,14 +339,19 @@ the value it was written or stated for (`carried`):
   stays as history, and every later repair reads the fact as stated then), as does its
   edge when the graph has one, so both planes show the restored value current. A marker
   keeps the end its fact's latest row stated when that end is still to come ("London
-  until December" is undone until December, not for ever). These observations state
+  until December" is undone until December, not for ever); an end a supersession close
+  set (it stamps `invalid_at`) is not one the fact stated, so it is not kept. These observations state
   nothing new: one carries `co_occur` 1 only when its fact (or edge) has no weighted row
   the readers count as current after the restore (open, or ending later), the usual Undo
   of a closed value, so the graph's readers still count it, and 0 otherwise, so Undoing
   back and forth adds no weight. A close is an `ALTER UPDATE`, so the retirement's
   closes may still be pending when the Undo weighs its facts: it reads with
   `apply_mutations_on_fly`, which applies them (their expressions are deterministic),
-  rather than waiting on `system.mutations`. Its facts then go through the interval
+  rather than waiting on `system.mutations`. ClickHouse refuses that read for the whole
+  table while any pending mutation on it has a subquery (a user erasure's delete does);
+  the Undo then reads the rows as stored and weighs its markers 1: a restored fact may
+  count twice in ranking until that mutation lands, but it never vanishes from the
+  graph. Its facts then go through the interval
   repair by the usual rule, as values seen at the restore: the retirement it undoes
   arrived earlier, so its value closes and its row stays live; a value asserted after
   the Undo, or starting on a later day, stays current. An Undo never retires a row. A
@@ -390,8 +395,9 @@ the value it was written or stated for (`carried`):
   Dec 1 begins, never Berlin before it begins. On one day the later arrival is newer,
   whether either is dated: a fact dated by its session's day beats an undated value seen
   earlier that day, and an undated update later that day beats a dated value. Within one
-  write the rows share one `seen_at`, so the later-stated value is the newer, whatever
-  its day. Two writers racing, even in one second, so agree on one current value: the
+  write the rows share one `seen_at`, so on one start day the later-stated value is the
+  newer; a later start day still wins whatever the order ("I move to Berlin" next month,
+  then an undated "I live in Paris": Paris closes when Berlin begins). Two writers racing, even in one second, so agree on one current value: the
   later arrival. A value can have several open rows, one per observation, so each value
   gets one verdict: it is the newer when any of its rows is, and the new row then closes
   when the earliest such row starts; otherwise every start of it closes, each with its

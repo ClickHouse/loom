@@ -319,7 +319,7 @@ def _survivors(rows: list[dict]) -> set[str]:
     return {row["object"] for row in rows} - closed
 
 
-def test_the_reviewers_three_values_leave_exactly_one_current_value() -> None:
+def test_three_values_that_cycled_pairwise_leave_one_current_value() -> None:
     # Pairwise, the old rules took A over B, B over C and C over A, and all three closed.
     # By (start day, seen_at): B (Oct 15) > C (Oct 14) > A (Oct 13).
     rows = [
@@ -399,12 +399,30 @@ def test_within_one_write_the_later_stated_value_wins() -> None:
     zurich = _live("zurich", day, seen)
     repairs = _repairs([zurich], _live("amsterdam", day, seen), earlier_batch_objects={"zurich"})
     assert [(r.old_object, r.new_object) for r in repairs] == [("zurich", "amsterdam")]
-    # "I lived in London ... I moved to Paris on Oct 1": undated London, earlier in the
-    # write, is older whatever its day.
+    # "I lived in London ... I moved to Paris on Oct 1", London left undated: undated,
+    # London starts at the write (Oct 15), a later day than Paris, so it is the newer
+    # in either order and Paris closes then. Only a date or an end on London keeps
+    # Paris current.
     london = _live("london", None, datetime(2026, 10, 15))
     paris = _live("paris", datetime(2026, 10, 1), datetime(2026, 10, 15))
     repairs = _repairs([london], paris, earlier_batch_objects={"london"})
-    assert [(r.old_object, r.valid_to) for r in repairs] == [("london", datetime(2026, 10, 1))]
+    assert [(r.old_object, r.valid_to) for r in repairs] == [("paris", datetime(2026, 10, 15))]
+    assert [(r.old_object, r.valid_to) for r in _repairs([paris], london)] == [
+        ("paris", datetime(2026, 10, 15))
+    ]
+
+
+@pytest.mark.parametrize("berlin_first", [True, False])
+def test_within_one_write_a_later_start_day_wins_whatever_the_order(berlin_first: bool) -> None:
+    # One write: "I move to Berlin" (in 45 days) and "I live in Paris" (undated), in
+    # either order. Batch order only breaks a same-day tie: Paris closes when Berlin
+    # begins, and Berlin stays current.
+    seen = datetime(2026, 10, 15, 10, 0, 0, 7)
+    berlin = _live("berlin", datetime(2026, 11, 29), seen)
+    paris = _live("paris", None, seen)
+    old, new = (berlin, paris) if berlin_first else (paris, berlin)
+    repairs = _repairs([old], new, earlier_batch_objects={old["object"]})
+    assert [(r.old_object, r.valid_to) for r in repairs] == [("paris", datetime(2026, 11, 29))]
 
 
 @pytest.mark.parametrize(

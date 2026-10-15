@@ -245,3 +245,34 @@ async def test_an_undo_weighs_what_is_open_with_pending_closes_applied(monkeypat
     # The repair runs the normal rule, as a value seen at the restore.
     ((restated, at),) = repaired
     assert at == restored and restated[0]["seen_at"] == restored
+
+
+async def test_an_undo_refused_on_the_fly_weighs_its_markers_one() -> None:
+    # While another org's subquery mutation is pending, ClickHouse refuses every
+    # on-the-fly read of the table: the Undo reads as stored and weighs its marker 1.
+    from server.memory.app import entity_projections as ep
+
+    refusal = (
+        "Code: 36. DB::Exception: ALTER UPDATE/ALTER DELETE statement with subquery may"
+        " be nondeterministic and cannot be applied on fly. (BAD_ARGUMENTS)"
+    )
+
+    class _RefusingCH(_CH):
+        def __init__(self, error: str) -> None:
+            super().__init__()
+            self.error = error
+            self.reads: list[str] = []
+
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            self.reads.append(sql)
+            if "apply_mutations_on_fly" in sql:
+                raise RuntimeError(self.error)
+            return [{"weighted": 1}]
+
+    ch = _RefusingCH(refusal)
+    assert await ep._read_closes_applied(ch, "SELECT 1 SETTINGS a = 1", {}) == [{"weighted": 0}]
+    assert ch.reads == ["SELECT 1 SETTINGS a = 1, apply_mutations_on_fly = 1",
+                        "SELECT 1 SETTINGS a = 1"]  # fmt: skip
+    # Any other error is not this refusal and stands.
+    with pytest.raises(RuntimeError):
+        await ep._read_closes_applied(_RefusingCH("Code: 36. DB::Exception: other"), "S", {})
