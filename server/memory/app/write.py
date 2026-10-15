@@ -176,14 +176,16 @@ def _check_applies_now(input: MemorySetInput) -> None:
 
 
 def _stated(input: MemorySetInput) -> frozenset[str]:
-    """The metadata columns a set's caller stated."""
+    """The metadata columns a set's caller changed: a field sent with a value that
+    changes something (an empty sensitivity is "detect", a null TTL and a false
+    clear_expiry are "keep"; none of them states anything)."""
     given = input.model_fields_set
     out = set()
     if "pinned" in given:
         out.add("pinned")
-    if given & {"ttl_seconds", "clear_expiry"}:
+    if input.clear_expiry or input.ttl_seconds is not None:
         out.add("expires_at")
-    if "sensitivity" in given:
+    if input.sensitivity:
         out.add("sensitivity")
     return frozenset(out)
 

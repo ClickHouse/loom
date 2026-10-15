@@ -584,6 +584,32 @@ def _replayed_revision(existing: MemoryRow) -> MemoryUpdateByIdOutput:
     )
 
 
+async def _mirror_accepted(
+    existing: MemoryRow, memory_row: dict[str, Any], input: Any, ch: Any
+) -> None:
+    """The search rows of the text the journal kept, with the metadata the update set."""
+    import server.memory.store as memory_repo
+
+    if not is_embedded(str(memory_row["memory_type"]), str(memory_row.get("sensitivity") or "")):
+        return
+    changes = {
+        f: memory_row[f]
+        for f in ("tags", "confidence")
+        if f in input.model_fields_set and getattr(input, f, None) is not None
+    }
+    if changes:
+        await memory_repo.reemit_embedding_rows_for_key(
+            existing.org,
+            existing.namespace,
+            existing.agent,
+            existing.user_id,
+            existing.session_id,
+            existing.memory_key,
+            ch=ch,
+            **changes,
+        )
+
+
 def _vector_filter(new_sha: str) -> tuple[list[Any], Callable[[Any], list[Any]]]:
     """A vector only for a kept row that still carries the text it was embedded
     from (by content: the same JSON however it is spaced or ordered); the first
@@ -607,12 +633,59 @@ def _revision_intent(
     revives (its pin and the rest the journal's when it is planned)."""
     from server.memory.app import verify as _verify
 
+    # A null means "keep" for these fields; an empty list still clears.
     supplied = frozenset(
-        f for f in ("tags", "concepts", "confidence", "char_limit") if f in input.model_fields_set
+        f
+        for f in ("tags", "concepts", "confidence", "char_limit")
+        if f in input.model_fields_set and getattr(input, f, None) is not None
     )
     keeps_value = new_sha == _verify.current_content_sha256(existing) and not input.revive
     declared = {row_key(memory_row): supplied} if keeps_value else {}
     return declared, frozenset({"expires_at"} if input.revive else ())
+
+
+async def _after_revision(
+    input: Any,
+    existing: MemoryRow,
+    memory_row: dict[str, Any],
+    new_sha: str,
+    new_version: int,
+    conflict_result: Any,
+    duplicate_of_id: str,
+    revision_run_id: str,
+    cfg_task: Any,
+    ch: Any,
+) -> MemoryUpdateByIdOutput:
+    """After the revision is in: settlement, peers and supersession from the row the
+    journal accepted, and the answer."""
+    cfg = await cfg_task
+    if str(memory_row["content_sha256"]) != new_sha:
+        # The journal kept the metadata on the text that holds now, not the text this
+        # update read: a verdict about the read text says nothing about it, and the
+        # accepted text's search rows take the metadata the update set.
+        conflict_result, duplicate_of_id = None, ""
+        await _mirror_accepted(existing, memory_row, input, ch)
+    _cd.schedule_settle(
+        _settle_identity(input.org, existing, revision_run_id),
+        conflict_result,
+        memory_id=str(existing.memory_id),
+        cfg=cfg,
+    )
+
+    await _update_post_write(input, existing, conflict_result, ch)
+
+    # Same-key supersession, exactly as memory.set runs it after its insert.
+    # From the row the journal accepted (a tags-only update lands on the value that
+    # holds now, which may not be the one it read).
+    await _revision_supersession(input.org, existing, str(memory_row["value"]), ch, cfg.policy)
+    return MemoryUpdateByIdOutput(
+        updated=True,
+        new_version=new_version,
+        content_sha256=str(memory_row["content_sha256"]),
+        conflict_verdict=conflict_result.verdict if conflict_result is not None else "",
+        conflict_peers=len(conflict_result.peers) if conflict_result is not None else 0,
+        duplicate_of=duplicate_of_id,
+    )
 
 
 async def _write_revision(
@@ -767,25 +840,15 @@ async def _write_revision(
     # Its version was drawn when the write began: a slow write indexes its own BM25 stats.
     if embedded:
         await memory_repo.index_late_rows(emb_rows, ch=ch)
-    cfg = await cfg_task
-    _cd.schedule_settle(
-        _settle_identity(input.org, existing, revision_run_id),
+    return await _after_revision(
+        input,
+        existing,
+        memory_row,
+        new_sha,
+        new_version,
         conflict_result,
-        memory_id=str(existing.memory_id),
-        cfg=cfg,
-    )
-
-    await _update_post_write(input, existing, conflict_result, ch)
-
-    # Same-key supersession, exactly as memory.set runs it after its insert.
-    # From the row the journal accepted (a tags-only update lands on the value that
-    # holds now, which may not be the one it read).
-    await _revision_supersession(input.org, existing, str(memory_row["value"]), ch, cfg.policy)
-    return MemoryUpdateByIdOutput(
-        updated=True,
-        new_version=new_version,
-        content_sha256=str(memory_row["content_sha256"]),
-        conflict_verdict=conflict_result.verdict if conflict_result is not None else "",
-        conflict_peers=len(conflict_result.peers) if conflict_result is not None else 0,
-        duplicate_of=duplicate_of_id,
+        duplicate_of_id,
+        revision_run_id,
+        cfg_task,
+        ch,
     )
