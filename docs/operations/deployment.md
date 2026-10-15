@@ -49,9 +49,13 @@ Sizing (web replicas, uvicorn processes, the workers container) is in
   starts Loom. It creates the `loom` database and the read-only `loom_reader` user
   (below), and checks the version and the grants. Run it again at any time with
   `docker compose --project-directory ~/.loom run --rm loom loom ch-setup`; what is
-  already in place is left alone. An existing `loom_reader` is replaced only when it has
-  the shape `ch-setup` gives it (a password user on the settings profile of its own name)
-  and logs in with `LOOM_CH_PASSWORD`; anything else of that name is left alone.
+  already in place is left alone. A `loom_reader` whose profile or grants differ from what
+  `ch-setup` gives it is rebuilt to exactly that (SELECT on `loom.*` only, the current
+  caps), so a role, grant or `REVOKE` an admin adds to it does not survive a rerun; the
+  installer reruns `ch-setup` on every install and upgrade. An existing `loom_reader` is
+  replaced only when it has the shape `ch-setup` gives it (a password user on the settings
+  profile of its own name) and logs in with `LOOM_CH_PASSWORD`; anything else of that name
+  is left alone.
 - **Without admin rights.** When the user cannot create the database, read the system
   tables the migrations read, or create the reader or its settings profile, `ch-setup`
   stops and prints the SQL for an admin, with the password as a placeholder.

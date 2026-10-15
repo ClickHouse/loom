@@ -693,18 +693,33 @@ def test_an_unset_reader_user_means_the_default_reader(
     assert "CREATE USER OR REPLACE `loom_reader`" in capsys.readouterr().out
 
 
+_WIDER = "its grants are not SELECT on loom.* alone"
+
+
 @pytest.mark.parametrize(
-    ("grants", "problem"),
+    ("reader", "grants", "problem"),
     [
-        (["GRANT SELECT ON loom.* TO loom_reader"], ""),
+        ("loom_reader", ["GRANT SELECT ON loom.* TO loom_reader"], ""),
+        # ClickHouse quotes a name like this one in SHOW GRANTS.
+        ("loom-reader", ["GRANT SELECT ON loom.* TO `loom-reader`"], ""),
         (
+            "loom_reader",
             ["GRANT SELECT ON loom.* TO loom_reader", "GRANT SELECT ON *.* TO loom_reader"],
-            "its grants are not SELECT on loom.* alone",
+            _WIDER,
+        ),
+        # Narrowed by an admin: not the reader ch-setup makes either.
+        (
+            "loom_reader",
+            [
+                "GRANT SELECT ON loom.* TO loom_reader",
+                "REVOKE SELECT ON loom.memory FROM loom_reader",
+            ],
+            _WIDER,
         ),
     ],
 )
-def test_the_reader_s_only_grant_is_select_on_loom(
-    monkeypatch: pytest.MonkeyPatch, grants: list[str], problem: str
+def test_the_reader_holds_select_on_loom_alone(
+    monkeypatch: pytest.MonkeyPatch, reader: str, grants: list[str], problem: str
 ) -> None:
     import clickhouse_connect
 
@@ -716,7 +731,7 @@ def test_the_reader_s_only_grant_is_select_on_loom(
 
     class Reader:
         def command(self, sql: str) -> Any:
-            return "loom_reader"
+            return reader
 
         def query(self, sql: str, **_: Any) -> SimpleNamespace:
             if sql == "SHOW GRANTS":
@@ -727,4 +742,4 @@ def test_the_reader_s_only_grant_is_select_on_loom(
             pass
 
     monkeypatch.setattr(clickhouse_connect, "get_client", lambda **_: Reader())
-    assert ch_setup.reader_status("loom_reader") == (True, problem)
+    assert ch_setup.reader_status(reader) == (True, problem)

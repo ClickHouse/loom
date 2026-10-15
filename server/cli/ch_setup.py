@@ -5,7 +5,8 @@ It creates the `loom` database and the read-only reader user
 (`LOOM_CH_READER_USER`, default `loom_reader`): SELECT on `loom.*` and a
 settings profile that pins Loom's caller-shaped caps as ceilings, with floors
 no statement can go under. Run it again at any time: what is in place is left
-alone, and a reader whose profile no longer matches the caps is rebuilt.
+alone, and a reader whose profile or grants differ from that is rebuilt to
+exactly it, so changes an admin made to the reader do not survive a rerun.
 
 A user without the privilege for a step gets the SQL to hand an admin instead,
 with the password left as a placeholder. The bundled ClickHouse defines the
