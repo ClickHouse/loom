@@ -92,7 +92,8 @@ class ClickHouseSettings(BaseModel):
     # Seconds after which a holder that stopped renewing is replaced.
     boot_migrate_lease_ttl_s: int = 300
     # Seconds a contender waits for the holder before boot fails (exit 1, the
-    # container restarts).
+    # container restarts); also how long a booting process waits for the
+    # provider configuration lock a sibling holds while it migrates.
     boot_migrate_lease_wait_s: float = 900.0
     # Pause between a contender's insert and its read-back, so a row just
     # acknowledged on another replica is visible.
