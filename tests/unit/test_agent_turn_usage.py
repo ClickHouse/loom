@@ -102,11 +102,16 @@ def test_a_turn_dated_in_the_future_is_stored_as_sent_and_reported() -> None:
         client = fake
 
     ahead = datetime.now(UTC) + timedelta(hours=1)
+    # A second ahead is ordinary skew and is not counted.
+    skewed = datetime.now(UTC) + timedelta(seconds=1)
     inp = CostRecordTurnsInput(
         org="o",
         namespace="n",
         session_id="s1",
-        turns=[{"message_id": "m1", "model": "claude-opus-5-5", "turn_at": ahead.isoformat()}],
+        turns=[
+            {"message_id": "m1", "model": "claude-opus-5-5", "turn_at": ahead.isoformat()},
+            {"message_id": "m2", "model": "claude-opus-5-5", "turn_at": skewed.isoformat()},
+        ],
     )
     with patch.object(h, "get_client", return_value=_Client()):
         out = asyncio.run(h.handle_cost_record_turns(inp))

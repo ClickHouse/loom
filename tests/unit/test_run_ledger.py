@@ -397,7 +397,7 @@ def test_a_resent_begin_that_moves_session_drops_the_cost_budget(env) -> None:
     # The cost budget was set for s1's turns, so it does not follow the run to s2.
     fake, _, h = env
     fake.one[:] = [_run_row(budget_usd=1.5, budget_seconds=600)]
-    asyncio.run(
+    out = asyncio.run(
         h.handle_run_begin(
             RunBeginInput(
                 org="o", namespace="n", agent="claude", run_id="r1", goal="g", session_id="s2"
@@ -406,6 +406,7 @@ def test_a_resent_begin_that_moves_session_drops_the_cost_budget(env) -> None:
     )
     row = next(rows[0] for table, rows in fake.inserted if table == "loom.agent_runs")
     assert row["session_id"] == "s2" and row["budget_usd"] == 0.0 and row["budget_seconds"] == 600
+    assert "budget_usd was dropped" in out.next
 
 
 def test_a_resent_begin_without_a_budget_keeps_the_runs_budget(env) -> None:

@@ -47,8 +47,8 @@ Limits:
   run can go past `budget_usd` by its last turn's cost before anything sees it.
 - **The client's clock.** The window compares the client's turn times with the server's run times; a clock minutes
   off misplaces the turns at a run's edges. A turn keeps the time it was sent with, so a re-sent turn stays with
-  the run it first fell in. `cost.record_turns` answers with `turns_dated_ahead`, the turns it received dated after
-  the server's clock, so a caller that posts turns itself can see a fast clock; the plugins post them without
+  the run it first fell in. `cost.record_turns` answers with `turns_dated_ahead`, the turns it received dated more than
+  5 s after the server's clock, so a caller that posts turns itself can see a fast clock; the plugins post them without
   reading the answer.
 - **One session, many runs.** Runs open at once in one session see the same turns: a nested run counts toward both,
   and concurrent workers that each want a cost budget need their own sessions.
@@ -57,10 +57,10 @@ Limits:
 - **MCP.** The MCP tools offer only `budget_seconds`, since the model does not know the session id its turns are
   recorded under.
 - **Retries.** A re-sent `run.begin` replaces the run's row like any retry: it keeps the session and budget it does
-  not restate, a new non-zero budget replaces the old one, and 0 keeps it, so a budget cannot be removed once set.
+  not restate, a new non-zero budget replaces the old one, and 0 keeps it.
   A new `budget_usd` must be sent with its `session_id` (a 422 otherwise); a new `budget_seconds` needs nothing else.
   A re-sent begin that moves the run to another session drops its cost budget, which was set for the old
-  session's turns, and keeps its time budget.
+  session's turns, keeps its time budget, and says so in its `next`. That is the only way a budget is removed.
   When `run.begin` answered with a different `run_id` than the one sent, re-send that `run_id`, or the same
   `session_id`; otherwise the retry opens a new run.
 

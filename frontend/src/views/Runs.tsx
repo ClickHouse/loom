@@ -129,7 +129,7 @@ export const EMPTY_WHY = {
 function budgetText(detail: RunGetResponse): string {
   const run = detail.run;
   const parts: string[] = [];
-  if (run?.budget_usd) parts.push(`$${run.budget_usd.toFixed(run.budget_usd < 0.01 ? 4 : 2)}`);
+  if (run?.budget_usd) parts.push(`$${run.budget_usd.toFixed(run.budget_usd < 0.01 ? 6 : 2)}`);
   if (run?.budget_seconds) {
     parts.push(fmtDuration(run.budget_seconds * 1000));
     const elapsed = detail.elapsed_seconds ?? 0;

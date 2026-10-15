@@ -185,7 +185,7 @@ class CostRecordTurnsOutput(BaseModel):
     unpriced_models: list[str] = Field(default_factory=list)
     # Total price of the priced turns in this batch, in USD, rounded to 6 places.
     cost_usd: float = 0.0
-    # Turns dated after the server's clock: the client's clock runs ahead, so a
+    # Turns dated over 5 s after the server's clock: the client's clock runs ahead, so a
     # run's cost window may place them late. They are stored as sent. The
     # plugins post fire-and-forget and do not read this.
     turns_dated_ahead: int = 0

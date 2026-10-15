@@ -408,8 +408,10 @@ async def _open_run(
     prior = existing or {}
     prior_session = str(prior.get("session_id") or SENTINEL)
     session_id = input.session_id if names_session(input.session_id) else prior_session
-    kept_usd = float(prior.get("budget_usd") or 0.0) if session_id == prior_session else 0.0
+    prior_usd = float(prior.get("budget_usd") or 0.0)
+    kept_usd = prior_usd if session_id == prior_session else 0.0
     budget_usd = input.budget_usd or kept_usd
+    dropped_usd = prior_usd > 0 and budget_usd == 0
     budget_seconds = input.budget_seconds or int(prior.get("budget_seconds") or 0)
     # The begin row in the ledger carries the run it opened, so begin and complete join
     # on `run_id` (the body names none; the transport's fallback is the header run, empty
@@ -456,17 +458,15 @@ async def _open_run(
     if version is not None:
         row["version"] = version
     await runs_store.insert_runs(ch, [row])
-    return RunBeginOutput(
-        run_id=run_id,
-        status="active",
-        started_at=_iso(started),
-        next=(
-            f"run_id={run_id}. Pass it as run_id on memory.set, memory.ask, "
-            "memory.search and observe.record so the run's writes and recalls "
-            "join this ledger. When done, call run.complete with the memory_keys "
-            "you actually relied on in memories_used."
-        ),
+    next_step = (
+        f"run_id={run_id}. Pass it as run_id on memory.set, memory.ask, "
+        "memory.search and observe.record so the run's writes and recalls "
+        "join this ledger. When done, call run.complete with the memory_keys "
+        "you actually relied on in memories_used."
     )
+    if dropped_usd:
+        next_step += " The run moved to another session, so its budget_usd was dropped."
+    return RunBeginOutput(run_id=run_id, status="active", started_at=_iso(started), next=next_step)
 
 
 @dataclass(frozen=True, slots=True)

@@ -913,11 +913,12 @@ def _rule_run_over_budget(
         return None
     spent = []
     if "cost" in over:
-        # The spend to four decimals, so a run just past a $1.00 budget never reads $1.00.
+        # To the 6 places run.get rounds cost to, so a run just past its budget
+        # never reads as at it.
         budget = float(run.get("budget_usd") or 0.0)
-        fmt = ",.4f" if budget < 0.01 else ",.2f"
+        fmt = ",.6f" if budget < 0.01 else ",.2f"
         cost = float(res.get("cost_usd") or 0.0)
-        spent.append(f"${cost:,.4f} of ${budget:{fmt}} spent")
+        spent.append(f"${cost:,.6f} of ${budget:{fmt}} spent")
     if "time" in over:
         elapsed = int(res.get("elapsed_seconds") or 0)
         allowed = int(run.get("budget_seconds") or 0)
