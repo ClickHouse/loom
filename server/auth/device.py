@@ -192,11 +192,17 @@ async def signed_in(
     identity: tuple[str, str, list[str], list[str]],
     upstream_refresh: str,
 ) -> Response:
-    """The user has signed in: remember who, and ask them to confirm."""
+    """The user has signed in: remember who, and ask them to confirm. A code
+    belongs to the first person who signs in with it: someone who saw it
+    later (a screen share, a shared notebook) cannot take the grant over."""
     device = await oauth.store.device_by_user_code(_user_code_id(user_code))
-    if device is None:
-        return _expired_page()
     subject, org, namespaces, roles = identity
+    if device is None or device["subject"] not in ("", subject):
+        if upstream_refresh:
+            await oidc.revoke(upstream_refresh)
+        return _expired_page()
+    if device["upstream_refresh"] and device["upstream_refresh"] != upstream_refresh:
+        await oidc.revoke(device["upstream_refresh"])  # the same person signed in again
     ticket = secrets.token_urlsafe(32)
     device |= {
         "subject": subject,

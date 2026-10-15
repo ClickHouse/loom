@@ -17,7 +17,6 @@ from typing import Any
 
 from loom._logging import logger
 from loom.account import AccountClient
-from loom.admin import AdminClient
 from loom.audit import AuditClient
 from loom.blacklist import BlacklistClient
 from loom.briefs import BriefsClient
@@ -31,6 +30,7 @@ from loom.conversations import ConversationsClient
 from loom.cost import CostClient
 from loom.credentials import DEFAULT_SERVER, StoredLogin, stored_login
 from loom.decision import DecisionClient
+from loom.deployment import DeploymentClient
 from loom.erasure import ErasureClient
 from loom.facts import FactsClient
 from loom.grants import GrantsClient
@@ -66,17 +66,18 @@ def default_agent_name(agent: str | None) -> str:
 
 
 def _credentials(
-    base_url: str | None, api_key: str | None
+    base_url: str | None, api_key: str | None, profile: str | None
 ) -> tuple[str, str | None, StoredLogin | None]:
     """The server and credential to use. The server: `base_url=`, else
     LOOM_BASE_URL, else localhost. The credential, first found wins: `api_key=`,
-    LOOM_API_KEY, the `loom login` session for that server, `~/.loom/token`
-    (what `loom mint-token --save` writes)."""
+    LOOM_API_KEY, the `loom login` session for that server (`profile`, else
+    LOOM_PROFILE, else `default`), `~/.loom/token` (what `loom mint-token
+    --save` writes)."""
     base_url = base_url or os.environ.get("LOOM_BASE_URL") or DEFAULT_SERVER
     api_key = api_key or os.environ.get("LOOM_API_KEY")
     if api_key:
         return base_url, api_key, None
-    auth = stored_login(base_url)
+    auth = stored_login(base_url, profile)
     return base_url, None if auth else token_from_file(), auth
 
 
@@ -109,6 +110,7 @@ class Agent:
         retry: RetryPolicy | dict[str, Any] | None = None,
         consumer: str = "",
         mentor_brief: bool | None = None,
+        profile: str | None = None,
     ) -> None:
         """The options are described in docs/reference/python-sdk.md ("Construction").
         `auto_run` (None reads `LOOM_AUTO_RUN`) is off by default because a
@@ -149,7 +151,7 @@ class Agent:
             )
         self.auto_run = bool(auto_run)
 
-        base_url, api_key, auth = _credentials(base_url, api_key)
+        base_url, api_key, auth = _credentials(base_url, api_key, profile)
 
         self.transport = Transport(
             base_url=base_url,
@@ -169,7 +171,7 @@ class Agent:
         # the hand-written high-level layer.
         self.client = OpsClient(self)
         self.account = AccountClient(self)
-        self.admin = AdminClient(self)
+        self.deployment = DeploymentClient(self)
         self.memory = MemoryClient(self)
         self.working_memory = WorkingMemoryClient(self)
         # Session briefs: a.briefs.save / get / list / delete.

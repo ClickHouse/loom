@@ -244,3 +244,26 @@ def test_a_refresh_the_server_cannot_answer_now_is_retryable(server) -> None:
     with pytest.raises(BackendUnavailable):
         credentials.access_token(refused="a1")
     assert _stored()["profiles"]["default"]["refresh_token"] == "r1"  # kept for the retry
+
+
+def test_a_failed_sign_in_request_is_a_typed_sdk_error(server) -> None:
+    from loom.errors import BackendUnavailable
+
+    server.queued["/oauth/device_authorization"] = [httpx.Response(502)]
+    with pytest.raises(BackendUnavailable):
+        credentials.login(_SERVER, open_browser=False, echo=lambda _: None)
+    # A poll answered invalid_grant (the code spent by a poll whose answer was lost).
+    server.pending = 0
+    server.queued["/oauth/token"] = [
+        httpx.Response(400, json={"detail": {"error": "invalid_grant"}})
+    ]
+    with pytest.raises(AuthInvalid, match="loom login"):
+        credentials.login(_SERVER, open_browser=False, echo=lambda _: None)
+
+
+def test_an_agent_can_name_its_profile(server, monkeypatch) -> None:
+    from loom import Agent
+
+    credentials.login(_SERVER, profile="work", open_browser=False, echo=lambda _: None)
+    assert "login:" not in repr(Agent("acme", "a", "n", base_url=_SERVER).transport)
+    assert "login:work" in repr(Agent("acme", "a", "n", base_url=_SERVER, profile="work").transport)

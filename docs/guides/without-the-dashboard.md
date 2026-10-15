@@ -22,7 +22,7 @@ and so on.
 
 ```console
 $ loom call --list                          # every operation and the role it needs
-$ loom call memory.search query="deploy window" top_k=5
+$ loom call memory.search query="deploy window" top_k:=5
 $ loom call grants.approve namespace=support subject=bob@example.com decision=approve
 $ loom call /v1/me/service_accounts         # a route outside the operation registry
 $ loom call /v1/me/service_accounts.create --data '{"name": "ci", "namespaces": ["support"]}'
@@ -32,9 +32,10 @@ $ loom call /v1/me/service_accounts.create --data '{"name": "ci", "namespaces": 
   from your token; `--org` and `--namespace` override them.
 - **A path** (it starts with `/`) is sent as given: GET without a body, POST
   with one.
-- **Fields** are `key=value`. A value that parses as JSON (`5`, `true`,
-  `'["a"]'`) is sent as JSON, anything else as text. `--data` takes a whole
-  JSON body, `@file` or `-` for stdin.
+- **Fields** are `key=value` for text, sent exactly as typed, and
+  `key:=json` for any other value (`top_k:=5`, `pinned:=true`,
+  `tags:='["a","b"]'`). `--data` takes a whole JSON object, `@file` or `-`
+  for stdin.
 - **Output:** the answer prints as JSON. An error prints one line with its
   code on stderr and exits 1.
 
@@ -43,7 +44,7 @@ The fields of each operation are listed in the
 
 In Python, `agent.call("<op>", {...})` reaches any operation, and every
 operation is also a method on `agent.client`. The routes outside the registry
-are on `agent.account` and `agent.admin`.
+are on `agent.account` and `agent.deployment`.
 
 ## Dashboard view → command and SDK call
 
@@ -65,10 +66,10 @@ are on `agent.account` and `agent.admin`.
 | Setup: connect an MCP client      | `/v1/me/setup/mcp_config --data '{"client": "cursor"}'`                                              | `agent.account.mcp_config("cursor")`                                                                |
 | Default namespace                 | `/v1/me/set-default-namespace namespace=…`                                                           | `agent.account.set_default_namespace(...)`                                                          |
 | Sharing summary                   | `/v1/me/sharing-summary`                                                                             | `agent.account.sharing_summary()`                                                                   |
-| Admin: health                     | `/v1/health`, `ops.health`                                                                           | `agent.admin.health()`                                                                              |
-| Admin: background workers         | `/v1/admin/workers.status`                                                                           | `agent.admin.workers_status()`                                                                      |
-| Admin: models and providers       | `/v1/admin/models`, `/v1/admin/models/validate`, `/v1/admin/models` (POST), `/v1/admin/models/reset` | `agent.admin.models()`, `.validate_models(...)`, `.save_models(...)`, `.reset_models(...)`          |
-| Admin: users, release a claim     | `admin.users`, `/v1/admin/claim_release`                                                             | `agent.client.admin.users()`, `agent.admin.release_claim(...)`                                      |
+| Admin: health                     | `/v1/health`, `ops.health`                                                                           | `agent.deployment.health()`                                                                         |
+| Admin: background workers         | `/v1/admin/workers.status`                                                                           | `agent.deployment.workers_status()`                                                                 |
+| Admin: models and providers       | `/v1/admin/models`, `/v1/admin/models/validate`, `/v1/admin/models` (POST), `/v1/admin/models/reset` | `agent.deployment.models()`, `.validate_models(...)`, `.save_models(...)`, `.reset_models(...)`     |
+| Admin: users, release a claim     | `admin.users`, `/v1/admin/claim_release`                                                             | `agent.client.admin.users()`, `agent.deployment.release_claim(...)`                                 |
 
 The same roles apply as in the dashboard. Approving a join needs admin on
 that namespace. The admin views need an org or platform admin.

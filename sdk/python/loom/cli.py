@@ -6,14 +6,14 @@ installed; the server's `loom` command hands these four to it.
 
   loom call grants.pending_for_me
   loom call grants.approve namespace=support subject=bob@example.com role=writer
-  loom call memory.search query="deploy window" top_k=5 --namespace support
+  loom call memory.search query="deploy window" top_k:=5 --namespace support
   loom call /v1/me/service_accounts
   loom call /v1/me/service_accounts.create --data '{"name": "ci", "namespaces": ["support"]}'
 
 An op name is POSTed to /v1/<op> with org and namespace filled in from the
 token (`--org`, `--namespace` override). A path starting with `/` is sent as
-given: GET without a body, POST with one. `key=value` values are read as JSON
-when they parse (`top_k=5`, `tags='["a"]'`), else as text.
+given: GET without a body, POST with one. `key=value` sends text as it is;
+`key:=json` sends a JSON value (`top_k:=5`, `tags:='["a"]'`, `pinned:=true`).
 """
 
 from __future__ import annotations
@@ -30,20 +30,20 @@ import httpx
 from loom import credentials
 from loom.errors import LoomError
 from loom.ops import OPS
-from loom.token import decode_token_claims
-from loom.transport import token_from_file
 
 COMMANDS = ("login", "logout", "whoami", "call")
 
 
 def _field(pair: str) -> tuple[str, Any]:
     key, sep, raw = pair.partition("=")
-    if not sep or not key:
-        raise argparse.ArgumentTypeError(f"expected key=value, got {pair!r}")
-    try:
-        return key, json.loads(raw)
-    except ValueError:
+    if not sep or not key or key == ":":
+        raise argparse.ArgumentTypeError(f"expected key=value or key:=json, got {pair!r}")
+    if not key.endswith(":"):
         return key, raw
+    try:
+        return key[:-1], json.loads(raw)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(f"{key[:-1]}: not JSON: {raw!r}") from e
 
 
 def _body(args: argparse.Namespace) -> dict[str, Any] | None:
@@ -53,7 +53,9 @@ def _body(args: argparse.Namespace) -> dict[str, Any] | None:
     elif data and data.startswith("@"):
         with open(data[1:], encoding="utf-8") as f:
             data = f.read()
-    body: dict[str, Any] = json.loads(data) if data else {}
+    body = json.loads(data) if data else {}
+    if not isinstance(body, dict):
+        raise ValueError("--data must be a JSON object")
     body.update(dict(args.fields))
     return body if (args.data or args.fields) else None
 
@@ -71,21 +73,22 @@ def _server(args: argparse.Namespace) -> str:
 async def _call(args: argparse.Namespace) -> Any:
     from loom.agent import Agent
 
-    server = _server(args)
-    token = os.environ.get("LOOM_API_KEY") or (
-        credentials.access_token(args.profile)
-        if credentials.stored_login(server) is not None
-        else token_from_file()
+    body = _body(args)
+    agent = Agent(
+        args.org or "",
+        args.namespace or "",
+        "loom-cli",
+        base_url=_server(args),
+        profile=args.profile,
     )
-    claims = decode_token_claims(token)
-    org = args.org or (claims.org if claims else None) or "dev"
-    namespace = args.namespace or (
-        claims.namespaces[0] if claims and claims.namespaces else "local"
-    )
-    agent = Agent(org, namespace, "loom-cli", base_url=server)
     try:
-        body = _body(args)
         if not args.target.startswith("/"):
+            # The identity an op needs, from the token unless given.
+            claims = agent.transport.token_claims()
+            agent.org = args.org or (claims.org if claims else None) or "dev"
+            agent.namespace = args.namespace or (
+                claims.namespaces[0] if claims and claims.namespaces else "local"
+            )
             return await agent.call(args.target, body or {})
         method = args.method or ("POST" if body is not None else "GET")
         resp = await agent.transport.request(method, args.target, json=body)
@@ -104,8 +107,6 @@ def _list_ops() -> None:
 
 def run(args: argparse.Namespace) -> int:
     """Run one parsed command: prints the answer, returns the exit code."""
-    if args.profile:
-        os.environ["LOOM_PROFILE"] = args.profile  # the session `Agent` picks up
     try:
         if args.cmd == "login":
             info = credentials.login(
@@ -130,8 +131,7 @@ def run(args: argparse.Namespace) -> int:
             if result is not None:
                 print(json.dumps(result, indent=2, default=str))
     except LoomError as e:
-        detail = f" ({e.code})" if getattr(e, "code", "") else ""
-        print(f"loom {args.cmd}: {e}{detail}", file=sys.stderr)
+        print(f"loom {args.cmd}: {e}", file=sys.stderr)
         return 1
     except (httpx.HTTPError, ValueError, OSError) as e:
         print(f"loom {args.cmd}: {e}", file=sys.stderr)
@@ -161,7 +161,9 @@ def main(argv: list[str] | None = None, prog: str = "python -m loom") -> int:
             p.add_argument("--no-browser", action="store_true", help="only print the URL")
         if name == "call":
             p.add_argument("target", nargs="?", help="an op name (memory.search) or a /path")
-            p.add_argument("fields", nargs="*", type=_field, help="key=value body fields")
+            p.add_argument(
+                "fields", nargs="*", type=_field, help="key=text or key:=json body fields"
+            )
             p.add_argument("--data", help="a JSON body, @file, or - for stdin")
             p.add_argument("--org", help="org for an op (default: the token's)")
             p.add_argument("--namespace", help="namespace for an op (default: the token's first)")

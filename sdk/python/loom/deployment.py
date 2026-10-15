@@ -1,9 +1,10 @@
-"""Deployment administration outside the op registry: health, background
+"""The deployment itself, outside the op registry: health, background
 workers, the model and provider settings, and releasing a self-signup claim
 — the dashboard's Admin views. Most need a platform or org admin token.
+(The admin *operations*, like `admin.users`, are on `agent.client.admin`.)
 
-status = await agent.admin.workers_status()
-models = await agent.admin.models()  # then validate_models / save_models
+status = await agent.deployment.workers_status()
+models = await agent.deployment.models()  # then validate_models / save_models
 """
 
 from __future__ import annotations
@@ -14,16 +15,14 @@ if TYPE_CHECKING:
     from loom.agent import Agent
 
 
-class AdminClient:
+class DeploymentClient:
     def __init__(self, agent: Agent) -> None:
         self._agent = agent
 
     async def _call(
         self, method: str, path: str, body: dict[str, Any] | None = None
     ) -> dict[str, Any]:
-        resp = await self._agent.transport.request(method, path, json=body)
-        out: dict[str, Any] = resp.json()
-        return out
+        return await self._agent.transport.request_json(method, path, json=body)
 
     async def health(self) -> dict[str, Any]:
         """What /v1/health reports: the store, the workers, problems and their fixes."""

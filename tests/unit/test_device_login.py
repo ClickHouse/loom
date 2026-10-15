@@ -260,7 +260,7 @@ def test_approved_grant_issues_a_session_and_is_audited(_world) -> None:
     assert claims["sub"] == "alice@example.com" and claims["exp"] - claims["iat"] == 3600
     assert tokens["refresh_token"]
     approved = [kw for name, kw in _world["events"] if name == "auth.device_approved"]
-    assert approved and approved[0]["subject"]["family"] == claims["jti"]
+    assert approved and approved[0]["subject"]["family"] == claims["sid"]
 
 
 def test_denied_grant_ends_with_access_denied(_world) -> None:
@@ -278,7 +278,7 @@ def test_a_replayed_device_code_ends_the_session(_world) -> None:
     _approve(c, grant["user_code"], _sign_in(c, grant["user_code"]).text)
     tokens = _poll(c, grant["device_code"]).json()
     assert _error(_poll(c, grant["device_code"])) == "invalid_grant"
-    jti = pyjwt.decode(tokens["access_token"], options={"verify_signature": False})["jti"]
+    jti = pyjwt.decode(tokens["access_token"], options={"verify_signature": False})["sid"]
     assert _world["revoked"] == [jti]
     assert _error(_refresh(c, tokens["refresh_token"])) == "invalid_grant"
 
@@ -292,7 +292,7 @@ def test_refresh_rotates_within_the_session() -> None:
     second = _refresh(c, first["refresh_token"]).json()
     assert second["refresh_token"] != first["refresh_token"]
     jti = [
-        pyjwt.decode(t["access_token"], options={"verify_signature": False})["jti"]
+        pyjwt.decode(t["access_token"], options={"verify_signature": False})["sid"]
         for t in (first, second)
     ]
     assert jti[0] == jti[1]
@@ -339,7 +339,7 @@ def test_revoking_a_refresh_token_ends_the_session(_world) -> None:
         data={"token": tokens["refresh_token"], "client_id": device.DEVICE_CLIENT_ID},
     )
     assert r.status_code == 200
-    jti = pyjwt.decode(tokens["access_token"], options={"verify_signature": False})["jti"]
+    jti = pyjwt.decode(tokens["access_token"], options={"verify_signature": False})["sid"]
     assert _world["revoked"] == [jti]
     assert _error(_refresh(c, tokens["refresh_token"])) == "invalid_grant"
 
@@ -714,3 +714,83 @@ def test_user_codes_are_keyed_with_the_server_secret(_world) -> None:
     stored = next(iter(_world["store"].devices.values()))["user_code"]
     plain = hashlib.sha256(device.normalize_user_code(grant["user_code"]).encode()).hexdigest()
     assert stored != plain and len(stored) == 64
+
+
+# ── round 3: a session is a person, not an hour ───────────────────────────
+
+
+def test_ending_a_session_refuses_its_access_tokens() -> None:
+    from server.auth.jwt import TokenError, verify_token
+
+    token = mint_token(
+        subject="ann",
+        org="acme",
+        namespaces=["ann"],
+        roles=["writer"],
+        ttl_seconds=3600,
+        session_id="s1",
+    )
+    assert verify_token(token).session_id == "s1"
+    revocation._apply_locally("s1", None)
+    with pytest.raises(TokenError, match="session"):
+        verify_token(token)
+
+
+def test_a_child_of_a_session_token_is_not_clipped_to_its_hour() -> None:
+    from server.auth import delegation
+    from server.auth.jwt import verify_token
+
+    def parent(**kw: Any) -> Any:
+        return verify_token(
+            mint_token(
+                subject="ann",
+                org="acme",
+                namespaces=["ann"],
+                roles=["writer"],
+                ttl_seconds=3600,
+                **kw,
+            )
+        )
+
+    ninety_days = 90 * 86400
+    assert delegation._child_ttl(parent(session_id="s1"), ninety_days) == ninety_days
+    assert delegation._child_ttl(parent(), ninety_days) <= 3600  # any other parent still bounds it
+
+
+def test_a_second_person_cannot_take_over_a_code(_world, monkeypatch) -> None:
+    mallory = ("mallory@example.com", "acme", ["mallory"], ["writer"])
+
+    async def credentials(identifier: str, password: str, *, address: str = "") -> Any:
+        return {"alice@example.com": _USER, "mallory@example.com": mallory}.get(identifier)
+
+    monkeypatch.setattr(login, "resolve_user_credentials", credentials)
+    c = _client()
+    grant = _start(c)
+    victim_page = _sign_in(c, grant["user_code"]).text
+    seen = c.post(
+        "/oauth/device",
+        data={
+            "user_code": grant["user_code"],
+            "identifier": "mallory@example.com",
+            "password": "x",
+        },
+    )
+    assert seen.status_code == 400 and "expired" in seen.text
+    _approve(c, grant["user_code"], victim_page)
+    claims = pyjwt.decode(
+        _poll(c, grant["device_code"]).json()["access_token"], options={"verify_signature": False}
+    )
+    assert claims["sub"] == "alice@example.com"
+
+
+def test_a_refused_sso_sign_in_revokes_the_idp_token_it_got(sso, monkeypatch) -> None:
+    revoked: list[str] = []
+
+    async def revoke(token: str) -> None:
+        revoked.append(token)
+
+    monkeypatch.setattr(oidc, "revoke", revoke)
+    sso["email"] = "stranger@elsewhere.example"
+    c = _client()
+    _sso_round_trip(c, _start(c)["user_code"])
+    assert revoked == ["idp-r1"]

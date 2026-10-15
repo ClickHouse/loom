@@ -23,13 +23,20 @@ def _env(monkeypatch, tmp_path):
     monkeypatch.setattr("loom.transport.TOKEN_FILE", tmp_path / "token")
 
 
-def test_fields_are_json_when_they_parse() -> None:
-    assert cli._field("top_k=5") == ("top_k", 5)
-    assert cli._field('tags=["a","b"]') == ("tags", ["a", "b"])
+def test_fields_are_text_unless_typed() -> None:
+    assert cli._field("memory_key=2024") == ("memory_key", "2024")
     assert cli._field("query=deploy window") == ("query", "deploy window")
     assert cli._field("value=") == ("value", "")
-    with pytest.raises(argparse.ArgumentTypeError):
-        cli._field("no-equals")
+    assert cli._field("top_k:=5") == ("top_k", 5)
+    assert cli._field('tags:=["a","b"]') == ("tags", ["a", "b"])
+    for bad in ("no-equals", "top_k:=five", ":=1"):
+        with pytest.raises(argparse.ArgumentTypeError):
+            cli._field(bad)
+
+
+def test_data_must_be_an_object(capsys) -> None:
+    assert cli.main(["call", "memory.search", "--data", "[1]"]) == 1
+    assert "JSON object" in capsys.readouterr().err
 
 
 def test_fields_win_over_data() -> None:
@@ -92,7 +99,7 @@ def test_a_path_is_sent_as_given(wire) -> None:
 def test_a_refusal_is_one_line_on_stderr_and_exit_1(wire, capsys) -> None:
     wire.status, wire.body = 403, {"detail": {"code": "AUTH_INSUFFICIENT", "message": "nope"}}
     assert cli.main(["call", "/v1/admin/workers.status"]) == 1
-    assert "AUTH_INSUFFICIENT" in capsys.readouterr().err
+    assert capsys.readouterr().err.count("AUTH_INSUFFICIENT") == 1
 
 
 def test_account_and_admin_clients_reach_the_routes_outside_the_registry(wire) -> None:
@@ -102,9 +109,9 @@ def test_account_and_admin_clients_reach_the_routes_outside_the_registry(wire) -
             await agent.account.create_service_account("ci", ["support"], role="viewer")
             await agent.account.mcp_config("cursor", namespace="support")
             await agent.account.set_default_namespace("support")
-            await agent.admin.workers_status()
-            await agent.admin.reset_models("7")
-            await agent.admin.release_claim("acme", "squatted", "abuse")
+            await agent.deployment.workers_status()
+            await agent.deployment.reset_models("7")
+            await agent.deployment.release_claim("acme", "squatted", "abuse")
         finally:
             await agent.close()
 
@@ -140,7 +147,7 @@ def test_route_errors_are_the_typed_sdk_errors(wire) -> None:
     async def go() -> None:
         agent = Agent("acme", "support", "t", base_url="http://loom.test", api_key="k")
         try:
-            await agent.admin.models()
+            await agent.deployment.models()
         finally:
             await agent.close()
 

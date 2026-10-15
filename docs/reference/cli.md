@@ -41,7 +41,7 @@ Commands fall into two kinds:
 own (`loom.cli`; `python -m loom …` with only the SDK installed), so `loom`
 needs `pip install clickhouse-loom` for them. `loom login [--server URL]
 [--profile NAME] [--no-browser]` signs in with a one-time code;
-`loom call <op|/path> [key=value …] [--data JSON] [--org] [--namespace]` reaches
+`loom call <op|/path> [key=text|key:=json …] [--data JSON] [--org] [--namespace]` reaches
 any operation or route with that session. See
 [use Loom without the dashboard](../guides/without-the-dashboard.md).
 

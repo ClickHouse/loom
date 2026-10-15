@@ -446,6 +446,8 @@ def test_service_accounts_and_account_views_need_no_dashboard(
         json.dumps({"name": "ci-bot", "namespaces": [ns], "role": "viewer"}),
     )
     assert _whoami(base, created["token"])["is_service_account"] is True
+    # Minted from an hour-long session token, it still gets the 90 days it asked for.
+    assert _whoami(base, created["token"])["exp"] - time.time() > 89 * 86400
     listed = _loom(home, "call", "/v1/me/service_accounts")
     assert [r["name"] for r in listed["rows"]] == ["ci-bot"]
     _loom(home, "call", "/v1/me/service_accounts.revoke", "name=ci-bot")
@@ -463,3 +465,14 @@ def test_service_accounts_and_account_views_need_no_dashboard(
 
     rows = asyncio.run(through_the_sdk())
     assert "sdk-bot" in [r["name"] for r in rows]
+
+    # A machine token outlives the session it was made from.
+    kept = _loom(
+        home,
+        "call",
+        "/v1/me/service_accounts.create",
+        "name=kept",
+        f"namespaces:={json.dumps([ns])}",
+    )
+    credentials.logout()
+    assert _whoami(base, kept["token"])["authenticated"] is True

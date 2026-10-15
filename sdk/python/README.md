@@ -54,7 +54,7 @@ got = await agent.memory.get(memory_key="deploy_window")
 hits = await agent.memory.search("when do we deploy")
 ```
 
-The `Agent` exposes 27 client modules: `client`, `account`, `admin`, `memory`, `working_memory`, `knowledge`, `conversations`, `profile`, `context`, `facts`, `learnings`, `conflicts`, `blacklist`, `grants`, `erasure`, `cost`, `audit`, `namespaces`, `procedure`, `run`, `tasks`, `policy`, `decision`, `calibration`, `briefs`, `code`, `tracker`. Each of the named ones is the hand-written layer over a wire-op group on the Loom server (`account` and `admin` cover the routes outside the op registry: service accounts, MCP setup, model settings, worker health); `client` holds every served op as a generated method (below).
+The `Agent` exposes 27 client modules: `client`, `account`, `deployment`, `memory`, `working_memory`, `knowledge`, `conversations`, `profile`, `context`, `facts`, `learnings`, `conflicts`, `blacklist`, `grants`, `erasure`, `cost`, `audit`, `namespaces`, `procedure`, `run`, `tasks`, `policy`, `decision`, `calibration`, `briefs`, `code`, `tracker`. Each of the named ones is the hand-written layer over a wire-op group on the Loom server (`account` and `deployment` cover the routes outside the op registry: service accounts, MCP setup, model settings, worker health); `client` holds every served op as a generated method (below).
 
 Full guide: [docs/reference/python-sdk.md](https://github.com/ClickHouse/loom/blob/main/docs/reference/python-sdk.md). Deployment paths (how an operator stands up the server): [docs/operations/deployment.md](https://github.com/ClickHouse/loom/blob/main/docs/operations/deployment.md).
 

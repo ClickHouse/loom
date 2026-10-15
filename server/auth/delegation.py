@@ -140,9 +140,12 @@ def _child_org(parent: AuthInfo, org: str) -> str:
 
 def _child_ttl(parent: AuthInfo, ttl_seconds: int | None) -> int:
     """The child's TTL: the one asked for, else the default, clipped so the
-    child never outlives its parent."""
+    child never outlives its parent. A sign-in session's access token lives an
+    hour and is replaced by the next refresh; its holder is the signed-in
+    person, so its children are bounded like that person's, by revocation of
+    the subject and the creator's live grants, not by the hour."""
     ttl = ttl_seconds if ttl_seconds is not None else DEFAULT_TTL_DAYS * 86400
-    if parent.expires_at is not None:
+    if parent.expires_at is not None and not parent.session_id:
         left = parent.expires_at - int(time.time())
         if left <= 0:
             raise _refuse("the parent token has expired")

@@ -203,16 +203,19 @@ clients); the provider only authenticates the person. The OAuth server:
 
 - accepts only https, loopback-http or app-scheme redirect URIs;
 - binds codes to client, redirect and PKCE S256;
-- stores codes, refresh tokens, device codes and user codes only as hashes, and the
-  provider's refresh token sealed (`server/core/secrets_at_rest.py`);
+- stores codes, refresh tokens and device codes only as hashes, user codes keyed with
+  the server secret, and the provider's refresh token sealed
+  (`server/core/secrets_at_rest.py`);
 - binds each refresh to its client; a refresh honours revocation, re-checks that the
   account is active and re-derives its roles.
 
 **Sessions.** Each sign-in starts a session family. Its access tokens (one hour) carry the
-family as their `jti`, and its refresh tokens rotate within it. Revoking the family in
+family as their `sid` claim, and its refresh tokens rotate within it. Revoking the family in
 `loom.revoked_tokens` ends every token of the session. That happens on logout
 (`/oauth/revoke`), when a spent refresh token, code or device code is presented again
-(someone else holds a copy), and when the provider refuses the user. Under OIDC each
+(someone else holds a copy), and when the provider refuses the user. A token delegated
+from a session (a service account, an MCP client's token) is bounded like the signed-in
+person, by their subject and live grants, not by the session's hour. Under OIDC each
 refresh first spends the provider's refresh token. A user deactivated there is cut off
 within an hour, and a provider that issues no refresh token gets no Loom refresh token.
 

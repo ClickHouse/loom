@@ -402,6 +402,18 @@ class Transport:
             raise self._error_for(path, resp, resp.headers.get("X-Request-Id") or request_id)
         return resp
 
+    async def request_json(
+        self,
+        method: str,
+        path: str,
+        *,
+        json: Mapping[str, Any] | None = None,
+        params: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """`request`, decoded: the JSON object the route answers."""
+        resp = await self.request(method, path, json=json, params=params)
+        return _json_object(path, resp, resp.headers.get("X-Request-Id", ""))
+
     async def post_with_meta(
         self,
         op_path: str,

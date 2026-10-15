@@ -106,7 +106,8 @@ def _endpoints(client: httpx.Client) -> dict[str, str]:
             f"{client.base_url} has no sign-in: it runs without auth (no login needed) "
             "or predates `loom login`"
         )
-    r.raise_for_status()
+    if r.status_code != 200:
+        raise _failed(r, "reading the server's sign-in endpoints")
     meta = r.json()
     server = urlsplit(str(client.base_url))
     endpoints = {}
@@ -118,6 +119,17 @@ def _endpoints(client: httpx.Client) -> dict[str, str]:
             )
         endpoints[name] = str(meta[name])
     return endpoints
+
+
+def _failed(r: httpx.Response, doing: str) -> LoomError:
+    """The typed SDK error for a refused sign-in request: a caller catches
+    LoomError, never an httpx one."""
+    error = _oauth_error(r) or f"HTTP {r.status_code}"
+    if r.status_code == 429 or r.status_code >= 500:
+        return BackendUnavailable(f"{doing}: {error}; retry")
+    if r.status_code in (401, 403) or error == "invalid_grant":
+        return AuthInvalid(f"{doing}: {error}; run `loom login` again")
+    return LoomError(f"{doing}: {error}")
 
 
 def _oauth_error(r: httpx.Response) -> str:
@@ -160,7 +172,8 @@ def login(
     with httpx.Client(base_url=server, timeout=30.0) as client:
         meta = _endpoints(client)
         r = client.post(meta["device_authorization_endpoint"], data={"client_id": CLIENT_ID})
-        r.raise_for_status()
+        if r.status_code != 200:
+            raise _failed(r, "starting the sign-in")
         grant = r.json()
         echo(
             f"To sign in, open {grant['verification_uri']} and enter the code "
@@ -205,8 +218,7 @@ def _poll(client: httpx.Client, token_endpoint: str, grant: dict[str, Any]) -> d
             raise AuthInvalid("the sign-in was denied")
         if error == "expired_token":
             break
-        r.raise_for_status()
-        raise LoomError(f"sign-in failed: {error or r.status_code}")
+        raise _failed(r, "sign-in failed")
     raise AuthInvalid("the sign-in code expired; run `loom login` again")
 
 
@@ -242,10 +254,9 @@ def _refresh(profile: str, refused: str) -> dict[str, Any]:
     if r.status_code == 400 and _oauth_error(r) == "invalid_grant":
         _drop(profile)
         raise AuthInvalid(f"the session for profile {profile!r} ended; run `loom login`")
-    if r.status_code == 503:
-        # Nothing was spent (the identity provider could not be asked): retry later.
-        raise BackendUnavailable(f"{entry['server']} cannot refresh the session right now; retry")
-    r.raise_for_status()
+    if r.status_code != 200:
+        # A 503 spent nothing (the identity provider could not be asked): retry later.
+        raise _failed(r, f"refreshing the session at {entry['server']}")
     _save(profile, entry["server"], r.json())
     return dict(_read()["profiles"][profile])
 
@@ -299,15 +310,16 @@ def whoami(profile: str | None = None) -> dict[str, Any]:
     server = _read()["profiles"][profile]["server"]
     with httpx.Client(base_url=server, timeout=30.0) as client:
         r = client.get("/v1/whoami", headers={"Authorization": f"Bearer {token}"})
-    r.raise_for_status()
+    if r.status_code != 200:
+        raise _failed(r, "asking the server who you are")
     info: dict[str, Any] = r.json()
     return {"profile": profile, "server": server, **info}
 
 
-def stored_login(server: str) -> StoredLogin | None:
-    """The signed-in profile (LOOM_PROFILE, default `default`) when it signed in
-    to `server`, else None: a profile's token is never sent anywhere else."""
-    profile = default_profile()
+def stored_login(server: str, profile: str | None = None) -> StoredLogin | None:
+    """The signed-in profile when it signed in to `server`, else None: a
+    profile's token is never sent anywhere else."""
+    profile = profile or default_profile()
     entry = _read()["profiles"].get(profile)
     if not entry or entry["server"] != server.rstrip("/"):
         return None

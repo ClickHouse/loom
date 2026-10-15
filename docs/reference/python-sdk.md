@@ -30,7 +30,7 @@ finally the first line of `~/.loom/token`, the file `loom mint-token --save`
 writes. A stored session is used only for the server it signed in to.
 Routes outside the operation registry are on `agent.account` (service
 accounts, MCP client setup, the default namespace, the sharing summary) and
-`agent.admin` (health, workers, model settings, claim release); see
+`agent.deployment` (health, workers, model settings, claim release); see
 [use Loom without the dashboard](../guides/without-the-dashboard.md). A blank `LOOM_API_KEY` counts as unset. The key never appears in a
 `repr` or a log line: credential headers are redacted to their scheme and last
 four characters.

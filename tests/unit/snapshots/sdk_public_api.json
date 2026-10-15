@@ -12,7 +12,8 @@
     "auto_run",
     "retry",
     "consumer",
-    "mentor_brief"
+    "mentor_brief",
+    "profile"
   ],
   "Agent.methods": {
     "call": [
@@ -93,7 +94,8 @@
     "auto_run",
     "retry",
     "consumer",
-    "mentor_brief"
+    "mentor_brief",
+    "profile"
   ],
   "SyncAgent.__init__": [
     "org",
@@ -109,7 +111,8 @@
     "auto_run",
     "retry",
     "consumer",
-    "mentor_brief"
+    "mentor_brief",
+    "profile"
   ],
   "clients": {
     "account": {
@@ -136,31 +139,6 @@
           "namespace"
         ],
         "sharing_summary": []
-      }
-    },
-    "admin": {
-      "class": "AdminClient",
-      "methods": {
-        "health": [],
-        "models": [],
-        "release_claim": [
-          "org",
-          "namespace",
-          "reason"
-        ],
-        "reset_models": [
-          "expected_version"
-        ],
-        "retry_models": [
-          "config_id"
-        ],
-        "save_models": [
-          "setup"
-        ],
-        "validate_models": [
-          "setup"
-        ],
-        "workers_status": []
       }
     },
     "audit": {
@@ -2049,6 +2027,31 @@
           "user_id",
           "valid_at"
         ]
+      }
+    },
+    "deployment": {
+      "class": "DeploymentClient",
+      "methods": {
+        "health": [],
+        "models": [],
+        "release_claim": [
+          "org",
+          "namespace",
+          "reason"
+        ],
+        "reset_models": [
+          "expected_version"
+        ],
+        "retry_models": [
+          "config_id"
+        ],
+        "save_models": [
+          "setup"
+        ],
+        "validate_models": [
+          "setup"
+        ],
+        "workers_status": []
       }
     },
     "erasure": {

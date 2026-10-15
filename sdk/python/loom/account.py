@@ -19,14 +19,10 @@ class AccountClient:
         self._agent = agent
 
     async def _get(self, path: str) -> dict[str, Any]:
-        resp = await self._agent.transport.request("GET", path)
-        body: dict[str, Any] = resp.json()
-        return body
+        return await self._agent.transport.request_json("GET", path)
 
     async def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
-        resp = await self._agent.transport.request("POST", path, json=body)
-        out: dict[str, Any] = resp.json()
-        return out
+        return await self._agent.transport.request_json("POST", path, json=body)
 
     async def service_accounts(self) -> list[dict[str, Any]]:
         """Your service accounts and MCP client tokens."""

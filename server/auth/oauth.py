@@ -18,7 +18,7 @@ when `LOOM_OAUTH_LOGIN_PROVIDER=oidc` (see oidc.py). Grants persist in
 `loom.oauth_state`, durable across restarts and replicas.
 
 Each sign-in starts a session `family`. Its access tokens carry the family as
-their `jti` and its refresh tokens rotate within it, so revoking the family in
+their `sid` and its refresh tokens rotate within it, so revoking the family in
 `loom.revoked_tokens` ends the whole session: on logout, when a spent refresh
 token or code comes back (someone else holds a copy), and when the identity
 provider refuses the user at refresh.
@@ -42,7 +42,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from server.auth.attempts import Attempts, client_address
-from server.auth.jwt import mint_token, new_jti
+from server.auth.jwt import AuthInfo, mint_token, new_jti
 from server.core.secrets_at_rest import seal, unseal
 from server.observability import audit
 from server.settings import settings
@@ -80,11 +80,12 @@ class CodeReplayed(Exception):
 #   take_* raise CodeReplayed when the code or token was already spent.
 #   save_device(device) / device_by_user_code(hash) / take_device(code) — the
 #     device grant (device.py); take_device consumes only a decided grant.
-# Codes, refresh tokens, device and user codes are bearer secrets, so the
-# store keys them by token_id(token) (sha256 hex), never the token itself: a
-# row read out of loom.oauth_state (a backup, a SELECT grant) is not a working
-# credential. The identity provider's refresh token has to be sent back to it,
-# so it is sealed instead (secrets_at_rest).
+# Codes, refresh tokens and device codes are bearer secrets, so the store
+# keys them by token_id(token) (sha256 hex), never the token itself: a row
+# read out of loom.oauth_state (a backup, a SELECT grant) is not a working
+# credential. User codes are short enough to search, so device.py keys them
+# with the server's secret. The identity provider's refresh token has to be
+# sent back to it, so it is sealed (secrets_at_rest).
 # A "grant" is the dict {client_id, redirect_uri, code_challenge, subject, org,
 # namespaces, roles, exp(int epoch), family, upstream_refresh} (code) or the
 # subset for refresh.
@@ -810,13 +811,15 @@ async def _finish_oidc_login(request: Request) -> Response:
     if email:
         # No account — auto-provision one if JIT is on (else stay fail-closed).
         resolved = await resolve_identity_for_email(email) or await jit_provision_for_email(email)
+    upstream = str(tokens.get("refresh_token") or "")
     if resolved is None:
         reason = "no loom account for this email" if email else "verified email required"
         await _signin_denied(str(claims.get("email") or ""), reason)
+        if upstream:
+            await oidc.revoke(upstream)
         if kind == "device":
             await device.deny(user_code)
         return _denied_page(f"{reason}; ask your Loom operator for access")
-    upstream = str(tokens.get("refresh_token") or "")
     if kind == "device":
         return await device.signed_in(user_code, resolved, upstream)
     if kind == "dashboard":
@@ -949,7 +952,7 @@ async def issue_tokens(grant: dict[str, Any], client_id: str) -> dict[str, Any]:
         roles=list(grant["roles"]),
         ttl_seconds=_ACCESS_TTL,
         is_service_account=False,
-        jti=grant["family"] or None,
+        session_id=grant["family"] or None,
     )
     body = {
         "access_token": access,
@@ -1108,6 +1111,17 @@ async def token(request: Request) -> JSONResponse:
     raise HTTPException(status_code=400, detail={"error": "unsupported_grant_type"})
 
 
+def _revocation_end(info: AuthInfo) -> datetime | None:
+    """How long revoking this token must last: a session for as long as its
+    refresh tokens can, any other token until it expires (None: never does)."""
+    session_end = datetime.now(UTC) + timedelta(seconds=_REFRESH_TTL)
+    if info.session_id:
+        return session_end
+    if info.expires_at is None:
+        return None
+    return max(datetime.fromtimestamp(info.expires_at, UTC), session_end)
+
+
 @router.post("/oauth/revoke")
 async def revoke_token(request: Request) -> Response:
     """RFC 7009 token revocation: `loom logout`. A refresh token ends its whole
@@ -1142,24 +1156,18 @@ async def revoke_token(request: Request) -> Response:
         info = verify_token(token_value)
     except TokenError:
         return Response(status_code=200)  # unknown, expired or already revoked
-    if info.token_id:
-        # The jti may name a whole session, whose refresh tokens outlive this
-        # access token, and the token may be a long-lived one minted elsewhere:
-        # the revocation lasts as long as either can.
-        session_end = datetime.now(UTC) + timedelta(seconds=_REFRESH_TTL)
-        token_end = datetime.fromtimestamp(info.expires_at, UTC) if info.expires_at else None
+    # A session's access token ends its whole session; any other token itself.
+    key = info.session_id or info.token_id
+    if key:
         await revoke(
-            info.token_id,
-            expires_at=max(token_end, session_end) if token_end else None,
-            reason="logout",
-            revoked_by=info.subject,
+            key, expires_at=_revocation_end(info), reason="logout", revoked_by=info.subject
         )
         await audit.emit(
             "auth.session_revoked",
             org=info.org,
             namespace="-",
             actor=info.subject,
-            subject={"jti": info.token_id, "reason": "logout"},
+            subject={"session": info.session_id, "jti": info.token_id, "reason": "logout"},
         )
     return Response(status_code=200)
 
