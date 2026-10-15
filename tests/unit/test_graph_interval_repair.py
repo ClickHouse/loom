@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 import pytest
@@ -508,14 +508,16 @@ class _Triples(StubCH):
             states: dict[tuple[str, str, str], dict[str, Any]] = {}
             for r in out:
                 k = (r["subject"], r["relation"], r["object"])
+                # Each value's own cutoff, matched by position as the SQL does.
+                since = params["seens"][[tuple(t) for t in params["triples"]].index(k)]
                 st = states.setdefault(k, {"subject": k[0], "relation": k[1], "object": k[2],
                                            "landed": False, "seen_since": False, "open": False,
                                            "raced": []})  # fmt: skip
                 stamped = r.get("invalid_at") == params["at"]
                 st["landed"] |= stamped
-                st["seen_since"] |= r["valid_to"] is None and r["seen_at"] > params["seen"]
+                st["seen_since"] |= r["valid_to"] is None and r["seen_at"] > since
                 st["open"] |= r["valid_to"] is None
-                if stamped and r["seen_at"] > params["seen"]:
+                if stamped and r["seen_at"] > since:
                     st["raced"].append((r["valid_from"], r["seen_at"]))
             return list(states.values())
         if "count()" in sql:
@@ -772,6 +774,78 @@ async def test_a_replay_leaves_closed_a_value_stated_again_with_an_older_date(
     await proj._repair_triples(_bulk_input(), [], [], at=_T, replay=True, repaired=[made], ch=ch)
     assert not [p for sql, p in ch.execute_calls if "UPDATE valid_to" in sql]
     assert done == ([] if back_since else [made, made])
+
+
+@pytest.mark.parametrize("closed_by_the_write", [True, False])
+@pytest.mark.asyncio
+async def test_a_replay_judges_a_value_stated_between_the_triples_of_its_write(
+    _declared, monkeypatch, closed_by_the_write
+) -> None:
+    # The write stored Paris and three more triples, a microsecond apart. Another
+    # write stated London a microsecond after Paris, inside that range: by the key it
+    # is newer than Paris. Taken by Paris's close, the replay judges it and opens it
+    # again; left open, it is that write's to repair, and the replay closes nothing.
+    from server.memory.app import projections as proj
+    from server.memory.domain.graph_quality import IntervalRepair
+
+    reopened: list[Any] = []
+
+    async def reopen(input, repair, **kw):
+        reopened.append(kw["seen"])
+
+    async def finish(input, repairs, *rest, ch):
+        return None
+
+    monkeypatch.setattr(proj, "_reopen_restated", reopen)
+    monkeypatch.setattr(proj, "_repair_contradictory_edges", finish)
+    monkeypatch.setattr(proj, "_retire_memories_behind_repairs", finish)
+    made = IntervalRepair("user", "works_at", "london", "paris", _T, None, _T, None, _T)
+    written = [
+        {**_row(obj, None), "relation": rel, "seen_at": _T + timedelta(microseconds=i)}
+        for i, (rel, obj) in enumerate(
+            [("works_at", "paris"), ("likes", "tea"), ("likes", "jazz"), ("likes", "rain")]
+        )
+    ]
+    london_seen = _T + timedelta(microseconds=1)
+    closed = _CLOSED_AT_T if closed_by_the_write else {}
+    rows = [
+        {**_row("london", None), **closed},
+        {**_row("london", None), **closed, "seen_at": london_seen},
+    ]
+    ch = _Triples(rows)
+    await proj._repair_triples(
+        _bulk_input(), written, [], at=_T, replay=True, repaired=[made], ch=ch
+    )
+    assert reopened == ([london_seen] if closed_by_the_write else [])
+    assert not [p for sql, p in ch.execute_calls if "UPDATE valid_to = greatest" in sql]
+
+
+@pytest.mark.asyncio
+async def test_a_replay_closes_its_own_value_a_value_seen_before_it_closed(
+    _declared, monkeypatch
+) -> None:
+    # Berlin, seen before the write but starting later, closed the write's own Paris,
+    # and that close never landed. Paris's row is the write's, not a value stated
+    # since: the replay closes it again.
+    from server.memory.app import projections as proj
+    from server.memory.domain.graph_quality import IntervalRepair
+
+    async def finish(input, repairs, *rest, ch):
+        return None
+
+    monkeypatch.setattr(proj, "_repair_contradictory_edges", finish)
+    monkeypatch.setattr(proj, "_retire_memories_behind_repairs", finish)
+    starts = datetime(2026, 10, 1)
+    made = IntervalRepair(
+        "user", "works_at", "paris", "berlin", starts, None, _T, starts, _SEEN_BEFORE
+    )
+    written = [{**_row("paris", None), "seen_at": _T}]
+    ch = _Triples([*written, _row("berlin", starts)])
+    await proj._repair_triples(
+        _bulk_input(), written, [], at=_T, replay=True, repaired=[made], ch=ch
+    )
+    closes = [p for sql, p in ch.execute_calls if "UPDATE valid_to = greatest" in sql]
+    assert [c["triples"] for c in closes] == [[("user", "works_at", "paris")]]
 
 
 # The second London, seen last, is dated before Rome (not current), after it but before

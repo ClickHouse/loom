@@ -1557,6 +1557,69 @@ async def test_an_undo_keeps_no_end_a_supersession_set(ch, org) -> None:
     assert await _open_cities(ch, org, {"london"}) == {"london"}
 
 
+async def test_an_undo_of_a_row_holding_two_values_keeps_the_later_one_current(ch, org) -> None:
+    # "I lived in Rome. I now live in Berlin.": Berlin, stated after Rome, is current.
+    # The row retires behind Paris and is Undone: Berlin is current again, not Rome.
+    from server.memory.app.restore import handle_memory_restore
+
+    live = ("user", "live_in")
+    row = await _stated(
+        ch,
+        org,
+        "s1",
+        "I lived in Rome. I now live in Berlin.",
+        (*live, "rome"),
+        also=((*live, "berlin"),),
+    )
+    await _mutations_done(ch, org)
+    assert await _open_cities(ch, org, {"berlin"}) == {"berlin"}
+    paris = await _stated(ch, org, "s2", "I live in Paris", (*live, "paris"))
+    await _follow_retirement(ch, org, row, paris)
+    assert await _open_cities(ch, org, {"paris"}) == {"paris"}
+    assert (await handle_memory_restore(_undo_of(paris))).restored
+    await _mutations_done(ch, org)
+    assert await _open_cities(ch, org, {"berlin"}) == {"berlin"}
+
+
+async def test_an_undo_takes_no_end_from_an_older_row_of_its_fact(ch, org) -> None:
+    # An older row said London until December; a later row said London with no end,
+    # and a supersession closed it. The latest row's end was the close's: the Undo
+    # keeps London open, not until December.
+    from types import SimpleNamespace
+
+    from server.memory.app import entity_projections
+    from server.memory.app.projections import close_triples, entity_triple_row
+
+    live = ("user", "live_in")
+    now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+    december = now + timedelta(days=60)
+    hour_ago = now - timedelta(hours=1)
+    older = entity_triple_row(
+        org, NS, *live, "london", provenance="t", confidence=1.0, adapter_name="t",
+        last_seen=hour_ago, seen_at=hour_ago, valid_to=december,
+    )  # fmt: skip
+    await ch.insert("loom.entity_triples", [older], settings={"wait_for_async_insert": 1})
+    london = await _stated(ch, org, "s1", "I live in London", (*live, "london"))
+    await close_triples(ch, org=org, namespace=NS, closes=[(*live, "london", now, now)])
+    await _mutations_done(ch, org)
+    await _edges_like_triples(ch, org)
+    scope = SimpleNamespace(org=org, namespace=NS, agent="bot")
+    await entity_projections.reopen_held_facts(scope, [str(london["memory_id"])], ch=ch)
+    await _mutations_done(ch, org)
+    ends = await ch.query_all(
+        "SELECT 'triples' AS plane, valid_to FROM loom.entity_triples WHERE org = {org:String}"
+        " AND adapter_name = 'row-restore'"
+        " UNION ALL SELECT 'edges', valid_to FROM loom.entity_edges WHERE org = {org:String}"
+        " AND entity_a = 'london' AND last_seen >= {now:DateTime} AND invalid_at IS NULL"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org, "now": now},
+    )
+    assert sorted((str(e["plane"]), e["valid_to"]) for e in ends) == [
+        ("edges", None),
+        ("triples", None),
+    ]
+
+
 async def test_undo_of_an_open_fact_keeps_its_date_for_later_writes(ch, org, monkeypatch) -> None:
     # London from May retires behind Paris from June; another row says London from
     # July. Undoing the May row is the newest assertion, so Rome from August arrives

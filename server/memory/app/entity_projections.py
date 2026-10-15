@@ -10,7 +10,7 @@ import re
 import unicodedata
 import uuid
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from typing import Any, NamedTuple
 
@@ -36,7 +36,7 @@ from server.memory.app.projections import (
     write_entity_triples,
 )
 from server.memory.domain import triples_follow_rows as tfr
-from server.memory.domain.graph_quality import canonical_edge_pair
+from server.memory.domain.graph_quality import canonical_edge_pair, observation_key
 from server.memory.domain.temporal_sql import GRAPH_HOLDER_SQL
 
 log = logging.getLogger(__name__)
@@ -532,15 +532,16 @@ async def reopen_held_facts(
     them by): an Undo brings a retired row's facts back with it.
     An Undo is an assertion made at the restore (`restored_at`, now by default, to the
     microsecond): each fact the rows hold, open or not, gets a new observation of its
-    latest row starting at the restore, ending where that row's stated end (not one a
-    close set) is still to come, and its edge one from the restore too, so later writes
-    read the Undo's date back from storage. It weighs 1 only when the fact (or edge)
-    has no weighted row the readers count as current after the Undo, the usual Undo of
-    a closed value, so readers still count it; otherwise 0, so Undoing back and forth
-    adds no weight. Every one then goes through the interval repair as a value seen at
-    the restore, by the usual rule: it beats the retirement it undoes, which arrived
-    earlier, and loses to a value asserted after it or starting on a later day. No row
-    retires.
+    latest row starting at the restore, ending where that row's own stated end (not one
+    a close set) is still to come, and its edge one from the restore too, so later
+    writes read the Undo's date back from storage. The observations are a microsecond
+    apart in the facts' stored order, so of two values the rows hold the later stays
+    the later. It weighs 1 only when the fact (or edge) has no weighted row the readers
+    count as current after the Undo, the usual Undo of a closed value, so readers still
+    count it; otherwise 0, so Undoing back and forth adds no weight. Every one then
+    goes through the interval repair as a value seen at its observation, by the usual
+    rule: it beats the retirement it undoes, which arrived earlier, and loses to a
+    value asserted after it or starting on a later day. No row retires.
     A replay passes the restore's time: it finds the observations written, by that
     instant, and repairs again as of the Undo."""
     # Only what the restored rows' values hold now: another row's claim keeps a fact
@@ -551,6 +552,9 @@ async def reopen_held_facts(
         return
     restored = restored_at or naive_utc_now()
     now = restored.replace(microsecond=0)  # as the DateTime columns store it
+    # The Undo restates its facts in their stored order, a microsecond apart from the
+    # restore, as one write stores its triples: the markers fill [restored, until).
+    until = restored + timedelta(microseconds=len(held))
     # On the fly: a retirement's closes are mutations, and a row they will close is
     # weighed as closed already (the close expressions are deterministic).
     latest = await _read_closes_applied(
@@ -558,11 +562,13 @@ async def reopen_held_facts(
         """
         SELECT subject, relation, object, argMax(confidence, seen_at) AS confidence,
                argMax(provenance, seen_at) AS provenance,
-               -- A tuple keeps a NULL (open) end, which argMax would skip. Only an
-               -- end the fact stated: a supersession close stamps `invalid_at`.
-               argMaxIf(tuple(valid_to), seen_at, invalid_at IS NULL).1 AS ends,
-               countIf(adapter_name = 'row-restore' AND seen_at = {seen:DateTime64(6)})
-                   AS restored,
+               -- The latest row's place in the order of its relation.
+               max(seen_at) AS seen, argMax(tuple(valid_from), seen_at).1 AS start,
+               -- A tuple keeps a NULL (open) end, which argMax would skip. Only the
+               -- latest row's own end: a supersession close stamps `invalid_at`.
+               argMax(tuple(if(invalid_at IS NULL, valid_to, NULL)), seen_at).1 AS ends,
+               countIf(adapter_name = 'row-restore' AND seen_at >= {seen:DateTime64(6)}
+                       AND seen_at < {until:DateTime64(6)}) AS restored,
                -- What the readers count as current after the Undo's second.
                countIf(co_occur > 0 AND (valid_from IS NULL OR valid_from <= {at:DateTime})
                        AND (valid_to IS NULL OR valid_to > {at:DateTime})) AS weighted
@@ -578,24 +584,30 @@ async def reopen_held_facts(
             "triples": sorted(held),
             "at": now,
             "seen": restored,
+            "until": until,
         },
     )
-    # This Undo's marker is its 'row-restore' row seen at its instant: a replay finds it
-    # and adds none, while another Undo in the same second is told apart.
-    fresh = [r for r in latest if not r["restored"]]
+    # Marker i is seen i microseconds after the restore, in the facts' stored order, so
+    # the later of two values the rows hold stays the later one.
+    latest = sorted(latest, key=lambda r: observation_key(r["start"], r["seen"], r["object"]))
+    stamped = [(r, restored + timedelta(microseconds=i)) for i, r in enumerate(latest)]
+    # This Undo's markers are its 'row-restore' rows seen in its range: a replay finds
+    # them and adds none, while another Undo in the same second is told apart.
+    fresh = [(r, seen) for r, seen in stamped if not r["restored"]]
     settings = {"async_insert": 1, "wait_for_async_insert": 1}
     # The edge plane agrees: each new marker's edge gets an observation from the Undo
     # too, inserted before the markers. Only a pair the graph has an edge for: the Undo
     # invents none, and weighs it as above. Edges carry no microseconds, so an edge row
     # seen and starting in the Undo's second, and not closed by a repair since, stands
     # for it: a replay after the markers failed to land does not add a second one.
-    pairs = sorted({canonical_edge_pair(r["subject"], r["object"]) for r in fresh})
+    pairs = sorted({canonical_edge_pair(r["subject"], r["object"]) for r, _ in fresh})
     edges = (
         await _read_closes_applied(
             ch,
             """
             SELECT entity_a, entity_b,
-                   argMaxIf(tuple(valid_to), last_seen, invalid_at IS NULL).1 AS ends,
+                   argMax(tuple(if(invalid_at IS NULL, valid_to, NULL)), last_seen).1
+                       AS ends,
                    countIf(valid_from = {at:DateTime} AND last_seen = {at:DateTime}
                            AND invalid_at IS NULL) AS restored,
                    countIf(co_occur > 0
@@ -640,20 +652,26 @@ async def reopen_held_facts(
             confidence=float(r["confidence"]),
             adapter_name="row-restore",
             last_seen=now,
-            seen_at=restored,
+            seen_at=seen,
             # Dated at the Undo; a closed interval before it stays as history.
             valid_from=now,
             valid_to=_still_ahead(r["ends"], now),
             # The Undo states nothing new: it only gives a closed fact its weight back.
             co_occur=0 if r["weighted"] else 1,
         )
-        for r in fresh
+        for r, seen in fresh
     ]
     if rows:
         await ch.insert("loom.entity_triples", rows, settings=settings)
     restated = [
-        {"subject": s, "relation": r, "object": o, "valid_from": now, "seen_at": restored}
-        for s, r, o in sorted(held)
+        {
+            "subject": r["subject"],
+            "relation": r["relation"],
+            "object": r["object"],
+            "valid_from": now,
+            "seen_at": seen,
+        }
+        for r, seen in stamped
     ]
     await repair_intervals(input, restated, ch=ch, at=restored)
 
@@ -668,8 +686,8 @@ async def _read_closes_applied(ch: Any, sql: str, params: dict[str, Any]) -> lis
     """The weight read `sql` (ending in its SETTINGS) with pending closes applied.
     ClickHouse refuses that for the whole table while any pending mutation on it has a
     subquery, as a user erasure's delete does. Then it reads the rows as stored and
-    counts none as weighted: the restored fact may count twice in ranking for a while,
-    but it never vanishes from the graph."""
+    counts none as weighted: an Undo made while such a mutation is pending may leave
+    the fact weighted twice, but it never vanishes from the graph."""
     try:
         rows: list[Any] = await ch.query_all(
             sql.rstrip() + ", apply_mutations_on_fly = 1", params=params

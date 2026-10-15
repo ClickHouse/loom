@@ -3,7 +3,7 @@ facet edge, which is the agent's and shared by every row that names it."""
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -193,12 +193,13 @@ async def test_a_bulk_write_reconciles_only_the_rows_it_revised(monkeypatch) -> 
 async def test_an_undo_weighs_what_is_open_with_pending_closes_applied(monkeypatch) -> None:
     # A retirement's closes are mutations: the Undo's two weight reads apply them on
     # the fly instead of waiting for them, and its markers keep a stated end still
-    # to come.
+    # to come. Rome was stored before Berlin, so Berlin's marker is the later.
     from types import SimpleNamespace
 
     from server.memory.app import entity_projections as ep
 
     restored = datetime(2026, 10, 15, 9, 0, 0, 123456)
+    stored = datetime(2026, 10, 1)
     until = datetime(2026, 12, 1)
 
     class _WeighingCH(_CH):
@@ -209,14 +210,16 @@ async def test_an_undo_weighs_what_is_open_with_pending_closes_applied(monkeypat
         async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
             self.reads.append(sql)
             if "FROM loom.entity_triples" in sql:
-                return [{"subject": "user", "relation": "live_in", "object": "london",
+                return [{"subject": "user", "relation": "live_in", "object": city,
                          "confidence": 1.0, "provenance": "extracted", "ends": until,
-                         "restored": 0, "weighted": 1}]  # fmt: skip
+                         "seen": stored + timedelta(microseconds=i), "start": None,
+                         "restored": 0, "weighted": 1}
+                        for city, i in (("berlin", 1), ("rome", 0))]  # fmt: skip
             return [{"entity_a": "london", "entity_b": "user", "ends": until,
                      "restored": 0, "weighted": 1}]  # fmt: skip
 
     async def held(*a: Any, **k: Any) -> list:
-        return [("user", "live_in", "london")]
+        return [("user", "live_in", "berlin"), ("user", "live_in", "rome")]
 
     repaired: list = []
 
@@ -233,18 +236,21 @@ async def test_an_undo_weighs_what_is_open_with_pending_closes_applied(monkeypat
     assert len(ch.reads) == 2
     assert all("apply_mutations_on_fly = 1" in sql for sql in ch.reads)
     assert not any("system.mutations" in sql for sql in ch.reads)
-    (marker,) = ch.inserts["loom.entity_triples"]
-    assert (marker["seen_at"], marker["valid_from"], marker["valid_to"]) == (
-        restored,
-        restored.replace(microsecond=0),
-        until,
-    )
-    assert marker["adapter_name"] == "row-restore" and marker["co_occur"] == 0
-    (edge,) = ch.inserts["loom.entity_edges"]
-    assert edge["valid_to"] == until
-    # The repair runs the normal rule, as a value seen at the restore.
+    later = restored + timedelta(microseconds=1)
+    markers = ch.inserts["loom.entity_triples"]
+    assert [(m["object"], m["seen_at"], m["valid_from"], m["valid_to"]) for m in markers] == [
+        ("rome", restored, restored.replace(microsecond=0), until),
+        ("berlin", later, restored.replace(microsecond=0), until),
+    ]
+    assert all(m["adapter_name"] == "row-restore" and m["co_occur"] == 0 for m in markers)
+    assert [e["valid_to"] for e in ch.inserts["loom.entity_edges"]] == [until]
+    # The repair runs the normal rule, each value seen at its marker.
     ((restated, at),) = repaired
-    assert at == restored and restated[0]["seen_at"] == restored
+    assert at == restored
+    assert [(t["object"], t["seen_at"]) for t in restated] == [
+        ("rome", restored),
+        ("berlin", later),
+    ]
 
 
 async def test_an_undo_refused_on_the_fly_weighs_its_markers_one() -> None:

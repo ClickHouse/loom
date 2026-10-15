@@ -335,12 +335,16 @@ the value it was written or stated for (`carried`):
   records nothing for a replay.
   Undo makes the restored value current in the graph: every fact the restored row holds,
   open or closed, gets a new observation (a `row-restore` marker) starting at the
-  restore and seen at its instant, to the microsecond (a closed interval before it
+  restore and seen from its instant on, to the microsecond (a closed interval before it
   stays as history, and every later repair reads the fact as stated then), as does its
-  edge when the graph has one, so both planes show the restored value current. A marker
-  keeps the end its fact's latest row stated when that end is still to come ("London
-  until December" is undone until December, not for ever); an end a supersession close
-  set (it stamps `invalid_at`) is not one the fact stated, so it is not kept. These
+  edge when the graph has one, so both planes show the restored value current. The
+  markers are a microsecond apart, in the order of their facts' latest stored rows, as
+  one write stores its triples: a row that said "I lived in Rome. I now live in
+  Berlin." is undone with Berlin current. A marker keeps the end its fact's latest row
+  stated when that end is still to come ("London until December" is undone until
+  December, not for ever); when that row's end was set by a supersession close (it
+  stamps `invalid_at`), the fact stated none, so the marker has none, even when an older
+  row stated one. These
   observations state nothing new: one carries `co_occur` 1 only when its fact (or edge)
   has no weighted row the readers count as current after the restore (started by then,
   and open or ending later), the usual Undo of a closed value, so the graph's readers
@@ -350,17 +354,17 @@ the value it was written or stated for (`carried`):
   `apply_mutations_on_fly`, which applies them (their expressions are deterministic),
   rather than waiting on `system.mutations`. ClickHouse refuses that read for the whole
   table while any pending mutation on it has a subquery (a user erasure's delete does);
-  the Undo then reads the rows as stored and weighs its markers 1: a restored fact may
-  count twice in ranking until that mutation lands, but it never vanishes from the
-  graph. Its facts then go through the interval
-  repair by the usual rule, as values seen at the restore: the retirement it undoes
+  the Undo then reads the rows as stored and weighs its markers 1: an Undo made while
+  such a mutation is pending may leave the fact weighted twice, but it never vanishes
+  from the graph. Its facts then go through the interval
+  repair by the usual rule, as values seen at their markers: the retirement it undoes
   arrived earlier, so its value closes and its row stays live; a value asserted after
   the Undo, or starting on a later day, stays current. An Undo never retires a row. A
   replayed Undo reuses the restore's instant from the failure, not the replay's clock,
   so it keeps its place in the order: a value asserted after the Undo, even in its
-  second, stays current. A marker is this Undo's when it is a `row-restore` row seen at
-  that instant, open or closed since, so a replay adds none, and another Undo in the
-  same second, with its own instant, is told apart. Edges carry no microseconds: an
+  second, stays current. A marker is this Undo's when it is a `row-restore` row seen in
+  its microseconds (from the instant, one per fact), open or closed since, so a replay
+  adds none, and another Undo in the same second, with its own instant, is told apart. Edges carry no microseconds: an
   edge marker is written only beside a missing triple marker, before it, and an edge
   row starting and seen in the Undo's second that no repair closed stands for it, so a
   replay after a failed triple insert does not repeat it. The failure records each
@@ -382,8 +386,9 @@ the value it was written or stated for (`carried`):
   in the write's own re-check, only when the interval repair, judging it as a new value
   against the value that closed it, finds it the newer: "back to London" dated by its
   session day still beats an undated Rome written earlier that day. "After the write"
-  is by `seen_at`, after the write's last triple, so a restatement in the write's own
-  second counts. When it had closed none, the replay repairs only the write's triples
+  is by `seen_at`, per closed value: after the earliest value that closed it (or the
+  write's own last row of it, when that is later), so a restatement in the write's own
+  second counts, even one another write stored between the write's triples. When it had closed none, the replay repairs only the write's triples
   that are still open (one a newer write closed was handled by that write's repair),
   dated at the write. A replay that fails in
   turn records the closes it made on the same failure, for the next one to finish.
@@ -409,8 +414,8 @@ the value it was written or stated for (`carried`):
   before it starts). One value stays current, never neither. Only an open-ended value is
   closed: one stated with its own end ("London until December") is left as it is, so it
   stays current beside the newer value until that end. Two values with one start day, one
-  `seen_at` and two writers are left to their object text: only two writes in the same
-  microsecond tie.
+  `seen_at` and two writers are left to their object text: writes whose offsets overlap
+  may tie.
 
   _Why one key._ The rule it replaces compared pairs: by date, by arrival when two
   values shared a start, and by arrival again when a dated and an undated value sat
@@ -420,7 +425,7 @@ the value it was written or stated for (`carried`):
   closed all three. A key read back from stored columns is a total order, the same for
   a write, an Undo and a replay of either, so every repair closes the same values, and
   a replay that reuses its write's instant sits where the write did. An Undo needs no
-  rule of its own: it is a value seen at the restore. The price is the time of day of a
+  rule of its own: its values are seen at the restore. The price is the time of day of a
   dated value: two values dated on one day order by arrival, not by the hour they
   state. And a session crossing midnight UTC: London undated, seen at 00:05 on Oct 15,
   is newer than Paris dated to the session's Oct 14 and arriving at 00:10, where the

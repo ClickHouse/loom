@@ -48,10 +48,11 @@ never fails the write. A `high`-sensitivity bulk entry projects nothing.
    they start (an undated value starts when it arrives), then by arrival to the microsecond, so racing writers agree
    on one current value: the later day, or on one day the later arrival (within one write, the later-stated value). An
    Undo (`memory.restore`) makes the restored value current from the restore on: the restored fact and its edge are
-   stored again starting at the restore, and keep the fact's own end if one is still to come, weighing 1 only when no
-   current row still carries the fact's weight (the retirement's pending closes applied; while another tenant's
-   erasure blocks that read, always 1), so the graph keeps counting it and Undoing back and forth adds none; the other
-   value's interval closes, and its row stays live. A value dated on a later day still wins, and so does a value
+   stored again starting at the restore, in their stored order (of two values the row held, the later stays current),
+   and keep the fact's own end if one is still to come, weighing 1 only when no current row still carries the fact's
+   weight (the retirement's pending closes applied; while another tenant's erasure blocks that read, always 1), so the
+   graph keeps counting it and Undoing back and forth adds none; the other value's interval closes, and its row stays
+   live. A value dated on a later day still wins, and so does a value
    stated after the Undo, even in its second. A failed close is replayed as of the write (or the Undo) that made it,
    to the microsecond, so a value stated since stays current; a replayed Undo skips a row revised since. A value
    stated with its own end ("London until December") is never closed early: it stays current beside the newer value

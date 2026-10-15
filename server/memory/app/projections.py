@@ -563,9 +563,7 @@ async def _repair_triples(
             from server.identity.app.namespace_ontology import load_relation_cardinality
 
             declared = await load_relation_cardinality(input.org, input.namespace)
-            # Rows seen after the write's last triple were stated since.
-            through = max((t["seen_at"] for t in triples), default=at)
-            states = await _recorded_close_states(input, repairs, at=at, through=through, ch=ch)
+            states = await _recorded_close_states(input, repairs, triples, at=at, ch=ch)
             skip: set[tuple[str, str, str]] = set()
             unlanded: set[tuple[str, str, str]] = set()
             for r in repairs:
@@ -695,12 +693,20 @@ class RecordedClose(NamedTuple):
     raced: list[Restatement]  # rows stated while the close landed, which it took
 
 
+def _closed_value(repair: IntervalRepair) -> tuple[str, str, str]:
+    return (repair.subject, repair.relation, repair.old_object)
+
+
+def _triple_key(triple: Mapping[str, Any]) -> tuple[str, str, str]:
+    return (str(triple["subject"]), str(triple["relation"]), str(triple["object"]))
+
+
 async def _recorded_close_states(
     input: MemoryBulkSetInput,
     repairs: list[IntervalRepair],
+    triples: list[dict[str, Any]],
     *,
     at: datetime,
-    through: datetime,
     ch: Any,
 ) -> dict[tuple[str, str, str], RecordedClose]:
     """What became of each value the write that arrived at `at` recorded closing. The
@@ -709,18 +715,31 @@ async def _recorded_close_states(
     repair decides. A value open with neither is one whose close never landed. A row
     seen after the write and stamped by its close was stated while the close landed
     ("back to London"): each such row is a `Restatement` the replay judges. "After" is
-    by `seen_at`, in microseconds, after `through`, the write's last triple, so a
-    restatement in the write's own second counts."""
+    by `seen_at`, in microseconds, per value: after the earliest value that closed it
+    and after the write's own `triples` of it, so a restatement in the write's own
+    second counts, even one stored between the write's triples."""
+    # Each value's cutoff is the earliest value that closed it. The write's own rows of
+    # it are never later than that when the write stated the closer (a later-stated
+    # value is never closed), but a stored value that closed the write's own may have
+    # been seen before it: the cutoff is then the write's last row of it.
+    values = sorted({_closed_value(r) for r in repairs})
+    since = []
+    for value in values:
+        closers = [r.new_seen_at or at for r in repairs if _closed_value(r) == value]
+        own = [t["seen_at"] for t in triples if _triple_key(t) == value]
+        since.append(max([min(closers), *own]))
     rows = await ch.query_all(
         """
+        WITH arrayElement({seens:Array(DateTime64(6))},
+                          indexOf({triples:Array(Tuple(String, String, String))},
+                                  (subject, relation, object))) AS since
         SELECT subject, relation, object,
                countIf(valid_to IS NULL) > 0 AS open,
                countIf(invalid_at = {at:DateTime}) > 0 AS landed,
-               countIf(valid_to IS NULL AND seen_at > {seen:DateTime64(6)}) > 0 AS seen_since,
+               countIf(valid_to IS NULL AND seen_at > since) > 0 AS seen_since,
                -- A tuple keeps a NULL valid_from, which an aggregate would skip.
                groupArrayIf(tuple(valid_from, seen_at),
-                            invalid_at = {at:DateTime} AND seen_at > {seen:DateTime64(6)})
-                   AS raced
+                            invalid_at = {at:DateTime} AND seen_at > since) AS raced
         FROM loom.entity_triples
         WHERE org = {org:String}
           AND namespace = {ns:String}
@@ -732,9 +751,9 @@ async def _recorded_close_states(
         params={
             "org": input.org,
             "ns": input.namespace,
-            "triples": sorted({(r.subject, r.relation, r.old_object) for r in repairs}),
+            "triples": values,
             "at": at.replace(microsecond=0),
-            "seen": through,
+            "seens": since,
         },
     )
     states: dict[tuple[str, str, str], RecordedClose] = {}
