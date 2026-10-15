@@ -213,13 +213,18 @@ clients); the provider only authenticates the person. The OAuth server:
 family as their `sid` claim, and its refresh tokens rotate within it. Revoking the family in
 `loom.revoked_tokens` ends every token of the session: on logout (`/oauth/revoke`), when the
 provider refuses the user at a refresh, and when a spent code or device code comes back, or
-a spent refresh token whose successor is already in use: someone else holds a copy, so this
-also revokes the session's `<sid>/minted` key, which every token delegated from the session
-carries in `parents`, and the service accounts and MCP tokens a thief could have minted end
-with it. A spent refresh token whose successor was
-never used is a client whose answer was lost: the unused successor is retired and the client
-is answered again, however much later it asks; if the retired one ever turns up, that is
-the theft. No path revokes more than the one session; a person's other sessions and tokens
+a spent refresh token comes back as a copy. Someone else holds it, so this also revokes the
+session's `<sid>/minted` key, which every token delegated from the session carries in
+`parents`, and the service accounts and MCP tokens a thief could have minted end with it.
+
+A spent refresh token names, in the same write that spends it, the token about to replace
+it. It comes back legitimately only when its answer was lost, and then within seconds (the
+SDK asks again at once): back within a minute with that successor never used, the successor
+is retired, the client answered again and an `auth.refresh_reissued` row written; while the
+successor is still being issued the answer is "retry". Any other return is a copy: later
+than a minute (a thief who refreshed first is caught when the owner comes back; an old copy
+from a backup is caught at once), or after the successor was used. No path revokes more
+than the one session; a person's other sessions and tokens
 are never collateral, and nothing automatic writes a subject-wide revocation (which could
 replace an operator's outright ban). A subject revoked outright is issued nothing.
 

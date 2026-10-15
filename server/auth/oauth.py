@@ -61,11 +61,13 @@ _UPSTREAM_PURPOSE = "oidc refresh token"
 
 
 class CodeReplayed(Exception):
-    """A single-use code or refresh token was presented after it was spent."""
+    """A single-use code or refresh token was presented after it was spent,
+    at `spent_at` (unix seconds)."""
 
-    def __init__(self, grant: dict[str, Any]) -> None:
+    def __init__(self, grant: dict[str, Any], spent_at: float = 0.0) -> None:
         super().__init__("spent credential presented again")
         self.grant = grant
+        self.spent_at = spent_at
 
 
 # --------------------------------------------------------------------------
@@ -181,20 +183,15 @@ class _CHStore:
     async def take_code(self, code: str, client_id: str) -> dict[str, Any] | None:
         return await self._take("code", token_id(code), client_id)
 
-    async def take_refresh(self, token: str, client_id: str) -> dict[str, Any] | None:
-        return await self._take("refresh", token_id(token), client_id)
+    async def take_refresh(
+        self, token: str, client_id: str, successor: str = ""
+    ) -> dict[str, Any] | None:
+        """Spend the refresh token, noting `successor` (the one about to be
+        issued in its place, if any) on it in the same write."""
+        return await self._take("refresh", token_id(token), client_id, successor)
 
-    async def _take(self, rtype: str, rid: str, client_id: str) -> dict[str, Any] | None:
-        row = await self._ch().query_one(
-            f"""SELECT {self._GRANT_COLUMNS} FROM {self._T} FINAL
-                WHERE record_type = {{t:String}} AND id = {{id:String}} LIMIT 1""",
-            params={"t": rtype, "id": rid},
-        )
-        if not row or int(row["expires_at"] or 0) < int(time.time()):
-            return None
-        if row["client_id"] != client_id:
-            return None  # checked before the consume: a wrong presenter can't burn it
-        grant = {
+    def _grant(self, row: dict[str, Any]) -> dict[str, Any]:
+        return {
             "client_id": row["client_id"],
             "redirect_uri": row["redirect_uri"],
             "code_challenge": row["code_challenge"],
@@ -207,40 +204,49 @@ class _CHStore:
             "upstream_refresh": unseal(_UPSTREAM_PURPOSE, row["upstream_refresh"]),
             "successor": row["successor"],
         }
+
+    async def _row(self, rtype: str, rid: str) -> dict[str, Any] | None:
+        row: dict[str, Any] | None = await self._ch().query_one(
+            f"""SELECT {self._GRANT_COLUMNS}, version FROM {self._T} FINAL
+                WHERE record_type = {{t:String}} AND id = {{id:String}} LIMIT 1""",
+            params={"t": rtype, "id": rid},
+        )
+        return row
+
+    async def _take(
+        self, rtype: str, rid: str, client_id: str, successor: str = ""
+    ) -> dict[str, Any] | None:
+        row = await self._row(rtype, rid)
+        if not row or int(row["expires_at"] or 0) < int(time.time()):
+            return None
+        if row["client_id"] != client_id:
+            return None  # checked before the consume: a wrong presenter can't burn it
+        grant = self._grant(row)
         if row["consumed"]:
-            raise CodeReplayed(grant)
-        await self._ch().insert(self._T, [self._grant_row(rtype, rid, grant, 1)])
+            raise CodeReplayed(grant, int(row["version"]) / 1e9)  # the spend's time_ns
+        spent = {**grant, "successor": token_id(successor) if successor else ""}
+        await self._ch().insert(self._T, [self._grant_row(rtype, rid, spent, 1)])
         return grant
 
     async def set_successor(self, token: str, g: dict[str, Any], successor: str) -> None:
-        """Note on the spent refresh token which token replaced it."""
+        """Note on the spent refresh token which token replaces it now."""
         row = self._grant_row(
             "refresh", token_id(token), {**g, "successor": token_id(successor)}, 1
         )
         await self._ch().insert(self._T, [row])
 
-    async def retire_unused(self, successor_id: str) -> dict[str, Any] | None:
-        """Spend a refresh token, by its id, if it has never been presented;
-        its grant, or None when it has been (or is gone)."""
-        row = await self._ch().query_one(
-            f"""SELECT {self._GRANT_COLUMNS} FROM {self._T} FINAL
-                WHERE record_type = 'refresh' AND id = {{id:String}} LIMIT 1""",
-            params={"id": successor_id},
-        )
-        if not row or row["consumed"]:
-            return None
-        grant = {
-            "client_id": row["client_id"],
-            "subject": row["subject"],
-            "org": row["org"],
-            "namespaces": list(row["namespaces"]),
-            "roles": list(row["roles"]),
-            "exp": int(row["expires_at"]),
-            "family": row["family"],
-            "upstream_refresh": unseal(_UPSTREAM_PURPOSE, row["upstream_refresh"]),
-        }
+    async def retire_if_unused(self, successor_id: str) -> tuple[str, dict[str, Any] | None]:
+        """Spend a refresh token by its id if it has never been presented.
+        ("unused", its grant), ("used", None), or ("missing", None) while
+        the answer that issues it is still being made."""
+        row = await self._row("refresh", successor_id)
+        if not row:
+            return "missing", None
+        if row["consumed"]:
+            return "used", None
+        grant = self._grant(row)
         await self._ch().insert(self._T, [self._grant_row("refresh", successor_id, grant, 1)])
-        return grant
+        return "unused", grant
 
     async def save_pending(self, state: str, data: dict[str, Any]) -> None:
         # OIDC in-flight login: stash the MCP client's params + nonce keyed by
@@ -985,7 +991,9 @@ def _invalid_grant(description: str = "") -> HTTPException:
     return HTTPException(status_code=400, detail=detail)
 
 
-async def issue_tokens(grant: dict[str, Any], client_id: str) -> dict[str, Any]:
+async def issue_tokens(
+    grant: dict[str, Any], client_id: str, *, refresh: str = ""
+) -> dict[str, Any]:
     """An access token for the grant's session, and the next refresh token.
     Under OIDC a session with no IdP refresh token gets no Loom refresh token:
     nothing could tell Loom the user was deactivated, so the session ends with
@@ -1012,7 +1020,7 @@ async def issue_tokens(grant: dict[str, Any], client_id: str) -> dict[str, Any]:
     }
     if settings.oauth_login_provider == "oidc" and not grant["upstream_refresh"]:
         return body
-    refresh = secrets.token_urlsafe(32)
+    refresh = refresh or secrets.token_urlsafe(32)
     await store.save_refresh(
         refresh,
         {
@@ -1145,33 +1153,61 @@ async def _refresh_token_grant(f: dict[str, str]) -> dict[str, Any]:
             detail={"error": "invalid_request", "error_description": "client_id required"},
         )
     refresh_token = f.get("refresh_token", "")
+    successor = secrets.token_urlsafe(32)  # noted on the spent token before it exists
     try:
-        grant = presented = await store.take_refresh(refresh_token, client_id)  # rotates
+        presented = await store.take_refresh(refresh_token, client_id, successor)  # rotates
     except CodeReplayed as e:
-        # Spent before. If what replaced it was never used, the answer was
-        # lost on its way to this client: retire the unused one and answer
-        # again. If it was used, two copies have gone separate ways: a theft.
-        presented = e.grant
-        grant = (
-            await store.retire_unused(presented["successor"]) if presented["successor"] else None
-        )
-        if grant is None:
-            raise await end_replayed_session(e, "refresh token") from None
-    if grant is None or presented is None:
-        raise _invalid_grant()
+        grant = await _answer_again(e, refresh_token, successor)
+    else:
+        if presented is None:
+            raise _invalid_grant()
+        grant = dict(presented)
     try:
-        body = await _refresh_session(grant, refresh_token)
+        return await _refresh_session(grant, refresh_token, successor)
     except HTTPException:
         raise  # an answer: refused, or retry later with the token put back
     except Exception:  # Loom's own failure: unspend the token so the retry is no replay
         await store.save_refresh(refresh_token, grant)  # with the IdP token it may have rotated
         raise
-    if "refresh_token" in body:
-        await store.set_successor(refresh_token, presented, body["refresh_token"])
-    return body
 
 
-async def _refresh_session(grant: dict[str, Any], refresh_token: str) -> dict[str, Any]:
+# A client whose refresh answer was lost asks again at once (the SDK, after
+# its timeout); a spent token that comes back later than this is a copy.
+_LOST_ANSWER_S = 60
+
+
+async def _answer_again(e: CodeReplayed, refresh_token: str, successor: str) -> dict[str, Any]:
+    """A spent refresh token came back. Soon after the spend, with the token
+    that replaced it never used, its answer was lost: retire that one and
+    answer again. Otherwise someone else holds a copy, and the session ends.
+    Returns the grant to answer from."""
+    spent = e.grant
+    if not spent["successor"] or time.time() - e.spent_at > _LOST_ANSWER_S:
+        raise await end_replayed_session(e, "refresh token")
+    grant: dict[str, Any] | None
+    state, grant = await store.retire_if_unused(spent["successor"])
+    if state == "missing":  # the first answer is still being made
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "temporarily_unavailable"},
+            headers={"Retry-After": "2"},
+        )
+    if grant is None:
+        raise await end_replayed_session(e, "refresh token")
+    await store.set_successor(refresh_token, spent, successor)
+    await audit.emit(
+        "auth.refresh_reissued",
+        org=grant["org"],
+        namespace="-",
+        actor=grant["subject"],
+        subject={"family": grant["family"], "client_id": grant["client_id"]},
+    )
+    return grant
+
+
+async def _refresh_session(
+    grant: dict[str, Any], refresh_token: str, successor: str
+) -> dict[str, Any]:
     """The refresh grant's checks and new tokens, once the old token is spent."""
     from server.auth.login import refreshed_roles
     from server.auth.revocation import is_revoked
@@ -1194,7 +1230,7 @@ async def _refresh_session(grant: dict[str, Any], refresh_token: str) -> dict[st
             await oidc.revoke(grant["upstream_refresh"])
         await end_session(grant, "account no longer active")
         raise _invalid_grant()
-    return await issue_tokens({**grant, "roles": roles}, grant["client_id"])
+    return await issue_tokens({**grant, "roles": roles}, grant["client_id"], refresh=successor)
 
 
 @router.post("/oauth/token")

@@ -3,6 +3,7 @@ SSO-only paths: every grant and every refusal, against the in-memory store."""
 
 from __future__ import annotations
 
+import asyncio
 import re
 import time
 from datetime import UTC, datetime, timedelta
@@ -1040,3 +1041,47 @@ def test_a_thefts_minted_revocation_lapses_with_what_it_revokes(_world) -> None:
 def test_discovery_always_names_its_response_types(monkeypatch) -> None:
     monkeypatch.setattr(oauth.settings, "oauth_enabled", False)
     assert oauth.authorization_server_metadata("https://x")["response_types_supported"] == []
+
+
+# ── lost answers versus copies ────────────────────────────────────────────
+
+
+def test_a_reanswer_is_audited(_world) -> None:
+    c = _client()
+    first = _signed_in_tokens(c)
+    _refresh(c, first["refresh_token"])  # lost
+    assert _refresh(c, first["refresh_token"]).status_code == 200
+    assert "auth.refresh_reissued" in [n for n, _ in _world["events"]]
+
+
+def test_a_thief_who_refreshes_first_is_caught_when_the_owner_comes_back(
+    _world, monkeypatch
+) -> None:
+    c = _client()
+    first = _signed_in_tokens(c)
+    _refresh(c, first["refresh_token"])  # the thief, with a copy of the file
+    monkeypatch.setattr(oauth, "_LOST_ANSWER_S", -1)  # the owner's next refresh comes later
+    assert _error(_refresh(c, first["refresh_token"])) == "invalid_grant"
+    sid = pyjwt.decode(first["access_token"], options={"verify_signature": False})["sid"]
+    assert _world["revoked"] == [sid, f"{sid}/minted"]
+
+
+def test_an_old_copy_from_a_backup_is_a_theft_not_a_lost_answer(_world, monkeypatch) -> None:
+    c = _client()
+    old = _signed_in_tokens(c)
+    _refresh(c, old["refresh_token"])  # the owner moved on; the new token sits unused
+    monkeypatch.setattr(oauth, "_LOST_ANSWER_S", -1)  # days later
+    assert _error(_refresh(c, old["refresh_token"])) == "invalid_grant"
+    assert len(_world["revoked"]) == 2
+
+
+def test_a_retry_while_the_first_answer_is_still_being_made_waits(_world) -> None:
+    c = _client()
+    first = _signed_in_tokens(c)
+    store = _world["store"]
+    # The first refresh has spent the token, named its successor, not yet saved it.
+    asyncio.run(
+        store.take_refresh(first["refresh_token"], device.DEVICE_CLIENT_ID, "not-yet-saved")
+    )
+    r = _refresh(c, first["refresh_token"])
+    assert r.status_code == 503 and _world["revoked"] == []

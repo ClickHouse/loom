@@ -305,27 +305,26 @@ def test_a_refresh_that_never_reached_the_server_is_tried_again(server, monkeypa
     assert credentials.access_token(refused="a1") == "a2"
 
 
-def test_a_refresh_whose_answer_is_lost_is_not_resent(server, monkeypatch) -> None:
-    """The server may have spent the token: sending it again would end the
-    session, so the SDK reports a retryable failure and keeps what it has."""
-    from loom.errors import BackendUnavailable
-
+def test_a_refresh_whose_answer_is_lost_is_asked_again_at_once(server, monkeypatch) -> None:
+    """The server spent the token and the answer never came: asked again
+    straight away, the server answers it again (see oauth._answer_again)."""
     credentials.login(_SERVER, open_browser=False, echo=lambda _: None)
     real = server.__class__.__call__
     sent: list[str] = []
 
-    def answer_lost(self: Any, request: httpx.Request) -> httpx.Response:
+    def answer_lost_once(self: Any, request: httpx.Request) -> httpx.Response:
         if request.url.path == "/oauth/token":
             sent.append(dict(httpx.QueryParams(request.content.decode()))["refresh_token"])
-            real(self, request)  # the server rotates the token...
-            raise httpx.ReadTimeout("answer lost", request=request)  # ...and the answer is lost
+            answer = real(self, request)
+            if len(sent) == 1:
+                raise httpx.ReadTimeout("answer lost", request=request)
+            return answer
         return real(self, request)
 
-    monkeypatch.setattr(server.__class__, "__call__", answer_lost)
-    with pytest.raises(BackendUnavailable):
-        credentials.access_token(refused="a1")
-    assert sent == ["r1"]  # once, never resent
-    assert _stored()["profiles"]["default"]["refresh_token"] == "r1"
+    monkeypatch.setattr(server.__class__, "__call__", answer_lost_once)
+    credentials.access_token(refused="a1")
+    assert sent == ["r1", "r1"]  # the same token, asked again at once
+    assert _stored()["profiles"]["default"]["refresh_token"] != "r1"
 
 
 def test_login_says_who_it_signed_in(server) -> None:

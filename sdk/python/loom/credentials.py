@@ -44,8 +44,8 @@ _DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
 # with a token that dies in flight.
 _REFRESH_MARGIN_S = 60
 # Longer than a refresh can take on the server, which asks the identity
-# provider first (discovery and token calls, 10 s each): giving up sooner
-# would resend a token the server has already spent, which ends the session.
+# provider first (discovery and token calls, 10 s each), and short enough
+# that the retry after it lands inside the server's minute for lost answers.
 _REFRESH_TIMEOUT_S = 45.0
 
 
@@ -283,8 +283,10 @@ def _refresh(profile: str, refused: str) -> dict[str, Any]:
         endpoint = _endpoints(client)["token_endpoint"]
         try:
             r = client.post(endpoint, data=form, timeout=_REFRESH_TIMEOUT_S)
-        except (httpx.ConnectError, httpx.ConnectTimeout):
-            # Nothing reached the server, so nothing was spent: try once more.
+        except httpx.TransportError:
+            # Not sent, or sent and the answer lost. Asked again at once, the
+            # server answers the lost answer again (it does so only shortly
+            # after the spend; later, the same token looks like a copy).
             r = client.post(endpoint, data=form, timeout=_REFRESH_TIMEOUT_S)
     if r.status_code == 400 and _oauth_error(r) == "invalid_grant":
         _drop(profile)

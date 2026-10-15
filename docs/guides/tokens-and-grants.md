@@ -268,7 +268,7 @@ stops every token they delegated). An op with no namespace that writes needs the
 hold that role on some namespace of the org. Revoking any ancestor's `jti` or `sub` (the
 dashboard revokes a service account by its `sub`) or the person's `sub` kills the token,
 its children and theirs. Tokens minted from a sign-in session outlive its logout; a stolen
-copy of the session coming back (a spent refresh token whose successor is in use) revokes
+copy of the session coming back (a spent refresh token presented as a copy) revokes
 its `<sid>/minted` key and so them too. A revoke with an issued-before cutoff judges each ancestor by its
 own `iat` and the person by the root's, so a child minted after the cutoff from an older
 token dies with it; a delegated token without aligned `parent_iats` is refused. `loom mint-token` signs with
