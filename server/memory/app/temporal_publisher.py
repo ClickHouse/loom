@@ -902,7 +902,7 @@ def _as_metadata(
         return "locked"
     if "expires_at" in fields and _locked_against(served, "expire", now):
         return "locked"
-    if row.get("duplicate_of") and "duplicate_of" in fields and _scheduled(served, now):
+    if intent.redirect and _scheduled(served, now):
         return "scheduled"  # a plan landed since the move checked: it would revive the key
     if not claims:
         # Nothing holds now: a removal of nothing restates; any other metadata write

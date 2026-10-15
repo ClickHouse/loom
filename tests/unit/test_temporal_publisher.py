@@ -1421,6 +1421,14 @@ def test_a_redirect_never_lands_on_a_key_with_a_plan(
     plan = datetime.now(UTC) + timedelta(days=30)
     assert run(pub.publish_rows([mrow('"B"', valid_at=plan, **_LOCKLESS)])) == []
     _over(journal, monkeypatch, head)
+    from server.memory.domain.temporal_capture import WriteIntent, write_intent
+
     moved = _copy(head, status="duplicate", duplicate_of="dest")
-    with _meta(moved, "status", "duplicate_of"):
+    with (
+        _meta(moved, "status", "duplicate_of"),
+        write_intent(WriteIntent(memory_key="k", redirect=True)),
+    ):
         assert run(pub.publish_rows([moved])) == []  # the plan would revive it behind the redirect
+    marked = _copy(head, status="duplicate", duplicate_of="peer")
+    with _meta(marked, "status", "duplicate_of"):
+        assert run(pub.publish_rows([marked]))  # a duplicate mark is not a move

@@ -30,6 +30,7 @@ from server.memory.app import write as write_mod
 from server.memory.domain import lock as _lock
 from server.memory.domain import provenance as _prov
 from server.memory.domain.memory_types import is_searchable_type
+from server.memory.domain.temporal_capture import WriteIntent, write_intent
 from server.memory.store.rows import next_version
 
 if TYPE_CHECKING:
@@ -165,7 +166,7 @@ async def _refuse_pending_plans(input: Any) -> None:
         )
 
 
-async def _redirect_source(source: MemoryRow, dest_id: str, ch: Any) -> None:
+async def _redirect_source(source: MemoryRow, dest_id: str, to_key: str, ch: Any) -> None:
     """The redirect: a new version of the SOURCE row with `status='duplicate'` and
     `duplicate_of` = the destination, every other column carried forward (the builder + the
     typed insert). The search mirror is re-emitted with the same status so the dense leg's own
@@ -180,9 +181,11 @@ async def _redirect_source(source: MemoryRow, dest_id: str, ch: Any) -> None:
         duplicate_of=dest_id,
         updated_at=now,
     )
-    if not await memory_repo.insert_over_heads(
-        [(row, frozenset({"status", "duplicate_of", "updated_at"}))], ch=ch
-    ):
+    with write_intent(WriteIntent(memory_key=source.memory_key, redirect=True)):
+        kept = await memory_repo.insert_over_heads(
+            [(row, frozenset({"status", "duplicate_of", "updated_at"}))], ch=ch
+        )
+    if not kept:
         # A plan landed on the source since `_refuse_pending_plans` (the publisher
         # re-checks under its lock), or the row changed: the destination is written,
         # the source is left as it was.
@@ -190,7 +193,8 @@ async def _redirect_source(source: MemoryRow, dest_id: str, ch: Any) -> None:
             409,
             "SCHEDULED_CHANGE",
             f"{source.memory_key!r} changed or gained a scheduled change while it was "
-            f"moved; {dest_id!r} was written, the source left in place. {_CANCEL_PLAN}",
+            f"moved: {to_key!r} was written and the source left in place; delete "
+            f"{to_key!r}, or move again once the change applies. {_CANCEL_PLAN}",
         )
     try:
         mirror = await memory_repo.embedding_mirror_for_keys(
@@ -275,7 +279,7 @@ async def handle_memory_move(input: MemoryMoveInput) -> MemoryMoveOutput:
     set_out = await write_mod.handle_memory_set(set_input)
     dest_id = await _destination_id(set_out, set_input)
     if input.keep_redirect:
-        await _redirect_source(source, dest_id, get_client())
+        await _redirect_source(source, dest_id, input.to_key, get_client())
     else:
         await _tombstone_source(source)
     return MemoryMoveOutput(

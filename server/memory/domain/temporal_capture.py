@@ -88,6 +88,9 @@ class WriteIntent:
     pin_guard: bool = False
     # A lock that may only tighten the lock in force (memory.lock).
     tighten_lock: bool = False
+    # A redirect of the key to another (memory.move): refused while the key holds a
+    # plan not yet due, which would revive it behind the redirect.
+    redirect: bool = False
     # Of a value write's metadata, the columns its caller stated (pinned, expires_at,
     # sensitivity). The rest is the journal's when the write is planned, not a copy
     # of what the writer read. None: a writer that states none of them.
