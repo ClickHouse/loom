@@ -112,10 +112,10 @@ def _loaded(key: _Key, task: asyncio.Task[GrantMap]) -> None:
 async def _read(org: str, subject: str) -> GrantMap:
     """One read: the subject's rows under every spelling the directory ties to
     it (`server.auth.aliases`), folded per namespace. Only the spelling itself
-    and an active account's pair (`held`) set the rank there. A deactivated
-    account's pair, and a released one's (`released_aliases`), still tie the
-    spellings, at rank 0 (`capping`): their rows may be the revocations that
-    cap, never a grant that admits."""
+    and its active account's pair (`held`) set the rank there. Its deactivated
+    account's pair, and the spellings a release kept (`released_aliases`, never
+    the row's current owner), still tie it at rank 0 (`capping`): their rows
+    may be the revocations that cap, never a grant that admits."""
     from server.core.ch import get_client, own_write_reads
 
     human = bool(subject) and subject != "*" and not subject.startswith("sa:")
@@ -124,20 +124,22 @@ async def _read(org: str, subject: str) -> GrantMap:
             """
             WITH (
                 SELECT (
-                    arrayFlatten(groupArrayIf([lower(owner_email), lower(contact_email)], active)),
-                    arrayFlatten(groupArray(arrayConcat(
-                        if(active, [], [lower(owner_email), lower(contact_email)]),
-                        released_aliases
-                    )))
+                    arrayFlatten(groupArrayIf(pair, own AND live)),
+                    arrayFlatten(groupArray(
+                        arrayConcat(if(own AND NOT live, pair, []), released_aliases)
+                    ))
                 )
                 FROM (
-                    SELECT owner_email, contact_email, released_aliases,
-                           ifNull(active, true) AND contact_email != '' AS active
+                    -- `own`: the row is the subject's account; else it matched on
+                    -- `released_aliases` alone, and its current owner is someone else.
+                    SELECT [lower(owner_email), lower(contact_email)] AS pair,
+                           released_aliases,
+                           contact_email != '' AND has(pair, {sub:String}) AS own,
+                           active AS live
                     FROM loom.namespaces FINAL
                     WHERE {human:Bool} AND org = {org:String}
                       AND ((contact_email != ''
-                            AND (lower(owner_email) = {sub:String}
-                                 OR lower(contact_email) = {sub:String}))
+                            AND has([lower(owner_email), lower(contact_email)], {sub:String}))
                            OR has(released_aliases, {sub:String}))
                 )
             ) AS ties,

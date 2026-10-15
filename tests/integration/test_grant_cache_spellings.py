@@ -39,10 +39,12 @@ async def org(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[str]:
             _account("h", "h", "h@x"),
             _account("d", "d", "d@x", active=False),
             _account("r", "", "", active=False, released_aliases=["r", "r@x"]),
+            # Released, then re-registered by an admin: its owner is not the released person.
+            _account("q", "admin", "admin@x", released_aliases=["q", "q@x"]),
         ],
     )
     grants: list[dict[str, Any]] = []
-    for spelling in ("h@x", "d@x", "r@x"):
+    for spelling in ("h@x", "d@x", "r@x", "admin@x"):
         for namespace, revoked in (("live", None), ("gone", now)):
             grants.append(
                 {
@@ -57,6 +59,8 @@ async def org(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[str]:
                     "version": time.time_ns(),
                 }
             )
+    # The same spelling in another org, where nothing ties it.
+    grants.append({**grants[0], "org": f"{name}-other"})
     await client.insert(
         "loom.namespace_grants",
         grants,
@@ -65,6 +69,11 @@ async def org(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[str]:
     try:
         yield name
     finally:
+        for table in ("loom.namespace_grants", "loom.namespaces"):
+            for partition in (name, f"{name}-other"):
+                await client.execute(
+                    f"ALTER TABLE {table} DROP PARTITION {{p:String}}", params={"p": partition}
+                )
         await client.disconnect()
 
 
@@ -75,6 +84,7 @@ async def org(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[str]:
         ("d", {"live": 0, "gone": 0}),  # deactivated: caps, never admits
         ("r", {"live": 0, "gone": 0}),  # released: caps, never admits
         ("r@x", {"live": 2, "gone": 0}),  # a spelling's own grants count
+        ("q", {}),  # the row's current owner is not the released person
     ],
 )
 async def test_which_tied_spellings_set_the_rank(
@@ -84,4 +94,6 @@ async def test_which_tied_spellings_set_the_rank(
 
 
 async def test_a_spelling_tied_in_one_org_is_not_tied_in_another(org: str) -> None:
-    assert (await grant_cache._read(org + "-other", "h")).ranks == {}
+    # h@x holds a grant in the other org, but h is tied to h@x only in this one.
+    assert (await grant_cache._read(f"{org}-other", "h")).ranks == {}
+    assert (await grant_cache._read(f"{org}-other", "h@x")).ranks == {"live": 2}
