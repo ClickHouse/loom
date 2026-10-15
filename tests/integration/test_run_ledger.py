@@ -237,6 +237,47 @@ async def test_a_replayed_turn_does_not_move_between_runs(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("turn_at", ["", "not a time"])
+async def test_a_replayed_turn_without_a_time_does_not_move_between_runs(
+    control_plane_url: str, ch_client: Any, turn_at: str
+) -> None:
+    from loom import Agent
+
+    ns = f"run-ledger-{uuid.uuid4().hex[:6]}"
+    async with Agent(org="run-test", namespace=ns, agent="w", base_url=control_plane_url) as a:
+        turn = {
+            "org": a.org,
+            "namespace": a.namespace,
+            "agent": a.agent,
+            "session_id": "sess-u",
+            "turns": [
+                {
+                    "message_id": "m1",
+                    "model": "claude-opus-5-5",
+                    "input_tokens": 400_000,
+                    "turn_at": turn_at,
+                }
+            ],
+        }
+        first = await a.run.begin(goal="first", session_id="sess-u", budget_usd=1.0)
+        await a.transport.post("/v1/cost.record_turns", turn)
+        ch_client.command("SYSTEM FLUSH ASYNC INSERT QUEUE")
+        before = await a.run.get(first["run_id"])
+        assert before["turns"] == 1 and before["over_budget"] == ["cost"]
+        await a.run.complete(first["run_id"], status="completed")
+        second = await a.run.begin(goal="second", session_id="sess-u", budget_usd=1.0)
+
+        # The same usage again, still without a time: it keeps the first one.
+        await a.transport.post("/v1/cost.record_turns", turn)
+        ch_client.command("SYSTEM FLUSH ASYNC INSERT QUEUE")
+
+        after = await a.run.get(first["run_id"])
+        assert (after["cost_usd"], after["over_budget"]) == (before["cost_usd"], ["cost"])
+        got_second = await a.run.get(second["run_id"])
+        assert got_second["turns"] == 0 and got_second["cost_usd"] == 0.0
+
+
+@pytest.mark.asyncio
 async def test_workers_in_their_own_sessions_count_only_their_own_turns(
     control_plane_url: str, ch_client: Any
 ) -> None:

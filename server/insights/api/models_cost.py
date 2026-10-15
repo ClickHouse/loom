@@ -153,7 +153,8 @@ class TurnUsage(BaseModel):
     cache_creation_5m_tokens: int = Field(default=0, ge=0, le=100_000_000)
     cache_creation_1h_tokens: int = Field(default=0, ge=0, le=100_000_000)
     output_tokens: int = Field(default=0, ge=0, le=100_000_000)
-    # ISO-8601 time of the turn (the transcript's timestamp); empty = now.
+    # ISO-8601 time of the turn (the transcript's timestamp). Empty or not a
+    # time: the time this message_id was first recorded with, else now.
     turn_at: str = Field(default="", max_length=40)
 
 

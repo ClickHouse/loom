@@ -666,13 +666,15 @@ async def _list_score(ch: RecordingCH, c: dict[str, Any]) -> None:
 
 
 async def _session_runs(ch: RecordingCH, c: dict[str, Any]) -> None:
-    """The session-run ledger reads: the run under an id, the idle sweep, and a
-    run's spend over its window."""
+    """The session-run ledger reads: the run under an id, the idle sweep, a
+    run's spend over its window, and the time a re-sent turn was first given."""
+    from server.insights.store import cost
     from server.tasks.store import runs
 
     await runs.active_runs_by_id(ch, ORG, "mcp-" + "0" * 40)
     await runs.idle_session_runs(ch, idle_seconds=1800, limit=500)
     await runs.run_cost(ch, ORG, NS, "s1", _DT, _DT)
+    await cost.first_turn_times(ORG, NS, "s1", ["m1"], ch=ch)
 
 
 def cases() -> list[Case]:

@@ -8,7 +8,7 @@ operations→handlers layering acyclic.
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from server.core.ch import get_client
@@ -197,12 +197,19 @@ async def handle_budget_status(input: BudgetStatusInput) -> BudgetStatusOutput:
     )
 
 
+def _parse_turn_at(text: str) -> datetime | None:
+    """A turn's ISO-8601 time as an aware datetime, or None when it has none."""
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
 async def handle_cost_record_turns(input: CostRecordTurnsInput) -> CostRecordTurnsOutput:
     """Price each turn from the shared table and write the ledger rows.
     Best-effort write: a CH failure records nothing rather than raising —
     the hook that calls this has already finished the user's turn."""
-    from datetime import UTC, datetime
-
     from server.observability.cost_accumulator import is_priced, turn_cost_usd
 
     rows: list[list[Any]] = []
@@ -211,7 +218,19 @@ async def handle_cost_record_turns(input: CostRecordTurnsInput) -> CostRecordTur
     total = 0.0
     now = datetime.now(UTC)
     ahead = 0
-    for t in input.turns:
+    sent = [_parse_turn_at(t.turn_at) for t in input.turns]
+    # A turn sent without a time keeps the one it was first recorded with, so a
+    # replay lands in the same run.
+    undated = [t.message_id for t, at in zip(input.turns, sent, strict=True) if at is None]
+    first: dict[str, datetime] = {}
+    if undated:
+        try:
+            first = await cost_store.first_turn_times(
+                input.org, input.namespace, input.session_id, undated, ch=get_client()
+            )
+        except Exception:  # noqa: BLE001 — a spend ledger must never fail the turn
+            first = {}
+    for t, turn_at in zip(input.turns, sent, strict=True):
         cost = turn_cost_usd(
             t.model,
             input_tokens=t.input_tokens,
@@ -226,17 +245,12 @@ async def handle_cost_record_turns(input: CostRecordTurnsInput) -> CostRecordTur
             total += cost
         elif t.model not in unpriced:
             unpriced.append(t.model)
-        turn_at = now
-        if t.turn_at:
-            try:
-                parsed = datetime.fromisoformat(t.turn_at.replace("Z", "+00:00"))
-                turn_at = parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
-            except ValueError:
-                turn_at = now
+        if turn_at is None:
+            turn_at = first.get(t.message_id, now)
+        elif turn_at > now + _AHEAD_SLACK:
             # Kept as sent, so a replay lands in the same run; a client clock
-            # running ahead is reported instead (`turns_dated_ahead`).
-            if turn_at > now + _AHEAD_SLACK:
-                ahead += 1
+            # running ahead is reported instead.
+            ahead += 1
         rows.append(
             [
                 input.org,
