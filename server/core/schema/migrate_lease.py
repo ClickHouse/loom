@@ -342,7 +342,7 @@ def key_exists(e: BaseException) -> bool:
 RUN_CLAIMS_TABLE_SQL = (
     "SELECT engine FROM system.tables WHERE database = 'loom' AND name = 'agent_run_claims'"
 )
-# /oauth/token claims each exchange in Keeper only where 027_oauth_claims.sql did.
+# /oauth/token claims each exchange in Keeper only where 028_oauth_claims.sql did.
 OAUTH_CLAIMS_TABLE_SQL = (
     "SELECT engine FROM system.tables WHERE database = 'loom' AND name = 'oauth_claims'"
 )

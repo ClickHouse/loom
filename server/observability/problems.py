@@ -657,7 +657,7 @@ def _oauth_claim_problems(settings: Any, state: HealthState) -> list[Problem]:
             "exchanges of one code or refresh token apart only by using it up first: two "
             "concurrent ones can still both mint tokens.",
             "Run ClickHouse with a Keeper (deploy/clickhouse-config/keeper.xml) and create the "
-            "table from schemas/migrations/027_oauth_claims.sql (the migration skipped it); "
+            "table from schemas/migrations/028_oauth_claims.sql (the migration skipped it); "
             "an exchange within a minute finds it.",
             source="runtime",
         )
@@ -677,7 +677,7 @@ def _grant_claim_problems(state: HealthState) -> list[Problem]:
             "are kept apart only within each server process: across processes an approval "
             "can still write over a promotion or a revoke that landed after its read.",
             "Run ClickHouse with a Keeper (deploy/clickhouse-config/keeper.xml) and create the "
-            "table from schemas/migrations/028_grant_claims.sql (the migration skipped it); "
+            "table from schemas/migrations/029_grant_claims.sql (the migration skipped it); "
             "a grant change within a minute finds it.",
             source="runtime",
         )
