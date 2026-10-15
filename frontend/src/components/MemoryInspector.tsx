@@ -563,7 +563,11 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
       // Either way the row changed, so the list behind the drawer is stale too,
       // even if the drawer has moved on to another memory.
       onChanged();
-      if (stale()) return;
+      if (stale()) {
+        // Toasts are app-wide, so still report it, naming the key the drawer has left.
+        toast(r.restored ? `Restored ${memoryKey}` : `Nothing to restore for ${memoryKey}`, r.restored ? "ok" : "info");
+        return;
+      }
       // Nothing to restore means the row changed since it was read: show it as it is now.
       toast(r.restored ? "Restored" : "Nothing to restore", r.restored ? "ok" : "info");
       try {
@@ -573,7 +577,8 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
         if (!stale()) toast(`Reload failed: ${humanizeError(e)}`, "error");
       }
     } catch (e) {
-      if (!stale()) toast(`Restore failed: ${humanizeError(e)}`, "error");
+      if (stale()) toast(`Restore of ${memoryKey} failed: ${humanizeError(e)}`, "error");
+      else toast(`Restore failed: ${humanizeError(e)}`, "error");
     } finally {
       if (!stale()) setRestoring(false);
     }

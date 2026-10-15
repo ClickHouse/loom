@@ -557,8 +557,8 @@ function AutoResolvedPanel({ initial }: { initial: AutoResolvedPage }) {
       if (!mounted.current) return;
       setOutcome((m) => new Map(m).set(k, out.restored ? "restored" : "gone"));
       const said = out.restored ? `Restored ${r.memory_key}` : `${r.memory_key} changed since; nothing undone`;
-      // A screen reader repeats nothing when the text does not change: a trailing space
-      // makes a second Undo of the same key read again.
+      // A screen reader repeats nothing when the text does not change: a trailing non-breaking
+      // space makes a second Undo of the same key read again.
       setAnnouncement((prev) => (prev === said ? `${said}\u00a0` : said));
       if (out.restored) toast("Restored", "ok");
     } catch (e) {

@@ -145,9 +145,9 @@ describe("MemoryInspector restore of a superseded row", () => {
     await waitFor(() => expect(toast).toHaveBeenCalledWith("Nothing to restore", "info"));
   });
 
-  it("drops a restore that lands after the drawer moved to another memory", async () => {
-    seed("writer");
-    const onChanged = vi.fn();
+  // Opens user_city, clicks Restore, then moves the drawer to user_job before the
+  // restore answers. Returns the callbacks that answer it.
+  async function restoreThenMove(onChanged: () => void) {
     const job: MemoryDetail = { ...SUPERSEDED, value: "works at Acme", memory_id: "m-job-1", status: "active" };
     vi.mocked(getMemory).mockImplementation(async (_id, key) => (key === "user_job" ? job : SUPERSEDED));
     const view = render(
@@ -155,10 +155,12 @@ describe("MemoryInspector restore of a superseded row", () => {
     );
     await screen.findByText("lives in Lisbon");
     let finish: (v: { restored: boolean }) => void = () => {};
+    let fail: (e: Error) => void = () => {};
     vi.mocked(restoreMemory).mockImplementation(
       () =>
-        new Promise((resolve) => {
+        new Promise((resolve, reject) => {
           finish = resolve;
+          fail = reject;
         }),
     );
     await userEvent.click(await screen.findByRole("button", { name: "Restore" }));
@@ -167,14 +169,29 @@ describe("MemoryInspector restore of a superseded row", () => {
     );
     await screen.findByText("works at Acme");
     vi.mocked(getMemory).mockClear();
+    return { finish, fail };
+  }
+
+  it("names the key of a restore that lands after the drawer moved to another memory", async () => {
+    seed("writer");
+    const onChanged = vi.fn();
+    const { finish } = await restoreThenMove(onChanged);
     finish({ restored: true });
-    await new Promise((r) => setTimeout(r, 20));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Restored user_city", "ok"));
+    // The drawer keeps showing the memory it moved to.
     expect(screen.getByText("works at Acme")).toBeTruthy();
     expect(screen.queryByText("lives in Lisbon")).toBeNull();
     expect(getMemory).not.toHaveBeenCalled();
-    expect(toast).not.toHaveBeenCalled();
     // The restore did land, so the list behind the drawer is refreshed.
     expect(onChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it("names the key of a restore that fails after the drawer moved to another memory", async () => {
+    seed("writer");
+    const { fail } = await restoreThenMove(() => {});
+    fail(new Error("network down"));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Restore of user_city failed: network down", "error"));
+    expect(screen.getByText("works at Acme")).toBeTruthy();
   });
 
   it("reports a landed restore even when the re-read fails", async () => {
