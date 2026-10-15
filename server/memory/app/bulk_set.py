@@ -48,6 +48,7 @@ from server.memory.app.projections import (
     write_entity_vectors,
 )
 from server.memory.app.provenance import writer_actor
+from server.memory.domain.conflicts import kept_versions
 from server.memory.domain.memory_types import is_embedded
 
 if TYPE_CHECKING:
@@ -443,16 +444,6 @@ async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
         await fence_high(fences, ch=ch)
 
 
-def _winners(state: _BulkWriteState) -> dict[str, dict[str, Any]]:
-    """memory_key -> the batch's highest-version row of it."""
-    winners: dict[str, dict[str, Any]] = {}
-    for r in state.memory_rows:
-        key = str(r.get("memory_key"))
-        if key not in winners or int(r["version"]) >= int(winners[key]["version"]):
-            winners[key] = r
-    return winners
-
-
 def _high_winners(state: _BulkWriteState) -> list[tuple[Any, int]]:
     """(identity key, version) of each key whose winning row is 'high': the fence an
     older write's late vector lands under."""
@@ -460,7 +451,7 @@ def _high_winners(state: _BulkWriteState) -> list[tuple[Any, int]]:
 
     return [
         (memory_repo.embedding_key(r), int(r["version"]))
-        for r in _winners(state).values()
+        for r in kept_versions(state.memory_rows).values()
         if str(r.get("sensitivity") or "") == "high"
     ]
 
@@ -470,7 +461,7 @@ def _vectors_to_retire(state: _BulkWriteState) -> dict[str, tuple[Any, int]]:
     highest version in the batch) lands unembedded and may have a live vector: the
     batch embedded an earlier entry of it, the replaced version was embedded, or the
     lookup failed and nobody knows."""
-    winners = _winners(state)
+    winners = kept_versions(state.memory_rows)
     batch_embedded = {str(r.get("memory_key")) for r in state.embedding_rows}
     out: dict[str, tuple[Any, int]] = {}
     for key, r in winners.items():
@@ -605,7 +596,6 @@ async def _record_intra_batch_retirements(
         NEWEST_WINS_CONTRADICTION,
         record_auto_supersessions,
     )
-    from server.memory.domain.conflicts import kept_versions
 
     # A key sent twice is two versions of one row (one id, when the key already
     # existed): only a kept version that landed superseded retired its row.
