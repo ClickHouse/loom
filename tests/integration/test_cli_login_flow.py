@@ -478,32 +478,22 @@ def test_service_accounts_and_account_views_need_no_dashboard(
     assert _whoami(base, kept["token"])["authenticated"] is True
 
 
-def test_a_stolen_session_takes_only_its_own_machine_tokens(
+def test_a_replay_ends_one_session_and_spares_the_persons_others(
     password_server, tmp_path, monkeypatch
 ) -> None:
     base, _org, ns, email, password = password_server
     laptop, desktop = tmp_path / "laptop", tmp_path / "desktop"
     _session_for(base, desktop, email, password, monkeypatch)
-    other = _loom(
-        desktop,
-        "call",
-        "/v1/me/service_accounts.create",
-        "name=desk",
-        f"namespaces:={json.dumps([ns])}",
-    )
+    other = _loom(desktop, "call", "/v1/me/service_accounts.create", "name=desk", f"namespaces:={json.dumps([ns])}")
     _session_for(base, laptop, email, password, monkeypatch)
-    made = _loom(
-        laptop,
-        "call",
-        "/v1/me/service_accounts.create",
-        "name=ci",
-        f"namespaces:={json.dumps([ns])}",
-    )
+    made = _loom(laptop, "call", "/v1/me/service_accounts.create", "name=ci", f"namespaces:={json.dumps([ns])}")
     first = _stored()
     credentials.access_token(refused=first["access_token"])  # rotate once
-    # A copy of the spent token comes back: this session and what it minted end.
+    # The spent token comes back at once, as a retry whose answer was lost
+    # would: that session ends, and (a retry, not a theft) its CI token stays.
     assert _refresh(base, first["refresh_token"]).json()["detail"]["error"] == "invalid_grant"
-    assert _whoami(base, made["token"])["authenticated"] is False
-    # The same person's other session, and what it minted, are not the thief's.
+    assert _whoami(base, _stored()["access_token"])["authenticated"] is False
+    assert _whoami(base, made["token"])["authenticated"] is True
+    # The same person's other session, and what it minted, are untouched.
     assert _whoami(base, other["token"])["authenticated"] is True
     assert _loom(desktop, "call", "/v1/me/sharing-summary")["subject"] == email

@@ -273,7 +273,8 @@ def test_denied_grant_ends_with_access_denied(_world) -> None:
     assert [n for n, _ in _world["events"]] == ["auth.device_denied"]
 
 
-def test_a_replayed_device_code_ends_the_session(_world) -> None:
+def test_a_replayed_device_code_ends_the_session(_world, monkeypatch) -> None:
+    monkeypatch.setattr(oauth, "_RETRY_GRACE_S", -1)
     c = _client()
     grant = _start(c)
     _approve(c, grant["user_code"], _sign_in(c, grant["user_code"]).text)
@@ -301,7 +302,8 @@ def test_refresh_rotates_within_the_session() -> None:
     assert claims[0]["jti"] != claims[1]["jti"]  # two tokens
 
 
-def test_a_replayed_refresh_token_revokes_the_whole_family(_world) -> None:
+def test_a_replayed_refresh_token_revokes_the_whole_family(_world, monkeypatch) -> None:
+    monkeypatch.setattr(oauth, "_RETRY_GRACE_S", -1)  # long after the spend: a thief
     c = _client()
     first = _signed_in_tokens(c)
     second = _refresh(c, first["refresh_token"]).json()
@@ -536,7 +538,7 @@ def test_dashboard_sso_hands_back_a_short_token_in_the_fragment(sso, _world) -> 
     assert back.status_code == 302 and back.headers["location"].startswith("/me#token=")
     token = back.headers["location"].split("#token=")[1]
     claims = pyjwt.decode(token, options={"verify_signature": False})
-    assert claims["exp"] - claims["iat"] == 12 * 3600
+    assert claims["exp"] - claims["iat"] == 3600 and claims["sid"]
     assert [n for n, _ in _world["events"]] == ["auth.sso_signin"]
 
 
@@ -901,3 +903,86 @@ def test_session_children_carry_the_sessions_minted_key() -> None:
 
     with pytest.raises(TokenError, match="parent"):
         verify_token(child)
+
+
+# ── round 6: a retry is not a theft, a leaked code proves nothing ─────────
+
+
+def test_a_quick_retry_ends_the_session_but_keeps_what_it_minted(_world) -> None:
+    c = _client()
+    first = _signed_in_tokens(c)
+    _refresh(c, first["refresh_token"])  # its answer was lost
+    assert _error(_refresh(c, first["refresh_token"])) == "invalid_grant"
+    sid = pyjwt.decode(first["access_token"], options={"verify_signature": False})["sid"]
+    assert _world["revoked"] == [sid]
+
+
+def test_a_loom_failure_during_refresh_leaves_the_token_usable(_world, monkeypatch) -> None:
+    c = _client()
+    tokens = _signed_in_tokens(c)
+
+    async def ch_down(subject: str, org: str, roles: list[str]) -> list[str]:
+        raise RuntimeError("ClickHouse unreachable")
+
+    monkeypatch.setattr(login, "refreshed_roles", ch_down)
+    with pytest.raises(RuntimeError):
+        _refresh(c, tokens["refresh_token"])
+
+    async def active(subject: str, org: str, roles: list[str]) -> list[str]:
+        return roles
+
+    monkeypatch.setattr(login, "refreshed_roles", active)
+    assert _refresh(c, tokens["refresh_token"]).status_code == 200  # no replay
+    assert _world["revoked"] == []
+
+
+def _code_for(c: TestClient, store: MemoryOAuthStore) -> tuple[str, str, str]:
+    """(client_id, code, verifier) for one MCP connect by password."""
+    import base64
+    import hashlib
+
+    client_id = _register(c)
+    verifier = "v" * 43
+    challenge = (
+        base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    )
+    r = c.post(
+        "/oauth/authorize",
+        data={
+            "client_id": client_id,
+            "redirect_uri": "http://127.0.0.1:9/cb",
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+            "identifier": "alice@example.com",
+            "password": "pw",
+        },
+        follow_redirects=False,
+    )
+    code = r.headers["location"].split("code=")[1].split("&")[0]
+    return client_id, code, verifier
+
+
+def _exchange(c: TestClient, client_id: str, code: str, verifier: str) -> httpx.Response:
+    return c.post(
+        "/oauth/token",
+        data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "client_id": client_id,
+            "redirect_uri": "http://127.0.0.1:9/cb",
+            "code_verifier": verifier,
+        },
+    )
+
+
+def test_a_leaked_spent_code_alone_ends_nothing(_world, monkeypatch) -> None:
+    monkeypatch.setattr(oauth, "_RETRY_GRACE_S", -1)
+    c = _client()
+    client_id, code, verifier = _code_for(c, _world["store"])
+    assert _exchange(c, client_id, code, verifier).status_code == 200
+    assert _error(_exchange(c, "someone-else", code, verifier)) == "invalid_grant"
+    assert _error(_exchange(c, client_id, code, "w" * 43)) == "invalid_grant"
+    assert _world["revoked"] == []
+    # With the verifier, it is the client's own copy coming back: the session ends.
+    assert _error(_exchange(c, client_id, code, verifier)) == "invalid_grant"
+    assert len(_world["revoked"]) == 2

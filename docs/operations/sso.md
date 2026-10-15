@@ -76,7 +76,7 @@ The provider can never grant admin.
 
 ## Sessions and logout
 
-- The dashboard's SSO token lasts 12 hours. After that the user clicks the
+- The dashboard's SSO token lasts an hour. After that the user clicks the
   button again, and Okta's own session usually makes that one click.
 - `loom logout` revokes the Loom session on the server and the Okta refresh
   token at Okta.

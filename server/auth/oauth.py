@@ -56,16 +56,17 @@ _ACCESS_TTL = 3600  # 1h access token
 _CODE_TTL = 60  # auth code: short-lived, single-use
 _REFRESH_TTL = 30 * 86400  # 30d refresh token
 _PENDING_TTL = 600  # OIDC pending-login record: time to complete IdP sign-in
-_DASHBOARD_TTL = 12 * 3600  # dashboard SSO token; the dashboard has no refresh
 _UPSTREAM_PURPOSE = "oidc refresh token"
 
 
 class CodeReplayed(Exception):
-    """A single-use code or refresh token was presented after it was spent."""
+    """A single-use code or refresh token was presented after it was spent,
+    `spent_at` (unix seconds) ago."""
 
-    def __init__(self, grant: dict[str, Any]) -> None:
+    def __init__(self, grant: dict[str, Any], spent_at: float) -> None:
         super().__init__("spent credential presented again")
         self.grant = grant
+        self.spent_at = spent_at
 
 
 # --------------------------------------------------------------------------
@@ -73,7 +74,8 @@ class CodeReplayed(Exception):
 #
 # Async interface (both impls):
 #   save_client(client_id, redirect_uris, client_name) / get_client(client_id)
-#   save_code(code, grant)   / take_code(code)    — single-use
+#   save_code(code, grant)   / take_code(code, client_id) — single-use, and
+#     like take_refresh bound to the issuee
 #   save_refresh(token, gr)  / take_refresh(token, client_id) — rotating
 #     (single-use) and bound to the issuee: another client_id gets None and
 #     the token is left unconsumed, so a wrong presenter can't burn it.
@@ -176,8 +178,8 @@ class _CHStore:
     async def save_refresh(self, token: str, g: dict[str, Any]) -> None:
         await self._ch().insert(self._T, [self._grant_row("refresh", token_id(token), g, 0)])
 
-    async def take_code(self, code: str) -> dict[str, Any] | None:
-        return await self._take("code", token_id(code))
+    async def take_code(self, code: str, client_id: str) -> dict[str, Any] | None:
+        return await self._take("code", token_id(code), client_id)
 
     async def take_refresh(self, token: str, client_id: str) -> dict[str, Any] | None:
         return await self._take("refresh", token_id(token), client_id)
@@ -186,7 +188,7 @@ class _CHStore:
         self, rtype: str, rid: str, client_id: str | None = None
     ) -> dict[str, Any] | None:
         row = await self._ch().query_one(
-            f"""SELECT {self._GRANT_COLUMNS} FROM {self._T} FINAL
+            f"""SELECT {self._GRANT_COLUMNS}, version FROM {self._T} FINAL
                 WHERE record_type = {{t:String}} AND id = {{id:String}} LIMIT 1""",
             params={"t": rtype, "id": rid},
         )
@@ -207,7 +209,7 @@ class _CHStore:
             "upstream_refresh": unseal(_UPSTREAM_PURPOSE, row["upstream_refresh"]),
         }
         if row["consumed"]:
-            raise CodeReplayed(grant)
+            raise CodeReplayed(grant, int(row["version"]) / 1e9)  # the consume row's time_ns
         await self._ch().insert(self._T, [self._grant_row(rtype, rid, grant, 1)])
         return grant
 
@@ -312,15 +314,17 @@ class _CHStore:
         """The device grant as the polling client sees it. An approved or
         denied grant is consumed by this read; a pending one is not."""
         row = await self._ch().query_one(
-            f"""SELECT client_id, consumed, {self._DEVICE_COLUMNS} FROM {self._T} FINAL
+            f"""SELECT client_id, consumed, version, {self._DEVICE_COLUMNS} FROM {self._T} FINAL
                 WHERE record_type = 'device' AND id = {{id:String}} LIMIT 1""",
             params={"id": token_id(device_code)},
         )
         if not row:
             return None
         d = self._device(row)
+        if d["exp"] < int(time.time()):
+            return d  # expired: the poller hears so, spent or not
         if row["consumed"]:
-            raise CodeReplayed(d)
+            raise CodeReplayed(d, int(row["version"]) / 1e9)
         if d["status"] != "pending":
             await self._ch().insert(self._T, [self._device_row(d, 1)])
         return d
@@ -917,10 +921,10 @@ async def _dashboard_signed_in(identity: tuple[str, str, list[str], list[str]]) 
         org=org,
         namespaces=namespaces,
         roles=roles,
-        ttl_seconds=_DASHBOARD_TTL,
+        ttl_seconds=_ACCESS_TTL,
         is_service_account=False,
         # A sign-in session like the CLI's: revocable as one, and what it mints
-        # is bounded like the person, not by its twelve hours.
+        # is bounded like the person, not by its hour.
         session_id=new_jti(),
     )
     await audit.emit(
@@ -1017,10 +1021,18 @@ async def end_session(grant: dict[str, Any], reason: str, *, stolen: bool = Fals
     )
 
 
+# A spent credential presented again this soon after is a client retrying a
+# request whose answer it lost, not a thief.
+_RETRY_GRACE_S = 30
+
+
 async def end_replayed_session(e: CodeReplayed, what: str) -> HTTPException:
-    """A spent credential came back: whoever holds a copy must lose the session."""
+    """A spent credential came back. Its session ends either way; unless it is
+    a quick retry, someone else holds a copy, and what the session minted
+    ends too."""
+    stolen = time.time() - e.spent_at > _RETRY_GRACE_S
     try:
-        await end_session(e.grant, f"{what} replayed", stolen=True)
+        await end_session(e.grant, f"{what} replayed", stolen=stolen)
     except Exception:  # the replay is refused whether or not the revoke landed
         log.exception("oauth: revoking a replayed %s's session failed", what)
     return _invalid_grant()
@@ -1029,12 +1041,14 @@ async def end_replayed_session(e: CodeReplayed, what: str) -> HTTPException:
 async def _authorization_code_grant(f: dict[str, str]) -> dict[str, Any]:
     client_id = f.get("client_id", "")
     try:
-        grant = await store.take_code(f.get("code", ""))  # single-use: marks consumed
+        grant = await store.take_code(f.get("code", ""), client_id)  # single-use
     except CodeReplayed as e:
+        if not verify_pkce_s256(f.get("code_verifier", ""), e.grant["code_challenge"]):
+            raise _invalid_grant() from None  # a leaked code alone proves nothing
         raise await end_replayed_session(e, "authorization code") from None
     if grant is None:
         raise _invalid_grant()
-    if grant["client_id"] != client_id or grant["redirect_uri"] != f.get("redirect_uri", ""):
+    if grant["redirect_uri"] != f.get("redirect_uri", ""):
         raise _invalid_grant()
     if not verify_pkce_s256(f.get("code_verifier", ""), grant["code_challenge"]):
         raise _invalid_grant("PKCE failed")
@@ -1068,8 +1082,7 @@ async def _ask_identity_provider(grant: dict[str, Any], refresh_token: str) -> s
 
 
 async def _refresh_token_grant(f: dict[str, str]) -> dict[str, Any]:
-    from server.auth.login import refreshed_roles
-    from server.auth.revocation import is_revoked, loaded
+    from server.auth.revocation import loaded
 
     # A refresh mints a token with a fresh iat, which would pass any
     # `revoke-token --issued-before` cutoff — so the revocation check must
@@ -1098,6 +1111,20 @@ async def _refresh_token_grant(f: dict[str, str]) -> dict[str, Any]:
         raise await end_replayed_session(e, "refresh token") from None
     if grant is None:
         raise _invalid_grant()
+    try:
+        return await _refresh_session(grant, refresh_token)
+    except HTTPException:
+        raise  # an answer: refused, or retry later with the token put back
+    except Exception:  # Loom's own failure: unspend the token so the retry is no replay
+        await store.save_refresh(refresh_token, grant)
+        raise
+
+
+async def _refresh_session(grant: dict[str, Any], refresh_token: str) -> dict[str, Any]:
+    """The refresh grant's checks and new tokens, once the old token is spent."""
+    from server.auth.login import refreshed_roles
+    from server.auth.revocation import is_revoked
+
     # exp is always saved as mint time + _REFRESH_TTL.
     issued_at = int(grant["exp"]) - _REFRESH_TTL
     if is_revoked(grant["family"]) or is_revoked(str(grant["subject"]), issued_at=issued_at):
@@ -1110,11 +1137,7 @@ async def _refresh_token_grant(f: dict[str, str]) -> dict[str, Any]:
     roles = await refreshed_roles(grant["subject"], grant["org"], list(grant["roles"]))
     if roles is None:
         raise _invalid_grant()
-    try:
-        return await issue_tokens({**grant, "roles": roles}, grant["client_id"])
-    except Exception:  # put the spent token back so the client's retry is no replay; re-raised
-        await store.save_refresh(refresh_token, grant)
-        raise
+    return await issue_tokens({**grant, "roles": roles}, grant["client_id"])
 
 
 @router.post("/oauth/token")

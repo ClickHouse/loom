@@ -253,8 +253,10 @@ what was asked for, cut to what the caller's token allows and to the caller's li
 - a service-account caller mints only service-account tokens (on the Setup page: send
   `persist=true`);
 - an expiry: `ttl_days`/`ttl_seconds`, 90 days when unset, and never past the caller's own
-  token's `exp` (a longer TTL is clipped);
-- `parents` (every ancestor's token id), `parent_subjects` (every ancestor's `sub`),
+  token's `exp` (a longer TTL is clipped), except from a sign-in session's hour-long token
+  (`loom login`, dashboard SSO), whose children are bounded like the person instead;
+- `parents` (every ancestor's token id; for a sign-in session the session's `<sid>/minted`
+  key in place of the access token's), `parent_subjects` (every ancestor's `sub`),
   `parent_iats` (every ancestor's `iat`) and `creator` (the person at the root).
 
 On every request the gate rechecks a delegated token: the person's live grant must still
@@ -264,7 +266,8 @@ them active any more, or who held grants and has none live, as after a claim rel
 stops every token they delegated). An op with no namespace that writes needs the person to
 hold that role on some namespace of the org. Revoking any ancestor's `jti` or `sub` (the
 dashboard revokes a service account by its `sub`) or the person's `sub` kills the token,
-its children and theirs. A revoke with an issued-before cutoff judges each ancestor by its
+its children and theirs. Tokens minted from a sign-in session outlive its logout; a stolen
+copy of the session coming back revokes its `<sid>/minted` key and so them too. A revoke with an issued-before cutoff judges each ancestor by its
 own `iat` and the person by the root's, so a child minted after the cutoff from an older
 token dies with it; a delegated token without aligned `parent_iats` is refused. `loom mint-token` signs with
 the key and is not a delegation.

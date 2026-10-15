@@ -34,7 +34,7 @@ class MemoryOAuthStore:
         self.refresh: dict[str, dict[str, Any]] = {}
         self.pending: dict[str, dict[str, Any]] = {}
         self.devices: dict[str, dict[str, Any]] = {}
-        self.spent: set[str] = set()
+        self.spent: dict[str, float] = {}  # key -> when it was spent
 
     async def save_client(self, client_id: str, redirect_uris: list[str], name: str) -> None:
         self.clients[client_id] = {"redirect_uris": list(redirect_uris), "client_name": name}
@@ -44,11 +44,11 @@ class MemoryOAuthStore:
 
     async def save_code(self, code: str, g: dict[str, Any]) -> None:
         self.codes[token_id(code)] = {"family": "", "upstream_refresh": "", **g}
-        self.spent.discard(token_id(code))
+        self.spent.pop(token_id(code), None)
 
     async def save_refresh(self, token: str, g: dict[str, Any]) -> None:
         self.refresh[token_id(token)] = {"family": "", "upstream_refresh": "", **g}
-        self.spent.discard(token_id(token))
+        self.spent.pop(token_id(token), None)
 
     def _take(
         self, rows: dict[str, dict[str, Any]], key: str, client_id: str | None = None
@@ -59,12 +59,12 @@ class MemoryOAuthStore:
         if client_id is not None and g["client_id"] != client_id:
             return None
         if key in self.spent:
-            raise CodeReplayed(dict(g))
-        self.spent.add(key)
+            raise CodeReplayed(dict(g), self.spent[key])
+        self.spent[key] = time.time()
         return dict(g)
 
-    async def take_code(self, code: str) -> dict[str, Any] | None:
-        return self._take(self.codes, token_id(code))
+    async def take_code(self, code: str, client_id: str) -> dict[str, Any] | None:
+        return self._take(self.codes, token_id(code), client_id)
 
     async def take_refresh(self, token: str, client_id: str) -> dict[str, Any] | None:
         return self._take(self.refresh, token_id(token), client_id)
@@ -77,7 +77,7 @@ class MemoryOAuthStore:
 
     async def save_device(self, d: dict[str, Any]) -> None:
         self.devices[d["id"]] = dict(d)
-        self.spent.discard(d["id"])  # a new unconsumed version, as the real store writes
+        self.spent.pop(d["id"], None)  # a new unconsumed version, as the real store writes
 
     async def device_by_user_code(self, user_code_id: str) -> dict[str, Any] | None:
         for d in self.devices.values():
@@ -94,8 +94,10 @@ class MemoryOAuthStore:
         d = self.devices.get(token_id(device_code))
         if d is None:
             return None
+        if d["exp"] < int(time.time()):
+            return dict(d)
         if d["id"] in self.spent:
-            raise CodeReplayed(dict(d))
+            raise CodeReplayed(dict(d), self.spent[d["id"]])
         if d["status"] != "pending":
-            self.spent.add(d["id"])
+            self.spent[d["id"]] = time.time()
         return dict(d)

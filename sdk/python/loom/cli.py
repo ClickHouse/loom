@@ -76,7 +76,7 @@ def _server(args: argparse.Namespace) -> str | None:
 async def _call(args: argparse.Namespace) -> Any:
     from loom.agent import Agent
 
-    body = _body(args)
+    body = args.body
     agent = Agent(
         args.org or "",
         args.namespace or "",
@@ -182,4 +182,9 @@ def main(argv: list[str] | None = None, prog: str = "python -m loom") -> int:
             args.fields = [*args.fields, *map(_field, extra)]
         except argparse.ArgumentTypeError as e:
             parser.error(str(e))
+    if args.cmd == "call":
+        try:
+            args.body = _body(args)
+        except (ValueError, OSError) as e:
+            parser.error(f"--data: {e}")
     return run(args)

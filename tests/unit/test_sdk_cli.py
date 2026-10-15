@@ -35,8 +35,9 @@ def test_fields_are_text_unless_typed() -> None:
 
 
 def test_data_must_be_an_object(capsys) -> None:
-    assert cli.main(["call", "memory.search", "--data", "[1]"]) == 1
-    assert "JSON object" in capsys.readouterr().err
+    with pytest.raises(SystemExit) as e:
+        cli.main(["call", "memory.search", "--data", "[1]"])
+    assert e.value.code == 2 and "JSON object" in capsys.readouterr().err
 
 
 def test_fields_win_over_data() -> None:

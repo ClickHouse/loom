@@ -1019,7 +1019,7 @@ Source: `server/settings/_observability.py`
 | `LOOM_OTEL_EXPORTER_OTLP_HEADERS` | `str` | *(unset)* | Comma-separated K=V headers sent to that endpoint, e.g. `Authorization=Bearer <token>`. |
 | `LOOM_OTEL_SERVICE_NAME` | `str` | `'loom'` | OTel resource `service.name` and `deployment.environment` stamped on every span, log and metric. |
 | `LOOM_OTEL_ENVIRONMENT` | `str` | `'dev'` | The `deployment.environment` value. |
-| `LOOM_OTEL_EXCLUDED_URLS` | `str` | `'/v1/health'` | Comma-separated path regexes the FastAPI instrumentation opens no span for (health polls). "" = instrument every path. |
+| `LOOM_OTEL_EXCLUDED_URLS` | `str` | `'/v1/health'` | Comma-separated path regexes the FastAPI instrumentation opens no span for (health polls). "" = instrument every path but the sign-in routes (/oauth/), which are always left out: their URLs carry codes. |
 | `LOOM_LATENCY_BUDGET_MULTIPLIER` | `float` | `1.0` | Scales every per-op `budget_p99_ms` (tuned for local CH) at the comparison site; set e.g. 20.0 on Cloud so SLO alerts don't fire on baseline RTT. |
 | `LOOM_LATENCY_BUDGET_OVERRIDES_BY_CONSUMER` | `str` | `''` | JSON map {consumer: {op \| "*": ms \| "<n>x"}}: an integer is a budget in ms, "3x" multiplies the op's declared budget. Checked after runtime `admin/budget.set` overrides, before per-op ones; malformed = logged once and ignored. '' = none. |
 | `LOOM_WORKER_LEDGER_ROWS` | `bool` | `True` | One agent_events row per worker pass that spent something or failed (operation worker.<name>.pass, kind='worker'); loom.worker_status records every pass. |
