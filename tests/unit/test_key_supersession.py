@@ -475,7 +475,8 @@ async def test_bulk_drops_a_retired_new_row_from_the_settling_steps(monkeypatch)
         ("user_hometown", ""),
     ]
     assert state.memory_rows[0]["status"] == "superseded"
-    # A new row that landed superseded wrote no graph facts: nothing of it to follow.
+    # A row that landed superseded is not followed: a brand-new id held no graph facts,
+    # and a stored row revised in place closes what it held through its reconcile.
     assert state.judged_follow_pairs == []
 
 

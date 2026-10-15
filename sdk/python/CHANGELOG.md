@@ -11,6 +11,8 @@ All notable changes to the Python SDK. The format follows
 
 - `CodedWidthMismatch` and `OverrideNotShared` (`BackendUnavailable` subclasses) for the
   server's `CODED_WIDTH_MISMATCH` and `OVERRIDE_NOT_SHARED`.
+- `memory.restore(if_superseded_by=..., only_if_superseded=...)`: undo a retirement only
+  while it still stands, never a delete.
 
 ### Changed
 

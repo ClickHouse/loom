@@ -103,10 +103,20 @@ async def test_restore_reverses_an_automatic_supersession_and_writes_the_ledger_
     monkeypatch.setattr("server.memory.store.get_by_key", _get_by_key)
     monkeypatch.setattr("server.memory.store.unsupersede_embeddings", _unsupersede)
     monkeypatch.setattr("server.observability.audit.emit", _emit)
-    out = await restore_mod.handle_memory_restore(
-        MemoryRestoreInput(org="o", namespace="n", agent="a", session_id="s1", memory_key="k")
-    )
+    from types import SimpleNamespace
+
+    from server.auth.context import set_current_auth
+
+    set_current_auth(SimpleNamespace(org="o", subject="alice", is_service_account=False))
+    try:
+        out = await restore_mod.handle_memory_restore(
+            MemoryRestoreInput(org="o", namespace="n", agent="a", session_id="s1", memory_key="k")
+        )
+    finally:
+        set_current_auth(None)
     assert out.restored is True and out.from_status == "superseded"
+    # The ledger row names who undid the retirement, from the token.
+    assert emitted[0][1]["actor"] == "human:alice"
     table, rows = ch.inserts[0]
     assert table == "loom.memory"
     assert (

@@ -859,14 +859,10 @@ async def _bulk_run_projections(
     ]
     await asyncio.gather(*(leg() for leg in _legs))
     # A row revised in place keeps its id: what it held before is judged against its
-    # new value, once its new links are in ('high' included: it now holds none). A
-    # brand-new row held nothing.
+    # new value, once its new links are in ('high' and judged-superseded included: it
+    # now holds none). A brand-new row held nothing.
     existed = set(state.existing_ids.values())
-    revised = [
-        r.memory_id
-        for r in state.results
-        if r.version and r.memory_key not in state.judged_retired_keys and r.memory_id in existed
-    ]
+    revised = [r.memory_id for r in state.results if r.version and r.memory_id in existed]
     if revised:
         await reconcile_row_facts(p_input, revised, reopen=False, op="memory.bulk_set", ch=ch)
 

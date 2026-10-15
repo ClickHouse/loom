@@ -1761,6 +1761,31 @@ async def test_an_undo_of_a_row_holding_two_values_keeps_the_later_one_current(c
     assert await _open_cities(ch, org, {"berlin"}) == {"berlin"}
 
 
+async def test_an_undo_weighs_a_fact_whose_row_a_close_ends_ahead(ch, org) -> None:
+    # A close dated December ends London's row ahead and stamps it now: that row is
+    # not current for the readers, so the Undo's own London row carries the weight.
+    from types import SimpleNamespace
+
+    from server.memory.app import entity_projections
+    from server.memory.app.projections import close_triples
+
+    live = ("user", "live_in")
+    london = await _stated(ch, org, "s1", "I live in London", (*live, "london"))
+    now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+    december = now + timedelta(days=60)
+    await close_triples(ch, org=org, namespace=NS, closes=[(*live, "london", december, now)])
+    await _mutations_done(ch, org)
+    scope = SimpleNamespace(org=org, namespace=NS, agent="bot")
+    await entity_projections.reopen_held_facts(scope, [str(london["memory_id"])], ch=ch)
+    await _mutations_done(ch, org)
+    (marker,) = await ch.query_all(
+        "SELECT co_occur FROM loom.entity_triples WHERE org = {org:String}"
+        " AND adapter_name = 'row-restore' SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert marker["co_occur"] == 1
+
+
 async def test_an_undo_takes_no_end_from_an_older_row_of_its_fact(ch, org) -> None:
     # An older row said London until December; a later row said London with no end,
     # and a supersession closed it. The latest row's end was the close's: the Undo
@@ -2435,6 +2460,32 @@ async def test_a_bulk_revision_to_high_closes_what_its_row_held(ch, org) -> None
         )
     )
     assert [r.memory_id for r in out.written] == [str(london["memory_id"])]
+    await _mutations_done(ch, org)
+    assert await _open_cities(ch, org, set()) == set()
+
+
+async def test_a_stored_row_revised_into_a_superseded_value_closes_what_it_held(
+    ch, org, judge
+) -> None:
+    # s1's row is revised in place by a late bulk and lands superseded behind s2's
+    # later row: the facts it held close, as they would for any revision.
+    from server.memory import store as M
+    from server.memory.api.models_bulk import MemoryBulkSetInput
+    from server.memory.app.bulk_set import handle_memory_bulk_set
+
+    jazz = await _stated(ch, org, "s1", "I like jazz", triple=("user", "likes", "jazz"))
+    rock = _row(org, "s2", "I like rock", datetime(2026, 6, 1))
+    await M.insert_memory_versions([rock], ch=ch)
+    assert await _open_cities(ch, org, {"jazz"}) == {"jazz"}
+    entry = {"memory_key": KEY, "value": "I like blues", "valid_at": datetime(2026, 5, 1)}
+    out = await handle_memory_bulk_set(
+        MemoryBulkSetInput(
+            org=org, namespace=NS, agent="bot", user_id=USER, session_id="s1", entries=[entry]
+        )
+    )
+    (written,) = out.written
+    assert written.memory_id == str(jazz["memory_id"])
+    assert written.superseded_by == str(rock["memory_id"])
     await _mutations_done(ch, org)
     assert await _open_cities(ch, org, set()) == set()
 

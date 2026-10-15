@@ -272,3 +272,29 @@ def test_the_restore_paths_carry_no_type_guard() -> None:
     src += inspect.getsource(restore_mod._restore_superseded)
     assert "is_searchable_type" not in src
     assert '.get("embedding")' not in src  # no non-empty-vector guard either
+
+
+@pytest.mark.asyncio
+async def test_a_restore_inside_an_erasure_records_who_restored_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from server.auth.context import set_current_auth
+
+    class _ErasureCH(_CH):
+        async def query_all(self, sql: str, params: Any = None, **kw: Any) -> list[dict[str, Any]]:
+            if "FROM loom.erasure_requests" in sql:
+                return [{"erasure_id": "e1", "scope_type": "namespace", "scope_value": "ns"}]
+            return await super().query_all(sql, params, **kw)
+
+    existing = _row("semantic", tombstoned_at=_NOW - timedelta(days=2))
+    ch = _ErasureCH([])
+    _wire(monkeypatch, existing, ch)
+    set_current_auth(SimpleNamespace(org="ops-org", subject="alice", is_service_account=False))
+    try:
+        assert (await restore_mod.handle_memory_restore(_restore_input())).restored
+    finally:
+        set_current_auth(None)
+    (reversal,) = ch.rows_for("loom.erasure_reversals")
+    assert reversal["restored_by"] == "human:alice"

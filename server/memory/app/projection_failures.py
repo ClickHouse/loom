@@ -107,9 +107,7 @@ async def record_projection_failure(
 ) -> None:
     """Append one projection failure row.
 
-    Callers should wrap this helper in their own fail-open guard. This module
-    intentionally does not import logging to avoid recursive logging loops in
-    exception handlers.
+    Callers should wrap this helper in their own fail-open guard.
     """
 
     ch = ch or get_client()
@@ -788,7 +786,8 @@ async def _retry_graph_projection(
             return "incomplete_read_scope"
     # A replay that writes rows writes them only for rows that still hold the value:
     # one revised, retired or made 'high' since keeps what it holds now. A repair of
-    # triples that already landed is dated at their write and runs as it would have.
+    # triples that already landed is dated at their write and runs as it would have,
+    # and so does a result recorded before results named their row: it has no id to check.
     kept: dict[str, Any] = {}
     if not failure.payload.get(TRIPLES_INSERTED_AT):
         from server.memory.app.entity_projections import rows_holding
@@ -800,7 +799,7 @@ async def _retry_graph_projection(
             [(r.memory_id, value_sha256(e)) for e, r in pairs if r.memory_id],
             ch=ch,
         )
-        pairs = [(e, r) for e, r in pairs if r.memory_id in held]
+        pairs = [(e, r) for e, r in pairs if not r.memory_id or r.memory_id in held]
         if not pairs:
             return ""
         bulk_input = bulk_input.model_copy(update={"entries": [e for e, _r in pairs]})

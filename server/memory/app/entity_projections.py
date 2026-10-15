@@ -531,25 +531,10 @@ async def close_dropped_facts(input: Any, ids: list[str], *, ch: Any) -> None:
 async def reopen_held_facts(
     input: Any, ids: list[str], *, ch: Any, restored_at: datetime | None = None
 ) -> None:
-    """Open again the facts the rows `ids` hold now (by the rule a revision keeps
-    them by): an Undo brings a retired row's facts back with it.
-    An Undo is an assertion made at the restore (`restored_at`, now by default, to the
-    microsecond): each fact the rows hold, open or not, gets a new observation of its
-    latest row starting at the restore (or at a closed fact's own later start), ending
-    where that row's own stated end (not one a close set) is still to come, and its edge
-    one from the same start, so later writes read the Undo's date back from storage.
-    The observations are a microsecond apart in the facts' stored order, so of two
-    values the rows hold the later stays the later. It weighs 1 only when the fact (or
-    edge) has no weighted row the readers count as current after the Undo, the usual
-    Undo of a closed value, so readers still count it; otherwise 0, so Undoing back and
-    forth adds no weight, and 0 when another of the Undo's observations closes it as it
-    starts. While another tenant's mutation blocks the weight read, it raises and writes
-    nothing: the caller records the failure for the replay. Every one then
-    goes through the interval repair as a value seen at its observation, by the usual
-    rule: it beats the retirement it undoes, which arrived earlier, and loses to a
-    value asserted after it or starting on a later day. No row retires.
-    A replay passes the restore's time: it finds the observations written, by that
-    instant, restates them as stored, and repairs again as of the Undo."""
+    """Open again the facts the rows `ids` hold now: an Undo brings a retired row's
+    facts back. An Undo is an assertion made at the restore, so each fact gets a new
+    observation starting then, repaired like any other value; no row retires. A replay
+    passes `restored_at`, finds the observations that Undo wrote and restates them."""
     from server.identity.app.namespace_ontology import load_relation_cardinality
 
     # Only what the restored rows' values hold now: another row's claim keeps a fact
@@ -589,7 +574,8 @@ async def reopen_held_facts(
                minIf(valid_from, ours) AS marker_start, minIf(seen_at, ours) AS marker_seen,
                -- What the readers count as current after the Undo's second.
                countIf(co_occur > 0 AND (valid_from IS NULL OR valid_from <= {at:DateTime})
-                       AND (valid_to IS NULL OR valid_to > {at:DateTime})) AS weighted
+                       AND (valid_to IS NULL OR valid_to > {at:DateTime})
+                       AND invalid_at IS NULL) AS weighted
         FROM loom.entity_triples
         WHERE org = {org:String} AND namespace = {ns:String}
           AND (subject, relation, object) IN {triples:Array(Tuple(String, String, String))}
@@ -646,7 +632,9 @@ async def reopen_held_facts(
             # Dated at the Undo; a closed interval before it stays as history.
             valid_from=m.start,
             valid_to=_still_ahead(m.row["ends"], m.start),
-            # The Undo states nothing new: it only gives a closed fact its weight back.
+            # The Undo states nothing new: it only gives a closed fact its weight back,
+            # so Undoing back and forth adds none, and a value it closes as it starts
+            # gets none.
             co_occur=0 if m.row["weighted"] or _triple(m) in beaten else 1,
         )
         for m in fresh

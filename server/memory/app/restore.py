@@ -14,6 +14,7 @@ from server.memory.api.models_crud import (
     MemoryRestoreInput,
     MemoryRestoreOutput,
 )
+from server.memory.app.provenance import writer_actor
 from server.memory.domain.excerpt import build_excerpt
 from server.memory.store.inserts import insert_memory_versions
 from server.memory.store.rows import next_version
@@ -95,7 +96,7 @@ async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryResto
         "memory.unsupersede",
         org=input.org,
         namespace=input.namespace,
-        actor=getattr(input, "actor", "") or "-",
+        actor=writer_actor() or "-",
         subject={
             "memory_key": input.memory_key,
             "memory_id": str(existing.memory_id),
@@ -368,7 +369,7 @@ async def handle_memory_restore(input: MemoryRestoreInput) -> MemoryRestoreOutpu
                         "scope_value": str(m["scope_value"]),
                         "memory_id": str(row.get("memory_id") or ""),
                         "memory_key": input.memory_key,
-                        "restored_by": getattr(input, "actor", "") or "",
+                        "restored_by": writer_actor(),
                     }
                     for m in matching
                 ],
