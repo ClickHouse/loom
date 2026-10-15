@@ -41,9 +41,10 @@ async def work(agent: Agent, run_id: str) -> Literal["completed", "cancelled"]:
 
 async def main() -> None:
     # AX stops a task with SIGTERM; cancelling lets the run close as cancelled.
+    loop = asyncio.get_running_loop()
     task = asyncio.current_task()
     if task is not None:
-        asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, task.cancel)
+        loop.add_signal_handler(signal.SIGTERM, task.cancel)
 
     org = os.environ["LOOM_ORG"]
     namespace = os.environ["LOOM_NAMESPACE"]
@@ -57,6 +58,9 @@ async def main() -> None:
             goal="Fix the flaky test", environment="ax", budget_seconds=BUDGET_SECONDS
         ) as run:
             run.status = await work(agent, run.run_id)
+            # The work is done and the close is next: a SIGTERM now must not
+            # cancel the close, which fits in the 10 s AX allows.
+            loop.add_signal_handler(signal.SIGTERM, lambda: None)
 
 
 if __name__ == "__main__":

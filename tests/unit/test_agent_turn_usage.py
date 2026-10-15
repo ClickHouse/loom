@@ -107,10 +107,11 @@ def test_a_turn_dated_in_the_future_is_clamped_to_the_servers_clock() -> None:
         session_id="s1",
         turns=[{"message_id": "m1", "model": "claude-opus-5-5", "turn_at": ahead}],
     )
+    before = datetime.now(UTC)
     with patch.object(h, "get_client", return_value=_Client()):
         asyncio.run(h.handle_cost_record_turns(inp))
     by = dict(zip(fake.cols, fake.rows[0], strict=True))
-    assert by["turn_at"] <= datetime.now(UTC)
+    assert before <= by["turn_at"] <= datetime.now(UTC)
 
 
 def test_handler_write_failure_records_nothing() -> None:

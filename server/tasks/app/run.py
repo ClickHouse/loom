@@ -404,6 +404,7 @@ async def _open_run(
     if session_id in ("", SENTINEL):
         session_id = str(prior.get("session_id") or SENTINEL)
     budget_usd = input.budget_usd or float(prior.get("budget_usd") or 0.0)
+    budget_seconds = input.budget_seconds or int(prior.get("budget_seconds") or 0)
     # The begin row in the ledger carries the run it opened, so begin and complete join
     # on `run_id` (the body names none; the transport's fallback is the header run, empty
     # for a bare client).
@@ -444,7 +445,7 @@ async def _open_run(
             else input.metadata
         ),
         "budget_usd": budget_usd,
-        "budget_seconds": input.budget_seconds or int(prior.get("budget_seconds") or 0),
+        "budget_seconds": budget_seconds,
     }
     if version is not None:
         row["version"] = version

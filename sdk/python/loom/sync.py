@@ -400,7 +400,7 @@ class SyncRunScope:
     `run_coroutine_threadsafe` copies into every call the thread makes, so
     `memory.set` / `memory.search` / `memory.ask` from that thread stamp the
     run_id and `ask` credits its cited keys. Yields the underlying RunScope
-    (`used()`, `final_response`, `confidence`, `outcome`, `completed`)."""
+    (`used()`, `final_response`, `confidence`, `outcome`, `status`, `completed`)."""
 
     def __init__(self, owner: SyncAgent, **begin_kwargs: Any) -> None:
         self._owner = owner

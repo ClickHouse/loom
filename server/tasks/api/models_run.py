@@ -53,12 +53,11 @@ class RunBeginInput(BaseModel):
     role: str = Field(default="", max_length=64)
     # Free-form key/values stored on the run; `role`, when set, is added to it.
     metadata: dict[str, Any] = Field(default_factory=dict)
-    # Model spend in USD the run may reach; 0 = none. Needs a session_id, and a
-    # retry that re-sends the budget must re-send the session too; a re-sent
-    # begin with 0 keeps the run's budget. run.get reports a budget the run went
-    # past in `over_budget`: a signal for the agent, never a stop.
+    # Model spend in USD the run may reach (0 = none, kept on a re-sent begin); needs a session_id.
+    # A retry that re-sends the budget re-sends the session too. run.get reports
+    # a budget the run went past in `over_budget`: a signal, never a stop.
     budget_usd: float = Field(default=0.0, ge=0.0, le=100_000.0)
-    # Seconds the run may take; 0 = none, kept on a re-sent begin like budget_usd.
+    # Seconds the run may take (0 = none, kept on a re-sent begin).
     budget_seconds: int = Field(default=0, ge=0, le=30 * 86400)
 
     @model_validator(mode="after")
