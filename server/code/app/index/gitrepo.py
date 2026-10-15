@@ -220,12 +220,14 @@ async def _git(
     runs as a repository job (sandbox.run_job): the network only through the egress
     proxy, the clone the one writable path, `token` for the remote's host. A local
     command reads and writes `index_file` as its index when given."""
-    if remote:
-        args = (args[0], *upload_pack_args(remote), *args[1:])
-    argv = ["git", *UNQUOTED_PATHS, "--git-dir", git_dir, *args]
+    extra = upload_pack_args(remote) if remote else []
+    argv = ["git", *UNQUOTED_PATHS, "--git-dir", git_dir, args[0], *extra, *args[1:]]
+    label = " ".join(args[:2])
     returncode: int | None
     if remote:
-        returncode, out, err = await _network_git(argv, git_dir, remote, token, stdin, timeout_s)
+        returncode, out, err = await _network_git(
+            argv, label, git_dir, remote, token, stdin, timeout_s
+        )
     else:
         env = auth_env()
         if index_file:
@@ -240,7 +242,7 @@ async def _git(
         try:
             out, err = await communicate_or_kill(proc, stdin, timeout_s=timeout_s)
         except TimeoutError:
-            raise GitError(f"git {' '.join(args[:2])} timed out after {timeout_s}s") from None
+            raise GitError(f"git {label} timed out after {timeout_s}s") from None
         returncode = proc.returncode
     if returncode != 0:
         raise GitError(
@@ -251,7 +253,13 @@ async def _git(
 
 
 async def _network_git(
-    argv: list[str], git_dir: str, remote: str, token: str, stdin: bytes | None, timeout_s: float
+    argv: list[str],
+    label: str,
+    git_dir: str,
+    remote: str,
+    token: str,
+    stdin: bytes | None,
+    timeout_s: float,
 ) -> tuple[int, bytes, bytes]:
     from server.code.app.index.sandbox import run_job
 
@@ -266,7 +274,7 @@ async def _network_git(
             **remote_access(remote),
         )
     except TimeoutError:
-        raise GitError(f"git {' '.join(argv[5:7])} timed out after {timeout_s}s") from None
+        raise GitError(f"git {label} timed out after {timeout_s}s") from None
     return done.returncode, done.stdout, done.stderr
 
 

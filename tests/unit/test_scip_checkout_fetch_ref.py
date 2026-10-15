@@ -86,8 +86,8 @@ def _foreign_owner_env(remote: Path) -> dict[str, str]:
 
 
 def _require_owner_check(checkout: Path, bare: Path, target: str) -> None:
-    """Git 2.45.1 began refusing a foreign-owned source in upload-pack; later releases
-    take the environment's safe.directory there again, so only some versions show it."""
+    """Only some git releases refuse a foreign-owned source in upload-pack; skip where
+    this one does not."""
     plain = subprocess.run(
         ["git", "-C", str(checkout), "fetch", str(bare), f"+{target}:refs/plain"],
         capture_output=True,
