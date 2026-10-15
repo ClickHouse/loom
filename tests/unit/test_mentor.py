@@ -640,7 +640,7 @@ def test_run_over_budget_fires_only_when_run_get_names_a_budget() -> None:
     over = {"run": run, "over_budget": ["cost"], "cost_usd": 2.5, "elapsed_seconds": 30}
     hint = _call("run.get", {"run_id": "r1"}, over, session="s2")
     assert hint is not None and hint[0] == "run_over_budget"
-    assert "cost budget ($2.50 of $2.00 spent)" in hint[1] and "run.complete" in hint[1]
+    assert "cost budget ($2.5000 of $2.00 spent)" in hint[1] and "run.complete" in hint[1]
     assert " s of " not in hint[1]
 
 
@@ -656,11 +656,18 @@ def test_run_over_budget_names_only_the_budgets_it_went_past() -> None:
     assert hint is not None and expected in hint[1]
 
 
+def test_run_over_budget_shows_a_spend_just_past_the_budget() -> None:
+    run = {"status": "active", "budget_usd": 1.0}
+    just_over = {"run": run, "over_budget": ["cost"], "cost_usd": 1.004}
+    hint = _call("run.get", {"run_id": "r1"}, just_over, session="s-just")
+    assert hint is not None and "$1.0040 of $1.00 spent" in hint[1]
+
+
 def test_run_over_budget_spells_a_large_spend_in_dollars() -> None:
     run = {"status": "active", "budget_usd": 10000.0}
     big = {"run": run, "over_budget": ["cost"], "cost_usd": 12345.0}
     hint = _call("run.get", {"run_id": "r1"}, big, session="s-big")
-    assert hint is not None and "$12,345.00 of $10,000.00 spent" in hint[1]
+    assert hint is not None and "$12,345.0000 of $10,000.00 spent" in hint[1]
 
 
 @pytest.mark.parametrize("status", ["completed", "failed", "cancelled"])

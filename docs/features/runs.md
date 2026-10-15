@@ -57,6 +57,7 @@ Limits:
   recorded under.
 - **Retries.** A re-sent `run.begin` replaces the run's row like any retry: it keeps the session and budget it does
   not restate, a new non-zero budget replaces the old one, and 0 keeps it, so a budget cannot be removed once set.
+  A new `budget_usd` must be sent with its `session_id` (a 422 otherwise); a new `budget_seconds` needs nothing else.
   When `run.begin` answered with a different `run_id` than the one sent, re-send that `run_id`, or the same
   `session_id`; otherwise the retry opens a new run.
 

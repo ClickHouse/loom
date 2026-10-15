@@ -89,9 +89,9 @@ COPY agent.py /opt/loom-agent/agent.py
 ENTRYPOINT ["/usr/local/bin/ax-task-runner"]
 ```
 
-`agent.py` needs an SDK and a Loom server from the release that added run
-budgets (1.0). An older server ignores the budget fields (it lists them in
-`ignored_args`) and never reports `over_budget`, so the agent runs without one.
+`agent.py` needs `clickhouse-loom>=1.0` and a 1.0 server. A pre-release build
+without run budgets ignores the budget fields (it lists them in `ignored_args`)
+and never reports `over_budget`, so the agent runs without one.
 
 Substrate accepts only an image pinned by digest, so `task.yaml` names it as
 `<registry>/ax-loom-task@sha256:<digest>`. A tag is refused, and AX then falls

@@ -905,16 +905,19 @@ def _rule_set_large_value(
 def _rule_run_over_budget(
     op: str, args: dict[str, Any], res: dict[str, Any], facts: dict[str, Any], st: dict[str, Any]
 ) -> _Call:
+    if op != "run.get":
+        return None
     over = res.get("over_budget") or []
     run = res.get("run") or {}
-    if op != "run.get" or not over or run.get("status") != "active":
+    if not over or run.get("status") != "active":
         return None
     spent = []
     if "cost" in over:
+        # The spend to four decimals, so a run just past a $1.00 budget never reads $1.00.
         budget = float(run.get("budget_usd") or 0.0)
         fmt = ",.4f" if budget < 0.01 else ",.2f"
         cost = float(res.get("cost_usd") or 0.0)
-        spent.append(f"${cost:{fmt}} of ${budget:{fmt}} spent")
+        spent.append(f"${cost:,.4f} of ${budget:{fmt}} spent")
     if "time" in over:
         elapsed = int(res.get("elapsed_seconds") or 0)
         allowed = int(run.get("budget_seconds") or 0)
