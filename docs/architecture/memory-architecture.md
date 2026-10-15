@@ -337,7 +337,9 @@ the value it was written or stated for (`carried`):
   open or closed, gets a new observation starting at the restore (a closed interval
   before it stays as history, and every later repair reads the fact as stated then), as
   does its edge when the graph has one, so both planes show the restored value current.
-  These observations state nothing new: they carry `co_occur` 0 and add no weight. And
+  These observations state nothing new: one carries `co_occur` 1 only when its fact (or
+  edge) has no open weighted row left, the usual Undo of a closed value, so the graph's
+  readers still count it, and 0 otherwise, so Undoing back and forth adds no weight. And
   its facts go through the interval repair dated at the restore as the newest value: the
   other row stays live, and its single-valued fact closes, even one seen in the same
   second; only a value starting after the restore stays current. That priority covers

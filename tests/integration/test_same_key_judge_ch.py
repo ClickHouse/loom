@@ -1261,7 +1261,10 @@ async def test_undo_makes_the_restored_value_current_and_retires_nothing(
 ) -> None:
     # An Undo is the newest assertion: the restored London is the current home, and
     # Paris's fact closes. The Paris row stays live: an Undo never retires a row.
+    from types import SimpleNamespace
+
     from server.memory.api.models_crud import MemoryRestoreInput
+    from server.memory.app import entity_projections
     from server.memory.app.restore import handle_memory_restore
 
     london = await _stated(
@@ -1272,7 +1275,7 @@ async def test_undo_makes_the_restored_value_current_and_retires_nothing(
     await _follow_retirement(ch, org, london, paris)
     assert await _open_cities(ch, org, {"paris"}) == {"paris"}
     # Undone in the second Paris was written: the Undo still wins the tie.
-    await _undo_in_the_second_of(ch, org, "paris", monkeypatch)
+    restored_at = await _undo_in_the_second_of(ch, org, "paris", monkeypatch)
     out = await handle_memory_restore(
         MemoryRestoreInput(
             org=org,
@@ -1289,21 +1292,54 @@ async def test_undo_makes_the_restored_value_current_and_retires_nothing(
     assert await _open_cities(ch, org, {"london"}) == {"london"}
     # The edge plane agrees: London's edge is the one current edge of the user.
     assert await _open_edges(ch, org, {"london"}) == ["london"]
-    # An Undo states nothing new: London was stated once, on either plane.
-    weights = await ch.query_all(
-        "SELECT 'triples' AS plane, sum(co_occur) AS n FROM loom.entity_triples"
-        " WHERE org = {org:String} AND object = 'london'"
-        " UNION ALL SELECT 'edges', sum(co_occur) FROM loom.entity_edges"
-        " WHERE org = {org:String} AND entity_a = 'london'"
-        " SETTINGS select_sequential_consistency = 1",
-        params={"org": org},
+    # The retirement closed London's own rows, so the Undo's open rows carry its
+    # weight: London is current for the readers on either plane, Paris is not.
+    assert await _open_weights(ch, org, "london") == {"triples": 1, "edges": 1}
+    assert await _open_weights(ch, org, "paris") == {"triples": 0, "edges": 0}
+    assert await _walked(org, ["london"], labeled=True) == ["london"]
+    assert await _walked(org, ["london"], labeled=False) == ["london"]
+    # A replay of the Undo finds its observations and weighs London no more.
+    scope = SimpleNamespace(org=org, namespace=NS, agent="bot")
+    await entity_projections.reopen_held_facts(
+        scope, [str(london["memory_id"])], ch=ch, restored_at=restored_at
     )
-    assert {str(w["plane"]): int(w["n"]) for w in weights} == {"triples": 1, "edges": 1}
+    assert await _open_weights(ch, org, "london") == {"triples": 1, "edges": 1}
     (row,) = await ch.query_all(
         "SELECT status FROM loom.memory FINAL WHERE org = {org:String} AND memory_id = {id:UUID}",
         params={"org": org, "id": str(paris["memory_id"])},
     )
     assert row["status"] == "active"
+
+
+async def _open_weights(ch: Any, org: str, city: str) -> dict[str, int]:
+    """The summed weight of `city`'s open rows, on the triple and the edge plane."""
+    weights = await ch.query_all(
+        "SELECT 'triples' AS plane, sum(co_occur) AS n FROM loom.entity_triples"
+        " WHERE org = {org:String} AND object = {city:String} AND valid_to IS NULL"
+        " UNION ALL SELECT 'edges', sum(co_occur) FROM loom.entity_edges"
+        " WHERE org = {org:String} AND entity_a = {city:String} AND valid_to IS NULL"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org, "city": city},
+    )
+    return {str(w["plane"]): int(w["n"]) for w in weights}
+
+
+async def _walked(org: str, want: list[str], *, labeled: bool) -> list[str]:
+    """The entities one hop of `facts.traverse` from `user` reaches, waiting up to two
+    seconds for `want`: it counts a fact closed this very second as current."""
+    from server.memory.api.models_facts import FactsTraverseInput
+    from server.memory.app.facts import handle_facts_traverse
+
+    walk = FactsTraverseInput(
+        org=org, namespace=NS, seed_entity="user", max_hops=1, labeled=labeled
+    )
+    for _ in range(10):
+        out = await handle_facts_traverse(walk)
+        walked = sorted(n.entity for n in out.nodes)
+        if walked == want:
+            break
+        await asyncio.sleep(0.2)
+    return walked
 
 
 async def _undo_in_the_second_of(ch: Any, org: str, city: str, monkeypatch: Any) -> datetime:
@@ -1379,6 +1415,8 @@ async def test_undo_of_an_open_fact_keeps_its_date_for_later_writes(ch, org, mon
         params={"org": org, "at": restored_at},
     )
     assert counted["n"] == 1
+    # London from July was open with its weight: the Undo adds none.
+    assert await _open_weights(ch, org, "london") == {"triples": 1, "edges": 1}
     await _stated(ch, org, "s4", "I live in Rome", (*live, "rome"), valid_at=datetime(2026, 8, 1))
     await _mutations_done(ch, org)
     assert await _open_cities(ch, org, {"london"}) == {"london"}

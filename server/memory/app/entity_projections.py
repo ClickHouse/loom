@@ -532,7 +532,9 @@ async def reopen_held_facts(
     An Undo is the newest assertion: each fact the rows hold, open or not, gets a new
     observation of its latest row starting at the restore (`restored_at`, now by
     default), and its edge one from the restore too, so later writes read the Undo's
-    date back from storage; neither adds weight (`co_occur` 0). Every one then
+    date back from storage. It weighs 1 only when the fact (or edge) has no open
+    weighted row left, the usual Undo of a closed value, so readers still count it;
+    otherwise 0, so Undoing back and forth adds no weight. Every one then
     goes through the interval repair dated at it as the newest value: another value
     of a single-valued relation closes, even one seen in the same second, unless it
     starts later. No row retires. A replay passes the restore's time: it finds the
@@ -550,7 +552,8 @@ async def reopen_held_facts(
         SELECT subject, relation, object, argMax(confidence, last_seen) AS confidence,
                argMax(provenance, last_seen) AS provenance,
                countIf(adapter_name = 'row-restore' AND valid_from = {at:DateTime}
-                       AND valid_to IS NULL) AS restored
+                       AND valid_to IS NULL) AS restored,
+               countIf(co_occur > 0 AND valid_to IS NULL) AS weighted
         FROM loom.entity_triples
         WHERE org = {org:String} AND namespace = {ns:String}
           AND (subject, relation, object) IN {triples:Array(Tuple(String, String, String))}
@@ -573,8 +576,8 @@ async def reopen_held_facts(
             # Dated at the Undo, so every later repair reads it as the newest
             # assertion; a closed interval before it stays as history.
             valid_from=now,
-            # The Undo states nothing new: the fact weighs what it did.
-            co_occur=0,
+            # The Undo states nothing new: it only gives a closed fact its weight back.
+            co_occur=0 if r["weighted"] else 1,
         )
         for r in latest
         # A replay finds this Undo's observation open and adds none. One closed since
@@ -587,14 +590,15 @@ async def reopen_held_facts(
         await ch.insert("loom.entity_triples", rows, settings=settings)
     # The edge plane agrees: each restored fact's edge gets an observation from the
     # Undo too, which the repair below leaves open. Only a pair the graph has an edge
-    # for: the Undo invents none. Weight 0 at the Undo's second, still open, marks it
-    # for a replay, as above.
+    # for: the Undo invents none, and weighs it as above. An open row seen and starting
+    # at the Undo's second marks it for a replay.
     pairs = sorted({canonical_edge_pair(s, o) for s, _, o in held})
     edges = await ch.query_all(
         """
         SELECT entity_a, entity_b,
-               countIf(co_occur = 0 AND valid_from = {at:DateTime} AND valid_to IS NULL)
-                   AS restored
+               countIf(valid_from = {at:DateTime} AND last_seen = {at:DateTime}
+                       AND valid_to IS NULL) AS restored,
+               countIf(co_occur > 0 AND valid_to IS NULL AND invalid_at IS NULL) AS weighted
         FROM loom.entity_edges
         WHERE org = {org:String} AND namespace = {ns:String}
           AND (entity_a, entity_b) IN {pairs:Array(Tuple(String, String))}
@@ -611,7 +615,7 @@ async def reopen_held_facts(
             e["entity_b"],
             last_seen=now,
             valid_from=now,
-            co_occur=0,
+            co_occur=0 if e["weighted"] else 1,
         )
         for e in edges
         if not e["restored"]

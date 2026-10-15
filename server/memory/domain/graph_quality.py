@@ -698,15 +698,21 @@ def triple_interval_repairs(
 
 
 def _one_session(
-    row_from: datetime | None, row_seen: object, new_from: datetime | None, new_start: datetime
+    row_from: datetime | None,
+    row_seen: datetime | None,
+    new_from: datetime | None,
+    new_start: datetime,
 ) -> bool:
     """Whether, of a stored row and the new fact, one is dated and the other undated and
     the undated one was seen within `SESSION_DATE_TOLERANCE_DAYS` after the dated one's
     start: one session's two statements, which order by arrival, whichever is new."""
-    if (row_from is None) == (new_from is None):
+    if row_from is None and new_from is not None:
+        dated, seen = new_from, row_seen
+    elif row_from is not None and new_from is None:
+        dated, seen = row_from, new_start
+    else:
         return False
-    dated, seen = (new_from, row_seen) if row_from is None else (row_from, new_start)
-    if dated is None or not isinstance(seen, datetime):
+    if seen is None:
         return False
     return dated <= seen <= dated + timedelta(days=SESSION_DATE_TOLERANCE_DAYS)
 

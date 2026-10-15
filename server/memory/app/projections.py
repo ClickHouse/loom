@@ -241,7 +241,7 @@ def entity_edge_row(
     """One `loom.entity_edges` row for the canonical pair (entity_a <= entity_b). A
     fresh observation is never born superseded (`invalid_at` NULL):
     _repair_contradictory_edges stamps the OLDER pair. `co_occur` is the weight the
-    readers sum; an observation that states nothing new (an Undo) carries 0."""
+    readers sum; an Undo's observation carries 0 when the edge is open with weight."""
     return {
         "org": org,
         "namespace": namespace,
@@ -273,7 +273,7 @@ def entity_triple_row(
     """One `loom.entity_triples` row as every triple writer inserts it. A fresh
     triple is never born superseded (`invalid_at` NULL): the contradiction
     repair stamps the older row. `co_occur` is the weight the readers sum; an
-    observation that states nothing new (an Undo) carries 0."""
+    Undo's observation carries 0 when the fact is open with weight."""
     return {
         "org": org,
         "namespace": namespace,
