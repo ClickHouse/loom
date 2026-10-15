@@ -150,10 +150,11 @@ def _release_workflow() -> dict:
     )
 
 
-def test_the_release_warns_when_a_published_bundle_keeps_its_own_release() -> None:
+def test_the_release_refuses_a_downgrade_before_it_builds() -> None:
     (resolve,) = [
         s for s in _release_workflow()["jobs"]["clickhouse"]["steps"] if s.get("id") == "resolve"
     ]
+    assert 'refuse_downgrade.sh "$image"' in resolve["run"]
     assert "::warning::clickhouse_image=" in resolve["run"]
 
 

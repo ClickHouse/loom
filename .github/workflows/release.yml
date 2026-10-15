@@ -139,12 +139,15 @@ jobs:
       # A re-run keeps the release this version's published bundle names, so
       # rerunning the installer for it never moves ClickHouse.
       # A dispatch may name the release in place of `latest`; a published
-      # bundle keeps its own either way.
+      # bundle keeps its own either way. A downgrade is refused here so the
+      # run stops before it builds and pushes images; github-release checks
+      # again before it uploads.
       - id: resolve
         env:
           VERSION: ${{ needs.version.outputs.version }}
           GH_TOKEN: ${{ github.token }}
           CLICKHOUSE_IMAGE: ${{ inputs.clickhouse_image }}
+          ALLOW_DOWNGRADE: ${{ inputs.allow_clickhouse_downgrade }}
         run: |
           if [ -n "$CLICKHOUSE_IMAGE" ]; then
             python - <<'PY'
@@ -171,6 +174,7 @@ jobs:
               else
                 image=$(bash dev/clickhouse_release.sh)
               fi
+              bash scripts/release/refuse_downgrade.sh "$image"
               ;;
             *) exit "$status" ;;
           esac
@@ -497,7 +501,7 @@ jobs:
       # written again from the published bundle. A new bundle never names an
       # older ClickHouse release than a recent published one (prereleases
       # included), unless the dispatch allows it.
-      - name: Keep a bundle this version already published
+      - name: Keep this version's published bundle, or refuse a ClickHouse downgrade
         env:
           VERSION: ${{ needs.version.outputs.version }}
           GH_TOKEN: ${{ github.token }}
@@ -515,14 +519,8 @@ jobs:
               fi
               ;;
             3)
-              last=0
-              bash scripts/release/published_bundle.sh recent recent-published || last=$?
-              if [ "$last" -eq 0 ] && [ "$ALLOW_DOWNGRADE" != true ]; then
-                image=$(python3 scripts/release/build_stack_bundle.py pinned-in release/stack/loom-stack.tar.gz)
-                python3 scripts/release/build_stack_bundle.py not-older "$image" recent-published/*/loom-stack.tar.gz
-              elif [ "$last" -ne 0 ] && [ "$last" -ne 3 ]; then
-                exit "$last"
-              fi
+              image=$(python3 scripts/release/build_stack_bundle.py pinned-in release/stack/loom-stack.tar.gz)
+              bash scripts/release/refuse_downgrade.sh "$image"
               ;;
             *) exit "$status" ;;
           esac

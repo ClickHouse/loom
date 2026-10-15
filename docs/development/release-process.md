@@ -96,7 +96,9 @@ A tag containing `-` (`vX.Y.Z-rc.1`) makes a GitHub pre-release and does not mov
    The dispatch passes only if that release dumps the tag's `schemas/schema.sql`;
    otherwise regenerate it on that release (the
    [schema dump](./migrations.md#schema-dump-and-check) commands with
-   `LOOM_CLICKHOUSE_IMAGE=clickhouse/clickhouse-server:A.B.C.D`), commit it, and re-tag;
+   `LOOM_CLICKHOUSE_IMAGE=clickhouse/clickhouse-server:A.B.C.D`), commit it, and re-tag.
+   A ClickHouse downgrade (see step 7) is refused here first, so such a run stops before
+   it builds and pushes images;
 3. `build` writes the version into the Python and TypeScript SDK sources and builds the
    Python SDK wheel and sdist, the npm tarball (after the TypeScript SDK's `check:dist`),
    and zips of the two plugins (`loom-claude-code-plugin-vX.Y.Z.zip`,
@@ -119,9 +121,9 @@ A tag containing `-` (`vX.Y.Z-rc.1`) makes a GitHub pre-release and does not mov
    (prereleases included) do, since an install upgrading to it would start an older
    server on data a newer one wrote; the job fails instead, unless the dispatch adds
    `-f allow_clickhouse_downgrade=true`. This job runs for one tag at a time, so two
-   tags released together cannot both pass the check against the same older bundle;
-   GitHub keeps one waiting run, so a third tag cancels the waiting one, which is then
-   re-run.
+   tags released together cannot both pass the check against the same older bundle.
+   Only one more such job waits: a third tag's publish cancels the waiting one, which must
+   then be re-run by hand (Re-run failed jobs).
 
 The server image is published before the GitHub Release, so an installer shown on the
 release page never points at a missing image.
