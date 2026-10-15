@@ -164,13 +164,14 @@ async def test_sync_quietly_never_raises(monkeypatch: pytest.MonkeyPatch) -> Non
 
 @pytest.fixture()
 def _handler_env(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-    calls: dict[str, Any] = {"sync": [], "revoke": [], "rows": []}
+    calls: dict[str, Any] = {"sync": [], "revoke": [], "rows": [], "events": []}
 
     async def _find(*_a: Any, **_k: Any) -> dict[str, Any] | None:
         return None
 
     async def _insert(row: dict[str, Any], **_k: Any) -> None:
         calls["rows"].append(row)
+        calls["events"].append("write")
 
     async def _no_ceiling(*_a: Any, **_k: Any) -> None:
         return None
@@ -180,6 +181,7 @@ def _handler_env(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
     async def _revoke(org: str, ns: str, subject: str, **_k: Any) -> None:
         calls["revoke"].append((org, ns, subject))
+        calls["events"].append("fan-out")
 
     monkeypatch.setattr(grants_repo, "find_active_grant", _find)
     monkeypatch.setattr(grants_repo, "insert_row", _insert)
@@ -258,7 +260,9 @@ async def test_grants_revoke_admin_fans_out(
     out = await grants_mod.handle_grants_revoke(
         GrantsRevokeInput(org="clickhouse", namespace="code-x", subject="alice")
     )
-    assert out.revoked and _handler_env["revoke"] == [("clickhouse", "code-x", "alice")]
+    # The other branches first, the grant last, then a sweep for a mirror written meanwhile.
+    assert out.revoked and _handler_env["events"] == ["fan-out", "write", "fan-out"]
+    assert set(_handler_env["revoke"]) == {("clickhouse", "code-x", "alice")}
 
 
 @pytest.mark.parametrize(
@@ -396,5 +400,18 @@ async def test_a_grant_made_admin_while_its_revoke_waits_is_fanned_out_first(
     out = await grants_mod.handle_grants_revoke(
         GrantsRevokeInput(org="clickhouse", namespace="code-x", subject="alice")
     )
-    assert out.revoked and _handler_env["revoke"] == [("clickhouse", "code-x", "alice")]
+    assert out.revoked and _handler_env["events"] == ["fan-out", "write", "fan-out"]
     assert [r["revoked_at"] is not None for r in _handler_env["rows"]] == [True]
+
+
+async def test_a_mirror_is_not_written_once_its_source_was_revoked() -> None:
+    class _RevokedSource(_FakeCH):
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            planned = await super().query_all(sql, params)
+            # alice's revoke on code-x lands after the sync read the branches.
+            self.rows = [_admin("code-x", "alice", revoked_at=T0 + timedelta(hours=1))]
+            return planned
+
+    ch = _RevokedSource([_admin("code-x", "alice")])
+    assert await maintainers.sync_repo_maintainers("clickhouse", "code-x", ch=ch) == 0
+    assert ch.inserted == []

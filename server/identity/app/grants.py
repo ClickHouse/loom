@@ -30,6 +30,10 @@ from server.operations.read_projection import project_rows
 log = logging.getLogger(__name__)
 
 
+# A revoke that finds the grant made admin under it starts over this many times.
+_REVOKE_TRIES = 3
+
+
 def _version() -> int:
     return time.time_ns()
 
@@ -299,6 +303,19 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
         raise GrantBusyError(
             f"{input.subject!r} on {input.org}/{input.namespace} keeps changing; retry shortly"
         )
+    if fanned_out:
+        # A sync that read this grant before it was revoked may have mirrored it since
+        # the fan-out read the branches; this sweep takes such a mirror back.
+        try:
+            await maintainers.revoke_repo_maintainer(input.org, input.namespace, subject)
+        except Exception as e:  # noqa: BLE001 — the revoke itself landed
+            log.warning(
+                "repo maintainers: sweep after revoking %s/%s %s failed: %s",
+                input.org,
+                input.namespace,
+                subject,
+                e,
+            )
     # The tokens this person minted lose their own grants here. Best-effort: the
     # person's revoke has landed; a failed cascade is logged, never a 500.
     from server.identity.app import token_grants
@@ -314,10 +331,6 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
             e,
         )
     return GrantsRevokeOutput(revoked=True, revoked_at=now)
-
-
-# A revoke that finds the grant made admin under it starts over this many times.
-_REVOKE_TRIES = 3
 
 
 def _active_admin(row: GrantState) -> bool:

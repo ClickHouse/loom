@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
 
@@ -103,34 +103,54 @@ def _state(row: dict[str, Any] | None) -> tuple[Any, ...] | None:
     return row.get("role"), row.get("status"), row.get("revoked_at"), row.get("granted_at")
 
 
-def _unchanged(now: dict[str, Any] | None, read: dict[str, Any] | None) -> bool:
-    """A mirror is written only over the grant it was planned from: one changed
-    since (an admin's lowering, say) is left to the next sync."""
-    return _state(now) == _state(read)
+def _admin_since(row: dict[str, Any] | None, granted_at: Any) -> bool:
+    """Whether `row` is a live admin grant given at `granted_at`."""
+    return (
+        row is not None
+        and row.get("role") == "admin"
+        and row.get("revoked_at") is None
+        and str(row.get("status") or "active") in _ACTIVE
+        and row.get("granted_at") == granted_at
+    )
 
 
-def _still_admin(now: dict[str, Any] | None, read: dict[str, Any] | None) -> bool:
+async def _mirror_wanted(
+    client: Any, org: str, row: dict[str, Any], now: dict[str, Any] | None, read: Any
+) -> bool:
+    """A mirror is written only over the grant it was planned from (one changed
+    since, an admin's lowering say, is left to the next sync), and only while
+    its source is still the admin grant it copies: a revoke that landed since
+    the plan read must not be copied back."""
+    if _state(now) != _state(read):
+        return False
+    source = await client.query_one(
+        _GRANT_ROW_SQL,
+        params={
+            "org": org,
+            "ns": row["granted_by"].removeprefix(GRANTED_BY_PREFIX),
+            "sub": row["subject"],
+        },
+    )
+    return _admin_since(source, row["granted_at"])
+
+
+async def _still_admin(
+    client: Any, org: str, row: dict[str, Any], now: dict[str, Any] | None, read: Any
+) -> bool:
     """A revocation stands while the subject still holds the admin grant it
     was planned against; one granted again since is newer and stays."""
-    return (
-        now is not None
-        and read is not None
-        and now.get("role") == "admin"
-        and now.get("revoked_at") is None
-        and str(now.get("status") or "active") in _ACTIVE
-        and now.get("granted_at") == read.get("granted_at")
-    )
+    return read is not None and _admin_since(now, read.get("granted_at"))
 
 
 async def _write_under_claims(
     client: Any,
     org: str,
     planned: list[dict[str, Any]],
-    still_wanted: Callable[[dict[str, Any] | None, dict[str, Any] | None], bool],
+    still_wanted: Callable[..., Awaitable[bool]],
     read: list[dict[str, Any]],
 ) -> int:
-    """Write each planned row under its grant's claim, if `still_wanted(current
-    row, row as read)` says so. A row that fails does not stop the others; the
+    """Write each planned row under its grant's claim, if `still_wanted(client,
+    org, row, current row, row as read)` says so. A row that fails does not stop the others; the
     first failure is raised once all were tried."""
     from server.auth.grant_claims import grant_change
     from server.core import grant_cache
@@ -144,7 +164,7 @@ async def _write_under_claims(
                 now = await client.query_one(
                     _GRANT_ROW_SQL, params={"org": org, "ns": ns, "sub": subject}
                 )
-                if not still_wanted(now, seen.get((ns, subject))):
+                if not await still_wanted(client, org, row, now, seen.get((ns, subject))):
                     continue
                 await client.insert(
                     "loom.namespace_grants",
@@ -212,7 +232,9 @@ async def sync_repo_maintainers(org: str, namespace: str, *, ch: Any | None = No
                     granted_at=at,
                 )
             )
-    written = await _write_under_claims(client, org, inserts, _unchanged, rows) if inserts else 0
+    written = (
+        await _write_under_claims(client, org, inserts, _mirror_wanted, rows) if inserts else 0
+    )
     if written:
         log.info(
             "repo maintainers: %s/%s — %d admin grant(s) mirrored across %d branches",
