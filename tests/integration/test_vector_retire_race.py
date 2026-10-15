@@ -1729,7 +1729,7 @@ async def test_a_slow_writes_embedding_is_still_counted_in_the_bm25_stats(ch: An
         # past it, so it indexes itself too; a repeat is harmless.
         marker = late_row("marker", ago_s=15)
         await M.insert_embedding_rows([marker], ch=ch)
-        await M.index_late_rows([marker], ch=ch)
+        assert await M.index_late_rows([marker], ch=ch) == 1
         await refresh()
         indexed, control = late_row("slow_write"), late_row("slow_write_unindexed")
         await M.insert_embedding_rows([indexed, control], ch=ch)
