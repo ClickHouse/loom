@@ -182,7 +182,7 @@ def test_password_login_and_the_sdk_uses_the_stored_session(password_server) -> 
     assert (who["subject"], who["org"]) == (email, org)
 
     async def use_it() -> Any:
-        agent = Agent(org, ns, "login-e2e")
+        agent = Agent(org, ns, "login-e2e", base_url=base)  # the session is that server's
         try:
             await agent.memory.set("login/fact/1", "the stored session works")
             return await agent.memory.get("login/fact/1")

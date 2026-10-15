@@ -3292,6 +3292,9 @@
     "ValidationError",
     "__version__",
     "decode_token_claims",
-    "tool_definitions"
+    "login",
+    "logout",
+    "tool_definitions",
+    "whoami"
   ]
 }
