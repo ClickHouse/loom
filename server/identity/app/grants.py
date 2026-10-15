@@ -150,9 +150,7 @@ async def handle_grants_create(input: GrantsCreateInput) -> GrantsCreateOutput:
 
     if input.replace and input.role != "admin":
         # Only `replace=true` lowers a grant (else 409): it may take admin.
-        lowered = await _taking_admin(input, subject, _write, lowered_to=input.role)
-        assert lowered is not None
-        now = lowered
+        now = await _taking_admin(input, subject, _write, lowered_to=input.role)
     else:
         async with grant_change(input.org, input.namespace, subject):
             now = await _write_grant(input, subject)
@@ -297,7 +295,15 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
     async def _write(row: GrantState | None) -> tuple[GrantState, datetime] | None:
         return None if row is None else (row, await _write_revoke(input, subject, row))
 
-    done = await _taking_admin(input, subject, _write)
+    done = None
+    if not _active_admin(row):
+        # A reader's grant, or a request: only its own claim, unless it became admin.
+        async with grant_change(input.org, input.namespace, subject):
+            row = await grants_repo.find_any_grant(input.org, input.namespace, subject)
+            if row is None or not _active_admin(row):
+                done = await _write(row)
+    if done is None and row is not None and _active_admin(row):
+        done = await _taking_admin(input, subject, _write)
     if done is None:
         return GrantsRevokeOutput(revoked=False)
     row, now = done

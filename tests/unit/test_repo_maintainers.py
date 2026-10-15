@@ -675,3 +675,51 @@ async def test_a_fan_out_keeps_a_branch_whose_other_admin_went_meanwhile() -> No
     )
     assert await maintainers.revoke_repo_maintainer("clickhouse", "code-x", "alice", ch=ch) == 1
     assert [r["namespace"] for r in ch.inserted] == ["code-x-26-6"]
+
+
+async def test_a_lowered_maintainer_is_lowered_on_every_other_branch() -> None:
+    ch = _FakeCH([_admin(ns, s) for ns in ("code-x-26-5", "code-x-26-6") for s in ("alice", "bob")])
+    assert (
+        await maintainers.revoke_repo_maintainer(
+            "clickhouse", "code-x", "alice", ch=ch, lowered_to="viewer"
+        )
+        == 2
+    )
+    assert {(r["namespace"], r["role"], r["revoked_at"]) for r in ch.inserted} == {
+        ("code-x-26-5", "viewer", None),
+        ("code-x-26-6", "viewer", None),
+    }
+
+
+async def test_two_maintainer_removals_in_one_repository_run_one_after_the_other(
+    _handler_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    log: list[str] = []
+    _recording_claims(monkeypatch, log)
+
+    async def _any(*_a: Any, **_k: Any) -> GrantState:
+        return GrantState.from_row(
+            {"subject": "x", "role": "admin", "status": "active", "granted_by": "ops"}
+        )
+
+    async def _three(*_a: Any, **_k: Any) -> int:
+        return 3
+
+    async def _slow_fan_out(*_a: Any, **_k: Any) -> None:
+        await asyncio.sleep(0.02)
+
+    monkeypatch.setattr(grants_repo, "find_any_grant", _any)
+    monkeypatch.setattr(grants_repo, "count_active_admins", _three)
+    monkeypatch.setattr(maintainers, "revoke_repo_maintainer", _slow_fan_out)
+    await asyncio.gather(
+        *(
+            grants_mod.handle_grants_revoke(
+                GrantsRevokeInput(org="clickhouse", namespace=ns, subject=subject)
+            )
+            for ns, subject in (("code-x", "alice"), ("code-x-26-5", "bob"))
+        )
+    )
+    held = [e for e in log if e.endswith("repo:Org/x/admins")]
+    assert held == ["+repo:Org/x/admins", "-repo:Org/x/admins"] * 2

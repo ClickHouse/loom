@@ -230,8 +230,9 @@ async def _write_subject(
     seen: _Seen,
     hold_repo: bool,
 ) -> int:
-    """`_write_under_claims` for one subject's rows. A revocation also holds its
-    branch's admins claim, so the branch's last admin is never revoked."""
+    """`_write_under_claims` for one subject's rows. A row that takes admin (a
+    revoke or a lowering) also holds its branch's admins claim, so the branch's
+    last admin is never taken."""
     from server.auth.grant_claims import admins_change, grant_change
     from server.core import grant_cache
 

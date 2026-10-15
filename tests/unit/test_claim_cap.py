@@ -404,18 +404,62 @@ def test_a_grant_write_drops_only_the_entries_that_read_its_subject(ch: _CH) -> 
     assert ch.grant_reads == reads + 1, "alice's entry covered that spelling"
 
 
+def _sibling_processes(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> Any:
+    """Two web processes; returns how the other one counts a write in `org`."""
+    monkeypatch.setattr(settings, "web_workers", 2)
+    monkeypatch.setattr(
+        "server.core.runtime_files.server_file", lambda name: str(tmp_path / f"loom-{name}")
+    )
+    grant_cache.clear()
+
+    def _sibling_writes(org: str) -> None:
+        path = grant_cache._marker(org)
+        assert path is not None
+        with open(path, "ab") as f:
+            f.write(b".")
+
+    return _sibling_writes
+
+
 def test_another_web_process_s_grant_write_is_seen_at_once(
     ch: _CH, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
-    import os
-
-    marker = tmp_path / "loom-grant-writes"
-    monkeypatch.setattr(settings, "web_workers", 2)
-    monkeypatch.setattr("server.core.runtime_files.server_file", lambda name: str(marker))
+    sibling_writes = _sibling_processes(monkeypatch, tmp_path)
     ch.grants["team"] = ("writer", "active", False)
     assert _admits(_flat("team"), "team", Role.WRITER)
-    ch.grants["team"] = ("writer", "active", True)  # revoked by a sibling web process
+    ch.grants["team"] = ("writer", "active", True)  # revoked by the other process
     assert _admits(_flat("team"), "team", Role.WRITER), "this process has not heard yet"
-    marker.write_bytes(b"")
-    os.utime(marker)  # the sibling marks its write
+    sibling_writes(ORG)
     assert not _admits(_flat("team"), "team", Role.WRITER)
+
+
+def test_a_read_begun_before_another_process_s_write_is_not_joined(
+    ch: _CH, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    sibling_writes = _sibling_processes(monkeypatch, tmp_path)
+    ch.grants["team"] = ("admin", "active", False)
+    read_done, go = _slow_reads(ch, monkeypatch)
+
+    async def _run() -> int | None:
+        early = asyncio.ensure_future(grant_cache.grant_map(ORG, "alice"))
+        await read_done.wait()
+        ch.grants["team"] = ("admin", "active", True)
+        sibling_writes(ORG)  # the revoke, written by the other process
+        go.set()
+        late = await grant_cache.grant_map(ORG, "alice")
+        await early
+        return late.rank("team")
+
+    assert asyncio.run(_run()) == 0
+
+
+def test_this_process_s_own_write_keeps_its_other_entries_with_siblings(
+    ch: _CH, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    _sibling_processes(monkeypatch, tmp_path)
+    ch.spellings = ["bob"]
+    asyncio.run(grant_cache.grant_map(ORG, "bob"))
+    reads = ch.grant_reads
+    grant_cache.invalidate(ORG, ["alice"])
+    asyncio.run(grant_cache.grant_map(ORG, "bob"))
+    assert ch.grant_reads == reads, "bob's entry is kept"

@@ -56,8 +56,9 @@ async def insert_rows(
 
 
 def _invalidate(rows: list[dict[str, Any]]) -> None:
-    """This process's namespace gate sees a grant change at once; others
-    within `grant_cache_ttl_seconds`."""
+    """This server's namespace gate sees a grant change at once (its other web
+    processes through the write count `grant_cache` keeps); others within
+    `grant_cache_ttl_seconds`."""
     for org in {r["org"] for r in rows}:
         grant_cache.invalidate(org, [r["subject"] for r in rows if r["org"] == org])
 

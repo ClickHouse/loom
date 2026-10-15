@@ -63,10 +63,10 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
 - **Security:** a token's claim on a namespace goes no further than the grant its subject
   holds there. A revoked or lowered grant ends every older token's claim, and a pending or
   rejected request caps it at no access; a scoped token keeps its own role there capped at
-  the grant. It applies at once on every web process of the server that changed the grant and within
-  `LOOM_GRANT_CACHE_TTL_SECONDS` (default 10 s) on the others. A namespace the subject never
-  held a grant on (named by an operator at mint) keeps its claim; a `loom mint-token` claim
-  beyond a grant the subject holds is now capped at it.
+  the grant. It applies at once on every web process of the server that changed the grant
+  and within `LOOM_GRANT_CACHE_TTL_SECONDS` (default 10 s) on the others. A namespace the
+  subject never held a grant on (named by an operator at mint) keeps its claim; a
+  `loom mint-token` claim beyond a grant the subject holds is now capped at it.
 - **Security:** with a Keeper, `/oauth/token` runs one exchange per code or refresh token
   (a KeeperMap claim, `loom.oauth_claims`, migration `028_oauth_claims.sql`); a concurrent
   presenter is told to retry, and a failed read answers a retryable 503

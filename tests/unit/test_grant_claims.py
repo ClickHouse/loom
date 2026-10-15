@@ -348,3 +348,36 @@ def test_two_admins_leaving_at_once_leave_one(monkeypatch: pytest.MonkeyPatch) -
         return list(await asyncio.gather(_outcome(_leave("alice")), _outcome(_leave("bob"))))
 
     assert sorted(asyncio.run(_both())) == ["done", "refused"] and len(gone) == 1
+
+
+def test_a_leave_whose_grant_became_admin_meanwhile_counts_the_admins(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from contextlib import asynccontextmanager
+
+    from server.identity.api.models import NamespaceLeaveInput
+    from server.identity.app import namespace_membership
+
+    reads = iter(["writer", "admin", "admin"])  # promoted between the read and the claim
+    claims: list[str] = []
+
+    async def _find(*_a: Any, **_k: Any) -> GrantState:
+        return GrantState.from_row({"role": next(reads), "status": "active", "granted_by": "x"})
+
+    @asynccontextmanager
+    async def _admins(org: str, ns: str) -> Any:
+        claims.append("admins")
+        yield
+
+    async def _left(input: Any, caller: str) -> str:
+        return "left"
+
+    monkeypatch.setattr(grants_repo, "find_active_grant", _find)
+    monkeypatch.setattr(namespace_membership, "admins_change", _admins)
+    monkeypatch.setattr(namespace_membership, "_leave", _left)
+    out = asyncio.run(
+        namespace_membership.handle_namespace_leave(
+            NamespaceLeaveInput(org="acme", namespace="team", subject="alice")
+        )
+    )
+    assert out == "left" and claims == ["admins"]
