@@ -86,7 +86,7 @@ class HealthState:
     run_claims_atomic: bool | None = None
     # Whether sign-in state has its Keeper table (loom.oauth_claims exists):
     # None = not asked yet in this process.
-    oauth_claims_atomic: bool | None = None
+    oauth_signin_keeper: bool | None = None
     env: Mapping[str, str] = field(default_factory=lambda: os.environ)
     # Saved keys take precedence over the environment, including explicit empty keys.
     saved_keys: Mapping[str, bool] = field(default_factory=saved_key_presence)
@@ -625,7 +625,7 @@ def _reader_user_problems(settings: Any, state: HealthState) -> list[Problem]:
 
 def _oauth_claim_problems(state: HealthState) -> list[Problem]:
     """No Keeper: sign-in cannot spend a credential exactly once, so it is off."""
-    if state.oauth_claims_atomic is not False:
+    if state.oauth_signin_keeper is not False:
         return []
     return [
         Problem(

@@ -638,7 +638,7 @@ def test_run_ids_without_keeper_claims_are_an_info_problem(monkeypatch: pytest.M
 def test_sign_in_without_keeper_is_reported() -> None:
     from server.observability.problems import HealthState, _oauth_claim_problems
 
-    assert _oauth_claim_problems(HealthState(oauth_claims_atomic=True)) == []
-    assert _oauth_claim_problems(HealthState(oauth_claims_atomic=None)) == []
-    (problem,) = _oauth_claim_problems(HealthState(oauth_claims_atomic=False))
+    assert _oauth_claim_problems(HealthState(oauth_signin_keeper=True)) == []
+    assert _oauth_claim_problems(HealthState(oauth_signin_keeper=None)) == []
+    (problem,) = _oauth_claim_problems(HealthState(oauth_signin_keeper=False))
     assert problem.code == "oauth_signin_needs_keeper" and "029_oauth_claims.sql" in problem.fix

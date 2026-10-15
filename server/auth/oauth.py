@@ -11,7 +11,6 @@ docs/architecture/security.md ("OIDC and OAuth").
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import hashlib
 import html
@@ -756,10 +755,9 @@ async def end_session(grant: Grant | Device, reason: str) -> None:
     accounts, MCP tokens) are their owner's to revoke: an automatic verdict that
     could be wrong (a lost answer looks like a replay) never reaches them.
 
-    When the revocation cannot be written, the debt is: a `revocation_owed` row
-    refuses every refresh in the family, which retries the revocation each time,
-    and this process keeps retrying it so the session's access tokens die too.
-    Raises only when neither landed."""
+    When the revocation cannot be written, a `revocation_owed` row stands in
+    for it: the revocation snapshot every process loads counts the family as
+    revoked. Raises only when neither landed."""
     from server.auth.revocation import revoke
 
     family = grant["family"]
@@ -768,43 +766,10 @@ async def end_session(grant: Grant | Device, reason: str) -> None:
     until = datetime.now(UTC) + timedelta(seconds=_REFRESH_TTL)
     try:
         await revoke(family, expires_at=until, reason=reason, revoked_by="oauth")
-    except Exception:  # recorded as owed below, or re-raised with it
+    except Exception:  # the owed row stands in for it, or the error goes on
         log.exception("oauth: revoking session %s failed; recording it as owed", family)
         await store.owe_revocation(family, reason)
-        _keep_trying(grant, reason)
-        return
     await _audit_ended(grant, reason)
-
-
-# family -> the task retrying its owed revocation: one per family.
-_owed: dict[str, asyncio.Task[None]] = {}
-_RETRY_WAITS_S = (2, 10, 60, 300, 1800)
-
-
-def _keep_trying(grant: Grant | Device, reason: str) -> None:
-    """Retry an owed revocation in the background until it lands."""
-    family = grant["family"]
-    if family in _owed:
-        return
-
-    async def retry() -> None:
-        from server.auth.revocation import revoke
-
-        for wait in _RETRY_WAITS_S:
-            await asyncio.sleep(wait)
-            until = datetime.now(UTC) + timedelta(seconds=_REFRESH_TTL)
-            try:
-                await revoke(family, expires_at=until, reason=reason, revoked_by="oauth")
-            except Exception as e:  # noqa: BLE001 — tried again after the next wait
-                log.warning("oauth: owed revocation of %s still failing: %s", family, e)
-                continue
-            await _audit_ended(grant, f"{reason} (owed)")
-            return
-        log.error("oauth: owed revocation of session %s never landed here", family)
-
-    task = asyncio.create_task(retry())
-    _owed[family] = task
-    task.add_done_callback(lambda _: _owed.pop(family, None))
 
 
 async def _audit_ended(grant: Grant | Device, reason: str) -> None:
@@ -832,11 +797,9 @@ async def end_replayed_session(e: CodeReplayed, what: str) -> OAuthError:
     an answer. Either way the session ends; its owner signs in again, told why,
     so a theft is not taken for an expiry. While the end is not recorded
     anywhere, the answer is "retry", not a final refusal."""
-    from server.auth.revocation import revoked_outright
-
     family = e.grant["family"]
     try:
-        ended = bool(family) and await revoked_outright(family)
+        ended = bool(family) and await store.session_ended(family)
     except Exception:  # unknown: treat it as the replay it may be
         log.exception("oauth: could not read whether session %s has ended", family)
         ended = False
@@ -942,10 +905,11 @@ async def _refresh_session(grant: Grant, refresh_token: str) -> dict[str, Any]:
 
     # exp is always saved as mint time + _REFRESH_TTL.
     issued_at = int(grant["exp"]) - _REFRESH_TTL
-    if is_revoked(grant["family"]) or is_revoked(str(grant["subject"]), issued_at=issued_at):
+    if is_revoked(str(grant["subject"]), issued_at=issued_at):
         raise _invalid_grant()
-    if grant["family"] and await store.revocation_owed(grant["family"]):
-        await end_session(grant, "owed revocation")  # try again; refused either way
+    # Read from storage, not this process's snapshot: a session ended a moment
+    # ago on another process (or owed its revocation) mints nothing more.
+    if await store.session_ended(grant["family"]):
         raise _invalid_grant()
     if settings.oauth_login_provider == "oidc":
         grant["upstream_refresh"] = await _ask_identity_provider(grant, refresh_token)

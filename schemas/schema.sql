@@ -2611,9 +2611,9 @@ CREATE TABLE IF NOT EXISTS loom.oauth_claims
 (
     `claim_key` String,
     `value` String,
-    `updated_at` DateTime64(3)
+    `expires_at` UInt32
 )
-ENGINE = KeeperMap('/loom/oauth_claims')
+ENGINE = KeeperMap('/loom/oauth_claims', 500000)
 PRIMARY KEY claim_key;
 
 -- loom.oauth_state

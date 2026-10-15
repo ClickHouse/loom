@@ -37,7 +37,7 @@ class MemoryOAuthStore(ClickHouseStore):
     async def _get(self, key: str) -> str | None:
         return self.keeper.get(key)
 
-    async def _swap(self, key: str, old: str | None, new: str) -> str | None:
+    async def _swap(self, key: str, old: str | None, new: str, expires_at: int) -> str | None:
         if self.keeper.get(key) == old:
             self.keeper[key] = new
         return self.keeper.get(key)
@@ -58,8 +58,10 @@ class MemoryOAuthStore(ClickHouseStore):
     async def owe_revocation(self, family: str, reason: str) -> None:
         self.owed.add(family)
 
-    async def revocation_owed(self, family: str) -> bool:
-        return family in self.owed
+    async def session_ended(self, family: str) -> bool:
+        from server.auth import revocation
+
+        return revocation.is_revoked(family) or family in self.owed
 
     def records(self, kind: str) -> dict[str, dict[str, Any]]:
         """The `kind` records in Keeper ("code", "device"…), by id."""

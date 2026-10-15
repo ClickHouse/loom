@@ -10,8 +10,9 @@ credential exactly one wins, however slow either is and whichever ClickHouse
 replica serves it; nothing here depends on time.
 
 Callers make every value unique (a nonce in it), so reading our value back
-proves our write landed. A key is swept a month after its last change
-(`sweep`), past the life of anything it holds.
+proves our write landed. Each key carries the expiry of what it holds, and the
+sweep drops it soon after; the table's key limit is a backstop against a flood
+of unauthenticated sign-in starts.
 
 A ClickHouse without a Keeper has no claims table. Sign-in then answers a
 retryable 503 (`Busy`) rather than spend credentials unguarded, and
@@ -21,6 +22,7 @@ retryable 503 (`Busy`) rather than spend credentials unguarded, and
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import secrets
 from typing import Any
@@ -31,8 +33,8 @@ log = logging.getLogger(__name__)
 
 _TABLE = "loom.oauth_claims"
 _TABLE_SQL = "SELECT engine FROM system.tables WHERE database = 'loom' AND name = 'oauth_claims'"
-_KEEP_DAYS = 31  # longer than a refresh token lives (30 days)
-SWEEP_INTERVAL_SECONDS = 3600
+_GRACE_S = 3600  # an expired credential still reads as expired for this long
+SWEEP_INTERVAL_SECONDS = 300
 
 # Whether loom.oauth_claims exists here: None until the boot probe or the
 # first sign-in asks.
@@ -51,7 +53,7 @@ def nonce() -> str:
     return secrets.token_hex(8)
 
 
-def transitions_atomic() -> bool | None:
+def keeper_available() -> bool | None:
     """Whether this ClickHouse has the claims table; None = not asked yet."""
     return _atomic
 
@@ -94,24 +96,39 @@ async def get(ch: Any, key: str) -> str | None:
     return str(row["value"]) if row else None
 
 
-async def swap(ch: Any, key: str, old: str | None, new: str) -> str | None:
-    """Set `key` to `new` if it holds `old` (None: if it is absent), and
-    return what it holds afterwards: `new` if this call's write landed."""
+async def swap(ch: Any, key: str, old: str | None, new: str, expires_at: int) -> str | None:
+    """Set `key` to `new`, kept until `expires_at` (epoch seconds), if it
+    holds `old` (None: if it is absent). Returns what it holds afterwards:
+    `new` if this call's write landed."""
     await _require(ch)
+    try:
+        return await _swap(ch, key, old, new, expires_at)
+    except Busy:
+        if old is not None:
+            # The write may have landed before Keeper failed: undo it, so the
+            # request told to retry finds the key as it read it.
+            with contextlib.suppress(Busy):
+                await _swap(ch, key, new, old, expires_at)
+        raise
+
+
+async def _swap(ch: Any, key: str, old: str | None, new: str, expires_at: int) -> str | None:
+    params = {"k": key, "v": new, "old": old or "", "e": expires_at}
     for attempt in range(3):
         try:
             if old is None:
                 await ch.execute(
-                    f"INSERT INTO {_TABLE} (claim_key, value, updated_at) "
-                    "SETTINGS keeper_map_strict_mode = 1 VALUES ({k:String}, {v:String}, now64(3))",
-                    params={"k": key, "v": new},
+                    f"INSERT INTO {_TABLE} (claim_key, value, expires_at) "
+                    "SETTINGS keeper_map_strict_mode = 1 "
+                    "VALUES ({k:String}, {v:String}, {e:UInt32})",
+                    params=params,
                 )
             else:
                 await ch.execute(
-                    f"ALTER TABLE {_TABLE} UPDATE value = {{v:String}}, updated_at = now64(3) "
+                    f"ALTER TABLE {_TABLE} UPDATE value = {{v:String}}, expires_at = {{e:UInt32}} "
                     "WHERE claim_key = {k:String} AND value = {old:String} "
                     "SETTINGS keeper_map_strict_mode = 1",
-                    params={"k": key, "v": new, "old": old},
+                    params=params,
                 )
         except Exception as e:  # a lost race is an answer; Keeper failing is a retry
             if not _lost_race(e):
@@ -120,18 +137,18 @@ async def swap(ch: Any, key: str, old: str | None, new: str) -> str | None:
         now = await get(ch, key)
         if now != old:  # ours, or the value another request wrote first
             return now
-        # Still `old`, which nobody writes twice: the write has not run, or
-        # this read came from a Keeper replica a moment behind it.
+        # Still `old`: the write has not run, or this read came from a Keeper
+        # replica a moment behind it.
         await asyncio.sleep(0.05 * (attempt + 1))
     raise Busy(key)
 
 
 async def sweep() -> None:
-    """Drop keys untouched for a month: everything they held has expired."""
+    """Drop keys whose credential expired more than `_GRACE_S` ago."""
     from server.core.ch import get_client
 
     ch = get_client()
     if await _available(ch):
         await ch.execute(
-            f"ALTER TABLE {_TABLE} DELETE WHERE updated_at < now64(3) - INTERVAL {_KEEP_DAYS} DAY"
+            f"ALTER TABLE {_TABLE} DELETE WHERE expires_at < toUInt32(now()) - {_GRACE_S}"
         )

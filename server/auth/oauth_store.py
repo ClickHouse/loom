@@ -21,6 +21,7 @@ or the next step of a device grant.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import time
@@ -108,7 +109,7 @@ class OAuthStore(Protocol):
     async def device_by_user_code(self, user_code_id: str) -> Device | None: ...
     async def take_device(self, device_code: str) -> Device | None: ...
     async def owe_revocation(self, family: str, reason: str) -> None: ...
-    async def revocation_owed(self, family: str) -> bool: ...
+    async def session_ended(self, family: str) -> bool: ...
 
 
 _GRANT_FIELDS = (
@@ -188,18 +189,19 @@ class ClickHouseStore:
     async def _get(self, key: str) -> str | None:
         return await claims.get(self._ch(), key)
 
-    async def _swap(self, key: str, old: str | None, new: str) -> str | None:
-        return await claims.swap(self._ch(), key, old, new)
+    async def _swap(self, key: str, old: str | None, new: str, expires_at: int) -> str | None:
+        return await claims.swap(self._ch(), key, old, new, expires_at)
 
     async def _load(self, key: str) -> tuple[dict[str, Any], str] | None:
         value = await self._get(key)
         return (json.loads(value), value) if value is not None else None
 
     async def _put(self, key: str, old: str | None, record: dict[str, Any]) -> str:
-        """Write `record` over `old` (None: a new key); the value written.
-        Raises claims.Changed when someone else changed it first."""
+        """Write `record` (kept until its `exp`) over `old` (None: a new key);
+        the value written. Raises claims.Changed when someone else changed it
+        first."""
         new = json.dumps(record)
-        if await self._swap(key, old, new) != new:
+        if await self._swap(key, old, new, record["exp"]) != new:
             raise claims.Changed(key)
         return new
 
@@ -260,7 +262,7 @@ class ClickHouseStore:
         rid = token_id(token)
         await self._save_refresh_grant(rid, g)
         key = f"family:{g['family']}"
-        if await self._swap(key, _held(g, key), rid) != rid:
+        if await self._swap(key, _held(g, key), rid, g["exp"]) != rid:
             raise claims.Changed(key)
 
     async def _save_refresh_grant(self, rid: str, g: Grant) -> None:
@@ -301,11 +303,15 @@ class ClickHouseStore:
             return None  # issued before sessions had families: its owner signs in again
         key = f"family:{grant['family']}"
         spending = f"spending:{claims.nonce()}"
-        now = await self._swap(key, rid, spending)
-        if now == spending:
-            return {**grant, "held": {key: spending}}
-        if now is None:
-            return None  # the session's key is gone: it ended a month ago
+        for attempt in range(2):
+            now = await self._swap(key, rid, spending, grant["exp"])
+            if now == spending:
+                return {**grant, "held": {key: spending}}
+            if now is None:
+                return None  # the session's key is gone: it has expired
+            if attempt == 0:
+                # Another token, or a Keeper replica a moment behind: look again.
+                await asyncio.sleep(0.2)
         raise CodeReplayed(grant)  # no longer the session's current token: spent
 
     async def save_pending(self, state: str, data: dict[str, Any]) -> None:
@@ -330,8 +336,7 @@ class ClickHouseStore:
 
     async def owe_revocation(self, family: str, reason: str) -> None:
         """Record that the session must be revoked: the revocation itself did
-        not land. Until it does, revocation.refresh() treats the family as
-        revoked and a refresh in it is refused."""
+        not land. revocation.refresh() counts the family as revoked from it."""
         await self._ch().insert(
             _T,
             [
@@ -345,13 +350,12 @@ class ClickHouseStore:
             ],
         )
 
-    async def revocation_owed(self, family: str) -> bool:
-        row = await self._ch().query_one(
-            f"SELECT 1 AS owed FROM {_T} FINAL "
-            "WHERE record_type = 'revocation_owed' AND id = {id:String} LIMIT 1",
-            params={"id": family},
-        )
-        return row is not None
+    async def session_ended(self, family: str) -> bool:
+        """Whether the session is revoked or owed its revocation, read from
+        storage rather than this process's revocation snapshot."""
+        from server.auth.revocation import revoked_outright
+
+        return await revoked_outright(family)
 
     async def save_device(self, d: Device) -> None:
         """A new device grant, or its next step (from the version this
@@ -359,7 +363,7 @@ class ClickHouseStore:
         key = f"device:{d['id']}"
         held = _held(d, key)
         if held is None:  # new: its user code leads to it
-            await self._put(f"user_code:{d['user_code']}", None, {"id": d["id"]})
+            await self._put(f"user_code:{d['user_code']}", None, {"id": d["id"], "exp": d["exp"]})
         await self._put(key, held, _record(d, _DEVICE_FIELDS, spent=False))
 
     async def _device(self, device_id: str) -> tuple[Device, dict[str, Any]] | None:

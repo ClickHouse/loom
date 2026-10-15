@@ -1034,7 +1034,6 @@ def _failing_revoke(monkeypatch, *, owe_fails: bool, store: Any) -> None:
         raise RuntimeError("revoked_tokens unwritable")
 
     monkeypatch.setattr(revocation, "revoke", down)
-    monkeypatch.setattr(oauth, "_keep_trying", lambda grant, reason: None)
     if owe_fails:
 
         async def owe_down(family: str, reason: str) -> None:
@@ -1117,12 +1116,3 @@ def test_a_refresh_after_logout_is_refused_without_a_replay_verdict(_world) -> N
     assert "other hands" not in r.json()["error_description"]
     reasons = [kw["subject"]["reason"] for n, kw in _world["events"] if n == "auth.session_revoked"]
     assert reasons == ["logout"]
-
-
-async def test_one_family_gets_one_retry_task() -> None:
-    oauth._owed.clear()
-    grant = {"family": "f1", "org": "o", "subject": "s", "client_id": "c"}
-    oauth._keep_trying(grant, "x")  # type: ignore[arg-type]
-    oauth._keep_trying(grant, "x")  # type: ignore[arg-type]
-    assert list(oauth._owed) == ["f1"]
-    oauth._owed["f1"].cancel()

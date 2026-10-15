@@ -242,17 +242,19 @@ key from that token's id, so of two requests presenting it one wins and the othe
 spent. The guarantee is Keeper's, not a lease's: no timing or replica lag can let two
 requests through. Ephemeral state (codes, device grants, IdP round trips) is the Keeper
 value itself; a refresh token's grant is a `loom.oauth_state` row written before the token
-is handed out and read with sequential consistency. Keys are swept a month after their last
-change. A ClickHouse without a Keeper has no claims table: sign-in answers 503, `/v1/health`
+is handed out and read with sequential consistency. Each key carries its credential's
+expiry and is swept within minutes of it; the table's key limit caps what unauthenticated
+sign-in starts can hold. When Keeper fails mid-change, the change is undone before the
+client is told to retry, so its retry is not taken for a replay. A ClickHouse without a Keeper has no claims table: sign-in answers 503, `/v1/health`
 reports `oauth_signin_needs_keeper`, and minted tokens keep working. A refresh token issued
 before sessions had a family is refused, so its owner signs in once more.
 
 **A revocation that cannot be written is owed.** When ending a session cannot write
 `loom.revoked_tokens`, a `revocation_owed` row in `loom.oauth_state` takes its place: the
 revocation snapshot every process loads (at boot and on its refresh cadence) counts the
-family as revoked, so its access tokens are refused everywhere, after any restart, and its
-refreshes are refused too. The process retries the real revocation in the background. When
-neither write lands, the request is answered 503 `temporarily_unavailable`, never a final
+family as revoked, so its access tokens are refused everywhere, after any restart. A
+refresh asks storage itself whether its session ended, so it never waits for a snapshot.
+When neither write lands, the request is answered 503 `temporarily_unavailable`, never a final
 `invalid_grant`.
 
 OAuth answers carry `error` and `error_description` at the top of the JSON body (RFC 6749

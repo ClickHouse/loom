@@ -122,11 +122,34 @@ async def test_an_approved_device_code_is_redeemed_once(store: Any) -> None:
 async def test_a_swap_from_a_value_already_replaced_loses(store: Any) -> None:
     from server.core.ch import get_client
 
-    ch, key = get_client(), f"test:{uuid.uuid4().hex}"
-    assert await claims.swap(ch, key, None, "v1") == "v1"
-    first, second = await _all(claims.swap(ch, key, "v1", "a"), claims.swap(ch, key, "v1", "b"))
+    ch, key, exp = get_client(), f"test:{uuid.uuid4().hex}", int(time.time()) + 60
+    assert await claims.swap(ch, key, None, "v1", exp) == "v1"
+    first, second = await _all(
+        claims.swap(ch, key, "v1", "a", exp), claims.swap(ch, key, "v1", "b", exp)
+    )
     assert sorted([first, second]) in (["a", "a"], ["b", "b"])  # both see the one winner
-    assert await claims.swap(ch, key, "v1", "late") in ("a", "b")
+    assert await claims.swap(ch, key, "v1", "late", exp) in ("a", "b")
+
+
+async def test_a_spend_whose_answer_keeper_lost_is_no_replay_on_retry(
+    store: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    token = secrets.token_urlsafe(32)
+    await store.save_refresh(token, _grant("loom-cli"))
+    real = claims.get
+    failed = False
+
+    async def get(ch: Any, key: str) -> str | None:
+        nonlocal failed
+        if not failed:  # the spend landed, then Keeper failed on the read-back
+            failed = True
+            raise claims.Busy(key)
+        return await real(ch, key)
+
+    monkeypatch.setattr(claims, "get", get)
+    with pytest.raises(claims.Busy):  # the client is told to retry
+        await store.take_refresh(token, "loom-cli")
+    assert await store.take_refresh(token, "loom-cli") is not None  # and the retry works
 
 
 async def test_two_people_signing_in_on_one_code_at_once_end_it_for_both(store: Any) -> None:
@@ -220,7 +243,7 @@ async def test_a_session_another_process_ended_reads_as_ended(
     assert await revocation.revoked_outright(family)
 
 
-async def test_the_sweep_worker_drops_keys_untouched_for_a_month(store: Any) -> None:
+async def test_the_sweep_worker_drops_keys_once_their_credential_expired(store: Any) -> None:
     import importlib
 
     from server.core.ch import get_client
@@ -230,12 +253,8 @@ async def test_the_sweep_worker_drops_keys_untouched_for_a_month(store: Any) -> 
     sweep = getattr(importlib.import_module(row.module), row.pass_attr)
 
     ch, old, fresh = get_client(), f"test:{uuid.uuid4().hex}", f"test:{uuid.uuid4().hex}"
-    await ch.execute(
-        "INSERT INTO loom.oauth_claims (claim_key, value, updated_at) "
-        "VALUES ({k:String}, 'x', now64(3) - INTERVAL 40 DAY)",
-        params={"k": old},
-    )
-    await claims.swap(ch, fresh, None, "y")
+    await claims.swap(ch, old, None, "x", int(time.time()) - 2 * claims._GRACE_S)
+    await claims.swap(ch, fresh, None, "y", int(time.time()) - 60)  # expired, in its grace
     await sweep()
     assert await claims.get(ch, old) is None
     assert await claims.get(ch, fresh) == "y"
