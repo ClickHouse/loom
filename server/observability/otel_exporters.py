@@ -46,6 +46,15 @@ def _make_ch_client_for_otel() -> Any:
     )
 
 
+def _disabled_level() -> int:
+    """How loudly an exporter says it disabled itself: a warning when the
+    ClickHouse exporter was chosen, otherwise (the default, with no ClickStack)
+    an expected note."""
+    from server.settings import settings
+
+    return logging.WARNING if settings.otel_exporter == "ch" else logging.INFO
+
+
 def _unwritable(exc: BaseException) -> str:
     """Why a `default.otel_*` target can never take a write, or '' for an error
     worth retrying. The tables are created by ClickStack/HyperDX, not by Loom's
@@ -106,7 +115,8 @@ def _make_clickhouse_span_exporter(service_name: str) -> Any:
                 return SpanExportResult.SUCCESS
             except Exception as e:  # export fails soft: FAILURE to the SDK, never a raise
                 if why := _unwritable(e):
-                    log.warning(
+                    log.log(
+                        _disabled_level(),
                         "OTel span exporter: cannot write default.otel_traces: %s. "
                         "Self-disabling span export. To enable, deploy ClickStack "
                         "(or grant the user INSERT there) or set LOOM_OTEL_EXPORTER=otlp "
@@ -375,7 +385,8 @@ def _make_clickhouse_metric_exporter(service_name: str) -> Any:
                 return MetricExportResult.SUCCESS
             except Exception as e:  # export fails soft: FAILURE to the SDK, never a raise
                 if why := _unwritable(e):
-                    log.warning(
+                    log.log(
+                        _disabled_level(),
                         "OTel metric exporter: cannot write default.otel_metrics_*: %s. "
                         "Self-disabling metric export.",
                         why,
@@ -425,7 +436,8 @@ def _make_clickhouse_log_exporter(service_name: str) -> Any:
                 return LogRecordExportResult.SUCCESS
             except Exception as e:  # export fails soft: FAILURE to the SDK, never a raise
                 if why := _unwritable(e):
-                    log.warning(
+                    log.log(
+                        _disabled_level(),
                         "OTel log exporter: cannot write default.otel_logs: %s. "
                         "Self-disabling log export.",
                         why,

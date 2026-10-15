@@ -814,7 +814,7 @@ def _check_server(args: argparse.Namespace) -> None:
     from server.core.schema import preflight
 
     server = preflight.require_ready(
-        need="read" if args.status or args.dry_run else "migrate",
+        need="read" if args.status or args.dry_run else "server",
         journal=Path(args.migrations_dir),
     )
     if warning := preflight.warnings(server):

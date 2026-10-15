@@ -84,12 +84,13 @@ Sizing (web replicas, uvicorn processes, the workers container) is in
 Every boot runs the same checks before it connects (the oldest replica's version, the
 database, the grants) and stops with one line naming the fix. Every Loom process but a
 read replica is checked, on every boot, for `CREATE TABLE`, `CREATE VIEW`, `ALTER TABLE`,
-`ALTER VIEW`, `DROP TABLE`, `DROP VIEW`, `INSERT`, `SELECT`, `OPTIMIZE`, `TRUNCATE` and
-`SYSTEM REFRESH VIEW` on `loom.*`, with boot migrations on or off: besides the migrations,
-it sets retention TTLs, compacts, rebuilds provider tables and retires views. A read
-replica is checked for `SELECT`, `INSERT`, `ALTER UPDATE` and `ALTER DELETE`.
-`GRANT CURRENT GRANTS ON loom.*` from an admin covers all of them. Only the replica-version
-and system-table reads, which only migrations need, relax while nothing is pending.
+`ALTER VIEW`, `DROP TABLE`, `DROP VIEW`, `INSERT`, `SELECT`, `OPTIMIZE` and `TRUNCATE` on
+`loom.*`, with boot migrations on or off: besides the migrations, it sets retention TTLs,
+compacts and rebuilds provider tables. Without `SYSTEM REFRESH VIEW` there it boots with a
+warning: purged code stays in the refreshable views until their next scheduled refresh. A
+read replica is checked for `SELECT`, `INSERT`, `ALTER UPDATE` and `ALTER DELETE`. `GRANT CURRENT GRANTS ON loom.*` from an admin
+covers all of them. Only the replica-version and system-table reads, which only migrations
+need, relax while nothing is pending or when boot migrations are off.
 `loom doctor` reports the checks as `clickhouse_preflight`.
 
 ### Local stack from a clone

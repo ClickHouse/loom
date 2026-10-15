@@ -25,7 +25,7 @@ fail() {
 
 # Settings this run is given that .env keeps, so a later `docker compose` in the
 # install directory, which reads only .env, uses the same port and image.
-KEPT_SETTINGS="LOOM_PORT LOOM_BIND_HOST LOOM_IMAGE_REPOSITORY"
+KEPT_SETTINGS="LOOM_PORT LOOM_BIND_HOST LOOM_IMAGE_REPOSITORY LOOM_CLICKHOUSE_IMAGE"
 # given KEY: the value this run was given for KEY, empty when none.
 given() {
   eval "printf '%s' \"\${$1-}\""

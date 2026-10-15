@@ -318,7 +318,7 @@ def _set_up(ch: Any, user: str, reader: str | None) -> int:
     from server.settings import settings
 
     try:
-        server = preflight.check(ch, need="migrate", strict=True)
+        server = preflight.check(ch, need="server", strict=True)
     except preflight.PreflightError as e:
         # The admin SQL follows, so the pointer to it is left out.
         print(f"✗ {e.reason}", file=sys.stderr)

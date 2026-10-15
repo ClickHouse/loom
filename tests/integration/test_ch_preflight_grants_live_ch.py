@@ -1,9 +1,8 @@
 """The preflight's grant checks against a real server: a user given everything
-on loom.* (as the admin SQL grants it) passes every check, the workers'
-OPTIMIZE, TRUNCATE and SYSTEM REFRESH VIEW included. From 26.9
-the ALTER group holds the global-only ALTER HANDLER, so `CHECK GRANT ALTER ON
-loom.*` fails for such a user; the migration grants name ALTER TABLE and ALTER
-VIEW instead."""
+on loom.* (as the admin SQL grants it) passes every check, the server's
+OPTIMIZE, TRUNCATE and SYSTEM REFRESH VIEW included. From 26.9 the ALTER group
+holds the global-only ALTER HANDLER, so `CHECK GRANT ALTER ON loom.*` fails for
+such a user; the server grants name ALTER TABLE and ALTER VIEW instead."""
 
 from __future__ import annotations
 
@@ -36,6 +35,6 @@ def loom_scoped_user() -> Any:
         admin.close()
 
 
-@pytest.mark.parametrize("need", ["migrate", "serve", "read"])
-def test_a_user_with_everything_on_loom_passes(loom_scoped_user: Any, need: str) -> None:
-    assert str(loom_scoped_user.command(f"CHECK GRANT {preflight.GRANTS[need]} ON loom.*")) == "1"
+@pytest.mark.parametrize("grants", [*preflight.GRANTS.values(), preflight.REFRESH_GRANT])
+def test_a_user_with_everything_on_loom_passes(loom_scoped_user: Any, grants: str) -> None:
+    assert str(loom_scoped_user.command(f"CHECK GRANT {grants} ON loom.*")) == "1"

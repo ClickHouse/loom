@@ -67,7 +67,7 @@ class FakeCH:
 
 
 def test_a_ready_server_passes_and_reports_what_it_has() -> None:
-    server = preflight.check(FakeCH(), need="serve")
+    server = preflight.check(FakeCH(), need="replica")
     assert server == preflight.Server("26.5.1.882", keeper=True, lightweight_updates=True)
 
 
@@ -78,7 +78,7 @@ def test_replica_discovery_cannot_be_left_to_the_user_s_profile() -> None:
 
 def test_the_oldest_replica_decides_the_version() -> None:
     with pytest.raises(preflight.PreflightError, match=r"26\.3\.1\.1 is older than 26\.4"):
-        preflight.check(FakeCH(replicas=("26.6.1.1", "26.3.1.1")), need="migrate")
+        preflight.check(FakeCH(replicas=("26.6.1.1", "26.3.1.1")), need="server")
 
 
 @pytest.mark.parametrize(
@@ -98,7 +98,7 @@ def test_replicas_that_cannot_be_asked_are_not_taken_for_one_server(
 
 def test_a_serving_process_falls_back_when_the_replicas_cannot_be_asked() -> None:
     ch = FakeCH(replica_error="Code: 279. DB::Exception: All connection tries failed")
-    assert preflight.check(ch, need="serve").version == "26.5.1.882"
+    assert preflight.check(ch, need="replica").version == "26.5.1.882"
     runner = {f"SELECT * FROM system.{t} LIMIT 0" for t in preflight.RUNNER_SYSTEM_TABLES}
     assert not runner & set(ch.ran)
 
@@ -134,7 +134,7 @@ def test_no_migration_files_to_compare_counts_as_pending(tmp_path) -> None:
 def test_a_restart_with_nothing_pending_is_not_strict(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(preflight, "_migrations_pending", lambda ch, journal: False)
     ch = FakeCH(replica_error="Code: 497. DB::Exception: Not enough privileges. (ACCESS_DENIED)")
-    server = preflight.check(ch, need="migrate")
+    server = preflight.check(ch, need="server")
     assert server.version == "26.5.1.882"
     assert "clusterAllReplicas" in server.next_migration[0].reason
 
@@ -144,9 +144,9 @@ def test_what_the_next_migration_needs_is_reported_while_nothing_is_pending(
 ) -> None:
     monkeypatch.setattr(preflight, "_migrations_pending", lambda ch, journal: False)
     ch = FakeCH(denied=("SELECT * FROM system.mutations",))
-    (gap,) = preflight.check(ch, need="migrate").next_migration
+    (gap,) = preflight.check(ch, need="server").next_migration
     assert "system.mutations" in gap.reason and gap.needs_admin
-    assert preflight.check(ch, need="serve").next_migration == ()
+    assert preflight.check(ch, need="replica").next_migration == ()
 
 
 def test_the_doctor_warns_of_what_the_next_migration_will_refuse(
@@ -161,7 +161,7 @@ def test_the_doctor_warns_of_what_the_next_migration_will_refuse(
     server = preflight.Server(
         "26.5.1.882", keeper=True, lightweight_updates=True, unreadable=("query_log",)
     )
-    monkeypatch.setattr(preflight, "needed_at_boot", lambda: "migrate")
+    monkeypatch.setattr(preflight, "needed_at_boot", lambda: "server")
     monkeypatch.setattr(
         preflight, "require_ready", lambda **_: dataclasses.replace(server, next_migration=gaps)
     )
@@ -175,13 +175,13 @@ def test_the_doctor_warns_of_what_the_next_migration_will_refuse(
 
 def test_a_refused_telemetry_table_is_a_warning_not_a_stop() -> None:
     ch = FakeCH(denied=("SELECT * FROM system.query_log",))
-    assert preflight.check(ch, need="migrate").unreadable == ("query_log",)
+    assert preflight.check(ch, need="server").unreadable == ("query_log",)
 
 
 def test_every_system_table_loom_reads_is_checked_before_any_ddl() -> None:
     ch = FakeCH(denied=("SELECT * FROM system.merge_tree_settings",))
     with pytest.raises(preflight.PreflightError) as e:
-        preflight.check(ch, need="migrate")
+        preflight.check(ch, need="server")
     assert "system.merge_tree_settings" in str(e.value) and e.value.needs_admin
     assert not any(sql.startswith("CREATE") for sql in ch.ran)
 
@@ -202,10 +202,10 @@ def test_a_server_without_the_default_cluster_answers_for_itself() -> None:
 
 def test_a_missing_database_is_created_only_when_asked() -> None:
     ch = FakeCH(database=False)
-    preflight.check(ch, need="migrate")
+    preflight.check(ch, need="server")
     assert "CREATE DATABASE IF NOT EXISTS loom" in ch.ran
     with pytest.raises(preflight.PreflightError, match=r"missing, or no grant on it"):
-        preflight.check(FakeCH(database=False), need="serve")
+        preflight.check(FakeCH(database=False), need="replica")
 
 
 def test_the_admin_pointer_is_in_the_message_but_not_the_reason() -> None:
@@ -225,7 +225,7 @@ def test_a_disabled_cap_is_written_uncapped(monkeypatch: pytest.MonkeyPatch) -> 
 def test_a_user_who_may_not_create_the_database_needs_an_admin() -> None:
     ch = FakeCH(database=False, denied=("CREATE DATABASE",))
     with pytest.raises(preflight.PreflightError) as e:
-        preflight.check(ch, need="migrate")
+        preflight.check(ch, need="server")
     assert e.value.needs_admin and "cannot see a database loom and may not create it" in str(
         e.value
     )
@@ -233,21 +233,21 @@ def test_a_user_who_may_not_create_the_database_needs_an_admin() -> None:
 
 def test_missing_grants_name_the_grant_to_run() -> None:
     with pytest.raises(preflight.PreflightError) as e:
-        preflight.check(FakeCH(grants=0), need="migrate")
+        preflight.check(FakeCH(grants=0), need="server")
     assert e.value.needs_admin and "GRANT CURRENT GRANTS ON loom.* TO `loom`" in str(e.value)
 
 
 def test_a_process_that_does_not_migrate_needs_only_the_serving_grants() -> None:
     ch = FakeCH()
-    preflight.check(ch, need="serve")
-    assert f"CHECK GRANT {preflight.GRANTS['serve']} ON loom.*" in ch.ran
-    assert not any(preflight.GRANTS["migrate"] in sql for sql in ch.ran)
+    preflight.check(ch, need="replica")
+    assert f"CHECK GRANT {preflight.GRANTS['replica']} ON loom.*" in ch.ran
+    assert not any(preflight.GRANTS["server"] in sql for sql in ch.ran)
 
 
 def test_the_migration_grants_never_name_the_global_alter_group() -> None:
     # 26.9 put the global-only ALTER HANDLER in ALTER: a grant on loom.* never holds it.
-    assert "ALTER," not in preflight.GRANTS["migrate"] + ","
-    assert "ALTER TABLE" in preflight.GRANTS["migrate"]
+    assert "ALTER," not in preflight.GRANTS["server"] + ","
+    assert "ALTER TABLE" in preflight.GRANTS["server"]
 
 
 def test_status_reads_need_only_select() -> None:
@@ -556,7 +556,7 @@ def test_the_doctor_fails_where_boot_could_not_create_the_database() -> None:
             return super().command(sql)
 
     with pytest.raises(preflight.PreflightError) as e:
-        preflight.check(NoCreate(database=False), need="migrate", create_database=False)
+        preflight.check(NoCreate(database=False), need="server", create_database=False)
     assert e.value.needs_admin and "may not create it" in str(e.value)
 
 
@@ -570,12 +570,12 @@ def test_a_database_another_worker_created_meanwhile_is_not_a_failure() -> None:
                 )
             return super().command(sql)
 
-    preflight.check(Raced(database=False), need="migrate")
+    preflight.check(Raced(database=False), need="server")
 
 
 def test_a_check_that_may_not_create_the_database_only_reports_it_missing() -> None:
     ch = FakeCH(database=False)
-    server = preflight.check(ch, need="migrate", create_database=False)
+    server = preflight.check(ch, need="server", create_database=False)
     assert not server.database
     assert not any(sql.startswith("CREATE DATABASE") for sql in ch.ran)
 
@@ -611,7 +611,7 @@ async def test_boot_logs_what_a_passing_preflight_warns_of_once(
     )
     monkeypatch.setattr(preflight, "require_ready", _real_require_ready)
     monkeypatch.setattr(preflight, "connect", lambda: ch)
-    monkeypatch.setattr(preflight, "needed_at_boot", lambda: "migrate")
+    monkeypatch.setattr(preflight, "needed_at_boot", lambda: "server")
     monkeypatch.setattr(preflight, "_migrations_pending", lambda ch, journal: False)
     with caplog.at_level("DEBUG"):
         await boot.require_clickhouse_ready()
@@ -748,14 +748,14 @@ def test_a_missing_ddl_grant_stops_even_with_nothing_pending(
             held = ("SELECT", "INSERT", "ALTER UPDATE", "ALTER DELETE")
             if sql.startswith("CHECK GRANT ") and "," not in sql:
                 return int(sql.removeprefix("CHECK GRANT ").split(" ON ")[0] in held)
-            if sql == f"CHECK GRANT {preflight.GRANTS['migrate']} ON loom.*":
+            if sql == f"CHECK GRANT {preflight.GRANTS['server']} ON loom.*":
                 return 0
             return super().command(sql, **kwargs)
 
     # The running server's workers use the DDL grants too.
     monkeypatch.setattr(preflight, "_migrations_pending", lambda ch, journal: False)
     with pytest.raises(preflight.PreflightError) as e:
-        preflight.check(DmlOnly(), need="migrate")
+        preflight.check(DmlOnly(), need="server")
     assert "is missing CREATE TABLE" in str(e.value)
     assert "SELECT" not in str(e.value).split(" on loom.*")[0]
 
@@ -771,12 +771,12 @@ def test_every_process_but_a_read_replica_needs_what_the_workers_run() -> None:
 
     # Boot migrations off changes nothing: the workers and provider rebuilds run.
     with pytest.raises(preflight.PreflightError) as e:
-        preflight.check(NoWorkerGrants(), need="migrate", migrates=False)
-    assert "is missing OPTIMIZE, TRUNCATE, SYSTEM REFRESH VIEW on loom.*" in str(e.value)
-    assert preflight.check(NoWorkerGrants(), need="serve").version
+        preflight.check(NoWorkerGrants(), need="server", migrates=False)
+    assert "is missing OPTIMIZE, TRUNCATE on loom.*" in str(e.value)
+    assert preflight.check(NoWorkerGrants(), need="replica").version
 
 
-@pytest.mark.parametrize(("replica", "need"), [(False, "migrate"), (True, "serve")])
+@pytest.mark.parametrize(("replica", "need"), [(False, "server"), (True, "replica")])
 def test_only_a_read_replica_is_checked_for_less(
     monkeypatch: pytest.MonkeyPatch, replica: bool, need: str
 ) -> None:
@@ -789,7 +789,7 @@ def test_only_a_read_replica_is_checked_for_less(
 def test_a_process_that_does_not_migrate_never_creates_the_database() -> None:
     ch = FakeCH(database=False)
     with pytest.raises(preflight.PreflightError, match="cannot see a database loom"):
-        preflight.check(ch, need="migrate", migrates=False)
+        preflight.check(ch, need="server", migrates=False)
     assert not any(sql.startswith("CREATE DATABASE") for sql in ch.ran)
 
 
@@ -812,3 +812,29 @@ async def test_boot_and_the_doctor_say_whether_this_process_migrates(
     await boot.require_clickhouse_ready()
     doctor._doctor_preflight_check()
     assert seen == [boot_migrate, boot_migrate]
+
+
+def test_a_server_without_refresh_view_boots_with_a_warning() -> None:
+    class NoRefresh(FakeCH):
+        def command(self, sql: str, **kwargs: Any) -> Any:
+            if sql == f"CHECK GRANT {preflight.REFRESH_GRANT} ON loom.*":
+                return 0
+            return super().command(sql, **kwargs)
+
+    server = preflight.check(NoRefresh(), need="server")
+    assert server.no_refresh
+    assert "may not SYSTEM REFRESH VIEW on loom.*" in preflight.warnings(server)
+    assert not preflight.check(NoRefresh(), need="replica").no_refresh
+
+
+@pytest.mark.parametrize(("exporter", "level"), [("", "INFO"), ("otlp", "INFO"), ("ch", "WARNING")])
+def test_an_exporter_disables_itself_quietly_unless_chosen(
+    monkeypatch: pytest.MonkeyPatch, exporter: str, level: str
+) -> None:
+    import logging
+
+    from server.observability import otel_exporters
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "otel_exporter", exporter)
+    assert otel_exporters._disabled_level() == getattr(logging, level)

@@ -309,7 +309,12 @@ def test_enter_at_a_rerun_prompt_keeps_the_saved_password(install, installer_env
 
 def test_the_port_and_image_given_to_a_run_stay_in_env(install) -> None:
     run, target = install
-    given = {"LOOM_PORT": "28977", "LOOM_IMAGE_REPOSITORY": "127.0.0.1:5000/loom"}
+    given = {
+        "LOOM_PORT": "28977",
+        "LOOM_IMAGE_REPOSITORY": "127.0.0.1:5000/loom",
+        # A later bare `up` must not move the bundled server to another release.
+        "LOOM_CLICKHOUSE_IMAGE": "clickhouse/clickhouse-server:head",
+    }
     assert run(**given).returncode == 0
     assert {k: _env(target)[k] for k in given} == given
     # A later run without them keeps them: a bare `docker compose` there must

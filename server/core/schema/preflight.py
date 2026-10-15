@@ -24,20 +24,22 @@ DATABASE = "loom"
 # 25.12 the text index. CI tests the latest release (dev/clickhouse_release.sh);
 # features of newer servers (the Quantized codec, aiEmbed) are probed where used.
 MIN_VERSION = (26, 4)
-# The grants on loom.* each kind of process needs. "migrate" is any Loom server
-# but a read replica, whether it migrates or not: besides the migrations, it
-# sets retention TTLs (ALTER TABLE), compacts (OPTIMIZE), rebuilds provider
-# tables (CREATE, TRUNCATE, DROP) and retires views (SYSTEM REFRESH VIEW).
+# The grants on loom.* each kind of process needs. A server, whether it
+# migrates or not, sets retention TTLs (ALTER TABLE), compacts (OPTIMIZE) and
+# rebuilds provider tables (CREATE, TRUNCATE, DROP) besides the migrations.
 # ALTER TABLE and ALTER VIEW, not ALTER: from 26.9 the ALTER group holds ALTER
 # HANDLER, which is global only, so `CHECK GRANT ALTER ON loom.*` fails even
 # after GRANT ALL ON loom.*.
-Need = Literal["migrate", "serve", "read"]
+Need = Literal["server", "replica", "read"]
 GRANTS: dict[Need, str] = {
-    "migrate": "CREATE TABLE, CREATE VIEW, ALTER TABLE, ALTER VIEW, DROP TABLE, DROP VIEW, "
-    "INSERT, SELECT, OPTIMIZE, TRUNCATE, SYSTEM REFRESH VIEW",
-    "serve": "SELECT, INSERT, ALTER UPDATE, ALTER DELETE",
+    "server": "CREATE TABLE, CREATE VIEW, ALTER TABLE, ALTER VIEW, DROP TABLE, DROP VIEW, "
+    "INSERT, SELECT, OPTIMIZE, TRUNCATE",
+    "replica": "SELECT, INSERT, ALTER UPDATE, ALTER DELETE",
     "read": "SELECT",
 }
+# A server retires views with it, and tolerates a refusal (the scheduled
+# refresh removes the rows anyway), so a missing one is a warning.
+REFRESH_GRANT = "SYSTEM REFRESH VIEW"
 # The system tables the migration runner reads (and the preflight's own): a
 # refused one would fail a migration halfway, so it stops a migrating boot.
 RUNNER_SYSTEM_TABLES = (
@@ -102,6 +104,8 @@ class Server:
     database: bool = True
     # Telemetry tables this user may not read: their views stay empty.
     unreadable: tuple[str, ...] = ()
+    # May not SYSTEM REFRESH VIEW: purged code lingers until the next refresh.
+    no_refresh: bool = False
     # What the next migration will refuse, passed now only because nothing
     # is pending.
     next_migration: tuple[PreflightError, ...] = ()
@@ -261,7 +265,7 @@ def needed_at_boot() -> Need:
     """What the server process needs: everything but a read replica runs DDL."""
     from server.settings import settings
 
-    return "serve" if settings.read_replica else "migrate"
+    return "replica" if settings.read_replica else "server"
 
 
 def check(
@@ -282,7 +286,7 @@ def check(
 
     user = settings.ch_user
     database = bool(ch.command(_DATABASE_COUNT))
-    migrates = migrates and need == "migrate"
+    migrates = migrates and need == "server"  # a replica or a read never migrates
     # Strict where migrations are about to run: a restart with nothing
     # pending, or one that does not migrate, relaxes what only they read.
     migrating = migrates and (strict or not database or _migrations_pending(ch, journal))
@@ -314,6 +318,7 @@ def check(
 
     # Strict even with nothing pending: the running server uses them too.
     _require(ch, user, GRANTS[need])
+    no_refresh = need == "server" and not _granted(ch, REFRESH_GRANT)
 
     if migrates:
         refused = [t for t in RUNNER_SYSTEM_TABLES if not _readable(ch, f"system.{t}")]
@@ -344,6 +349,7 @@ def check(
         lightweight_updates=lightweight,
         database=database or create_database,
         unreadable=unreadable,
+        no_refresh=no_refresh,
         next_migration=tuple(later),
     )
 
@@ -359,9 +365,14 @@ def warnings(server: Server) -> str:
     if server.unreadable:
         tables = ", ".join(f"system.{t}" for t in server.unreadable)
         parts.append(f"may not read {tables}, so the telemetry from these tables stays empty")
+    if server.no_refresh:
+        parts.append(
+            f"may not {REFRESH_GRANT} on {DATABASE}.*, so purged code stays in the "
+            "refreshable views until their next scheduled refresh"
+        )
     # Each reason may end in its own SQL advice: " | " keeps them apart.
     line = " | ".join(parts)
-    if server.unreadable or any(gap.needs_admin for gap in server.next_migration):
+    if server.unreadable or server.no_refresh or any(g.needs_admin for g in server.next_migration):
         line += " (`loom ch-setup --print-sql` prints the SQL)"
     return line
 
