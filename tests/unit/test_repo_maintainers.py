@@ -164,7 +164,7 @@ async def test_sync_quietly_never_raises(monkeypatch: pytest.MonkeyPatch) -> Non
 
 @pytest.fixture()
 def _handler_env(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-    calls: dict[str, Any] = {"sync": [], "revoke": [], "rows": []}
+    calls: dict[str, Any] = {"sync": [], "revoke": [], "revoke_bound": [], "rows": []}
 
     async def _find(*_a: Any, **_k: Any) -> dict[str, Any] | None:
         return None
@@ -178,8 +178,9 @@ def _handler_env(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     async def _sync(org: str, ns: str, **_k: Any) -> None:
         calls["sync"].append((org, ns))
 
-    async def _revoke(org: str, ns: str, subject: str, **_k: Any) -> None:
+    async def _revoke(org: str, ns: str, subject: str, **k: Any) -> None:
         calls["revoke"].append((org, ns, subject))
+        calls["revoke_bound"].append(k.get("granted_before"))
 
     monkeypatch.setattr(grants_repo, "find_active_grant", _find)
     monkeypatch.setattr(grants_repo, "insert_row", _insert)
@@ -316,26 +317,28 @@ async def test_a_sibling_that_fails_does_not_stop_the_revoke_of_the_others(
 
 
 @pytest.mark.parametrize("spelling", ["alice", "alice@x.io"])
+@pytest.mark.parametrize("stored", ["alice", "alice@x.io"])
 async def test_a_retried_revoke_finishes_the_fan_out_under_either_spelling(
-    _handler_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch, spelling: str
+    _handler_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch, spelling: str, stored: str
 ) -> None:
-    # The row is stored under the login handle; the retry may name the email.
+    # The revoked row is stored under one spelling; the retry may name the other.
     async def _none(*_a: Any, **_k: Any) -> None:
         return None
 
-    async def _handle(org: str, subject: str, **_k: Any) -> str:
-        return "alice"
+    async def _both(org: str, subject: str, **_k: Any) -> list[str]:
+        return [subject, *({"alice", "alice@x.io"} - {subject})]
 
     async def _revoked_at(org: str, ns: str, subject: str, **_k: Any) -> datetime | None:
-        return T0 if subject == "alice" else None
+        return T0 if subject == stored else None
 
     monkeypatch.setattr(grants_repo, "find_any_grant", _none)
     monkeypatch.setattr(grants_repo, "admin_revoked_at", _revoked_at)
-    monkeypatch.setattr("server.auth.aliases.canonical_subject", _handle)
+    monkeypatch.setattr("server.auth.aliases.subject_aliases", _both)
     out = await grants_mod.handle_grants_revoke(
         GrantsRevokeInput(org="clickhouse", namespace="code-x", subject=spelling)
     )
-    assert not out.revoked and _handler_env["revoke"] == [("clickhouse", "code-x", "alice")]
+    assert not out.revoked and _handler_env["revoke"] == [("clickhouse", "code-x", stored)]
+    assert _handler_env["revoke_bound"] == [T0]
 
 
 async def test_a_finishing_fan_out_leaves_an_admin_grant_newer_than_the_revoke() -> None:
@@ -371,3 +374,35 @@ async def test_a_mirror_onto_a_new_branch_does_not_override_a_lowering_on_anothe
     await maintainers.sync_repo_maintainers("clickhouse", "code-x", ch=ch)
     assert [r["namespace"] for r in ch.inserted] == ["code-x-26-6"]
     assert ch.inserted[0]["granted_at"] == T0, "the mirror keeps its source's time"
+
+
+async def test_a_retried_revoke_on_a_namespace_without_branches_reads_nothing(
+    _handler_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _none(*_a: Any, **_k: Any) -> None:
+        return None
+
+    async def _unexpected(*_a: Any, **_k: Any) -> None:
+        raise AssertionError("no revoked-row read off a repository")
+
+    monkeypatch.setattr(grants_repo, "find_any_grant", _none)
+    monkeypatch.setattr(grants_repo, "admin_revoked_at", _unexpected)
+    out = await grants_mod.handle_grants_revoke(
+        GrantsRevokeInput(org="clickhouse", namespace="team", subject="alice")
+    )
+    assert not out.revoked and _handler_env["revoke"] == []
+
+
+async def test_a_revoke_leaves_a_grant_given_again_after_it_planned() -> None:
+    class _Regranted(_FakeCH):
+        async def query_one(self, sql: str, params: Any = None) -> dict[str, Any] | None:
+            row = await super().query_one(sql, params)
+            if row and params["ns"] == "code-x-26-6":
+                return {**row, "granted_at": T0 + timedelta(hours=2)}
+            return row
+
+    ch = _Regranted(
+        [_admin(ns, s) for ns in ("code-x-26-5", "code-x-26-6") for s in ("alice", "bob")]
+    )
+    assert await maintainers.revoke_repo_maintainer("clickhouse", "code-x", "alice", ch=ch) == 1
+    assert [r["namespace"] for r in ch.inserted] == ["code-x-26-5"]

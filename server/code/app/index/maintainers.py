@@ -109,13 +109,16 @@ def _unchanged(now: dict[str, Any] | None, read: dict[str, Any] | None) -> bool:
     return _state(now) == _state(read)
 
 
-def _still_admin(now: dict[str, Any] | None, _read: dict[str, Any] | None) -> bool:
-    """A revocation stands while the subject is still an admin there."""
+def _still_admin(now: dict[str, Any] | None, read: dict[str, Any] | None) -> bool:
+    """A revocation stands while the subject still holds the admin grant it
+    was planned against; one granted again since is newer and stays."""
     return (
         now is not None
+        and read is not None
         and now.get("role") == "admin"
         and now.get("revoked_at") is None
         and str(now.get("status") or "active") in _ACTIVE
+        and now.get("granted_at") == read.get("granted_at")
     )
 
 

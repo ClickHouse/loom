@@ -307,14 +307,17 @@ async def handle_grants_revoke(input: GrantsRevokeInput) -> GrantsRevokeOutput:
 
 
 async def _finish_revoke_fan_out(input: GrantsRevokeInput) -> None:
-    """A retry of a revoke whose branch fan-out failed finishes it, under
-    whichever spelling the revoked admin row is stored: it revokes the sibling
-    admin grants no newer than that revocation."""
-    from server.auth.aliases import canonical_subject
+    """A revoke that finds nothing to revoke finishes the branch fan-out of an
+    earlier one (a retry after a fan-out failed): under whichever spelling the
+    subject's revoked admin row is stored, it revokes their sibling admin
+    grants no newer than that revocation. A removed maintainer revoked again
+    on any branch is so removed from every branch."""
+    from server.auth.aliases import subject_aliases
     from server.code.app.index import maintainers
 
-    canonical = await canonical_subject(input.org, input.subject)
-    for subject in dict.fromkeys((canonical, input.subject)):
+    if len(maintainers.branch_namespaces(input.org, input.namespace)) < 2:
+        return
+    for subject in await subject_aliases(input.org, input.subject):
         revoked_at = await grants_repo.admin_revoked_at(input.org, input.namespace, subject)
         if revoked_at is not None:
             await maintainers.revoke_repo_maintainer(
