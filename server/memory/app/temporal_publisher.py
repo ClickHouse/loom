@@ -357,6 +357,14 @@ class _RowChange:
     def __init__(self, row: Mapping[str, Any], build: Build | None = None) -> None:
         self.row = row
         self.build = build
+        # As the writer built it: a re-plan merges from this, never from a row an
+        # earlier attempt already merged.
+        self.given = dict(row)
+
+    def reset(self) -> None:
+        r = cast(dict[str, Any], self.row)
+        r.clear()
+        r.update(self.given)
 
     @property
     def ident(self) -> Ident:
@@ -584,6 +592,7 @@ async def _plan(
     priors = await _retried_commits(b, ch)
     own = {ident: {str(c["commit_id"]) for c in cs} for ident, cs in priors.items()}
     for change in changes:
+        change.reset()
         ident = change.ident
         prior = priors[ident].pop(0) if priors.get(ident) else None
         if prior is not None:
@@ -655,12 +664,11 @@ def _plan_row(
     active = [x.a for x in current.values()]
     base = read_base(row)
     # What the writer changed from the head it read (None: it declared no head).
-    changed = None if base is None else frozenset(c for c, v in row.items() if base.get(c) != v)
-    if base is not None:
-        _rebase(row, base, head, active, now)
+    changed = None if base is None else _changed(row, base)
     left_out = _left_out_before(row, intent, active, head, floor, ident)
-    if not left_out and base is not None:
-        left_out = _locked_against_change(row, base, active, head)
+    if not left_out and base is not None and changed is not None:
+        left_out = _rebase(row, base, changed, head, active, intent, now)
+        left_out = left_out or _locked_against_change(changed, active, now)
     if left_out:
         return left_out
     try:
@@ -756,72 +764,128 @@ _NOT_REBASED = frozenset(
         "memory_id",
         "version",
         "updated_at",
+        "created_at",
     }
 )
-_CONTENT = frozenset({"value", "value_json", "content_sha256"})
+# What a row says about the world: the writer's own, never merged.
+_CONTENT = frozenset({"value", "value_json", "content_sha256", "tombstoned_at", "redacted_at"})
+# One lock: a writer that set any of it set all of it.
+_LOCK = ("lock_mode", "lock_until", "lock_reason", "locked_by", "locked_at")
+
+
+def _same(a: Any, b: Any) -> bool:
+    """Equal as loom.memory stores them (datetimes as UTC whole seconds)."""
+    if isinstance(a, datetime) or isinstance(b, datetime):
+        return _second(a) == _second(b)
+    return bool(a == b)
+
+
+def _second(d: Any) -> datetime | None:
+    u = tm.utc(d) if isinstance(d, datetime) else None
+    return u.replace(microsecond=0) if u is not None else None
+
+
+def _changed(row: Mapping[str, Any], base: Mapping[str, Any]) -> frozenset[str]:
+    return frozenset(c for c, v in row.items() if c in base and not _same(base[c], v))
 
 
 def _rebase(
     row: Mapping[str, Any],
     base: Mapping[str, Any],
+    changed: frozenset[str],
     head: Mapping[str, Any] | None,
     served: Sequence[tm.Assertion],
+    intent: WriteIntent,
     now: datetime,
-) -> None:
-    """A row built from a head its writer read: every column the writer left as it
-    read it takes the key's state now, the journal's current claim over the
-    current row (which lands just after its commit). A three-way merge, so a copy
-    never undoes a lock, pin, expiry, value or status another write committed
-    after the read; what the writer changed stays its own."""
-    theirs = dict(head or {})
+) -> str:
+    """A row built from a head its writer read, merged over the key as it is now;
+    '' or why it is left out. What the writer changed is its own. Its content
+    and removal always are: a write of a new value asserts that value (the later
+    draw wins) and takes only the lock from the journal. A metadata write takes
+    the rest from the claim it read (same content and qualifiers), as the journal
+    holds it now; when the content it read is no longer what applies, another
+    write moved the key and it is left out (`superseded`), never applied to
+    someone else's claim. The lock merges as one unit."""
     claims = tm.current_claims(served, now)
-    shown = str(theirs.get("content_sha256") or "")
-    claim = next((a for a in claims if a.content_sha256 == shown), None)
-    if claim is None and len(claims) == 1:
-        claim = claims[0]
-    if claim is not None:
-        theirs |= columns_of(claim)
+    sha, value = str(base.get("content_sha256") or ""), str(base.get("value") or "")
+    mine = [a for a in claims if a.content_sha256 == sha or _same_value(a.value, value)]
+    if not mine and len(claims) == 1 and head is not None:
+        # A row whose stored hash or text form differs from the journal's (written
+        # before the hash, or as bare text): unmoved while the current row, as new
+        # as the claim, still carries what the writer read.
+        fresh = int(head.get("version") or 0) >= claims[0].source_version
+        if fresh and str(head.get("content_sha256") or "") == sha:
+            mine = list(claims)
+    if intent.qualifiers:
+        mine = [a for a in mine if a.qualifiers == dict(intent.qualifiers)]
+    if len({tuple(sorted(a.qualifiers.items())) for a in mine}) > 1:
+        start, end = _base_validity(base)
+        mine = [
+            a for a in mine if (_second(tm.row_start(a)), _second(a.valid_to)) == (start, end)
+        ] or mine
+    if len({tuple(sorted(a.qualifiers.items())) for a in mine}) > 1:
+        return "ambiguous"  # the same text under several qualifier sets: name one
+    claim = mine[0] if mine else None
+    writes_content = bool(changed & _CONTENT)
+    if claim is None:
+        if not writes_content and claims:
+            return "superseded"  # the key now holds other content
+        return ""
+    theirs = columns_of(claim)
+    if intent.conditional and any(
+        c in theirs and not _same(theirs[c], base.get(c)) for c in changed
+    ):
+        return "superseded"  # what it was conditioned on changed (a touch, a lock)
+    if writes_content:
+        cols = [] if changed & set(_LOCK) else list(_LOCK)
+    else:
+        lock = [] if changed & set(_LOCK) else list(_LOCK)
+        own = _CONTENT | set(_LOCK) | changed | _NOT_REBASED
+        cols = [c for c in theirs if c not in own] + lock
+        # Columns the journal does not keep, from a current row no older than the claim.
+        if head is not None and int(head.get("version") or 0) >= claim.source_version:
+            cols += [c for c in head if c not in theirs and c not in own]
+            theirs = dict(head) | theirs
     r = cast(dict[str, Any], row)
-    for col, mine in list(r.items()):
-        if col in _NOT_REBASED or col not in theirs or col not in base:
-            continue
-        if col in _CONTENT and claim is None:  # content only from a claim, all of it
-            continue
-        if mine == base[col] and theirs[col] != mine:
-            r[col] = theirs[col]
+    for c in cols:
+        if c in r and c in theirs and c not in _NOT_REBASED:
+            r[c] = theirs[c]
+    return ""
+
+
+def _base_validity(base: Mapping[str, Any]) -> tuple[datetime | None, datetime | None]:
+    return (
+        _second(base.get("valid_at") or base.get("temporal_anchor")),
+        _second(base.get("valid_to")),
+    )
 
 
 def _locked_against_change(
-    row: Mapping[str, Any],
-    base: Mapping[str, Any],
-    served: Sequence[tm.Assertion],
-    head: Mapping[str, Any] | None,
+    changed: frozenset[str], served: Sequence[tm.Assertion], now: datetime
 ) -> str:
     """A change the key's lock in force refuses, though its writer read the key
-    unlocked: a new value, or a new expiry, under `read_only`."""
-    changes = set()
-    if row.get("content_sha256") != base.get("content_sha256"):
-        changes.add("value")
-    if row.get("expires_at") != base.get("expires_at"):
-        changes.add("expire")
-    return "locked" if any(_locked_against(served, head, c) for c in changes) else ""
+    unlocked: a new value, a removal or a new expiry, under `read_only`. Only what
+    the writer itself changed counts."""
+    actions = set()
+    if changed & {"value", "content_sha256"}:
+        actions.add("value")
+    if "expires_at" in changed:
+        actions.add("expire")
+    return "locked" if any(_locked_against(served, a, now) for a in actions) else ""
 
 
 def _locked_against_removal(served: Sequence[tm.Assertion], head: Mapping[str, Any] | None) -> bool:
-    return _locked_against(served, head, "delete")
+    return _locked_against(served, "delete", datetime.now(UTC))
 
 
-def _locked_against(
-    served: Sequence[tm.Assertion], head: Mapping[str, Any] | None, action: str
-) -> bool:
-    """A lock that refuses `action` is in force, as the journal holds it (its mode
-    and its deadline)."""
+def _locked_against(served: Sequence[tm.Assertion], action: str, now: datetime) -> bool:
+    """A lock that refuses `action` is in force on what holds now, as the journal
+    keeps it (mode and deadline); a lock on an ended claim binds nothing."""
     from server.memory.domain.lock import REFUSES
 
-    now = datetime.now(UTC)
     return any(
         action in REFUSES.get(a.lock_mode, ()) and (a.lock_until is None or a.lock_until > now)
-        for a in served
+        for a in tm.current_claims(served, now)
     )
 
 
@@ -998,6 +1062,13 @@ async def namespace_lock(org: str, ns: str) -> AsyncIterator[Callable[[], Awaita
         except BackendUnavailableError as e:
             raise TemporalUnavailableError(f"namespace {ns!r} publisher lock unavailable") from e
 
+        if not keeper and await store.foreign_publisher(org, ns, PUBLISHER_ID, _STARTED):
+            # Process mode means one writer in all; another one has committed here.
+            raise TemporalUnavailableError(
+                f"namespace {ns!r}: another process publishes memory without a Keeper; "
+                "run one server process, or a Keeper"
+            )
+
         async def still_held() -> bool:
             return not keeper or await _locks.still_held(name)
 
@@ -1005,6 +1076,9 @@ async def namespace_lock(org: str, ns: str) -> AsyncIterator[Callable[[], Awaita
 
 
 _serving = False
+# When this process started publishing: a commit by another publisher since then
+# means a second writer in process mode.
+_STARTED = datetime.now(UTC)
 
 
 def serve() -> None:

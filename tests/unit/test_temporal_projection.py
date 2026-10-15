@@ -382,7 +382,7 @@ def test_an_attestation_time_is_part_of_the_serving_state() -> None:
     common = dict(
         content_sha256="h", memory_type="semantic", status="active", tags=(), entities=(),
         pinned=False, lock_mode="", sensitivity="", verified_by="v", verified_sha256="h",
-        valid_to=None, expires_at=None, confidence=1.0,
+        valid_to=None, expires_at=None, confidence=1.0, lock_until=None,
     )  # fmt: skip
     a = SimpleNamespace(**common, verified_at=at, valid_from=None, validity_basis="stated")
     row = SimpleNamespace(**common, verified_at=at, valid_at=None, temporal_anchor=None)

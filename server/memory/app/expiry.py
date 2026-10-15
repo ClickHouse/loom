@@ -39,6 +39,7 @@ from typing import Any
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value as _sha
 from server.memory.domain import lock as _lock
+from server.memory.domain.temporal_capture import WriteIntent, write_intent
 from server.memory.store.inserts import insert_memory_versions
 
 log = logging.getLogger(__name__)
@@ -228,8 +229,12 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
             kept.update(_ident(r) for r in rows)
 
         try:
-            # Declared as read: a key touched or locked since is left out, not swept.
-            with memory_repo.reading([m[1] for m in mirrors]):
+            # Declared as read, and conditional: a key touched or locked since is left
+            # out, not swept.
+            with (
+                memory_repo.reading([m[1] for m in mirrors]),
+                write_intent(WriteIntent(conditional=True)),
+            ):
                 await insert_memory_versions(version_rows, ch=ch, alongside=[_keep])
         except Exception as e:  # the pass records a failure; the rows expire next pass
             log.exception("memory_expiry_sweep: version insert failed")

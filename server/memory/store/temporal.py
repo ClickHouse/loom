@@ -151,6 +151,9 @@ ASSERTION_COLS: tuple[str, ...] = (
     "pinned",
     "lock_mode",
     "lock_until",
+    "lock_reason",
+    "locked_by",
+    "locked_at",
     "verified_by",
     "verified_at",
     "verified_sha256",
@@ -851,6 +854,20 @@ async def memory_heads(
     )
 
 
+async def foreign_publisher(
+    org: str, namespace: str, publisher_id: str, since: datetime, *, ch: _CHClient | None = None
+) -> bool:
+    """Has another publisher committed to the namespace since `since`?"""
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        f"SELECT count() AS n FROM {COMMITS} WHERE org = {{org:String}} "
+        "AND namespace = {ns:String} AND recorded_at >= {since:DateTime64(6, 'UTC')} "
+        "AND publisher_id != {me:String}",
+        params={"org": org, "ns": namespace, "since": since, "me": publisher_id},
+    )
+    return bool(int((row or {}).get("n") or 0))
+
+
 async def version_row(
     org: str,
     namespace: str,
@@ -1167,7 +1184,8 @@ _STATE = (
     "toString(lock_mode), toString(sensitivity), verified_by, verified_sha256, "
     "ifNull(toUnixTimestamp(verified_at), 0), "
     "ifNull(toUnixTimestamp({valid_from}), 0), ifNull(toUnixTimestamp(valid_to), 0), "
-    "ifNull(toUnixTimestamp(expires_at), 0), round(confidence, 3))"
+    "ifNull(toUnixTimestamp(expires_at), 0), round(confidence, 3), "
+    "ifNull(toUnixTimestamp(lock_until), 0))"
 )
 # An inferred start is never projected (loom.memory has no basis column): compared as NULL.
 _STATE_A = _STATE.format(valid_from="if(validity_basis = 'inferred', NULL, valid_from)")
@@ -1185,9 +1203,9 @@ async def divergent_rows(
 ) -> list[dict[str, Any]]:
     """Of these identities, those whose loom.memory row is live where the journal
     serves nothing, or does not carry the state of an assertion that applies now.
-    A key with nothing applying now, or with snapshots, is always returned: only
-    the reducer picks a closed fact or the latest snapshot. A superset of the real
-    divergences; the caller decides exactly."""
+    A key with nothing applying now, or with snapshots or events, is always
+    returned: only the reducer picks a closed fact, the latest snapshot or event.
+    A superset of the real divergences; the caller decides exactly."""
     if not keys:
         return []
     ch = ch or _default_client()
@@ -1204,7 +1222,7 @@ async def divergent_rows(
                        AND (valid_from IS NULL OR valid_from <= now64(6))
                        AND (valid_to IS NULL OR valid_to > now64(6)
                             OR temporal_kind IN ('event', 'snapshot'))) AS now_vals,
-                   countIf(temporal_kind = 'snapshot') > 0 AS snapshots
+                   countIf(temporal_kind IN ('snapshot', 'event')) > 0 AS snapshots
             FROM {ASSERTIONS} FINAL
             WHERE org = {{org:String}} AND namespace = {{ns:String}} AND retired_seq IS NULL
               AND {_IDENT} IN ks {erased_sql}

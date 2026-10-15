@@ -13,6 +13,7 @@ import pytest
 
 from server.core import idempotency, request_work
 from server.core.errors import PreconditionFailedError, TemporalUnavailableError
+from server.core.hashing import sha256_value_json
 from server.memory.app import temporal_publisher as pub
 from server.memory.app import temporal_rows as rows
 from server.memory.domain import temporal_model as tm
@@ -103,6 +104,9 @@ class Journal:
             and (r["agent"], r["user_id"], r["session_id"], r["memory_key"]) in set(keys)
         ]
 
+    async def alone(self, *_a, **_k):
+        return False
+
     async def none(self, *_a, **_k):
         return [] if not _k.get("one") else None
 
@@ -157,6 +161,7 @@ def journal(monkeypatch: pytest.MonkeyPatch) -> Journal:
         "withdraw_commits": j.withdraw,
         "repair_namespace": j.repair,
         "mark_published": j.publish_mark,
+        "foreign_publisher": j.alone,
     }.items():
         monkeypatch.setattr(store, name, fn)
 
@@ -198,7 +203,7 @@ def mrow(value: str, **kw: Any) -> dict[str, Any]:
         "memory_id": "00000000-0000-0000-0000-000000000001",
         "memory_type": "semantic",
         "value": value,
-        "content_sha256": value,
+        "content_sha256": sha256_value_json(value),
         "status": "active",
         "tombstoned_at": None,
         "redacted_at": None,
@@ -918,3 +923,104 @@ def test_late_evidence_of_the_current_value_leaves_the_row_alone(journal: Journa
 def test_values_compare_as_canonical_json() -> None:
     assert pub._same_value('{"v":1}', '{"v": 1}')
     assert not pub._same_value("1", "true") and not pub._same_value("1", "1.0")
+
+
+_LOCKLESS = {
+    "lock_mode": "",
+    "lock_until": None,
+    "lock_reason": "",
+    "locked_by": "",
+    "locked_at": None,
+}
+
+
+def _over(journal: Journal, monkeypatch: pytest.MonkeyPatch, head: dict[str, Any]) -> None:
+    async def heads(*_a: Any, **_k: Any) -> list[dict[str, Any]]:
+        return [head]
+
+    monkeypatch.setattr(store, "memory_heads", heads)
+
+
+def _copy(base: dict[str, Any], **changes: Any) -> dict[str, Any]:
+    return {**base, **changes, "version": next(_VERSIONS)}
+
+
+def test_unlocking_a_read_only_memory_with_an_expiry(
+    journal: Journal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory.domain.temporal_capture import read_bases, row_key
+
+    exp = datetime.now(UTC).replace(tzinfo=None, microsecond=0) + timedelta(hours=1)
+    base = mrow('"A"', **_LOCKLESS, expires_at=exp)
+    run(pub.publish_rows([base]))
+    locked = _copy(base, lock_mode="read_only")
+    with read_bases({row_key(locked): base}):
+        run(pub.publish_rows([locked]))
+    _over(journal, monkeypatch, locked)
+    unlock = _copy(locked, lock_mode="")
+    with read_bases({row_key(unlock): locked}):
+        assert run(pub.publish_rows([unlock])) == [unlock]
+
+
+def test_a_set_after_a_concurrent_delete_asserts_its_value(
+    journal: Journal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory.domain.temporal_capture import read_bases, row_key
+
+    base = mrow('"A"', **_LOCKLESS)
+    run(pub.publish_rows([base]))
+    gone = _copy(base, tombstoned_at=datetime.now(UTC))
+    run(pub.publish_rows([gone]))
+    _over(journal, monkeypatch, gone)
+    new = _copy(base, value='"B"', content_sha256=sha256_value_json('"B"'))
+    with read_bases({row_key(new): base}):
+        (row,) = run(pub.publish_rows([new]))
+    assert row["tombstoned_at"] is None and row["value"] == '"B"'
+
+
+def test_a_conditional_write_loses_to_a_change_since_its_read(
+    journal: Journal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory.domain.temporal_capture import WriteIntent, read_bases, row_key, write_intent
+
+    old = datetime.now(UTC).replace(tzinfo=None, microsecond=0) - timedelta(minutes=1)
+    base = mrow('"A"', **_LOCKLESS, expires_at=old)
+    run(pub.publish_rows([base]))
+    touched = _copy(base, expires_at=old + timedelta(days=1))
+    with read_bases({row_key(touched): base}):
+        run(pub.publish_rows([touched]))
+    _over(journal, monkeypatch, touched)
+    sweep = _copy(base, tombstoned_at=datetime.now(UTC), expires_at=None)
+    with read_bases({row_key(sweep): base}), write_intent(WriteIntent(conditional=True)):
+        assert run(pub.publish_rows([sweep])) == []
+
+
+def test_a_metadata_write_over_moved_content_is_superseded(
+    journal: Journal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory.domain.temporal_capture import read_bases, row_key
+
+    base = mrow('"A"', **_LOCKLESS)
+    run(pub.publish_rows([base]))
+    moved = _copy(base, value='"B"', content_sha256=sha256_value_json('"B"'))
+    run(pub.publish_rows([moved]))
+    _over(journal, monkeypatch, moved)
+    tag = _copy(base, tags=["t"])
+    with read_bases({row_key(tag): base}):
+        assert run(pub.publish_rows([tag])) == []
+    assert json.loads(journal.commits[-1]["assertions"])[0]["value"] == '"B"'
+
+
+def test_a_lock_on_an_ended_claim_binds_nothing() -> None:
+    now = datetime.now(UTC)
+    ended = tm.first(
+        '"A"',
+        valid_from=now - timedelta(days=2),
+        valid_to=now - timedelta(days=1),
+        lock_mode="read_only",
+    )
+    held = tm.first('"B"', valid_from=now - timedelta(days=1))
+    assert not pub._locked_against([ended, held], "value", now)
+    assert pub._locked_against(
+        [held.__class__(**{**held.__dict__, "lock_mode": "read_only"})], "value", now
+    )

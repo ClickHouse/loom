@@ -96,15 +96,30 @@ the `loom.memory` row (the current-state projection) are written after it.
 - **A copied row is merged over the journal.** A writer that built its row from a
   head it read (lock, unlock, pin, unpin, touch, verify, update, delete, set, bulk,
   restore, status flips, conflict marks, expiry, apply, proposals, move, observe)
-  declares that head. When the row is planned, every column it left as it read it
-  takes the key's state now (the journal's current claim over the current row);
-  what it changed stays its own. A lock, pin, expiry or value another write
-  committed after the read is never undone by the copy, and nothing is refused
-  or retried for having read an older head. A new value or expiry that a
-  `read_only` lock in the journal refuses is left out as `locked`. Every left-out
-  write answers why (`left_out`: superseded, locked, restated).
+  declares that head. What it changed is what differs from that head (datetimes
+  to the second, as `loom.memory` keeps them); a column it left as it read it is
+  not a change, so a deliberate "set it to what it already was" loses to a write
+  that changed it since. When the row is planned:
+  - Its content and its removal are always its own: a new value asserts that value
+    (the later draw wins) and takes only the lock from the journal.
+  - A metadata write takes every other column from the claim it read (same
+    content, under the write's qualifiers, or the one lineage the read row showed)
+    as the journal holds it now, and the columns the journal does not keep from a
+    current row no older than that claim. When the content it read no longer
+    applies, another write moved the key and it is left out (`superseded`); when
+    the same text holds under several qualifier sets it is left out
+    (`ambiguous`).
+  - The lock (mode, deadline, reason, by whom, since when) is journaled and
+    merges as one unit: a writer that set any of it set all of it.
+  - A conditional write (the expiry sweep) is left out when anything it changes
+    was changed by another write since its read (`superseded`).
+  - A new value, a removal or a new expiry that a `read_only` lock in force on
+    what holds now refuses is left out as `locked`; a lock on an ended claim binds
+    nothing.
+    Every left-out write answers why (`left_out`: superseded, ambiguous, locked,
+    restated). Nothing is refused or retried for having read an older head.
 - A removal of a key whose lock in force refuses it is refused in planning (the
-  head row's `lock_until` decides expiry), with its row. A write that changes the
+  journal's lock and deadline decide), with its row. A write that changes the
   memory it read (lock, pin, verify, touch, update by id) on a key the journal no
   longer serves is refused, never a re-assertion.
 - Nothing takes rows out of service in place: `memory.clear` and `memory.reject`
@@ -203,7 +218,9 @@ Operational limits of this release:
 - Publication is serialized per namespace: about 4–6 writes/s on one namespace
   (measured on ClickHouse 26.9 with a Keeper: ~10 statements and the Keeper lease
   per commit, ~120 ms under the lock), parallel across namespaces. A write that
-  marks k conflict peers or restates commits k more.
+  marks k conflict peers or restates commits k more. A write that waits past
+  `memory_temporal_lock_wait_s` for its namespace's lock answers 503 "busy"
+  (retryable): a single hot key under dozens of concurrent writers sees it.
 - A redaction holds the namespace lock through its scrubs; writes to that
   namespace wait (and see "busy" past the lock wait). Under a Keeper lease the
   redaction checks the lease before each scrub; in process mode the lock cannot lapse.

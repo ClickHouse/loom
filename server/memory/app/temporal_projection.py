@@ -456,6 +456,7 @@ def _state_of(a: tm.Assertion) -> tuple[Any, ...]:
         _epoch(a.valid_to),
         _epoch(a.expires_at),
         round(a.confidence, 3),
+        _epoch(a.lock_until),
     )
 
 
@@ -476,6 +477,7 @@ def _state_of_row(r: memory_repo.MemoryRow) -> tuple[Any, ...]:
         _epoch(r.valid_to),
         _epoch(r.expires_at),
         round(float(r.confidence), 3),
+        _epoch(getattr(r, "lock_until", None)),
     )
 
 

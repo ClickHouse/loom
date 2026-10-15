@@ -36,6 +36,9 @@ ASSESS_FIELDS: tuple[str, ...] = (
     "pinned",
     "lock_mode",
     "lock_until",
+    "lock_reason",
+    "locked_by",
+    "locked_at",
     "verified_by",
     "verified_at",
     "verified_sha256",
@@ -77,6 +80,9 @@ class WriteIntent:
     existing: bool = False
     # The memory id a new key's current-state row takes (the one already journaled).
     memory_id: str = ""
+    # The write holds only while what it changes is as it read it (an expiry sweep:
+    # a key touched or locked since keeps its new state, the write is left out).
+    conditional: bool = False
 
 
 _intent: ContextVar[WriteIntent | None] = ContextVar("loom_temporal_intent", default=None)
@@ -192,12 +198,15 @@ def assertion_from_row(row: Mapping[str, Any], intent: WriteIntent) -> tm.Assert
         modality=intent.modality or "asserted",
         status=str(row.get("status") or "active"),
         confidence=_confidence(row),
-        expires_at=tm.utc(row.get("expires_at")),
+        expires_at=_seconds(tm.utc(row.get("expires_at"))),
         pinned=bool(row.get("pinned")),
         lock_mode=str(row.get("lock_mode") or ""),
         lock_until=_seconds(tm.utc(row.get("lock_until"))),
+        lock_reason=str(row.get("lock_reason") or ""),
+        locked_by=str(row.get("locked_by") or ""),
+        locked_at=_seconds(tm.utc(row.get("locked_at"))),
         verified_by=str(row.get("verified_by") or ""),
-        verified_at=tm.utc(row.get("verified_at")),
+        verified_at=_seconds(tm.utc(row.get("verified_at"))),
         verified_sha256=str(row.get("verified_sha256") or ""),
         grounding=str(row.get("grounding") or ""),
         source_class=str(row.get("source_class") or ""),
@@ -299,9 +308,9 @@ def _shown(
     if not mine:
         current = tm.current_claims(same, now or datetime.now(UTC))
         if head is not None:
-            start, end = _start(head), tm.utc(head.get("valid_to"))
+            shows = (_seconds(_start(head)), _seconds(tm.utc(head.get("valid_to"))))
             current = [
-                a for a in current if (tm.row_start(a), a.valid_to) == (start, end)
+                a for a in current if (_seconds(tm.row_start(a)), _seconds(a.valid_to)) == shows
             ] or current
         lineages = {tuple(sorted(a.qualifiers.items())) for a in current}
         if len(lineages) == 1:

@@ -72,6 +72,8 @@ async def handle_memory_lock(input: MemoryLockInput) -> MemoryLockOutput:
         until = now + timedelta(seconds=input.ttl_seconds)
     else:
         until = to_naive_utc(input.until)
+    # To the second, as the row and the journal keep it: the answer says what holds.
+    until = until.replace(microsecond=0) if until is not None else None
     if until is not None and until <= now:
         raise HTTPException(
             status_code=422,

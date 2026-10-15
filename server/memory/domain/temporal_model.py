@@ -49,8 +49,11 @@ class Assertion:
     expires_at: datetime | None = None
     pinned: bool = False
     lock_mode: str = ""
-    # When the lock lapses (None: it holds until unlocked).
+    # When the lock lapses (None: it holds until unlocked), why, by whom, since when.
     lock_until: datetime | None = None
+    lock_reason: str = ""
+    locked_by: str = ""
+    locked_at: datetime | None = None
     verified_by: str = ""
     verified_at: datetime | None = None
     verified_sha256: str = ""
@@ -90,7 +93,7 @@ class Assertion:
 
     def to_json(self) -> dict[str, Any]:
         out = asdict(self)
-        for k in ("valid_from", "valid_to", "expires_at", "lock_until", "verified_at"):
+        for k in ("valid_from", "valid_to", "expires_at", "lock_until", "locked_at", "verified_at"):
             out[k] = _iso(out[k])
         for k in ("tags", "entities", "evidence_ids", "derived_from"):
             out[k] = list(out[k])
@@ -100,7 +103,7 @@ class Assertion:
     def from_json(cls, d: dict[str, Any]) -> Assertion:
         known = {f for f in cls.__dataclass_fields__}
         d = {k: v for k, v in d.items() if k in known}
-        for k in ("valid_from", "valid_to", "expires_at", "lock_until", "verified_at"):
+        for k in ("valid_from", "valid_to", "expires_at", "lock_until", "locked_at", "verified_at"):
             d[k] = _parse(d.get(k))
         for k in ("tags", "entities", "evidence_ids", "derived_from"):
             d[k] = tuple(d.get(k) or ())
@@ -258,6 +261,7 @@ def current_claims(after: Iterable[Assertion], now: datetime) -> list[Assertion]
     """What the current row shows: what applies now (of events, the latest that has
     happened: a late-recorded older one fills the past), else (when nothing does)
     the latest that has begun."""
+    # An expired claim is still the key's state (its row shows it; reads filter it).
     after = list(after)
     held = latest_events(valid_now(after, now))
     if held:
