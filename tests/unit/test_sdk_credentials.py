@@ -332,3 +332,14 @@ def test_login_says_who_it_signed_in(server) -> None:
     printed: list[str] = []
     credentials.login(_SERVER, open_browser=False, echo=printed.append)
     assert printed[-1] == f"Signed in to {_SERVER} as alice (acme)."
+
+
+def test_an_early_refresh_that_fails_keeps_the_token_that_still_works(server) -> None:
+    credentials.login(_SERVER, open_browser=False, echo=lambda _: None)
+    data = _stored()
+    data["profiles"]["default"]["expires_at"] = int(time.time()) + 30  # inside the margin
+    credentials.CREDENTIALS_FILE.write_text(json.dumps(data))
+    server.queued["/oauth/token"] = [
+        httpx.Response(503, json={"detail": {"error": "temporarily_unavailable"}})
+    ]
+    assert credentials.access_token() == "a1"

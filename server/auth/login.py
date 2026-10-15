@@ -329,6 +329,13 @@ async def jit_provision_for_email(
         # Not this person's (their account would have resolved): someone made
         # it first, and their grants on it must not reach this person's data.
         log.warning("oidc jit: namespace %r already exists; refusing the sign-in", ns)
+        await audit.emit(
+            "auth.signin_denied",
+            org=_settings.oidc_jit_org,
+            namespace=ns,
+            actor=ident,
+            subject={"provider": "oidc", "reason": "jit namespace taken"},
+        )
         return None
     await provision_account(
         org=_settings.oidc_jit_org,

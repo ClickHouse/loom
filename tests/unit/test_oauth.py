@@ -191,7 +191,8 @@ def test_refresh_token_rotates() -> None:
     rt = first["refresh_token"]
     r = _refresh(c, rt)
     assert r.status_code == 200 and r.json()["access_token"]
-    # Old refresh token is rotated out (single-use).
+    # Once its successor has been used, the old refresh token is rotated out.
+    assert _refresh(c, r.json()["refresh_token"]).status_code == 200
     assert _refresh(c, rt).status_code == 400
 
 

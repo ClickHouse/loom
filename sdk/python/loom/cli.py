@@ -132,6 +132,9 @@ def run(args: argparse.Namespace) -> int:
                 print(json.dumps(result, indent=2, default=str))
     except (LoomError, httpx.HTTPError, ValueError, OSError) as e:
         print(f"loom {args.cmd}: {e}", file=sys.stderr)
+        for err in getattr(e, "detail", {}).get("errors") or []:
+            where = ".".join(str(part) for part in err.get("loc", []))
+            print(f"  {where}: {err.get('msg', err)}", file=sys.stderr)
         return 1
     return 0
 

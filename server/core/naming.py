@@ -26,11 +26,15 @@ SENTINEL = "-"
 SSO_NAMESPACE_PREFIX = "u-"
 
 
+# The exact shape: `u-`, the email's local part (up to 40), 8 hex of its hash.
+_SSO_NAMESPACE_RE = re.compile(rf"{SSO_NAMESPACE_PREFIX}.{{1,40}}-[0-9a-f]{{8}}")
+
+
 def reserved_for_sso(namespace: str) -> bool:
     """Whether a new namespace by this name is single sign-on's to create."""
     from server.settings import settings
 
-    return settings.oidc_jit_provision and namespace.startswith(SSO_NAMESPACE_PREFIX)
+    return settings.oidc_jit_provision and bool(_SSO_NAMESPACE_RE.fullmatch(namespace))
 
 
 _NAMESPACE_RE = re.compile(r"[a-z0-9][a-z0-9-]*")

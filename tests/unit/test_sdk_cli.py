@@ -187,3 +187,21 @@ def test_a_route_call_never_leaves_the_server(wire) -> None:
         with pytest.raises(ValueError, match="not a path"):
             asyncio.run(go(elsewhere))
     assert wire.seen == []
+
+
+def test_a_validation_failure_says_which_field(wire, capsys) -> None:
+    wire.status, wire.body = (
+        422,
+        {
+            "detail": {
+                "code": "VALIDATION_FAILED",
+                "message": "Input validation failed",
+                "errors": [{"loc": ["body", "value"], "msg": "Field required"}],
+            }
+        },
+    )
+    assert (
+        cli.main(["call", "memory.set", "memory_key=a/b/c", "--org", "acme", "--namespace", "n"])
+        == 1
+    )
+    assert "body.value: Field required" in capsys.readouterr().err

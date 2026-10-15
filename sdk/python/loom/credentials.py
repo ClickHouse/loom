@@ -304,8 +304,13 @@ def access_token(profile: str | None = None, *, refused: str = "") -> str:
     if not entry:
         raise AuthInvalid(f"not signed in (profile {profile!r}); run `loom login`")
     if not _usable(entry, refused):
-        with _locked():
-            entry = _refresh(profile, refused)
+        try:
+            with _locked():
+                entry = _refresh(profile, refused)
+        except BackendUnavailable:
+            # Early, not yet expired, and not the one refused: it still works.
+            if entry["access_token"] == refused or entry["expires_at"] <= time.time():
+                raise
     return str(entry["access_token"])
 
 

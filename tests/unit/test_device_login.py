@@ -59,9 +59,12 @@ def _world(monkeypatch):
         return roles
 
     monkeypatch.setattr(login, "refreshed_roles", active)
-    for limiter in (device._polls, device._requests_by_address, device._wrong_codes_by_address):
-        limiter.clear()
-    for limiter in (oauth._sso_starts_by_address,):
+    for limiter in (
+        device._polls,
+        device._requests_by_address,
+        device._wrong_codes_by_address,
+        oauth._sso_starts_by_address,
+    ):
         limiter.clear()
     return {"store": store, "revoked": revoked, "expiries": expiries, "events": events}
 
@@ -274,7 +277,6 @@ def test_denied_grant_ends_with_access_denied(_world) -> None:
 
 
 def test_a_replayed_device_code_ends_the_session(_world, monkeypatch) -> None:
-    monkeypatch.setattr(oauth, "_RETRY_GRACE_S", -1)
     c = _client()
     grant = _start(c)
     _approve(c, grant["user_code"], _sign_in(c, grant["user_code"]).text)
@@ -303,16 +305,15 @@ def test_refresh_rotates_within_the_session() -> None:
 
 
 def test_a_replayed_refresh_token_revokes_the_whole_family(_world, monkeypatch) -> None:
-    monkeypatch.setattr(oauth, "_RETRY_GRACE_S", -1)  # long after the spend: a thief
     c = _client()
     first = _signed_in_tokens(c)
     second = _refresh(c, first["refresh_token"]).json()
+    _refresh(c, second["refresh_token"])  # its successor is in use
     # The old token comes back (someone kept a copy): refused, and the session ends.
     assert _error(_refresh(c, first["refresh_token"])) == "invalid_grant"
     sid = pyjwt.decode(second["access_token"], options={"verify_signature": False})["sid"]
     assert _world["revoked"] == [sid, f"{sid}/minted"]
-    # So the legitimate holder's newer token is dead too, and so is its access token.
-    assert _error(_refresh(c, second["refresh_token"])) == "invalid_grant"
+    # So the legitimate holder's session is dead too, access tokens and all.
     assert revocation.is_revoked(sid)
     reasons = [kw["subject"]["reason"] for n, kw in _world["events"] if n == "auth.session_revoked"]
     assert reasons == ["refresh token replayed"]
@@ -911,13 +912,17 @@ def test_session_children_carry_the_sessions_minted_key() -> None:
 # ── retries are not thefts, a leaked code proves nothing ────────────────────
 
 
-def test_a_quick_retry_ends_the_session_but_keeps_what_it_minted(_world) -> None:
+def test_a_lost_answer_is_answered_again_and_the_session_goes_on(_world) -> None:
     c = _client()
     first = _signed_in_tokens(c)
-    _refresh(c, first["refresh_token"])  # its answer was lost
-    assert _error(_refresh(c, first["refresh_token"])) == "invalid_grant"
+    lost = _refresh(c, first["refresh_token"]).json()  # never reached the client
+    again = _refresh(c, first["refresh_token"])
+    assert again.status_code == 200 and _world["revoked"] == []
+    assert _refresh(c, again.json()["refresh_token"]).status_code == 200
+    # The answer that was lost is retired: if it ever turns up, someone has a copy.
+    assert _error(_refresh(c, lost["refresh_token"])) == "invalid_grant"
     sid = pyjwt.decode(first["access_token"], options={"verify_signature": False})["sid"]
-    assert _world["revoked"] == [sid]
+    assert _world["revoked"] == [sid, f"{sid}/minted"]
 
 
 def test_a_loom_failure_during_refresh_leaves_the_token_usable(_world, monkeypatch) -> None:
@@ -979,7 +984,6 @@ def _exchange(c: TestClient, client_id: str, code: str, verifier: str) -> httpx.
 
 
 def test_a_leaked_spent_code_alone_ends_nothing(_world, monkeypatch) -> None:
-    monkeypatch.setattr(oauth, "_RETRY_GRACE_S", -1)
     c = _client()
     client_id, code, verifier = _code_for(c, _world["store"])
     assert _exchange(c, client_id, code, verifier).status_code == 200
@@ -1023,11 +1027,11 @@ def test_an_inactive_account_ends_its_session_at_refresh(_world, monkeypatch) ->
     assert _world["revoked"] == [sid]
 
 
-def test_a_thefts_minted_revocation_lapses_with_what_it_revokes(_world, monkeypatch) -> None:
-    monkeypatch.setattr(oauth, "_RETRY_GRACE_S", -1)
+def test_a_thefts_minted_revocation_lapses_with_what_it_revokes(_world) -> None:
     c = _client()
     first = _signed_in_tokens(c)
-    _refresh(c, first["refresh_token"])
+    second = _refresh(c, first["refresh_token"]).json()
+    _refresh(c, second["refresh_token"])
     _refresh(c, first["refresh_token"])
     lasts = [e - datetime.now(UTC) for e in _world["expiries"]]
     assert all(timedelta(days=29) < left <= timedelta(days=30) for left in lasts)

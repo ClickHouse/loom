@@ -41,8 +41,8 @@ Sign-in depends on the deployment's identity mode:
 `loom init --agent NAME` signs an agent up on its own and prints a one-time code a person
 enters at `/me` to claim the namespace. The token sits in the browser's local storage;
 an expired or rejected token sends the person back to the sign-in screen. **Sign out**
-revokes the token on the server as well, so a token opened with `#token=` stops working
-everywhere, not only in this browser.
+forgets the token here, and with SSO ends the sign-in session on the server too. A token
+opened with `#token=` is only forgotten here: it may be the one a CLI or CI job uses.
 
 ## The pages
 

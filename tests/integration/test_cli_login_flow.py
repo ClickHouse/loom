@@ -221,10 +221,13 @@ def test_refresh_rotates_and_a_replayed_token_ends_the_session(password_server) 
     assert second["refresh_token"] != first["refresh_token"]
     assert _whoami(base, second["access_token"])["authenticated"] is True
 
-    # Someone kept the old refresh token and uses it: refused, and the session ends.
+    # The client goes on (its new token is used), then someone presents the old
+    # one they kept: refused, and the session ends.
+    credentials.access_token(refused=second["access_token"])
+    third = _stored()
     assert _refresh(base, first["refresh_token"]).json()["detail"]["error"] == "invalid_grant"
-    assert _refresh(base, second["refresh_token"]).json()["detail"]["error"] == "invalid_grant"
-    assert _whoami(base, second["access_token"])["authenticated"] is False
+    assert _refresh(base, third["refresh_token"]).json()["detail"]["error"] == "invalid_grant"
+    assert _whoami(base, third["access_token"])["authenticated"] is False
 
 
 def test_logout_revokes_the_session_on_the_server(password_server) -> None:
@@ -479,7 +482,7 @@ def test_service_accounts_and_account_views_need_no_dashboard(
     assert _whoami(base, kept["token"])["authenticated"] is True
 
 
-def test_a_replay_ends_one_session_and_spares_the_persons_others(
+def test_a_stolen_session_ends_with_what_it_minted_and_spares_the_rest(
     password_server, tmp_path, monkeypatch
 ) -> None:
     base, _org, ns, email, password = password_server
@@ -501,12 +504,30 @@ def test_a_replay_ends_one_session_and_spares_the_persons_others(
         f"namespaces:={json.dumps([ns])}",
     )
     first = _stored()
-    credentials.access_token(refused=first["access_token"])  # rotate once
-    # The spent token comes back at once, as a retry whose answer was lost
-    # would: that session ends, and (a retry, not a theft) its CI token stays.
+    credentials.access_token(refused=first["access_token"])  # the client goes on...
+    credentials.access_token(refused=_stored()["access_token"])
+    # ...and a copy of the first token turns up: this session and what it minted end.
     assert _refresh(base, first["refresh_token"]).json()["detail"]["error"] == "invalid_grant"
     assert _whoami(base, _stored()["access_token"])["authenticated"] is False
-    assert _whoami(base, made["token"])["authenticated"] is True
+    assert _whoami(base, made["token"])["authenticated"] is False
     # The same person's other session, and what it minted, are untouched.
     assert _whoami(base, other["token"])["authenticated"] is True
     assert _loom(desktop, "call", "/v1/me/sharing-summary")["subject"] == email
+
+
+def test_a_lost_refresh_answer_does_not_end_the_session(
+    password_server, tmp_path, monkeypatch
+) -> None:
+    base, _org, ns, email, password = password_server
+    home = tmp_path / "laptop"
+    _session_for(base, home, email, password, monkeypatch)
+    made = _loom(
+        home, "call", "/v1/me/service_accounts.create", "name=ci", f"namespaces:={json.dumps([ns])}"
+    )
+    first = _stored()
+    lost = _refresh(base, first["refresh_token"])  # the server rotates; the client never hears
+    assert lost.status_code == 200
+    # The client asks again with what it has, however much later: it goes on.
+    credentials.access_token(refused=first["access_token"])
+    assert _whoami(base, _stored()["access_token"])["authenticated"] is True
+    assert _whoami(base, made["token"])["authenticated"] is True

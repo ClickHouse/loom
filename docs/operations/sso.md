@@ -70,6 +70,11 @@ path below. For a person with no account:
   those domains. Anyone else is shown "sign-in denied", and `loom login`
   stops with an error.
 - With JIT off, only existing accounts can sign in.
+- A JIT account's namespace is `u-<name>-<8 hex>`, named from the email.
+  With JIT on, nobody else can create one, but a name made before JIT was
+  turned on stays someone else's, and that person is refused (an
+  `auth.signin_denied` row says "jit namespace taken"). Look for `u-`
+  namespaces before you turn JIT on.
 
 Platform admins are the verified emails listed in `LOOM_PLATFORM_ADMINS`.
 The provider can never grant admin.
@@ -80,18 +85,22 @@ The provider can never grant admin.
   button again, and Okta's own session usually makes that one click.
 - `loom logout` revokes the Loom session on the server and the Okta refresh
   token at Okta.
-- If a spent refresh token is ever presented again, someone else holds a
-  copy. Loom ends that session and, unless it came back within 30 seconds (a
-  client retrying a lost answer), the service accounts and MCP tokens minted
-  from it. The person's other sessions are not affected.
+- If a spent refresh token comes back after the token that replaced it has
+  been used, someone else holds a copy: Loom ends that session and the
+  service accounts and MCP tokens minted from it. (A client that lost the
+  answer to a refresh just asks again and goes on.) The person's other
+  sessions are not affected.
 - Okta refusing the user at a refresh ends that session.
 - Service accounts and MCP tokens a person creates from a sign-in session
   outlive it, including `loom logout`, for at most 30 days. Only a refresh
   asks Okta about the user, so for someone with no live session nothing
   checks before then. When offboarding, revoke the person:
   `loom revoke-token --subject <their subject>`.
-- Every sign-in, approval, denial, JIT account and ended session writes an
-  `auth.*` row to the audit log.
+- Every sign-in, device approval and denial, MCP consent, JIT account and
+  ended session writes an `auth.*` row to the audit log:
+  `auth.sso_signin`, `auth.signin_denied`, `auth.device_approved`,
+  `auth.device_denied`, `auth.connect_approved`, `auth.connect_denied`,
+  `auth.jit_provisioned`, `auth.session_revoked`.
 
 ## Behind a proxy
 

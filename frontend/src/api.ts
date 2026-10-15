@@ -3,6 +3,7 @@
 // localStorage.
 
 import { noteCallEnd, noteCallStart } from "./lib/vitalsCounter";
+import { claimsFromToken } from "./lib/boot";
 import { apiErrorFromResponse } from "./lib/errors";
 export { ApiError } from "./lib/errors";
 // The two code-plane shapes the shell reads; the plane itself lives in api/code.ts and rides with the Repositories view.
@@ -72,12 +73,13 @@ export function clearToken(): void {
   localStorage.removeItem(KEY_TOKEN);
 }
 
-/** Sign out: end the stored token on the server (a sign-in session ends whole), then
- *  forget it here. Forgetting it never waits on the server's answer. */
+/** Sign out: forget the stored token here, and end it on the server when it is a
+ *  sign-in session's (SSO). A token pasted in with `#token=` may be the one a CLI or
+ *  CI job uses too, so that one is only forgotten here. */
 export async function signOut(): Promise<void> {
   const t = token();
   clearToken();
-  if (!t) return;
+  if (!t || !claimsFromToken(t)?.session) return;
   try {
     await fetch("/oauth/revoke", {
       method: "POST",

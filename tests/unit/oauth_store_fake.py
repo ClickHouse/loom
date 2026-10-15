@@ -59,7 +59,7 @@ class MemoryOAuthStore:
         if client_id is not None and g["client_id"] != client_id:
             return None
         if key in self.spent:
-            raise CodeReplayed(dict(g), self.spent[key])
+            raise CodeReplayed({"successor": "", **g})
         self.spent[key] = time.time()
         return dict(g)
 
@@ -68,6 +68,17 @@ class MemoryOAuthStore:
 
     async def take_refresh(self, token: str, client_id: str) -> dict[str, Any] | None:
         return self._take(self.refresh, token_id(token), client_id)
+
+    async def set_successor(self, token: str, g: dict[str, Any], successor: str) -> None:
+        self.refresh[token_id(token)] = {**g, "successor": token_id(successor)}
+        self.spent[token_id(token)] = time.time()
+
+    async def retire_unused(self, successor_id: str) -> dict[str, Any] | None:
+        g = self.refresh.get(successor_id)
+        if g is None or successor_id in self.spent:
+            return None
+        self.spent[successor_id] = time.time()
+        return dict(g)
 
     async def save_pending(self, state: str, data: dict[str, Any]) -> None:
         self.pending[state] = dict(data)
@@ -97,7 +108,7 @@ class MemoryOAuthStore:
         if d["exp"] < int(time.time()):
             return dict(d)
         if d["id"] in self.spent:
-            raise CodeReplayed(dict(d), self.spent[d["id"]])
+            raise CodeReplayed(dict(d))
         if d["status"] != "pending":
             self.spent[d["id"]] = time.time()
         return dict(d)
