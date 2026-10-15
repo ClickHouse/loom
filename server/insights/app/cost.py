@@ -206,6 +206,7 @@ async def handle_cost_record_turns(input: CostRecordTurnsInput) -> CostRecordTur
     priced_n = 0
     total = 0.0
     now = datetime.now(UTC)
+    ahead = 0
     for t in input.turns:
         cost = turn_cost_usd(
             t.model,
@@ -228,9 +229,10 @@ async def handle_cost_record_turns(input: CostRecordTurnsInput) -> CostRecordTur
                 turn_at = parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
             except ValueError:
                 turn_at = now
-            # A turn cannot have happened later than now: a client clock running
-            # ahead would hide it from the run it belongs to.
-            turn_at = min(turn_at, now)
+            # Kept as sent, so a replay lands in the same run; a client clock
+            # running ahead is reported instead (`turns_dated_ahead`).
+            if turn_at > now:
+                ahead += 1
         rows.append(
             [
                 input.org,
@@ -260,6 +262,7 @@ async def handle_cost_record_turns(input: CostRecordTurnsInput) -> CostRecordTur
         priced=priced_n,
         unpriced_models=unpriced,
         cost_usd=round(total, 6),
+        turns_dated_ahead=ahead,
     )
 
 

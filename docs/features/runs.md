@@ -20,7 +20,7 @@ A run row lives in `loom.agent_runs`. Most of what `run.get` shows is derived at
 | `observations`                     | derived           | episodic rows from `observe.record` tagged with the `run_id`                                                     |
 | `turns`, `cost_usd`                | derived           | the session's turns in `loom.agent_turn_usage` made while the run was open (written by the coding-agent plugins) |
 | `budget_usd`, `budget_seconds`     | stored            | `run.begin` (0 = no budget)                                                                                      |
-| `elapsed_seconds`, `over_budget`   | derived           | the run's age (or its duration once closed) and `cost_usd`, against the budget                                   |
+| `elapsed_seconds`, `over_budget`   | derived           | from the run's start to its close (or now), on the server's clock, and `cost_usd`, against the budget            |
 
 `recalled` is `-1` when `LOOM_SEARCH_TRACE_LOG_ENABLED` is off and no `recalled_keys` were sent.
 
@@ -46,9 +46,9 @@ Limits:
   count when they arrive after the agent's own `run.complete`. A call's cost is known only after it returns, so a
   run can go past `budget_usd` by its last turn's cost before anything sees it.
 - **The client's clock.** The window compares the client's turn times with the server's run times; a clock minutes
-  off misplaces the turns at a run's edges. A turn dated after the server's now is stamped with the server's time
-  when it arrives, and again if it is re-sent (at a month boundary the two stamps can fall in different partitions
-  and count in both windows). Any other re-sent turn keeps its time.
+  off misplaces the turns at a run's edges. A turn keeps the time it was sent with, so a re-sent turn stays with
+  the run it first fell in. `cost.record_turns` counts the turns it received dated after the server's clock in
+  `turns_dated_ahead`, which is how a fast client clock shows.
 - **One session, many runs.** Runs open at once in one session see the same turns: a nested run counts toward both,
   and concurrent workers that each want a cost budget need their own sessions.
 - **Unpriced models.** A turn whose model the price table does not know costs 0; `run.get` counts those in

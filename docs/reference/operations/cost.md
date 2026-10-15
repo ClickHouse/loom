@@ -75,6 +75,7 @@ The coding agent's own spend for one session, a batch of turns per call.
 | `priced` | `int` | Turns whose model the price table knows; 0 when the write failed. |
 | `unpriced_models` | `list[str]` | Models the price table does not know: their rows carry cost_usd=0 and priced=false; add them to PRICE_PER_1K_TOKENS rather than trusting $0. |
 | `cost_usd` | `float` | Total price of the priced turns in this batch, in USD, rounded to 6 places. |
+| `turns_dated_ahead` | `int` | Turns dated after the server's clock: the client's clock runs ahead, so a run's cost window may place them late. |
 
 ## `cost.summary`
 

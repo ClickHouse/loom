@@ -120,6 +120,7 @@ export const EMPTY_WHY = {
   sessionCost:
     "the turns the run's session made while the run was open, from the usage the Stop hook posts (cost.record_turns)",
   budget: "set by run.begin(budget_usd, budget_seconds); a signal for the agent, never a stop",
+  unpriced: "turns from a model the price table does not know: they cost 0, so they never count toward budget_usd",
 } as const;
 
 /** The budget run.begin set and the time used against it, e.g. "$1.00 · 30m 0s · 42s
@@ -556,7 +557,9 @@ export function Runs() {
                   detail &&
                   open &&
                   (() => {
-                    const hasSession = Boolean(open.session_id && open.session_id !== "-");
+                    // The server's names_session: blank or "-" is no session.
+                    const session = (open.session_id ?? "").trim();
+                    const hasSession = session !== "" && session !== "-";
                     const over = detail.over_budget ?? [];
                     return (
                       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm">
@@ -587,7 +590,15 @@ export function Runs() {
                             title={hasSession ? EMPTY_WHY.sessionCost : EMPTY_WHY.noSession}
                           >
                             {hasSession ? (
-                              detail.turns
+                              <>
+                                {detail.turns}
+                                {(detail.unpriced_turns ?? 0) > 0 && (
+                                  <span className="text-[var(--color-text-subtle)]" title={EMPTY_WHY.unpriced}>
+                                    {" "}
+                                    ({detail.unpriced_turns} unpriced)
+                                  </span>
+                                )}
+                              </>
                             ) : (
                               <span className="text-[var(--color-text-subtle)]">no session</span>
                             )}

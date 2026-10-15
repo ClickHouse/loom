@@ -185,6 +185,9 @@ class CostRecordTurnsOutput(BaseModel):
     unpriced_models: list[str] = Field(default_factory=list)
     # Total price of the priced turns in this batch, in USD, rounded to 6 places.
     cost_usd: float = 0.0
+    # Turns dated after the server's clock: the client's clock runs ahead, so a
+    # run's cost window may place them late. They are stored as sent.
+    turns_dated_ahead: int = 0
 
 
 AgentGroupDim = Literal["namespace", "agent", "day", "model", "consumer", "session_id"]

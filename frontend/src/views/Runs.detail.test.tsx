@@ -183,6 +183,15 @@ describe("Runs page", () => {
     expect(await within(dialog).findByTitle(EMPTY_WHY.budget)).toHaveTextContent("60s · 0s elapsed");
   });
 
+  it("names the turns it could not price", async () => {
+    listRuns.mockResolvedValue([full]);
+    getRun.mockResolvedValue(detail({ turns: 3, unpriced_turns: 2 }));
+    render(<Runs />);
+    fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByTitle(EMPTY_WHY.unpriced)).toHaveTextContent("(2 unpriced)");
+  });
+
   it("a run without a budget shows a dash", async () => {
     listRuns.mockResolvedValue([full]);
     render(<Runs />);

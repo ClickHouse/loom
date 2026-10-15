@@ -106,7 +106,7 @@ Replay one run: goal, status, final response, the memories it relied on, the mem
 | `turns` | `int` | The session's turns in loom.agent_turn_usage (the plugin's Stop hook writes them) made while the run was open; 0 when the run has no session or the hook is not installed. |
 | `unpriced_turns` | `int` | Those turns whose model the price table does not know: each costs 0, so `cost_usd` and a cost budget leave them out. |
 | `cost_usd` | `float` | Summed model cost in USD of those turns; 0 as for `turns`. |
-| `elapsed_seconds` | `int` | Seconds the run has taken: until now while active, its duration once closed. |
+| `elapsed_seconds` | `int` | Seconds from started_at to completed_at (to now while active), on the server's clock; not duration_ms. |
 | `over_budget` | `list[Literal['cost', 'time']]` | The budgets the run has gone past: `cost` (cost_usd > budget_usd) and `time` (elapsed_seconds > budget_seconds). |
 
 ## `run.grade`

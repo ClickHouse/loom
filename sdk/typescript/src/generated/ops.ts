@@ -2339,6 +2339,7 @@ export interface CostRecordTurnsOutput {
   priced: number;
   unpriced_models?: string[];
   cost_usd?: number;
+  turns_dated_ahead?: number;
 }
 
 export interface CostSummaryInput {

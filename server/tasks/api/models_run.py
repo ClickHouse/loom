@@ -327,7 +327,8 @@ class RunGetOutput(BaseModel):
     unpriced_turns: int = 0
     # Summed model cost in USD of those turns; 0 as for `turns`.
     cost_usd: float = 0.0
-    # Seconds the run has taken: until now while active, its duration once closed.
+    # Seconds from started_at to completed_at (to now while active), on the
+    # server's clock; not duration_ms.
     elapsed_seconds: int = 0
     # The budgets the run has gone past: `cost` (cost_usd > budget_usd) and
     # `time` (elapsed_seconds > budget_seconds). Empty when within budget or

@@ -7553,6 +7553,7 @@ class CostRecordTurnsOutput(TypedDict, total=False):
     priced: Required[int]
     unpriced_models: NotRequired[list[str]]
     cost_usd: NotRequired[float]
+    turns_dated_ahead: NotRequired[int]
 
 
 class CostSummaryInput(TypedDict, total=False):
