@@ -71,6 +71,11 @@ def test_a_ready_server_passes_and_reports_what_it_has() -> None:
     assert server == preflight.Server("26.5.1.882", keeper=True, lightweight_updates=True)
 
 
+def test_replica_discovery_cannot_be_left_to_the_user_s_profile() -> None:
+    # A profile with skip_unavailable_shards = 1 would silently drop a replica.
+    assert preflight.REPLICA_VERSIONS_SQL.endswith("SETTINGS skip_unavailable_shards = 0")
+
+
 def test_the_oldest_replica_decides_the_version() -> None:
     with pytest.raises(preflight.PreflightError, match=r"26\.3\.1\.1 is older than 26\.4"):
         preflight.check(FakeCH(replicas=("26.6.1.1", "26.3.1.1")), need="migrate")

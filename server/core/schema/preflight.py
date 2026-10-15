@@ -194,7 +194,8 @@ def oldest_version(ch: Client, *, strict: bool = True) -> str:
     rolling upgrade answers from replicas on two versions, and the old one
     still runs the DDL. A server without the `default` cluster is one node.
     When the replicas cannot be asked, `strict` (a process about to migrate)
-    stops; otherwise the connected server answers, with a warning."""
+    stops; otherwise the connected server answers (check() records what a
+    migrating process would have refused)."""
     from server.settings import settings
 
     try:

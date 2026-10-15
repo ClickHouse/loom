@@ -8,9 +8,9 @@ TCP proxy that injects faults between loom's client and the server.
   it, the pool slot is released, the client keeps working.
 
 Skips cleanly when LOOM_CH_HOST is unset. Plain MergeTree keeps no block
-tokens unless `non_replicated_deduplication_window` is set (the dev/CI
-server config sets 1000; Cloud's SharedMergeTree keeps 10,000 by default),
-so the dedup case skips on a server without a window rather than fail.
+tokens unless `non_replicated_deduplication_window` is set: migration 028
+sets 1000 on every MergeTree table (Cloud's SharedMergeTree keeps 10,000 by
+default), so the dedup case skips only on an unmigrated table without one.
 
 The control arm (token off) is not a CI test: a server with a window
 deduplicates identical blocks by content hash regardless of

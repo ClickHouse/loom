@@ -93,8 +93,8 @@ def admin_sql(user: str, reader: str | None) -> list[str]:
     return [
         f"CREATE DATABASE IF NOT EXISTS {preflight.DATABASE}",
         f"GRANT CURRENT GRANTS ON {preflight.DATABASE}.* TO `{user}`",
-        # system.query_log among them shows every user's queries on this server;
-        # docs/operations/deployment.md says how to narrow it.
+        # system.query_log and system.processes among them show every user's past
+        # and running queries; docs/operations/deployment.md says how to narrow them.
         f"GRANT {', '.join(f'SELECT ON system.{t}' for t in preflight.SYSTEM_TABLES)} TO `{user}`",
         # clusterAllReplicas, which asks every replica for its version. READ only:
         # on Cloud plain REMOTE also grants writes to any host through remote().

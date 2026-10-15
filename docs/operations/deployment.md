@@ -63,10 +63,11 @@ Sizing (web replicas, uvicorn processes, the workers container) is in
   are still refused). It creates the reader with `OR REPLACE`, so check that no other
   account has that name; `ch-setup` running the SQL itself refuses one it cannot prove is
   Loom's.
-- **The query log.** Loom reads `system.query_log` for each request's cost, so the Loom
-  user sees every user's queries on that server. On a server Loom shares, a self-managed
-  admin can keep it to Loom's own with
-  `CREATE ROW POLICY loom_own ON system.query_log USING user IN ('loom', 'loom_reader') TO loom`;
+- **Other users' queries.** Loom reads `system.query_log` for each request's cost and
+  `system.processes` to see whether its own statements are still running, so the Loom
+  user sees every user's past and running queries on that server, literals included. On
+  a server Loom shares, a self-managed admin can keep both to Loom's own:
+  `CREATE ROW POLICY loom_own ON system.query_log, system.processes USING user IN ('loom', 'loom_reader') TO loom`;
   ClickHouse Cloud does not allow row policies on system tables.
 - **Switching.** Re-run the installer with `--clickhouse` to move an install to your own
   server; Loom starts on an empty `loom` database there. The bundled container keeps
