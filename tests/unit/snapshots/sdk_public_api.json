@@ -584,6 +584,10 @@
               "body",
               "options"
             ],
+            "list_saved_messages": [
+              "body",
+              "options"
+            ],
             "save_message": [
               "body",
               "options"

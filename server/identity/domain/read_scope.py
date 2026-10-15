@@ -231,6 +231,7 @@ SCOPED_OPS = frozenset(
         "context.pack",
         "conflicts.list",
         # Saved messages are one user's opt-ins; both legs filter the user's rows.
+        "conversation.list_saved_messages",
         "conversation.search_saved_messages",
         "memory.aggregate",
         "memory.ask",

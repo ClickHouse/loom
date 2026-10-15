@@ -2254,6 +2254,29 @@ export interface ConversationListOutput {
   next_cursor?: string | null;
 }
 
+export interface ConversationListSavedMessagesInput {
+  org: string;
+  namespace: string;
+  agent: string;
+  user_id: string;
+  conversation_id?: string | null;
+  limit?: number;
+  cursor?: string | null;
+}
+
+export interface SavedMessageHit {
+  conversation_id: string;
+  message_id: string;
+  role: "user" | "assistant";
+  content_excerpt: string;
+  ts: string; // date-time
+}
+
+export interface ConversationListSavedMessagesOutput {
+  rows: SavedMessageHit[];
+  next_cursor?: string | null;
+}
+
 export interface ConversationSaveMessageInput {
   org: string;
   namespace: string;
@@ -2309,14 +2332,6 @@ export interface ConversationSearchSavedMessagesInput {
   conversation_id?: string | null;
   role?: "user" | "assistant" | null;
   top_k?: number;
-}
-
-export interface SavedMessageHit {
-  conversation_id: string;
-  message_id: string;
-  role: "user" | "assistant";
-  content_excerpt: string;
-  ts: string; // date-time
 }
 
 export interface ConversationSearchSavedMessagesOutput {
@@ -8656,6 +8671,7 @@ export type OpName =
   | "conversation.delete"
   | "conversation.get"
   | "conversation.list"
+  | "conversation.list_saved_messages"
   | "conversation.save_message"
   | "conversation.search"
   | "conversation.search_saved_messages"
@@ -8974,6 +8990,7 @@ export interface OpMap {
   "conversation.delete": { input: ConversationDeleteInput; output: ConversationDeleteOutput };
   "conversation.get": { input: ConversationGetInput; output: ConversationGetOutput };
   "conversation.list": { input: ConversationListInput; output: ConversationListOutput };
+  "conversation.list_saved_messages": { input: ConversationListSavedMessagesInput; output: ConversationListSavedMessagesOutput };
   "conversation.save_message": { input: ConversationSaveMessageInput; output: ConversationSaveMessageOutput };
   "conversation.search": { input: ConversationSearchInput; output: ConversationSearchOutput };
   "conversation.search_saved_messages": { input: ConversationSearchSavedMessagesInput; output: ConversationSearchSavedMessagesOutput };
@@ -9292,6 +9309,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "conversation.delete", group: "conversation", method: "delete", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 600, audit: true, readOnly: false },
   { name: "conversation.get", group: "conversation", method: "get", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 100, audit: false, readOnly: true },
   { name: "conversation.list", group: "conversation", method: "list", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: true },
+  { name: "conversation.list_saved_messages", group: "conversation", method: "listSavedMessages", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 150, audit: false, readOnly: true },
   { name: "conversation.save_message", group: "conversation", method: "saveMessage", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 250, audit: false, readOnly: false },
   { name: "conversation.search", group: "conversation", method: "search", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 120, audit: false, readOnly: true },
   { name: "conversation.search_saved_messages", group: "conversation", method: "searchSavedMessages", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 200, audit: false, readOnly: true },
@@ -9534,4 +9552,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 315;
+export const GENERATED_OP_COUNT = 316;
