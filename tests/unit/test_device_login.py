@@ -1167,6 +1167,6 @@ def test_an_approval_whose_code_could_not_be_saved_can_be_submitted_again(
     monkeypatch.setattr(store, "save_code", flaky)
     approve = {"ticket": ticket, "decision": "approve"}
     first = c.post("/oauth/authorize/approve", data=approve, follow_redirects=False)
-    assert first.status_code == 503
+    assert first.status_code == 503 and "submit your choice again" in first.text
     again = c.post("/oauth/authorize/approve", data=approve, follow_redirects=False)
     assert again.status_code == 302 and "code=" in again.headers["location"]

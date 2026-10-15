@@ -365,8 +365,8 @@ async def device_code_grant(f: dict[str, str]) -> dict[str, Any]:
         return await oauth.issue_tokens(device, DEVICE_CLIENT_ID, since=device["exp"] - _DEVICE_TTL)
     except oauth.OAuthError:
         raise  # a refusal stands
-    except asyncio.CancelledError:  # the CLI went away: the device code is its again
-        await asyncio.shield(oauth.store.save_device(device))
+    except asyncio.CancelledError:  # cancelled at shutdown: the device code is the CLI's again
+        await oauth.put_back(oauth.store.save_device(device))
         raise
     except Exception as e:  # Loom's own failure: unspend the code so the next poll is no replay
         oauth.log.warning("oauth: issuing tokens for a device grant failed: %s", e)

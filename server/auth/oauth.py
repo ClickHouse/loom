@@ -19,6 +19,7 @@ import json
 import logging
 import secrets
 import time
+from collections.abc import Awaitable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlsplit
@@ -562,15 +563,15 @@ def _expired_sign_in() -> Response:
     )
 
 
-def _sign_in_unavailable(restart: str = "") -> Response:
+def _sign_in_unavailable(restart: str) -> Response:
     """Loom could not finish a sign-in it may not resume: the IdP's code is
     spent, so `restart` (where it began) starts a fresh one."""
-    again = (
-        f'<p><a href="{html.escape(restart)}">Start again</a> in a minute.</p>'
-        if restart
-        else "<p>In a minute, start again from where you began.</p>"
+    return html_page(
+        "Sign in to Loom",
+        "<h2>Sign-in is unavailable right now</h2>"
+        f'<p><a href="{html.escape(restart)}">Start again</a> in a minute.</p>',
+        503,
     )
-    return html_page("Sign in to Loom", f"<h2>Sign-in is unavailable right now</h2>{again}", 503)
 
 
 def _restart_url(pending: dict[str, Any]) -> str:
@@ -781,6 +782,17 @@ authorization to <b>{html.escape(destination)}</b>.</p>
 @connect_router.post("/oauth/authorize/approve")
 async def connect_approve(request: Request) -> Response:
     f = await form_body(request)
+    try:
+        return await _decide_connect(f)
+    except claims.Busy:  # nothing was spent: the same choice can be sent again
+        return html_page(
+            "Connect Loom",
+            "<h2>Loom is busy</h2><p>Go back and submit your choice again in a moment.</p>",
+            503,
+        )
+
+
+async def _decide_connect(f: dict[str, str]) -> Response:
     ticket = token_id(f.get("ticket", ""))
     expired = html_page("Connect Loom", "<h2>This approval has expired</h2>", 400)
     pending = await store.pending(ticket)
@@ -793,17 +805,19 @@ async def connect_approve(request: Request) -> Response:
         "redirect_uri": pending["redirect_uri"],
         "code_challenge": pending["code_challenge"],
     }
-    if approved:
-        # Minted before the ticket is spent, so a failed write leaves the
-        # approval to submit again; of two submits only the one that spends
-        # the ticket answers with its code.
-        answer = await _redirect_with_code(
+    # Minted before the ticket is spent, so a failed write leaves the approval
+    # to submit again; of two submits only the one that spends the ticket answers.
+    answer = (
+        await _redirect_with_code(
             client,
             (subject, org, namespaces, roles),
             upstream_refresh=unseal(UPSTREAM_PURPOSE, pending["upstream_refresh"]),
             state=pending["mcp_state"],
             since=pending["since"],
         )
+        if approved
+        else None
+    )
     if await store.take_pending(ticket) is None:
         return expired  # the other submit answered
     await audit.emit(
@@ -813,7 +827,7 @@ async def connect_approve(request: Request) -> Response:
         actor=subject,
         subject={"client_id": pending["client_id"], "redirect_uri": pending["redirect_uri"]},
     )
-    if approved:
+    if answer is not None:
         return answer
     from server.auth import oidc
 
@@ -945,6 +959,15 @@ async def _audit_ended(grant: Grant | Device, reason: str) -> None:
     )
 
 
+async def put_back(saving: Awaitable[None]) -> None:
+    """Return a spent credential from a request being cancelled; a failure
+    here must not hide the cancellation."""
+    try:
+        await asyncio.shield(saving)
+    except Exception as e:  # noqa: BLE001 — the cancellation is what goes on
+        log.warning("oauth: could not put a credential back: %s", e)
+
+
 def _unavailable() -> OAuthError:
     return OAuthError("temporarily_unavailable", 503, headers={"Retry-After": "5"})
 
@@ -1005,8 +1028,8 @@ async def _authorization_code_grant(f: dict[str, str]) -> dict[str, Any]:
         return await issue_tokens(grant, client_id, since=grant["since"])
     except OAuthError:
         raise
-    except asyncio.CancelledError:  # the client went away: the code is theirs again
-        await asyncio.shield(store.save_code(code, grant))
+    except asyncio.CancelledError:  # cancelled at shutdown: the code is the client's again
+        await put_back(store.save_code(code, grant))
         raise
     except Exception as e:  # Loom's own failure: unspend the code so the retry is no replay
         log.warning("oauth: issuing tokens for a code failed: %s", e)
@@ -1056,8 +1079,8 @@ async def _refresh_token_grant(f: dict[str, str]) -> dict[str, Any]:
         if e.status_code != 503:  # refused for good: no token replaces this one
             await store.retire_refresh(grant)
         raise  # an answer: refused, or retry later with the token put back
-    except asyncio.CancelledError:  # the client went away: the token is theirs again
-        await asyncio.shield(store.save_refresh(refresh_token, grant))
+    except asyncio.CancelledError:  # cancelled at shutdown: the token is the client's again
+        await put_back(store.save_refresh(refresh_token, grant))
         raise
     except Exception as e:  # Loom's own failure: unspend the token so the retry is no replay
         log.warning("oauth: refreshing a session failed: %s", e)

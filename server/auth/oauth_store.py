@@ -362,22 +362,24 @@ class ClickHouseStore:
         record = {"data": data, "exp": exp, "spent": False, "nonce": claims.nonce()}
         await self._put(f"pending:{state}", None, record)
 
-    async def pending(self, state: str) -> dict[str, Any] | None:
-        """The record `take_pending` would spend, left unspent."""
-        loaded = await self._load(f"pending:{state}")
+    async def _live_pending(self, key: str) -> tuple[dict[str, Any], str] | None:
+        loaded = await self._load(key)
         if loaded is None or loaded[0]["spent"] or loaded[0]["exp"] < int(time.time()):
             return None
-        data: dict[str, Any] = loaded[0]["data"]
+        return loaded
+
+    async def pending(self, state: str) -> dict[str, Any] | None:
+        """The record `take_pending` would spend, left unspent."""
+        loaded = await self._live_pending(f"pending:{state}")
+        data: dict[str, Any] | None = loaded[0]["data"] if loaded else None
         return data
 
     async def take_pending(self, state: str) -> dict[str, Any] | None:
         key = f"pending:{state}"
-        loaded = await self._load(key)
+        loaded = await self._live_pending(key)
         if loaded is None:
             return None
         record, value = loaded
-        if record["spent"] or record["exp"] < int(time.time()):
-            return None
         try:
             await self._put(key, value, {**record, "spent": True, "nonce": claims.nonce()})
         except claims.Changed:

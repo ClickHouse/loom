@@ -682,7 +682,7 @@ def test_a_refresh_cancelled_midway_leaves_the_token_usable(monkeypatch) -> None
     rt = _refresh_token_for_alice(c)
 
     async def cancelled(subject: str, org: str, roles: list[str]) -> list[str]:
-        raise asyncio.CancelledError  # the client hung up while its refresh ran
+        raise asyncio.CancelledError  # the server shuts down while the refresh runs
 
     form = {"grant_type": "refresh_token", "refresh_token": rt, "client_id": "loom-test"}
     with monkeypatch.context() as gone:
@@ -690,3 +690,18 @@ def test_a_refresh_cancelled_midway_leaves_the_token_usable(monkeypatch) -> None
         with pytest.raises(asyncio.CancelledError):
             asyncio.run(oauth._refresh_token_grant(form))
     assert _refresh(c, rt).status_code == 200
+
+
+async def test_a_put_back_that_fails_still_lets_the_cancellation_through() -> None:
+    async def fails() -> None:
+        raise RuntimeError("Keeper away")
+
+    async def refresh() -> None:
+        try:
+            raise asyncio.CancelledError
+        except asyncio.CancelledError:
+            await oauth.put_back(fails())
+            raise
+
+    with pytest.raises(asyncio.CancelledError):
+        await refresh()
