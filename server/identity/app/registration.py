@@ -23,9 +23,20 @@ async def namespace_row(
     return await namespaces_repo.fetch_row(org, namespace, ch=ch)
 
 
-async def namespace_is_active(org: str, namespace: str, *, ch: _CHClient | None = None) -> bool:
-    """Is (org, namespace) a registered, active namespace? A soft-deleted one is not."""
-    return await namespaces_repo.is_active(org, namespace, ch=ch)
+async def namespace_claimable(org: str, namespace: str, subject: str) -> bool:
+    """Whether a domain may register (org, namespace) as new for `subject`: no
+    directory row, or a soft-deleted one `subject` administers. A soft-deleted
+    namespace keeps its data and grant rows, so registering it again would make
+    anyone else, a subject whose grant there was revoked included, its admin."""
+    from server.auth.authz import Role, grant_role_for
+
+    row = await namespace_row(org, namespace)
+    if row is None:
+        return True
+    if row.get("active") is not False or not subject:
+        return False
+    role = await grant_role_for(org, namespace, subject)
+    return role is not None and role.value >= Role.ADMIN.value
 
 
 async def grant_self_admin(org: str, namespace: str, subject: str) -> None:
@@ -49,4 +60,4 @@ async def grant_self_admin(org: str, namespace: str, subject: str) -> None:
     )
 
 
-__all__ = ["grant_self_admin", "namespace_is_active", "namespace_row"]
+__all__ = ["grant_self_admin", "namespace_claimable", "namespace_row"]

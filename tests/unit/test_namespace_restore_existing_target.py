@@ -217,3 +217,24 @@ async def test_a_non_admin_learns_nothing_from_the_idempotency_probe(wire) -> No
     with pytest.raises(AuthInsufficientError):
         await namespace_snapshot.handle_namespace_restore(_restore_input())
     assert probed == []
+
+
+@pytest.mark.asyncio
+async def test_the_auto_registered_owner_completes_a_registration_but_cannot_restore(
+    wire,
+) -> None:
+    # A first write names its writer owner and grants nothing. Completing the
+    # registration grants nothing either; a restore writes its payload's
+    # grants and an admin grant for the caller, so it needs a real admin.
+    from server.identity.app.namespace_autoregister import AUTO_REGISTER_TAG
+
+    install, _grants = wire
+    row = _deleted_row(active=True, owner_email="alice@x", tags=[AUTO_REGISTER_TAG])
+    ch = install(row, "alice@x", Role.VIEWER)
+    with pytest.raises(AuthInsufficientError):
+        await namespace_snapshot.handle_namespace_restore(_restore_input())
+    assert ch.rows_for("loom.namespace_grants") == []
+    await h.handle_namespace_register(
+        NamespaceRegisterInput(org=ORG, namespace=NS, owner_email="alice@x")
+    )
+    assert ch.rows_for("loom.namespace_grants") == []

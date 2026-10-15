@@ -31,6 +31,7 @@ class _Auth:
         self.org = "clickhouse"
         self.namespaces = namespaces
         self.is_service_account = sa
+        self.issued_at = None
 
     def can_write(self, org: str, ns: str) -> bool:
         return ns in self.namespaces

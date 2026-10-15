@@ -245,6 +245,26 @@ async def test_legacy_private_memory_namespace_still_pends(monkeypatch: pytest.M
     assert out.status == "pending"
 
 
+@pytest.mark.asyncio
+async def test_a_second_request_stays_a_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A pending writer request followed by an admin request is still only a
+    request: the first one never becomes an active base role."""
+    import server.identity.app.namespace_membership as ns
+    from server.identity.domain.grants import GrantState
+    from server.identity.store import grants as grants_repo
+
+    ch = _wire(monkeypatch, _row(kind="memory", join_policy="approval"))
+
+    async def _pending_writer(*_: Any, **__: Any) -> GrantState:
+        return GrantState.from_row({"role": "writer", "status": "pending", "granted_by": "alice"})
+
+    monkeypatch.setattr(grants_repo, "find_any_grant", _pending_writer)
+    out = await ns.handle_namespace_join(_join("admin"))
+    assert out.status == "pending" and out.requested_role == "admin"
+    (row,) = ch.inserted
+    assert (row["status"], row["role"], row["pending_role"]) == ("pending", "admin", None)
+
+
 # --- registry writers carry the column ----------------------------------------------
 
 

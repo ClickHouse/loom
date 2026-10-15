@@ -16,8 +16,10 @@ and hands back the handle for the slice after that. Pages are stable, cost
 one keyed read, and stay inside the read scope the first call resolved.
 
 Handle format: `page/<sha256 prefix>@<offset>`. The blob's JSON is
-`{"v": 1, "query": ..., "top_k": ..., "candidates_total": ..., "hits": [...]}`
-where `hits` is the tail in rank order, each a `_MemorySearchHit` dump.
+`{"v": 1, "query": ..., "top_k": ..., "candidates_total": ...,
+"namespaces_searched": [...], "namespaces_skipped": [...], "hits": [...]}`
+where `hits` is the tail in rank order, each a `_MemorySearchHit` dump, and
+the namespace lists are the first call's, so every page says what it covers.
 """
 
 from __future__ import annotations
@@ -60,7 +62,15 @@ def split_tail(pool: list[Any], final: list[Any]) -> tuple[int, list[Any]]:
     return len(seen | served), tail
 
 
-def encode_page(*, query: str, top_k: int, candidates_total: int, tail: list[Any]) -> str:
+def encode_page(
+    *,
+    query: str,
+    top_k: int,
+    candidates_total: int,
+    tail: list[Any],
+    namespaces_searched: list[str],
+    namespaces_skipped: list[str],
+) -> str:
     hits = [h.model_dump() if hasattr(h, "model_dump") else dict(h) for h in tail]
     return json.dumps(
         {
@@ -68,6 +78,8 @@ def encode_page(*, query: str, top_k: int, candidates_total: int, tail: list[Any
             "query": query,
             "top_k": int(top_k),
             "candidates_total": int(candidates_total),
+            "namespaces_searched": namespaces_searched,
+            "namespaces_skipped": namespaces_skipped,
             "hits": hits,
         },
         ensure_ascii=False,

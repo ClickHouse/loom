@@ -167,11 +167,18 @@ class AuthSettings(BaseModel):
     jwt_leeway_seconds: int = 30
 
     # Seconds the `loom.revoked_tokens` snapshot is cached; verify checks both
-    # jti and sub against it, so a revoke takes effect within this TTL.
+    # jti and sub against it, so a revocation takes effect on other processes
+    # within this TTL (at once on the one that wrote it).
     jwt_revocation_cache_ttl_seconds: float = 30.0
     # Oldest revocation snapshot a process still trusts, seconds. Past it
     # (refreshes keep failing) every bearer is refused with a retryable 503.
+    # A subject's cached grants are trusted as long when a re-read fails.
     jwt_revocation_max_stale_seconds: float = 600.0
+    # Seconds a subject's grant rows are cached for the namespace gate, which
+    # caps a token's claim at the grant it holds there: a revoked or lowered
+    # grant takes effect on other processes within this TTL (at once on the
+    # one that wrote it).
+    grant_cache_ttl_seconds: float = 10.0
 
     # Browser self-signup: "off" (endpoint 404s) or "open"
     # (/v1/auth/self-signup mints JWTs scoped to the requested namespace).

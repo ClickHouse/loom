@@ -186,7 +186,7 @@ Find procedures whose `situation` field is semantically closest to the caller's 
 | `situation` | `str` | required | The state the agent is in; compared against each procedure's stored situation. |
 | `top_k` | `int` | `5` | At most this many candidates are searched (1–50); filters may return fewer. |
 | `tags` | `list[str]` | *(computed)* | Only procedures carrying at least one of these tags; empty = no tag filter. |
-| `namespace_scope` | `Literal['this', 'all_mine']` | `'all_mine'` | `all_mine` searches every namespace the caller belongs to; `this` only `namespace`. |
+| `namespace_scope` | `Literal['this', 'all_mine']` | `'all_mine'` | `all_mine` also searches the caller's own namespaces (up to the fan-out cap); `this` only `namespace`. |
 | `templates_only` | `bool` | `False` | When true, only return procedures promoted to reusable templates (proven, well-exercised workflow topologies). |
 | `include_candidates` | `bool` | `True` | Candidates are procedures nothing has exercised yet AND that no human authored. |
 | `include_quarantined` | `bool` | `False` | A quarantined procedure (its last `strike_limit` runs all failed) is dropped unless asked for; returned last, labelled. |

@@ -1,11 +1,12 @@
 """The home namespace's fact answers first.
 
-`loom_search` fans four sections over every namespace the caller can read.
-A short question such as "what i test?" can return the caller's own one-line
-fact at similarity 0.40 followed by transcript chunks, knowledge rows and
-conversation snippets from other namespaces at 0.27–0.31 — about 2,000
-tokens for a two-word answer. The calibration flags none of them: every row
-is above the similarity floor, just far below the answer.
+`loom_search` fans four sections over the addressed namespace and the
+caller's own (the all_mine fan-out). A short question such as "what i test?"
+can return the caller's own one-line fact at similarity 0.40 followed by
+transcript chunks, knowledge rows and conversation snippets from other
+namespaces at 0.27–0.31 — about 2,000 tokens for a two-word answer. The
+calibration flags none of them: every row is above the similarity floor,
+just far below the answer.
 
 When the top memory hit is a `fact` from the caller's home namespace the
 question is answered by a row the caller wrote; the other namespaces' rows

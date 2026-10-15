@@ -89,6 +89,42 @@ def test_viewer_only_memory_claims_still_pick_a_memory_namespace_and_indexes_nev
     assert mi.pick_default_namespace(["legacy-ns"], {}, lambda ns: True, "x") == "legacy-ns"
 
 
+def _auth(subject: str, *, is_service_account: bool = False) -> SimpleNamespace:
+    return SimpleNamespace(
+        subject=subject,
+        org="clickhouse",
+        namespaces=(),
+        ns_roles=(),
+        is_service_account=is_service_account,
+        can_write=lambda org, ns: True,
+    )
+
+
+def test_a_claim_capped_below_writer_is_not_the_write_home(monkeypatch) -> None:
+    from server.core import grant_cache
+
+    async def _kind_map(org: str) -> dict[str, str]:
+        return KINDS
+
+    async def _viewer_on_alice(org: str, subject: str) -> grant_cache.GrantMap:
+        return grant_cache.GrantMap(ranks={"alice": 1})
+
+    async def _no_default(*_a: Any, **_k: Any) -> None:
+        return None
+
+    import server.identity.app.namespace_kinds as nk
+
+    monkeypatch.setattr(nk, "kind_map", _kind_map)
+    monkeypatch.setattr(grant_cache, "_read", _viewer_on_alice)
+    monkeypatch.setattr(mi.caller_defaults, "saved_default", _no_default)
+    auth = _auth("alice")
+    auth.namespaces = ("alice", "core-tracker")
+    claimed = ["alice", "core-tracker"]
+    assert asyncio.run(mi._claimed_home_default(auth, "clickhouse", claimed, None)) == (
+        "core-tracker"
+    )
+
+
 def test_the_async_wrapper_reads_the_service_accounts_owner_and_saved_default(monkeypatch) -> None:
     async def _kind_map(org: str) -> dict[str, str]:
         return KINDS
@@ -111,9 +147,7 @@ def test_the_async_wrapper_reads_the_service_accounts_owner_and_saved_default(mo
                 return {"namespace": "alice"} if params["sub"] == "alice" else None
             return None
 
-    auth = SimpleNamespace(
-        subject="sa:claude-desktop-3b9fb8", is_service_account=True, can_write=lambda org, ns: True
-    )
+    auth = _auth("sa:claude-desktop-3b9fb8", is_service_account=True)
     ch = _CH()
     out = asyncio.run(mi._claimed_home_default(auth, "clickhouse", CLAIMED, ch))
     assert out == "alice"
@@ -121,9 +155,7 @@ def test_the_async_wrapper_reads_the_service_accounts_owner_and_saved_default(mo
     assert ch.owner_asked == "alice", "the owner's saved default, not the SA's"
     # A human subject: no service-account read.
     ch2 = _CH()
-    human = SimpleNamespace(
-        subject="alice@example.com", is_service_account=False, can_write=lambda org, ns: True
-    )
+    human = _auth("alice@example.com")
     assert (
         asyncio.run(mi._claimed_home_default(human, "clickhouse", ["core-tracker", "alice"], ch2))
         == "alice"

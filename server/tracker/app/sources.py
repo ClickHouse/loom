@@ -417,14 +417,15 @@ def _namespace_specs(input: Any) -> list[dict[str, Any]]:
 
 
 async def _namespace_taken(org: str, namespace: str) -> bool:
-    from server.core.ch import get_client
+    from server.auth.context import current_caller
+    from server.auth.default_namespace import auth_off_subject
+    from server.identity.app.registration import namespace_claimable
     from server.tracker.domain import sources
 
     if namespace in sources.namespace_entries():
         return True
-    from server.identity.app.registration import namespace_is_active
-
-    return await namespace_is_active(org, namespace, ch=get_client())
+    subject = current_caller()[0] or auth_off_subject()
+    return not await namespace_claimable(org, namespace, subject)
 
 
 async def _probe_or_refuse(

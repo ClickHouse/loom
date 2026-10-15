@@ -21,7 +21,7 @@ _CREATED = datetime(2025, 1, 2, 3, 4, 5)
 _ROW: dict[str, Any] = {
     "org": "acme",
     "namespace": "vault",
-    "owner_email": "alice@acme.test",
+    "owner_email": "Alice",
     "description": "secrets",
     "tags": ["sensitive"],
     "active": True,
@@ -38,7 +38,7 @@ _ROW: dict[str, Any] = {
     "password_hash": "argon2id$abc",
     "requires_approval": True,
     "daily_cost_cap_usd": 12.5,
-    "contact_email": "alice@acme.test",
+    "contact_email": "Alice@Acme.test",
     "classification": "restricted",
     "join_policy": "closed",
     "retrieval_defaults": '{"k": 3}',
@@ -71,7 +71,7 @@ def test_release_keeps_classification_and_every_other_column(
     out = asyncio.run(
         cr.claim_release(cr.ClaimReleaseInput(org="acme", namespace="vault", reason="left"), None)  # type: ignore[arg-type]
     )
-    assert out.released and out.previous_owner == "alice@acme.test" and out.grants_revoked == 1
+    assert out.released and out.previous_owner == "Alice" and out.grants_revoked == 1
 
     ns_rows = [rows for table, rows in fake.inserts if table == "loom.namespaces"]
     assert len(ns_rows) == 1 and len(ns_rows[0]) == 1
@@ -83,7 +83,12 @@ def test_release_keeps_classification_and_every_other_column(
     assert written["active"] is False
     assert written["description"] == "Released by local (left)"
     assert written["updated_at"] > _CREATED
+    # the person's spellings stay tied for the claim cap, and for nothing else
+    assert written["released_aliases"] == ["alice", "alice@acme.test"], (
+        "kept lowercase, as the cap matches them"
+    )
     changed = {
+        "released_aliases",
         "owner_email",
         "contact_email",
         "password_hash",
