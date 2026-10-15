@@ -354,33 +354,97 @@ def test_the_reader_must_not_be_the_loom_user(monkeypatch: pytest.MonkeyPatch) -
 
 
 @pytest.mark.parametrize(
-    ("found", "problem", "refusal"),
+    ("found", "logged_in", "problem", "refusal"),
     [
         # A same-named user that does not log in with Loom's password: an analyst's account.
-        ("user", ch_setup.CANNOT_LOG_IN, "does not accept LOOM_CH_PASSWORD"),
-        # A same-named profile with no reader user, or one other accounts inherit.
-        ("profile", ch_setup.CANNOT_LOG_IN, "a settings profile named analyst exists"),
+        ("user", False, "it does not accept LOOM_CH_PASSWORD", "DROP USER IF EXISTS"),
+        # A probe that failed for another reason proves nothing either.
+        ("user", False, "Read timed out", "exists: Read timed out"),
+        # No password, not on its own profile, or a shared profile.
+        ("foreign", True, "its profile does not match", "is not one ch-setup made"),
+        # A profile with no user: Loom's own after DROP USER, or someone else's.
+        ("profile", False, "missing", "DROP SETTINGS PROFILE analyst"),
     ],
 )
 def test_an_account_ch_setup_cannot_prove_is_loom_s_is_left_alone(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     found: str,
+    logged_in: bool,
     problem: str,
     refusal: str,
 ) -> None:
-    monkeypatch.setattr(ch_setup, "reader_problem", lambda reader: problem)
+    monkeypatch.setattr(ch_setup, "reader_status", lambda reader: (logged_in, problem))
     monkeypatch.setattr(ch_setup, "reader_objects", lambda ch, reader: found)
     ch = FakeCH()
     assert ch_setup._set_up(ch, "loom_app", "analyst") == 1
     assert refusal in capsys.readouterr().err
-    assert not any(sql.startswith(("CREATE USER", "CREATE SETTINGS")) for sql in ch.ran)
+    assert not any(sql.startswith(("CREATE USER", "CREATE SETTINGS", "DROP")) for sql in ch.ran)
+
+
+class Accounts(FakeCH):
+    """A server holding `user` (storage, open login) and profile rows of the reader's name."""
+
+    def __init__(self, user=None, own_profile=0, profiles=0, shared=0):
+        super().__init__()
+        self.user, self.counts = user, (own_profile, profiles, shared)
+
+    def query(self, sql: str, **kwargs: Any) -> SimpleNamespace:
+        if "system.users" in sql:
+            return SimpleNamespace(result_rows=[self.user] if self.user else [])
+        return super().query(sql, **kwargs)
+
+    def command(self, sql: str, **kwargs: Any) -> Any:
+        own_profile, profiles, shared = self.counts
+        if "user_name = {r:String} AND inherit_profile" in sql:
+            return own_profile
+        if "system.settings_profiles" in sql:
+            return profiles
+        if "ifNull(user_name" in sql:
+            return shared
+        return super().command(sql, **kwargs)
+
+
+@pytest.mark.parametrize(
+    ("accounts", "found"),
+    [
+        (Accounts(), ""),
+        (Accounts(user=("users_xml", 0)), "config"),
+        (Accounts(user=("local_directory", 0), own_profile=1, profiles=1), "user"),
+        (Accounts(user=("local_directory", 1), own_profile=1, profiles=1), "foreign"),
+        (Accounts(user=("local_directory", 0)), "foreign"),
+        (Accounts(user=("local_directory", 0), own_profile=1, profiles=1, shared=1), "foreign"),
+        (Accounts(profiles=1, shared=1), "foreign"),
+        (Accounts(profiles=1), "profile"),
+    ],
+)
+def test_only_a_reader_in_ch_setup_s_shape_counts_as_a_user(accounts: Accounts, found: str) -> None:
+    assert ch_setup.reader_objects(accounts, "loom_reader") == found
+
+
+def test_a_reader_left_halfway_is_dropped_so_a_rerun_starts_clean(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ch_setup, "reader_status", lambda reader: (False, "missing"))
+    monkeypatch.setattr(ch_setup, "reader_objects", lambda ch, reader: "")
+    ch = FakeCH(denied=("CREATE USER",))
+    assert ch_setup._set_up(ch, "loom_app", "loom_reader") == 1
+    assert "DROP SETTINGS PROFILE IF EXISTS `loom_reader`" in ch.ran
+
+
+def test_ch_setup_checks_for_the_next_migration_even_with_nothing_pending(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(preflight, "_migrations_pending", lambda ch, journal: False)
+    ch = FakeCH(replica_error="Code: 497. DB::Exception: Not enough privileges. (ACCESS_DENIED)")
+    assert ch_setup._set_up(ch, "loom_app", "loom_reader") == 1
+    assert "GRANT READ ON REMOTE" in capsys.readouterr().err
 
 
 def test_a_reader_that_logs_in_with_loom_s_password_is_rebuilt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(ch_setup, "reader_problem", lambda r: "its profile does not match")
+    monkeypatch.setattr(ch_setup, "reader_status", lambda r: (True, "its profile does not match"))
     monkeypatch.setattr(ch_setup, "reader_objects", lambda ch, r: "user")
     ch = FakeCH()
     assert ch_setup._set_up(ch, "loom", "loom_reader") == 0
@@ -391,7 +455,7 @@ def test_a_bundled_reader_whose_caps_differ_is_a_failure(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setattr(
-        ch_setup, "reader_problem", lambda r: "its profile does not match the current caps"
+        ch_setup, "reader_status", lambda r: (True, "its profile does not match the current caps")
     )
     monkeypatch.setattr(ch_setup, "reader_objects", lambda ch, r: "config")
     assert ch_setup._set_up(FakeCH(), "loom", "loom_reader") == 1
@@ -410,7 +474,7 @@ def test_a_reader_whose_owner_cannot_be_seen_is_not_replaced(
                 raise RuntimeError("Code: 497. DB::Exception: Not enough privileges")
             return super().query(sql, **kwargs)
 
-    monkeypatch.setattr(ch_setup, "reader_problem", lambda reader: "missing")
+    monkeypatch.setattr(ch_setup, "reader_status", lambda reader: (False, "missing"))
     ch = MayNotListUsers()
     assert ch_setup.reader_objects(ch, "someone_elses") == "unknown"
     assert ch_setup._set_up(ch, "delegate", "someone_elses") == 1
@@ -426,7 +490,7 @@ def test_a_user_who_may_not_create_the_reader_gets_the_admin_sql(
     from server.settings import settings
 
     monkeypatch.setattr(settings, "ch_password", "s3cret-value")
-    monkeypatch.setattr(ch_setup, "reader_problem", lambda reader: "missing")
+    monkeypatch.setattr(ch_setup, "reader_status", lambda reader: (False, "missing"))
     ch = FakeCH(denied=("CREATE SETTINGS PROFILE",))
     assert ch_setup._set_up(ch, "loom_app", "loom_reader") == 1
     captured = capsys.readouterr()

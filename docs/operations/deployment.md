@@ -38,8 +38,8 @@ Sizing (web replicas, uvicorn processes, the workers container) is in
   as Cloud's `default`, which would let Loom manage every database and user on the
   service. The URL must name one.
 - **The URL.** `http://` defaults to port 8123, `https://` to 8443 and TLS.
-  Percent-encode `@`, `:`, `/` and `%` in the user or password; an empty password is `user:@host` or `LOOM_CH_PASSWORD=`. `LOOM_CH_URL` works in place
-  of `--clickhouse`. A server on the Docker host is `host.docker.internal`: `localhost`
+  Percent-encode `@`, `:`, `/` and `%` in the user or password; an empty password is
+  `user:@host` or `LOOM_CH_PASSWORD=`. `LOOM_CH_URL` works in place of `--clickhouse`. A server on the Docker host is `host.docker.internal`: `localhost`
   inside the container is the container itself.
 - **The password.** Set `LOOM_CH_PASSWORD`, or answer the prompt, which does not echo;
   one in the URL works too, but `ps` and the shell history see it. It is written only to
@@ -49,18 +49,20 @@ Sizing (web replicas, uvicorn processes, the workers container) is in
   starts Loom. It creates the `loom` database and the read-only `loom_reader` user
   (below), and checks the version and the grants. Run it again at any time with
   `docker compose --project-directory ~/.loom run --rm loom loom ch-setup`; what is
-  already in place is left alone, and a user or settings profile of the reader's name
-  that does not log in with `LOOM_CH_PASSWORD` is never replaced.
+  already in place is left alone. An existing `loom_reader` is replaced only when it has
+  the shape `ch-setup` gives it (a password user on the settings profile of its own name)
+  and logs in with `LOOM_CH_PASSWORD`; anything else of that name is left alone.
 - **Without admin rights.** When the user cannot create the database, read the system
-  tables the migrations read, create the reader or its settings profile, `ch-setup` stops and prints the SQL
-  for an admin, with the password as a placeholder. `loom ch-setup --print-sql` prints
-  it without connecting. The SQL grants the Loom user everything the admin holds on
-  `loom.*` through `GRANT CURRENT GRANTS` (ClickHouse Cloud does not accept `GRANT ALL`),
-  `SELECT` on the system tables Loom reads, and `READ ON REMOTE`, which
-  `clusterAllReplicas` needs to ask every replica for its version (a self-managed server
-  shows it as `REMOTE` in `SHOW GRANTS`; writes through `remote()` are still refused). It creates the reader with `OR REPLACE`, so check that no
-  other account has that name: `ch-setup` running the SQL itself refuses one it did not
-  make.
+  tables the migrations read, or create the reader or its settings profile, `ch-setup`
+  stops and prints the SQL for an admin, with the password as a placeholder.
+  `loom ch-setup --print-sql` prints it without connecting. The SQL grants the Loom user
+  everything the admin holds on `loom.*` through `GRANT CURRENT GRANTS` (ClickHouse Cloud
+  does not accept `GRANT ALL`), `SELECT` on the system tables Loom reads, and
+  `READ ON REMOTE`, which `clusterAllReplicas` needs to ask every replica for its version
+  (a self-managed server shows it as `REMOTE` in `SHOW GRANTS`; writes through `remote()`
+  are still refused). It creates the reader with `OR REPLACE`, so check that no other
+  account has that name; `ch-setup` running the SQL itself refuses one it cannot prove is
+  Loom's.
 - **The query log.** Loom reads `system.query_log` for each request's cost, so the Loom
   user sees every user's queries on that server. On a server Loom shares, a self-managed
   admin can keep it to Loom's own with
@@ -117,12 +119,12 @@ The bundled ClickHouse starts with the files in `deploy/clickhouse-config/`:
   is `LOOM_CH_PASSWORD`. The bundled server defines it in `nlp_user_settings.xml`;
   `loom ch-setup` creates the same user and profile with SQL on any other server, from
   the current `LOOM_CH_CALLER_SHAPED_*` values. Raising one of those settings on the
-  bundled server needs the XML profile raised too; elsewhere, re-run `ch-setup`. After changing
-  `LOOM_CH_PASSWORD`, which the reader shares, drop the reader (`DROP USER loom_reader`) and
-  re-run `ch-setup`: it takes only a reader that logs in with the current password as Loom's. The
-  server probes the user at boot; `/v1/health` and `loom doctor` report
-  `ch_reader_user_failing` when ClickHouse refuses it. Unset, the reads run as
-  `LOOM_CH_USER`.
+  bundled server needs the XML profile raised too; elsewhere, re-run `ch-setup`. After
+  changing `LOOM_CH_PASSWORD`, which the reader shares, drop the reader
+  (`DROP USER loom_reader; DROP SETTINGS PROFILE loom_reader`) and re-run `ch-setup`: it
+  replaces only a reader that logs in with the current password. The server probes the
+  user at boot; `/v1/health` and `loom doctor` report `ch_reader_user_failing` when
+  ClickHouse refuses it. Unset, the reads run as `LOOM_CH_USER`.
 - **Ports.** If `8123` or `9000` is taken, set `LOOM_CH_HOST_PORT` or
   `LOOM_CH_NATIVE_HOST_PORT` in `.env`. These are compose variables for the host side
   only; containers always talk to `clickhouse:8123`.

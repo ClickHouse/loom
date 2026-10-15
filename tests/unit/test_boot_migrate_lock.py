@@ -145,7 +145,7 @@ def test_pending_names_reads_the_ledger_and_fails_open(tmp_path, monkeypatch) ->
     (tmp_path / "790_old.sql").write_text("SELECT 1")
     (tmp_path / "800_new.sql").write_text("SELECT 2")
     monkeypatch.setattr(mig, "client", lambda: object())
-    monkeypatch.setattr(mig, "_applied", lambda ch: {"790_old.sql": "abc"})
+    monkeypatch.setattr(mig, "applied_migrations", lambda ch: {"790_old.sql": "abc"})
     assert mig.pending_names(tmp_path) == ["800_new.sql"]
     # a directory that does not exist has nothing pending (no guess at the cwd)
     assert mig.pending_names(tmp_path / "missing") == []

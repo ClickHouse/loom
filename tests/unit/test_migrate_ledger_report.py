@@ -233,7 +233,7 @@ def test_migrate_refuses_a_stranded_database_before_applying_anything(
         [("000_m.sql", "SELECT 1;"), ("005_base.sql", "-- loom: baseline covers 5\nSELECT 1;")],
     )
     monkeypatch.setattr(m, "client", lambda: object())
-    monkeypatch.setattr(m, "_applied", lambda ch: {"000_m.sql": "", "003_add.sql": "y"})
+    monkeypatch.setattr(m, "applied_migrations", lambda ch: {"000_m.sql": "", "003_add.sql": "y"})
 
     def _never(*a, **k):
         raise AssertionError("a stranded database must not be migrated")

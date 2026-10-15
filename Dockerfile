@@ -174,8 +174,11 @@ USER loom
 # interfaces. 0.0.0.0 = reachable by others, so it needs LOOM_PUBLIC_BASE_URL,
 # auth and a real signing secret. A compose stack that publishes on loopback
 # passes its LOOM_BIND_HOST through.
+# PYTHONPATH: the `loom` command imports the same /app tree as the server,
+# not the copy in the venv, which ships without schemas/.
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app \
     PORT=7777 \
     LOOM_BIND_HOST=0.0.0.0 \
     LOOM_LISTEN_HOST=0.0.0.0

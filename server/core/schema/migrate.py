@@ -274,7 +274,7 @@ def _await_mutations(
 _FRESH_CLUSTER_CODES = frozenset({60, 81})  # UNKNOWN_TABLE, UNKNOWN_DATABASE
 
 
-def _applied(ch: Client) -> dict[str, str]:
+def applied_migrations(ch: Client) -> dict[str, str]:
     """Return {filename: checksum} of already-applied migrations.
 
     Empty on a fresh cluster (the ledger does not exist yet). Any other error
@@ -383,7 +383,7 @@ def pending_names(mig_dir: str | Path | None = None) -> list[str]:
         files = sorted_migrations(d.glob("*.sql"))
         if not files:
             return []
-        return list(ledger_report(_applied(client()), files).pending)
+        return list(ledger_report(applied_migrations(client()), files).pending)
     except Exception as e:  # noqa: BLE001 — a diagnostic, never a boot failure
         logging.getLogger(__name__).warning("pending-migration check skipped: %s", e)
         return []
@@ -777,7 +777,7 @@ def _apply_under_lease(ch: Client, files: list[Path], to_apply: list[Path]) -> i
         lease.release()
         return 1
     try:
-        applied = _applied(ch)
+        applied = applied_migrations(ch)
         if lease.held:
             still = [f for f in to_apply if f.name not in applied]
             if not still:
@@ -879,7 +879,7 @@ def main(argv: list[str] | None = None, *, check_server: bool = True) -> int:
         print(f"  ✗ could not connect to ClickHouse: {e}", file=sys.stderr)
         return 1
 
-    applied = _applied(ch)
+    applied = applied_migrations(ch)
     report = ledger_report(applied, files)
 
     if args.status:

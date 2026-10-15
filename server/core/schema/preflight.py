@@ -96,7 +96,7 @@ class Server:
     # Telemetry tables this user may not read: their views stay empty.
     unreadable: tuple[str, ...] = ()
     # What the next boot with a migration to apply will refuse, passed now
-    # only because nothing is pending.
+    # only because nothing is pending; each names its fix.
     next_migration: tuple[str, ...] = ()
 
 
@@ -174,18 +174,16 @@ def _migrations_pending(ch: Client, journal: Path) -> bool:
     package that ships none), counts as pending: only a confirmed empty set
     relaxes the checks."""
     from server.core.schema.journal import sorted_migrations
-    from server.core.schema.migrate import ledger_report
+    from server.core.schema.migrate import applied_migrations, ledger_report
 
     files = sorted_migrations(journal.glob("*.sql"))
     if not files:
         return True
     try:
-        rows = ch.query(f"SELECT filename, checksum FROM {DATABASE}._migrations FINAL").result_rows
+        applied = applied_migrations(ch)
     except Exception as e:  # noqa: BLE001 — unknown means pending, the strict side
-        if error_code(e) not in (60, 81):  # no ledger yet: everything is pending
-            log.warning("migration ledger unreadable, checking as if migrating: %s", str(e)[:160])
+        log.warning("migration ledger unreadable, checking as if migrating: %s", str(e)[:160])
         return True
-    applied = {str(name): str(checksum).rstrip("\x00") for name, checksum in rows}
     return bool(ledger_report(applied, files).pending)
 
 
@@ -233,27 +231,33 @@ def needed_at_boot() -> Need:
 
 
 def check(
-    ch: Client, *, need: Need, create_database: bool = True, journal: Path = MIGRATIONS_DIR
+    ch: Client,
+    *,
+    need: Need,
+    create_database: bool = True,
+    journal: Path = MIGRATIONS_DIR,
+    strict: bool = False,
 ) -> Server:
     """Raise PreflightError unless the server is new enough and `loom` exists
     with the grants `need` names. A process that will migrate creates a missing
     database where its user may; with `create_database` off (the doctor) it
-    only reports it missing. Returns what the doctor reports besides."""
+    only reports it missing. `strict` checks as if a migration were pending
+    (ch-setup prepares for the next one). Returns what the doctor reports besides."""
     from server.settings import settings
 
     user = settings.ch_user
     database = bool(ch.command(_DATABASE_COUNT))
     # Strict where DDL is about to run: a restart with nothing pending is
     # checked like a process that only serves.
-    migrating = need == "migrate" and (not database or _migrations_pending(ch, journal))
+    migrating = need == "migrate" and (strict or not database or _migrations_pending(ch, journal))
     later: list[str] = []
     try:
         version = oldest_version(ch, strict=need == "migrate")
     except PreflightError as e:
         if migrating:
             raise
-        later.append(e.reason)
-        version = oldest_version(ch, strict=False)
+        later.append(str(e))
+        version = str(ch.command("SELECT version()"))
     if version_key(version)[:2] < MIN_VERSION:
         floor = ".".join(map(str, MIN_VERSION))
         raise PreflightError(f"ClickHouse {version} is older than {floor}: upgrade the server")
@@ -296,7 +300,7 @@ def check(
             )
             if migrating:
                 raise error
-            later.append(error.reason)
+            later.append(str(error))
     if later:
         log.warning("nothing to migrate now; the next migration will refuse: %s", "; ".join(later))
     unreadable = tuple(t for t in TELEMETRY_SYSTEM_TABLES if not _readable(ch, f"system.{t}"))

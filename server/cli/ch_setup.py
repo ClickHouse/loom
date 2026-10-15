@@ -9,9 +9,10 @@ alone, and a reader whose profile no longer matches the caps is rebuilt.
 
 A user without the privilege for a step gets the SQL to hand an admin instead,
 with the password left as a placeholder. The bundled ClickHouse defines the
-reader in its config, so there it only reports. An account is taken as
-Loom's only when it logs in with LOOM_CH_PASSWORD; any other user or settings
-profile of the reader's name is left alone.
+reader in its config, so there it only reports. An existing reader is
+replaced only when it has the shape ch-setup gives it (a password user on the
+settings profile of its own name) and logs in with LOOM_CH_PASSWORD; anything
+else of that name is left alone.
 """
 
 from __future__ import annotations
@@ -25,7 +26,6 @@ from server.core.ch_errors import error_code
 from server.core.schema import preflight
 
 DEFAULT_READER = "loom_reader"
-CANNOT_LOG_IN = "missing, or its password is not LOOM_CH_PASSWORD"
 _PASSWORD_PLACEHOLDER = "'<LOOM_CH_PASSWORD>'"
 # Names go into the SQL between backticks; anything else is refused.
 _NAME = re.compile(r"^[A-Za-z0-9_.@-]+$")
@@ -49,7 +49,7 @@ def _caps() -> dict[str, float]:
 def _profile() -> dict[str, tuple[str, float | None, float | None, bool]]:
     """The reader's settings profile: each setting's value (as SQL), its MIN
     and MAX (None for none) and whether it is CONST. `reader_sql` writes it and
-    `reader_problem` checks the reader runs under exactly this."""
+    `reader_status` checks the reader runs under exactly this."""
     from server.code.domain.deadline import STATEMENT_FLOOR_S
 
     profile: dict[str, tuple[str, float | None, float | None, bool]] = {
@@ -109,9 +109,9 @@ def _setting(
     return (shown, lower, upper, readonly == 1)
 
 
-def reader_problem(reader: str) -> str:
-    """Why `reader` is not ready ('' when it is): it must log in with
-    LOOM_CH_PASSWORD, read `loom.*` and run under exactly `_profile`, the
+def reader_status(reader: str) -> tuple[bool, str]:
+    """Whether `reader` logs in with LOOM_CH_PASSWORD, and why it is not ready
+    ('' when it is): it must read `loom.*` and run under exactly `_profile`, the
     constraints included."""
     import clickhouse_connect
 
@@ -134,30 +134,37 @@ def reader_problem(reader: str) -> str:
             ch.close()
     except Exception as e:  # noqa: BLE001 — every failure is a reason the reader is not ready
         if error_code(e) in preflight.AUTH_FAILED:
-            return CANNOT_LOG_IN
-        return str(e).splitlines()[0][:160]
+            return False, "it does not accept LOOM_CH_PASSWORD"
+        return False, str(e).splitlines()[0][:160]
     actual = {row[0]: _setting(*row[1:]) for row in rows}
     # `readonly` cannot be changed under readonly anyway, so only its value counts.
     actual["readonly"] = (actual["readonly"][0], None, None, False)
     if name != reader or actual != profile:
-        return "its profile does not match the current caps and constraints"
+        return True, "its profile does not match the current caps and constraints"
     if not granted:
-        return f"it lacks SELECT on {preflight.DATABASE}.*"
-    return ""
+        return True, f"it lacks SELECT on {preflight.DATABASE}.*"
+    return True, ""
 
 
 def reader_objects(ch: Any, reader: str) -> str:
     """What already carries the reader's name: "" (nothing), "config" (the
-    server's users.xml, as on the bundled server), "user" (an SQL user),
-    "profile" (a settings profile with no such user, or one other accounts
-    inherit), or "unknown" when this login may not list them. A name proves
-    nothing about who made it; only a reader that logs in with
-    LOOM_CH_PASSWORD is taken as Loom's."""
+    server's users.xml, as on the bundled server), "user" (an SQL user in the
+    shape ch-setup gives it: a password and the settings profile of its own
+    name), "foreign" (any other user, or a profile other accounts use),
+    "profile" (a profile with no user: left over, or someone else's), or
+    "unknown" when this login may not list them."""
     params = {"r": reader}
     try:
         users = ch.query(
-            "SELECT storage FROM system.users WHERE name = {r:String}", parameters=params
+            "SELECT storage, hasAny(auth_type, ['no_password', 'no_authentication']) "
+            "FROM system.users WHERE name = {r:String}",
+            parameters=params,
         ).result_rows
+        own_profile = ch.command(
+            "SELECT count() FROM system.settings_profile_elements "
+            "WHERE user_name = {r:String} AND inherit_profile = {r:String}",
+            parameters=params,
+        )
         profiles = ch.command(
             "SELECT count() FROM system.settings_profiles WHERE name = {r:String}",
             parameters=params,
@@ -171,9 +178,21 @@ def reader_objects(ch: Any, reader: str) -> str:
         return "unknown"
     if users and users[0][0] == "users_xml":
         return "config"
-    if shared or (profiles and not users):
-        return "profile"
-    return "user" if users else ""
+    if users:
+        _, open_login = users[0]
+        return "user" if own_profile and not open_login and not shared else "foreign"
+    if shared:
+        return "foreign"
+    return "profile" if profiles else ""
+
+
+def _drop_reader(ch: Any, reader: str) -> None:
+    """Undo a reader made halfway, so a rerun starts from nothing."""
+    try:
+        ch.command(f"DROP USER IF EXISTS `{reader}`")
+        ch.command(f"DROP SETTINGS PROFILE IF EXISTS `{reader}`")
+    except Exception:  # noqa: BLE001 — the error that led here is the one to report
+        pass
 
 
 def _print_admin_sql(user: str, reader: str) -> None:
@@ -197,7 +216,7 @@ def _set_up(ch: Any, user: str, reader: str) -> int:
     from server.settings import settings
 
     try:
-        server = preflight.check(ch, need="migrate")
+        server = preflight.check(ch, need="migrate", strict=True)
     except preflight.PreflightError as e:
         # The admin SQL follows, so the pointer to it is left out.
         print(f"✗ {e.reason}", file=sys.stderr)
@@ -206,7 +225,7 @@ def _set_up(ch: Any, user: str, reader: str) -> int:
         return 1
     print(f"✓ ClickHouse {server.version}; database {preflight.DATABASE} ready for {user!r}")
 
-    problem = reader_problem(reader)
+    logged_in, problem = reader_status(reader)
     found = reader_objects(ch, reader)
     if found == "config" and problem:
         print(
@@ -228,27 +247,31 @@ def _set_up(ch: Any, user: str, reader: str) -> int:
         )
         _print_admin_sql(user, reader)
         return 1
-    elif found == "profile":
+    elif found == "foreign":
         print(
-            f"✗ a settings profile named {reader} exists that ch-setup cannot tell it made "
-            "(no such user, or other accounts use it); set LOOM_CH_READER_USER to another name",
+            f"✗ {reader} exists and is not one ch-setup made (no password, not on the profile "
+            "of its own name, or its profile is shared); set LOOM_CH_READER_USER to another name",
             file=sys.stderr,
         )
         return 1
-    elif found == "user" and problem == CANNOT_LOG_IN:
+    elif found == "profile" or (found == "user" and not logged_in):
+        why = "is a settings profile with no user" if found == "profile" else f"exists: {problem}"
         print(
-            f"✗ {reader} is an existing user that does not accept LOOM_CH_PASSWORD. If it is "
-            f"Loom's reader and the password changed, DROP USER {reader} and run this again; "
-            "otherwise set LOOM_CH_READER_USER to another name",
+            f"✗ {reader} {why}. If it is Loom's reader from an earlier setup (the password "
+            f"changed, or a setup stopped halfway), have an admin run DROP USER IF EXISTS "
+            f"{reader}; DROP SETTINGS PROFILE {reader}; and run this again. Otherwise set "
+            "LOOM_CH_READER_USER to another name",
             file=sys.stderr,
         )
         return 1
     else:
-        print(f"· {reader}: {problem}; creating it")
+        print(f"· {reader}: {problem}; rebuilding it" if found else f"· {reader}: creating it")
         try:
             for stmt in reader_sql(reader, _quote(settings.ch_password)):
                 ch.command(stmt)
         except Exception as e:
+            if not found:
+                _drop_reader(ch, reader)
             if error_code(e) != preflight.ACCESS_DENIED:
                 raise
             print(f"✗ {user!r} may not create users or settings profiles", file=sys.stderr)

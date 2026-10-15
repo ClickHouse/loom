@@ -166,8 +166,9 @@ def _doctor_otel_erasure_index_check(settings: Any) -> tuple[str, str, str]:
 
 def _doctor_preflight_check() -> tuple[str, str, str]:
     """The `clickhouse_preflight` line: FAIL with the fix where boot would
-    refuse this ClickHouse, WARN when boot will create the database (the
-    doctor never does), PASS otherwise. A missing Keeper has its own line."""
+    refuse this ClickHouse; WARN, with every reason, when boot will create the
+    database (the doctor never does), a telemetry table is unreadable or the
+    next migration would refuse; PASS otherwise. A missing Keeper has its own line."""
     from server.core.schema import preflight
 
     try:
@@ -176,28 +177,23 @@ def _doctor_preflight_check() -> tuple[str, str, str]:
         return ("clickhouse_preflight", FAIL, str(e))
     except Exception as e:  # noqa: BLE001 — a doctor line must never crash the doctor
         return ("clickhouse_preflight", FAIL, f"{type(e).__name__}: {e}")
-    if server.next_migration:
-        return (
-            "clickhouse_preflight",
-            WARN,
-            f"ClickHouse {server.version}: up now, but the next boot with a migration to apply "
-            f"will refuse: {'; '.join(server.next_migration)} "
-            "(`loom ch-setup --print-sql` prints it)",
-        )
+    warnings = [
+        f"the next boot with a migration to apply will refuse: {gap}"
+        for gap in server.next_migration
+    ]
     if server.unreadable:
         tables = ", ".join(f"system.{t}" for t in server.unreadable)
-        return (
-            "clickhouse_preflight",
-            WARN,
-            f"ClickHouse {server.version}: may not read {tables}, so the telemetry from "
-            "these tables stays empty; `loom ch-setup --print-sql` has the grant",
+        warnings.append(
+            f"may not read {tables}, so the telemetry from these tables stays empty "
+            "(`loom ch-setup --print-sql` has the grant)"
         )
     if not server.database:
+        warnings.append(f"database {preflight.DATABASE} does not exist yet; boot will create it")
+    if warnings:
         return (
             "clickhouse_preflight",
             WARN,
-            f"ClickHouse {server.version}: database {preflight.DATABASE} does not exist yet; "
-            "boot will create it",
+            f"ClickHouse {server.version}: " + "; ".join(warnings),
         )
     return (
         "clickhouse_preflight",
