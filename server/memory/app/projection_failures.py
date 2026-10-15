@@ -441,7 +441,6 @@ async def _retry_status_mirror(failure: ProjectionFailureRow, *, ch: Any) -> Non
     delete since tombstones it. A row no longer stored at all was erased, and the
     erasure removed its embeddings with it: nothing is left to mirror."""
     import server.memory.store as memory_repo
-    from server.identity.domain.read_scope import WHOLE_NAMESPACE
 
     ids = [str(i) for i in failure.payload.get("memory_ids") or []]
     if not ids:
@@ -525,7 +524,7 @@ def _recorded_repairs(payload: dict[str, Any]) -> list[IntervalRepair]:
             valid_from=parse_iso_dt(r["valid_from"]),
             invalid_at=parse_iso_dt(r["invalid_at"]),
             new_valid_from=parse_iso_dt(r["new_valid_from"]),
-            new_seen_at=parse_iso_dt(r.get("new_seen_at")),
+            new_seen_at=parse_iso_dt(r["new_seen_at"]),
         )
         for r in payload.get(TRIPLES_REPAIRS) or []
     ]

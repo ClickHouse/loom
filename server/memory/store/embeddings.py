@@ -120,7 +120,7 @@ async def mirror_status_to_embeddings(
         chunk = keys[start : start + step]
         try:
             rows = await _live_rows_for_keys(ch, chunk)
-        except Exception as e:
+        except Exception as e:  # a mirror, never the write; strict re-raises
             if strict:
                 raise
             _log.warning("status mirror: embeddings read failed for %d keys: %s", len(chunk), e)
@@ -140,7 +140,7 @@ async def mirror_status_to_embeddings(
         try:
             await insert_embedding_rows(out, ch=ch)
             await retire_copies_under_unembedded_heads(out, ch=ch)
-        except Exception as e:
+        except Exception as e:  # a mirror, never the write; strict re-raises
             if strict:
                 raise
             _log.warning("status mirror: embeddings re-emit failed (%d rows): %s", len(out), e)

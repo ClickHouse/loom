@@ -628,7 +628,8 @@ async def reopen_held_facts(
     # them and adds none, while another Undo in the same second is told apart.
     fresh = [m for m in markers if not m.row["restored"]]
     settings = {"async_insert": 1, "wait_for_async_insert": 1}
-    # Edges first: a replay after the triple markers failed to land finds them.
+    # Edges first: if the triple markers then fail to land, a replay finds these edges
+    # and adds none.
     await _insert_edge_markers(input, fresh, beaten, now, settings=settings, ch=ch)
     rows = [
         entity_triple_row(

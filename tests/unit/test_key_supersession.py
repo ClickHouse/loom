@@ -959,7 +959,8 @@ def test_only_entries_that_wrote_a_live_row_project_graph_facts() -> None:
     # unchanged restatement, an identity duplicate or a merge would be): both wrote
     # nothing (version 0) and keep their place in the results.
     state.results = [
-        _BulkSetResult(memory_key=k, version=v) for k, v in zip(keys, (1, 2, 0, 0), strict=True)
+        _BulkSetResult(memory_key=k, version=v, memory_id=f"id-{k}")
+        for k, v in zip(keys, (1, 2, 0, 0), strict=True)
     ]
     inp = Input(entries=[SimpleNamespace(memory_key=k) for k in keys])
 
@@ -973,7 +974,10 @@ def test_only_entries_that_wrote_a_live_row_project_graph_facts() -> None:
     assert projected() == (["user_job"], ["user_job"])
     # Nor does a 'high' row: its content stays out of the shared graph and its replay.
     state.judged_retired_keys = set()
-    state.memory_rows = [{"version": 1, "sensitivity": "high"}, {"version": 2}]
+    state.memory_rows = [
+        {"memory_id": "id-user_city", "sensitivity": "high"},
+        {"memory_id": "id-user_job"},
+    ]
     assert projected() == (["user_job"], ["user_job"])
 
 
