@@ -13,6 +13,7 @@ import enum
 import json
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from server.core.ch import sequential_reads
@@ -56,22 +57,28 @@ RUN_COLUMNS = (
     "grade_reason",
     "grade_ref",
     "graded_at",
+    # The run's optional budget (0 = none), set by run.begin and carried by every
+    # later write of the row like the grade columns.
+    "budget_usd",
+    "budget_seconds",
 )
 _RUN_SELECT = ", ".join(RUN_COLUMNS)
-# A row read without a column (a replica behind the grade migration, a fake) still writes
-# it: the grade columns' own defaults, never a KeyError on close.
+# A row read without a column (a replica behind the grade or budget migration, a fake)
+# still writes it: the columns' own defaults, never a KeyError on close.
 _COLUMN_DEFAULTS: dict[str, Any] = {
     "grade": "",
     "grade_source": "",
     "grade_reason": "",
     "grade_ref": "",
     "graded_at": None,
+    "budget_usd": 0.0,
+    "budget_seconds": 0,
 }
 _SYNC_INSERT = {"async_insert": 0, "wait_for_async_insert": 1}
 
 
 def run_row(row: RunLedgerRow) -> dict[str, Any]:
-    """Every agent_runs column of `row`, the grade columns defaulted."""
+    """Every agent_runs column of `row`, the grade and budget columns defaulted."""
     cols: dict[str, Any] = dict(row)
     out = {c: cols[c] if c in cols else _COLUMN_DEFAULTS[c] for c in RUN_COLUMNS}
     if "version" in cols:
@@ -430,19 +437,24 @@ async def traced_recall_keys(ch: Any, org: str, ns: str, run_id: str) -> list[st
     return [str(r["memory_key"]) for r in rows if r.get("memory_key")]
 
 
-async def session_cost(ch: Any, org: str, ns: str, session_id: str) -> tuple[int, float]:
-    """(turns, cost in USD) the session's usage rows record."""
+async def run_cost(
+    ch: Any, org: str, ns: str, session_id: str, since: datetime, until: datetime
+) -> tuple[int, int, float]:
+    """(turns, unpriced turns, cost in USD) of the session's turns with
+    since <= turn_at <= until. An unpriced turn costs 0."""
     row = await ch.query_one(
         """
-        SELECT count() AS turns, sum(cost_usd) AS cost
+        SELECT count() AS turns, countIf(NOT priced) AS unpriced, sum(cost_usd) AS cost
         FROM loom.agent_turn_usage FINAL
         WHERE org = {org:String} AND namespace = {ns:String} AND session_id = {sid:String}
+          AND turn_at >= {since:DateTime64(3)} AND turn_at <= {until:DateTime64(3)}
         """,
-        params={"org": org, "ns": ns, "sid": session_id},
+        params={"org": org, "ns": ns, "sid": session_id, "since": since, "until": until},
     )
     if not row:
-        return 0, 0.0
-    return int(row.get("turns") or 0), round(float(row.get("cost") or 0.0), 6)
+        return 0, 0, 0.0
+    turns, unpriced = int(row.get("turns") or 0), int(row.get("unpriced") or 0)
+    return turns, unpriced, round(float(row.get("cost") or 0.0), 6)
 
 
 async def live_memories_by_key(
@@ -479,9 +491,9 @@ __all__ = [
     "list_runs",
     "live_memories_by_key",
     "observation_count",
+    "run_cost",
     "run_row",
     "runs_to_grade",
-    "session_cost",
     "traced_recall_keys",
     "written_keys",
 ]

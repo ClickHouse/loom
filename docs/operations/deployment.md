@@ -299,7 +299,7 @@ out of `.env`.
 ## ClickHouse requirements
 
 Loom needs no server config of its own: the table settings it relies on are set on its
-tables (`031_table_settings.sql`), and `loom ch-setup` makes the database and the reader
+tables (`032_table_settings.sql`), and `loom ch-setup` makes the database and the reader
 user with SQL.
 
 | Requirement               | Why                                                                                                                                                                                                                                                 | ClickHouse Cloud                                 | Self-managed                                                                                                                                                                                                                                                  |

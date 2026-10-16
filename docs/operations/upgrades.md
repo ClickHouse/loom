@@ -42,8 +42,9 @@ checkout.
 
 ## Upgrade procedure
 
-1. Read the release's `CHANGELOG.md` entry for operator steps (new settings, backfills a
-   deployment must run) and the client-visible wire changes.
+1. Read the release's [GitHub Release](https://github.com/ClickHouse/loom/releases) notes
+   for operator steps (new settings, backfills a deployment must run) and the
+   client-visible wire changes.
 2. From the new build's checkout, against the production ClickHouse, run
    `loom migrate --dry-run --strict`. It lists what the boot will apply and stops on
    ledger problems ([troubleshooting](./troubleshooting.md#migrations-pending-or-checksum-drift)).

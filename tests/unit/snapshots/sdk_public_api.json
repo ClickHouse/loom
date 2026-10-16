@@ -2902,7 +2902,9 @@
           "model",
           "consumer",
           "role",
-          "metadata"
+          "metadata",
+          "budget_usd",
+          "budget_seconds"
         ],
         "complete": [
           "run_id",

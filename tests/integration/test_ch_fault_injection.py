@@ -8,7 +8,7 @@ TCP proxy that injects faults between loom's client and the server.
   it, the pool slot is released, the client keeps working.
 
 Skips cleanly when LOOM_CH_HOST is unset. Plain MergeTree keeps no block
-tokens unless `non_replicated_deduplication_window` is set: migration 031
+tokens unless `non_replicated_deduplication_window` is set: migration 032
 sets 1000 on every MergeTree table (Cloud's SharedMergeTree keeps 10,000 by
 default), so the dedup case skips only on an unmigrated table without one.
 
@@ -180,7 +180,7 @@ def _rows(n: int, namespace: str) -> list[dict[str, Any]]:
 
 
 async def _dedup_window(direct: Any) -> int:
-    """The table's own window where its definition sets one (migration 031
+    """The table's own window where its definition sets one (migration 032
     does), else the server default."""
     eng = await direct.query_one(
         "SELECT engine, engine_full FROM system.tables "

@@ -13,10 +13,12 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
-from server.core.naming import SENTINEL
+from server.core.naming import SENTINEL, names_session
+from server.operations.base import MCP_HIDDEN
 from server.operations.read_projection import ProjectedRow
+from server.tasks.domain.budgets import BudgetKind
 from server.tasks.domain.states import RunStatus
 
 
@@ -27,7 +29,8 @@ class RunBeginInput(BaseModel):
     user_id: str = Field(default=SENTINEL)
     # The conversation this run belongs to. Joins the run to the memories,
     # observations and model turns (loom.agent_turn_usage) already keyed by
-    # session — cost per run comes from here without another write.
+    # session — cost per run comes from here without another write. Kept on a
+    # re-sent begin of the same run_id that names none.
     session_id: str = Field(default=SENTINEL)
     # Caller-supplied for end-to-end tracing (re-sending the same id is a
     # replace, not a duplicate). Empty = the server mints one. The shape of an
@@ -52,6 +55,27 @@ class RunBeginInput(BaseModel):
     role: str = Field(default="", max_length=64)
     # Free-form key/values stored on the run; `role`, when set, is added to it.
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # Model spend in USD the run may reach; needs a session_id (0 = none, kept on a
+    # re-sent begin of the same run_id). Rounded to 6 places, so the smallest
+    # budget is 0.000001. Hidden over MCP, which hides session_id.
+    budget_usd: float = Field(default=0.0, ge=0.0, le=100_000.0, json_schema_extra=MCP_HIDDEN)
+    # Seconds the run may take (0 = none, kept on a re-sent begin of the same run_id).
+    budget_seconds: int = Field(default=0, ge=0, le=30 * 86400)
+
+    @field_validator("budget_usd")
+    @classmethod
+    def _to_six_places(cls, v: float) -> float:
+        # run.get rounds cost to 6 places, so the budget is kept to the same.
+        rounded = round(v, 6)
+        if v > 0 and rounded == 0:
+            raise ValueError("budget_usd is kept to 6 places; the smallest is 0.000001")
+        return rounded
+
+    @model_validator(mode="after")
+    def _cost_budget_has_a_session(self) -> RunBeginInput:
+        if self.budget_usd > 0 and not names_session(self.session_id):
+            raise ValueError("budget_usd needs a session_id: a run's spend is its session's turns")
+        return self
 
 
 class RunBeginOutput(BaseModel):
@@ -224,6 +248,9 @@ class RunRow(ProjectedRow):
     memories_used: list[str] = Field(default_factory=list)
     memories_written: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # The budget run.begin set; 0 = none.
+    budget_usd: float = 0.0
+    budget_seconds: int = 0
 
 
 class RunGradeInput(BaseModel):
@@ -301,11 +328,22 @@ class RunGetOutput(BaseModel):
     memories_written: list[str] = Field(default_factory=list)
     # Episodic observations (`observe.record`) tagged with this run's id.
     observations: int = 0
-    # From loom.agent_turn_usage by session_id (the plugin's Stop hook writes
-    # it); 0 when the run has no session or the hook is not installed.
+    # The session's turns in loom.agent_turn_usage (the plugin's Stop hook writes
+    # them) made while the run was open; 0 when the run has no session or the
+    # hook is not installed.
     turns: int = 0
-    # Summed model cost in USD of the run's session turns; 0 as for `turns`.
+    # Those turns whose model the price table does not know: each costs 0, so
+    # `cost_usd` and a cost budget leave them out.
+    unpriced_turns: int = 0
+    # Summed model cost in USD of those turns; 0 as for `turns`.
     cost_usd: float = 0.0
+    # Seconds from started_at to completed_at (to now while active), on the
+    # server's clock; not duration_ms.
+    elapsed_seconds: int = 0
+    # The budgets the run has gone past: `cost` (cost_usd > budget_usd) and
+    # `time` (elapsed_seconds > budget_seconds). Empty when within budget or
+    # when run.begin set none.
+    over_budget: list[BudgetKind] = Field(default_factory=list)
 
 
 class RunListInput(BaseModel):

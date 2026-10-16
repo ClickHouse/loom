@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import uuid
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -131,3 +132,216 @@ async def test_complete_unknown_run_is_404(control_plane_url: str) -> None:
     async with Agent(org="run-test", namespace=ns, agent="w", base_url=control_plane_url) as a:
         with pytest.raises(NotFound):
             await a.run.complete("never-begun", status="failed")
+
+
+async def _record_turn(a: Any, session_id: str, message_id: str, turn_at: str = "") -> float:
+    """One priced turn (10k input + 1k output tokens of claude-opus-5-5) under the session."""
+    out = await a.transport.post(
+        "/v1/cost.record_turns",
+        {
+            "org": a.org,
+            "namespace": a.namespace,
+            "agent": a.agent,
+            "session_id": session_id,
+            "turns": [
+                {
+                    "message_id": message_id,
+                    "model": "claude-opus-5-5",
+                    "input_tokens": 10_000,
+                    "output_tokens": 1_000,
+                    "turn_at": turn_at,
+                }
+            ],
+        },
+    )
+    return float(out["cost_usd"])
+
+
+def _now_iso() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+@pytest.mark.asyncio
+async def test_each_run_in_a_session_counts_only_its_own_turns(
+    control_plane_url: str, ch_client: Any
+) -> None:
+    from loom import Agent
+
+    ns = f"run-ledger-{uuid.uuid4().hex[:6]}"
+    async with Agent(org="run-test", namespace=ns, agent="w", base_url=control_plane_url) as a:
+        # Budgets in units of one turn's price, so the test outlives a price change:
+        # the first run's budget holds one turn but not two, the second's not one.
+        from server.observability.cost_accumulator import turn_cost_usd
+
+        turn = turn_cost_usd("claude-opus-5-5", input_tokens=10_000, output_tokens=1_000)
+        # The Stop hook posts a prompt's turns after the prompt ends, so after the
+        # agent has completed a run it opened during that prompt.
+        first = await a.run.begin(goal="first", session_id="sess-b", budget_usd=1.5 * turn)
+        await asyncio.sleep(0.2)
+        first_turn_at = _now_iso()
+        await asyncio.sleep(0.2)
+        await a.run.complete(first["run_id"], status="completed")
+        first_cost = await _record_turn(a, "sess-b", "m1", turn_at=first_turn_at)
+
+        await asyncio.sleep(0.2)
+        second = await a.run.begin(goal="second", session_id="sess-b", budget_usd=0.5 * turn)
+        await asyncio.sleep(0.2)
+        second_cost = await _record_turn(a, "sess-b", "m2", turn_at=_now_iso())
+        assert first_cost == pytest.approx(turn) and second_cost == pytest.approx(turn)
+
+        # A re-sent turn keeps its time, and so its run.
+        await _record_turn(a, "sess-b", "m1", turn_at=first_turn_at)
+        ch_client.command("SYSTEM FLUSH ASYNC INSERT QUEUE")
+
+        got_first = await a.run.get(first["run_id"])
+        assert got_first["turns"] == 1 and got_first["cost_usd"] == first_cost
+        assert got_first["over_budget"] == []
+        got_second = await a.run.get(second["run_id"])
+        assert got_second["turns"] == 1 and got_second["cost_usd"] == second_cost
+        assert got_second["over_budget"] == ["cost"]
+
+
+@pytest.mark.asyncio
+async def test_a_replayed_turn_does_not_move_between_runs(
+    control_plane_url: str, ch_client: Any
+) -> None:
+    from loom import Agent
+
+    ns = f"run-ledger-{uuid.uuid4().hex[:6]}"
+    async with Agent(org="run-test", namespace=ns, agent="w", base_url=control_plane_url) as a:
+        # A client clock an hour fast dates its turn ahead of every run window.
+        ahead = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+        turn = {
+            "org": a.org,
+            "namespace": a.namespace,
+            "agent": a.agent,
+            "session_id": "sess-r",
+            "turns": [{"message_id": "m1", "model": "claude-opus-5-5", "turn_at": ahead}],
+        }
+        first = await a.run.begin(goal="first", session_id="sess-r", budget_usd=1000.0)
+        out = await a.transport.post("/v1/cost.record_turns", turn)
+        assert out["turns_dated_ahead"] == 1
+        ch_client.command("SYSTEM FLUSH ASYNC INSERT QUEUE")
+        before = await a.run.get(first["run_id"])
+        await a.run.complete(first["run_id"], status="completed")
+        second = await a.run.begin(goal="second", session_id="sess-r", budget_usd=1000.0)
+
+        # The hook delivers the identical usage again while the second run is open.
+        await a.transport.post("/v1/cost.record_turns", turn)
+        ch_client.command("SYSTEM FLUSH ASYNC INSERT QUEUE")
+
+        after = await a.run.get(first["run_id"])
+        assert (after["turns"], after["cost_usd"]) == (before["turns"], before["cost_usd"])
+        got_second = await a.run.get(second["run_id"])
+        assert got_second["turns"] == 0 and got_second["cost_usd"] == 0.0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("turn_at", ["", "not a time"])
+async def test_a_replayed_turn_without_a_time_does_not_move_between_runs(
+    control_plane_url: str, ch_client: Any, turn_at: str
+) -> None:
+    from loom import Agent
+
+    ns = f"run-ledger-{uuid.uuid4().hex[:6]}"
+    async with Agent(org="run-test", namespace=ns, agent="w", base_url=control_plane_url) as a:
+        turn = {
+            "org": a.org,
+            "namespace": a.namespace,
+            "agent": a.agent,
+            "session_id": "sess-u",
+            "turns": [
+                {
+                    "message_id": "m1",
+                    "model": "claude-opus-5-5",
+                    "input_tokens": 400_000,
+                    "turn_at": turn_at,
+                }
+            ],
+        }
+        first = await a.run.begin(goal="first", session_id="sess-u", budget_usd=1.0)
+        await a.transport.post("/v1/cost.record_turns", turn)
+        ch_client.command("SYSTEM FLUSH ASYNC INSERT QUEUE")
+        before = await a.run.get(first["run_id"])
+        assert before["turns"] == 1 and before["over_budget"] == ["cost"]
+        await a.run.complete(first["run_id"], status="completed")
+        second = await a.run.begin(goal="second", session_id="sess-u", budget_usd=1.0)
+
+        # The same usage again, still without a time: it keeps the one it has.
+        # A second turn in the batch makes the block new, so insert dedup
+        # does not simply drop the replay.
+        later = {"message_id": "m2", "model": "claude-opus-5-5", "turn_at": _now_iso()}
+        await a.transport.post("/v1/cost.record_turns", {**turn, "turns": [*turn["turns"], later]})
+        ch_client.command("SYSTEM FLUSH ASYNC INSERT QUEUE")
+
+        after = await a.run.get(first["run_id"])
+        assert (after["cost_usd"], after["over_budget"]) == (before["cost_usd"], ["cost"])
+        got_second = await a.run.get(second["run_id"])
+        assert got_second["turns"] == 1 and got_second["cost_usd"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_an_undated_replay_keeps_the_time_a_later_send_gave_the_turn(
+    control_plane_url: str, ch_client: Any
+) -> None:
+    from loom import Agent
+
+    ns = f"run-ledger-{uuid.uuid4().hex[:6]}"
+    async with Agent(org="run-test", namespace=ns, agent="w", base_url=control_plane_url) as a:
+
+        async def send(*turns: dict[str, Any]) -> None:
+            body = {
+                "org": a.org,
+                "namespace": a.namespace,
+                "agent": a.agent,
+                "session_id": "sess-d",
+            }
+            await a.transport.post("/v1/cost.record_turns", {**body, "turns": list(turns)})
+            ch_client.command("SYSTEM FLUSH ASYNC INSERT QUEUE")
+
+        m1 = {"message_id": "m1", "model": "claude-opus-5-5", "input_tokens": 400_000}
+        first = await a.run.begin(goal="first", session_id="sess-d")
+        await send(m1)
+        await a.run.complete(first["run_id"], status="completed")
+        second = await a.run.begin(goal="second", session_id="sess-d")
+        # Re-sent with a time inside the second run: the turn is now the second's.
+        await send({**m1, "turn_at": _now_iso()})
+        cost = (await a.run.get(second["run_id"]))["cost_usd"]
+        assert cost > 0
+
+        # An undated replay keeps that time, not the older row's.
+        await send(m1, {"message_id": "m2", "model": "claude-opus-5-5", "turn_at": _now_iso()})
+        assert (await a.run.get(first["run_id"]))["cost_usd"] == 0.0
+        assert (await a.run.get(second["run_id"]))["cost_usd"] == cost
+
+
+@pytest.mark.asyncio
+async def test_workers_in_their_own_sessions_count_only_their_own_turns(
+    control_plane_url: str, ch_client: Any
+) -> None:
+    from loom import Agent
+
+    ns = f"run-ledger-{uuid.uuid4().hex[:6]}"
+    async with Agent(org="run-test", namespace=ns, agent="a", base_url=control_plane_url) as a:
+        run_a = await a.run.begin(goal="worker a", session_id="worker-a", budget_usd=1.0)
+        run_b = await a.run.begin(goal="worker b", session_id="worker-b", budget_usd=1.0)
+        cost = await _record_turn(a, "worker-a", "m1", turn_at=_now_iso())
+        ch_client.command("SYSTEM FLUSH ASYNC INSERT QUEUE")
+        got_a = await a.run.get(run_a["run_id"])
+        assert got_a["turns"] == 1 and got_a["cost_usd"] == cost
+        got_b = await a.run.get(run_b["run_id"])
+        assert got_b["turns"] == 0 and got_b["cost_usd"] == 0.0 and got_b["over_budget"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_cost_budget_without_a_session_is_refused(control_plane_url: str) -> None:
+    from loom import Agent
+    from loom.errors import ValidationError
+
+    ns = f"run-ledger-{uuid.uuid4().hex[:6]}"
+    async with Agent(org="run-test", namespace=ns, agent="w", base_url=control_plane_url) as a:
+        with pytest.raises(ValidationError) as e:
+            await a.run.begin(goal="no session", budget_usd=1.0)
+        assert "session_id" in str(e.value.detail)
+        timed = await a.run.begin(goal="time only", budget_seconds=60)
+        assert timed["status"] == "active"

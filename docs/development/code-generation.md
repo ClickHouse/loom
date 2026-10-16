@@ -96,7 +96,7 @@ python scripts/codegen/wire_changelog.py --diff a.json b.json
 It materialises each revision with `git archive`, imports its registry in a child
 interpreter, and prints the operations and the request and response fields added or
 removed, plus role, budget and MCP-tier changes. Its output goes into the release notes
-([release process](./release-process.md#changelogs)); the "what changed for clients"
+([release process](./release-process.md#release-notes)); the "what changed for clients"
 section is generated, not written.
 
 ### gen_py_library_methods

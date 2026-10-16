@@ -329,7 +329,7 @@ def test_outcome_override_and_explicit_duration(env) -> None:
     assert [(e["event_type"], e["event_count"]) for e in events] == [("used", 3)]
 
 
-def test_get_derives_written_observed_recalled_and_session_cost(env) -> None:
+def test_get_derives_written_observed_recalled_and_run_cost(env) -> None:
     fake, _, h = env
     fake.one.append(
         _run_row(status="completed", completed_at=T0, duration_ms=5, memories_used=["ci:flaky"])
@@ -346,6 +346,162 @@ def test_get_derives_written_observed_recalled_and_session_cost(env) -> None:
     assert out.recalled == -1 and out.turns == 12 and out.cost_usd == 0.4321
     cost_call = [c for c in fake.calls if "agent_turn_usage" in c[1]][0]
     assert cost_call[2]["sid"] == "s1"
+
+
+def test_begin_stores_the_budget_and_complete_carries_it(env) -> None:
+    fake, _, h = env
+    fake.one.append(None)
+    asyncio.run(
+        h.handle_run_begin(
+            RunBeginInput(
+                org="o",
+                namespace="n",
+                agent="claude",
+                session_id="s1",
+                goal="g",
+                budget_usd=1.5,
+                budget_seconds=600,
+            )
+        )
+    )
+    row = fake.inserted[0][1][0]
+    assert row["budget_usd"] == 1.5 and row["budget_seconds"] == 600
+
+    fake.inserted.clear()
+    fake.one[:] = [_run_row(budget_usd=1.5, budget_seconds=600)]
+    asyncio.run(
+        h.handle_run_complete(
+            RunCompleteInput(org="o", namespace="n", run_id="r1", status="completed")
+        )
+    )
+    closed = next(rows[0] for table, rows in fake.inserted if table == "loom.agent_runs")
+    assert closed["status"] == "completed"
+    assert closed["budget_usd"] == 1.5 and closed["budget_seconds"] == 600
+
+
+def test_the_session_id_is_stored_as_sent(env) -> None:
+    # cost.record_turns keys turns by the session id as sent, so the run must too.
+    fake, _, h = env
+    asyncio.run(
+        h.handle_run_begin(
+            RunBeginInput(
+                org="o", namespace="n", agent="a", goal="g", session_id=" s1 ", budget_usd=1.0
+            )
+        )
+    )
+    row = next(rows[0] for table, rows in fake.inserted if table == "loom.agent_runs")
+    assert row["session_id"] == " s1 "
+
+
+def test_a_resent_begin_that_moves_session_drops_the_cost_budget(env) -> None:
+    # The cost budget was set for s1's turns, so it does not follow the run to s2.
+    fake, _, h = env
+    fake.one[:] = [_run_row(budget_usd=1.5, budget_seconds=600)]
+    out = asyncio.run(
+        h.handle_run_begin(
+            RunBeginInput(
+                org="o", namespace="n", agent="claude", run_id="r1", goal="g", session_id="s2"
+            )
+        )
+    )
+    row = next(rows[0] for table, rows in fake.inserted if table == "loom.agent_runs")
+    assert row["session_id"] == "s2" and row["budget_usd"] == 0.0 and row["budget_seconds"] == 600
+    assert "budget_usd was dropped" in out.next and "session_id=s2" in out.next
+
+
+def test_a_resent_begin_without_a_budget_keeps_the_runs_budget(env) -> None:
+    fake, _, h = env
+    fake.one.append(_run_row(budget_usd=1.5, budget_seconds=600))
+    asyncio.run(
+        h.handle_run_begin(
+            RunBeginInput(org="o", namespace="n", agent="claude", run_id="r1", goal="retry")
+        )
+    )
+    row = next(rows[0] for table, rows in fake.inserted if table == "loom.agent_runs")
+    assert row["budget_usd"] == 1.5 and row["budget_seconds"] == 600
+    # The session the budget is counted from stays with it.
+    assert row["session_id"] == "s1"
+
+
+def _get_with(env, row: dict[str, Any], cost: float) -> Any:
+    fake, _, h = env
+    fake.one.append(row)
+    fake.all.append([])
+    fake.one.append({"n": 0})
+    fake.one.append({"turns": 3, "cost": cost})
+    return asyncio.run(h.handle_run_get(RunGetInput(org="o", namespace="n", run_id="r1")))
+
+
+def test_get_names_the_budgets_an_active_run_went_past(env) -> None:
+    # _now is 42.5 s after T0.
+    out = _get_with(env, _run_row(budget_usd=1.0, budget_seconds=30), cost=1.25)
+    assert out.elapsed_seconds == 42
+    assert out.over_budget == ["cost", "time"]
+
+
+def test_get_within_budget_or_without_one_names_nothing(env) -> None:
+    within = _get_with(env, _run_row(budget_usd=2.0, budget_seconds=60), cost=1.25)
+    assert within.over_budget == []
+    no_budget = _get_with(env, _run_row(), cost=99.0)
+    assert no_budget.over_budget == [] and no_budget.run.budget_usd == 0.0
+
+
+def test_a_closed_run_is_timed_on_the_servers_clock(env) -> None:
+    # The client reported 10 ms; the server saw the run open for 90 s.
+    closed = datetime(2026, 9, 11, 12, 1, 30)
+    row = _run_row(status="completed", completed_at=closed, duration_ms=10, budget_seconds=60)
+    out = _get_with(env, row, cost=0.0)
+    assert out.elapsed_seconds == 90 and out.over_budget == ["time"]
+
+
+def test_a_cost_budget_needs_a_session() -> None:
+    # Refused by the request model, before run.begin claims the run id.
+    for blank in ("-", "", " "):
+        with pytest.raises(ValidationError, match="session_id"):
+            RunBeginInput(
+                org="o", namespace="n", agent="a", goal="g", session_id=blank, budget_usd=1.0
+            )
+    RunBeginInput(org="o", namespace="n", agent="a", goal="g", session_id="s1", budget_usd=1.0)
+    RunBeginInput(org="o", namespace="n", agent="a", goal="g", budget_seconds=60)
+
+
+def _cost_query(fake: Any) -> tuple[str, dict[str, Any]]:
+    return [(c[1], c[2]) for c in fake.calls if "agent_turn_usage" in c[1]][0]
+
+
+def test_cost_counts_the_turns_made_while_the_run_was_open(env) -> None:
+    fake, _, _ = env
+    closed_at = datetime(2026, 9, 11, 12, 0, 5)
+    _get_with(env, _run_row(status="completed", completed_at=closed_at, duration_ms=5000), 0.1)
+    sql, params = _cost_query(fake)
+    assert "turn_at >= {since" in sql and "turn_at <= {until" in sql
+    assert (params["since"], params["until"]) == (T0, closed_at)
+
+    fake.calls.clear()
+    _get_with(env, _run_row(), 0.1)  # active: up to now
+    _, params = _cost_query(fake)
+    assert (params["since"], params["until"]) == (T0, datetime(2026, 9, 11, 12, 0, 42, 500000))
+
+
+def test_get_reports_the_turns_it_could_not_price(env) -> None:
+    fake, _, h = env
+    fake.one.append(_run_row(budget_usd=0.01))
+    fake.all.append([])
+    fake.one.append({"n": 0})
+    fake.one.append({"turns": 2, "unpriced": 1, "cost": 0.0})
+    out = asyncio.run(h.handle_run_get(RunGetInput(org="o", namespace="n", run_id="r1")))
+    # An unpriced turn costs 0, so it cannot trip the cost budget.
+    assert out.turns == 2 and out.unpriced_turns == 1 and out.over_budget == []
+
+
+def test_a_run_without_a_session_reads_no_cost(env) -> None:
+    fake, _, h = env
+    fake.one.append(_run_row(session_id="-"))
+    fake.all.append([])
+    fake.one.append({"n": 0})
+    out = asyncio.run(h.handle_run_get(RunGetInput(org="o", namespace="n", run_id="r1")))
+    assert out.turns == 0 and out.cost_usd == 0.0
+    assert not [c for c in fake.calls if "agent_turn_usage" in c[1]]
 
 
 def test_get_missing_run(env) -> None:
@@ -524,3 +680,29 @@ def test_a_narrowed_runs_written_keys_and_observations_stay_in_its_scope() -> No
         asyncio.run(runs_store.written_keys(ch, "o", "n", "r", scope=scope))
         asyncio.run(runs_store.observation_count(ch, "o", "n", "r", scope=scope))
         assert all(("scope_uid" in s) is bounded for s in ch.sql), ch.sql
+
+
+@pytest.mark.parametrize("toolset", ["atomic", "all"])
+def test_mcp_offers_the_time_budget_but_not_the_cost_one(toolset: str) -> None:
+    # MCP hides session_id, so a model could never satisfy budget_usd's session rule.
+    from server.transport import mcp_tools
+
+    tools = asyncio.run(mcp_tools._tools_descriptor(toolset=toolset))
+    begin = next(t for t in tools if t["name"] == "loom_run_begin")
+    assert "budget_seconds" in begin["inputSchema"]["properties"]
+    assert "budget_usd" not in begin["inputSchema"]["properties"]
+
+
+def test_a_cost_budget_is_kept_to_six_places() -> None:
+    # run.get rounds cost to 6 places, so the budget it is compared with is too.
+    inp = RunBeginInput(
+        org="o", namespace="n", agent="a", goal="g", session_id="s1", budget_usd=1.23456789
+    )
+    assert inp.budget_usd == 1.234568
+    # One that would round to no budget is refused, not read as "keep the old one".
+    with pytest.raises(ValidationError):
+        RunBeginInput(org="o", namespace="n", agent="a", goal="g", session_id="s1", budget_usd=4e-7)
+    smallest = RunBeginInput(
+        org="o", namespace="n", agent="a", goal="g", session_id="s1", budget_usd=6e-7
+    )
+    assert smallest.budget_usd == 0.000001
