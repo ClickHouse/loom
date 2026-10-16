@@ -11,6 +11,7 @@ import random
 import re
 
 import pytest
+import re2
 
 from server.code.domain.index import grep_plan as gp
 
@@ -69,6 +70,95 @@ def test_unparseable_pattern_scans() -> None:
     assert gp.is_scan(gp.plan_regex(r"[a-z]{3,}"))
 
 
+def test_posix_classes_scan_because_the_stdlib_misreads_them() -> None:
+    # RE2 reads [[:alpha:]] as one class; the stdlib would require the literal "]abc"
+    assert gp.is_scan(gp.plan_regex(r"[[:alpha:]]abcd"))
+    assert gp.is_scan(gp.plan_regex(r"TODO|[[:digit:]]+FIXME"))
+
+
+K, S = "\u212a", "\u017f"  # what RE2 also matches to k and s under (?i)
+
+
+def _spellings(*words: str) -> gp.Or:
+    return gp.Or(tuple(gp.And((w,)) for w in words))
+
+
+def test_case_insensitive_runs_plan_every_spelling_of_k_and_s() -> None:
+    assert gp.plan_regex("kelvin", ignore_case=True) == _spellings("kelvin", K + "elvin")
+    assert gp.plan_regex("(?i)Ask|other") == _spellings(
+        "ask", "as" + K, "a" + S + "k", "a" + S + K, "other"
+    )
+    assert gp.plan_regex("(?i:kelvin)_bound") == gp.Or(
+        (gp.And(("_bound", "kelvin")), gp.And(("_bound", K + "elvin")))
+    )
+    assert gp.plan_regex("(?-i:kelvin)", ignore_case=True) == gp.And(("kelvin",))
+    assert gp.plan_regex("TOTAL", ignore_case=True) == gp.And(("total",))
+
+
+def _unfolded(plan: gp.Plan) -> set[str]:
+    assert isinstance(plan, gp.Or)
+    return {
+        lit.replace(K, "k").replace(S, "s")
+        for b in plan.branches
+        if isinstance(b, gp.And)
+        for lit in b.literals
+    }
+
+
+def test_a_run_with_many_k_and_s_keeps_its_longest_piece_holding_four() -> None:
+    plan = gp.plan_regex("subStackSizeLimits", ignore_case=True)  # five k/s letters
+    assert isinstance(plan, gp.Or) and len(plan.branches) == 16
+    assert _unfolded(plan) == {"substacksizelimit"}
+    # these broke into pieces too short to index: each branch keeps a long piece
+    plan = gp.plan_regex("isKeySorted|sessionKeys", ignore_case=True)
+    assert _unfolded(plan) == {"iskeysorted", "sessionkey"}
+
+
+def test_spellings_past_max_terms_spell_fewer_letters_per_run() -> None:
+    words = ("first", "second", "third")
+    plan = gp.plan_regex("|".join(f"{w}Stack{w}" for w in words), ignore_case=True)
+    assert gp._term_count(plan) <= gp.MAX_TERMS
+    pieces = _unfolded(plan)
+    assert len(pieces) == 3
+    assert all(any(p in f"{w}stack{w}" for w in words) and len(p) >= 8 for p in pieces)
+
+
+def test_case_insensitive_non_ascii_letters_require_nothing() -> None:
+    assert gp.plan_regex("NAÏVE_x", ignore_case=True) == gp.And(("ve_x",))
+    assert gp.plan_regex("CAFÉ_BAR", ignore_case=True) == gp.And(("caf", "_bar"))
+    assert gp.plan_regex("CAFÉ_BAR") == gp.And(("cafÉ_bar",))  # ASCII-only fold, like lower()
+
+
+def _needles(pattern: str, ignore_case: bool = False) -> list[str]:
+    plan = gp.plan_regex(pattern, ignore_case=ignore_case, spell_folds=False)
+    return gp.scan_needles(plan, ignore_case=ignore_case)
+
+
+def test_scan_needles_take_the_longest_literal_of_each_branch() -> None:
+    assert _needles(r"join.*not supported|totals") == [
+        "not supported",
+        "totals",
+    ]
+    assert _needles(r"getTotals\(\)|setTotals\(") == [
+        "gettotals()",
+        "settotals(",
+    ]
+    assert _needles(r"^TODO$|\bFIXME\b") == ["todo", "fixme"]
+    assert _needles("café|naïve") == ["café", "naïve"]
+    assert _needles(r"mutex.*lock") == []  # one branch: RE2 prefilters it
+    assert _needles(r"TODO|.*") == []
+    assert _needles(r"\b[0-9a-f]{32}\b") == []
+    assert _needles("") == []
+
+
+def test_case_insensitive_needles_are_k_and_s_free_and_cover_one_branch_too() -> None:
+    # match() skips rows on no literal of a (?i) regex, so a single branch is guarded too
+    assert _needles(r"StorageReplicatedMergeTree::\w+Part", ignore_case=True) == [
+        "toragereplicatedmergetree::"
+    ]
+    assert _needles("isKeySorted|sessionKeys", ignore_case=True) == ["orted", "ion"]
+
+
 def test_distribution_keeps_the_shared_literal_in_every_branch() -> None:
     plan = gp.plan_regex(r"positiveModulo(OrNull|Legacy)\(")
     assert isinstance(plan, gp.Or)
@@ -115,6 +205,45 @@ def test_content_predicate_keeps_the_three_exact_shapes_and_puts_the_guard_first
     assert params == {"sc_pat": "TODO|FIXME", "sc_0": "%todo%", "sc_1": "%fixme%"}
 
 
+def test_scan_predicate_guards_only_an_alternation() -> None:
+    sql, params = gp.content_predicate(
+        r"TODO|FIXME", regex=True, case_sensitive=True, index_guard=False
+    )
+    assert sql == (
+        "multiSearchAnyCaseInsensitive(content, {gp_any:Array(String)}) AND match(content, {pat:String})"
+    )
+    assert params == {"pat": "TODO|FIXME", "gp_any": ["todo", "fixme"]}
+    sql, params = gp.content_predicate(
+        r"TODO|Kelvin", regex=True, case_sensitive=False, index_guard=False
+    )
+    assert params == {"pat": "(?i)TODO|Kelvin", "gp_any": ["todo", "elvin"]}
+    for pattern, case_sensitive in (
+        (r"TODO.*FIXME", True),
+        (r"[0-9]+|\s+", True),
+    ):
+        sql, params = gp.content_predicate(
+            pattern, regex=True, case_sensitive=case_sensitive, index_guard=False
+        )
+        assert sql == "match(content, {pat:String})", pattern
+    assert gp.content_predicate(
+        "TODO|FIXME", regex=False, case_sensitive=True, index_guard=False
+    ) == (
+        "position(content, {pat:String}) > 0",
+        {"pat": "TODO|FIXME"},
+    )
+
+
+def test_a_leading_inline_ignore_case_gets_the_case_insensitive_needles() -> None:
+    sql, params = gp.content_predicate(
+        r"(?i)StorageReplicatedMergeTree::\w+Part",
+        regex=True,
+        case_sensitive=True,
+        index_guard=False,
+    )
+    assert sql.startswith("multiSearchAnyCaseInsensitive(content, {gp_any:Array(String)}) AND ")
+    assert params["gp_any"] == ["toragereplicatedmergetree::"]
+
+
 def test_short_literal_emits_exactly_the_old_statement() -> None:
     assert gp.content_predicate("ab", regex=False, case_sensitive=True) == (
         "position(content, {pat:String}) > 0",
@@ -127,37 +256,52 @@ def test_short_literal_emits_exactly_the_old_statement() -> None:
 
 
 _ALPHA = "abcAB_(:"
+# what RE2 folds past ASCII under (?i), and two letters lower() leaves alone
+_FOLDS = "kKsS\u212a\u017féÉ"
 
 
-def _gen_regex(rng: random.Random, depth: int = 0) -> str:
+def _gen_regex(rng: random.Random, depth: int = 0, alphabet: str = _ALPHA) -> str:
     kind = rng.random()
     if depth > 2 or kind < 0.35:
         n = rng.randint(1, 6)
-        return "".join(rng.choice(_ALPHA) for _ in range(n)).replace("(", r"\(")
+        return "".join(rng.choice(alphabet) for _ in range(n)).replace("(", r"\(")
     if kind < 0.5:
-        return _gen_regex(rng, depth + 1) + _gen_regex(rng, depth + 1)
+        return _gen_regex(rng, depth + 1, alphabet) + _gen_regex(rng, depth + 1, alphabet)
     if kind < 0.62:
-        return "(" + _gen_regex(rng, depth + 1) + "|" + _gen_regex(rng, depth + 1) + ")"
+        return (
+            "("
+            + _gen_regex(rng, depth + 1, alphabet)
+            + "|"
+            + _gen_regex(rng, depth + 1, alphabet)
+            + ")"
+        )
     if kind < 0.72:
         return (
             "("
-            + _gen_regex(rng, depth + 1)
+            + _gen_regex(rng, depth + 1, alphabet)
             + ")"
             + rng.choice(["?", "*", "+", "{2}", "{0,3}", "{1,}"])
         )
     if kind < 0.8:
         return (
-            _gen_regex(rng, depth + 1)
+            _gen_regex(rng, depth + 1, alphabet)
             + rng.choice([".", r"\w", r"\s*", "[ab]", "[^c]"])
-            + _gen_regex(rng, depth + 1)
+            + _gen_regex(rng, depth + 1, alphabet)
         )
     if kind < 0.88:
         return (
-            rng.choice(["^", r"\b", ""]) + _gen_regex(rng, depth + 1) + rng.choice(["$", r"\b", ""])
+            rng.choice(["^", r"\b", ""])
+            + _gen_regex(rng, depth + 1, alphabet)
+            + rng.choice(["$", r"\b", ""])
         )
     if kind < 0.94:
-        return "(?=" + _gen_regex(rng, depth + 1) + ")" + _gen_regex(rng, depth + 1)
-    return "(?:" + _gen_regex(rng, depth + 1) + ")" + _gen_regex(rng, depth + 1)
+        return (
+            "(?="
+            + _gen_regex(rng, depth + 1, alphabet)
+            + ")"
+            + _gen_regex(rng, depth + 1, alphabet)
+        )
+    return "(?:" + _gen_regex(rng, depth + 1, alphabet) + ")" + _gen_regex(rng, depth + 1, alphabet)
 
 
 def _gen_text(rng: random.Random, seeds: list[str]) -> str:
@@ -191,6 +335,45 @@ def test_plan_never_refuses_a_matching_text(seed: int) -> None:
                     checked += 1
                     assert gp.admits(plan, text), (pat, text, plan)
     assert checked > 500  # the generator produced real matches, not only refusals
+
+
+def _fold_variants(s: str, rng: random.Random) -> str:
+    """`s` with some letters swapped for what RE2 folds them to under (?i)."""
+    swap = {"k": "\u212a", "K": "\u212a", "s": "\u017f", "S": "\u017f", "é": "É", "É": "é"}
+    return "".join(swap[c] if c in swap and rng.random() < 0.5 else c for c in s)
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_plans_and_needles_never_refuse_what_re2_matches(seed: int) -> None:
+    """RE2 (what ClickHouse's match runs) is the oracle, in both case modes, over
+    texts that carry the characters it folds past ASCII."""
+    rng = random.Random(500 + seed)
+    checked = {True: 0, False: 0}
+    for _ in range(2500):
+        pat = _gen_regex(rng, alphabet=_ALPHA + _FOLDS)
+        if rng.random() < 0.6:
+            pat += "|" + _gen_regex(rng, alphabet=_ALPHA + _FOLDS)
+        seeds = [s for s in re.split(r"[^\w:(]+", pat.replace("\\(", "(")) if s]
+        for case_sensitive in (True, False):
+            try:
+                rx = re2.compile(pat if case_sensitive else "(?i)" + pat)
+            except re2.error:
+                continue
+            plan = gp.plan_regex(pat, ignore_case=not case_sensitive)
+            needles = gp.scan_needles(
+                gp.plan_regex(pat, ignore_case=not case_sensitive, spell_folds=False),
+                ignore_case=not case_sensitive,
+            )
+            for _ in range(6):
+                text = _fold_variants(_gen_text(rng, seeds), rng)
+                if rx.search(text) is None:
+                    continue
+                checked[case_sensitive] += 1
+                assert gp.admits(plan, text), (pat, case_sensitive, text, plan)
+                if needles:
+                    low = gp.ascii_lower(text)
+                    assert any(n in low for n in needles), (pat, case_sensitive, text, needles)
+    assert min(checked.values()) > 300
 
 
 @pytest.mark.parametrize("seed", range(3))
