@@ -6,9 +6,11 @@ per-credential path. A row keyed by a `jti` revokes one token, keyed by a
 only those whose `iat` precedes it, so a re-mint after the cutoff survives.
 The table is ReplacingMergeTree ORDER BY jti: the newest row per key governs.
 
-- `revoke` is the one write path (`loom revoke-token`, the admin endpoint)
-  and takes effect in this process at once, even when the re-read after
-  the insert fails; `list_active` is its read.
+- `revoke` is the write path (`loom revoke-token`, the admin endpoint) and
+  takes effect in this process at once, even when the re-read after the
+  insert fails; `list_active` is its read. `cut_off` writes an operator
+  action's cutoff (adopt, a bot replaced or disabled) under its own key
+  beside the subject's, so neither ever replaces the other.
 - Every process that verifies tokens holds its own snapshot: `load_at_boot`
   fills it, and the supervisor worker (lease holder) or `start_refresh_loop`
   (every other process) re-reads it each `jwt_revocation_cache_ttl_seconds`.
@@ -61,6 +63,11 @@ _revoked_jtis: frozenset[str] = frozenset()
 # Keys revoked only for tokens issued before the cutoff (unix seconds);
 # replaced together with `_revoked_jtis` on every refresh.
 _revoked_before: dict[str, int] = {}
+# A cutoff an operator action writes beside a subject's own revocation row, so
+# it can never replace an outright revoke written there (by `revoke-token`, at
+# any moment): the snapshot reads both, and the stronger one stands. The NUL
+# keeps it apart from every subject, which no command line can carry.
+CUTOFF_PREFIX = "\x00cutoff:"
 # Operator cutoffs (`cut_off`), apart from the subject's own row: whatever that
 # row says, a cutoff here still stands.
 _cut_off: dict[str, int] = {}
@@ -218,13 +225,6 @@ async def revoke(
     return row
 
 
-# A cutoff an operator action writes beside a subject's own revocation row, so
-# it can never replace an outright revoke written there (by `revoke-token`, at
-# any moment): the snapshot reads both, and the stronger one stands. The NUL
-# keeps it apart from every subject, which no command line can carry.
-CUTOFF_PREFIX = "\x00cutoff:"
-
-
 async def cut_off(subject: str, *, issued_before: datetime, reason: str, revoked_by: str) -> None:
     """Revoke the tokens of `subject` issued before `issued_before`, leaving any
     outright revocation of it as it is."""
@@ -245,6 +245,7 @@ async def cut_off(subject: str, *, issued_before: datetime, reason: str, revoked
             }
         ],
     )
+    await refresh()  # as `revoke` does; then made sure of here, however the re-read went
     global _cut_off
     seconds = _cutoff_seconds(cutoff) or 0
     _cut_off = {**_cut_off, subject: max(_cut_off.get(subject, 0), seconds)}

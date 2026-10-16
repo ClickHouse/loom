@@ -137,7 +137,7 @@ def _cmd_disable(args: argparse.Namespace) -> int:
 
     async def _run(ch: Any) -> int:
         if not await account_admin.disable_bot(args.name, by=f"cli:{getpass.getuser()}"):
-            return _fail(f"no active bot {args.name!r}")
+            return _fail(f"no bot {args.name!r}")
         print(f"bot {args.name} disabled; its tokens are revoked")
         return 0
 
