@@ -10,7 +10,7 @@ Everything a task touches is private to it: the branch, the checkout, the virtua
 
 ## 1. Worktree
 
-In Claude Code, enter one with the `EnterWorktree` tool: it creates `.claude/worktrees/<name>` from `origin/main` and moves the session there, so the worktree's own `CLAUDE.md`, rules and settings load. Rename its branch (`git branch -m worktree-<name> <branch>`) and continue at §2. A path-scoped rule loads for files under the session's project directory, so a session that edits a sibling checkout from outside it works without the rules. Other agents create the worktree with git and start their session inside it:
+In Claude Code, run `git fetch origin main` (the tool reuses a fetch up to a day old), then enter one with the `EnterWorktree` tool: it creates `.claude/worktrees/<name>` from `origin/main` and moves the session there, so the worktree's own `CLAUDE.md`, rules and settings load. Rename its branch (`git branch -m worktree-<name> <branch>`), run `pwd` (that is `<worktree>` below) and continue at §2. A path-scoped rule loads for files under the session's project directory, so a session that edits a sibling checkout from outside it works without the rules. Other agents create the worktree with git and start their session inside it:
 
 ```bash
 BRANCH="$ARGUMENTS"          # Claude Code fills this in; elsewhere write the branch name, e.g. fix/search-floor

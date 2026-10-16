@@ -81,4 +81,4 @@ git push origin --delete <branch>   # the repository keeps merged branches
 
 ## 7. After the merge
 
-Remove the private ClickHouse (`docker rm -f <your container>`), then, from the primary checkout, the worktree and its branch (`git worktree remove <worktree>`, `git branch -D <branch>`). Deploying is a separate, explicit step (`loom-deploy`).
+Remove the private ClickHouse (`docker rm -f <your container>`), then the worktree and its branch. In Claude Code, leave with `ExitWorktree` (`action: "remove"`, and `discard_changes: true`, since a squash merge leaves the branch's commits off `main`); it refuses commands aimed at the primary checkout while you are inside the worktree. Elsewhere, from the primary checkout: `git worktree remove <worktree>`, `git branch -D <branch>`. Deploying is a separate, explicit step (`loom-deploy`).

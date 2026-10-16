@@ -225,7 +225,6 @@ DECISION_REFERENCE_DATA = {
 
 
 def _iter_scan_files():
-    # `.claude/` also holds ignored third-party skills a contributor installed.
     for d in SCAN_DIRS:
         base = ROOT / d
         if not base.exists():
