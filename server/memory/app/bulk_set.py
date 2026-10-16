@@ -5,6 +5,7 @@ the insert, and the projections and audit that follow it."""
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from contextvars import ContextVar
 from dataclasses import replace
@@ -343,25 +344,39 @@ def _winners(state: _BulkWriteState) -> dict[str, dict[str, Any]]:
 
 async def _bulk_retried(input: MemoryBulkSetInput, state: _BulkWriteState) -> None:
     """Phase 0: a retry's earlier commits, before any filter drops an entry (a value
-    now unchanged, a pin or lock set since): its body is checked against them first."""
+    now unchanged, a pin or lock set since); its body is checked against them first.
+    Each commit goes back to the entry that made it: by the value it committed, then a
+    restatement's (which holds none) in order. An entry the earlier attempt skipped
+    made no commit, and the publisher pairs a key's changes with its commits in turn."""
     from server.memory.app.temporal_publisher import durable_commits
 
     idents = [(input.agent, input.user_id, input.session_id, e.memory_key) for e in input.entries]
     prior = await durable_commits(input.org, input.namespace, idents)
-    state.retried = {ident[3]: receipts for ident, receipts in prior.items()}
+    for (_a, _u, _s, key), receipts in prior.items():
+        state.retried_keys.add(key)
+        entries = [e for e in input.entries if e.memory_key == key]
+        left = list(receipts)
+        for entry in entries:
+            value = json.dumps(entry.value)
+            rc = next((r for r in left if any(a.value == value for a in _added(r))), None)
+            if rc is not None:
+                left.remove(rc)
+                state.retried[id(entry)] = rc
+        for entry in entries:
+            if id(entry) not in state.retried and left and not _added(left[0]):
+                state.retried[id(entry)] = left.pop(0)
+
+
+def _added(receipt: Any) -> tuple[Any, ...]:
+    return receipt.amendment.added if receipt.amendment is not None else ()
 
 
 def _answer_retried(state: _BulkWriteState) -> None:
     """A retried entry a later step still answered with version 0 (a verdict, a row
-    the journal left out) answers with its earlier commit's version: a key's results
-    and its commits pair up in order."""
-    left = {k: list(rs) for k, rs in state.retried.items()}
-    for res in state.results:
-        receipts = left.get(res.memory_key)
-        if receipts:
-            rc = receipts.pop(0)
-            if not res.version:
-                res.version = rc.row_version
+    the journal left out) answers with its own earlier commit's version."""
+    for res, rc in state.retried_results:
+        if not res.version:
+            res.version = rc.row_version
 
 
 def _answer_published_versions(results: list[Any], drawn: list[tuple[dict[str, Any], int]]) -> None:

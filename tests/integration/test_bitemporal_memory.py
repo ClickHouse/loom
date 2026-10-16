@@ -1754,3 +1754,33 @@ async def test_a_durable_bulk_retry_answers_as_its_commit_and_refuses_another_bo
         other = {"entries": [{"memory_key": "k", "value": "V", "tags": ["x"]}]}
         with pytest.raises(Exception, match="PRECONDITION_FAILED|Idempotency-Key"):
             await a.call("memory.bulk_set", other, idempotency_key=key)
+
+
+@pytest.mark.parametrize("written_since", [False, True])
+async def test_a_bulk_retry_answers_each_entry_as_its_own_commit_did(
+    control_plane_url, mint_test_token, written_since: bool
+) -> None:
+    # The first attempt skipped k="A" (unchanged) and committed k="B". Its retry answers
+    # [0, B's version] again and journals nothing; a write since (Z) stays current.
+    a, _ = await _agent(control_plane_url, mint_test_token, "bulk-retry-pair")
+    async with a:
+        await a.call("memory.set", {"memory_key": "k", "value": "A"})
+        key = f"r-{uuid.uuid4().hex}"
+        body = {"entries": [{"memory_key": "k", "value": "A"}, {"memory_key": "k", "value": "B"}]}
+        first = [
+            w["version"]
+            for w in (await a.call("memory.bulk_set", body, idempotency_key=key))["written"]
+        ]
+        assert first[0] == 0 and first[1]
+        if written_since:
+            await a.call("memory.set", {"memory_key": "k", "value": "Z"})
+        seq = (await a.call("memory.get", {"memory_key": "k"}))["version"]
+        ch = await _ch()
+        try:
+            await _expire_replay(ch, key, "memory.bulk_set")
+        finally:
+            await ch.disconnect()
+        again = await a.call("memory.bulk_set", body, idempotency_key=key)
+        assert [w["version"] for w in again["written"]] == first
+        got = await a.call("memory.get", {"memory_key": "k"})
+        assert (got["value"], got["version"]) == ("Z" if written_since else "B", seq)

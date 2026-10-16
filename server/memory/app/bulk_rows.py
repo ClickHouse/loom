@@ -109,9 +109,13 @@ class _BulkWriteState:
     left_out: set[str] = field(default_factory=set)
     # Of those, late evidence the journal took (it is audited like a written row).
     past_only_rows: list[dict[str, Any]] = field(default_factory=list)
-    # A retry's earlier commits per memory_key, in order (`durable_commits`): its
-    # entries skip the filters below and answer as those commits did.
-    retried: dict[str, list[Any]] = field(default_factory=dict)
+    # A retry's (`durable_commits`): the keys the earlier attempt committed, and per
+    # entry (by object) the commit it made. A matched entry skips the filters below and
+    # answers as its commit did; an entry of such a key that made none writes nothing.
+    retried_keys: set[str] = field(default_factory=set)
+    retried: dict[int, Any] = field(default_factory=dict)
+    # (result, commit) of each matched entry, for the answer after the insert.
+    retried_results: list[tuple[Any, Any]] = field(default_factory=list)
     # (row_idx, embed_text, excerpt, key_text) per searchable kept entry.
     pending: list[tuple[int, str, str, str]] = field(default_factory=list)
     # (entry, serialized_value, tags, entities, expires_at) per kept entry.
@@ -207,8 +211,12 @@ def _bulk_skip_gate(
     """Phase 4a, per entry: True when the entry writes nothing — an unchanged
     restatement, an identity duplicate, a value-locked or a pinned target. Each still gets a
     version-0 result row so the response shape is unchanged."""
-    if entry.memory_key in state.retried:
+    if id(entry) in state.retried:
         return False  # the publisher answers a retried entry from its commit
+    if entry.memory_key in state.retried_keys:
+        # The earlier attempt wrote nothing for this entry: neither does its retry.
+        state.results.append(_BulkSetResult(memory_key=entry.memory_key, version=0))
+        return True
     # Re-ingest skip-gate: a byte-identical live value skips the
     # rewrite+re-embed+re-project. Caller still gets a result row
     # (version 0) so the response shape is unchanged.
@@ -468,6 +476,8 @@ async def _bulk_build_rows(
             state.n_created += 1
         _seen_keys.add(entry.memory_key)
         state.results.append(_BulkSetResult(memory_key=entry.memory_key, version=version))
+        if id(entry) in state.retried:
+            state.retried_results.append((state.results[-1], state.retried[id(entry)]))
 
         if is_embedded(entry.memory_type, entry_sensitivity):
             _bulk_append_pending(state, entry, serialized_value)
