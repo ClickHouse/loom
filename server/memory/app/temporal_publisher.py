@@ -57,6 +57,7 @@ from server.memory.domain.temporal_capture import (
     intent_for,
     note_left_out,
     removes,
+    slot_of,
     write_intent,
 )
 from server.memory.store import temporal as store
@@ -96,6 +97,8 @@ class Receipt:
     past_only: bool = False
     # A retry's: the loom.memory version its commit's row was written at.
     row_version: int = 0
+    # A retry's: the request entry its commit answered (`request_slot`; -1: none).
+    request_slot: int = -1
     # Why the row was neither journaled nor written: superseded (a later-drawn
     # version committed first), locked (a change the key's lock in force refuses), restated
     # (nothing changed and the value is not what applies now).
@@ -301,7 +304,7 @@ async def publish_rows(
         except PreconditionFailedError:
             # The key's current row may lag the journal (a due plan): bring it in line,
             # so the re-read the refusal asks for sees what the journal holds.
-            await _refresh_current(org, ns, sorted({ident_of(r) for r in batch}))
+            await refresh_current(org, ns, sorted({ident_of(r) for r in batch}))
             raise
         except LoomServerError:
             raise
@@ -567,7 +570,7 @@ async def publish(
                     ch=ch,
                 )
             if batch.refresh:
-                await _refresh_current(org, ns, batch.refresh)
+                await refresh_current(org, ns, batch.refresh)
             bag = _bag()
             if bag is not None:
                 bag.extend(batch.receipts)
@@ -864,7 +867,7 @@ def _reshapes_current(
     }
 
 
-async def _refresh_current(org: str, ns: str, idents: list[Ident]) -> None:
+async def refresh_current(org: str, ns: str, idents: list[Ident]) -> None:
     from server.memory.app.temporal_projection import reconcile_identities
 
     try:
@@ -1695,6 +1698,7 @@ def _commit_row(b: _Batch, p: _Planned, seq: int, at: datetime) -> dict[str, Any
         "request_id": request_id_var.get() or "",
         "idempotency_key": "" if p.seed else b.idem,
         "request_sha256": b.request_sha if b.idem and not p.seed else "",
+        "request_slot": slot_of(p.row),
         "operation": "memory.journal_seed" if p.seed else b.operation[:64],
         "change_kind": p.amendment.change_kind,
         "payload_schema": tm.PAYLOAD_SCHEMA,
@@ -1736,4 +1740,5 @@ def _receipt(ns: str, ident: Ident, prior: Mapping[str, Any], *, moved_on: bool)
         moved_on,
         str(prior.get("memory_id") or ""),
         row_version=int(prior.get("row_version") or 0),
+        request_slot=int(prior.get("request_slot", -1)),
     )

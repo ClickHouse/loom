@@ -29,6 +29,9 @@ CREATE TABLE IF NOT EXISTS loom.memory_temporal_commits
     -- The request body hash the idempotency key was sent with: a retry with the
     -- same one replays this commit; another body under the key is refused.
     `request_sha256` String DEFAULT '',
+    -- Which entry of its request this commit is the outcome of (memory.bulk_set's
+    -- entry index), so a retry answers each entry as it was answered; -1 otherwise.
+    `request_slot` Int32 DEFAULT -1,
     `operation` LowCardinality(String),
     `change_kind` LowCardinality(String),
     `payload_schema` UInt16,

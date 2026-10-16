@@ -2383,6 +2383,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_temporal_commits
     `request_id` String DEFAULT '',
     `idempotency_key` String DEFAULT '',
     `request_sha256` String DEFAULT '',
+    `request_slot` Int32 DEFAULT -1,
     `operation` LowCardinality(String),
     `change_kind` LowCardinality(String),
     `payload_schema` UInt16,

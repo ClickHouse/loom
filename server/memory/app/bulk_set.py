@@ -5,7 +5,6 @@ the insert, and the projections and audit that follow it."""
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from contextvars import ContextVar
 from dataclasses import replace
@@ -22,6 +21,7 @@ from server.identity.domain.read_scope import scope_and
 from server.memory.api.models_bulk import (
     MemoryBulkSetInput,
     MemoryBulkSetOutput,
+    _BulkSetResult,
 )
 from server.memory.app.bulk_rows import (
     _BULK_CARRIED_COLS,
@@ -46,7 +46,7 @@ from server.memory.app.projections import (
 )
 from server.memory.app.provenance import writer_actor
 from server.memory.domain.memory_types import is_embedded
-from server.memory.domain.temporal_capture import current_intent, write_intent
+from server.memory.domain.temporal_capture import current_intent, request_slots, write_intent
 
 if TYPE_CHECKING:
     from server.memory.app.search.clock import StageClock
@@ -317,7 +317,7 @@ async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
         await memory_repo.insert_embedding_rows(written, ch=ch)
 
     # A bulk write never replaces a pinned value it does not pin (as memory.set).
-    with write_intent(replace(current_intent(), pin_guard=True)):
+    with write_intent(replace(current_intent(), pin_guard=True)), request_slots(state.row_slot):
         await memory_repo.insert_memory_versions(state.memory_rows, ch=ch, alongside=[_embed])
     _answer_published_versions(state.results, drawn)
     _drop_left_out(state, kept_ids, drawn)
@@ -342,41 +342,28 @@ def _winners(state: _BulkWriteState) -> dict[str, dict[str, Any]]:
     return winners
 
 
-async def _bulk_retried(input: MemoryBulkSetInput, state: _BulkWriteState) -> None:
-    """Phase 0: a retry's earlier commits, before any filter drops an entry (a value
-    now unchanged, a pin or lock set since); its body is checked against them first.
-    Each commit goes back to the entry that made it: by the value it committed, then a
-    restatement's (which holds none) in order. An entry the earlier attempt skipped
-    made no commit, and the publisher pairs a key's changes with its commits in turn."""
-    from server.memory.app.temporal_publisher import durable_commits
+async def _bulk_replay(input: MemoryBulkSetInput) -> MemoryBulkSetOutput | None:
+    """A retry of a batch the journal already holds is answered from it, before any
+    filter, policy check or row is built: each entry with the version its commit
+    recorded for it (`request_slot`), the others 0, as they were. Its body is checked
+    against the commits first. The current rows are reconciled, nothing is written."""
+    from server.memory.app.temporal_publisher import durable_commits, refresh_current
 
     idents = [(input.agent, input.user_id, input.session_id, e.memory_key) for e in input.entries]
     prior = await durable_commits(input.org, input.namespace, idents)
-    for (_a, _u, _s, key), receipts in prior.items():
-        state.retried_keys.add(key)
-        entries = [e for e in input.entries if e.memory_key == key]
-        left = list(receipts)
-        for entry in entries:
-            value = json.dumps(entry.value)
-            rc = next((r for r in left if any(a.value == value for a in _added(r))), None)
-            if rc is not None:
-                left.remove(rc)
-                state.retried[id(entry)] = rc
-        for entry in entries:
-            if id(entry) not in state.retried and left and not _added(left[0]):
-                state.retried[id(entry)] = left.pop(0)
-
-
-def _added(receipt: Any) -> tuple[Any, ...]:
-    return receipt.amendment.added if receipt.amendment is not None else ()
-
-
-def _answer_retried(state: _BulkWriteState) -> None:
-    """A retried entry a later step still answered with version 0 (a verdict, a row
-    the journal left out) answers with its own earlier commit's version."""
-    for res, rc in state.retried_results:
-        if not res.version:
-            res.version = rc.row_version
+    by_slot = {r.request_slot: r for rs in prior.values() for r in rs if r.request_slot >= 0}
+    if not by_slot:
+        return None
+    await refresh_current(input.org, input.namespace, sorted(prior))
+    return MemoryBulkSetOutput(
+        written=[
+            _BulkSetResult(
+                memory_key=e.memory_key,
+                version=by_slot[i].row_version if i in by_slot else 0,
+            )
+            for i, e in enumerate(input.entries)
+        ]
+    )
 
 
 def _answer_published_versions(results: list[Any], drawn: list[tuple[dict[str, Any], int]]) -> None:
@@ -726,8 +713,10 @@ async def handle_memory_bulk_set(
 
     _bulk_work: dict[str, Any] = {}
     _bulk_clock = StageClock(_bulk_work)
+    replayed = await _bulk_replay(input)
+    if replayed is not None:
+        return replayed
     state = _BulkWriteState()
-    await _bulk_retried(input, state)
     await _bulk_existing_lookup(ch, input, state)
 
     identity_dupes = await _bulk_identity_dupes(ch, input)
@@ -752,7 +741,6 @@ async def handle_memory_bulk_set(
     _intra_pairs = await _bulk_intra_batch_pairs(ch, input, state)
 
     await _bulk_insert(ch, state)
-    _answer_retried(state)
     _bulk_clock.mark("insert")
 
     _value_links = await _bulk_post_insert_links(ch, input, state)

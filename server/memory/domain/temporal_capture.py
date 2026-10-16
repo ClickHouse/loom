@@ -162,6 +162,24 @@ def declared_fields(row: Mapping[str, Any]) -> frozenset[str] | None:
     return (_declared.get() or {}).get(row_key(row))
 
 
+# Per version row (by object): the index of the request entry it writes, recorded
+# on its commit (`request_slot`) so a retry can answer each entry as it was answered.
+_slots: ContextVar[Mapping[int, int] | None] = ContextVar("loom_temporal_slots", default=None)
+
+
+@contextmanager
+def request_slots(slots: Mapping[int, int]) -> Iterator[None]:
+    token = _slots.set(slots)
+    try:
+        yield
+    finally:
+        _slots.reset(token)
+
+
+def slot_of(row: Mapping[str, Any]) -> int:
+    return (_slots.get() or {}).get(id(row), -1)
+
+
 # Per row_key: why the journal left a row of this block out (superseded, stale,
 # locked, restated), for a writer that re-reads and retries.
 _left_out: ContextVar[dict[tuple[str, ...], str] | None] = ContextVar(

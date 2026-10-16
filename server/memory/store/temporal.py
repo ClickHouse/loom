@@ -101,6 +101,7 @@ COMMIT_COLS: tuple[str, ...] = (
     "request_id",
     "idempotency_key",
     "request_sha256",
+    "request_slot",
     "operation",
     "change_kind",
     "payload_schema",
@@ -428,7 +429,7 @@ async def commits_for_idempotency_key(
     rows = await ch.query_all(
         f"SELECT agent, user_id, session_id, memory_key, toString(memory_id) AS memory_id, "
         f"commit_id, commit_seq, recorded_at, row_version, "
-        f"change_kind, retired_assertion_ids, assertions, request_sha256 "
+        f"change_kind, retired_assertion_ids, assertions, request_sha256, request_slot "
         f"FROM {COMMITS} WHERE org = {{org:String}} AND namespace = {{ns:String}} "
         f"AND idempotency_key = {{k:String}} AND {_IDENT} IN {_KEYS} AND {_ON_TIME}"
         + _not_erased("recorded_at", erased, params)

@@ -1784,3 +1784,47 @@ async def test_a_bulk_retry_answers_each_entry_as_its_own_commit_did(
         assert [w["version"] for w in again["written"]] == first
         got = await a.call("memory.get", {"memory_key": "k"})
         assert (got["value"], got["version"]) == ("Z" if written_since else "B", seq)
+
+
+async def test_a_bulk_retry_answers_before_a_blacklist_rule_added_since(
+    control_plane_url, mint_test_token
+) -> None:
+    a, _ = await _agent(control_plane_url, mint_test_token, "bulk-retry-bl")
+    async with a:
+        key = f"r-{uuid.uuid4().hex}"
+        body = {"entries": [{"memory_key": "k", "value": "the code is omega"}]}
+        first = await a.call("memory.bulk_set", body, idempotency_key=key)
+        await a.call("blacklist.add", {"pattern": "omega", "scope": "namespace", "sweep": False})
+        ch = await _ch()
+        try:
+            await _expire_replay(ch, key, "memory.bulk_set")
+        finally:
+            await ch.disconnect()
+        again = await a.call("memory.bulk_set", body, idempotency_key=key)
+        assert [w["version"] for w in again["written"]] == [first["written"][0]["version"]]
+
+
+async def test_a_bulk_retry_pairs_a_correction_with_its_own_entry(
+    control_plane_url, mint_test_token
+) -> None:
+    # B's commit carries an earlier A segment: the retry still answers A's entry 0.
+    a, _ = await _agent(control_plane_url, mint_test_token, "bulk-retry-carried")
+    async with a:
+        await a.call("memory.set", {"memory_key": "k", "value": "A", "valid_at": jan(1)})
+        key = f"r-{uuid.uuid4().hex}"
+        body = {"entries": [
+            {"memory_key": "k", "value": "A", "valid_at": jan(1)},
+            {"memory_key": "k", "value": "B", "valid_at": jan(10)},
+        ]}  # fmt: skip
+        first = [
+            w["version"]
+            for w in (await a.call("memory.bulk_set", body, idempotency_key=key))["written"]
+        ]
+        ch = await _ch()
+        try:
+            await _expire_replay(ch, key, "memory.bulk_set")
+        finally:
+            await ch.disconnect()
+        again = await a.call("memory.bulk_set", body, idempotency_key=key)
+        assert [w["version"] for w in again["written"]] == first
+        assert (await a.call("memory.get", {"memory_key": "k"}))["value"] == "B"
