@@ -28,6 +28,7 @@ def _on_disk(root: Path, paths: tuple[str, ...]) -> list[str]:
     for top in [root / p for p in paths] or [root]:
         if top.is_file() or top.is_symlink():
             found.append(top)
+            continue
         for here, dirs, files in os.walk(top):
             found += [Path(here, n) for n in files]
             found += [Path(here, n) for n in dirs if Path(here, n).is_symlink()]

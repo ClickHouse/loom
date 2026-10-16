@@ -284,6 +284,10 @@ def test_settings_deny_shared_and_production_commands() -> None:
         assert any(_matches(r, command) for r in perms["ask"]), command
     for command in NOT_DENIED:
         assert not any(_matches(r, command) for r in perms["deny"]), command
+    # The reviewer runs in the background, where only pre-approved commands run.
+    reviewer = (ROOT / ".claude" / "agents" / "loom-reviewer.md").read_text()
+    for command in re.findall(r"`(\.venv/bin/python -m pytest[^`]*)`", reviewer):
+        assert any(_matches(r, command) for r in perms["allow"]), command
     # Only the whole unit suite runs without asking: a path after it could be anything.
     assert not any(
         _matches(r, ".venv/bin/python -m pytest tests/unit/x.py tests/integration")
@@ -312,6 +316,7 @@ def _hook(command: str) -> int:
         ".venv/bin/python -m pytest tests/unit -q -k 'a and not b'",
         ".venv/bin/python -m pytest 'tests/unit/test_a.py::test_b[x-1]' -q",
         "git log | grep -F x",
+        "gh pr view 57 --json files --jq '.files[].path'",
         "python3 .claude/skills/loom-writing/scripts/check_prose.py AGENTS.md",
     ],
 )
@@ -368,6 +373,7 @@ def test_tracked_files_outside_git_lists_files_and_links(tmp_path: Path) -> None
     (tmp_path / "links").mkdir()
     (tmp_path / "links" / "a").symlink_to("../skills/a")
     assert tracked(root=tmp_path) == ["links/a", "skills/a/SKILL.md"]
+    assert tracked("links/a", root=tmp_path) == ["links/a"]
 
 
 def _check_prose(*args: str, stdin: str = "") -> subprocess.CompletedProcess[str]:

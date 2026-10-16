@@ -400,7 +400,7 @@ async def me_service_accounts_revoke(
                 "revoked_at": now,
                 "revoked_by": subject,
                 "version": _time.time_ns(),
-                # Column-mirror discipline (CLAUDE.md): carry every column
+                # Column-mirror discipline: carry every column
                 # forward or the merge zeros it.
                 "kind": row.get("kind") or "service_account",
                 "client": row.get("client") or "",

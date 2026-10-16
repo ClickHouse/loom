@@ -65,34 +65,57 @@ def _pytest_ok(args: list[str]) -> bool:
     return unit_path
 
 
-def _segment_ok(words: list[str], piped: bool) -> bool:
+def _without_jq(words: list[str]) -> list[str]:
+    # gh hands the --jq expression to jq; it starts with `.`, so no glob can make it a flag.
+    out = []
+    for i, word in enumerate(words):
+        if i and words[i - 1] in {"--jq", "-q"} and words[0] == "gh":
+            continue
+        out.append(word)
+    return out
+
+
+def _segment_refusal(words: list[str], piped: bool) -> str | None:
+    name = f"`{' '.join(words[:3])}`"
     if any(w.startswith("--watch") for w in words):
-        return False  # it never exits
+        return f"{name} never exits"
     if piped and words[0] in {"head", "tail"}:
-        return len(words) == 1 or bool(LINE_COUNT.fullmatch(" ".join(words[1:])))
+        if len(words) > 1 and not LINE_COUNT.fullmatch(" ".join(words[1:])):
+            return f"{name}: after a pipe, head and tail take only a line count"
+        return None
     if piped:
-        return words[0] in FILTERS
+        return None if words[0] in FILTERS else f"{name} cannot read a pipe here"
     if tuple(words[:3]) == PYTEST:
-        return _pytest_ok(words[3:])
-    if any("[" in w or "]" in w for w in words):
-        return False
+        return (
+            None
+            if _pytest_ok(words[3:])
+            else "pytest runs only tests/unit paths with -q, -x, -k and similar flags"
+        )
+    if any("[" in w or "]" in w for w in _without_jq(words)):
+        return "brackets are allowed only in a pytest node id or a --jq expression"
     if words[0] == "git" and any(w.startswith(GIT_WRITE_FLAGS) for w in words):
-        return False
-    return any(tuple(words[: len(c)]) == c for c in COMMANDS)
+        return f"{name} with that flag writes a file or runs a program"
+    if not any(tuple(words[: len(c)]) == c for c in COMMANDS):
+        return f"{name} is not on the reviewer's read-only list"
+    return None
 
 
 def refusal(command: str) -> str | None:
     command = re.sub(r"\s2>&1\b|\s2?>\s*/dev/null\b", "", command)
     if not SAFE.fullmatch(command):
-        return "it has a character that could start a second command or a shell expansion"
+        return (
+            "it has a character that could start a second command or a shell expansion"
+            " (`*` is refused even quoted: use the Glob or Grep tool)"
+        )
     lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
     lexer.whitespace_split = True
     segment: list[str] = []
     piped = False
     for token in [*lexer, "&&"]:
         if token in {"&&", "|"}:
-            if not segment or not _segment_ok(segment, piped):
-                return f"`{' '.join(segment[:4])}` is not on the reviewer's read-only list"
+            reason = _segment_refusal(segment, piped) if segment else f"nothing before `{token}`"
+            if reason:
+                return reason
             segment, piped = [], token == "|"
         elif set(token) <= set("&|;<>()"):
             return f"`{token}` is not allowed: join commands with `&&` or `|`, and redirect nothing"

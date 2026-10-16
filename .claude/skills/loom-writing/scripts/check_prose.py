@@ -51,8 +51,9 @@ INTERNAL = {
     r"\b(10\.\d+|192\.168|172\.(1[6-9]|2\d|3[01]))\.\d+\.\d+\b": "a private IP address",
     r"\b[\w.-]+\.(internal|corp|lan)\b": "an internal host name",
 }
-# The gate leaves these two out: its fake-value rule needs a `test-` or `example-`
-# word, which a JWT or GitHub token fixture cannot carry.
+# The gate leaves these two out: a GitHub token's body is all word characters, so its
+# fake-value rule never fires on one, and the repo's JWT and token test fixtures would
+# fail it.
 SECRETS = [
     ("JWT", re.compile(r"\beyJ[\w-]{10,}\.[\w-]{10,}")),
     ("GitHub token", re.compile(r"\b(?:gh[oprsu]_\w{20,}|github_pat_\w{20,})")),
