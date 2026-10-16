@@ -86,11 +86,9 @@ async def adopt(plan: list[dict[str, Any]], *, by: str, keep_tokens: bool) -> in
         org, owner = accounts[0]["org"], accounts[0]["owner"]
         # Whoever registered the address may hold tokens from before; the person
         # signs in again through the provider. Revoked before the link lands, so
-        # an adopt stopped between the two is redone whole by the next one. A
-        # cutoff written over an outright revoke would let the offboarded
-        # subject back in, so that one stands.
-        if not keep_tokens and not await revocation.revoked_outright(owner):
-            await revocation.revoke(
+        # an adopt stopped between the two is redone whole by the next one.
+        if not keep_tokens:
+            await revocation.cut_off(
                 owner, issued_before=_after_this_second(), reason="sso adopt", revoked_by=by
             )
         await sso_links.link(email, [(org, a["namespace"]) for a in accounts], by)
@@ -231,8 +229,9 @@ async def create_bot(bot: machines.Machine, *, by: str, replace: bool) -> None:
 
 
 async def disable_bot(name: str, *, by: str) -> bool:
-    """Refuse the bot's proofs and revoke the tokens it holds; False if none is active."""
-    bot = await machines.get(name)
+    """Refuse the bot's proofs and revoke the tokens it holds; False if there
+    is no such bot. Run again, it finishes a disable that stopped part way."""
+    bot = await machines.get(name, active_only=False)
     if bot is None:
         return False
     await machines.save(bot, by=by, active=False)
@@ -245,9 +244,9 @@ async def disable_bot(name: str, *, by: str) -> bool:
 
 
 async def _end_tokens(name: str, *, by: str, reason: str) -> datetime:
-    """Its tokens live an hour; revoked now, not when they run out (unless
-    revoked outright already, which a cutoff must not weaken). Returns the cutoff."""
-    subject, cutoff = machines.subject(name), _from_now_on()
-    if not await revocation.revoked_outright(subject):
-        await revocation.revoke(subject, issued_before=cutoff, reason=reason, revoked_by=by)
+    """Its tokens live an hour; revoked now, not when they run out. Returns the cutoff."""
+    cutoff = _from_now_on()
+    await revocation.cut_off(
+        machines.subject(name), issued_before=cutoff, reason=reason, revoked_by=by
+    )
     return cutoff

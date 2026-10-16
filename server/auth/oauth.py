@@ -1413,7 +1413,9 @@ async def _token_exchange_grant(f: dict[str, str]) -> dict[str, Any]:
         m, proof = await machines.verify_workload(token, f.get("client_id", ""))
     except machines.Refused as e:
         raise _refused(e) from None
-    ttl = min(machines.TOKEN_TTL, int(proof["exp"]) - since)
+    # Its life left is measured now, after the verify (which may have waited on
+    # the issuer); `since` stays the issue time revocation is judged by.
+    ttl = min(machines.TOKEN_TTL, int(proof["exp"]) - int(time.time()))
     if ttl < 30:  # inside the verify's leeway, or nearly out: a token would outlive it
         raise OAuthError("invalid_grant", description="the subject token has run out")
     issued = await _machine_tokens(
@@ -1425,21 +1427,22 @@ async def _token_exchange_grant(f: dict[str, str]) -> dict[str, Any]:
 async def _machine_tokens(
     m: machines.Machine, since: int, ttl: int, how: dict[str, str]
 ) -> dict[str, Any]:
-    """The token for bot `m`. `since` was taken before `m` was read, so a
-    disable the read missed has a later cutoff, and revokes this token."""
+    """The token for bot `m`, good for `ttl` seconds from now. `since` was
+    taken before `m` was read, so a disable the read missed has a later
+    cutoff, and revokes this token."""
     from server.auth.revocation import subjects_revoked
 
     subject = machines.subject(m["name"])
     if await subjects_revoked([subject], issued_at=since):
         raise OAuthError("invalid_client", 401, description="this bot is revoked")
-    jti = new_jti()
+    jti, now = new_jti(), int(time.time())
     token = mint_token(
         subject=subject,
         org=m["org"],
         namespaces=[ns for ns, _ in m["ns_roles"]],
         roles=[],
         ns_roles=dict(m["ns_roles"]),
-        ttl_seconds=ttl,
+        ttl_seconds=now - since + ttl,  # `ttl` from now, the token dated `since`
         is_service_account=True,
         jti=jti,
         issued_at=since,

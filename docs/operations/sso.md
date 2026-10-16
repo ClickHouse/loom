@@ -141,10 +141,11 @@ with more than one admin, registered first, in one org); its tokens are for
   `warning` to send the request again if saving it may not have finished),
   `/v1/admin/bots.list` and `/v1/admin/bots.disable`; `/v1/admin/sso.adopt`,
   `sso.unlink` and `sso.password_link` mirror `loom sso`.
-- Replacing or disabling a bot revokes its tokens up to 5 s ahead, and both
-  wait that out before they return. Replica clocks must agree within 5 s (NTP
-  does): a replica ahead could issue a token from the old bot that survives,
-  and one behind refuses the new key until its clock passes the cutoff.
+- Replacing or disabling a bot revokes its tokens up to the next second plus
+  5 s, and both wait that out (about 6 s) before they return. Replica clocks
+  must agree within 5 s (NTP does): a replica ahead could issue a token from
+  the old bot that survives, and one behind refuses the new key until its
+  clock passes the cutoff.
 
 Software that can only hold a static key gets an operator-minted token, with an
 expiry (`--ttl-days 90`, re-minted on a schedule) or without one, which lives

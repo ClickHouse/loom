@@ -14,7 +14,7 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
-from server.core.ch import get_client
+from server.core.ch import get_client, own_write_reads
 
 TABLE = "loom.sso_links"
 
@@ -118,17 +118,15 @@ async def _write(
 ) -> None:
     if not accounts:
         return
-    from server.core.ch import own_write_reads
-
     ch = ch or get_client()
     # Past the email's newest link row, whichever replica's clock wrote it: under
     # FINAL a later unlink with a lower version would be lost.
     with own_write_reads():
-        rows = await ch.query_all(
+        row = await ch.query_one(
             f"SELECT max(version) AS v FROM {TABLE} WHERE email = {{email:String}}",
             params={"email": email.strip().lower()},
         )
-    newest = int((rows[0].get("v") if rows else 0) or 0)
+    newest = int((row or {}).get("v") or 0)
     now, version = datetime.now(UTC), max(time.time_ns(), newest + 1)
     await ch.insert(
         TABLE,

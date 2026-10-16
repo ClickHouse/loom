@@ -348,7 +348,9 @@ issued never outlives it. A CI trust must name at least one claim: any job on a 
 can ask for any audience. A token is issued as of the moment before the bot is read, so a
 disable landing during the exchange still cuts it off.
 Disabling a bot refuses later proofs and revokes its tokens; no refresh token exists to
-outlive it.
+outlive it. The cutoffs an operator action writes (a bot replaced or disabled, an account
+adopted) sit in their own revocation row beside the subject's, so an outright revocation
+written at any moment is never replaced by one.
 
 **Unauthenticated routes.** Sign-up and password sign-in are rate-limited in-process
 (`server/auth/attempts.py`) per client address (the connection's peer, which uvicorn

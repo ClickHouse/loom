@@ -136,11 +136,14 @@ async def refresh() -> None:
         full: set[str] = set()
         before: dict[str, int] = {}
         for r in rows:
-            cutoff = _cutoff_seconds(r.get("issued_before"))
+            key, cutoff = (
+                str(r["jti"]).removeprefix(CUTOFF_PREFIX),
+                _cutoff_seconds(r.get("issued_before")),
+            )
             if cutoff is None:
-                full.add(str(r["jti"]))
+                full.add(key)
             else:
-                before[str(r["jti"])] = cutoff
+                before[key] = max(before.get(key, 0), cutoff)
         _revoked_jtis = frozenset(full)
         _revoked_before = before
         _loaded = True
@@ -211,6 +214,37 @@ async def revoke(
     return row
 
 
+# A cutoff an operator action writes beside a subject's own revocation row, so
+# it can never replace an outright revoke written there (by `revoke-token`, at
+# any moment): the snapshot reads both, and the stronger one stands.
+CUTOFF_PREFIX = "cutoff:"
+
+
+async def cut_off(subject: str, *, issued_before: datetime, reason: str, revoked_by: str) -> None:
+    """Revoke the tokens of `subject` issued before `issued_before`, leaving any
+    outright revocation of it as it is."""
+    from server.core.ch import get_client
+
+    now = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
+    cutoff = issued_before.astimezone(UTC).replace(tzinfo=None)
+    await get_client().insert(
+        "loom.revoked_tokens",
+        [
+            {
+                "jti": CUTOFF_PREFIX + subject,
+                "revoked_at": now,
+                "expires_at": revocation_expiry(None, now),
+                "reason": reason,
+                "revoked_by": revoked_by,
+                "issued_before": cutoff,
+            }
+        ],
+    )
+    global _revoked_before
+    seconds = _cutoff_seconds(cutoff) or 0
+    _revoked_before = {**_revoked_before, subject: max(_revoked_before.get(subject, 0), seconds)}
+
+
 def revoked_here(jti: str) -> None:
     """Refuse `jti` in this process now, for a revocation written elsewhere
     (an owed one) that the next snapshot will carry."""
@@ -240,7 +274,8 @@ async def subjects_revoked(subjects: list[str], *, issued_at: int) -> bool:
     `revoke-token`."""
     if not subjects:
         return False
-    for r in await _read_revocations(sorted(set(subjects))):
+    keys = sorted({*subjects, *(CUTOFF_PREFIX + s for s in subjects)})
+    for r in await _read_revocations(keys):
         cutoff = _cutoff_seconds(r.get("issued_before"))
         if cutoff is None or issued_at < cutoff:
             return True

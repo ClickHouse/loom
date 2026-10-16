@@ -28,7 +28,7 @@ from typing import Any, TypedDict
 import httpx
 import jwt
 
-from server.core.ch import get_client
+from server.core.ch import get_client, own_write_reads
 
 TABLE = "loom.machine_identities"
 TOKEN_TTL = 3600
@@ -65,14 +65,14 @@ def subject(name: str) -> str:
     return f"sa:{name}"
 
 
-async def get(name: str) -> Machine | None:
-    """The active machine identity `name`, read as of every write that landed:
-    a replica a moment behind must not mint for a bot just disabled."""
-    from server.core.ch import own_write_reads
-
+async def get(name: str, *, active_only: bool = True) -> Machine | None:
+    """The machine identity `name` (only an active one, unless `active_only` is
+    off for an operator finishing a disable), read as of every write that
+    landed: a replica a moment behind must not mint for a bot just disabled."""
+    active = " AND active = 1" if active_only else ""
     with own_write_reads():
         row = await get_client().query_one(
-            f"SELECT * FROM {TABLE} FINAL WHERE name = {{name:String}} AND active = 1",
+            f"SELECT * FROM {TABLE} FINAL WHERE name = {{name:String}}{active}",
             params={"name": name},
         )
     if row is None:
@@ -96,16 +96,14 @@ async def listed() -> list[dict[str, Any]]:
 
 
 async def save(m: Machine, *, by: str, active: bool = True) -> None:
-    from server.core.ch import own_write_reads
-
-    # Past the newest row of the name, whichever replica's clock wrote it: under
+    # Past the name's newest row, whichever replica's clock wrote it: under
     # FINAL a later change with a lower version would be lost.
     with own_write_reads():
-        newest = await get_client().query_one(
+        row = await get_client().query_one(
             f"SELECT max(version) AS v FROM {TABLE} WHERE name = {{name:String}}",
             params={"name": m["name"]},
         )
-    version = max(time.time_ns(), int((newest or {}).get("v") or 0) + 1)
+    version = max(time.time_ns(), int((row or {}).get("v") or 0) + 1)
     await get_client().insert(
         TABLE,
         [

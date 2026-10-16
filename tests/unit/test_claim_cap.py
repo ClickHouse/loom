@@ -332,7 +332,8 @@ def test_several_subjects_are_checked_for_a_revocation_in_one_read(ch: _CH) -> N
     assert asyncio.run(rev.subjects_revoked(["u-bob", "bob", "u-bob"], issued_at=now))
     assert not asyncio.run(rev.subjects_revoked(["u-bob"], issued_at=now))
     assert not asyncio.run(rev.subjects_revoked([], issued_at=now))
-    assert reads == [["bob", "u-bob"], ["u-bob"]]
+    # Each subject's own row and the operator cutoff written beside it.
+    assert reads == [["bob", "cutoff:bob", "cutoff:u-bob", "u-bob"], ["cutoff:u-bob", "u-bob"]]
 
 
 def test_a_stale_exact_grant_read_does_not_loosen_the_cap(

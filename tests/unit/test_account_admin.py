@@ -56,14 +56,12 @@ def test_a_trust_issuer_is_kept_as_given_slash_and_all() -> None:
 def world(monkeypatch) -> dict[str, Any]:
     state: dict[str, Any] = {"bots": {}, "revoked": [], "outright": set(), "namespaces": {"triage"}}
 
-    async def get(name: str) -> machines.Machine | None:
-        return state["bots"].get(name)
+    async def get(name: str, *, active_only: bool = True) -> machines.Machine | None:
+        bot = state["bots"].get(name)
+        return bot if bot and (bot["active"] or not active_only) else None
 
     async def save(m: machines.Machine, *, by: str, active: bool = True) -> None:
-        if active:
-            state["bots"][m["name"]] = m
-        else:
-            state["bots"].pop(m["name"], None)
+        state["bots"][m["name"]] = {**m, "active": active}
 
     async def is_active(org: str, namespace: str, **kw: Any) -> bool:
         return namespace in state["namespaces"]
@@ -71,10 +69,11 @@ def world(monkeypatch) -> dict[str, Any]:
     async def revoked_outright(jti: str) -> bool:
         return jti in state["outright"]
 
-    async def revoke(token_id: str, **kw: Any) -> dict[str, Any]:
-        state["revoked"].append((token_id, kw["reason"]))
+    async def cut_off(subject: str, **kw: Any) -> None:
+        if state.get("revoke_fails"):
+            raise RuntimeError("ClickHouse away")
+        state["revoked"].append((subject, kw["reason"]))
         state["cutoff"] = kw["issued_before"]
-        return {}
 
     async def no_wait(cutoff: Any) -> None:
         return None
@@ -86,7 +85,7 @@ def world(monkeypatch) -> dict[str, Any]:
     monkeypatch.setattr(machines, "save", save)
     monkeypatch.setattr(namespaces, "is_active", is_active)
     monkeypatch.setattr(revocation, "revoked_outright", revoked_outright)
-    monkeypatch.setattr(revocation, "revoke", revoke)
+    monkeypatch.setattr(revocation, "cut_off", cut_off)
     monkeypatch.setattr(account_admin.audit, "emit", emit)
     monkeypatch.setattr(account_admin, "_wait_until", no_wait)
     return state
@@ -174,4 +173,16 @@ def test_adopting_ends_a_persons_tokens_but_not_their_next_sign_in(world, monkey
     plan = [{"email": "lee@acme.io", "org": "acme", "namespace": "lee", "owner": "lee", "skip": ""}]
     asyncio.run(account_admin.adopt(plan, by="ops", keep_tokens=False))
     # The next whole second, not the bots' margin: they sign in again at once.
-    assert world["cutoff"].timestamp() <= time.time() + 1
+    # And still past every token issued so far.
+    assert time.time() < world["cutoff"].timestamp() <= time.time() + 1
+
+
+def test_a_disable_that_stopped_part_way_is_finished_by_another(world) -> None:
+    asyncio.run(account_admin.create_bot(_bot(["triage=writer"]), by="ops", replace=False))
+    world["revoke_fails"] = True
+    with pytest.raises(RuntimeError):
+        asyncio.run(account_admin.disable_bot("triage", by="ops"))
+    assert world["revoked"] == []  # saved inactive, its tokens alive
+    world["revoke_fails"] = False
+    assert asyncio.run(account_admin.disable_bot("triage", by="ops"))
+    assert world["revoked"] == [("sa:triage", "bot disabled")]

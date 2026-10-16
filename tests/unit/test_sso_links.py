@@ -17,9 +17,9 @@ class _Recorder:
     def __init__(self) -> None:
         self.rows: list[dict[str, Any]] = []
 
-    async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+    async def query_one(self, sql: str, params: dict[str, Any]) -> dict[str, Any]:
         # A row a replica ahead wrote: the next one must still be newer.
-        return [{"v": max((r["version"] for r in self.rows), default=2**62)}]
+        return {"v": max((r["version"] for r in self.rows), default=2**62)}
 
     async def insert(self, table: str, rows: list[dict[str, Any]]) -> None:
         assert table == "loom.sso_links"
