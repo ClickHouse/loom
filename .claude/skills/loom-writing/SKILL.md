@@ -54,7 +54,7 @@ Review comment:
 ```text
 Bad:  Great work overall! One small thing worth noting: it might be a good idea to
       consider potentially handling the case where the cursor could be empty.
-Good: P2 server/memory/app/timeline.py:88 — an empty cursor re-reads from the start, so a
+Good: P2 server/memory/workers/conflict_sweep.py:88 — an empty cursor re-reads from the start, so a
       worker restart re-emits every event. Treat "" as "no cursor" and test the restart.
 ```
 
@@ -81,4 +81,4 @@ Write the text to a file, then:
 python3 .claude/skills/loom-writing/scripts/check_prose.py <file>...   # prints path:line, the phrase and a replacement; exit 1 on a hit
 ```
 
-Fix every hit or keep it on purpose (a quoted error message, a term of art such as "critical section"). Then read the text once as the reviewer would and cut any sentence that changes nothing for them.
+It flags the words above that are filler in every use, plus home and host paths, private addresses, internal host names and secrets, which it checks inside code blocks too, because pasted logs are where they leak. The words that are only sometimes filler (ensure, key, critical, handles) are yours to judge. Fix every hit or keep it on purpose (a quoted error message, a term of art such as "critical section"). Then read the text once as the reviewer would and cut any sentence that changes nothing for them.

@@ -1,12 +1,13 @@
 """The agent instruction files stay loadable, within budget and true to the repository.
 
-AGENTS.md is the one instruction file; CLAUDE.md imports it, and Codex and Cursor read
-the skills through the `.agents/skills` symlink. A skill, rule or subagent whose
+AGENTS.md is the one instruction file; CLAUDE.md imports it, and Codex reads each skill
+through its symlink under `.agents/skills/`. A skill, rule or subagent whose
 frontmatter does not parse is loaded without it; a rule whose globs match nothing has
 silently stopped loading; a path, make target or module these files name that no
 longer exists sends every agent down the wrong road. When this test fails after a
 rename, it names the file that still says the old name. Links are checked by
-test_doc_links.py.
+test_doc_links.py. The trigger cases are run by the skill-creator description
+optimizer, not by CI; this test keeps their shape.
 """
 
 from __future__ import annotations
@@ -20,12 +21,11 @@ from pathlib import Path
 import pytest
 import yaml
 
+from server.code.app.index.instructions_lint import lint_text
+from tests.unit.tracked_files import tracked
+
 ROOT = Path(__file__).resolve().parents[2]
-TRACKED = set(
-    subprocess.run(
-        ["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True
-    ).stdout.splitlines()
-)
+TRACKED = set(tracked())
 # Tracked skills only: `npx skills add` may install an ignored skill beside them.
 SKILLS = sorted(ROOT / p for p in TRACKED if re.fullmatch(r"\.claude/skills/[^/]+/SKILL\.md", p))
 RULES = sorted((ROOT / ".claude" / "rules").rglob("*.md"))
@@ -41,21 +41,6 @@ MAX_DESCRIPTIONS_TOTAL = 4000
 # AGENTS.md loads in every session of every agent.
 MAX_AGENTS_MD_BYTES = 9000
 MIN_TRIGGER_CASES = 3
-# Paths these files name on purpose that git does not track: local state and run output.
-UNTRACKED = {
-    ".env",
-    ".venv",
-    ".venv/bin/python",
-    ".venv/bin/uvicorn",
-    "coverage.json",
-    "frontend/node_modules",
-    "bench/matrix_runs/",
-    "MATRIX_RESULTS.md",
-    ".claude/worktrees/",
-    ".claude/settings.local.json",
-}
-# Slash-separated names that are not files: git refs and an MCP method.
-NOT_PATHS = {"origin/main", "refs/loom/merges/", "tools/list"}
 HOOK = ROOT / ".claude" / "hooks" / "read_only_bash.py"
 CHECK_PROSE = ROOT / ".claude" / "skills" / "loom-writing" / "scripts" / "check_prose.py"
 
@@ -74,19 +59,24 @@ def _code_spans(path: Path) -> list[str]:
     return re.findall(r"`([^`\n]+)`", text)
 
 
-def _is_tracked_path(path: str) -> bool:
-    path = path.removeprefix("./").rstrip("/")
-    return path in TRACKED or any(p.startswith(path.rstrip("/") + "/") for p in TRACKED)
-
-
 def test_claude_md_imports_agents_md() -> None:
     first = (ROOT / "CLAUDE.md").read_text().splitlines()[0]
     assert first == "@AGENTS.md"
 
 
-def test_codex_reads_the_same_skills() -> None:
-    link = ROOT / ".agents" / "skills"
-    assert link.is_symlink() and link.resolve() == (ROOT / ".claude" / "skills").resolve()
+@pytest.mark.parametrize("skill", SKILLS, ids=lambda p: p.parent.name)
+def test_codex_reads_each_skill_through_its_link(skill: Path) -> None:
+    link = ROOT / ".agents" / "skills" / skill.parent.name
+    assert link.is_symlink() and link.resolve() == skill.parent.resolve()
+    assert f".agents/skills/{skill.parent.name}" in TRACKED
+
+
+def test_every_loom_skill_is_tracked() -> None:
+    # .gitignore names each skill; one left out is silently missing from the commit.
+    on_disk = {
+        p.parent.parent.name for p in (ROOT / ".claude" / "skills").glob("*/evals/triggers.json")
+    }
+    assert on_disk == {s.parent.name for s in SKILLS}
 
 
 def test_always_loaded_text_fits_its_budget() -> None:
@@ -109,8 +99,12 @@ def test_skill_frontmatter(skill: Path) -> None:
 def test_skill_has_trigger_cases(skill: Path) -> None:
     cases = json.loads((skill.parent / "evals" / "triggers.json").read_text())
     assert all(set(c) == {"query", "should_trigger"} for c in cases)
-    assert sum(c["should_trigger"] for c in cases) >= MIN_TRIGGER_CASES
-    assert sum(not c["should_trigger"] for c in cases) >= MIN_TRIGGER_CASES
+    positives = sum(c["should_trigger"] for c in cases)
+    if _frontmatter(skill)[0].get("disable-model-invocation"):
+        assert positives == 0, "a manual-only skill never loads on its own"
+    else:
+        assert positives >= MIN_TRIGGER_CASES
+    assert len(cases) - positives >= MIN_TRIGGER_CASES
 
 
 def test_each_trigger_case_belongs_to_one_skill() -> None:
@@ -164,14 +158,9 @@ def test_rule_paths_match_tracked_files(rule: Path) -> None:
 
 @pytest.mark.parametrize("doc", INSTRUCTIONS, ids=lambda p: str(p.relative_to(ROOT)))
 def test_named_paths_exist(doc: Path) -> None:
-    missing = []
-    for span in _code_spans(doc):
-        path = re.sub(r"(::\w+|:\d+(-\d+)?)$", "", span.split()[0])
-        if not re.fullmatch(r"\.?[\w.-]+(/[\w.-]+)+/?", path) or path.startswith("../"):
-            continue  # not a repository path: a command, a placeholder, a relative link
-        if path not in UNTRACKED | NOT_PATHS and not _is_tracked_path(path):
-            missing.append(path)
-    assert not missing, f"{doc.relative_to(ROOT)} names paths that do not exist: {missing}"
+    relative = str(doc.relative_to(ROOT))
+    stale = [f.ref.value for f in lint_text(relative, doc.read_text(), TRACKED).stale]
+    assert not stale, f"{relative} names paths that do not exist: {stale}"
 
 
 @pytest.mark.parametrize("doc", INSTRUCTIONS, ids=lambda p: str(p.relative_to(ROOT)))
@@ -227,6 +216,11 @@ DENIED = (
     "git push origin refs/tags/v1.2.3",
     "git push origin HEAD --follow-tags",
     "git push origin main -u",
+    "git push origin 'HEAD:main'",
+    "git --no-pager push origin main",
+    "git -P push -f origin x",
+    "git clean -xdf",
+    "git clean -df",
     "git -C ../x push --force origin br",
     "git -c push.default=current push -f",
     "git diff --output=/tmp/x",
@@ -245,6 +239,7 @@ DENIED = (
     "bash ./redeploy.sh",
     "/opt/x/redeploy.sh --force",
     "LOOM_COLOUR=blue docker compose -f dev/docker-compose.colour.yml up -d",
+    "docker compose -f ./dev/docker-compose.colour.yml down",
     "docker rm -f loom-blue",
     "docker stop loom-workers",
 )
@@ -255,12 +250,14 @@ ASKED = (
     "gh issue create --title t --body-file b.md",
     "gh api repos/ClickHouse/loom/pulls/57/comments/1/replies -f body=x",
     "make bench-quick",
+    "git push --force-with-lease",
+    "git push origin br --force-with-lease",
+    ".venv/bin/python -m pytest tests/unit/../integration",
     "PYTHONPATH=x .venv/bin/python bench/longmemeval.py --repeats 3",
 )
 NOT_DENIED = (
     "git push -u origin HEAD",
     "git push --force-with-lease",
-    "git push origin br --force-with-lease",
     "git push -u origin v2-search-floor",
     "./redeploy.sh --status",
     "git push -u origin validate-settings",
@@ -274,15 +271,16 @@ def test_settings_deny_shared_and_production_commands() -> None:
     perms = json.loads((ROOT / ".claude" / "settings.json").read_text())["permissions"]
     for command in DENIED:
         assert any(_matches(r, command) for r in perms["deny"]), command
-    for command in ASKED:
+    for command in ASKED:  # an ask rule wins over an allow rule
         assert any(_matches(r, command) for r in perms["ask"]), command
-        assert not any(_matches(r, command) for r in perms["allow"]), command
     for command in NOT_DENIED:
         assert not any(_matches(r, command) for r in perms["deny"]), command
 
 
 def _hook(command: str) -> int:
-    payload = json.dumps({"tool_input": {"command": command}})
+    payload = (
+        command if command.startswith("{") else json.dumps({"tool_input": {"command": command}})
+    )
     return subprocess.run(
         [sys.executable, str(HOOK)], input=payload, capture_output=True, text=True
     ).returncode
@@ -293,13 +291,12 @@ def _hook(command: str) -> int:
     [
         "git diff origin/main...HEAD",
         "cd /x && git log --oneline -5",
-        'grep -n "->" server/x.py',
+        "git show HEAD:AGENTS.md | head -20",
+        "git log -p | grep -n foo",
         "gh pr view 57 --json body --jq .body",
-        "gh api graphql -F n=57 -f query='query{viewer{login}}'",
         ".venv/bin/python -m pytest tests/unit/test_x.py -q 2>&1 | tail -5",
-        "LOOM_ENV_FILE= .venv/bin/python -m pytest tests/unit -q",
-        "jq '.a > 1' f.json",
-        "grep -in mutation server/x.py",
+        "LOOM_ENV_FILE= .venv/bin/python -m pytest tests/unit -q -k 'a and b'",
+        "python3 .claude/skills/loom-writing/scripts/check_prose.py AGENTS.md",
     ],
 )
 def test_reviewer_hook_allows_reads(command: str) -> None:
@@ -310,23 +307,27 @@ def test_reviewer_hook_allows_reads(command: str) -> None:
     "command",
     [
         "git diff --output=/tmp/x",
+        "git fetch . HEAD:x",
         "echo hi > f",
         "cat a &>b",
-        "git fetch --upload-pack='touch x' origin",
-        "rm -rf x",
-        "sed -i s/a/b/ f",
-        "find . -delete",
-        "gh api repos/x/y/issues -f title=t",
-        "gh api graphql -f query='mutation{x}'",
-        "echo $(rm x)",
-        "git push origin br",
-        "cat a | tee b",
+        "echo >(touch x)",
+        "sed -n '1e touch x' f",
+        "uniq in out",
+        "rg --pre bash x f",
+        "make lint format",
+        ".venv/bin/python -m ruff check --fix-only",
+        ".venv/bin/python -m pytest tests/unit --junitxml=/root/x",
+        ".venv/bin/python -m pytest tests/integration",
+        ".venv/bin/python -m pytest tests/unit/../integration",
+        "LOOM_ENV_FILE=/opt/x/.env .venv/bin/python -m pytest tests/unit",
+        "echo 'mutation{x}' | gh api graphql -F query=@-",
+        "git diff; rm x",
+        "git log | sh",
         "gh pr comment 57 -b x",
-        "make format",
-        "git commit -m 'x",
+        "{not json",
     ],
 )
-def test_reviewer_hook_blocks_writes(command: str) -> None:
+def test_reviewer_hook_blocks_everything_else(command: str) -> None:
     assert _hook(command) == 2
 
 

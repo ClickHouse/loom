@@ -32,7 +32,7 @@ Each `.claude/rules/<area>.md` holds the traps for the files its `paths:` frontm
 
 These hold in every area; a change to one needs a design rationale in the PR body and in its `docs/architecture/` page.
 
-- **Identity tuple on every row:** `(org, namespace, agent, user_id, session_id)`, the last two defaulting to `'-'`. The server stamps `actor` and `source_class` from the token, never from the body (`server.memory.app.provenance.writer_actor`, `server.memory.domain.provenance.source_class_for`); a new write path sets both.
+- **Identity tuple on every row:** `(org, namespace, agent, user_id, session_id)`, the last two defaulting to `'-'`. The server sets `actor` from the token (`server.memory.app.provenance.writer_actor`) and `source_class` from the op and its `source_trace`, where a request may only declare a downgrade to `derived`, `external` or `imported` (`server.memory.domain.provenance.source_class_for`); a new write path sets both.
 - **Tenant isolation.** A read scopes by `(org, namespace)` from the token. An op addressed by org-wide id (`memory.get_by_id`, `update_by_id`, `redact`) calls `authz.row_in_scope` after the fetch and answers `found=False`, never a 403 that confirms the id exists (`tests/integration/test_cross_principal_leakage.py`).
 - **Belief revision** is the design lens for memory: Expand (`memory.set`), Revise (`memory.update_by_id`), Contract (`memory.delete`), Reinforce (`memory.pin`), Refuse (`blacklist.add`). Behaviour that maps to none of them is suspect.
 - **Builds N-1 and N serve side by side** on N's schema during a rolling upgrade, and nothing replica-wide lives outside ClickHouse ([rolling upgrades](docs/architecture/rolling-upgrades.md)).

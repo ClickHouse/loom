@@ -23,8 +23,9 @@ from __future__ import annotations
 
 import hashlib
 import re
-import subprocess
 from pathlib import Path
+
+from tests.unit.tracked_files import tracked
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -227,11 +228,7 @@ DECISION_REFERENCE_DATA = {
 
 def _iter_scan_files():
     # `.claude/` also holds ignored third-party skills a contributor installed.
-    agent_files = set(
-        subprocess.run(
-            ["git", "ls-files", ".claude"], cwd=ROOT, capture_output=True, text=True, check=True
-        ).stdout.splitlines()
-    )
+    agent_files = set(tracked(".claude"))
     for d in SCAN_DIRS:
         base = ROOT / d
         if not base.exists():

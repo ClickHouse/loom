@@ -8,20 +8,13 @@ fetched. An anchor is checked against the GitHub slugs of the target's headings.
 from __future__ import annotations
 
 import re
-import subprocess
 from pathlib import Path
 
 import pytest
 
+from tests.unit.tracked_files import tracked
+
 ROOT = Path(__file__).resolve().parents[2]
-
-
-def _tracked(path: str) -> list[str]:
-    # `npx skills add` installs ignored skills beside the tracked ones.
-    out = subprocess.run(
-        ["git", "ls-files", path], cwd=ROOT, capture_output=True, text=True, check=True
-    )
-    return out.stdout.splitlines()
 
 
 DOCS = sorted(
@@ -31,7 +24,7 @@ DOCS = sorted(
         *(ROOT / "integrations").glob("*/README.md"),
         ROOT / "integrations" / "README.md",
         ROOT / "sdk" / "python" / "README.md",
-        *(ROOT / p for p in _tracked(".claude/skills") if p.endswith(".md")),
+        *(ROOT / p for p in tracked(".claude/skills") if p.endswith(".md")),
         *(ROOT / ".claude" / "rules").rglob("*.md"),
         *(ROOT / ".claude" / "agents").glob("*.md"),
     }

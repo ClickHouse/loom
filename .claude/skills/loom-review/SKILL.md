@@ -74,7 +74,7 @@ Post only when the requester asked for comments on the PR. Then post one review 
 ```bash
 review=$(mktemp) && cat > "$review" <<'JSON'
 {"commit_id": "<head sha>", "event": "COMMENT", "body": "<verdict and blind spots, two or three lines>",
- "comments": [{"path": "server/x.py", "line": 88, "side": "RIGHT", "body": "P2 — <problem, failing input, fix>"}]}
+ "comments": [{"path": "server/memory/app/search/graph.py", "line": 88, "side": "RIGHT", "body": "P2 — <problem, failing input, fix>"}]}
 JSON
 gh api repos/ClickHouse/loom/pulls/<n>/reviews --input "$review"
 ```

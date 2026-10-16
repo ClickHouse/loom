@@ -14,7 +14,7 @@ and ask it a question.
   3. print the answer and the evidence rows (file#chunk, section, score,
      excerpt) as a compact table;
   4. default question "What is the identity tuple on every row?" — answered
-     by AGENTS.md's "Conventions" section — `--question` overrides.
+     by AGENTS.md's "Invariants" section — `--question` overrides.
 
 Talks to `--base-url` (default http://localhost:7777) with the token from
 `LOOM_API_KEY`, then `~/.loom/config.json`, then `~/.loom/token`, else none

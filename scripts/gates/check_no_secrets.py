@@ -53,7 +53,7 @@ def _looks_like_a_credential(value: str) -> bool:
 # (label, regex). Each must capture the secret itself in group 1, so the shape
 # gate applies to the VALUE and not to the whole line. The OpenAI pattern
 # excludes the other `sk-` providers so one key is one finding.
-_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("OpenAI API key", re.compile(r"\b(sk-(?!ant-|lf-)(?:proj-)?[A-Za-z0-9_-]{24,})")),
     ("Anthropic API key", re.compile(r"\b(sk-ant-[A-Za-z0-9_-]{24,})")),
     ("Langfuse secret key", re.compile(r"\b(sk-lf-[0-9a-fA-F-]{16,})")),
@@ -130,7 +130,7 @@ def _scan(path: str) -> list[Finding]:
         return []
     hits: list[Finding] = []
     for lineno, line in enumerate(text.splitlines(), start=1):
-        for label, pattern in _PATTERNS:
+        for label, pattern in SECRET_PATTERNS:
             for m in pattern.finditer(line):
                 value = m.group(1)
                 # Provider-prefixed patterns are self-validating (they encode

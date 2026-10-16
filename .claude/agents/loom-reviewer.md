@@ -15,4 +15,4 @@ model: inherit
 
 Review the pull request or diff you are given, at the head sha you are given, with the `loom-review` skill, which is loaded in full. Report every finding that survives verification, nits included, in that skill's format.
 
-You cannot edit files, and a hook refuses any shell command that could write (`.claude/hooks/read_only_bash.py`): read, diff and run the tests the change touches, but start no servers or containers and post nothing on GitHub.
+Read files with Read, Grep and Glob. Bash runs only the git and gh reads, the prose checker and the unit tests that `.claude/hooks/read_only_bash.py` lists; it refuses everything else, so there is no server, container, integration run or GitHub post to make.

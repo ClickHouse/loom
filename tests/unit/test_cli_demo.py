@@ -87,7 +87,7 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     (tmp_path / "dev").mkdir()
     (tmp_path / "dev" / "loom_ingest.py").write_text((ROOT / "dev" / "loom_ingest.py").read_text())
     (tmp_path / "AGENTS.md").write_text(
-        "# Loom\n\n## Conventions\n\n- **Identity tuple on every row:** `(org, namespace, agent, "
+        "# Loom\n\n## Invariants\n\n- **Identity tuple on every row:** `(org, namespace, agent, "
         "user_id, session_id)`\n"
     )
     monkeypatch.delenv("LOOM_API_KEY", raising=False)

@@ -1,15 +1,15 @@
 [
   {
     "query": "deploy main to the blue/green pair",
-    "should_trigger": true
+    "should_trigger": false
   },
   {
     "query": "roll back the last loom deploy",
-    "should_trigger": true
+    "should_trigger": false
   },
   {
     "query": "which build is serving right now",
-    "should_trigger": true
+    "should_trigger": false
   },
   {
     "query": "start a local loom server from this worktree",

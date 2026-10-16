@@ -1,9 +1,10 @@
-"""PreToolUse hook for the loom-reviewer subagent: allow a Bash command only if it cannot write.
+"""PreToolUse hook for the loom-reviewer subagent: run only commands on a short read-only list.
 
 Reads the hook payload on stdin. Exit 0 allows the command; exit 2 blocks it and the
-message on stderr goes back to the agent. Every part of a compound command must start
-with a read-only prefix, carry no flag that makes it write, and redirect nowhere but
-/dev/null.
+message on stderr goes back to the agent; any error blocks too. The reviewer reads
+files with its Read, Grep and Glob tools, so Bash is kept to git and gh reads, the
+prose checker and the unit tests. Running the unit tests executes the PR's own test
+code, so review in Bash only a PR you would run locally.
 """
 
 from __future__ import annotations
@@ -13,128 +14,84 @@ import re
 import shlex
 import sys
 
-READ_ONLY = (
-    "git diff",
-    "git log",
-    "git show",
-    "git status",
-    "git rev-parse",
-    "git merge-base",
-    "git ls-files",
-    "git grep",
-    "git blame",
-    "git fetch",
-    "git branch --show-current",
-    "gh pr view",
-    "gh pr diff",
-    "gh pr checks",
-    "gh pr list",
-    "gh run view",
-    "gh run list",
-    "gh issue view",
-    "gh issue list",
-    "gh search",
-    "gh api graphql",
-    "cat",
-    "head",
-    "tail",
-    "grep",
-    "rg",
-    "ls",
-    "wc",
-    "find",
-    "jq",
-    "diff",
-    "sort",
-    "uniq",
-    "cut",
-    "tr",
-    "nl",
-    "sed -n",
-    "echo",
-    "printf",
-    "pwd",
-    "cd",
-    "true",
-    "test",
-    ".venv/bin/python -m pytest",
-    ".venv/bin/python -m ruff check",
-    "python3 .claude/skills/loom-writing/scripts/check_prose.py",
-    "make lint",
-    "make typecheck",
-    "make test-unit",
-    "make schema-check",
+COMMANDS = (
+    ("git", "diff"),
+    ("git", "log"),
+    ("git", "show"),
+    ("git", "status"),
+    ("git", "rev-parse"),
+    ("git", "merge-base"),
+    ("git", "ls-files"),
+    ("git", "blame"),
+    ("gh", "pr", "view"),
+    ("gh", "pr", "diff"),
+    ("gh", "pr", "checks"),
+    ("gh", "run", "view"),
+    ("gh", "run", "list"),
+    ("gh", "issue", "view"),
+    ("gh", "issue", "list"),
+    ("python3", ".claude/skills/loom-writing/scripts/check_prose.py"),
+    ("cd",),
 )
-# Flags that turn one of the commands above into a writer, by the command they belong to.
-WRITE_FLAGS = {
-    "": {"--output", "--upload-pack", "--basetemp", "--fix", "-X", "--method"},
-    "sed": {"-i", "--in-place"},
-    "sort": {"-o"},
-    "find": {
-        "-delete",
-        "-exec",
-        "-execdir",
-        "-ok",
-        "-okdir",
-        "-fprint",
-        "-fprint0",
-        "-fprintf",
-        "-fls",
-    },
-}
-SEPARATORS = {"&&", "||", ";", "|", "|&", "&"}
-REDIRECTS = {">", ">>", ">|", "&>", "&>>", ">&", "<>"}
-ASSIGNMENT = re.compile(r"^(LOOM_\w*|PYTHONPATH)=")
+# Allowed only after a pipe, reading the previous command's output.
+FILTERS = {"head", "tail", "wc", "grep"}
+GIT_WRITE_FLAGS = ("--output", "--ext-diff", "--textconv")
+PYTEST = (".venv/bin/python", "-m", "pytest")
+PYTEST_FLAG = re.compile(
+    r"-q|-qq|-v|-x|-rA|--tb=\w+|-p|no:randomly|--randomly-seed=\d+|--no-header"
+)
+UNIT_TEST = re.compile(r"tests/unit(/[\w./-]*)?(::[\w\[\]-]+)*")
 
 
-def _tokens(line: str) -> list[str]:
-    lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
-    lexer.whitespace_split = True
-    return list(lexer)
+def _pytest_ok(args: list[str]) -> bool:
+    after_k = False
+    for arg in args:
+        if after_k:  # the -k expression selects tests; it opens nothing
+            after_k = False
+        elif arg == "-k":
+            after_k = True
+        elif ".." in arg or not (PYTEST_FLAG.fullmatch(arg) or UNIT_TEST.fullmatch(arg)):
+            return False
+    return True
 
 
-def _parts(command: str) -> list[list[str]]:
-    parts: list[list[str]] = []
-    for line in command.splitlines():
-        part: list[str] = []
-        for token in _tokens(line):
-            if token in SEPARATORS:
-                parts.append(part)
-                part = []
-            else:
-                part.append(token)
-        parts.append(part)
-    return [p for p in parts if p]
+def _segment_ok(words: list[str], piped: bool) -> bool:
+    if piped:
+        return words[0] in FILTERS
+    if words[0] == "LOOM_ENV_FILE=":  # the empty value: load no .env
+        words = words[1:]
+    if tuple(words[:3]) == PYTEST:
+        return _pytest_ok(words[3:])
+    if words[0] == "git" and any(w.startswith(GIT_WRITE_FLAGS) for w in words):
+        return False
+    return any(tuple(words[: len(c)]) == c for c in COMMANDS)
 
 
 def refusal(command: str) -> str | None:
-    if "`" in command or "$(" in command or "<(" in command:
-        return "command substitution can run anything"
-    for part in _parts(command):
-        while part and ASSIGNMENT.match(part[0]):
-            part = part[1:]
-        for i, token in enumerate(part):
-            if token in REDIRECTS:
-                target = part[i + 1] if i + 1 < len(part) else ""
-                if target != "/dev/null" and not (token == ">&" and target in {"1", "2"}):
-                    return "redirection writes a file"
-            flag = token.split("=")[0]
-            if flag in WRITE_FLAGS[""] or flag in WRITE_FLAGS.get(part[0], ()):
-                return f"`{token}` makes the command write"
-            if part[:3] == ["gh", "api", "graphql"] and re.search(r"\bmutation\b", token):
-                return f"`{token}` makes the command write"
-        words = " ".join(part)
-        if not any(words == p or words.startswith(p + " ") for p in READ_ONLY):
-            return f"`{' '.join(part[:3])}` is not on the reviewer's read-only list"
+    if "`" in command or re.search(r"[$<>]\(", command):
+        return "command and process substitution can run anything"
+    command = re.sub(r"\s2>&1\b|\s2?>\s*/dev/null\b", "", command)
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    segment: list[str] = []
+    piped = False
+    for token in [*lexer, "&&"]:
+        if token in {"&&", "|"}:
+            if not segment or not _segment_ok(segment, piped):
+                return f"`{' '.join(segment[:4])}` is not on the reviewer's read-only list"
+            segment, piped = [], token == "|"
+        elif set(token) <= set("&|;<>()"):
+            return f"`{token}` is not allowed: join commands with `&&` or `|`, and redirect nothing"
+        else:
+            segment.append(token)
     return None
 
 
 def main() -> int:
-    command = json.load(sys.stdin).get("tool_input", {}).get("command", "")
     try:
-        reason = refusal(command)
-    except ValueError:  # unbalanced quotes: what would run cannot be told
-        reason = "the command does not parse"
+        reason = refusal(json.load(sys.stdin)["tool_input"]["command"])
+    except Exception as e:  # noqa: BLE001 — a hook that cannot decide must refuse, not allow
+        reason = f"the command could not be checked ({type(e).__name__})"
     if reason:
         print(f"loom-reviewer is read-only: {reason}.", file=sys.stderr)
         return 2
