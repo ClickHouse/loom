@@ -37,7 +37,7 @@ from server.memory.app.projections import (
     write_entity_triples,
 )
 from server.memory.domain import triples_follow_rows as tfr
-from server.memory.domain.temporal_sql import GRAPH_HOLDER_SQL, LIVE_STATUSES
+from server.memory.domain.temporal_sql import GRAPH_HOLDER_SQL, HOLDS_VALUE_SQL, LIVE_STATUSES
 
 log = logging.getLogger(__name__)
 
@@ -419,7 +419,7 @@ async def project_memory_set_entities(
 
     async def still_held() -> bool:
         held = await rows_holding(
-            input.org, input.namespace, version, ch=ch, holder_sql=NOT_RETIRED_SQL
+            input.org, input.namespace, version, ch=ch, holder_sql=HOLDS_VALUE_SQL
         )
         return bool(held)
 
@@ -1229,15 +1229,6 @@ async def _carried_by(
     }
 
 
-# The first write's fence: the row was not deleted, retired or re-set as 'high'
-# (those keep the row's value, so the columns tell). No validity test: a
-# proposal or a fact dated in the past still gets its edges.
-NOT_RETIRED_SQL = (
-    "tombstoned_at IS NULL AND status NOT IN ('superseded', 'rejected', 'tombstoned')"
-    " AND sensitivity != 'high'"
-)
-
-
 async def rows_holding(
     org: str,
     namespace: str,
@@ -1247,7 +1238,9 @@ async def rows_holding(
     holder_sql: str = GRAPH_HOLDER_SQL,
 ) -> set[str]:
     """Of `versions`, (memory_id, content_sha256) pairs, the ids of the rows whose
-    current value is still that version and may hold graph facts (`holder_sql`)."""
+    current value is still that version and that pass `holder_sql`: by default
+    GRAPH_HOLDER_SQL (may hold graph facts), or a weaker test such as
+    HOLDS_VALUE_SQL (not deleted, retired or 'high')."""
     if not versions:
         return set()
     found = await ch.query_all(

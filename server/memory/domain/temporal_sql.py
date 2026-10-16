@@ -91,6 +91,17 @@ GRAPH_HOLDER_SQL = (
     " AND sensitivity != 'high'"
 )
 
+# A `loom.memory` row that still holds the value it was written with: not deleted, not
+# retired (superseded, rejected or tombstoned) and not re-set as 'high' — those keep the
+# row's value, so the columns tell. Weaker than GRAPH_HOLDER_SQL: no validity or expiry
+# test, so a proposal or a fact dated in the past still counts. A point write's late
+# edge projection fences on it.
+HOLDS_VALUE_SQL = (
+    "tombstoned_at IS NULL"
+    f" AND status IN ({', '.join(repr(s) for s in (*LIVE_STATUSES, PROPOSED_STATUS))})"
+    " AND sensitivity != 'high'"
+)
+
 
 def _c(alias: str, col: str) -> str:
     return f"{alias}.{col}" if alias else col
