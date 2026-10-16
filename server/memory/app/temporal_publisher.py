@@ -938,7 +938,7 @@ def _as_metadata(
             return "superseded"  # no longer expired: touched since the sweep read it
     if intent.tighten_lock and _loosens(row, claims, now):
         return "locked"
-    if "expires_at" in fields and _locked_against(served, "expire", now):
+    if "expires_at" in fields and locked_against(served, "expire", now):
         return "locked"
     if intent.redirect and _scheduled(served, now):
         return "scheduled"  # a plan landed since the move checked: it would revive the key
@@ -1060,7 +1060,7 @@ def _as_value_write(
     under = [a for a in claims if a.qualifiers == dict(intent.qualifiers)]
     target = under if intent.qualifiers else (under or claims)
     new_value = bool(claims) and all(a.content_sha256 != sha for a in target)
-    if new_value and _locked_against(served, "value", now):
+    if new_value and locked_against(served, "value", now):
         return "locked"
     # Against what the caller asked for, before anything is inherited: a pin the row
     # would take from the journal never authorizes replacing the pinned value.
@@ -1208,10 +1208,10 @@ def _assess_fields(
 
 
 def _locked_against_removal(served: Sequence[tm.Assertion], head: Mapping[str, Any] | None) -> bool:
-    return _locked_against(served, "delete", datetime.now(UTC))
+    return locked_against(served, "delete", datetime.now(UTC))
 
 
-def _locked_against(served: Sequence[tm.Assertion], action: str, now: datetime) -> bool:
+def locked_against(served: Sequence[tm.Assertion], action: str, now: datetime) -> bool:
     """A lock that refuses `action` is in force on what holds now, as the journal
     keeps it (mode and deadline); a lock on an ended claim binds nothing."""
     from server.memory.domain.lock import REFUSES
@@ -1333,7 +1333,18 @@ async def _above_landed(b: _Batch, ch: _CHClient) -> None:
         if not drawn or p.past_only:
             continue
         if newest.get(p.ident, 0) >= drawn:
-            cast(dict[str, Any], p.row)["version"] = drawn = newest[p.ident] + 1
+            raised = newest[p.ident] + 1
+            cast(dict[str, Any], p.row)["version"] = raised
+            # The claims this row added name its version; carried segments keep theirs.
+            p.amendment = replace(
+                p.amendment,
+                added=tuple(
+                    replace(a, source_version=raised) if a.source_version == drawn else a
+                    for a in p.amendment.added
+                ),
+            )
+            p.payload_sha = p.amendment.payload_sha256()
+            drawn = raised
         newest[p.ident] = max(newest.get(p.ident, 0), drawn)
 
 

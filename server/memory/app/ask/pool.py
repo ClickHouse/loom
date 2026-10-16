@@ -376,10 +376,7 @@ async def _order_pool(run: _AskRun) -> None:
     _rw.mark_stage("retrieval")
     # A historical ask reads only what was admitted at its cutoff: today's pending
     # turns are not evidence of it (a read token or strict validity is still today).
-    if (
-        getattr(search_input, "valid_as_of", None) is None
-        and getattr(search_input, "known_as_of", None) is None
-    ):
+    if search_input.valid_as_of is None and search_input.known_as_of is None:
         run.ranked, run.pending_evidence_n = await _pending_evidence_stage(
             search_input, question, run.ranked
         )

@@ -687,10 +687,14 @@ def _grant_claim_problems(state: HealthState) -> list[Problem]:
 
 
 def _memory_publisher_problems(settings: Any, state: HealthState) -> list[Problem]:
-    """No Keeper (loom.grant_claims, a KeeperMap table, is absent) and no declared single
-    writer: the temporal publisher refuses every memory write."""
-    single = settings.memory_temporal_publisher == "process" and settings.web_workers == 1
-    if single or state.grant_claims_atomic is not False:
+    """The temporal publisher refuses every memory write: process mode with more than
+    one web worker, or another mode with no Keeper (loom.grant_claims, a KeeperMap
+    table, absent)."""
+    if settings.memory_temporal_publisher == "process":
+        refused = settings.web_workers != 1
+    else:
+        refused = state.grant_claims_atomic is False
+    if not refused:
         return []
     return [
         Problem(

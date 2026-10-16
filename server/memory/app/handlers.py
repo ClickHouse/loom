@@ -839,7 +839,7 @@ def _retract_unless_locked(served: list[Any]) -> Any:
     from server.memory.app import temporal_publisher as publisher
     from server.memory.domain import temporal_model as tm
 
-    if publisher._locked_against(served, "delete", datetime.now(UTC)):
+    if publisher.locked_against(served, "delete", datetime.now(UTC)):
         return tm.Amendment("retract")
     return tm.retract(served)
 
@@ -880,25 +880,50 @@ async def _clear_journal_only(input: MemoryClearInput) -> tuple[int, bool]:
     current row was left to the reconciler."""
     from server.memory.store import temporal as temporal_store
 
-    idents = await temporal_store.journal_only_identities(
+    found = await temporal_store.journal_only_identities(
         input.org, input.namespace, user_id=input.user_id, agent=input.agent
     )
-    done, pending = await _retract_journal_only(input.org, input.namespace, idents, "memory.clear")
+    done, pending = await _retract_journal_only(
+        input.org, input.namespace, [(i, mid) for i, mid, _ in found], "memory.clear"
+    )
     return len(done), pending
 
 
 async def _delete_journal_only(input: MemoryDeleteInput) -> MemoryDeleteOutput | None:
-    """A delete of a key only the journal holds (any agent of the caller's user, as the
-    row lookup goes namespace-wide): its claims retracted, or None when it has none."""
+    """A delete of a key only the journal holds, found as the row lookup finds a row:
+    the caller's exact identity first, else one match namespace-wide for its user, in
+    the request's read scope. Its claims retracted, or None when there is none."""
+    from types import SimpleNamespace
+
     from server.memory.app import temporal_publisher as publisher
     from server.memory.store import temporal as temporal_store
 
-    idents = await temporal_store.journal_only_identities(
-        input.org, input.namespace, user_id=input.user_id, memory_key=input.memory_key
-    )
-    if not idents:
+    def lookup(agent: str | None = None, session_id: str | None = None) -> Any:
+        return temporal_store.journal_only_identities(
+            input.org,
+            input.namespace,
+            user_id=input.user_id,
+            agent=agent,
+            session_id=session_id,
+            memory_key=input.memory_key,
+            scope=request_scope(),
+        )
+
+    found = []
+    if input.agent != "*":
+        found = await lookup(agent=input.agent, session_id=input.session_id)
+    found = found or await lookup()
+    if not found:
         return None
-    done, pending = await _retract_journal_only(input.org, input.namespace, idents, "memory.delete")
+    ident, memory_id, actor = found[0]
+    # A member of a code namespace retracts only the rules they wrote.
+    assert_own_row(
+        SimpleNamespace(actor=actor, memory_key=input.memory_key, namespace=input.namespace),
+        op="memory.delete",
+    )
+    done, pending = await _retract_journal_only(
+        input.org, input.namespace, [(ident, memory_id)], "memory.delete"
+    )
     if not done:  # served nothing, or a lock in force kept it
         return None
     return MemoryDeleteOutput(

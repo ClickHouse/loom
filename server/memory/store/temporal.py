@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
-from server.identity.domain.read_scope import ReadFilters, scope_and
+from server.identity.domain.read_scope import ReadFilters, scope_and, scope_where
 from server.memory.store.redaction import REDACTED_VALUE
 
 COMMITS = "loom.memory_temporal_commits"
@@ -1055,12 +1055,15 @@ async def journal_only_identities(
     *,
     user_id: str | None = None,
     agent: str | None = None,
+    session_id: str | None = None,
     memory_key: str | None = None,
+    scope: ReadFilters | None = None,
     ch: _CHClient | None = None,
-) -> list[tuple[tuple[str, str, str, str], str]]:
-    """The (identity, memory_id) of every key of the scope the journal has a commit for
-    and loom.memory serves no live row of (a plan an amendment made, not yet due):
-    what `memory.clear` and `memory.delete` retract in the journal itself."""
+) -> list[tuple[tuple[str, str, str, str], str, str]]:
+    """The (identity, memory_id, actor of its last commit) of every key of the scope the
+    journal has a commit for and loom.memory serves no live row of (a plan an amendment
+    made, not yet due): what `memory.clear` and `memory.delete` retract in the journal
+    itself. In identity order."""
     ch = ch or _default_client()
     where = ["org = {org:String}", "namespace = {ns:String}"]
     params: dict[str, Any] = {"org": org, "ns": namespace}
@@ -1070,23 +1073,31 @@ async def journal_only_identities(
     if agent is not None:
         where.append("agent = {agent:String}")
         params["agent"] = agent
+    if session_id is not None:
+        where.append("session_id = {sid:String}")
+        params["sid"] = session_id
     if memory_key is not None:
         where.append("memory_key = {mk:String}")
         params["mk"] = memory_key
-    scope = " AND ".join(where)
+    if scope is not None:  # the request's read scope (own_user, own_session)
+        where += scope_where(scope, params)
+    cond = " AND ".join(where)
     rows = await ch.query_all(
         "SELECT agent, user_id, session_id, memory_key, "
-        "toString(argMax(memory_id, commit_seq)) AS memory_id "
-        f"FROM {COMMITS} WHERE {scope} "
+        "toString(argMax(memory_id, commit_seq)) AS memory_id, "
+        "argMax(actor, commit_seq) AS actor "
+        f"FROM {COMMITS} WHERE {cond} "
         f"AND {_IDENT} NOT IN (SELECT {_IDENT} FROM loom.memory FINAL "
-        f"WHERE {scope} AND tombstoned_at IS NULL) "
-        "GROUP BY agent, user_id, session_id, memory_key",
+        f"WHERE {cond} AND tombstoned_at IS NULL) "
+        "GROUP BY agent, user_id, session_id, memory_key "
+        "ORDER BY agent, user_id, session_id, memory_key",
         params=params,
     )
     return [
         (
             (str(r["agent"]), str(r["user_id"]), str(r["session_id"]), str(r["memory_key"])),
             str(r["memory_id"]),
+            str(r["actor"]),
         )
         for r in rows
     ]
@@ -1275,38 +1286,34 @@ async def served_contents(
     }
 
 
-async def redacted_among(
+async def journal_values(
     org: str,
     namespace: str,
-    wanted: Sequence[tuple[tuple[str, str, str, str], str]],
+    idents: Sequence[tuple[str, str, str, str]],
+    assertion_ids: Sequence[str],
     *,
     ch: _CHClient | None = None,
-) -> set[tuple[tuple[str, str, str, str], str]]:
-    """Which (identity, value sha256) pairs a redaction has scrubbed from the journal."""
-    if not wanted:
-        return set()
+) -> dict[str, str]:
+    """Each assertion's value as the journal's payloads hold it now: a redaction scrubs
+    them in place, projected or not."""
+    if not assertion_ids:
+        return {}
     ch = ch or _default_client()
     rows = await ch.query_all(
-        "SELECT agent, user_id, session_id, memory_key, toString(value_sha256) AS sha "
-        f"FROM {ASSERTIONS} FINAL WHERE org = {{org:String}} AND namespace = {{ns:String}} "
-        "AND memory_key IN {mk:Array(String)} "
-        "AND (agent, user_id, session_id, memory_key, toString(value_sha256)) "
-        "IN {pairs:Array(Tuple(String, String, String, String, String))} "
-        f"AND value = '{REDACTED_VALUE}'",
+        "SELECT JSONExtractString(a, 'assertion_id') AS id, JSONExtractString(a, 'value') AS v "
+        f"FROM {COMMITS} ARRAY JOIN JSONExtractArrayRaw(assertions) AS a "
+        "WHERE org = {org:String} AND namespace = {ns:String} "
+        f"AND memory_key IN {{mk:Array(String)}} AND {_IDENT} IN {_KEYS} "
+        "AND JSONExtractString(a, 'assertion_id') IN {ids:Array(String)}",
         params={
             "org": org,
             "ns": namespace,
-            "mk": sorted({i[3] for i, _ in wanted}),
-            "pairs": [(*i, sha) for i, sha in wanted],
+            "mk": sorted({k[3] for k in idents}),
+            "keys": [tuple(k) for k in idents],
+            "ids": sorted(set(assertion_ids)),
         },
     )
-    return {
-        (
-            (str(r["agent"]), str(r["user_id"]), str(r["session_id"]), str(r["memory_key"])),
-            str(r["sha"]),
-        )
-        for r in rows
-    }
+    return {str(r["id"]): str(r["v"]) for r in rows}
 
 
 async def redact_value(

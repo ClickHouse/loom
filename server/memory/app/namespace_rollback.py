@@ -183,12 +183,13 @@ async def apply(org: str, namespace: str, changes: list[KeyChange]) -> list[publ
     that committed. A refused key commits nothing, nor does one whose lock in force
     refuses the change. The current rows follow with `project`."""
     kept = [c for c in changes if not c.refused]
-    restored = [(c.ident, a.value_sha256) for c in kept for a in c.then]
+    restored = {a.assertion_id: a.value for c in kept for a in c.then}
 
     async def not_redacted_since() -> None:
-        # A redaction scrubs the journal without a commit: under the lock, a value
-        # this plan restores must not be one scrubbed since it was planned.
-        if await store.redacted_among(org, namespace, restored):
+        # A redaction scrubs the journal's payloads without a commit: under the lock,
+        # each value this plan restores must still be what the journal holds.
+        held = await store.journal_values(org, namespace, [c.ident for c in kept], list(restored))
+        if any(held.get(aid) != value for aid, value in restored.items()):
             raise PreconditionFailedError(
                 "a value this rollback restores was redacted since it was planned; "
                 "plan the rollback again"
@@ -215,7 +216,7 @@ async def project(org: str, namespace: str, receipts: list[publisher.Receipt]) -
 def _build(c: KeyChange) -> publisher.Build:
     def build(served: list[tm.Assertion]) -> tm.Amendment:
         now = datetime.now(UTC)
-        if publisher._locked_against(served, "value" if c.then else "delete", now):
+        if publisher.locked_against(served, "value" if c.then else "delete", now):
             return tm.Amendment("rollback")
         # A lock is today's control, not part of what the key said then: the one in
         # force stays, and one lifted since is not taken again.

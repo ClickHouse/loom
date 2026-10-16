@@ -125,20 +125,21 @@ def test_rows_older_than_the_journal_do_not_block_a_rollback() -> None:
 async def test_a_value_redacted_after_the_plan_stops_the_rollback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # A redaction scrubs the journal without a commit: the check under the lock sees it.
+    # A redaction scrubs the journal's payloads without a commit: the check under the
+    # lock reads them, so it sees one the assertion projection never had.
     from server.core.errors import PreconditionFailedError
 
     c = _change([tm.first('"Leeds"')], [tm.first('"Paris"')])
 
-    async def redacted(org: str, ns: str, wanted: list, **_k: Any) -> set:
-        assert wanted == [(_IDENT, tm.first('"Leeds"').value_sha256)]
-        return set(wanted)
+    async def scrubbed(org: str, ns: str, idents: list, ids: list, **_k: Any) -> dict:
+        assert idents == [_IDENT] and ids == [c.then[0].assertion_id]
+        return {ids[0]: REDACTED_VALUE}
 
     async def publish(org: str, ns: str, items: list, *, recheck: Any, **_k: Any) -> list:
         await recheck()
         return []
 
-    monkeypatch.setattr(rb.store, "redacted_among", redacted)
+    monkeypatch.setattr(rb.store, "journal_values", scrubbed)
     monkeypatch.setattr(rb.publisher, "publish_amendments", publish)
     with pytest.raises(PreconditionFailedError, match="redacted since it was planned"):
         await rb.apply("o", "n", [c])

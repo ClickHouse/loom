@@ -667,6 +667,7 @@ def test_grant_changes_without_keeper_claims_are_a_warning(
         (False, "keeper", 1, True),
         (False, "process", 2, True),
         (False, "process", 1, False),
+        (True, "process", 2, True),
         (True, "auto", 4, False),
         (None, "auto", 1, False),
     ],

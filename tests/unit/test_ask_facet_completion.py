@@ -126,6 +126,8 @@ class _SearchInput:
     top_k = 3
     query = "How many individuals are 28 years old or older?"
     observation_date = None
+    valid_as_of = None
+    known_as_of = None
     run_id = None
 
     def temporal_requested(self) -> bool:

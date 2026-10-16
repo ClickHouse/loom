@@ -167,7 +167,7 @@ async def test_clear_retracts_a_key_only_the_journal_holds_unless_a_lock_keeps_i
     from server.memory.domain import temporal_model as tm
 
     ident = ("a", "alice", "-", "plan")
-    clear["journal"] = [(ident, "00000000-0000-0000-0000-000000000009")]
+    clear["journal"] = [(ident, "00000000-0000-0000-0000-000000000009", "human:alice")]
     out = await handle_memory_clear(
         MemoryClearInput(org="o", namespace="n", user_id="alice", confirm_subject="alice")
     )
@@ -179,3 +179,43 @@ async def test_clear_retracts_a_key_only_the_journal_holds_unless_a_lock_keeps_i
     assert got == ident and build([plan]).retired == ("p1",)
     locked = tm.Assertion("p2", "p2", "launch", lock_mode="read_only")
     assert build([locked]).empty
+
+
+@pytest.mark.asyncio
+async def test_delete_of_a_journal_only_key_prefers_the_exact_identity_and_checks_its_author(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.api.models_crud import MemoryDeleteInput
+    from server.memory.app import handlers as hm
+    from server.memory.store import temporal as temporal_store
+
+    asked: list[dict] = []
+    mine, theirs = ("a", "u", "s1", "k"), ("b", "u", "s2", "k")
+
+    async def _journal_only(org: str, ns: str, **k: Any) -> list:
+        asked.append(k)
+        exact = k.get("agent") == "a"
+        return (
+            [(mine, "m1", "human:me")] if exact else [(theirs, "m2", "human:x"), (mine, "m1", "")]
+        )
+
+    retracted: list = []
+
+    async def _retract(org: str, ns: str, idents: list, op: str) -> tuple[list, bool]:
+        retracted.extend(idents)
+        return [type("R", (), {"commit_seq": 3, "ident": idents[0][0]})()], False
+
+    authors: list[str] = []
+    monkeypatch.setattr(temporal_store, "journal_only_identities", _journal_only)
+    monkeypatch.setattr(hm, "_retract_journal_only", _retract)
+    monkeypatch.setattr(hm, "assert_own_row", lambda row, op: authors.append(row.actor))
+    monkeypatch.setattr(hm, "request_scope", lambda: "scope")
+    monkeypatch.setattr("server.memory.app.temporal_publisher.read_token", lambda r: "t")
+    out = await hm._delete_journal_only(
+        MemoryDeleteInput(
+            org="o", namespace="n", agent="a", user_id="u", session_id="s1", memory_key="k"
+        )
+    )
+    assert out is not None and out.found and out.commit_seq == 3
+    assert retracted == [(mine, "m1")] and authors == ["human:me"]
+    assert asked[0]["scope"] == "scope" and asked[0]["session_id"] == "s1"

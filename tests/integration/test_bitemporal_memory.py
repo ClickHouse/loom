@@ -1605,3 +1605,64 @@ async def test_delete_retracts_a_key_only_the_journal_holds(
         out = await a.call("memory.delete", {"memory_key": "plan"})
         assert (out["found"], out["tombstoned"]) == (True, True) and out["commit_seq"]
         assert (await a.call("memory.get", due))["found"] is False
+
+
+async def test_the_journal_payloads_show_a_redaction_a_rollback_checks(
+    control_plane_url, mint_test_token
+) -> None:
+    # What namespace.rollback re-reads under the lock: the value in the journal's
+    # payloads, which a redaction scrubs whether or not the assertion was projected.
+    from server.memory.store import temporal as store
+    from server.memory.store.redaction import REDACTED_VALUE
+
+    a, ns = await _agent(control_plane_url, mint_test_token, "rb-redact")
+    async with a:
+        await a.call("memory.set", {"memory_key": "k", "value": "OLD-SECRET"})
+        await a.call("memory.set", {"memory_key": "k", "value": "public"})
+        iv = await a.call("memory.intervals", {"memory_key": "k", "include_retired": True})
+        old = next(x for x in iv["retired"] if "OLD-SECRET" in str(x["value"]))
+        ident = ("t", "-", "-", "k")
+        ch = await _ch()
+        try:
+            before = await store.journal_values(ORG, ns, [ident], [old["assertion_id"]], ch=ch)
+            mid = (await a.call("memory.get", {"memory_key": "k"}))["memory_id"]
+            await a.call("memory.redact", {"memory_id": mid, "assertion_id": old["assertion_id"]})
+            after = await store.journal_values(ORG, ns, [ident], [old["assertion_id"]], ch=ch)
+        finally:
+            await ch.disconnect()
+        assert "OLD-SECRET" in before[old["assertion_id"]]
+        assert after[old["assertion_id"]] == REDACTED_VALUE
+
+
+async def test_a_session_scoped_delete_leaves_another_sessions_keys_current_or_planned(
+    control_plane_url, mint_test_token
+) -> None:
+    from loom import Agent
+
+    from server.auth.jwt import mint_token
+
+    a, ns = await _agent(control_plane_url, mint_test_token, "delete-scope")
+    later = datetime.now(UTC) + timedelta(days=30)
+    due = (later + timedelta(days=1)).isoformat()
+    async with a:
+        for body in (
+            {"memory_key": "w", "value": "now"},
+            {"memory_key": "q", "change_kind": "transition", "value": "later",
+             "effective_at": later.isoformat()},
+        ):  # fmt: skip
+            op = "memory.amend" if "change_kind" in body else "memory.set"
+            await a.call(op, {**body, "user_id": "u1", "session_id": "s2"})
+        pinned = mint_token(
+            subject=f"sa:scope-{uuid.uuid4().hex[:6]}", org=ORG, namespaces=[ns],
+            roles=["writer"], ttl_seconds=600, is_service_account=True,
+            read_scope="own_session", read_user_id="u1",
+        )  # fmt: skip
+        s1 = Agent(org=ORG, namespace=ns, agent="t", base_url=control_plane_url, api_key=pinned)
+        async with s1:
+            for key in ("w", "q"):
+                body = {"memory_key": key, "user_id": "u1", "session_id": "s1"}
+                assert (await s1.call("memory.delete", body))["found"] is False, key
+        own = {"user_id": "u1", "session_id": "s2"}
+        assert (await a.call("memory.get", {"memory_key": "w", **own}))["found"]
+        planned = {"memory_key": "q", **own, "valid_as_of": due}
+        assert (await a.call("memory.get", planned))["value"] == "later"

@@ -435,6 +435,9 @@ def test_a_projection_landing_between_plan_and_lock_goes_below_the_write(
     assert calls["n"] == 2  # planned once
     assert row["version"] == landed["v"] + 1
     assert journal.commits[-1]["row_version"] == row["version"]
+    # The claim the row added names the version it was written at.
+    (added,) = json.loads(journal.commits[-1]["assertions"])
+    assert added["source_version"] == row["version"]
 
 
 def test_a_write_begun_before_an_erasure_is_fenced(journal: Journal) -> None:
@@ -1101,8 +1104,8 @@ def test_a_lock_on_an_ended_claim_binds_nothing() -> None:
         lock_mode="read_only",
     )
     held = tm.first('"B"', valid_from=now - timedelta(days=1))
-    assert not pub._locked_against([ended, held], "value", now)
-    assert pub._locked_against(
+    assert not pub.locked_against([ended, held], "value", now)
+    assert pub.locked_against(
         [held.__class__(**{**held.__dict__, "lock_mode": "read_only"})], "value", now
     )
 

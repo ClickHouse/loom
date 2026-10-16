@@ -157,6 +157,8 @@ def test_compound_question_retrieves_each_part(monkeypatch) -> None:
         top_k: int = 3
         query: str = "How many events last for two weeks?Additionally, How many people in my family are aged 34?"
         observation_date: Any = None
+        valid_as_of: Any = None
+        known_as_of: Any = None
         run_id: Any = None
 
         def temporal_requested(self) -> bool:
