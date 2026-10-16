@@ -1297,7 +1297,7 @@ async def _ended(family: str) -> bool:
     """Whether the session has ended, from storage; unknown counts as not."""
     try:
         return await store.session_ended(family)
-    except Exception:  # unreadable: ending it again is harmless
+    except Exception:  # unreadable: ending it again only replaces its stored reason
         log.exception("oauth: could not read whether session %s has ended", family)
         return False
 
@@ -1554,6 +1554,9 @@ async def revoke_token(request: Request) -> Response:
                 await store.retire_refresh(spent)
             except Exception:  # its session has ended: an unretired key refreshes nothing
                 log.exception("oauth: logout could not retire a token of ended session")
+            # The current token holds the IdP's current token, which whatever
+            # ended the session (a replay, an old copy's logout) never had.
+            await _revoke_upstream(spent)
         return Response(status_code=200)
     if grant is not None:
         try:

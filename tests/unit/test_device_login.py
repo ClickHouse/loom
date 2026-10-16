@@ -1562,3 +1562,26 @@ def test_a_current_token_logging_out_an_ended_session_keeps_its_first_reason(
     assert c.post("/oauth/revoke", data={"token": new, "client_id": "loom-cli"}).status_code == 200
     reasons = [kw["subject"]["reason"] for n, kw in _world["events"] if n == "auth.session_revoked"]
     assert reasons == [first]  # the theft's reason is not overwritten by a logout
+
+
+@pytest.mark.parametrize("ended_by", ["old copy's logout", "replay"])
+def test_logging_out_an_ended_session_revokes_the_idp_s_current_token(
+    _world, sso, monkeypatch, ended_by: str
+) -> None:
+    revoked: list[str] = []
+
+    async def idp_revoke(token: str) -> None:
+        revoked.append(token)
+
+    monkeypatch.setattr(oidc, "revoke", idp_revoke)
+    c = _client()
+    grant = _start(c)
+    _approve(c, grant["user_code"], _sso_round_trip(c, grant["user_code"]).text)
+    old = _poll(c, grant["device_code"]).json()["refresh_token"]  # holds idp-r1
+    new = _refresh(c, old).json()["refresh_token"]  # holds idp-r1+, the IdP's current
+    if ended_by == "replay":
+        _refresh(c, old)
+    else:
+        c.post("/oauth/revoke", data={"token": old, "client_id": device.DEVICE_CLIENT_ID})
+    c.post("/oauth/revoke", data={"token": new, "client_id": device.DEVICE_CLIENT_ID})
+    assert "idp-r1+" in revoked
