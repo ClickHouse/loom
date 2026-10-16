@@ -58,20 +58,27 @@ def _same_write(a: audit_repo.AuditRow, b: audit_repo.AuditRow) -> bool:
     return (a.ts, a.request_id) == (b.ts, b.request_id)
 
 
+# One write's audit rows, read whole: a request writes far fewer.
+_WRITE_ROWS = 10_000
+
+
 async def _finish_the_write(
     page: list[audit_repo.AuditRow], limit: int, read_page: Any
 ) -> tuple[list[audit_repo.AuditRow], bool]:
-    """Cut `page` (up to `limit` + 1 rows) to `limit`, then add the rest of the
-    last row's write: the rows of the same millisecond and request id. The cursor
-    names only (ts, request_id), so the next page starts after all of them; a
-    page can then hold more than `limit` rows. Returns (rows, has_more)."""
+    """Cut `page` (up to `limit` + 1 rows) to `limit`. When the cut falls inside
+    one write (rows of the same millisecond and request id), the page ends with
+    every row of that write, read again whole: their hashes need not differ (a
+    legacy row has none), so they cannot be read "after the last hash". The
+    cursor names only (ts, request_id), so the next page starts after all of
+    them; a page can then hold more than `limit` rows. Returns (rows, has_more)."""
     rows, rest = page[:limit], page[limit:]
-    while rows and rest and _same_write(rest[0], rows[-1]):
-        rows.append(rest.pop(0))
-        if not rest:
-            last = rows[-1]
-            rest = await read_page(before=(last.ts, last.request_id, last.row_hash))
-    return rows, bool(rest)
+    if not (rows and rest and _same_write(rest[0], rows[-1])):
+        return rows, bool(rest)
+    last = rows[-1]
+    write = await read_page(write=(last.ts, last.request_id), limit=_WRITE_ROWS)
+    rows = [r for r in rows if not _same_write(r, last)] + write
+    older = await read_page(before=(last.ts, last.request_id, None), limit=1)
+    return rows, bool(older)
 
 
 async def handle_audit_list(input: AuditListInput) -> AuditListOutput:
@@ -133,8 +140,10 @@ async def handle_audit_list(input: AuditListInput) -> AuditListOutput:
         limit=input.limit + 1,  # +1 to detect "more"
         ch=ch,
     )
-    page = await read_page(before=_decode_page_cursor(input.cursor) if input.cursor else None)
-    page, has_more = await _finish_the_write(page, input.limit, read_page)
+    before = _decode_page_cursor(input.cursor) if input.cursor else None
+    page = await read_page(before=before)
+    # The page's last write is read again under the same cursor.
+    page, has_more = await _finish_the_write(page, input.limit, partial(read_page, before=before))
     rows = [AuditListRow(**r.model_dump()) for r in page]
     next_cursor = _encode_cursor(page[-1].ts, page[-1].request_id) if rows and has_more else None
     project_rows(rows, AuditListRow, input.fields, always=frozenset({"ts"}))

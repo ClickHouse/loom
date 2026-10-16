@@ -120,7 +120,9 @@ See [telemetry](./telemetry.md#backlogs-and-process-state) for the rest of the c
 
 ## Reading the trail
 
-`audit.list` pages the caller's rows newest first with an opaque keyset cursor.
+`audit.list` pages the caller's rows newest first with an opaque keyset cursor. A page never ends
+inside one write: the rows one request wrote in the same millisecond come on one page, so
+a page can hold more than `limit` rows.
 
 | Field        | Meaning                                                              |
 | ------------ | -------------------------------------------------------------------- |

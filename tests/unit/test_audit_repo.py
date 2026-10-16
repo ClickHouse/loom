@@ -120,27 +120,47 @@ async def test_the_cursor_reads_the_same_on_the_previous_build(monkeypatch) -> N
 
 @pytest.mark.asyncio
 async def test_a_page_never_ends_inside_one_writes_rows(monkeypatch) -> None:
-    # Three records of one write share a millisecond and a request id. A cursor of
-    # (ts, request_id) would skip the ones after it, so the page takes them all.
+    # Three records of one write share a millisecond and a request id, and (legacy
+    # rows) no hash. A cursor of (ts, request_id) would skip the ones after it, so
+    # the page takes them all, read again whole rather than after the last hash.
     from server.auth import context as ctx
     from server.core.cursors import decode_cursor
     from server.insights.api.models_audit import AuditListInput
     from server.insights.app import audit as h
 
     monkeypatch.setattr(ctx, "current_auth", lambda: None)
-    tied = [{**_row(), "row_hash": c * 64} for c in "fed"]
+    tied = [{**_row(), "row_hash": b"\x00" * 64, "subject": n} for n in "123"]
     older = {**_row(), "ts": datetime(2026, 5, 16, 11, 0, 0, tzinfo=UTC), "request_id": "req-0"}
     ch = StubCH()
-    ch.query_all_returns.extend([tied[:2], [tied[2], older]])
+    ch.query_all_returns.extend([tied[:2], tied, [older]])
     monkeypatch.setattr(h, "get_client", lambda: ch)
     out = await h.handle_audit_list(AuditListInput(org="clickhouse", namespace="ns", limit=1))
-    assert [r.row_hash for r in out.rows] == [c * 64 for c in "fed"]
+    assert [r.subject for r in out.rows] == ["1", "2", "3"]
     assert out.next_cursor is not None
     assert decode_cursor(out.next_cursor) == (_row()["ts"], "req-1")
-    # The rest of the write is read below the last row it returned.
+    # The write is read by its (ts, request_id), with no hash comparison.
     sql, params = ch.query_all_calls[1]
-    assert "(ts, request_id, row_hash) <" in sql
-    assert (params["c_rid"], params["c_hash"]) == ("req-1", "e" * 64)
+    assert "AND ts = toDateTime64('2026-05-16 12:00:00.000', 3, 'UTC')" in sql
+    assert "AND request_id = {w_rid:String}" in sql and "row_hash) <" not in sql
+    assert params["w_rid"] == "req-1" and "c_hash" not in params
+    # Then whether anything is older than the write.
+    sql, params = ch.query_all_calls[2]
+    assert "AND (ts, request_id) < (" in sql and params["lim"] == 1
+
+
+@pytest.mark.asyncio
+async def test_a_page_that_ends_with_a_whole_write_has_no_next_cursor(monkeypatch) -> None:
+    from server.auth import context as ctx
+    from server.insights.api.models_audit import AuditListInput
+    from server.insights.app import audit as h
+
+    monkeypatch.setattr(ctx, "current_auth", lambda: None)
+    tied = [{**_row(), "subject": n} for n in "12"]
+    ch = StubCH()
+    ch.query_all_returns.extend([tied, tied, []])
+    monkeypatch.setattr(h, "get_client", lambda: ch)
+    out = await h.handle_audit_list(AuditListInput(org="clickhouse", namespace="ns", limit=1))
+    assert [r.subject for r in out.rows] == ["1", "2"] and out.next_cursor is None
 
 
 @pytest.mark.asyncio

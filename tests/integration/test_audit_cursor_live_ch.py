@@ -110,3 +110,50 @@ async def test_pages_alternating_with_the_previous_build_return_every_row_once(
     org: str,
 ) -> None:
     assert await walk(org, [this_build, previous_build]) == list("cbadef")
+
+
+@pytest.mark.asyncio
+async def test_a_write_of_unhashed_rows_is_paged_whole(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Legacy rows carry no row hash: five rows of one write tie on (ts,
+    # request_id, row_hash), so the hash cannot order them.
+    from server.auth import context as ctx
+    from server.core.ch import get_client
+
+    monkeypatch.setattr(ctx, "current_auth", lambda: None)
+    c = get_client()
+    await c.connect()
+    org = f"itest-audit-{uuid.uuid4().hex[:8]}"
+    rows = [(T0, "w", str(i)) for i in range(5)] + [(T0 - timedelta(seconds=1), "x", "older")]
+    await c.insert(
+        "loom.audit_log",
+        [
+            {
+                "ts": ts,
+                "event_type": "memory.set",
+                "org": org,
+                "namespace": "ns",
+                "actor": "itest",
+                "subject": subject,
+                "request_id": rid,
+            }
+            for ts, rid, subject in rows
+        ],
+    )
+    try:
+        seen, cursor = [], None
+        for _ in range(10):
+            out = await h.handle_audit_list(
+                AuditListInput(org=org, namespace="ns", limit=2, cursor=cursor)
+            )
+            seen += [r.subject for r in out.rows]
+            cursor = out.next_cursor
+            if cursor is None:
+                break
+        assert sorted(seen) == ["0", "1", "2", "3", "4", "older"]
+    finally:
+        await c.execute(
+            "ALTER TABLE loom.audit_log DELETE WHERE org = {org:String} "
+            "SETTINGS mutations_sync = 2",
+            params={"org": org},
+        )
+        await c.disconnect()
