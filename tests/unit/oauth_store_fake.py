@@ -13,7 +13,7 @@ from typing import Any
 
 from fastapi import FastAPI
 
-from server.auth import claims, device, oauth
+from server.auth import claims, device, oauth, password_setup
 from server.auth.oauth_store import ClickHouseStore, Grant
 
 
@@ -24,6 +24,7 @@ def oauth_app() -> FastAPI:
     app.add_exception_handler(claims.Busy, oauth._busy_response)
     app.include_router(oauth.router)
     app.include_router(device.router)
+    app.include_router(password_setup.router)
     app.include_router(oauth.connect_router)
     return app
 

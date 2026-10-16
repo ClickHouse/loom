@@ -677,6 +677,16 @@ def test_a_password_session_cannot_refresh_once_sso_is_on(monkeypatch) -> None:
     assert _error(_refresh(c, tokens["refresh_token"])) == "invalid_grant"
 
 
+def test_an_sso_session_cannot_refresh_once_sso_is_off(sso, monkeypatch) -> None:
+    # The IdP no longer vouches at each refresh: the session ends, and its
+    # owner signs in the way Loom now signs people in.
+    c = _client()
+    tokens = _sso_tokens(c)
+    monkeypatch.setattr(oauth.settings, "oauth_login_provider", "password")
+    r = _refresh(c, tokens["refresh_token"])
+    assert _error(r) == "invalid_grant" and "sign in again" in r.json()["error_description"]
+
+
 # ── dashboard SSO and the closed password door ────────────────────────────
 
 

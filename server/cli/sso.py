@@ -31,6 +31,14 @@ def register_sso_cli(sub: Any) -> None:
     p_unlink.add_argument("--email", required=True)
     add_apply_flags(p_unlink, writes="remove the links")
     p_unlink.set_defaults(func=_cmd_unlink)
+    p_link = sso.add_parser(
+        "password-link",
+        help="Print a one-time link (a day) that sets the password of an email's SSO "
+        "accounts, for after single sign-on is turned off.",
+    )
+    p_link.add_argument("--email", required=True)
+    p_link.add_argument("--org", default="", help="Needed when the email has accounts in several")
+    p_link.set_defaults(func=_cmd_password_link)
 
 
 def _cmd_adopt(args: argparse.Namespace) -> int:
@@ -100,6 +108,31 @@ def _cmd_unlink(args: argparse.Namespace) -> int:
         print(
             f"unlinked {len(accounts)} account(s): new SSO sign-ins no longer reach them; "
             "end open sessions with `loom revoke-token --subject <subject>`"
+        )
+        return 0
+
+    return run_connected(_run)
+
+
+def _cmd_password_link(args: argparse.Namespace) -> int:
+    from server.auth import password_setup
+    from server.settings import settings
+
+    async def _run(ch: Any) -> int:
+        accounts = await password_setup.sso_accounts(args.email, args.org)
+        orgs = {a["org"] for a in accounts}
+        if not accounts:
+            print(f"  ✗ {args.email} has no SSO account (one without a password)")
+            return 1
+        if len(orgs) > 1:
+            print(f"  ✗ {args.email} has accounts in {sorted(orgs)}; pass --org")
+            return 2
+        code = await password_setup.make_link(args.email, accounts)
+        base = (settings.oauth_issuer or settings.public_base_url).rstrip("/")
+        print(f"{base}/oauth/set-password?code={code}")
+        print(
+            f"  one use, for a day, while single sign-on is off; sets the password of "
+            f"{', '.join(a['namespace'] for a in accounts)}"
         )
         return 0
 

@@ -1285,6 +1285,9 @@ async def _refresh_session(grant: Grant, refresh_token: str) -> dict[str, Any]:
         raise _invalid_grant()
     if settings.oauth_login_provider == "oidc":
         grant["upstream_refresh"] = await _ask_identity_provider(grant, refresh_token)
+    elif grant["upstream_refresh"]:
+        # Signed in through SSO, now off: nothing vouches for the user any more.
+        raise _invalid_grant("single sign-on is off here; sign in again")
     # The grant is a sign-in snapshot; each refresh re-checks the account
     # is still active and re-derives its roles, so neither a released
     # account nor a removed host rides a rolling 30-day chain.
@@ -1400,7 +1403,7 @@ def _busy_response(request: Request, exc: Exception) -> JSONResponse:
 def attach(app: Any) -> None:
     """Mount sign-in wherever there is something to sign in to, and MCP
     connect (dynamic client registration, an opt-in surface) only when enabled."""
-    from server.auth import device, oidc
+    from server.auth import device, oidc, password_setup
 
     if settings.auth_actually_required() or settings.oauth_enabled:
         oidc.validate_config()  # fail fast if provider=oidc but IdP config missing
@@ -1408,5 +1411,6 @@ def attach(app: Any) -> None:
         app.add_exception_handler(claims.Busy, _busy_response)
         app.include_router(router)
         app.include_router(device.router)
+        app.include_router(password_setup.router)
     if settings.oauth_enabled:
         app.include_router(connect_router)
