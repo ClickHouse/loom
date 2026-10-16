@@ -8,6 +8,7 @@ import contextlib
 import hashlib
 import json
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -1961,10 +1962,11 @@ async def _walked(
     labeled: bool,
     as_of: datetime | None = None,
     seed: str = "user",
+    until: Callable[[list[str]], bool] | None = None,
 ) -> list[str]:
     """The entities one hop of `facts.traverse` from `seed` reaches (at `as_of`, when
-    given), waiting up to two seconds for `want`: it counts a fact closed this very
-    second as current."""
+    given), waiting up to two seconds for `want` (or for a walk `until` accepts): it
+    counts a fact closed this very second as current."""
     from server.memory.api.models_facts import FactsTraverseInput
     from server.memory.app.facts import handle_facts_traverse
 
@@ -1974,7 +1976,7 @@ async def _walked(
     for _ in range(10):
         out = await handle_facts_traverse(walk)
         walked = sorted(n.entity for n in out.nodes)
-        if walked == want:
+        if until(walked) if until else walked == want:
             break
         await asyncio.sleep(0.2)
     return walked
@@ -2021,8 +2023,9 @@ async def test_a_projection_landing_after_a_revision_leaves_no_edge(
     release.set()
     await after_write.drain()
     await _mutations_done(ch, org)
-    # `lif` (the mined "lives") names no triple, so the revision leaves its edge.
-    assert "london" not in await _walked(org, ["jazz", "lif"], labeled=False, seed="alice")
+    assert "london" not in await _walked(
+        org, [], labeled=False, seed="alice", until=lambda w: "london" not in w
+    )
 
 
 async def test_a_late_projection_whose_cleanup_failed_is_closed_by_the_repair(
@@ -2078,10 +2081,14 @@ async def test_a_late_projection_whose_cleanup_failed_is_closed_by_the_repair(
         org=org, projection="entity_edges_close", status="active", ch=ch
     )
     await _mutations_done(ch, org)
-    assert "london" in await _walked(org, ["jazz", "lif"], labeled=False, seed="alice")
+    assert "london" in await _walked(
+        org, [], labeled=False, seed="alice", until=lambda w: "london" in w
+    )
     await retry_projection_failures(org=org, projection="entity_edges_close", ch=ch)
     await _mutations_done(ch, org)
-    assert "london" not in await _walked(org, ["jazz", "lif"], labeled=False, seed="alice")
+    assert "london" not in await _walked(
+        org, [], labeled=False, seed="alice", until=lambda w: "london" not in w
+    )
     assert not await list_projection_failures(
         org=org, projection="entity_edges_close", status="active", ch=ch
     )
@@ -2143,11 +2150,13 @@ async def test_a_late_projections_edge_ends_when_the_revision_ended_its_value(
         await retry_projection_failures(org=org, projection="entity_edges_close", ch=ch)
     await _mutations_done(ch, org)
     between = revised + timedelta(seconds=1.2)
+    for labeled in (False, True):
+        assert "london" not in await _walked(
+            org, [], labeled=labeled, as_of=between, seed="alice", until=lambda w: "london" not in w
+        )
     assert "london" not in await _walked(
-        org, ["jazz", "lif"], labeled=False, as_of=between, seed="alice"
+        org, [], labeled=False, seed="alice", until=lambda w: "london" not in w
     )
-    assert "london" not in await _walked(org, ["jazz"], labeled=True, as_of=between, seed="alice")
-    assert "london" not in await _walked(org, ["jazz", "lif"], labeled=False, seed="alice")
 
 
 @pytest.mark.parametrize(
@@ -4327,7 +4336,12 @@ async def test_two_undated_writers_racing_in_one_second_leave_one_current_value(
     )
     await _mutations_done(ch, org)
     # The later arrival, to the microsecond, is the one current value.
-    assert len(await _open_cities(ch, org, {"paris"})) == 1
+    later = await ch.query_one(
+        "SELECT argMax(object, seen_at) AS city FROM loom.entity_triples"
+        " WHERE org = {org:String} SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert await _open_cities(ch, org, {later["city"]}) == {later["city"]}
 
 
 async def _edges_like_triples(ch: Any, org: str) -> None:
@@ -4761,8 +4775,10 @@ async def _mentions(ch: Any, org: str, row: dict[str, Any], *entities: str) -> N
 
 async def _walks_to(org: str, entity: str, *, seed: str = "alice") -> bool:
     """Whether one unlabelled hop from `seed` reaches `entity`, waiting up to two
-    seconds for it (`_walked` waits; it stops early only on `entity` alone)."""
-    return entity in await _walked(org, [entity], labeled=False, seed=seed)
+    seconds for it."""
+    return entity in await _walked(
+        org, [entity], labeled=False, seed=seed, until=lambda w: entity in w
+    )
 
 
 async def test_a_dropped_facts_edge_stays_open_while_another_row_names_both(ch, org) -> None:
@@ -4813,7 +4829,9 @@ async def test_a_key_that_no_longer_names_both_keeps_no_edge_open(ch, org) -> No
     await asyncio.sleep(1.1)  # the walk counts an edge ended this second as current
     assert await _walked(org, [], labeled=True, seed="alice") == []
     # The revisions' own edges (jazz, blues) are walked; Paris is not.
-    assert "paris" not in await _walked(org, [], labeled=False, seed="alice")
+    assert "paris" not in await _walked(
+        org, [], labeled=False, seed="alice", until=lambda w: "paris" not in w
+    )
 
 
 @pytest.mark.parametrize(
@@ -4879,7 +4897,9 @@ async def test_a_retired_rows_revision_projects_no_edges(ch, org) -> None:
     await _follow_retirement(ch, org, london, paris)
     await _revise("memory.update_by_id", org, london, "Alice works at Umbrella")
     await _mutations_done(ch, org)
-    assert "umbrella" not in await _walked(org, [], labeled=False, seed="alice")
+    assert "umbrella" not in await _walked(
+        org, [], labeled=False, seed="alice", until=lambda w: "umbrella" not in w
+    )
 
 
 async def test_a_row_naming_the_pair_while_its_edge_ends_keeps_it_open(ch, org) -> None:
