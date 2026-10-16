@@ -8199,7 +8199,7 @@
        "nargs": 0,
        "type": null,
        "required": false,
-       "help": "Also open github.com/ClickHouse/loom/issues/new in the default browser with a short header pre-filled.",
+       "help": "Also open the bug form in the default browser with the versions pre-filled.",
        "metavar": null
       }
      ]
@@ -11369,7 +11369,7 @@
     },
     {
      "dest": "report",
-     "help": "Print a GitHub-Issue-ready bug report with auto-attached `loom doctor` diagnostic.",
+     "help": "Print the bug form's Environment field: versions and the `loom doctor` checks.",
      "metavar": "report"
     },
     {

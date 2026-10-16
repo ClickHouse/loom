@@ -1,0 +1,29 @@
+name: Question
+description: Ask how to do something with Loom.
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > Check the [documentation](https://github.com/ClickHouse/loom/tree/main/docs) first: the [FAQ](https://github.com/ClickHouse/loom/blob/main/docs/faq.md) and [troubleshooting](https://github.com/ClickHouse/loom/blob/main/docs/operations/troubleshooting.md) answer the common ones.
+        > Search [existing issues](https://github.com/ClickHouse/loom/issues?q=is%3Aissue) before asking.
+  - type: textarea
+    attributes:
+      label: Company or project name
+      description: Optional. Who you are building with Loom helps us weigh the answer.
+    validations:
+      required: false
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What you are trying to do, and what you have read or tried so far.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Loom version
+      description: Optional. Release tag or commit (`loom --version`).
+    validations:
+      required: false

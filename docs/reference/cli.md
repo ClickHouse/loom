@@ -176,13 +176,13 @@ namespace's grants. See [OKF](../features/integrations/okf.md) and
 
 ### Diagnose and repair
 
-`loom report` prints a GitHub-issue-ready bug report with the `loom doctor`
-output attached. `loom drops` prints the memory ingest drop ledger for a
-namespace. `loom erasure-re-verify` re-checks failed erasure sagas. The
-backfill and repair commands (`integrity-repair`, `reconcile-status`,
-`repair-value-bytes`, `entity-edges-invalidate-junk`, `rechunk`,
-`lexical-stats-rebuild`, …) and when to run each are in
-[Maintenance](../operations/maintenance.md) and
+`loom report` prints the bug form's Environment field with the `loom doctor`
+output; `--open` opens the form with the versions filled in. `loom drops`
+prints the memory ingest drop ledger for a namespace. `loom erasure-re-verify`
+re-checks failed erasure sagas. The backfill and repair commands
+(`integrity-repair`, `reconcile-status`, `repair-value-bytes`,
+`entity-edges-invalidate-junk`, `rechunk`, `lexical-stats-rebuild`, …) and
+when to run each are in [Maintenance](../operations/maintenance.md) and
 [Troubleshooting](../operations/troubleshooting.md).
 
 ## Reading the table
@@ -272,7 +272,7 @@ python scripts/codegen/docs_reference.py
 | `loom bot list` | Every bot, active or disabled. |  |
 | `loom bot disable` | Refuse its proofs and revoke the tokens it holds. | `--name` |
 | `loom doctor` | Diagnose pre-boot misconfig (Python version, settings, JWT, CH reachability) and print the problem list /v1/health carries, each with its fix. | `--json`, `--client`, `--server-url`, `--token` |
-| `loom report` | Print a GitHub-Issue-ready bug report with auto-attached `loom doctor` diagnostic. | `--open` |
+| `loom report` | Print the bug form's Environment field: versions and the `loom doctor` checks. | `--open` |
 | `loom drops` | Print the memory ingest drop ledger (loom.memory_drops) for a namespace, by stage/reason — what the pipeline discarded, truncated or gave up on. | `--namespace`, `--org`, `--hours` |
 | `loom namespaces-gc` | List (default) or erase throwaway namespaces — finished bench runs under the bench prefixes that nobody registered and nobody has written to for --idle-hours — in one list-scoped erasure saga per… | `--org`, `--prefix`, `--namespace`, `--exclude-prefix`, `--idle-hours`, `--include-registered`, `--erase`, `--no-purge`, `--skip-external`, `--batch`, `--show`, `--requester`, `--worker-pass` |
 | `loom erasure-re-verify` | Re-verify failed erasure sagas: print each one's last step-named reason and a fresh residue census (default, read-only); --resume re-runs them from their checkpoint past the recovery worker's… | `--org`, `--id`, `--resume`, `--skip-external`, `--orphan-graph`, `--erase`, `--batch`, `--show`, `--requester` |
