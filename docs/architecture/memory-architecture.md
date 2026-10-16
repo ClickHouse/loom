@@ -204,17 +204,19 @@ The prompt names keys by subject and attribute, never by value
 supersedes the earlier row. A "forget this" request in the transcript retires the
 matching rows (`_retire_forgotten`).
 
-**Same key, another session.** The storage identity includes the session, so a key
-that a later session states again is a second live row, and the conflict check skips
-same-key peers. Under `newest_wins` the newer write retires the older row. Under
-`auto_reinforce` a shared key alone is not evidence of one attribute: extraction reuses
-generic keys (`assistant_recommended_3`, `user_attended`) for different items, and in a
-sample of 60 same-key pairs from chat-history namespaces 58 were different facts.
+### Same key, another session
 
-So, before its insert, a bulk write asks the conflict judge about the newest live rows of
-each key it writes for the same subject: the same `user_id`, or for the anonymous user
-`-` the same agent (`key_supersession.judge_same_key_rows`). The writer's own identity is
-never a peer: its stored row is the one the write revises.
+The storage identity includes the session, so a key that a later session states again is
+a second live row, and the conflict check skips same-key peers. Under `newest_wins` the
+newer write retires the older row. Under `auto_reinforce` a shared key alone is not
+evidence of one attribute: extraction reuses generic keys (`assistant_recommended_3`,
+`user_attended`) for different items, and in a sample of 60 same-key pairs from
+chat-history namespaces 58 were different facts.
+
+So, before its insert, a bulk write asks the conflict judge about the newest live rows
+of each key it writes for the same subject: the same `user_id`, or for the anonymous
+user `-` the same agent (`key_supersession.judge_same_key_rows`). The writer's own
+identity is never a peer: its stored row is the one the write revises.
 
 - **What gets judged.** Entries of one bulk share an identity, so for a key written
   twice only the highest version, the one `FINAL` keeps, is judged.
@@ -228,8 +230,8 @@ never a peer: its stored row is the one the write revises.
   the key's first version). It is capped at the write time, because a fact dated in the
   future was still stated when it was written. Then come the write time and the id.
   Times are compared in UTC to the second; a valid time outside ClickHouse's `DateTime`
-  range counts as none. Rows that tie on both times are separated by id (as text),
-  which is arbitrary but fixed.
+  range counts as none. Rows that tie on both times are separated by id (as text), which
+  is arbitrary but fixed.
   - **A late old session:** its rows carry their session date, so it doesn't bury a
     later value, whether that value is dated or undated.
   - **An undated late row:** it counts as stated when it was written, so it is the later
@@ -254,40 +256,112 @@ Then by label:
 Neither side retires while a lock is in force: a new row that revises a `no_delete` or
 `read_only` key keeps its lock and stays live, as a stored one does. A new row lands
 superseded only if its winner, re-read after the judge's call, is still the version
-judged, live and unexpired; otherwise it stays live and the next write of the key
-judges it again. Expired rows and rows past their `valid_to` are never peers. An entry
-that lands superseded writes no current graph facts, and when a bulk write's judge
-retires a stored row, the triple plane closes the loser's triples that the live end of
-the winner's chain does not state (`triples_follow_rows`), following `superseded_by` up
-to 8 links (a repair reads to the end, up to 1,024). A row's stated triples are the
-ones `entity_triple_rows` links to its id and current `content_sha256`, so a
-canonicalised subject ("I live in Paris" is `(user, lives_in, paris)`) closes too, and
-a winner that names an old value under another relation ("... and the user visited
+judged, live and unexpired; otherwise it stays live and the next write of the key judges
+it again. Expired rows and rows past their `valid_to` are never peers.
+
+A stored row retires after the insert only if it isn't locked, and wasn't pinned,
+retired or revised since the judge read it (the retirement reads it read-your-writes).
+It also leaves the write's other conflict marks and refines, so no other verdict of the
+write re-emits it; an entry whose key keeps no conflict mark or refine answers `clear`.
+`superseded_by` names the row that was the later statement when the retirement happened.
+That row can itself retire later, so a reader follows the chain. A row labelled
+`sensitivity='high'` is never judged or read as a peer, so its value never reaches the
+LLM. The read is bounded by the writer's read scope, like every same-key retirement.
+
+This costs one judge call per new row that has such peers, on top of the bulk conflict
+check's own calls. The calls are bounded by the same settings
+(`LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES`, `LOOM_BULK_CONFLICT_CHECK_CONCURRENCY`), and
+they add at least one LLM round trip to a bulk write that has any (one per
+`LOOM_BULK_CONFLICT_CHECK_CONCURRENCY` rows judged). The policy is the namespace's, as
+for the write's conflict verdicts.
+
+Without this, "User is Asian American" (05-23) and "The user has mixed Irish and Italian
+ethnicity" (05-30) both stayed live under `user_ethnicity`, and a reader shown both
+merged them into one answer. The point write keeps the documented `auto_reinforce`
+behaviour and its latency: it doesn't call the judge for same-key rows. The judge is off
+by default (`LOOM_MEMORY_CONFLICT_JUDGE=true` turns it on); with it off, same-key rows
+stay live as before.
+
+### Following a retirement in the graph
+
+An entry that lands superseded writes no current graph facts, and when a bulk write's
+judge retires a stored row, the triple plane closes the loser's triples that the live
+end of the winner's chain does not state (`triples_follow_rows`), following
+`superseded_by` up to 8 links (a repair reads to the end, up to 1,024). A row's stated
+triples are the ones `entity_triple_rows` links to its id and current `content_sha256`,
+so a canonicalised subject ("I live in Paris" is `(user, lives_in, paris)`) closes too,
+and a winner that names an old value under another relation ("... and the user visited
 Paris") does not keep it, while one it says in a clause the update left unchanged stays
 open ("work in London" of "I live in London and work in London" → "I live in Rome and
-work in London"). A row written before those links existed is matched by the subject
-and object its prose names. Each successor the follow writes, one already open
-included, is linked to its winner as `inferred`: an inferred link adds to what a row is
-read by, so a winner whose extractor stated nothing is still matched by its text too.
-Other same-key retirements (a `newest_wins` policy, a point write's supersession) are
-not followed: their losers' triples stay open, a known gap.
+work in London"), and keeps a later end it stated ("I live in London until December" is
+not ended now). A row written before those links existed is matched by the subject and
+object its prose names.
+
+Each successor the follow writes, one already open included, is linked to its winner as
+`inferred`: an inferred link adds to what a row is read by, so a winner whose extractor
+stated nothing is still matched by its text too. A successor then goes through the
+interval repair, as a write of it does: an older value of its single-valued relation
+that another live row still states closes when the newer successor starts (see Which
+value is newer).
+
+A write follows up to 1,024 pairs itself and records the rest, or all of them if the
+follow fails, for `projection_repair` to follow; a replay dates an undated winner by its
+last write. Other same-key retirements (a `newest_wins` policy, a point write's
+supersession) are not followed: their losers' triples stay open, a known gap.
+
+A facet edge (the agent's file, concept or topic) is no row's: it is never linked, and
+no retirement closes it.
+
+A triple another live row's links still state stays open, unless a newer successor's
+repair closes it (above); a row whose value was first written before rows were linked to
+triples (by the row-links migration's applied time, read from `loom.memory_versions`, so
+a pin, a lock or an Undo of the same value keeps it one) has no links its extractor
+stated for its current value, and keeps open a triple its key is linked to
+(`entity_triple_memories`) while its value still names it; an Undo of such a row opens
+again the triples it holds by that rule. A successor written for such a row, or a link
+of another of its values, does not make it a linked row. A value written since that
+stated no fact has no link and holds none; during a rolling deploy, a replica still on
+the previous build writes key links only, so its rows hold nothing until the fact is
+stated again.
+
+A cycle or a longer chain leaves the loser's triples open and logs a warning, and a
+write records the pair for `projection_repair`; a pair even the repair cannot read
+abandons its row (status `abandoned`, with `unfollowable_chain: N pair(s)` in
+`error_message`). An end that holds no facts states nothing, so the loser's triples
+close with no successor, and a triple another pair's live end still states stays open.
+
+A closed triple ends when its own row was replaced (the latest such date, if several
+rows close it), never before it started; all of a write's closes are one mutation,
+issued after its successors are in, so a replay of a follow that failed midway still
+finds the loser's triples open. A row written while the follow runs may state a triple
+it closes, and the close takes that write's triple too: every writer inserts a triple's
+row links before the triple, so once the close is queued the follow reads which closed
+triples a live row holds and undoes the close for those, with a second mutation matched
+on the close's `invalid_at` and each triple's `valid_to` (mutations run in order, and no
+row is copied). The links are a few rows a write, inserted synchronously as the client
+inserts by default, so a write still waits on one async-insert flush, its triples'. The
+re-check is one more read (two or three when a holding row was revised) on every follow
+that closes anything. If that re-check fails, the closed triples and the close's time
+are recorded (`triples_reopen`) for `projection_repair`.
+
+### Revisions
 
 A row revised in place (`memory.set` on a live key, `memory.bulk_set`,
-`memory.update_by_id`) keeps its id but not its hash. What its extractor stated for
-the current hash holds. A successor the follow wrote for the row, and a triple its
-extractor stated for a value it was revised from, is read by its id, with the hash of
-the value it was written or stated for (`carried`):
+`memory.update_by_id`) keeps its id but not its hash. What its extractor stated for the
+current hash holds. A successor the follow wrote for the row, and a triple its extractor
+stated for a value it was revised from, is read by its id, with the hash of the value it
+was written or stated for (`carried`):
 
 - **Written for the current value:** it holds; the follow judged it against that value.
 - **Written or stated for an older value:** it holds only while the new value says
-  nothing that value did not and still states it (`restates`). Its sentences are the
-  old one's (read from `loom.memory_versions`), in order, each whole or cut to a
-  statement of the triple, and no statement is dropped. A statement is a sentence
-  naming the object that does not ask, cut after the clause naming the object or the
-  first with the relation's words, whichever comes later; a sentence without the
-  relation's words counts only whole, and a question states nothing. Clauses end at a
-  comma or colon and at "and" or "but", and sentences at `.;?!`, never inside a name
-  of the triple ("Marks and Spencer", "Austin, Texas"). So "I live in London, not Paris" is kept by "I live in
+  nothing that value did not and still states it (`restates`). Its sentences are the old
+  one's (read from `loom.memory_versions`), in order, each whole or cut to a statement
+  of the triple, and no statement is dropped. A statement is a sentence naming the
+  object that does not ask, cut after the clause naming the object or the first with the
+  relation's words, whichever comes later; a sentence without the relation's words
+  counts only whole, and a question states nothing. Clauses end at a comma or colon and
+  at "and" or "but", and sentences at `.;?!`, never inside a name of the triple ("Marks
+  and Spencer", "Austin, Texas"). So "I live in London, not Paris" is kept by "I live in
   London" and "I live in London, not Paris.", and closed by "I live in London, near the
   river", "I live in London and work at Acme", "Still, I live in London", "I live in
   London?", "I lived in London" and "I live in Rome and visited London".
@@ -310,273 +384,254 @@ the value it was written or stated for (`carried`):
   facts to that row; one merged into any other row links none and says so in `next`. A
   row that may not hold facts (below: `high`, expired, or past its `valid_to`) states
   none: a `high` row's content stays out of the shared graph.
-- **Words:** pair texts and old values are read decoded (stored JSON escapes
-  non-ASCII). Words are read in any script written with spaces, a vowel sign or virama
-  staying in its word; a script written without spaces, such as Japanese, is one word
-  per run. Any other mark (an emoji, a quote, a sign) counts as a word, and a curly
-  apostrophe is the straight one. A comma or dot inside the triple's subject or object
-  ("Austin, Texas", "St. Louis", "1,000") is the name's, never a clause or sentence
-  break, so an unchanged value still states it. The
-  templated-substitution rule behind `newest_wins` pairs two statements only when they
-  share their beginning and differ in the span that ends them. Two statements about
-  different subjects share their ending instead ("Basketball was created in the country
-  of Soviet Union" / "Club Nouveau was created in …"), or differ in a span that carries
-  the copula ("The capital of Soviet Union is Moscow" / "The capital of Italy is Rome"),
-  and never pair: a looser rule would retire the update row itself and close its triple,
-  and multi-hop questions would lose their chain. A shared ending of two
-  words or more after a beginning that does not end in a preposition, copula or article
-  is taken for a predicate's object in any language, and never pairs ("lives in London"
-  / "works in London", "живёт в Москве" / "работает в Москве", "habite à Paris" /
-  "travaille à Paris"): a missed update is safer than a wrong supersession. One shared
-  word is the head of the object ("prefers dark mode" / "… light mode" pairs), and so
-  are more after "a", "an" or "the" ("drives a red sports car" / "… a blue sports car"
-  pairs). Otherwise a shared ending from a preposition on is a detail both keep ("I work
-  at Acme in London" / "… at Globex in London" pairs Acme with Globex). After a bare
-  name and a copula or "have" verb of a major language, the two spans are two
-  attributes unless both are numbers ("Wang Xiaoming est âgé de 28 ans" / "… est
-  ingénieur logiciel" and "У меня есть собака" / "… кошка" never pair; "I live in
-  Москва" / "… in Berlin" does).
+- **Words:** pair texts and old values are read decoded (stored JSON escapes non-ASCII).
+  Words are read in any script written with spaces, a vowel sign or virama staying in
+  its word; a script written without spaces, such as Japanese, is one word per run. Any
+  other mark (an emoji, a quote, a sign) counts as a word, and a curly apostrophe is the
+  straight one. A comma or dot inside the triple's subject or object ("Austin, Texas",
+  "St. Louis", "1,000") is the name's, never a clause or sentence break, so an unchanged
+  value still states it. The templated-substitution rule behind `newest_wins` pairs two
+  statements only when they share their beginning and differ in the span that ends them.
+  Two statements about different subjects share their ending instead ("Basketball was
+  created in the country of Soviet Union" / "Club Nouveau was created in …"), or differ
+  in a span that carries the copula ("The capital of Soviet Union is Moscow" / "The
+  capital of Italy is Rome"), and never pair: a looser rule would retire the update row
+  itself and close its triple, and multi-hop questions would lose their chain. A shared
+  ending of two words or more after a beginning that does not end in a preposition,
+  copula or article is taken for a predicate's object in any language, and never pairs
+  ("lives in London" / "works in London", "живёт в Москве" / "работает в Москве",
+  "habite à Paris" / "travaille à Paris"): a missed update is safer than a wrong
+  supersession. One shared word is the head of the object ("prefers dark mode" / "…
+  light mode" pairs), and so are more after "a", "an" or "the" ("drives a red sports
+  car" / "… a blue sports car" pairs). Otherwise a shared ending from a preposition on
+  is a detail both keep ("I work at Acme in London" / "… at Globex in London" pairs Acme
+  with Globex). After a bare name and a copula or "have" verb of a major language, the
+  two spans are two attributes unless both are numbers ("Wang Xiaoming est âgé de 28
+  ans" / "… est ingénieur logiciel" and "У меня есть собака" / "… кошка" never pair; "I
+  live in Москва" / "… in Berlin" does).
 - **Erased values:** an old value since erased or redacted holds nothing (another
   unredacted version with the same hash still counts). The links stay until the row is
-  erased; each carries its row's `user_id`, so a user's erasure finds them after the
-  row is gone.
-- **Rows that hold facts:** one rule decides whether a row's value may hold graph facts
-  (`GRAPH_HOLDER_SQL`): live, not deleted, not expired, its `valid_to` not passed, and
-  not `high`; a proposal is not live, so its `relations` are never graphed. The follow's
-  live end, the check for a live row still stating a fact, a revision, an Undo and a
-  replay all read it; a point write checks the same rule on the row it just wrote. A
-  revision (`memory.set`, `memory.bulk_set`, `memory.update_by_id`) of a row that
-  existed before the write closes the facts its row held that no row holds any longer,
-  and an Undo of a retirement opens again those the restored row's current value holds
-  by the same rule (another row's claim keeps a fact from closing, but never reopens
-  one); either, when it fails, is recorded for `projection_repair` as
-  `triples_reconcile`. A dropped fact still valid later ("until Dec 1") ends now, and so
-  does one a retired row stated until later, or it ends when a winner dated ahead
-  starts, as an open one closes (a later end the follow's close gave stays). Its edge
-  ends with its triples, at their latest end, unless a live row still holds another fact
-  valid now between the same two entities, or a live row's current value names both:
-  `entity_edge_rows` links each pair to the row and the `content_sha256` of the value
-  that named it, so the revised or retired rows count too, and a revision whose new
-  value still names both keeps its edge. No row text is read: a row whose entities came
-  from extraction or resolution ("NYC" is `new york city`) keeps it as well. A row
-  whose value was first written before those links existed, and has none for it, keeps
-  the edge while its key is linked to the pair (`entity_edge_memories`), as before. A
-  row naming the pair while the close runs lands its links before its edges, and the
-  close checks again after its UPDATE and opens the pair again when one is found. The
-  edge keeps no `invalid_at`, so a walk at an earlier time still finds it. A revision
-  writes its new value's edges before that close: `memory.set` waits for its entity
-  projection when it revises a row (a first write projects beside the response), and
-  `memory.update_by_id` and `memory.update` project a changed value's edges the same
-  way (a failure is recorded for `projection_repair` as `entity_edges`). The follow
-  reads the retired rows' facts again after its plan, so a replay of a follow whose
-  close landed still ends the rest. When a revision, or a retirement the follow
-  closes, leaves a single-valued relation of the row with no value valid now (a value
-  a close ended later counts only while an open value starts by that end: Paris holds
-  until the move to Berlin it was closed for), the newest value a live row still holds
-  and a close ended is stated again from the relation's last close, as an Undo states
-  it and through the Undo's own check of the rows found holding it, each value's
-  newest eight (a row revised or retired meanwhile is left to that change), but
-  labelled `row-fallback`: triple and edge markers, then the
-  interval repair, so a newer value written meanwhile wins. Its id is derived from the
-  closes it answers, so a replay finds the markers. When the repair of a fallback's or
-  an Undo's markers fails, the failure records their id and the closes it had made, as
-  a write's failed repair does; the replay finishes those closes and their edges first
-  (or repairs the markers still open, when none was made), then reconciles as before.
-  London undone over Paris and then revised or retired away leaves Paris current from
-  then on, and its earlier interval stays as history. A value that ended on its own
-  stays ended. A replay of a failed triple, edge or entity-vector write writes only for
-  the entries whose row still has the value the entry wrote (its id and
-  `content_sha256`, the version the triple links carry) and passes this rule, so a
-  revision since stays current; with none left the failure resolves with nothing to do.
-  A `memory.bulk_set` entry whose row is `high` projects nothing into the graph and
-  records nothing for a replay. Undo makes the restored value current in the graph:
-  every fact the restored row holds, open or closed, gets a new observation (a
-  `row-restore` marker) seen from the restore's instant on, to the microsecond (a closed
-  interval before it stays as history, and every later repair reads the fact as stated
-  then), as does its edge when the graph has one, so both planes show the restored value
-  current. A marker starts at the restore, or, for a closed fact whose latest row starts
-  later, at that start ("I live in Rome. Moving to Berlin on Dec 1." is undone with Rome
-  current until Dec 1 and Berlin from then); a fact still open is another row's, so its
-  start is not taken. The markers are a microsecond apart, in the order of their facts'
-  latest stored rows, as one write stores its triples: a row that said "I lived in Rome.
-  I now live in Berlin." is undone with Berlin current. A marker keeps the end its
-  fact's latest row stated when that end is still to come ("London until December" is
-  undone until December, not for ever); when that row's end was set by a supersession
-  close (it stamps `invalid_at`), the fact stated none, so the marker has none, even
-  when an older row stated one. These observations state nothing new: one carries
-  `co_occur` 0 only when a single weighted row of its fact (or edge), not stamped
-  `invalid_at`, spans the marker's whole interval (starting by the marker's start and
-  ending no earlier than its end, or open when the marker is), so Undoing back and forth
-  adds no weight; and 1 otherwise (the usual Undo of a closed value), so the graph's
-  readers still count it after a shorter row ends. Rows that only together span the
-  marker do not count: at worst one weight too many, never a fact lost. A marker the
-  interval repair closes as it starts is never current, so it weighs 0 too: another
-  marker of the same Undo (same subject, same single-valued relation) starts no later
-  and is newer than the value's newest row, the marker or its fact's newest open row by
-  start day. Rome's total stays the same however often that row is undone. A close is an
-  `ALTER UPDATE`, so the retirement's closes may still be pending when the Undo weighs
-  its facts: it reads with `apply_mutations_on_fly`, which applies them (their
-  expressions are deterministic), rather than waiting on `system.mutations`. ClickHouse
-  refuses that read for the whole table while any pending mutation on it has a subquery
-  (another tenant's erasure delete does). The Undo then writes nothing to the graph: the
-  memory row is restored at once, the refusal is recorded as a `triples_reconcile`
-  failure dated at the restore, and `projection_repair` replays it once that mutation
-  has landed and the read works again (until then each pass fails it again and it stays
-  active). Its facts then go through the interval repair by the usual rule, as values
-  seen at their markers: the retirement it undoes arrived earlier, so its value closes
-  and its row stays live; a value asserted after the Undo, or starting on a later day,
-  stays current. An Undo never retires a row. A replayed Undo reuses the restore's
-  instant from the failure, not the replay's clock, so it keeps its place in the order:
-  a value asserted after the Undo, even in its second, stays current. Each Undo has an
-  id (`restore_id`), stored on every triple and edge marker it writes and recorded in
-  its failure: a marker is this Undo's when it carries that id, open or closed since, so
-  a replay adds none and restates each as stored, from its own start ("Berlin on Dec 1"
-  still closes Rome on Dec 1), while a fact held only since gets its marker after those
-  stored, and another Undo, even a microsecond apart, never takes them for its own. An
-  edge marker keeps its triple markers' end, open while any of them is, never the end of
-  another relation's row of the same two entities; it is written before its triple
-  marker, so a replay after a failed triple insert finds the edge by the id and does not
-  repeat it. The failure records each restored row's `content_sha256`; a replay skips a
-  row revised since, whose revision reconciles its facts, so the revised value is never
-  dated at the Undo. A row counts as holding only while it has that hash and may still
-  hold graph facts (live, not deleted, not ended, not `high`): a retirement keeps the
-  hash, and is left to its own close too. A row revised or retired while the Undo ran
-  may have reconciled before the markers landed, so the Undo, and every replay of it,
-  closes what such a row no longer holds. A failed triple write records when it arrived: a replay of a failed insert
-  inserts the triples seen at that arrival, not at its own clock, so an older value
-  replayed after a newer one lands behind it instead of closing it. Some of its triples
-  may have landed before the insert failed, so it also records what the write resolved
-  its names to (none is recorded too), and the replay names them so. A failed interval
-  repair records the triple write for replay too; when the triples landed before the
-  repair failed, the replay does not insert them again, never repairs as of the replay's
-  own clock, and names their entities as the write resolved them (the failure records
-  those resolutions), not as they resolve by the replay. When the repair had issued
-  closes before it failed, the failure records them and the replay finishes them: it
-  issues again a close that never landed, closes their edges and, under `newest_wins`,
-  retires the rows behind them. Each recorded close names the newest value that closed
-  its value (a write closing London with Paris and then Madrid records Madrid). The
-  replay first skips a closed value a later write has stated again (open beside a row
-  the close took, or in a row that came after the close). Otherwise it judges every row
-  the close took that came after it (a restatement that landed while the close ran).
-  When any of them is the newer, the close is undone, as the write's own re-check would
-  have, and the value is first repaired as of the newest such restatement by start (an
-  undated one starts when seen) against the values written since, which found it closed:
-  a newer one closes it again and, under `newest_wins`, retires the rows behind it, as
-  that value's own write would have. A restatement counts, here and in the write's own
-  re-check, only when the interval repair, judging it as a new value against the value
-  that closed it, finds it the newer: "back to London" dated by its session day still
-  beats an undated Rome written earlier that day. A row "came after the close" when it
-  was seen after the newest value that closed it (or after the write's own last row of
-  it, when that is later), so a restatement in the write's own second counts, even one
-  another write stored between the write's triples; or when it is newer than that value
-  by the key below, as one dated on a later day is. A row seen before that value on its
-  day cannot beat it, so it closes again. When it had closed none, the replay repairs
-  only the write's triples that are still open (one a newer write closed was handled by
-  that write's repair), dated at the write. A replay that fails in turn records the
-  closes it made on the same failure, for the next one to finish.
-- **Which value is newer:** of two values of a single-valued relation, the newer stays
-  current and the older closes when the newer starts. Every triple row is placed by one
-  key, `(start day, seen_at, object)`: its start is its `valid_from`, or, undated, its
-  `seen_at`, the arrival of the write that stored it to the microsecond, plus one
-  microsecond per triple stated before it in that write (`last_seen`, `invalid_at`,
-  `valid_from` and `valid_to` stay whole seconds, the arrival's for the first two).
-  Values on different days order by day: Rome from July, imported after London was
-  stated undated in October, closes when London was seen, and London undated on Oct 5
-  closes when Berlin from Dec 1 begins, never Berlin before it begins. On one day the
-  later arrival is newer, whether either is dated: a fact dated by its session's day beats
-  an undated value seen earlier that day, and an undated update later that day beats a
-  dated value. Within one write the later-stated triple is stored later, so on one start
-  day the later-stated value is the newer, and any other writer reads that order back; a
-  later start day still wins whatever the order ("I move to Berlin" next month, then an
-  undated "I live in Paris": Paris closes when Berlin begins). Within one write, an undated
-  value whose own verb is a past form of a state (`lived_in`, `worked_at`,
-  `was_based_in`, as the extractor copied it from the text) is older than a dated value
-  of its relation, whichever is stated first: it is seen a microsecond before the
-  earliest start of another value in the write, when that start is earlier ("user
-  lived_in london" and "user live_in paris" from Oct 1, written Oct 15: London closes on
-  Oct 1, Paris stays current). Statement order alone moves nothing, because extraction
-  emits facts in any order ("I live in Paris" next to "I moved to London in 2019" keeps
-  Paris), and only the triple's own verb counts, not its sentence ("worked at Acme
-  before joining Globex" leaves Globex current). Two writers racing, even in
-  one second, so agree on one current value: the later arrival. A value can have several
-  open rows, one per observation, so values compare at their newest open row, the new
-  value's open stored rows counted with the new one ("London from Oct 15, Paris from
-  Oct 14, London from Oct 13" in one write leaves London current). Every start of the
-  older value closes, each with its own edge, when the earliest row of the newer value
-  that beats it starts (an edge, as a triple, never closes before it starts). One value
-  stays current, never neither. Only an open-ended value is closed: one stated with its
-  own end ("London until December") is left as it is, so it stays current beside the
-  newer value until that end. Two values with one start day, one `seen_at` and two
-  writers are left to their object text: writes whose offsets overlap may tie.
+  erased; each carries its row's `user_id`, so a user's erasure finds them after the row
+  is gone.
 
-  _Why one key._ The rule it replaces compared pairs: by date, by arrival when two
-  values shared a start, and by arrival again when a dated and an undated value sat
-  within two days of each other. Pairwise rules that switch between dates and arrivals
-  are not transitive: A dated Oct 13 noon, B undated and C dated Oct 14, arriving C, B,
-  A, gave A over B, B over C and C over A, and three writers that each read all three
-  closed all three. A key read back from stored columns is a total order, the same for
-  a write, an Undo and a replay of either, so every repair closes the same values, and
-  a replay that reuses its write's instant sits where the write did. An Undo needs no
-  rule of its own: its values are seen at the restore. The price is the time of day of a
-  dated value: two values dated on one day order by arrival, not by the hour they
-  state. And a session crossing midnight UTC: London undated, seen at 00:05 on Oct 15,
-  is newer than Paris dated to the session's Oct 14 and arriving at 00:10, where the
-  old two-day window ordered them by arrival. The day decides, which keeps the order
-  total.
+### Rows that hold facts
 
-A facet edge (the agent's file, concept or topic) is no row's: it is never linked, and
-no retirement closes it. A triple another live row's links still state stays open; a row
-whose value was first written before rows were linked to triples (by the row-links
-migration's applied time, read from `loom.memory_versions`, so a pin, a lock or an Undo
-of the same value keeps it one) has no links, and keeps open a triple its key is linked
-to (`entity_triple_memories`) while its value still names it; an Undo of such a row
-opens again the triples it holds by that rule. A value written since that
-stated no fact has no link and holds none; during a rolling deploy, a replica still on
-the previous build writes key links only, so its rows hold nothing until the fact is
-stated again. A cycle or a longer chain leaves the loser's triples open and logs a
-warning, and a write records the pair for `projection_repair`; a pair even the repair
-cannot read abandons its row (status `abandoned`, with `unfollowable_chain: N pair(s)`
-in `error_message`). An end that holds no facts states nothing, so the loser's triples
-close with no successor, and a triple another pair's live end still states stays open. A
-closed triple ends when its own row was replaced (the latest such date, if several rows
-close it), never before it started; all of a write's closes are one mutation, issued
-after its successors are in, so a replay of a follow that failed midway still finds the
-loser's triples open. A row written while the follow runs may state a triple it closes,
-and the close takes that write's triple too: every writer inserts a triple's row links
-before the triple, so once the close is queued the follow reads which closed triples a
-live row holds and undoes the close for those, with a second mutation matched on the
-close's `invalid_at` and each triple's `valid_to` (mutations run in order, and no row is
-copied). The links are a few rows a write, inserted synchronously as the client inserts
-by default, so a write still waits on one async-insert flush, its triples'. The re-check
-is one more read (two or three when a holding row was revised) on every follow that
-closes anything. If that re-check fails, the closed triples and the close's time are
-recorded (`triples_reopen`) for `projection_repair`.
+One rule decides whether a row's value may hold graph facts (`GRAPH_HOLDER_SQL`): live,
+not deleted, not expired, its `valid_to` not passed, and not `high`; a proposal is not
+live, so its `relations` are never graphed. The follow's live end, the check for a live
+row still stating a fact, a revision, an Undo and a replay all read it; a point write
+checks the same rule on the row it just wrote.
 
-A write follows up to 1,024 pairs itself and records the rest, or all of them if the
-follow fails, for `projection_repair` to follow; a replay dates an undated winner by its
-last write. A stored row retires after the insert only if it isn't locked, and wasn't
-pinned, retired or revised since the judge read it (the retirement reads it
-read-your-writes). It also leaves the write's other conflict marks and refines, so no
-other verdict of the write re-emits it; an entry whose key keeps no conflict mark or
-refine answers `clear`. `superseded_by` names the row that was the later statement when
-the retirement happened. That row can itself retire later, so a reader follows the
-chain. A row labelled `sensitivity='high'` is never judged or read as a peer, so its
-value never reaches the LLM. The read is bounded by the writer's read scope, like every
-same-key retirement.
+A revision (`memory.set`, `memory.bulk_set`, `memory.update_by_id`) of a row that
+existed before the write closes the facts its row held that no row holds any longer, and
+an Undo of a retirement opens again those the restored row's current value holds by the
+same rule (another row's claim keeps a fact from closing, but never reopens one);
+either, when it fails, is recorded for `projection_repair` as `triples_reconcile`.
 
-This costs one judge call per new row that has such peers, on top of the bulk conflict
-check's own calls. The calls are bounded by the same settings
-(`LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES`, `LOOM_BULK_CONFLICT_CHECK_CONCURRENCY`), and
-they add at least one LLM round trip to a bulk write that has any (one per
-`LOOM_BULK_CONFLICT_CHECK_CONCURRENCY` rows judged). The policy is the namespace's, as
-for the write's conflict verdicts.
+A dropped fact still valid later ("until Dec 1") ends now, and so does one a retired row
+stated until later, or it ends when a winner dated ahead starts, as an open one closes
+(a later end the follow's close gave stays).
 
-Without this, "User is Asian American" (05-23) and "The user has mixed Irish and Italian
-ethnicity" (05-30) both stayed live under `user_ethnicity`, and a reader shown both
-merged them into one answer. The point write keeps the documented `auto_reinforce`
-behaviour and its latency: it doesn't call the judge for same-key rows. The judge is off
-by default (`LOOM_MEMORY_CONFLICT_JUDGE=true` turns it on); with it off, same-key rows
-stay live as before.
+Its edge ends with its triples, at their latest end, unless a live row still holds
+another fact valid now between the same two entities, or a live row's current value
+names both: `entity_edge_rows` links each pair to the row and the `content_sha256` of
+the value that named it, so the revised or retired rows count too, and a revision whose
+new value still names both keeps its edge. No row text is read: a row whose entities
+came from extraction or resolution ("NYC" is `new york city`) keeps it as well. A row
+whose value was first written before those links existed, and has none for it, keeps the
+edge while its key is linked to the pair (`entity_edge_memories`), as before. A row
+naming the pair while the close runs lands its links before its edges, and the close
+checks again after its UPDATE and opens the pair again when one is found. The edge keeps
+no `invalid_at`, so a walk at an earlier time still finds it.
+
+A revision writes its new value's edges before that close: `memory.set` waits for its
+entity projection when it revises a row (a first write projects beside the response, and
+only while its row still holds that value: if a revision or retirement lands while it
+runs, it ends the edges it wrote that no live row names), and `memory.update_by_id` and
+`memory.update` project a changed value's edges the same way (a failure is recorded for
+`projection_repair` as `entity_edges`). The follow reads the retired rows' facts again
+after its plan, so a replay of a follow whose close landed still ends the rest.
+
+### One value current
+
+When a revision, or a retirement the follow closes, leaves a single-valued relation of
+the row with no value valid now (a value a close ended later counts only while an open
+value starts by that end: Paris holds until the move to Berlin it was closed for), the
+newest value a live row still holds and a close ended is stated again from the
+relation's last close, as an Undo states it and through the Undo's own check of the rows
+found holding it, each value's newest eight (a row revised or retired meanwhile is left
+to that change), but labelled `row-fallback`: triple and edge markers, then the interval
+repair, so a newer value written meanwhile wins. Its id is derived from the closes it
+answers, so a replay finds the markers. When the repair of a fallback's or an Undo's
+markers fails, the failure records their id and the closes it had made, as a write's
+failed repair does; the replay finishes those closes and their edges first (or repairs
+the markers still open, when none was made), then reconciles as before.
+
+London undone over Paris and then revised or retired away leaves Paris current from then
+on, and its earlier interval stays as history. A value that ended on its own stays
+ended.
+
+### Undo
+
+Undo makes the restored value current in the graph: every fact the restored row holds,
+open or closed, gets a new observation (a `row-restore` marker) seen from the restore's
+instant on, to the microsecond (a closed interval before it stays as history, and every
+later repair reads the fact as stated then), as does its edge when the graph has one, so
+both planes show the restored value current. A marker starts at the restore, or, for a
+closed fact whose latest row starts later, at that start ("I live in Rome. Moving to
+Berlin on Dec 1." is undone with Rome current until Dec 1 and Berlin from then); a fact
+still open is another row's, so its start is not taken. The markers are a microsecond
+apart, in the order of their facts' latest stored rows, as one write stores its triples:
+a row that said "I lived in Rome. I now live in Berlin." is undone with Berlin current.
+A marker keeps the end its fact's latest row stated when that end is still to come
+("London until December" is undone until December, not for ever); when that row's end
+was set by a supersession close (it stamps `invalid_at`), the fact stated none, so the
+marker has none, even when an older row stated one.
+
+These observations state nothing new: one carries `co_occur` 0 only when a single
+weighted row of its fact (or edge), not stamped `invalid_at`, spans the marker's whole
+interval (starting by the marker's start and ending no earlier than its end, or open
+when the marker is), so Undoing back and forth adds no weight; and 1 otherwise (the
+usual Undo of a closed value), so the graph's readers still count it after a shorter row
+ends. Rows that only together span the marker do not count: at worst one weight too
+many, never a fact lost. A marker the interval repair closes as it starts is never
+current, so it weighs 0 too: another marker of the same Undo (same subject, same
+single-valued relation) starts no later and is newer than the value's newest row, the
+marker or its fact's newest open row by start day. Rome's total stays the same however
+often that row is undone.
+
+A close is an `ALTER UPDATE`, so the retirement's closes may still be pending when the
+Undo weighs its facts: it reads with `apply_mutations_on_fly`, which applies them (their
+expressions are deterministic), rather than waiting on `system.mutations`. ClickHouse
+refuses that read for the whole table while any pending mutation on it has a subquery
+(another tenant's erasure delete does). The Undo then writes nothing to the graph: the
+memory row is restored at once, the refusal is recorded as a `triples_reconcile` failure
+dated at the restore, and `projection_repair` replays it once that mutation has landed
+and the read works again (until then each pass fails it again and it stays active).
+
+Its facts then go through the interval repair by the usual rule, as values seen at their
+markers: the retirement it undoes arrived earlier, so its value closes and its row stays
+live; a value asserted after the Undo, or starting on a later day, stays current. An
+Undo never retires a row. A replayed Undo reuses the restore's instant from the failure,
+not the replay's clock, so it keeps its place in the order: a value asserted after the
+Undo, even in its second, stays current.
+
+Each Undo has an id (`restore_id`), stored on every triple and edge marker it writes and
+recorded in its failure: a marker is this Undo's when it carries that id, open or closed
+since, so a replay adds none and restates each as stored, from its own start ("Berlin on
+Dec 1" still closes Rome on Dec 1), while a fact held only since gets its marker after
+those stored, and another Undo, even a microsecond apart, never takes them for its own.
+An edge marker keeps its triple markers' end, open while any of them is, never the end
+of another relation's row of the same two entities; it is written before its triple
+marker, so a replay after a failed triple insert finds the edge by the id and does not
+repeat it.
+
+The failure records each restored row's `content_sha256`; a replay skips a row revised
+since, whose revision reconciles its facts, so the revised value is never dated at the
+Undo. A row counts as holding only while it has that hash and may still hold graph facts
+(live, not deleted, not ended, not `high`): a retirement keeps the hash, and is left to
+its own close too. A row revised or retired while the Undo ran may have reconciled
+before the markers landed, so the Undo, and every replay of it, closes what such a row
+no longer holds.
+
+### Replay
+
+A replay of a failed triple, edge or entity-vector write writes only for the entries
+whose row still has the value the entry wrote (its id and `content_sha256`, the version
+the triple links carry) and may still hold facts (above), so a revision since stays
+current; with none left the failure resolves with nothing to do. A `memory.bulk_set`
+entry whose row is `high` projects nothing into the graph and records nothing for a
+replay.
+
+A failed triple write records when it arrived: a replay of a failed insert inserts the
+triples seen at that arrival, not at its own clock, so an older value replayed after a
+newer one lands behind it instead of closing it. Some of its triples may have landed
+before the insert failed, so it also records what the write resolved its names to (none
+is recorded too), and the replay names them so. A failed interval repair records the
+triple write for replay too; when the triples landed before the repair failed, the
+replay does not insert them again, never repairs as of the replay's own clock, and names
+their entities as the write resolved them (the failure records those resolutions), not
+as they resolve by the replay. When the repair had issued closes before it failed, the
+failure records them and the replay finishes them: it issues again a close that never
+landed, closes their edges and, under `newest_wins`, retires the rows behind them.
+
+Each recorded close names the newest value that closed its value (a write closing London
+with Paris and then Madrid records Madrid). The replay first skips a closed value a
+later write has stated again (open beside a row the close took, or in a row that came
+after the close). Otherwise it judges every row the close took that came after it (a
+restatement that landed while the close ran). When any of them is the newer, the close
+is undone, as the write's own re-check would have, and the value is first repaired as of
+the newest such restatement by start (an undated one starts when seen) against the
+values written since, which found it closed: a newer one closes it again and, under
+`newest_wins`, retires the rows behind it, as that value's own write would have. A
+restatement counts, here and in the write's own re-check, only when the interval repair,
+judging it as a new value against the value that closed it, finds it the newer: "back to
+London" dated by its session day still beats an undated Rome written earlier that day. A
+row "came after the close" when it was seen after the newest value that closed it (or
+after the write's own last row of it, when that is later), so a restatement in the
+write's own second counts, even one another write stored between the write's triples; or
+when it is newer than that value by the key below, as one dated on a later day is. A row
+seen before that value on its day cannot beat it, so it closes again.
+
+When it had closed none, the replay repairs only the write's triples that are still open
+(one a newer write closed was handled by that write's repair), dated at the write. A
+replay that fails in turn records the closes it made on the same failure, for the next
+one to finish.
+
+### Which value is newer
+
+Of two values of a single-valued relation, the newer stays current and the older closes
+when the newer starts. Every triple row is placed by one key,
+`(start day, seen_at, object)`: its start is its `valid_from`, or, undated, its
+`seen_at`, the arrival of the write that stored it to the microsecond, plus one
+microsecond per triple stated before it in that write (`last_seen`, `invalid_at`,
+`valid_from` and `valid_to` stay whole seconds, the arrival's for the first two).
+
+Values on different days order by day: Rome from July, imported after London was stated
+undated in October, closes when London was seen, and London undated on Oct 5 closes when
+Berlin from Dec 1 begins, never Berlin before it begins. On one day the later arrival is
+newer, whether either is dated: a fact dated by its session's day beats an undated value
+seen earlier that day, and an undated update later that day beats a dated value. Within
+one write the later-stated triple is stored later, so on one start day the later-stated
+value is the newer, and any other writer reads that order back; a later start day still
+wins whatever the order ("I move to Berlin" next month, then an undated "I live in
+Paris": Paris closes when Berlin begins).
+
+Within one write, an undated value whose own verb is a past form of a state (`lived_in`,
+`worked_at`, `was_based_in`, as the extractor copied it from the text) is older than a
+dated value of its relation, whichever is stated first: it is seen a microsecond before
+the earliest start of another value in the write, when that start is earlier ("user
+lived_in london" and "user live_in paris" from Oct 1, written Oct 15: London closes on
+Oct 1, Paris stays current). Statement order alone moves nothing, because extraction
+emits facts in any order ("I live in Paris" next to "I moved to London in 2019" keeps
+Paris), and only the triple's own verb counts, not its sentence ("worked at Acme before
+joining Globex" leaves Globex current).
+
+Two writers racing, even in one second, so agree on one current value: the later
+arrival. A value can have several open rows, one per observation, so values compare at
+their newest open row, the new value's open stored rows counted with the new one
+("London from Oct 15, Paris from Oct 14, London from Oct 13" in one write leaves London
+current). Every start of the older value closes, each with its own edge, when the
+earliest row of the newer value that beats it starts (an edge, as a triple, never closes
+before it starts). One value stays current, never neither. Only an open-ended value is
+closed: one stated with its own end ("London until December") is left as it is, so it
+stays current beside the newer value until that end. Two values with one start day, one
+`seen_at` and two writers are left to their object text: writes whose offsets overlap
+may tie.
+
+_Why one key._ The rule it replaces compared pairs: by date, by arrival when two values
+shared a start, and by arrival again when a dated and an undated value sat within two
+days of each other. Pairwise rules that switch between dates and arrivals are not
+transitive: A dated Oct 13 noon, B undated and C dated Oct 14, arriving C, B, A, gave A
+over B, B over C and C over A, and three writers that each read all three closed all
+three. A key read back from stored columns is a total order, the same for a write, an
+Undo and a replay of either, so every repair closes the same values, and a replay that
+reuses its write's instant sits where the write did. An Undo needs no rule of its own:
+its values are seen at the restore. The price is the time of day of a dated value: two
+values dated on one day order by arrival, not by the hour they state. And a session
+crossing midnight UTC: London undated, seen at 00:05 on Oct 15, is newer than Paris
+dated to the session's Oct 14 and arriving at 00:10, where the old two-day window
+ordered them by arrival. The day decides, which keeps the order total.
 
 The extraction also writes its inputs:
 

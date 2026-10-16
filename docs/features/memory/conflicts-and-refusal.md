@@ -149,40 +149,54 @@ A write that retires rows through several paths leaves one record per path, and 
 that retires more than 200 rows splits them across several records. A record names each
 retired memory, the row it retired behind and the reason; it holds ids, keys and
 identity, never value text. On every path listed, a locked or pinned row, or one
-already retired since it was read, is left as it is. A row is listed once a re-read
-after the write finds its superseded version at the head; one a later write overtook is
-not. One the re-read could not see is listed with `unconfirmed`: a write's result
-never counts it among the rows it retired, recall is left as it was, and the projection
-repair mirrors the row's head onto recall once it can read it (should even queueing
-that fail, `loom reconcile-status` finds the divergence). A point write (`memory.set`,
-`memory.update_by_id`, the deferred judge) writes its record beside the response.
+already retired since it was read, is left as it is.
+
+A row is listed once a re-read after the write finds its superseded version at the
+head; one a later write overtook is not. One the re-read could not see is listed with
+`unconfirmed`: a write's result never counts it among the rows it retired, recall is
+left as it was, and the projection repair mirrors the row's head onto recall once it
+can read it (should even queueing that fail, `loom reconcile-status` finds the
+divergence). A point write (`memory.set`, `memory.update_by_id`, the deferred judge)
+writes its record beside the response.
+
+#### The Auto-resolved tab
 
 The Review queue's **Auto-resolved** tab lists the last 30 days, a page of 20 records at
-a time, and its Undo calls `memory.restore` with `if_superseded_by`: the row comes back
-`active` and `memory.unsupersede` is recorded only while it is still retired behind the
-memory the record names; a row deleted, revived or retired again since shows "Changed
-since". The Undo holds the key's write lock from its read of the row to its insert,
-as a conditional write (`if_match_sha256`) does: a conditional revision made meanwhile
-lands first and the Undo shows "Changed since", or waits for the Undo. An
-unconditional write takes no lock, and the later of the two wins. When another
-conditional write holds the lock past its wait, the Undo answers 409 PRECONDITION_FAILED ("another
-conditional write to this key is still running; re-read and retry"). An Undo opens again the
-graph facts the restored row still holds (see the
-[entity graph](../entity-graph.md)). To mark rows
-already restored, the tab reads up to 2,500 `memory.unsupersede` records (5 pages of 500) back to the oldest retirement it shows. Past that, an older row still offers Undo,
-and undoing a row that is already live shows "Changed since". An Undo is not
-remembered: a later write of the same key is judged again, and can retire the row again
-if it is the later statement. A row the re-read could not confirm is marked "may not
-have taken effect". The memory inspector's **Restore** on a superseded row sends
-`only_if_superseded`, and `if_superseded_by` when it can see the successor: a read
-narrowed below the namespace shows none for a successor outside its scope, and either
-way a delete since is never undone. When it finds nothing to restore, the inspector re-reads the
-row and shows it as it is now. Either way the list behind the drawer is refreshed, even if
-the drawer has moved to another memory; a failed re-read shows "Reload failed" and leaves
-the restore's own message standing. A restore that answers after the drawer has moved to
-another memory or closed is still reported, with its key named ("Restored user_city",
-"Restore of user_city failed: …"), and leaves the drawer on the memory it moved to; if
-the drawer has come back to the restored memory, it re-reads the row.
+a time. A row the re-read could not confirm is marked "may not have taken effect". To
+mark rows already restored, the tab reads up to 2,500 `memory.unsupersede` records (5
+pages of 500) back to the oldest retirement it shows. Past that, an older row still
+offers Undo, and undoing a row that is already live shows "Changed since".
+
+#### Undo
+
+The tab's Undo calls `memory.restore` with `if_superseded_by`: the row comes back, and
+`memory.unsupersede` is recorded, only while it is still retired behind the memory the
+record names; a row deleted, revived or retired again since shows "Changed since". It
+comes back `active`, or `conflicted` when it was under review when it retired: it still
+lists its peers, as they list it.
+
+The Undo holds the key's write lock from its read of the row to its insert, as a
+conditional write (`if_match_sha256`) does: a conditional revision made meanwhile lands
+first and the Undo shows "Changed since", or waits for the Undo. An unconditional write
+takes no lock, and the later of the two wins. When another conditional write holds the
+lock past its wait, the Undo answers 409 PRECONDITION_FAILED ("another conditional write
+to this key is still running; re-read and retry").
+
+An Undo opens again the graph facts the restored row still holds (see the
+[entity graph](../entity-graph.md)). It is not remembered: a later write of the same key
+is judged again, and can retire the row again if it is the later statement.
+
+#### Restore from the memory inspector
+
+The memory inspector's **Restore** on a superseded row sends `only_if_superseded`, and
+`if_superseded_by` when it can see the successor: a read narrowed below the namespace
+shows none for a successor outside its scope, and either way a delete since is never
+undone. When it finds nothing to restore, the inspector re-reads the row and shows it as
+it is now. Either way the list behind the drawer is refreshed, even if the drawer has
+moved to another memory; a failed re-read is reported and leaves the restore's own
+message standing. A restore that answers after the drawer has moved to another memory or
+closed is still reported, with its key named, and leaves the drawer on the memory it
+moved to; if the drawer has come back to the restored memory, it re-reads the row.
 
 ## Duplicates
 
