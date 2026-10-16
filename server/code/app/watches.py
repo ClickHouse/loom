@@ -140,11 +140,14 @@ async def deliver(watch: CoverageWatch, coverage: dict[str, Any]) -> tuple[bool,
     if not await repo.ready_event_exists(org, inbox, task_id):
         seq = await server_version()
         await repo.insert_ready_event(_event_row(watch, task_id, tier_summary(coverage), seq))
-        emitted = True
-        task_wakeups.notify(
-            task_wakeups.inbox_key(org, inbox),
-            task_wakeups.poster_key(org, watch.created_by),
-        )
+        # The task id is the insert's dedup token, so when another delivery
+        # posted first ClickHouse dropped ours: the stored seq is then not ours.
+        emitted = await repo.ready_event_seq(org, inbox, task_id) == seq
+        if emitted:
+            task_wakeups.notify(
+                task_wakeups.inbox_key(org, inbox),
+                task_wakeups.poster_key(org, watch.created_by),
+            )
     delivered = next_watch_version(watch, delivered_at=naive_utc_now())
     await repo.insert_watch_version(delivered)
     return emitted, delivered

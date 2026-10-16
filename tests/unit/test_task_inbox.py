@@ -95,6 +95,7 @@ class FakeRepo:
         self.tasks: dict[str, dict[str, Any]] = {}
         self.events: list[dict[str, Any]] = []
         self.leases = FakeLeases()
+        self.dedup_tokens: set[str] = set()
 
     # inboxes
     async def fetch_inbox_row(self, org, inbox):
@@ -144,6 +145,11 @@ class FakeRepo:
         return None
 
     async def insert_task_version(self, row, *, dedup_token=""):
+        # ClickHouse drops an insert whose token it has already seen.
+        if dedup_token in self.dedup_tokens:
+            return
+        if dedup_token:
+            self.dedup_tokens.add(dedup_token)
         self.tasks[str(row["task_id"])] = dict(row)
 
     async def list_tasks(
@@ -465,6 +471,31 @@ async def test_idempotency_key_returns_the_first_task(fake: FakeRepo) -> None:
     a = await _post(fake, idempotency_key="k1")
     b = await _post(fake, idempotency_key="k1", title="retried")
     assert a.created and not b.created and a.task.task_id == b.task.task_id
+
+
+@pytest.mark.asyncio
+async def test_racing_creates_with_one_key_answer_with_the_task_that_landed(
+    fake: FakeRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await _register(fake)
+    a = await _post(fake, idempotency_key="k1")
+    # The second create read before the first one landed: its own insert
+    # carries the same dedup token, so ClickHouse drops it.
+    lookup = fake.fetch_task_by_idempotency_key
+    calls = []
+
+    async def miss_first_lookup(*args: Any) -> Any:
+        calls.append(args)
+        return None if len(calls) == 1 else await lookup(*args)
+
+    monkeypatch.setattr(fake, "fetch_task_by_idempotency_key", miss_first_lookup)
+    events_before = len(fake.events)
+    b = await _post(fake, idempotency_key="k1", title="raced")
+    assert not b.created and b.task.task_id == a.task.task_id
+    assert len(fake.tasks) == 1
+    # no "created" event or lease row for a task that was never stored
+    assert len(fake.events) == events_before
+    assert list(fake.leases.rows) == [a.task.task_id]
 
 
 # ------------------------------------------------------------ accept + promotion

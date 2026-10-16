@@ -85,7 +85,15 @@ class Fake:
         )
 
     async def insert_ready_event(self, row):
-        self.events.append(dict(row))
+        # The task id is the insert's dedup token: ClickHouse drops a repeat.
+        if not await self.ready_event_exists(row["org"], row["inbox"], row["task_id"]):
+            self.events.append(dict(row))
+
+    async def ready_event_seq(self, org, inbox, task_id):
+        for e in self.events:
+            if e["org"] == org and e["inbox"] == inbox and e["task_id"] == task_id:
+                return e["seq"]
+        return None
 
     async def fetch_inbox(self, org, inbox):
         return self.inboxes.get((org, inbox))
@@ -117,6 +125,7 @@ def fake(history: tuple[str, list[str]], monkeypatch: pytest.MonkeyPatch) -> Fak
         "insert_watch_version",
         "ready_event_exists",
         "insert_ready_event",
+        "ready_event_seq",
     ):
         monkeypatch.setattr(wrepo, name, getattr(f, name))
     monkeypatch.setattr(tasks_repo, "fetch_inbox", f.fetch_inbox)
@@ -201,6 +210,35 @@ async def test_a_crash_between_the_event_and_the_watch_update_does_not_duplicate
     got = await code_coverage_notify.run_pass()
     assert (got.delivered, got.emitted) == (1, 0) and len(fake.events) == 1
     assert fake.watches[(ORG, NS, b, INBOX)].delivered_at is not None
+
+
+@pytest.mark.asyncio
+async def test_two_racing_deliveries_report_one_emitted_event(
+    fake: Fake, history: tuple[str, list[str]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.code.domain.index import repos
+
+    _, (a, b, c) = history
+    fake.set_heads(fast=c, clang=a)
+    await h.handle_code_coverage_watch(_watch(b))
+    fake.set_heads(fast=c, clang=c)
+    watch = fake.watches[(ORG, NS, b, INBOX)]
+    coverage = await svc.coverage_for(repos.repo_for_namespace(ORG, NS), b, fake.state)
+
+    # Both deliverers checked for the event before either posted it.
+    async def no_event_yet(org: str, inbox: str, task_id: str) -> bool:
+        return False
+
+    seqs = iter([SERVER_NOW_US, SERVER_NOW_US + 1])
+
+    async def server_version(floor: int = 0) -> int:
+        return next(seqs)
+
+    monkeypatch.setattr(wrepo, "ready_event_exists", no_event_yet)
+    monkeypatch.setattr(svc, "server_version", server_version)
+    first, _ = await svc.deliver(watch, coverage)
+    second, _ = await svc.deliver(watch, coverage)
+    assert (first, second) == (True, False) and len(fake.events) == 1
 
 
 @pytest.mark.asyncio

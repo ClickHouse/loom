@@ -143,6 +143,9 @@ async with Agent(org="acme", namespace="public", agent="public-bot", api_key=PUB
     out["task"]["status"]  # "triage", or "todo" when the poster is trusted
 ```
 
+Two creates with one `idempotency_key` store one task, even when they race: each answers with it, and only
+the one that stored it says `created=true`.
+
 `namespace` is the poster's own; the first argument names the inbox. `create` also takes `priority` (default 3),
 `deadline`, `not_before`, `origin` and `parent_task_id`. A task with `not_before` is `todo` but hidden from `pull`
 until then, which is how a bot keeps its own "retry later" backlog.

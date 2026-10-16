@@ -92,6 +92,21 @@ async def ready_event_exists(
     return bool(row and int(row.get("n") or 0) > 0)
 
 
+async def ready_event_seq(
+    org: str, inbox: str, task_id: str, *, ch: _CHClient | None = None
+) -> int | None:
+    """The stored ready event's ``seq``, or None when there is none."""
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        "SELECT seq FROM loom.task_events "
+        "WHERE org = {org:String} AND inbox = {inbox:String} AND task_id = {tid:UUID} "
+        "AND event = {event:String} ORDER BY seq LIMIT 1 "
+        "SETTINGS select_sequential_consistency = 1",
+        params={"org": org, "inbox": inbox, "tid": task_id, "event": READY_EVENT},
+    )
+    return int(row["seq"]) if row else None
+
+
 async def insert_ready_event(row: dict[str, Any], *, ch: _CHClient | None = None) -> None:
     """The event row; the id doubles as the insert's dedup token, so a retried
     insert of the same row lands once."""
