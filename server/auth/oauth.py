@@ -1413,7 +1413,9 @@ async def _token_exchange_grant(f: dict[str, str]) -> dict[str, Any]:
         m, proof = await machines.verify_workload(token, f.get("client_id", ""))
     except machines.Refused as e:
         raise _refused(e) from None
-    ttl = max(60, min(machines.TOKEN_TTL, int(proof["exp"]) - since))
+    ttl = min(machines.TOKEN_TTL, int(proof["exp"]) - since)
+    if ttl < 30:  # inside the verify's leeway, or nearly out: a token would outlive it
+        raise OAuthError("invalid_grant", description="the subject token has run out")
     issued = await _machine_tokens(
         m, since, ttl, {"by": "workload", "workload_sub": str(proof["sub"])}
     )
@@ -1423,9 +1425,8 @@ async def _token_exchange_grant(f: dict[str, str]) -> dict[str, Any]:
 async def _machine_tokens(
     m: machines.Machine, since: int, ttl: int, how: dict[str, str]
 ) -> dict[str, Any]:
-    """The token for bot `m`, issued as of `since`, taken before `m` was read:
-    a disable that lands after that read cuts off at a later second, so this
-    token falls under it, and one that landed before it, the read saw."""
+    """The token for bot `m`. `since` was taken before `m` was read, so a
+    disable the read missed has a later cutoff, and revokes this token."""
     from server.auth.revocation import subjects_revoked
 
     subject = machines.subject(m["name"])

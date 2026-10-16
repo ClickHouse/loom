@@ -178,7 +178,7 @@ async def verify_workload(token: str, name: str) -> tuple[Machine, dict[str, Any
             leeway=_LEEWAY_S,
         )
     except (httpx.HTTPError, jwt.PyJWKClientConnectionError, _Undiscovered) as e:
-        raise Refused("temporarily_unavailable", f"the issuer's keys: {e!r}") from e
+        raise Refused("temporarily_unavailable", f"the issuer's keys: {e}") from e
     except (jwt.PyJWTError, ValueError, KeyError) as e:
         raise Refused("invalid_grant", f"subject token refused: {e}") from None
     for claim, want in m["claims"].items():
@@ -209,16 +209,17 @@ async def _jwks_uri(issuer: str) -> str:
     if cached and time.monotonic() - cached[1] < _DISCOVERY_TTL_S:
         return cached[0]
     try:
-        r = await http().get(f"{issuer}/.well-known/openid-configuration", timeout=10.0)
+        r = await http().get(f"{issuer.rstrip('/')}/.well-known/openid-configuration", timeout=10.0)
         r.raise_for_status()
         doc = r.json()
     except (httpx.HTTPError, ValueError) as e:
         raise _Undiscovered(type(e).__name__) from e
+    # A document that does not match is a trust registered wrong, not a fault to retry.
     if not isinstance(doc, dict) or doc.get("issuer") != issuer:
-        raise _Undiscovered("its discovery document names another issuer")
+        raise Refused("invalid_client", "the trust's issuer names another in its discovery")
     jwks_uri = str(doc.get("jwks_uri", ""))
     if not jwks_uri.startswith("https://"):
-        raise _Undiscovered("its discovery document names no https jwks_uri")
+        raise Refused("invalid_client", "the trust's issuer names no https jwks_uri")
     _discovered[issuer] = (jwks_uri, time.monotonic())
     return jwks_uri
 

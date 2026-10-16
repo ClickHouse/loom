@@ -297,3 +297,33 @@ def test_two_clients_of_one_job_share_its_token_file(bots, monkeypatch, tmp_path
     assert first.token() and second.token()
     first._renew_at = 0  # a renewal, from the unchanged file
     assert first.token(refused=first.token())
+
+
+def test_an_issuer_ending_in_a_slash_takes_its_own_tokens(bots) -> None:
+    bots["registered"]["deploy"]["issuer"] = "https://sts.example/tenant/"
+    token = _ci_token(bots, iss="https://sts.example/tenant/")
+    assert _exchange(TestClient(oauth_app()), token).status_code == 200
+
+
+def test_a_ci_token_at_its_end_gets_nothing(bots) -> None:
+    # Inside the verify's leeway it still decodes; a token issued now would outlive it.
+    token = _ci_token(bots, exp=int(time.time()) - 10)
+    r = _exchange(TestClient(oauth_app()), token)
+    assert r.status_code == 400 and r.json()["error"] == "invalid_grant"
+
+
+def test_a_trust_whose_discovery_names_another_issuer_is_refused_for_good(monkeypatch) -> None:
+    import httpx
+
+    class _Web:
+        async def get(self, url: str, **kw: Any) -> httpx.Response:
+            doc = {"issuer": "https://elsewhere.example", "jwks_uri": "https://x/keys"}
+            return httpx.Response(200, json=doc, request=httpx.Request("GET", url))
+
+    from server.clients import _http
+
+    machines._discovered.clear()
+    monkeypatch.setattr(_http, "get_client", lambda: _Web())
+    with pytest.raises(machines.Refused) as refused:
+        asyncio.run(machines._jwks_uri("https://ci.example"))
+    assert refused.value.error == "invalid_client" and "_Undiscovered" not in str(refused.value)

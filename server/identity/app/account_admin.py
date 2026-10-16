@@ -9,11 +9,10 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from server.auth import machines, revocation, sso_links
+from server.core.naming import validate_namespace_name
 from server.observability import audit
 
 _BOT_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
-# One concrete org or namespace: never empty, never the `*` that means "all".
-_PLACE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 
 
 def _from_now_on() -> datetime:
@@ -139,13 +138,18 @@ def bot_from(
 
     if not _BOT_NAME.fullmatch(name):
         raise ValueError("name: lower-case letters, digits and '-', at most 63")
-    if not _PLACE.fullmatch(org):
+    # One concrete org: never empty, never the `*` a token reads as every org.
+    if not org.strip() or "*" in org or org != org.strip():
         raise ValueError(f"org must name one org, got {org!r}")
     ns_roles: dict[str, str] = {}
     for item in namespace_roles:
         ns, sep, role = item.partition("=")
         ns, role = ns.strip(), role.strip().lower()
-        if not sep or not _PLACE.fullmatch(ns) or role not in GRANT_ROLES:
+        try:
+            ns = validate_namespace_name(ns)  # a name, never the `*` of every namespace
+        except ValueError:
+            sep = ""
+        if not sep or role not in GRANT_ROLES:
             raise ValueError(
                 f"a namespace role is NS=viewer|writer|admin on one namespace, got {item!r}"
             )
@@ -158,7 +162,7 @@ def bot_from(
         if not sep or not claim.strip() or not value or value == "*":
             raise ValueError(f"a claim is NAME=VALUE (a bare * matches anything), got {item!r}")
         wanted[claim.strip()] = value
-    issuer = issuer.rstrip("/")  # a token's `iss` is compared exactly
+    issuer = issuer.strip()  # compared exactly with a token's `iss`, slash and all
     trust = bool(issuer or audience or wanted)
     if trust and not (issuer.startswith("https://") and audience and wanted):
         # Any job on the platform can ask for a token with any audience: only
@@ -178,10 +182,12 @@ def bot_from(
 
 
 async def create_bot(bot: machines.Machine, *, by: str, replace: bool) -> None:
+    from server.core.ch import own_write_reads
     from server.identity.store import namespaces
 
     name, org = bot["name"], bot["org"]
-    missing = [ns for ns, _ in bot["ns_roles"] if not await namespaces.is_active(org, ns)]
+    with own_write_reads():  # "register it, then the bot" must not read a replica behind
+        missing = [ns for ns, _ in bot["ns_roles"] if not await namespaces.is_active(org, ns)]
     if missing:
         raise ValueError(f"no namespace {', '.join(missing)} in org {org!r}; register it first")
     if await revocation.revoked_outright(machines.subject(name)):

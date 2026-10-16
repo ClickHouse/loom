@@ -73,11 +73,12 @@ class MachineLogin(httpx.Auth):
                     # a short-lived CI proof capped.
                     life = self._expires_at - time.time()
                     self._renew_at = self._expires_at - min(_RENEW_BEFORE_S, life / 2)
-                except AuthInvalid:
-                    # A renewal that failed (a CI token already spent) leaves
-                    # the token in hand good until it runs out.
+                except (AuthInvalid, httpx.HTTPError, OSError):
+                    # The CI token ran out or Loom is unreachable: the token in
+                    # hand is good until it runs out, and the next try waits a bit.
                     if self._token == refused or time.time() >= self._expires_at:
                         raise
+                    self._renew_at = min(self._expires_at, time.time() + 30)
             return self._token
 
     def _fetch(self) -> tuple[str, float]:
@@ -187,7 +188,8 @@ def _workload_token(audience: str) -> str:
     if not (url and bearer and audience):
         raise AuthInvalid(
             "LOOM_CLIENT_ID is set but there is no key (LOOM_CLIENT_KEY_FILE) or CI token "
-            "(LOOM_WORKLOAD_TOKEN_FILE, or a CI job with LOOM_WORKLOAD_AUDIENCE)"
+            "(LOOM_WORKLOAD_TOKEN, LOOM_WORKLOAD_TOKEN_FILE, or a CI job with "
+            "LOOM_WORKLOAD_AUDIENCE)"
         )
     # The runner's URL carries its own query (an API version): the audience joins it.
     asked = httpx.URL(url).copy_merge_params({"audience": audience})

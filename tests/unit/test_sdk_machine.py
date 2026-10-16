@@ -152,3 +152,21 @@ def test_the_cli_reads_a_bots_claims_before_its_first_request(token_endpoint, mo
     monkeypatch.setenv("LOOM_WORKLOAD_TOKEN", "ci")
     login = machine.MachineLogin("https://loom.example", "deploy")
     assert login.current_token() == "t1" and len(token_endpoint) == 1
+
+
+def test_a_renewal_lost_to_the_network_keeps_the_token_and_waits(monkeypatch) -> None:
+    calls: list[int] = []
+
+    def post(*a: Any, **k: Any) -> httpx.Response:
+        calls.append(1)
+        if len(calls) == 1:
+            return httpx.Response(200, json={"access_token": "t1", "expires_in": 3600})
+        raise httpx.ConnectError("Loom unreachable")
+
+    monkeypatch.setattr(machine.httpx, "post", post)
+    monkeypatch.setenv("LOOM_WORKLOAD_TOKEN", "ci")
+    login = machine.MachineLogin("https://loom.example", "deploy")
+    login.token()
+    login._renew_at = 0  # due for renewal, with the token still good
+    assert [login.token() for _ in range(5)] == ["t1"] * 5
+    assert len(calls) == 2  # one failed renewal, then it waits

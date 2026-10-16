@@ -29,16 +29,17 @@ def test_a_bot_is_one_orgs_on_named_namespaces(org: str, roles: list[str]) -> No
         account_admin.bot_from(name="b", org=org, namespace_roles=roles, public_key_pem=_KEY)
 
 
-def test_a_trust_issuer_is_compared_without_its_trailing_slash() -> None:
+def test_a_trust_issuer_is_kept_as_given_slash_and_all() -> None:
+    # Some issuers' `iss` ends in a slash, and a token's `iss` is compared exactly.
     bot = account_admin.bot_from(
         name="deploy",
         org="acme",
         namespace_roles=["deploys=writer"],
-        issuer="https://ci.example/",
+        issuer="https://sts.example/tenant/",
         audience="loom",
         claims=["repository=acme/app"],
     )
-    assert bot["issuer"] == "https://ci.example"
+    assert bot["issuer"] == "https://sts.example/tenant/"
 
 
 @pytest.fixture

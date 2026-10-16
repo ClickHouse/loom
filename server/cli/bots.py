@@ -101,12 +101,15 @@ def _cmd_create(args: argparse.Namespace) -> int:
                 return _fail(str(e))
             with os.fdopen(fd, "wb") as f:
                 f.write(private)
+        saved = False
         try:
             await account_admin.create_bot(bot, by=f"cli:{getpass.getuser()}", replace=args.replace)
+            saved = True
         except ValueError as e:
-            if args.generate_key:
-                os.remove(args.generate_key)
             return _fail(str(e))
+        finally:
+            if args.generate_key and not saved:
+                os.remove(args.generate_key)
         print(f"bot {args.name}: tokens for {machines.subject(args.name)} in {args.org}")
         if bot["public_keys"]:
             key_file = args.generate_key or "<its private key>"
