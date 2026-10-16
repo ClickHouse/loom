@@ -1,5 +1,6 @@
-"""The conversation store's "*" agent: the substring fallback spans every agent, as
-the vector search does, and `thread_agent` names the agent that owns a thread."""
+"""The conversation store across agents: the substring fallback spans every agent on
+"*"/"-", as the vector search does, and a thread read with no agent reads every
+agent's turns."""
 
 from __future__ import annotations
 
@@ -40,19 +41,21 @@ async def test_substring_search_spans_every_agent_on_a_wildcard() -> None:
 
 
 @pytest.mark.asyncio
-async def test_thread_agent_is_the_thread_rows_owner_before_a_later_writer() -> None:
-    # Created by "planner", appended to later by "reviewer": the thread row names the owner.
-    ch = StubCH([[{"agent": "planner"}], [{"agent": "reviewer"}]])
-    assert await conversation_repo.thread_agent("o", "ns", "t-1", ch=ch) == "planner"
-    assert len(ch.calls) == 1
-    assert "conversation_threads" in ch.calls[0][0]
+async def test_thread_reads_drop_the_agent_filter_for_any_agent() -> None:
+    reads = (
+        lambda agent, ch: conversation_repo.fetch_thread("o", "ns", agent, "t-1", ch=ch),
+        lambda agent, ch: conversation_repo.count_thread_msgs("o", "ns", agent, "t-1", ch=ch),
+        lambda agent, ch: conversation_repo.list_thread("o", "ns", agent, "t-1", ch=ch),
+    )
+    for read in reads:
+        ch = StubCH()
+        await read("bot", ch)
+        sql, params = ch.calls[-1]
+        assert "agent = {agent:String}" in sql
+        assert params["agent"] == "bot"
 
-
-@pytest.mark.asyncio
-async def test_thread_agent_falls_back_to_the_latest_message() -> None:
-    # Built by conversation.append alone: no thread row, the latest message's agent.
-    ch = StubCH([[], [{"agent": "reviewer"}]])
-    assert await conversation_repo.thread_agent("o", "ns", "t-2", ch=ch) == "reviewer"
-
-    ch = StubCH([[], [{"agent": ""}]])
-    assert await conversation_repo.thread_agent("o", "ns", "ghost", ch=ch) is None
+        await read(None, ch)
+        sql, params = ch.calls[-1]
+        assert "agent = {agent:String}" not in sql
+        assert "agent" not in params
+        assert "thread_id = {tid:String}" in sql

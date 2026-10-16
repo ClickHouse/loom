@@ -239,12 +239,13 @@ async def insert_thread(
 async def fetch_thread(
     org: str,
     namespace: str,
-    agent: str,
+    agent: str | None,
     thread_id: str,
     *,
     ch: _CHClient | None = None,
 ) -> ThreadRow | None:
-    """Return the thread-level metadata row, or None if absent.
+    """Return the thread-level metadata row, or None if absent. `agent=None`
+    reads it whoever owns it (a thread is one row per thread_id).
 
     `loom.conversation_threads` is ReplacingMergeTree(updated_at) so
     FINAL collapses earlier (title/metadata) versions; we read the
@@ -252,23 +253,23 @@ async def fetch_thread(
     if they need structure (the handler does).
     """
     ch = ch or _default_client()
+    params: dict[str, Any] = {"org": org, "ns": namespace, "tid": thread_id}
+    agent_clause = ""
+    if agent is not None:
+        agent_clause = "AND agent = {agent:String}"
+        params["agent"] = agent
     row = await ch.query_one(
-        """
+        f"""
         SELECT thread_id, title, metadata, run_id, user_id, created_at, updated_at, agent
         FROM loom.conversation_threads FINAL
-        WHERE org = {org:String}
-          AND namespace = {ns:String}
-          AND agent = {agent:String}
-          AND thread_id = {tid:String}
+        WHERE org = {{org:String}}
+          AND namespace = {{ns:String}}
+          AND thread_id = {{tid:String}}
           AND tombstoned_at IS NULL
+          {agent_clause}
         LIMIT 1
         """,
-        params={
-            "org": org,
-            "ns": namespace,
-            "agent": agent,
-            "tid": thread_id,
-        },
+        params=params,
     )
     return cast(ThreadRow | None, row)
 
@@ -440,7 +441,7 @@ async def search_substring(
 async def list_thread(
     org: str,
     namespace: str,
-    agent: str,
+    agent: str | None,
     thread_id: str,
     *,
     run_id: str | None = None,
@@ -453,6 +454,7 @@ async def list_thread(
 
     `after`: `(ts, msg_id)` of the previous page's last row — returns
     only messages strictly after it. `run_id`: restrict to one agent run.
+    `agent=None`: every agent's messages in the thread.
     `order`: `asc` (oldest first, the default) or `desc` (newest first —
     the thread's tail; `after` is an ascending cursor and is not combined
     with it).
@@ -462,17 +464,18 @@ async def list_thread(
     where = [
         "org = {org:String}",
         "namespace = {ns:String}",
-        "agent = {agent:String}",
         "thread_id = {tid:String}",
         "tombstoned_at IS NULL",
     ]
     params: dict[str, Any] = {
         "org": org,
         "ns": namespace,
-        "agent": agent,
         "tid": thread_id,
         "limit": int(limit),
     }
+    if agent is not None:
+        where.append("agent = {agent:String}")
+        params["agent"] = agent
     if after is not None:
         ts_after, msg_after = after
         where.append(
@@ -506,77 +509,37 @@ async def list_thread(
     return [_hydrate(r) for r in rows]
 
 
-async def thread_agent(
-    org: str,
-    namespace: str,
-    thread_id: str,
-    *,
-    ch: _CHClient | None = None,
-) -> str | None:
-    """The agent that owns a thread, for a caller that knows only its id: the
-    agent of its thread row (conversation.create), else, for a thread built by
-    conversation.append alone, the agent of its latest live message. None when
-    the namespace has no such thread."""
-    ch = ch or _default_client()
-    params = {"org": org, "ns": namespace, "tid": thread_id}
-    row = await ch.query_one(
-        """
-        SELECT agent
-        FROM loom.conversation_threads FINAL
-        WHERE org = {org:String}
-          AND namespace = {ns:String}
-          AND thread_id = {tid:String}
-          AND tombstoned_at IS NULL
-        LIMIT 1
-        """,
-        params=params,
-    )
-    if row:
-        return str(row["agent"])
-    row = await ch.query_one(
-        """
-        SELECT argMax(agent, ts) AS agent
-        FROM loom.conversations
-        WHERE org = {org:String}
-          AND namespace = {ns:String}
-          AND thread_id = {tid:String}
-          AND tombstoned_at IS NULL
-        """,
-        params=params,
-    )
-    return str(row["agent"]) if row and row["agent"] else None
-
-
 async def count_thread_msgs(
     org: str,
     namespace: str,
-    agent: str,
+    agent: str | None,
     thread_id: str,
     *,
     ch: _CHClient | None = None,
 ) -> int:
-    """Total messages for one (org, ns, agent, thread_id).
+    """Total messages for one (org, ns, agent, thread_id); `agent=None` counts
+    every agent's.
 
     Used by `conversation.get` to populate `msg_count` whether or not
     the caller asked for the messages payload.
     """
     ch = ch or _default_client()
+    params: dict[str, Any] = {"org": org, "ns": namespace, "tid": thread_id}
+    agent_clause = ""
+    if agent is not None:
+        agent_clause = "AND agent = {agent:String}"
+        params["agent"] = agent
     row = await ch.query_one(
-        """
+        f"""
         SELECT count() AS n
         FROM loom.conversations
-        WHERE org = {org:String}
-          AND namespace = {ns:String}
-          AND agent = {agent:String}
-          AND thread_id = {tid:String}
+        WHERE org = {{org:String}}
+          AND namespace = {{ns:String}}
+          AND thread_id = {{tid:String}}
           AND tombstoned_at IS NULL
+          {agent_clause}
         """,
-        params={
-            "org": org,
-            "ns": namespace,
-            "agent": agent,
-            "tid": thread_id,
-        },
+        params=params,
     )
     return int(row["n"]) if row else 0
 

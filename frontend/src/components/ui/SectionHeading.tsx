@@ -11,7 +11,8 @@ import { IconButton } from "../IconButton";
  * tooltip instead of trailing the label into an ellipsis ("MEMORY TYPES inspect…").
  *
  * `level` picks the heading element (h2–h4) so the outline of a page is
- * real; the visual is the same at every level. The (i) is Click UI's xs icon button.
+ * real; the visual is the same at every level. The (i) is Click UI's sm icon button, the
+ * size Click UI gives its own inline icon actions (a popover's or a file row's close).
  * A label over a group inside a list or menu is `.section-label`, not this.
  */
 export interface SectionHeadingProps {

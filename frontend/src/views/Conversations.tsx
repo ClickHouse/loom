@@ -274,8 +274,8 @@ export function Conversations() {
   // conversation collapse to one card with a hit count, not N
   // duplicates. Within a thread, hits stay in server order (relevance).
   // A search spans the caller's namespaces, so a hit opens in its own one.
-  // Hits carry no agent: the recent-threads list names it when it holds
-  // the thread, else "*" lets conversation.get find the thread's agent.
+  // Hits carry no agent; the recent-threads list names it when it holds
+  // the thread.
   const groupedHits = useMemo(() => {
     if (!hits) return null;
     const byThread = new Map<string, ConversationHit[]>();
@@ -290,7 +290,7 @@ export function Conversations() {
       const { thread_id } = items[0];
       const namespace = items[0].namespace || identity.namespace;
       const agent = namespace === identity.namespace ? threadAgent.get(thread_id) : undefined;
-      return { key, thread_id, namespace, agent: agent || "*", hits: items };
+      return { key, thread_id, namespace, agent, hits: items };
     });
   }, [hits, threads, identity.namespace]);
 
@@ -303,14 +303,15 @@ export function Conversations() {
   );
 
   const openThreadDialog = useCallback(
-    async (thread_id: string, agent: string, opts: { namespace?: string; msgId?: string } = {}) => {
+    async (thread_id: string, opts: { namespace?: string; msgId?: string; knownAgent?: string } = {}) => {
       threadReads.current?.abort();
       const ctl = new AbortController();
       threadReads.current = ctl;
       const { signal } = ctl;
       const namespace = opts.namespace || identity.namespace;
       const targetMsgId = opts.msgId;
-      setOpenThread({ thread_id, agent, namespace });
+      // "*" reads every agent's turns in the thread, however it was opened.
+      setOpenThread({ thread_id, agent: "*", namespace });
       setThreadDetail(null);
       setMoreCursor(null);
       setLoadingMore(false);
@@ -330,14 +331,18 @@ export function Conversations() {
           if (!signal.aborted) setThreadMemories([]);
         });
       try {
-        const d = await getConversationThread({ org: identity.org, namespace }, agent, thread_id, {
-          limit: 200,
-          signal,
-        });
+        const read = (agent: string) =>
+          getConversationThread({ org: identity.org, namespace }, agent, thread_id, { limit: 200, signal });
+        let d = await read("*");
+        // A replica of the previous release reads "*" as a literal agent; the thread
+        // list's agent still opens the thread there. Drop with the next release.
+        if (!d.found && opts.knownAgent && !signal.aborted) {
+          const agent = opts.knownAgent;
+          d = await read(agent);
+          if (d.found) setOpenThread((t) => t && { ...t, agent });
+        }
         if (signal.aborted) return;
         setThreadDetail(d);
-        // Later pages read under the agent the server found for "*".
-        if (d.found && d.agent) setOpenThread((t) => t && { ...t, agent: d.agent });
         // If the thread's reported msg_count exceeds what we loaded,
         // there are more pages to walk via conversation.list. Cursor
         // value is the last message's id — the server resolves it to
@@ -366,7 +371,7 @@ export function Conversations() {
   // Deep-link from a memory's "View source conversation" → open that thread.
   useEffect(() => {
     if (!pendingConversationThread) return;
-    void openThreadDialog(pendingConversationThread, "*");
+    void openThreadDialog(pendingConversationThread);
     clearPendingConversationThread();
   }, [pendingConversationThread, openThreadDialog, clearPendingConversationThread]);
 
@@ -426,7 +431,7 @@ export function Conversations() {
           <button
             type="button"
             key={t.thread_id}
-            onClick={() => openThreadDialog(t.thread_id, t.agent)}
+            onClick={() => openThreadDialog(t.thread_id, { knownAgent: t.agent })}
             className="w-full text-left p-3 rounded-xl border border-border bg-surface hover:border-border-strong flex items-start gap-3"
           >
             <div className="min-w-0 flex-1">
@@ -497,7 +502,13 @@ export function Conversations() {
           )}
           {canSetLogging && loggingEnabled !== null && (
             <div className="ml-auto flex items-center gap-1">
-              <Switch checked={loggingEnabled} onCheckedChange={toggleLogging} label="Record conversations" />
+              <Switch
+                checked={loggingEnabled}
+                onCheckedChange={toggleLogging}
+                label="Record conversations"
+                orientation="horizontal"
+                dir="start"
+              />
               <IconButton
                 icon="info-in-circle"
                 size="xs"
@@ -573,11 +584,11 @@ export function Conversations() {
             <div key={g.key} className="rounded-xl border border-border bg-surface overflow-hidden">
               <button
                 type="button"
-                onClick={() => openThreadDialog(g.thread_id, g.agent, { namespace: g.namespace })}
+                onClick={() => openThreadDialog(g.thread_id, { namespace: g.namespace, knownAgent: g.agent })}
                 className="w-full text-left px-3.5 py-2.5 flex items-center gap-2 text-xs tabular hover:bg-surface-2 border-b border-border"
               >
                 <span className="font-mono text-text truncate">{g.thread_id}</span>
-                {g.agent !== "*" && (
+                {g.agent && (
                   <>
                     <span className="text-text-muted">·</span>
                     <span className="font-mono text-text-muted">{displayAgent(g.agent)}</span>
@@ -598,7 +609,9 @@ export function Conversations() {
                   <button
                     type="button"
                     key={`${h.msg_id}-${i}`}
-                    onClick={() => openThreadDialog(g.thread_id, g.agent, { namespace: g.namespace, msgId: h.msg_id })}
+                    onClick={() =>
+                      openThreadDialog(g.thread_id, { namespace: g.namespace, msgId: h.msg_id, knownAgent: g.agent })
+                    }
                     className="w-full text-left px-3.5 py-2.5 hover:bg-surface-2"
                   >
                     <div className="flex items-center gap-2 mb-1 text-xs tabular">

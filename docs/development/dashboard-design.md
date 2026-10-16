@@ -48,7 +48,7 @@ Loom keeps a few elements of its own, on Click UI tokens:
 - **Layer order** (inline in `index.html`, before any stylesheet): `properties, theme, base, clickui, components, utilities`. Click UI sits above Tailwind's reset and below the utilities, so put only layout utilities (margin, width, flex placement) on a Click UI component; a colour or padding utility would override Click UI.
 - **Tokens** in `src/styles.css`: Loom's semantic names (`--color-bg`, `--color-surface`, `--color-text-muted`, `--color-accent`, `--color-success`, the type scale, radii, shadows) are defined from Click UI's variables, for Loom's own elements. Click UI components read Click UI's variables directly.
 - **Accessibility corrections**: Click UI 0.13's light theme misses WCAG AA in a few places (link and empty-button blue, info alert text, opaque success and info badges, solid default and warning badges, placeholder text, the field, checkbox, radio and switch strokes, the avatar's hover background, and its 10 px small badge and 11 px small avatar). `styles.css` redefines those Click UI variables with the next palette step that passes, so every component picks the fix up. The focus ring is Click UI's outline blue, 2 px at a 2 px offset, on every focusable element: Click UI draws a typed button's ring in that button's own stroke colour (a secondary button's is 1.5:1, under 3:1) and draws none on checkboxes, switches, tabs, links and its dialog close.
-- **Disabled with a reason**: Click UI styles only a natively disabled button; `styles.css` gives an `aria-disabled` Click UI button the same look by matching Click UI's class prefixes (`button__`, `button_empty__`).
+- **Disabled with a reason**: Click UI styles only a natively disabled button; `ui/Unavailable` marks its button `data-unavailable` (with the button's type), and `styles.css` gives that button Click UI's disabled colours.
 - **Layers on top**: dialogs z-50 (a confirm z-[60]), toasts z-[65], every Radix popper (menus, selects, popovers, tooltips) z-[70].
 - **Type**: Click UI's sizes, 12, 14, 16, 18, 20 and 32 px. Click UI's 10 px step (captions, small badges) is left out: captions are 12 px (`text-xs`), and `styles.css` sets the small badge to 12 px. Page titles are 20 px. Inter and Inconsolata, latin and latin-ext, are declared in `styles.css` under Click UI's family names.
 
@@ -79,5 +79,5 @@ Loom keeps a few elements of its own, on Click UI tokens:
 ## Checks
 
 - `make lint` and CI run Biome's accessibility rules over `frontend/src` (`biome.json` overrides). A suppression names its rule and the reason.
-- `frontend/e2e/a11y.spec.ts` runs axe (WCAG 2.0–2.2 A and AA) on every route at desktop and phone width, and on the shell's dialog and menu.
+- `frontend/e2e/a11y.spec.ts` runs axe (WCAG 2.0–2.2 A and AA) on every route at desktop and phone width, and on the shell's dialogs, menus and popovers. The explorer specs also run at 1280×720.
 - `npm --prefix frontend run budget` caps the boot scripts, the stylesheets and the index chunk; `e2e/perf-budget.spec.ts` and `e2e/route-budget.spec.ts` cap paint time, long tasks and layout shift.

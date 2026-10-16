@@ -108,6 +108,37 @@ test.describe("open overlays", () => {
     expect(await violations(page)).toEqual([]);
   });
 
+  test("the header search panel stays open on Tab focus and leaves no focus guard behind", async ({ page }) => {
+    await open(page, "/memories");
+    const search = page.getByRole("combobox", { name: "Search Loom" });
+    const guards = page.locator("[data-radix-focus-guard]");
+    await page.getByRole("button", { name: /^Namespace: / }).focus();
+    await page.keyboard.press("Tab");
+    await expect(search).toBeFocused();
+    // The empty box's recent memories are options of the listbox; ↓ highlights the first.
+    const listbox = page.getByRole("listbox", { name: "Search results" });
+    await expect(listbox).toBeVisible();
+    await page.waitForTimeout(300);
+    await expect(listbox).toBeVisible();
+    expect(await violations(page)).toEqual([]);
+    await page.keyboard.press("ArrowDown");
+    await expect(search).toHaveAttribute(
+      "aria-activedescendant",
+      (await listbox.getByRole("option").first().getAttribute("id")) ?? "",
+    );
+
+    await page.keyboard.press("Tab");
+    await expect(listbox).toBeHidden();
+    await expect(guards).toHaveCount(0);
+
+    await search.click();
+    await expect(listbox).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(listbox).toBeHidden();
+    await expect(guards).toHaveCount(0);
+    await expect(search).toBeFocused();
+  });
+
   test("the namespace picker", async ({ page }) => {
     await open(page, "/memories");
     await page.getByRole("button", { name: /^Namespace: / }).click();

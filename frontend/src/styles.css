@@ -310,18 +310,6 @@ body {
   .tabular {
     font-variant-numeric: tabular-nums;
   }
-
-  /* Agent badge — a Click UI opaque badge in the agent's own hue
-     (`--agent-hue`, set by AgentBadge): a 12 % tint, a 20 % stroke and deep
-     text of the same hue (4.5:1 on the tint for every hue). */
-  .agent-badge {
-    background: oklch(0.6 0.12 var(--agent-hue) / 0.12);
-    border-color: oklch(0.6 0.12 var(--agent-hue) / 0.2);
-    color: oklch(0.42 0.12 var(--agent-hue));
-  }
-  .agent-badge-dot {
-    background: oklch(0.6 0.16 var(--agent-hue));
-  }
 }
 
 /* Date and date-time inputs, which Click UI has no field for (its DatePicker
@@ -369,17 +357,22 @@ body {
 }
 
 /* A Click UI Button that is unavailable but must stay focusable so its reason can be
-   read (`aria-disabled`, not `disabled`) takes Click UI's disabled look, which Click UI
-   only gives `:disabled`. A loading button is natively disabled and keeps its own. The
-   selectors are Click UI's CSS-module class prefixes. */
+   read (`aria-disabled`, not `disabled`; components/ui/Unavailable) takes Click UI's
+   disabled look, which Click UI only gives `:disabled`. `data-unavailable` is the
+   button's type. A loading button is natively disabled and keeps its own. */
 @layer components {
-  button[class*="button__"][aria-disabled="true"]:not(:disabled) {
+  [data-unavailable]:not(:disabled) {
     background: var(--click-button-basic-color-primary-background-disabled);
     border-color: var(--click-button-basic-color-primary-stroke-disabled);
     color: var(--click-button-basic-color-primary-text-disabled);
     cursor: not-allowed;
   }
-  button[class*="button_empty__"][aria-disabled="true"]:not(:disabled) {
+  [data-unavailable="secondary"]:not(:disabled) {
+    background: var(--click-button-basic-color-secondary-background-disabled);
+    border-color: var(--click-button-basic-color-secondary-stroke-disabled);
+    color: var(--click-button-basic-color-secondary-text-disabled);
+  }
+  [data-unavailable="empty"]:not(:disabled) {
     background: var(--click-button-basic-color-empty-background-disabled);
     border-color: var(--click-button-basic-color-empty-stroke-disabled);
     color: var(--click-button-basic-color-empty-text-disabled);

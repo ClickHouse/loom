@@ -200,22 +200,37 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     expect(await screen.findByRole("dialog")).toHaveTextContent("ns-z");
   });
 
-  it("pages the rest of a thread under the agent conversation.get found", async () => {
-    listConversationThreads.mockResolvedValue({ threads: [] });
+  it("opens a listed thread with every agent's turns, and pages it the same way", async () => {
+    listConversationThreads.mockResolvedValue({ threads: [summary("thread-y", "Title Y")] });
     getNamespace.mockResolvedValue({ conversation_logging_enabled: true });
-    searchConversations.mockResolvedValueOnce({ hits: [hit("thread-y", "said in Y")] });
     getConversationThread.mockResolvedValue({ ...detail("thread-y", "Title Y"), msg_count: 2 });
     listMemories.mockResolvedValue(noMemories);
     listConversationMessages.mockResolvedValue({ rows: [], next_cursor: null });
 
     render(<Conversations />);
-    const box = screen.getByLabelText("Search conversation transcripts");
-    fireEvent.change(box, { target: { value: "said" } });
-    fireEvent.keyDown(box, { key: "Enter" });
-    fireEvent.click(await screen.findByText("said in Y"));
+    fireEvent.click(await screen.findByText("Title Y"));
     fireEvent.click(await screen.findByRole("button", { name: /Load more/ }));
     await waitFor(() => expect(listConversationMessages).toHaveBeenCalledTimes(1));
+    expect(getConversationThread).toHaveBeenCalledTimes(1);
     expect(getConversationThread.mock.calls[0][1]).toBe("*");
+    expect(listConversationMessages.mock.calls[0][1]).toBe("*");
+  });
+
+  it("falls back to the listed agent where a replica reads '*' literally", async () => {
+    listConversationThreads.mockResolvedValue({ threads: [summary("thread-y", "Title Y")] });
+    getNamespace.mockResolvedValue({ conversation_logging_enabled: true });
+    getConversationThread
+      .mockResolvedValueOnce({ ...detail("thread-y", ""), found: false, msg_count: 0, messages: [] })
+      .mockResolvedValueOnce({ ...detail("thread-y", "Title Y"), msg_count: 2 });
+    listMemories.mockResolvedValue(noMemories);
+    listConversationMessages.mockResolvedValue({ rows: [], next_cursor: null });
+
+    render(<Conversations />);
+    fireEvent.click(await screen.findByText("Title Y"));
+    expect(await screen.findByText("body of thread-y")).toBeInTheDocument();
+    expect(getConversationThread.mock.calls.map((c) => c[1])).toEqual(["*", "claude-code"]);
+    fireEvent.click(screen.getByRole("button", { name: /Load more/ }));
+    await waitFor(() => expect(listConversationMessages).toHaveBeenCalledTimes(1));
     expect(listConversationMessages.mock.calls[0][1]).toBe("claude-code");
   });
 

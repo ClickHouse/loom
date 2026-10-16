@@ -41,9 +41,9 @@ test("an expand's result is a toast and an inspector line — also when it chang
   await expect(notice).toHaveAttribute("aria-live", "polite");
   await expect(notice).toHaveText("");
 
-  // Select the first hop-1 node (it becomes the inspector's subject), then `e`.
+  // Select the first hop-1 node (it becomes the inspector's subject) by its name, then `e`.
   const first = rows.nth(1);
-  await first.click();
+  await first.getByText(`${SMALL_SEED}-h1-0`, { exact: true }).click();
   await expect(page.getByRole("complementary", { name: "Inspector" })).toContainText(`${SMALL_SEED}-h1-0`);
   await first.focus();
   await page.keyboard.press("e");
@@ -81,10 +81,27 @@ test("an expand's result is a toast and an inspector line — also when it chang
   await expect(toast).toHaveCount(0, { timeout: 8_000 });
   await expect(notice).toHaveText(`${SMALL_SEED}-h1-1 — Expanded: 0 new within one hop · 3 already shown`);
   // Selecting the node the notice is about drops the prefix.
-  await second.click();
+  await second.getByText(`${SMALL_SEED}-h1-1`, { exact: true }).click();
   await expect(notice).toHaveText("Expanded: 0 new within one hop · 3 already shown");
   // No re-walk happened.
   expect(calls.traverse).toHaveLength(1);
+  expect(errors).toEqual([]);
+});
+
+test("an outline row selects its node; the button at its end selects the edge", async ({ page }) => {
+  await installApi(page);
+  const errors = collectErrors(page);
+  await page.goto(`/graph?seed=${SMALL_SEED}`);
+  const row = page.getByRole("tree", { name: "Walk outline" }).getByRole("treeitem").nth(1);
+  const inspector = page.getByRole("complementary", { name: "Inspector" });
+  // The row's centre is the node, whatever the outline's width.
+  await row.click();
+  await expect(row).toHaveAttribute("aria-selected", "true");
+  const edge = row.getByRole("button", { name: `Select the edge: co-mentioned 20× with ${SMALL_SEED}` });
+  await edge.click();
+  await expect(row).toHaveAttribute("aria-selected", "false");
+  await expect(edge).toHaveAttribute("aria-pressed", "true");
+  await expect(inspector).toContainText(`${SMALL_SEED} — ${SMALL_SEED}-h1-0`);
   expect(errors).toEqual([]);
 });
 
@@ -126,7 +143,7 @@ test("an expand clicked while a re-walk loads is dropped when the walk lands", a
   await page.goto(`/graph?seed=${SMALL_SEED}`);
   await expect(page.locator(NODE)).toHaveCount(SMALL_HOP1 + 1);
   const rows = page.getByRole("tree", { name: "Walk outline" }).getByRole("treeitem");
-  await rows.nth(1).click();
+  await rows.nth(1).getByText(`${SMALL_SEED}-h1-0`, { exact: true }).click();
   const inspector = page.getByRole("complementary", { name: "Inspector" });
   await expect(inspector).toContainText(`${SMALL_SEED}-h1-0`);
 
@@ -210,12 +227,9 @@ test.describe("under a coarse pointer", () => {
     const row = page.getByRole("tree", { name: "Walk outline" }).getByRole("treeitem").first();
     await row.scrollIntoViewIfNeeded();
     const rowBox = await size(row);
-    // IconButton: select a node (by key — at 390 px a click at the row's
-    // centre lands on its edge button and selects the edge instead) so the
-    // inspector draws its actions.
+    // IconButton: select a node by its name so the inspector draws its actions.
     const node = page.getByRole("tree", { name: "Walk outline" }).getByRole("treeitem").nth(1);
-    await node.focus();
-    await page.keyboard.press("Enter");
+    await node.getByText(`${SMALL_SEED}-h1-0`, { exact: true }).tap();
     await expect(node).toHaveAttribute("aria-selected", "true");
     const icon = page.getByRole("complementary", { name: "Inspector" }).getByRole("button", { name: "Copy entity" });
     await icon.scrollIntoViewIfNeeded();

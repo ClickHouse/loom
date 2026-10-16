@@ -6,6 +6,9 @@ import { Tip } from "./Tooltip";
  * `reason`, the child stays focusable but `aria-disabled` (a natively disabled control takes
  * no hover or focus, so the reason would be unreachable), its click does nothing, and the
  * reason is its tooltip and accessible description. Without one, the child renders as is.
+ *
+ * The child is a Click UI Button. `data-unavailable` carries its `type` so styles.css can
+ * give it the disabled look Click UI only gives `:disabled`.
  */
 export function Unavailable({ reason, children }: { reason?: string | null; children: ReactElement }) {
   const id = useId();
@@ -15,6 +18,7 @@ export function Unavailable({ reason, children }: { reason?: string | null; chil
       <Tip content={reason}>
         {cloneElement(children, {
           "aria-disabled": "true",
+          "data-unavailable": (children.props as { type?: string }).type ?? "primary",
           "aria-describedby": id,
           onClick: (e: MouseEvent) => e.preventDefault(),
         })}

@@ -11,9 +11,10 @@ import { relationLabel, shorten, type Selection, type VisibleTree, type WalkMode
  * that reached it, the community when known). Roving tabindex: `↑`/`↓` move, `→` expands
  * a collapsed row or moves into its children, `←` collapses or moves to the parent, `↵`
  * selects, `w` walks from here, `p` finds a path from the seed to here, `e` expands in
- * place (`facts.related`), `r` selects the edge that reached the row, `x` pins. The row's
- * relation is a button too: clicking it selects the edge. The actions are drawn on the
- * selected row only, so 200 rows stay 200 rows.
+ * place (`facts.related`), `r` selects the edge that reached the row, `x` pins. A click on
+ * the row selects its node; the edge that reached it has its own button at the row's end,
+ * clear of the name and the metadata. The other actions are drawn on the selected row
+ * only, so 200 rows stay 200 rows.
  */
 
 export interface OutlineProps {
@@ -215,6 +216,10 @@ export function Outline({
           const edgeSelected = selectedEdgeChild === n.entity;
           const parent = n.parent;
           const isSeed = n.entity === model.seed;
+          const relation =
+            typed && n.via_relation
+              ? `${n.via_direction === "in" ? "← " : "→ "}${relationLabel(n.via_relation)}`
+              : `co-mentioned ${n.via_co_occur}×`;
           return (
             <div
               key={n.entity}
@@ -259,18 +264,9 @@ export function Outline({
                 <div className="text-xs text-text-muted flex items-center gap-1.5 min-w-0">
                   <span className="tabular-nums shrink-0">hop {n.hop}</span>
                   {parent && (
-                    <button
-                      type="button"
-                      tabIndex={-1}
-                      onClick={() => onSelect(edgeSelected ? null : { kind: "edge", parent, child: n.entity })}
-                      className={`truncate underline decoration-dotted hover:text-text ${edgeSelected ? "text-text" : ""}`}
-                    >
-                      {typed && n.via_relation
-                        ? `${n.via_direction === "in" ? "← " : "→ "}${relationLabel(n.via_relation)}`
-                        : `co-mentioned ${n.via_co_occur}×`}
-                      {" with "}
-                      {shorten(parent, 20)}
-                    </button>
+                    <span className={`truncate ${edgeSelected ? "text-text" : ""}`}>
+                      {relation} with {shorten(parent, 20)}
+                    </span>
                   )}
                   {hasCommunities && n.community_id !== null && (
                     <span className="truncate">· {communityLabel(n.community_id)}</span>
@@ -307,6 +303,17 @@ export function Outline({
                     />
                   )}
                 </div>
+              )}
+              {parent && (
+                <IconButton
+                  label={`Select the edge: ${relation} with ${parent}`}
+                  onClick={() => onSelect(edgeSelected ? null : { kind: "edge", parent, child: n.entity })}
+                  icon="share-network"
+                  size="sm"
+                  tabIndex={-1}
+                  aria-pressed={edgeSelected}
+                  className="shrink-0 -my-1"
+                />
               )}
             </div>
           );

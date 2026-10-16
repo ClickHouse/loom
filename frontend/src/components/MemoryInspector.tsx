@@ -1199,7 +1199,7 @@ function Row({ label, value, mono }: { label: string; value: string; mono?: bool
   return (
     <>
       <dt className="text-text-muted">{label}</dt>
-      <dd className={`text-text ${mono ? "font-mono text-xs" : ""}`}>{value}</dd>
+      <dd className={`text-text ${mono ? "font-mono" : ""}`}>{value}</dd>
     </>
   );
 }

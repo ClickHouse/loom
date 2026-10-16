@@ -355,35 +355,27 @@ async def handle_conversation_get(
         return await _conversation_get_reads(input)
 
 
-async def _thread_agent(org: str, namespace: str, agent: str, thread_id: str) -> str | None:
-    """The agent to read a thread under: the caller's, or for "*"/"-" the agent
-    that owns the thread (None when there is no such thread). A search spans
-    agents; a thread is read under the one that owns it."""
-    from server.knowledge.store import conversations as conversation_repo
-
-    if agent not in ("*", "-"):
-        return agent
-    return await conversation_repo.thread_agent(org, namespace, thread_id)
+def _thread_reader(agent: str) -> str | None:
+    """The agent filter for one thread's reads: "*" reads every agent's turns
+    (a caller that has only the thread id: a search hit, a memory's source)."""
+    return None if agent == "*" else agent
 
 
 async def _conversation_get_reads(input: ConversationGetInput) -> ConversationGetOutput:
     from server.knowledge.store import conversations as conversation_repo
 
-    agent = await _thread_agent(input.org, input.namespace, input.agent, input.thread_id)
-    if agent is None:
-        return ConversationGetOutput(found=False, thread_id=input.thread_id)
-    input = input.model_copy(update={"agent": agent})
+    agent = _thread_reader(input.agent)
     thread = await conversation_repo.fetch_thread(
         input.org,
         input.namespace,
-        input.agent,
+        agent,
         input.thread_id,
     )
 
     msg_count = await conversation_repo.count_thread_msgs(
         input.org,
         input.namespace,
-        input.agent,
+        agent,
         input.thread_id,
     )
 
@@ -397,6 +389,7 @@ async def _conversation_get_reads(input: ConversationGetInput) -> ConversationGe
     thread_row: Mapping[str, Any] = thread if thread is not None else {}
 
     messages: list[_ConversationEntry] = []
+    writer = agent or ""
     if input.include_messages:
         # list_thread has no offset arg, so pull (offset + limit) and slice.
         # `order="desc"` counts the page from the newest turn, so offset 0
@@ -404,12 +397,14 @@ async def _conversation_get_reads(input: ConversationGetInput) -> ConversationGe
         rows = await conversation_repo.list_thread(
             input.org,
             input.namespace,
-            input.agent,
+            agent,
             input.thread_id,
             limit=input.offset + input.limit,
             order=input.order,
         )
         page = rows[input.offset : input.offset + input.limit]
+        if rows and not writer:
+            writer = max(rows, key=lambda r: r.ts).agent
         messages = [
             _ConversationEntry(
                 msg_id=r.msg_id,
@@ -432,7 +427,8 @@ async def _conversation_get_reads(input: ConversationGetInput) -> ConversationGe
         metadata=_safe_load_json(thread_row.get("metadata", "") or ""),
         run_id=thread_row.get("run_id", "-") or "-",
         user_id=thread_row.get("user_id", "-") or "-",
-        agent=thread_row.get("agent", "") or input.agent,
+        # The owner (the thread row's agent), else the latest writer read.
+        agent=thread_row.get("agent", "") or writer,
         created_at=thread_row.get("created_at"),
         updated_at=thread_row.get("updated_at"),
         msg_count=msg_count,
@@ -446,14 +442,11 @@ async def handle_conversation_list(
     """Paginate one thread's history in chronological order."""
     from server.knowledge.store import conversations as conversation_repo
 
-    agent = await _thread_agent(input.org, input.namespace, input.agent, input.thread_id)
-    if agent is None:
-        return ConversationListOutput(rows=[], next_cursor=None)
     after = _decode_cursor(input.cursor) if input.cursor else None
     rows = await conversation_repo.list_thread(
         input.org,
         input.namespace,
-        agent,
+        _thread_reader(input.agent),
         input.thread_id,
         run_id=input.run_id,
         after=after,

@@ -4,6 +4,7 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
 } from "react";
@@ -63,18 +64,21 @@ export interface Placed extends XNode {
   angle: number;
   /** Whether this node's label is drawn in "key" mode (budgeted per ring). */
   keyLabel: boolean;
-  /** Characters of the label that fit between the node and the card's edge
-   * (≤ 24); the rest is an explicit ellipsis, never a clip. */
-  labelMax: number;
+  /** Svg units between the node and the card's edge that its label may take. */
+  labelRoom: number;
 }
 
-/** How many characters fit from a node outward to the card's edge, at the
- *  canvas label floor (≈ 9 svg units per character at a 554 px canvas). The
- *  full name is always in the readout, the outline and the inspector. */
-function labelFit(x: number, r: number, angle: number, width: number): number {
+function labelRoom(x: number, r: number, angle: number, width: number): number {
   const cos = Math.cos(angle);
-  const room = Math.abs(cos) < 0.25 ? Math.min(x, width - x) * 2 - 8 : (cos > 0 ? width - x : x) - r - 8;
-  return Math.max(6, Math.min(24, Math.floor(room / 9)));
+  return Math.abs(cos) < 0.25 ? Math.min(x, width - x) * 2 - 8 : (cos > 0 ? width - x : x) - r - 8;
+}
+
+/** How many characters of a label fit in `room` svg units. A character is ~0.6 em
+ *  of the 12 px label floor (--canvas-label-min), times `scale` svg units per screen
+ *  pixel, so a narrow card fits fewer. The rest is an explicit ellipsis, never a clip;
+ *  the full name is always in the readout, the outline and the inspector. */
+function labelFit(room: number, scale: number): number {
+  return Math.max(4, Math.min(24, Math.floor(room / (12 * 0.6 * scale))));
 }
 
 interface Layout {
@@ -104,7 +108,7 @@ function seedPlaced(m: WalkModel, x: number, y: number, maxW: number): Placed {
     r: 11,
     angle: 0,
     keyLabel: true,
-    labelMax: 24,
+    labelRoom: 2 * x - 8,
   };
 }
 
@@ -119,7 +123,9 @@ function radialLayout(m: WalkModel, nodes: XNode[], width: number, height: numbe
   const byHop = new Map<number, XNode[]>();
   for (const n of nodes) byHop.set(n.hop, [...(byHop.get(n.hop) || []), n]);
   const maxW = Math.max(1, ...nodes.map((n) => n.via_co_occur));
-  const maxR = Math.min(cx, cy) - 28;
+  // Above the top ring node and below the bottom one sits a label: 44 units is its
+  // height at the 12 px floor on a ~420 px card (1280 px wide window).
+  const maxR = Math.min(cx - 28, cy - 44);
   const radii: number[] = [];
   for (let hop = 1; hop <= maxHop; hop++) {
     const count = (byHop.get(hop) || []).length;
@@ -166,7 +172,7 @@ function radialLayout(m: WalkModel, nodes: XNode[], width: number, height: numbe
         r,
         angle,
         keyLabel: labelled.has(n.entity),
-        labelMax: labelFit(x, r, angle, width),
+        labelRoom: labelRoom(x, r, angle, width),
       });
     });
   }
@@ -189,17 +195,23 @@ function linearLayout(m: WalkModel, nodes: XNode[], width: number, height: numbe
     r: 6 + 6 * Math.sqrt(n.via_co_occur / maxW),
     angle: Math.PI / 2,
     keyLabel: true,
-    labelMax: Math.max(6, Math.min(24, Math.floor((stepX || width) / 9))),
+    labelRoom: stepX || width,
   }));
   return { seed: seedPlaced(m, left, y, maxW), nodes: placed, rings: [], linear: true };
 }
 
 /** Label placement: outward from the ring, anchored by which side the node
- *  sits on, so labels never cross the ring inwards over other nodes. */
-function labelProps(n: Placed): { dx: number; dy: number; anchor: "start" | "end" | "middle" } {
+ *  sits on, so labels never cross the ring inwards over other nodes. A label above
+ *  or below its node stays inside the card: its baseline is clamped by the label's
+ *  height in svg units (the 12 px floor times `scale`). */
+function labelProps(n: Placed, scale: number): { dx: number; dy: number; anchor: "start" | "end" | "middle" } {
   const cos = Math.cos(n.angle);
   const sin = Math.sin(n.angle);
-  if (Math.abs(cos) < 0.25) return { dx: 0, dy: sin > 0 ? n.r + 12 : -n.r - 5, anchor: "middle" };
+  if (Math.abs(cos) < 0.25) {
+    const size = 12 * scale;
+    const dy = sin > 0 ? n.r + 12 : -n.r - 5;
+    return { dx: 0, dy: Math.min(H - 2 - size * 0.3, Math.max(2 + size, n.y + dy)) - n.y, anchor: "middle" };
+  }
   return { dx: cos > 0 ? n.r + 4 : -n.r - 4, dy: 4, anchor: cos > 0 ? "start" : "end" };
 }
 
@@ -268,6 +280,8 @@ interface NodeProps {
   pinned: boolean;
   /** Descendants hidden under this node when collapsed; 0 = not collapsed. */
   hidden: number;
+  /** Svg units per screen pixel: how long and how tall a label is. */
+  scale: number;
 }
 
 const GraphNode = memo(function GraphNode({
@@ -279,8 +293,9 @@ const GraphNode = memo(function GraphNode({
   sel,
   pinned,
   hidden,
+  scale,
 }: NodeProps) {
-  const lp = labelProps(n);
+  const lp = labelProps(n, scale);
   const ax = n.r + 7;
   const ay = -n.r - 7;
   return (
@@ -313,7 +328,7 @@ const GraphNode = memo(function GraphNode({
           fontWeight={selected ? 600 : 400}
           style={{ pointerEvents: "none", paintOrder: "stroke", stroke: "var(--color-surface)", strokeWidth: 3 }}
         >
-          {shorten(n.entity, n.labelMax)}
+          {shorten(n.entity, labelFit(n.labelRoom, scale))}
         </text>
       )}
       {showRelation && n.via_relation && (
@@ -423,13 +438,17 @@ export function Canvas({
   // Canvas text floor: the svg scales with its viewBox, so the card carries
   // `--canvas-scale` = svg units per screen pixel and the stylesheet multiplies
   // --canvas-label-min by it. One DOM write per resize, none on hover; the layout itself
-  // never reads it.
+  // never reads it, the label lengths do (`labelFit`).
+  const [scale, setScale] = useState(1.45);
   useEffect(() => {
     const card = cardRef.current;
     if (!card || typeof ResizeObserver === "undefined") return;
     const write = (w: number, h: number) => {
-      const scale = Math.min(w / W, h / H);
-      if (scale > 0) card.style.setProperty("--canvas-scale", (1 / scale).toFixed(3));
+      const fit = Math.min(w / W, h / H);
+      if (fit <= 0) return;
+      const next = (1 / fit).toFixed(3);
+      card.style.setProperty("--canvas-scale", next);
+      setScale(Number(next));
     };
     // No getBoundingClientRect on mount — it forced a layout (46 ms at 4x, the top
     // function of the Graph boot); the observer delivers the card's size on its first
@@ -741,6 +760,7 @@ export function Canvas({
               sel={selChain ? selChain.has(n.entity) : false}
               pinned={pinned.has(n.entity)}
               hidden={visible.hiddenUnder.get(n.entity) || 0}
+              scale={scale}
             />
           ))}
           <g
@@ -773,7 +793,7 @@ export function Canvas({
               textAnchor="middle"
               style={{ pointerEvents: "none", paintOrder: "stroke", stroke: "var(--color-surface)", strokeWidth: 3 }}
             >
-              {shorten(placed.seed.entity, 24)}
+              {shorten(placed.seed.entity, labelFit(placed.seed.labelRoom, scale))}
             </text>
             {(visible.hiddenUnder.get(placed.seed.entity) || 0) > 0 ? (
               <g

@@ -412,81 +412,117 @@ async def test_operation_registered_with_viewer_role() -> None:
 
 
 @pytest.mark.asyncio
-async def test_any_agent_opens_the_thread_under_its_own_agent(
+async def test_any_agent_reads_the_whole_thread(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """agent="*" (a caller that knows the thread id but not who wrote it, such as
-    a search hit or a memory's source link) reads the thread under its own agent."""
+    """agent="*" (a caller that knows the thread id but not who wrote it: a search
+    hit, a memory's source link) reads every agent's turns, and the thread row's
+    owner and title."""
     from server.knowledge.api.models_conversations import ConversationGetInput
     from server.knowledge.app.conversations import handle_conversation_get
     from server.knowledge.store import conversations as conversation_repo
 
-    read_as: list[str] = []
-
-    async def fake_thread_agent(org, namespace, thread_id, **kw):
-        return "reviewer"
+    read_as: list[str | None] = []
 
     async def fake_fetch_thread(org, namespace, agent, thread_id, **kw):
         read_as.append(agent)
-        return _thread(agent=agent)
+        return _thread(agent="planner")
 
     async def fake_count(org, namespace, agent, thread_id, **kw):
         read_as.append(agent)
-        return 1
+        return 2
 
-    monkeypatch.setattr(conversation_repo, "thread_agent", fake_thread_agent)
+    async def fake_list_thread(org, namespace, agent, thread_id, **kw):
+        read_as.append(agent)
+        return [_msg(msg_id="m1", role="user", content="hi", ts=datetime(2026, 6, 1, 9, 0))]
+
     monkeypatch.setattr(conversation_repo, "fetch_thread", fake_fetch_thread)
     monkeypatch.setattr(conversation_repo, "count_thread_msgs", fake_count)
+    monkeypatch.setattr(conversation_repo, "list_thread", fake_list_thread)
 
     out = await handle_conversation_get(
-        ConversationGetInput(org="clickhouse", namespace="finance", agent="*", thread_id="t-1")
+        ConversationGetInput(
+            org="clickhouse", namespace="finance", agent="*", thread_id="t-1", include_messages=True
+        )
     )
     assert out.found is True
-    assert out.agent == "reviewer"
-    assert read_as == ["reviewer", "reviewer"]
+    assert out.agent == "planner"
+    assert out.title == "Q1 incident response"
+    assert read_as == [None, None, None]
 
 
 @pytest.mark.asyncio
-async def test_any_agent_on_an_unknown_thread_is_not_found(
+async def test_any_agent_names_an_append_only_threads_latest_writer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from server.knowledge.api.models_conversations import ConversationGetInput
     from server.knowledge.app.conversations import handle_conversation_get
     from server.knowledge.store import conversations as conversation_repo
 
-    async def fake_thread_agent(*a, **kw):
+    async def fake_fetch_thread(*a, **kw):
         return None
 
-    async def must_not_read(*a, **kw):
-        raise AssertionError("no thread read without an agent")
+    async def fake_count(*a, **kw):
+        return 2
 
-    monkeypatch.setattr(conversation_repo, "thread_agent", fake_thread_agent)
-    monkeypatch.setattr(conversation_repo, "fetch_thread", must_not_read)
-    monkeypatch.setattr(conversation_repo, "count_thread_msgs", must_not_read)
+    async def fake_list_thread(*a, **kw):
+        return [
+            _msg(msg_id="m1", role="user", content="hi", ts=datetime(2026, 6, 1, 9, 0)),
+            _msg(msg_id="m2", role="assistant", content="hello", ts=datetime(2026, 6, 1, 9, 1)),
+        ]
+
+    monkeypatch.setattr(conversation_repo, "fetch_thread", fake_fetch_thread)
+    monkeypatch.setattr(conversation_repo, "count_thread_msgs", fake_count)
+    monkeypatch.setattr(conversation_repo, "list_thread", fake_list_thread)
 
     out = await handle_conversation_get(
-        ConversationGetInput(org="clickhouse", namespace="finance", agent="*", thread_id="ghost")
+        ConversationGetInput(
+            org="clickhouse", namespace="finance", agent="*", thread_id="t-1", include_messages=True
+        )
     )
-    assert out.found is False
-    assert out.thread_id == "ghost"
+    assert out.found is True
+    assert out.agent == "reviewer"
 
 
 @pytest.mark.asyncio
-async def test_list_with_any_agent_pages_the_thread_under_its_own_agent(
+async def test_only_star_is_a_wildcard_on_get(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.knowledge.api.models_conversations import ConversationGetInput
+    from server.knowledge.app.conversations import handle_conversation_get
+    from server.knowledge.store import conversations as conversation_repo
+
+    read_as: list[str | None] = []
+
+    async def fake_fetch_thread(org, namespace, agent, thread_id, **kw):
+        read_as.append(agent)
+        return None
+
+    async def fake_count(org, namespace, agent, thread_id, **kw):
+        read_as.append(agent)
+        return 0
+
+    monkeypatch.setattr(conversation_repo, "fetch_thread", fake_fetch_thread)
+    monkeypatch.setattr(conversation_repo, "count_thread_msgs", fake_count)
+
+    await handle_conversation_get(
+        ConversationGetInput(org="clickhouse", namespace="finance", agent="-", thread_id="t-1")
+    )
+    assert read_as == ["-", "-"]
+
+
+@pytest.mark.asyncio
+async def test_list_with_any_agent_pages_the_whole_thread(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from server.knowledge.api.models_conversations import ConversationListInput
     from server.knowledge.app.conversations import handle_conversation_list
     from server.knowledge.store import conversations as conversation_repo
 
-    async def fake_thread_agent(*a, **kw):
-        return "reviewer"
-
     async def fake_list_thread(org, namespace, agent, thread_id, **kw):
-        assert agent == "reviewer"
+        assert agent is None
         return [_msg(msg_id="m1", role="user", content="hi", ts=datetime(2026, 6, 1, 9, 0))]
 
-    monkeypatch.setattr(conversation_repo, "thread_agent", fake_thread_agent)
     monkeypatch.setattr(conversation_repo, "list_thread", fake_list_thread)
 
     out = await handle_conversation_list(

@@ -69,6 +69,7 @@ export function HeaderSearch({
   const [profileSections, setProfileSections] = useState<ProfileEntry[]>([]);
   const [nsRows, setNsRows] = useState<NsRow[]>([]);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const anchorRef = useRef<HTMLDivElement | null>(null);
   const listboxId = useId();
   const optionId = (i: number) => `${listboxId}-${i}`;
 
@@ -298,7 +299,10 @@ export function HeaderSearch({
 
   const namespacesShown = matchedNamespaces.slice(0, 2);
   const profileShown = matchedProfile.slice(0, PER_GROUP_CAP);
-  const memoryShown = hits;
+  const memoryShown = q.length > 0 ? hits : [];
+  // The empty box offers the newest memories and the profile as options of the same listbox.
+  const recentShown = q.length === 0 ? recent.slice(0, 3) : [];
+  const yourProfileShown = q.length === 0 ? profileSections.slice(0, 3) : [];
   const documentsShown = matchedDocuments.slice(0, PER_GROUP_CAP);
 
   const switchNs = (ns: string) => {
@@ -332,27 +336,32 @@ export function HeaderSearch({
 
   // Flat activation list for ↑↓ keyboard nav.
   type Activation =
+    | { kind: "recent"; mem: MemoryListEntry }
     | { kind: "ns"; ns: NsRow }
     | { kind: "profile"; section: ProfileEntry }
     | { kind: "mem"; mem: SearchHit }
     | { kind: "doc"; doc: KnowledgeEntry };
   const activations: Activation[] = useMemo(
     () => [
+      ...recentShown.map((mem) => ({ kind: "recent" as const, mem })),
+      ...yourProfileShown.map((section) => ({ kind: "profile" as const, section })),
       ...namespacesShown.map((ns) => ({ kind: "ns" as const, ns })),
       ...profileShown.map((section) => ({ kind: "profile" as const, section })),
       ...memoryShown.map((mem) => ({ kind: "mem" as const, mem })),
       ...documentsShown.map((doc) => ({ kind: "doc" as const, doc })),
     ],
-    [namespacesShown, profileShown, memoryShown, documentsShown],
+    [recentShown, yourProfileShown, namespacesShown, profileShown, memoryShown, documentsShown],
   );
 
-  const [activeIdx, setActiveIdx] = useState(0);
+  // A query highlights its top hit, so Enter opens it; the empty box highlights nothing
+  // until ↓ moves into it. Each open starts over.
+  const [activeIdx, setActiveIdx] = useState(-1);
   useEffect(() => {
-    setActiveIdx(0);
-  }, [q]);
+    if (open) setActiveIdx(q ? 0 : -1);
+  }, [q, open]);
 
   const popoverOpen = open && (parsed.raw.length > 0 || q.length === 0);
-  const listboxShown = popoverOpen && hasResults;
+  const listboxShown = popoverOpen && activations.length > 0;
   // The highlighted option stays in view of the scrolling popover as ↑↓ move it.
   useEffect(() => {
     if (listboxShown) document.getElementById(`${listboxId}-${activeIdx}`)?.scrollIntoView?.({ block: "nearest" });
@@ -361,7 +370,8 @@ export function HeaderSearch({
   const activate = (i: number) => {
     const a = activations[i];
     if (!a) return;
-    if (a.kind === "ns") switchNs(a.ns.namespace);
+    if (a.kind === "recent") openMemory(a.mem);
+    else if (a.kind === "ns") switchNs(a.ns.namespace);
     else if (a.kind === "profile") openProfileSection(a.section.label);
     else if (a.kind === "mem") openMemory({ memory_key: a.mem.memory_key, agent: a.mem.agent || "" });
     else if (a.kind === "doc") openDocument(a.doc);
@@ -370,10 +380,9 @@ export function HeaderSearch({
   const onInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Escape") {
       setOpen(false);
-      setActiveIdx(0);
       return;
     }
-    if (!hasResults) return;
+    if (activations.length === 0) return;
     if (!popoverOpen) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -396,15 +405,33 @@ export function HeaderSearch({
   const memoryPending = searching && memoryQuery.length >= MEMORY_MIN_CHARS;
 
   // Index offsets for activeIdx → row mapping.
-  const offNs = 0;
+  const offRecent = 0;
+  const offYourProfile = offRecent + recentShown.length;
+  const offNs = offYourProfile + yourProfileShown.length;
   const offProfile = offNs + namespacesShown.length;
   const offMem = offProfile + profileShown.length;
   const offDoc = offMem + memoryShown.length;
 
+  // The attributes every option row shares; the input names the highlighted one.
+  const optionProps = (idx: number) => ({
+    id: optionId(idx),
+    role: "option",
+    "aria-selected": idx === activeIdx,
+    tabIndex: -1,
+    onMouseEnter: () => setActiveIdx(idx),
+    className: rowClass(idx === activeIdx),
+  });
+
+  // Radix counts the anchor as outside the panel, so the focus that opens the panel (or a
+  // click back into the field) would close it again at once.
+  const keepOpenFromAnchor = (e: Event) => {
+    if (e.target instanceof Node && anchorRef.current?.contains(e.target)) e.preventDefault();
+  };
+
   return (
     <Popover open={popoverOpen} onOpenChange={setOpen}>
       <RadixPopover.Anchor asChild>
-        <div className="relative w-full">
+        <div ref={anchorRef} className="relative w-full">
           <SearchField
             ref={inputRef}
             value={q}
@@ -413,6 +440,8 @@ export function HeaderSearch({
               setOpen(true);
             }}
             onFocus={() => setOpen(true)}
+            // After Escape or a pick the field keeps focus, so only a click reopens it.
+            onClick={() => setOpen(true)}
             onKeyDown={onInputKeyDown}
             placeholder="Search profile, memories, library…"
             aria-label="Search Loom"
@@ -440,17 +469,9 @@ export function HeaderSearch({
         align="start"
         aria-label="Search results"
         onOpenAutoFocus={(e) => e.preventDefault()}
+        onInteractOutside={keepOpenFromAnchor}
         className="w-(--radix-popover-trigger-width) max-h-[70vh] overflow-y-auto"
       >
-        {q.length === 0 && (
-          <EmptyState
-            recentMemories={recent.slice(0, 3)}
-            profileLabels={profileSections.slice(0, 3)}
-            onMemory={openMemory}
-            onProfile={openProfileSection}
-          />
-        )}
-
         {q.length > 0 && !hasResults && (memoryPending ? <Searching /> : <NoResults q={q} />)}
 
         {hasResults && (
@@ -470,8 +491,44 @@ export function HeaderSearch({
           </div>
         )}
 
-        {hasResults && (
+        {activations.length > 0 && (
           <div id={listboxId} role="listbox" aria-label="Search results">
+            {recentShown.length > 0 && (
+              <OptionGroup id={`${listboxId}-recent`} icon="document" label="Recent memories">
+                {recentShown.map((e, i) => (
+                  <button
+                    type="button"
+                    key={`${e.agent}::${e.memory_key}`}
+                    {...optionProps(offRecent + i)}
+                    onClick={() => openMemory(e)}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <TypeChip label="memory" />
+                      <span className="font-mono text-sm truncate">{e.memory_key}</span>
+                    </div>
+                  </button>
+                ))}
+              </OptionGroup>
+            )}
+
+            {yourProfileShown.length > 0 && (
+              <OptionGroup id={`${listboxId}-you`} icon="user" label="Your profile" className="mt-1">
+                {yourProfileShown.map((s, i) => (
+                  <button
+                    type="button"
+                    key={s.label}
+                    {...optionProps(offYourProfile + i)}
+                    onClick={() => openProfileSection(s.label)}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <TypeChip label="profile" />
+                      <span className="font-mono text-sm truncate">{s.label}</span>
+                    </div>
+                  </button>
+                ))}
+              </OptionGroup>
+            )}
+
             {namespacesShown.length > 0 && (
               <OptionGroup id={`${listboxId}-ns`} icon="folder-closed" label="Jump to" className="mb-1">
                 {namespacesShown.map((r, i) => {
@@ -479,17 +536,12 @@ export function HeaderSearch({
                   return (
                     <a
                       key={r.namespace}
-                      id={optionId(idx)}
-                      role="option"
-                      aria-selected={idx === activeIdx}
-                      tabIndex={-1}
+                      {...optionProps(idx)}
                       href={viewHref("memories")}
                       onClick={(e) => {
                         e.preventDefault();
                         switchNs(r.namespace);
                       }}
-                      onMouseEnter={() => setActiveIdx(idx)}
-                      className={rowClass(idx === activeIdx)}
                     >
                       <div className="flex items-center gap-2">
                         <TypeChip label="namespace" />
@@ -516,13 +568,8 @@ export function HeaderSearch({
                     <button
                       type="button"
                       key={s.label}
-                      id={optionId(idx)}
-                      role="option"
-                      aria-selected={idx === activeIdx}
-                      tabIndex={-1}
+                      {...optionProps(idx)}
                       onClick={() => openProfileSection(s.label)}
-                      onMouseEnter={() => setActiveIdx(idx)}
-                      className={rowClass(idx === activeIdx)}
                     >
                       <div className="flex items-center gap-2 min-w-0">
                         <TypeChip label="profile" />
@@ -543,13 +590,8 @@ export function HeaderSearch({
                     <button
                       type="button"
                       key={`${e.agent || ""}::${e.memory_key}`}
-                      id={optionId(idx)}
-                      role="option"
-                      aria-selected={idx === activeIdx}
-                      tabIndex={-1}
+                      {...optionProps(idx)}
                       onClick={() => openMemory({ memory_key: e.memory_key, agent: e.agent || "" })}
-                      onMouseEnter={() => setActiveIdx(idx)}
-                      className={rowClass(idx === activeIdx)}
                     >
                       <div className="flex items-center gap-2 min-w-0">
                         <TypeChip label="memory" />
@@ -579,17 +621,7 @@ export function HeaderSearch({
                   const idx = offDoc + i;
                   const label = d.title || d.original_filename || d.source_uri;
                   return (
-                    <button
-                      type="button"
-                      key={d.source_uri}
-                      id={optionId(idx)}
-                      role="option"
-                      aria-selected={idx === activeIdx}
-                      tabIndex={-1}
-                      onClick={() => openDocument(d)}
-                      onMouseEnter={() => setActiveIdx(idx)}
-                      className={rowClass(idx === activeIdx)}
-                    >
+                    <button type="button" key={d.source_uri} {...optionProps(idx)} onClick={() => openDocument(d)}>
                       <div className="flex items-center gap-2 min-w-0">
                         <TypeChip label="library" />
                         <span className={`text-sm truncate ${d.title ? "" : "font-mono"}`}>{label}</span>
@@ -608,6 +640,8 @@ export function HeaderSearch({
             )}
           </div>
         )}
+
+        {q.length === 0 && <SyntaxHelp />}
 
         {/* Links to the full views sit after the listbox: they are not options. */}
         {hasResults && (
@@ -724,55 +758,10 @@ function rowClass(isActive: boolean): string {
   return `${ROW_BLEED} py-2 no-underline hover:no-underline text-text ${isActive ? "bg-surface-2" : "hover:bg-surface-2"}`;
 }
 
-function EmptyState({
-  recentMemories,
-  profileLabels,
-  onMemory,
-  onProfile,
-}: {
-  recentMemories: MemoryListEntry[];
-  profileLabels: ProfileEntry[];
-  onMemory: (e: MemoryListEntry) => void;
-  onProfile: (label: string) => void;
-}) {
+/** The query syntax, under the empty box's options. */
+function SyntaxHelp() {
   return (
     <div>
-      {recentMemories.length > 0 && (
-        <div>
-          <GroupHeader icon="document" label="Recent memories" />
-          {recentMemories.map((e) => (
-            <button
-              type="button"
-              key={`${e.agent}::${e.memory_key}`}
-              onClick={() => onMemory(e)}
-              className={`${ROW_BLEED} py-1.5 hover:bg-surface-2`}
-            >
-              <div className="flex items-center gap-2 min-w-0">
-                <TypeChip label="memory" />
-                <span className="font-mono text-sm truncate">{e.memory_key}</span>
-              </div>
-            </button>
-          ))}
-        </div>
-      )}
-      {profileLabels.length > 0 && (
-        <div className="mt-1">
-          <GroupHeader icon="user" label="Your profile" />
-          {profileLabels.map((s) => (
-            <button
-              type="button"
-              key={s.label}
-              onClick={() => onProfile(s.label)}
-              className={`${ROW_BLEED} py-1.5 hover:bg-surface-2`}
-            >
-              <div className="flex items-center gap-2 min-w-0">
-                <TypeChip label="profile" />
-                <span className="font-mono text-sm truncate">{s.label}</span>
-              </div>
-            </button>
-          ))}
-        </div>
-      )}
       <div className="section-label pt-2 pb-1 border-t border-border mt-2">Syntax</div>
       <div className="pb-1 space-y-1 text-xs text-text-muted">
         <div className="flex items-baseline gap-2">
