@@ -47,9 +47,35 @@ def test_a_failed_insert_is_a_failure(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_a_missing_logs_table_disables_export(monkeypatch: pytest.MonkeyPatch) -> None:
     client = _Client(RuntimeError("Code: 60. Unknown table default.otel_logs"))
-    monkeypatch.setattr(otel_exporters, "_is_unknown_table_error", lambda e: True)
+    monkeypatch.setattr(otel_exporters, "_unwritable", lambda e: "it does not exist")
     exporter = _exporter(monkeypatch, client)
     assert exporter.export(["a record"]) is LogRecordExportResult.SUCCESS
     client.error = None
     assert exporter.export(["a record"]) is LogRecordExportResult.SUCCESS
     assert client.inserts == []
+
+
+@pytest.mark.parametrize(
+    ("error", "permanent"),
+    [
+        ("Code: 60. DB::Exception: Table default.otel_logs does not exist", True),
+        ("Code: 497. DB::Exception: loom_app: Not enough privileges", True),
+        ("Code: 241. DB::Exception: Memory limit exceeded", False),
+    ],
+)
+def test_a_missing_table_or_a_refused_grant_disables_export(error: str, permanent: bool) -> None:
+    from server.observability import otel_exporters
+
+    assert bool(otel_exporters._unwritable(RuntimeError(error))) is permanent
+
+
+@pytest.mark.parametrize(("exporter", "level"), [("", "INFO"), ("otlp", "INFO"), ("ch", "WARNING")])
+def test_an_exporter_disables_itself_quietly_unless_chosen(
+    monkeypatch: pytest.MonkeyPatch, exporter: str, level: str
+) -> None:
+    import logging
+
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "otel_exporter", exporter)
+    assert otel_exporters._disabled_level() == getattr(logging, level)

@@ -20,7 +20,6 @@ def _row(mode: str = "", until: datetime | None = None) -> Any:
 def clear(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """The scope's live rows, the tombstones written and the locked count."""
     from server.memory import store as memory_repo
-
     from server.memory.app import temporal_publisher as publisher
     from server.memory.store import temporal as temporal_store
 

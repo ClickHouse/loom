@@ -128,7 +128,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_temporal_assertions
 ENGINE = ReplacingMergeTree(projected_seq)
 PARTITION BY (org)
 ORDER BY (org, namespace, agent, user_id, session_id, memory_key, assertion_id)
-SETTINGS index_granularity = 256;
+SETTINGS index_granularity = 256, non_replicated_deduplication_window = 1000;
 
 -- The highest journal sequence a projection has applied with no gap below it.
 -- A reader whose cutoff is above it reduces the journal tail itself. The
@@ -145,7 +145,8 @@ CREATE TABLE IF NOT EXISTS loom.memory_temporal_watermarks
     `updated_at` DateTime64(6, 'UTC') DEFAULT now64(6)
 )
 ENGINE = ReplacingMergeTree(applied_seq)
-ORDER BY (org, namespace, projection);
+ORDER BY (org, namespace, projection)
+SETTINGS non_replicated_deduplication_window = 1000;
 
 -- Vectors for historical search, keyed by what was embedded: the model and the
 -- sha256 of the exact embed text (value and key axis), so a revision whose text
@@ -162,7 +163,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_temporal_vectors
 )
 ENGINE = ReplacingMergeTree(created_at)
 ORDER BY (org, namespace, embedding_model, embed_input_sha256)
-SETTINGS index_granularity = 256;
+SETTINGS index_granularity = 256, non_replicated_deduplication_window = 1000;
 
 -- Shared memory history: every promotion, supersession and demotion row,
 -- kept after the ReplacingMergeTree merges the head.
@@ -187,7 +188,8 @@ CREATE TABLE IF NOT EXISTS loom.shared_versions
 )
 ENGINE = ReplacingMergeTree
 PARTITION BY (org, namespace)
-ORDER BY (org, namespace, memory_key, version);
+ORDER BY (org, namespace, memory_key, version)
+SETTINGS non_replicated_deduplication_window = 1000;
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS loom.shared_versions_mv TO loom.shared_versions AS
 SELECT org, namespace, memory_key, value, memory_type, confidence, promoted_from,

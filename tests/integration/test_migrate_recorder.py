@@ -39,7 +39,7 @@ def test_record_inserts_a_watermark_row(sync_ch_client) -> None:
 
     try:
         _loom_migrate._record(sync_ch_client, fake_name, fake_checksum)
-        applied = _loom_migrate._applied(sync_ch_client)
+        applied = _loom_migrate.applied_migrations(sync_ch_client)
         assert fake_name in applied
         assert applied[fake_name] == fake_checksum
     finally:

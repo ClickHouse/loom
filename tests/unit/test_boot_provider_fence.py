@@ -84,6 +84,22 @@ async def test_first_install_predates_provider_lock_table(setup):
 
 
 @pytest.mark.asyncio
+async def test_an_upgrade_without_keeper_migrates_without_the_provider_lock(setup):
+    # provider_configuration exists, the KeeperMap lock table does not.
+    client, migrate, pending, rows, execute, owned = setup
+    client.query_one.side_effect = [{"n": 1}, {"n": 0}]
+    execute.side_effect = lambda *args, **kwargs: 0 if not owned else 9
+    assert (
+        await boot.run_fenced_boot_migrations(
+            client, migrate, "lock", enabled=True, pending=pending
+        )
+        == 0
+    )
+    execute.assert_called_once()
+    rows.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_noop_restart_requires_no_keeper_and_never_invokes_migration_runner(setup):
     client, migrate, pending, rows, execute, _ = setup
     pending.return_value = []

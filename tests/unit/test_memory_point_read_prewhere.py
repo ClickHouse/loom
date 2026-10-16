@@ -23,7 +23,7 @@ from tests.unit.schema_ddl import ddl
 
 def test_the_point_read_tables_carry_a_small_granule() -> None:
     assert "SETTINGS index_granularity = 128," in ddl("memory")
-    assert "SETTINGS index_granularity = 1024;" in ddl("memory_belief_sources")
+    assert "SETTINGS index_granularity = 1024," in ddl("memory_belief_sources")
 
 
 class _CH:

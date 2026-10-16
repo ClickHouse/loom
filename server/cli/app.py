@@ -152,6 +152,10 @@ def _add_code_okf_up_parsers(sub: Any) -> None:
 
     register_up_cli(sub)
 
+    from server.cli.ch_setup import register_ch_setup_cli
+
+    register_ch_setup_cli(sub)
+
     from server.cli.read_replica import register_read_replica_cli
 
     register_read_replica_cli(sub)

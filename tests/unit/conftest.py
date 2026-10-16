@@ -660,8 +660,9 @@ def _tracker_contract_not_enforced() -> Iterator[None]:
 @pytest.fixture(autouse=True)
 def _vector_read_state_not_probed() -> Iterator[None]:
     """`CHClient.connect()` probes the vector read state
-    (replica check, coded columns, patch parts). Unit clients are fakes, so
-    the connect probe is replaced by a no-op here and the module state starts
+    (replica check, coded columns, patch parts) and the replicas' versions for
+    the condition cache. Unit clients are fakes, so both connect probes are
+    replaced by no-ops here and the module state starts
     and ends empty — a test that wants a reading sets it
     (`vector_codes_state.set_coded`, `patch_parts.set_reading`). Set by hand
     for the reason given above."""
@@ -673,11 +674,14 @@ def _vector_read_state_not_probed() -> Iterator[None]:
         return None
 
     before = ch_mod._probe_vector_state
+    guard = ch_mod._turn_off_unsafe_condition_cache
     ch_mod._probe_vector_state = _not_probed  # type: ignore[assignment]
+    ch_mod._turn_off_unsafe_condition_cache = _not_probed  # type: ignore[assignment]
     vector_codes_state.reset()
     patch_parts.reset()
     yield
     ch_mod._probe_vector_state = before  # type: ignore[assignment]
+    ch_mod._turn_off_unsafe_condition_cache = guard  # type: ignore[assignment]
     vector_codes_state.reset()
     patch_parts.reset()
 
@@ -728,3 +732,19 @@ def scalar_code_repo(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     for name, value in SCALAR_CODE_REPO.items():
         monkeypatch.setattr(settings, name, value)
     return dict(SCALAR_CODE_REPO)
+
+
+@pytest.fixture(autouse=True)
+def _clickhouse_preflight_passes() -> Iterator[None]:
+    """Boot and `loom migrate` check a real ClickHouse before they connect
+    (`server.core.schema.preflight`). Unit tests run against fakes, so the
+    check answers ready; tests/unit/test_ch_preflight.py covers it. Set by
+    hand, like the vector probe above, so it is undone after the settings
+    guard has looked."""
+    from server.core.schema import preflight
+
+    ready = preflight.Server(version="26.5.1.882", keeper=True, lightweight_updates=True)
+    before = preflight.require_ready
+    preflight.require_ready = lambda **_: ready  # type: ignore[assignment]
+    yield
+    preflight.require_ready = before  # type: ignore[assignment]

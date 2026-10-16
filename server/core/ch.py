@@ -33,6 +33,7 @@ from server.core.ch_errors import (
     REPLICA_BOUND_RETRIES,
     WIDTH_MISMATCH_CODE,
     error_code,
+    error_line,
     is_replica_bound_error,
     is_transient_network_error,
     is_unknown_quantized_setting,
@@ -113,7 +114,9 @@ def caller_shaped() -> Iterator[None]:
         caller_shaped_var.reset(token)
 
 
-def _caller_shaped_ceilings() -> dict[str, float]:
+def caller_shaped_ceilings() -> dict[str, float]:
+    """The ceilings a caller-shaped read runs under (0 = none); `loom ch-setup`
+    pins the same ones in the reader's settings profile."""
     return {
         "max_execution_time": float(settings.ch_caller_shaped_max_execution_s),
         "max_memory_usage": float(settings.ch_caller_shaped_max_memory_bytes),
@@ -128,7 +131,7 @@ def _apply_caller_ceilings(out: dict[str, Any], cls: str) -> None:
     same statements `_reader_auth` sends as the reader user."""
     if not caller_shaped_var.get() or cls != "read":
         return
-    for name, ceiling in _caller_shaped_ceilings().items():
+    for name, ceiling in caller_shaped_ceilings().items():
         if ceiling <= 0:
             continue
         asked = float(out.get(name) or 0)
@@ -171,6 +174,7 @@ async def probe_reader_user(client: Any) -> None:
     global _reader_user_ok, _reader_user_error
     if not settings.ch_reader_user:
         return
+    tag = query_tag_var.set("ch.reader_probe")
     try:
         with caller_shaped():
             row = await client.query_one(READER_PROBE_SQL)
@@ -182,6 +186,8 @@ async def probe_reader_user(client: Any) -> None:
         log.warning("LOOM_CH_READER_USER=%s cannot read: %s", settings.ch_reader_user, e)
         _reader_user_ok = False
         _reader_user_error = str(e)
+    finally:
+        query_tag_var.reset(tag)
 
 
 def reader_user_state() -> bool | None:
@@ -468,6 +474,46 @@ async def _probe_vector_state(client: CHClient) -> None:
     await ensure_probed(client)
 
 
+def condition_cache_unsafe(oldest_version: str) -> bool:
+    """Before 26.8 (ClickHouse #112086) a vector-search read with a WHERE clause
+    could record granules as non-matching, and a later SELECT with the same
+    condition silently returned fewer rows. True when the oldest replica is
+    older than that, so Loom's sessions turn the cache off whatever any
+    profile says."""
+    from server.core.schema.preflight import version_key
+
+    return version_key(oldest_version)[:2] < (26, 8)
+
+
+async def _turn_off_unsafe_condition_cache(client: AsyncClient) -> None:
+    """Run every Loom session with the query condition cache off when any
+    replica predates its vector-read fix (`condition_cache_unsafe`), or when the
+    replicas cannot be asked. Each new connection asks, so a reconnect keeps
+    the setting."""
+    from server.core.schema.preflight import CLUSTER_DOESNT_EXIST, REPLICA_VERSIONS_SQL, version_key
+
+    async def versions(sql: str) -> list[str]:
+        # The raw client, before CHClient tags its queries: name this one here.
+        rows = await client.query(sql, settings={"log_comment": "ch.condition_cache_probe"})
+        return [str(row[0]) for row in rows.result_rows]
+
+    try:
+        try:
+            replicas = await versions(REPLICA_VERSIONS_SQL)
+        except Exception as e:
+            if error_code(e) != CLUSTER_DOESNT_EXIST:
+                raise
+            replicas = await versions("SELECT version()")  # one server, no cluster
+        oldest = min(replicas, key=version_key)
+    except Exception as e:  # noqa: BLE001 — unknown replicas: assume an old one is among them
+        log.info("replica versions unknown (%s): use_query_condition_cache = 0", error_line(e, 120))
+        client.set_client_setting("use_query_condition_cache", 0)
+        return
+    if condition_cache_unsafe(oldest):
+        client.set_client_setting("use_query_condition_cache", 0)
+        log.info("ClickHouse %s: sessions run with use_query_condition_cache = 0", oldest)
+
+
 def _insert_data(
     rows: list[dict[str, Any]], columns: list[str], type_names: list[str] | None
 ) -> list[list[Any]]:
@@ -536,7 +582,7 @@ class CHClient:
             d["_reconnect_lock"] = asyncio.Lock()
 
     async def connect(self) -> None:
-        self._client = await clickhouse_connect.get_async_client(
+        client = await clickhouse_connect.get_async_client(
             **connection_kwargs(),
             compress=True,
             # The driver's read timeout is the outer backstop
@@ -574,7 +620,10 @@ class CHClient:
         # default before the session setting applies; bind them in UTC too.
         # tz_source="server" reads a bare DateTime in that zone, so reads come
         # back naive UTC, never in the host's zone.
-        self._client.server_tz = UTC
+        client.server_tz = UTC
+        # Settled before any task can use it: a reconnect publishes it only now.
+        await _turn_off_unsafe_condition_cache(client)
+        self._client = client
         await _probe_vector_state(self)
 
     async def disconnect(self) -> None:

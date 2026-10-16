@@ -81,4 +81,4 @@ async def test_a_namespace_the_pass_never_visited_is_one_statement() -> None:
 
 
 def test_the_table_reads_256_row_granules() -> None:
-    assert ddl("entity_communities").endswith("\nSETTINGS index_granularity = 256;")
+    assert "\nSETTINGS index_granularity = 256," in ddl("entity_communities")

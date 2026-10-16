@@ -590,8 +590,8 @@ Supported server versions are in
 
 Before 26.8, a vector-search read with a `WHERE` clause can record wrong entries in the
 query condition cache, and a later plain `SELECT` with the same condition can return fewer
-rows. Boot logs a warning on an older server with `use_query_condition_cache = 1`
-(`warn_below_vector_floor`); upgrade, or set it to 0 on Loom's profile.
+rows. When any replica is older, every Loom session turns the cache off when it connects
+(`server/core/ch.py`, `condition_cache_unsafe`).
 
 ## Invariants
 
@@ -623,7 +623,7 @@ rows. Boot logs a warning on an older server with `use_query_condition_cache = 1
   settings.
 - `server/core/schema/vector_codec_ddl.py`, `server/core/schema/table_rebuild.py`:
   apply-time rewrites and rebuilds.
-- `server/core/vectors/codes_state.py`, `patch_parts.py`, `vector_floor.py`:
+- `server/core/vectors/codes_state.py`, `patch_parts.py`:
   vector read policy.
 - `server/memory/store/rows.py`, `inserts.py`: the version-row builders.
 - `server/erasure/store/census.py`: `_CENSUS`, `STEP_ONLY_TABLES`, `NO_MEMORY_CONTENT`;

@@ -90,6 +90,18 @@ def strip_quantized_setting(sql: str) -> str:
 _SERVER_CODE = re.compile(r"Code: (\d+)\.")
 
 
+_DRIVER_PREFIX = re.compile(r"^Received ClickHouse exception, code: \d+, server response: ")
+
+
+def error_line(e: BaseException, limit: int = 200) -> str:
+    """The first line of an error a person can read: without the driver's
+    prefix and the URL it appends, or the exception's type when it has no text."""
+    lines = str(e).splitlines()
+    if not lines:
+        return type(e).__name__
+    return _DRIVER_PREFIX.sub("", lines[0]).split(" (for url")[0][:limit]
+
+
 def error_code(e: BaseException | str) -> int | None:
     """The ClickHouse server error code an exception (or its text) carries as
     `Code: <n>.`, or None."""

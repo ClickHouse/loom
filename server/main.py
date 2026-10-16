@@ -10,6 +10,7 @@ or:
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import os
 from collections.abc import AsyncIterator
@@ -75,6 +76,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         allow_insecure=settings.allow_insecure,
     )
 
+    await boot.require_clickhouse_ready()
     ch = get_client()
     await ch.connect()
 
@@ -95,7 +97,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
     rc = await boot.run_fenced_boot_migrations(
         ch,
-        _migrate_mod.main,
+        # The preflight already ran above, before the first connect.
+        functools.partial(_migrate_mod.main, check_server=False),
         settings.boot_migrate_lock_path,
         enabled=bool(settings.boot_migrate),
         pending=_migrate_mod.pending_names,

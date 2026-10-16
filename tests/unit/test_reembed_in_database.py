@@ -111,23 +111,6 @@ def test_shortfall_is_min_of_live_and_limit_minus_returned() -> None:
 
 
 @pytest.mark.asyncio
-async def test_vector_floor_warning_only_below_26_8_with_cache_on() -> None:
-    from server.core.vectors import vector_floor as vip
-
-    class _CH:
-        def __init__(self, v: str, qcc: str) -> None:
-            self.v, self.qcc = v, qcc
-
-        async def query_all(self, sql: str, params=None):
-            return [{"v": self.v, "qcc": self.qcc}]
-
-    assert await vip.warn_below_vector_floor(_CH("26.6.1.10", "1")) is not None
-    assert await vip.warn_below_vector_floor(_CH("26.8.1.187", "1")) is None
-    assert await vip.warn_below_vector_floor(_CH("26.6.1.10", "0")) is None
-    assert await vip.warn_below_vector_floor(_CH("27.1.1.1", "1")) is None
-
-
-@pytest.mark.asyncio
 async def test_in_database_statement_runs_through_the_client_with_its_settings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
