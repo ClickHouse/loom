@@ -1,0 +1,75 @@
+name: Feature request
+description: Suggest a workflow Loom should support.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > Search [existing issues](https://github.com/ClickHouse/loom/issues?q=is%3Aissue) first. A change to storage, the identity model, auth or a new external dependency is discussed here before any pull request.
+  - type: textarea
+    attributes:
+      label: Company or project name
+      description: Optional. Put your company name or project description here.
+    validations:
+      required: false
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Memory and search
+        - Knowledge (documents)
+        - Conversations, sessions and runs
+        - Code index
+        - Tracker
+        - Namespaces, tokens and grants
+        - MCP server
+        - Agent plugin (Claude Code, Codex, Cursor)
+        - Python SDK
+        - TypeScript SDK
+        - CLI
+        - Dashboard
+        - Background workers
+        - Migrations and schema
+        - Deployment and installation
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use case
+      description: The agent workflow, integration or question Loom does not handle today, and who hits it.
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Describe the solution you'd like
+      description: What should happen. An op's input and output, an SDK call you wish worked, a setting or a CLI command is ideal.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Describe alternatives you've considered
+      description: The existing ops, SDK calls or CLI commands that came close, and where they fell short.
+    validations:
+      required: false
+  - type: dropdown
+    id: ai-assistance
+    attributes:
+      label: Where the need comes from
+      description: This asks about the need, not how the text was written; drafting with AI is fine. A need you hit while building carries more weight than one a model suggested.
+      options:
+        - I hit this need myself
+        - The need is mine, an AI tool helped shape the proposal
+        - An AI tool suggested this feature
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Additional context
+      description: Anything else, such as links, screenshots or related issues.
+    validations:
+      required: false

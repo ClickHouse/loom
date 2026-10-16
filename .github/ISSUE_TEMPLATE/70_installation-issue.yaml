@@ -1,0 +1,76 @@
+name: Installation or deployment issue
+description: Loom does not install, build, boot or connect to ClickHouse.
+labels: ["installation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > Run `loom doctor` first: it prints each problem it finds with its fix. [Troubleshooting](https://github.com/ClickHouse/loom/blob/main/docs/operations/troubleshooting.md) covers the common ones.
+        > **Never paste tokens, API keys, JWTs, passwords or customer data.** `loom report` output is safe to paste: it records only whether each secret is set.
+        > A security issue goes to security@clickhouse.com, not here ([SECURITY.md](https://github.com/ClickHouse/loom/blob/main/SECURITY.md)).
+  - type: textarea
+    attributes:
+      label: Company or project name
+      description: Optional. Put your company name or project description here.
+    validations:
+      required: false
+  - type: dropdown
+    id: install-path
+    attributes:
+      label: Installation path
+      options:
+        - install.sh
+        - "`loom up` (released image)"
+        - Docker Compose from a checkout
+        - Web and workers deployed apart
+        - From source (`pip install -e`)
+        - Agent plugin install
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: clickhouse
+    attributes:
+      label: ClickHouse
+      options:
+        - Bundled with Loom
+        - Self-managed
+        - ClickHouse Cloud
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: The command you ran and its full output.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system and architecture
+      description: e.g. Ubuntu 24.04 on arm64, macOS 15 on Apple silicon. Include the Docker version if Docker is involved.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Paste `loom report` (or `loom report --open`, which fills this in). Otherwise give the Loom version (`loom --version`), ClickHouse version (`SELECT version()`) and where it runs (bundled, self-managed or ClickHouse Cloud), the SDK or plugin version and agent host, and the LLM and embedding providers.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Additional context
+      description: Anything else about the problem.
+    validations:
+      required: false
+  - type: checkboxes
+    id: redacted
+    attributes:
+      label: Redaction
+      options:
+        - label: I removed tokens, keys, passwords and personal or customer data from everything above.
+          required: true

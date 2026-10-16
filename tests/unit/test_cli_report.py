@@ -3,8 +3,8 @@
 `report` reuses `_run_doctor_checks` (so we don't need to retest each
 check individually — that's tests/unit/test_cli_doctor.py's job).
 We test:
-  - The markdown body has the required sections + the doctor block
-  - The header-only variant fits the --open URL flow
+  - The body carries the versions + the doctor block
+  - --open lands on the bug form with the versions in its Environment field
   - No secrets surface (jwt_secret is reported as boolean, never value)
   - The argparse subcommand is registered with --open
 """
@@ -26,7 +26,7 @@ def _stub_httpx_for_ch_check(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("httpx.Client", _failing_httpx_client)
 
 
-def test_report_body_has_required_sections(
+def test_report_body_has_versions_and_doctor_block(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     from server.cli.doctor import _cmd_report
@@ -34,21 +34,13 @@ def test_report_body_has_required_sections(
     rc = _cmd_report(argparse.Namespace(open=False))
     out = capsys.readouterr().out
 
-    # Bug-report placeholders.
-    assert "**What you were trying to do**" in out
-    assert "**What you expected to happen**" in out
-    assert "**What actually happened**" in out
-    assert "**Error messages**" in out
-
-    # Environment block.
-    assert "**Environment**" in out
     assert "Loom version:" in out
     assert "Python:" in out
     assert "Platform:" in out
 
-    # Auto-attached doctor output (fenced).
-    assert "**Diagnostic (`loom doctor`)**" in out
-    assert "```" in out
+    # Plain text for the form's text-rendered Environment field.
+    assert "loom doctor:" in out
+    assert "```" not in out
     assert "python_version" in out  # at least one check name appears
     assert "jwt_secret" in out
     assert "clickhouse_reachable" in out
@@ -81,8 +73,8 @@ def test_open_flag_builds_correct_url(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """--open opens the new-issue URL via webbrowser.open with a body
-    param that's URL-encoded. We stub webbrowser to capture the URL."""
+    """--open opens the bug form with the versions in its Environment
+    field (issue forms prefill a field from the query param of its id)."""
     import webbrowser
 
     captured: dict[str, str] = {}
@@ -106,19 +98,15 @@ def test_open_flag_builds_correct_url(
 
     parsed = urllib.parse.urlparse(captured["url"])
     qs = urllib.parse.parse_qs(parsed.query)
-    body = qs["body"][0]
+    assert qs["template"] == ["30_bug-report.yaml"]
+    env = qs["environment"][0]
 
-    # Header version of the body fits the URL — it has the env block +
-    # placeholders, but NOT the doctor block (kept on stdout to dodge
-    # URL truncation).
-    assert "Loom version:" in body
-    assert "Python:" in body
-    assert "Platform:" in body
-    assert "What you were trying to do" in body
-    assert "python_version" not in body  # doctor block belongs on stdout
+    assert "Loom version:" in env
+    assert "Python:" in env
+    assert "Platform:" in env
+    assert "python_version" not in env  # doctor block stays on stdout
 
-    # Full output (which the operator pastes manually) is on stdout.
-    assert "Diagnostic (`loom doctor`)" in out
+    assert "loom doctor:" in out
     # And the helper message confirms what to do next.
     assert "browser" in out.lower()
 

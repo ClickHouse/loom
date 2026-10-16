@@ -1,0 +1,40 @@
+name: Documentation issue
+description: Something in the docs is wrong, missing or unclear.
+labels: ["documentation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > Thanks for helping improve the documentation.
+  - type: input
+    id: page
+    attributes:
+      label: Documentation page
+      description: A link to the page, e.g. https://github.com/ClickHouse/loom/blob/main/docs/getting-started/quickstart.md
+    validations:
+      required: true
+  - type: textarea
+    id: issue
+    attributes:
+      label: Describe the issue
+      description: What is wrong, missing or unclear. Quote the passage if it helps.
+    validations:
+      required: true
+  - type: textarea
+    id: fix
+    attributes:
+      label: Suggested fix
+      description: Optional. What the page should say instead.
+    validations:
+      required: false
+  - type: dropdown
+    id: ai-assistance
+    attributes:
+      label: How this was found
+      description: This asks how the problem was found, not how the text was written; drafting with AI is fine.
+      options:
+        - I hit this reading the docs
+        - An AI tool helped, and I checked the page myself
+        - An AI tool found this, and I have not checked the page
+    validations:
+      required: true
