@@ -583,3 +583,36 @@ def test_the_foreign_write_sweep_moves_past_every_page_by_version(
     asyncio.run(_ADOPT_FOREIGN(limit=2, only=("o", "n")))
     asyncio.run(_ADOPT_FOREIGN(limit=2, only=("o", "n")))
     assert asked == [(100, ("o", "n")), (102, ("o", "n"))] and cursors[("o", "n")] == 104
+
+
+def test_the_foreign_write_sweep_stays_a_settle_window_behind_now(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A row drawn earlier may land later: the cursor never passes now - settle, so the
+    # window is read again on the next pass.
+    from server.memory.app import temporal_publisher
+
+    now_ns = int(datetime.now(UTC).timestamp() * 1e9)
+    recent = now_ns - 5 * 10**9  # drawn 5 s ago
+    cursors: dict[tuple[str, str], int] = {("", ""): recent - 10**9}
+
+    async def watermark(org: str, ns: str, name: str = "", **_k: Any) -> int:
+        return cursors.get((org, ns), 0)
+
+    async def advance(org: str, ns: str, value: int, name: str = "", **_k: Any) -> None:
+        cursors[(org, ns)] = value
+
+    async def foreign_rows(after: int, **_k: Any) -> list:
+        return [{"org": "o", "namespace": "n", "agent": "a", "user_id": "-", "session_id": "-",
+                 "memory_key": "k", "v": recent}]  # fmt: skip
+
+    async def adopt(*_a: Any, **_k: Any) -> int:
+        return 1
+
+    monkeypatch.setattr(store, "watermark", watermark)
+    monkeypatch.setattr(store, "advance_watermark", advance)
+    monkeypatch.setattr(store, "foreign_rows", foreign_rows)
+    monkeypatch.setattr(temporal_publisher, "adopt", adopt)
+    monkeypatch.setattr(tp, "_rollout", lambda: True)
+    asyncio.run(_ADOPT_FOREIGN(limit=10))
+    assert cursors[("", "")] == recent - 10**9  # not past the settle window

@@ -200,6 +200,8 @@ _FOREIGN = "foreign_writes"
 _FOREIGN_TAIL_S = 900.0
 # How far before its first pass the sweep starts (this build's migration ran at boot).
 _FOREIGN_START_S = 300
+# How long after its draw another build's row may still be landing.
+_FOREIGN_SETTLE_S = 60
 _last_mixed = time.monotonic()
 
 
@@ -313,7 +315,13 @@ async def _adopt_foreign_writes(*, limit: int, only: tuple[str, str] | None = No
             log.warning("temporal adopt: %s/%s failed, retried next pass: %r", org, ns, e)
             return adopted  # the cursor stays: the page is swept again
     if rows:
-        await store.advance_watermark(org_, ns_, int(rows[-1]["v"]), _FOREIGN)
+        # A version is drawn when its write began and lands later: the cursor stays a
+        # settle window behind now, so a row drawn earlier that lands late is still
+        # swept (adoption is idempotent, so the window is read again each pass).
+        settled = int((datetime.now(UTC) - timedelta(seconds=_FOREIGN_SETTLE_S)).timestamp() * 1e9)
+        await store.advance_watermark(
+            org_, ns_, max(cursor, min(int(rows[-1]["v"]), settled)), _FOREIGN
+        )
     return adopted
 
 

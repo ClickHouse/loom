@@ -682,7 +682,11 @@ async def _plan(
     }
     priors = await _retried_commits(b, ch)
     own = {ident: {str(c["commit_id"]) for c in cs} for ident, cs in priors.items()}
-    adopted: set[Ident] = set()
+    # Rows another build wrote, as the plan read them (the batch's own rows replace
+    # `head_rows` entries as it goes): each is adopted once, before its key's change.
+    foreign_heads = {
+        ident: h for ident, h in head_rows.items() if foreign(h, committed_v.get(ident, 0))
+    }
     for change in changes:
         change.reset()
         ident = change.ident
@@ -693,10 +697,10 @@ async def _plan(
         current = served.setdefault(ident, {})
         if not current and ident not in parents:
             _seed(b, ident, head_rows.get(ident), current)
-        elif ident not in adopted:
-            adopted.add(ident)
-            if foreign(head_rows.get(ident), committed_v.get(ident, 0)):
-                _adopt(b, ident, head_rows[ident], current, committed_v.get(ident, 0), planned_at)
+        elif ident in foreign_heads:
+            _adopt(
+                b, ident, foreign_heads.pop(ident), current, committed_v.get(ident, 0), planned_at
+            )
         active = [x.a for x in current.values()]
         if change.build is not None:
             amendment = change.build(active)
@@ -958,7 +962,9 @@ def _adopt(
     except tm.EmptyInterval:
         return
     if planned.empty:
-        return
+        # The row changes nothing the journal models (a re-save of what it holds): an
+        # empty commit at its version still records that this version was seen.
+        planned = tm.Amendment("restate")
     retired = [current.pop(aid) for aid in planned.retired if aid in current]
     memory_id = str(head.get("memory_id") or "")
     for a in planned.added:

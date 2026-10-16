@@ -1673,3 +1673,25 @@ def test_a_key_only_another_build_wrote_is_seeded_and_written_not_planned_again(
     (row,) = run(pub.publish_rows([mrow('"Berlin"')]))
     ops = [c["operation"] for c in journal.commits]
     assert ops[0] == "memory.journal_seed" and row["value"] == '"Berlin"'
+
+
+def test_another_builds_resave_of_the_same_value_does_not_block_the_next_write(
+    journal: Journal, monkeypatch
+) -> None:
+    # The other build re-saved A as it is: its row changes nothing the journal models,
+    # so it is journaled as an empty observed commit and the next write goes through.
+    run(pub.publish_rows([mrow('"A"')]))
+    resaved = mrow('"A"', journal_version=journal.commits[-1]["row_version"])
+
+    async def heads(*_a, **_k):
+        return [resaved]
+
+    async def versions(*_a, **_k):
+        return {("a", "-", "-", "k"): (resaved["version"], resaved["journal_version"])}
+
+    monkeypatch.setattr(store, "memory_heads", heads)
+    monkeypatch.setattr(store, "landed_heads", versions)
+    (row,) = run(pub.publish_rows([mrow('"B"')]))
+    kinds = [(c["operation"], c["change_kind"]) for c in journal.commits[1:]]
+    assert kinds[0] == ("memory.observed", "restate") and row["value"] == '"B"'
+    assert journal.commits[1]["row_version"] == resaved["version"]
