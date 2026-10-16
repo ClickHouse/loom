@@ -1536,8 +1536,10 @@ async def revoke_token(request: Request) -> Response:
     reason = "logout"
     try:
         grant = spent = await store.take_refresh(token_value, client_id)
-    except SessionRetired:
-        return Response(status_code=200)  # a logout asked again: ended already
+    except SessionRetired as e:
+        # Retired by a refusal that may not have ended the session: a logout
+        # ends it now (twice is harmless), and leaves the key retired.
+        grant, reason = e.grant, "logout (session already retired)"
     except CodeReplayed as e:
         # Spent already: a logout retried, or an old copy. Still a logout,
         # but the audit keeps the difference.

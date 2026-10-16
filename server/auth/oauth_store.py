@@ -85,6 +85,10 @@ class SessionRetired(Exception):
     """A refresh token presented again after a refusal or a logout retired its
     session: nothing replaced it, so it is no theft, only an ended session."""
 
+    def __init__(self, grant: Grant) -> None:
+        super().__init__("retired refresh token presented again")
+        self.grant = grant
+
 
 class CodeReplayed(Exception):
     """A single-use code, refresh token or device code was presented after
@@ -102,8 +106,10 @@ def token_id(token: str) -> str:
 class OAuthStore(Protocol):
     """What oauth.py and device.py need from the store. take_* spend a
     credential: None when it is unknown, expired or another client's (left
-    unspent), CodeReplayed when it was spent. A save that finds the record
-    changed since this request read it raises claims.Changed."""
+    unspent), CodeReplayed when it was spent; take_refresh raises
+    SessionRetired for a token its session retired (a logout, a refusal). A
+    save that finds the record changed since this request read it raises
+    claims.Changed."""
 
     async def save_client(self, client_id: str, redirect_uris: list[str], name: str) -> None: ...
     async def get_client(self, client_id: str) -> dict[str, Any] | None: ...
@@ -367,7 +373,7 @@ class ClickHouseStore:
         if now is None:
             return None  # the session's key is gone: it has expired
         if now == _current(generation + 1, "ended"):
-            raise SessionRetired  # a client asking twice is refused, not taken for a theft
+            raise SessionRetired(grant)  # a client asking twice is refused, not taken for a theft
         # A read may lag behind Keeper, never run ahead of it: a later
         # generation seen is one that was issued, so this token was spent.
         if _generation(now) > generation:

@@ -1506,3 +1506,17 @@ def test_a_taken_over_refresh_the_idp_refuses_is_named_as_loom_s_loss(sso, monke
     sso["upstream"] = "refused"
     r = _refresh(c, rt)
     assert r.status_code == 400 and "did not finish" in r.json()["error_description"]
+
+
+def test_a_logout_with_a_refused_sessions_token_still_ends_it(_world, sso, monkeypatch) -> None:
+    # A refusal retires the session key without always ending the session
+    # (SSO turned off): the logout that follows must end it, not just answer 200.
+    c = _client()
+    grant = _start(c)
+    _approve(c, grant["user_code"], _sso_round_trip(c, grant["user_code"]).text)
+    rt = _poll(c, grant["device_code"]).json()["refresh_token"]
+    monkeypatch.setattr(oauth.settings, "oauth_login_provider", "password")
+    assert _refresh(c, rt).status_code == 400  # "single sign-on is off here"
+    family = oauth.store.refresh[oauth.token_id(rt)]["family"]
+    r = c.post("/oauth/revoke", data={"token": rt, "client_id": device.DEVICE_CLIENT_ID})
+    assert r.status_code == 200 and family in _world["revoked"]

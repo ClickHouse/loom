@@ -525,9 +525,11 @@ class Scenario:
         }
         for label, srv in self.builds.items():
             got = httpx.post(f"{srv.url}/oauth/token", data=refresh, timeout=30)
+            refused = got.status_code == 400 and "invalid_grant" in got.text
+            # A build that serves no sign-in has no token endpoint at all.
             self.check(
-                got.status_code < 500,
-                f"{label} refuses an unknown refresh cleanly ({got.status_code})",
+                refused or (label == "N-1" and got.status_code == 404),
+                f"{label} refuses an unknown refresh as invalid_grant ({got.status_code})",
             )
 
     def dashboard_loads_across(self) -> None:

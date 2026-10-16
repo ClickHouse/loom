@@ -112,7 +112,12 @@ class _Login:
             self.error = e
 
     def user_code(self) -> str:
-        line = self.printed.get(timeout=10)
+        try:
+            line = self.printed.get(timeout=10)
+        except queue.Empty:
+            # The sign-in never printed its code: say why (a 429 from the
+            # device-start limit, say), not that a queue stayed empty.
+            raise AssertionError(f"loom login printed no code: {self.error!r}") from None
         match = re.search(r"enter the code ([A-Z]{4}-[A-Z]{4})", line)
         assert match, line
         return match.group(1)
@@ -186,6 +191,9 @@ def password_server(ch_client) -> Iterator[tuple[str, str, str, str, str]]:
     email = f"login-{uuid.uuid4().hex[:6]}@test.com"
     password = "pw-" + uuid.uuid4().hex[:8]
     ns = _seed(ch_client, org, email, hash_password(password))
+    # Every test server here starts sign-ins from 127.0.0.1, and the limit on
+    # them is durable: a suite run again within its window would be refused.
+    ch_client.command("DELETE FROM loom.auth_attempts WHERE kind LIKE 'device.start%'")
     env = {"LOOM_AUTH_REQUIRED": "true", "LOOM_JWT_SECRET": _JWT_SECRET}
     with loom_server("login", env) as base:
         yield base, org, ns, email, password
