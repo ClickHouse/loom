@@ -15,7 +15,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
-from scripts.gates.check_no_secrets import PROVIDER_KEY_PATTERNS  # noqa: E402 — the repo's gate
+from scripts.gates.check_no_secrets import PROVIDER_KEY_PATTERNS
 
 # The phrases from SKILL.md's table that are filler in every use; the other rows
 # need a reader's judgement.

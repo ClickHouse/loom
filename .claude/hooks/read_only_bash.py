@@ -40,7 +40,8 @@ GIT_WRITE_FLAGS = ("--output", "--ext-diff", "--textconv")
 LINE_COUNT = re.compile(r"(-n ?\d+|-\d+|-q)( (-n ?\d+|-\d+|-q))*")
 # Everything a listed command needs. Leaving out newline, #, ;, $, *, braces,
 # parentheses, backslash and backticks rules out a second command and every expansion
-# that could hide a flag; brackets are allowed only in a pytest node id.
+# that could hide a flag; brackets are allowed only in a pytest node id and in a gh
+# --jq expression that starts with `.`.
 SAFE = re.compile(r"[\w .,/:=@+^~%'\"|&\[\]-]*")
 PYTEST = (".venv/bin/python", "-m", "pytest")
 PYTEST_FLAG = re.compile(
@@ -66,12 +67,19 @@ def _pytest_ok(args: list[str]) -> bool:
 
 
 def _without_jq(words: list[str]) -> list[str]:
-    # gh hands the --jq expression to jq; it starts with `.`, so no glob can make it a flag.
+    # A --jq expression that starts with `.` can expand only to a dotfile, never a flag.
+    if words[0] != "gh":
+        return words
     out = []
     for i, word in enumerate(words):
-        if i and words[i - 1] in {"--jq", "-q"} and words[0] == "gh":
-            continue
-        out.append(word)
+        if word.startswith(("--jq=", "-q=")):
+            expression = word.split("=", 1)[1]
+        elif i > 0 and words[i - 1] in {"--jq", "-q"}:
+            expression = word
+        else:
+            expression = ""
+        if not expression.startswith("."):
+            out.append(word)
     return out
 
 
@@ -86,15 +94,14 @@ def _segment_refusal(words: list[str], piped: bool) -> str | None:
     if piped:
         return None if words[0] in FILTERS else f"{name} cannot read a pipe here"
     if tuple(words[:3]) == PYTEST:
-        return (
-            None
-            if _pytest_ok(words[3:])
-            else "pytest runs only tests/unit paths with -q, -x, -k and similar flags"
-        )
+        if not _pytest_ok(words[3:]):
+            return "pytest runs only tests/unit paths with -q, -x, -k and similar flags"
+        return None
     if any("[" in w or "]" in w for w in _without_jq(words)):
         return "brackets are allowed only in a pytest node id or a --jq expression"
-    if words[0] == "git" and any(w.startswith(GIT_WRITE_FLAGS) for w in words):
-        return f"{name} with that flag writes a file or runs a program"
+    flags = [w for w in words if w.startswith(GIT_WRITE_FLAGS)] if words[0] == "git" else []
+    if flags:
+        return f"`{flags[0]}` makes git write a file or run a program"
     if not any(tuple(words[: len(c)]) == c for c in COMMANDS):
         return f"{name} is not on the reviewer's read-only list"
     return None
@@ -103,10 +110,12 @@ def _segment_refusal(words: list[str], piped: bool) -> str | None:
 def refusal(command: str) -> str | None:
     command = re.sub(r"\s2>&1\b|\s2?>\s*/dev/null\b", "", command)
     if not SAFE.fullmatch(command):
-        return (
-            "it has a character that could start a second command or a shell expansion"
-            " (`*` is refused even quoted: use the Glob or Grep tool)"
-        )
+        if "*" in command:
+            return (
+                "`*` is refused even quoted: name a directory or file (`-- server/`),"
+                " or find files with the Glob or Grep tool"
+            )
+        return "it has a character that could start a second command or a shell expansion"
     lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
     lexer.whitespace_split = True
     segment: list[str] = []

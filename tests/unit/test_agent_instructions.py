@@ -317,6 +317,7 @@ def _hook(command: str) -> int:
         ".venv/bin/python -m pytest 'tests/unit/test_a.py::test_b[x-1]' -q",
         "git log | grep -F x",
         "gh pr view 57 --json files --jq '.files[].path'",
+        "gh pr view 57 --json files --jq='.files[].path'",
         "python3 .claude/skills/loom-writing/scripts/check_prose.py AGENTS.md",
     ],
 )
@@ -351,6 +352,8 @@ def test_reviewer_hook_allows_reads(command: str) -> None:
         "git log | tail -qf x",
         "git log | tail +1f x",
         "git log | tail --foll x",
+        "gh pr view 57 --jq [-][-]web",
+        "git log -p --ext-diff",
         "git diff *",
         "git diff [^a]x",
         ".venv/bin/python -m pytest -q",
