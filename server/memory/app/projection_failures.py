@@ -558,10 +558,7 @@ async def _recording_restated_repair(
     try:
         yield
     except TriplesRepairFailed as e:
-        # Stored as JSON: compare it as the next retry reads it.
-        changes = json.loads(json.dumps(restated_repair_payload(e)))
-        if any(changes[k] != failure.payload.get(k) for k in changes):
-            await _update_payload(failure, changes, ch=ch)
+        await _record_changes(failure, restated_repair_payload(e), ch=ch)
         raise
 
 
@@ -877,13 +874,20 @@ async def _retry_graph_projection(
                 )
             except TriplesRepairFailed as e:
                 # What this replay wrote rides the failure, for the next to finish: the
-                # entries it kept and the closes it made. The payload is stored as JSON:
-                # compare it as the next retry reads it.
-                changes = json.loads(json.dumps({**repair_failure_payload(e), **kept}))
-                if any(changes[k] != failure.payload.get(k) for k in changes):
-                    await _update_payload(failure, changes, ch=ch)
+                # entries it kept and the closes it made.
+                await _record_changes(failure, {**repair_failure_payload(e), **kept}, ch=ch)
                 raise
     return ""
+
+
+async def _record_changes(
+    failure: ProjectionFailureRow, changes: dict[str, Any], *, ch: Any
+) -> None:
+    """Write `changes` into the failure's payload when any differs from what it holds."""
+    # Stored as JSON: compare them as the next retry reads them.
+    changes = json.loads(json.dumps(changes))
+    if any(changes[k] != failure.payload.get(k) for k in changes):
+        await _update_payload(failure, changes, ch=ch)
 
 
 async def _update_payload(
