@@ -1835,6 +1835,7 @@ CREATE TABLE IF NOT EXISTS loom.memory
     `sensitivity` LowCardinality(String) DEFAULT '',
     `value_preview` String MATERIALIZED substring(value, 1, 2048),
     `value_len` UInt32 MATERIALIZED length(value),
+    `journal_version` UInt64 DEFAULT 0,
     INDEX type_skip memory_type TYPE set(8) GRANULARITY 4,
     INDEX pinned_skip pinned TYPE set(2) GRANULARITY 4,
     INDEX entities_skip entities TYPE bloom_filter(0.01) GRANULARITY 4,
@@ -2498,6 +2499,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_temporal_commits
     `idempotency_key` String DEFAULT '',
     `request_sha256` String DEFAULT '',
     `request_slot` Int32 DEFAULT -1,
+    `request_outcomes` String DEFAULT '',
     `operation` LowCardinality(String),
     `change_kind` LowCardinality(String),
     `payload_schema` UInt16,
@@ -2672,6 +2674,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_versions
     `sensitivity` LowCardinality(String) DEFAULT '',
     `value_preview` String MATERIALIZED substring(value, 1, 2048),
     `value_len` UInt32 MATERIALIZED length(value),
+    `journal_version` UInt64 DEFAULT 0,
     INDEX memory_id_skip memory_id TYPE bloom_filter(0.01) GRANULARITY 4
 )
 ENGINE = ReplacingMergeTree
@@ -4211,7 +4214,8 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS loom.memory_versions_mv TO loom.memory_ve
     `locked_by` String,
     `locked_at` Nullable(DateTime),
     `on_expire` LowCardinality(String),
-    `expire_reason` String
+    `expire_reason` String,
+    `journal_version` UInt64
 )
 AS SELECT
     org,
@@ -4274,7 +4278,8 @@ AS SELECT
     locked_by,
     locked_at,
     on_expire,
-    expire_reason
+    expire_reason,
+    journal_version
 FROM loom.memory;
 
 -- loom.session_brief_revisions_mv

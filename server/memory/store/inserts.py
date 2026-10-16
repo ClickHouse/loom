@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import Any
+from typing import Any, cast
 
 from server.core.errors import PreconditionFailedError
 from server.core.repo_base import _CHClient, _default_client
@@ -134,6 +134,10 @@ async def _publish_insert_fence(
         rows = await hook(rows, ch=ch)
     if not rows:
         return 0
+    # Each row names the version this build wrote it at, once the journal has stamped
+    # it: a build that does not journal carries the column forward unchanged.
+    for r in rows:
+        cast(dict[str, Any], r)["journal_version"] = int(r.get("version") or 0)
     await _insert_then_fence(rows, ch, alongside)
     return len(rows)
 

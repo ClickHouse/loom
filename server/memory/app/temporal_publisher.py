@@ -57,6 +57,7 @@ from server.memory.domain.temporal_capture import (
     intent_for,
     note_left_out,
     removes,
+    request_outcomes,
     slot_of,
     write_intent,
 )
@@ -68,6 +69,9 @@ from server.settings import settings
 log = logging.getLogger(__name__)
 
 PUBLISHER_ID = default_holder()
+# Per namespace lease name: the in-process queue in front of the deployment lease
+# (one entry per namespace this process has written).
+_local_locks: dict[str, asyncio.Lock] = {}
 _locks = KeyWriteLocks(wait_s=settings.memory_temporal_lock_wait_s, ttl_s=60)
 _receipts: ContextVar[list[Receipt] | None] = ContextVar("loom_temporal_receipts", default=None)
 # Set while the erasure fence takes rows back out: those rows are not fenced again.
@@ -99,6 +103,9 @@ class Receipt:
     row_version: int = 0
     # A retry's: the request entry its commit answered (`request_slot`; -1: none).
     request_slot: int = -1
+    # A retry's: how the request answered its entries with no commit (JSON; '' when not
+    # this commit, the request's first, or none).
+    request_outcomes: str = ""
     # Why the row was neither journaled nor written: superseded (a later-drawn
     # version committed first), locked (a change the key's lock in force refuses), restated
     # (nothing changed and the value is not what applies now).
@@ -593,6 +600,8 @@ class _Planned:
     past_only: bool = False
     # The journal's first record of a key written before it (`_seed`).
     seed: bool = False
+    # A write the journal did not see, journaled as observed (`_adopt`).
+    observed: bool = False
     # A restatement's: the claim its row shows.
     restated: str = ""
 
@@ -671,28 +680,21 @@ async def _plan(
     }
     priors = await _retried_commits(b, ch)
     own = {ident: {str(c["commit_id"]) for c in cs} for ident, cs in priors.items()}
+    adopted: set[Ident] = set()
     for change in changes:
         change.reset()
         ident = change.ident
         prior = _prior_of(priors.get(ident), slot_of(change.row))
         if prior is not None:
-            # A retry is answered with the commit its first attempt made, whatever
-            # the key serves now; the same key with another body is refused.
-            if str(prior["request_sha256"]) != b.request_sha:
-                raise PreconditionFailedError(
-                    "Idempotency-Key reused with a different request to this memory"
-                )
-            # Moved on: the key's last commit is not one this request made.
-            moved_on = b.parents.get(ident) not in (None, *own.get(ident, ()))
-            receipt = _receipt(ns, ident, prior, moved_on=moved_on)
-            assert receipt.amendment is not None  # read back from the commit
-            held = [x.a for x in served.get(ident, {}).values()]
-            past = _retry_past_only(receipt.amendment, held, planned_at)
-            b.receipts.append(replace(receipt, past_only=past, row=change.row))
+            _answer_retry(b, change, prior, own.get(ident, set()), served, planned_at)
             continue
         current = served.setdefault(ident, {})
         if not current and ident not in parents:
             _seed(b, ident, head_rows.get(ident), current)
+        elif ident not in adopted:
+            adopted.add(ident)
+            if foreign(head_rows.get(ident), committed_v.get(ident, 0)):
+                _adopt(b, ident, head_rows[ident], current, committed_v.get(ident, 0), planned_at)
         active = [x.a for x in current.values()]
         if change.build is not None:
             amendment = change.build(active)
@@ -724,6 +726,30 @@ async def _plan(
             _planned(b, change, intent, amendment, active, memory_id, retired, planned_at)
         )
     return b
+
+
+def _answer_retry(
+    b: _Batch,
+    change: _RowChange,
+    prior: dict[str, Any],
+    own: set[str],
+    served: dict[Ident, dict[str, Served]],
+    now: datetime,
+) -> None:
+    """A retry is answered with the commit its first attempt made, whatever the key
+    serves now; the same key with another body is refused."""
+    ident = change.ident
+    if str(prior["request_sha256"]) != b.request_sha:
+        raise PreconditionFailedError(
+            "Idempotency-Key reused with a different request to this memory"
+        )
+    # Moved on: the key's last commit is not one this request made.
+    moved_on = b.parents.get(ident) not in (None, *own)
+    receipt = _receipt(b.ns, ident, prior, moved_on=moved_on)
+    assert receipt.amendment is not None  # read back from the commit
+    held = [x.a for x in served.get(ident, {}).values()]
+    past = _retry_past_only(receipt.amendment, held, now)
+    b.receipts.append(replace(receipt, past_only=past, row=change.row))
 
 
 def _prior_of(priors: list[dict[str, Any]] | None, slot: int) -> dict[str, Any] | None:
@@ -897,6 +923,79 @@ def _seed(
     for a in seed.added:
         current[a.assertion_id] = Served(a, memory_id, 0, _EPOCH)
     b.planned.append(_Planned(ident, memory_id, seed, seed.payload_sha256(), head, [], seed=True))
+
+
+def foreign(head: Mapping[str, Any] | None, committed: int) -> bool:
+    """A current row this build did not write (`journal_version` is the version it
+    stamps; a build that does not journal carries an older one forward), newer than
+    every row the key's journal names: a write the journal has not seen."""
+    if head is None:
+        return False
+    version = int(head.get("version") or 0)
+    return version > committed and int(head.get("journal_version") or 0) != version
+
+
+def _adopt(
+    b: _Batch,
+    ident: Ident,
+    head: Mapping[str, Any],
+    current: dict[str, Served],
+    committed: int,
+    now: datetime,
+) -> None:
+    """Journal a write the journal did not see (another build's, during a rollout)
+    as the change it made, before the batch's own: a value, a removal or a metadata
+    change of the key, at the row's version. It is not this request's change."""
+    # The change the row makes against what the journal serves, as it was written:
+    # no write-time policy (a lock, a pin guard, a declared field) applies to a write
+    # that has already happened.
+    try:
+        planned = amendment_for_row(
+            head, [x.a for x in current.values()], WriteIntent(), None, now=now
+        )
+    except tm.EmptyInterval:
+        return
+    if planned.empty:
+        return
+    retired = [current.pop(aid) for aid in planned.retired if aid in current]
+    memory_id = str(head.get("memory_id") or "")
+    for a in planned.added:
+        current[a.assertion_id] = Served(a, memory_id, 0, _EPOCH)
+    b.planned.append(
+        _Planned(
+            ident,
+            memory_id,
+            planned,
+            planned.payload_sha256(),
+            head,
+            retired,
+            seed=True,
+            observed=True,
+        )  # fmt: skip
+    )
+
+
+async def adopt(org: str, ns: str, idents: Sequence[Ident]) -> int:
+    """Journal the writes of these keys' current rows that the journal has not seen
+    (`foreign`), so neither a read nor the reconciler takes them for drift. Returns
+    the keys adopted."""
+    heads = await store.memory_heads(org, ns, idents)
+    committed = await store.newest_row_versions(org, ns, idents)
+    rows = [h for h in heads if foreign(h, committed.get(ident_of(h), 0))]
+    if not rows:
+        return 0
+
+    def nothing(_active: list[tm.Assertion]) -> tm.Amendment:
+        return tm.Amendment("assess")  # the adoption is the change; this commits none
+
+    await publish(
+        org,
+        ns,
+        [_RowChange(dict(h), nothing) for h in rows],
+        WriteIntent(),
+        operation="memory.observed",
+    )
+    return len(rows)
 
 
 def _erased_before(head: Mapping[str, Any], gone: store.Erased) -> bool:
@@ -1385,7 +1484,7 @@ async def _above_landed(b: _Batch, ch: _CHClient) -> None:
     raised_from: dict[Ident, dict[int, int]] = {}
     for p in b.planned:
         drawn = int(p.row.get("version") or 0)
-        if drawn and not p.past_only:
+        if drawn and not p.past_only and not p.seed:  # a seed or adoption writes no row
             if newest.get(p.ident, 0) >= drawn:
                 raised_from.setdefault(p.ident, {})[drawn] = newest[p.ident] + 1
                 cast(dict[str, Any], p.row)["version"] = drawn = newest[p.ident] + 1
@@ -1450,6 +1549,10 @@ def _stamp(b: _Batch, seq: int, last_at: datetime, now: datetime) -> None:
                 row=p.row,
             )
         )
+    # The request's own first commit carries how it answered the entries that made none.
+    own = next((c for c in b.commits if c["idempotency_key"]), None)
+    if own is not None:
+        own["request_outcomes"] = request_outcomes()
 
 
 def _request_commits() -> set[tuple[str, Ident]]:
@@ -1477,25 +1580,29 @@ async def namespace_lock(org: str, ns: str) -> AsyncIterator[Callable[[], Awaita
     is still held. Publication takes it, and so does anything that must see no commit
     land between a check and its change (a redaction)."""
     name = f"memory_temporal/{org}\x1f{ns}"
-    async with AsyncExitStack() as stack:
-        # Only taking the lease maps to "busy": a refusal from inside the section
-        # (an erasure fence, a stale revision) keeps its own error.
-        try:
-            lease = await stack.enter_async_context(_locks.lease(name))
-        except LeaseBusy as e:
-            raise TemporalUnavailableError(
-                f"namespace {ns!r} publisher is busy; retry", retry_after_s=1
-            ) from e
-        except BackendUnavailableError as e:
-            raise TemporalUnavailableError(f"namespace {ns!r} publisher lock unavailable") from e
+    # Writers in this process queue here rather than poll Keeper against each other.
+    local = _local_locks.setdefault(name, asyncio.Lock())
+    try:
+        async with local, AsyncExitStack() as stack:
+            # Only taking the lease maps to "busy": a refusal from inside the section
+            # (an erasure fence, a stale revision) keeps its own error.
+            try:
+                lease = await stack.enter_async_context(_locks.lease(name))
+            except LeaseBusy as e:
+                raise TemporalUnavailableError(
+                    f"namespace {ns!r} publisher is busy; retry", retry_after_s=1
+                ) from e
+            except BackendUnavailableError as e:
+                raise TemporalUnavailableError(
+                    f"namespace {ns!r} publisher lock unavailable"
+                ) from e
 
-        async def still_held() -> bool:
-            return bool(lease.held)
+            async def still_held() -> bool:
+                return bool(lease.held)
 
-        try:
             yield still_held
-        except LeaseLost as e:
-            raise TemporalUnavailableError(f"namespace {ns!r} publisher lease lost; retry") from e
+    except LeaseLost as e:  # raised as the lease's block exits
+        raise TemporalUnavailableError(f"namespace {ns!r} publisher lease lost; retry") from e
 
 
 async def _served(
@@ -1667,7 +1774,14 @@ def _commit_row(b: _Batch, p: _Planned, seq: int, at: datetime) -> dict[str, Any
         "idempotency_key": "" if p.seed else b.idem,
         "request_sha256": b.request_sha if b.idem and not p.seed else "",
         "request_slot": slot_of(p.row),
-        "operation": "memory.journal_seed" if p.seed else b.operation[:64],
+        "request_outcomes": "",
+        "operation": (
+            "memory.observed"
+            if p.observed
+            else "memory.journal_seed"
+            if p.seed
+            else b.operation[:64]
+        ),
         "change_kind": p.amendment.change_kind,
         "payload_schema": tm.PAYLOAD_SCHEMA,
         "payload_sha256": p.payload_sha,
@@ -1709,4 +1823,5 @@ def _receipt(ns: str, ident: Ident, prior: Mapping[str, Any], *, moved_on: bool)
         str(prior.get("memory_id") or ""),
         row_version=int(prior.get("row_version") or 0),
         request_slot=int(prior.get("request_slot", -1)),
+        request_outcomes=str(prior.get("request_outcomes") or ""),
     )

@@ -669,7 +669,7 @@ def test_a_failed_embedding_write_still_runs_the_after_insert_fence(
     monkeypatch.setattr(inserts, "_AFTER_INSERT", [fence])
     with pytest.raises(ConnectionError):
         run(inserts.insert_memory_versions([{"memory_key": "a"}], ch=Ch(), alongside=[embed]))
-    assert fenced == [[{"memory_key": "a"}]]
+    assert fenced == [[{"memory_key": "a", "journal_version": 0}]]  # stamped as inserted
 
 
 def test_a_cancelled_request_still_runs_the_after_insert_fence(
@@ -705,7 +705,7 @@ def test_a_cancelled_request_still_runs_the_after_insert_fence(
         await asyncio.sleep(0.1)  # the insert returns, with nobody waiting on it
 
     run(scenario())
-    assert fenced == [[{"memory_key": "a"}]]
+    assert fenced == [[{"memory_key": "a", "journal_version": 0}]]  # stamped as inserted
 
 
 def test_a_clock_a_moment_behind_the_journal_is_waited_out(journal: Journal, monkeypatch) -> None:
@@ -1560,3 +1560,61 @@ def test_a_bulk_entry_answers_with_the_version_its_row_was_published_at() -> Non
     rows[0]["version"], rows[1]["version"] = 20, 21  # the publisher raised both
     _answer_published_versions([first, second, skipped], drawn)
     assert (first.version, second.version, skipped.version) == (20, 21, 0)
+
+
+def test_a_lease_lost_while_publishing_is_a_temporal_503(journal: Journal, monkeypatch) -> None:
+    from server.core.leases import LeaseLost
+
+    @contextlib.asynccontextmanager
+    async def lost(name: str, **_k: Any) -> Any:
+        yield types.SimpleNamespace(held=True)
+        raise LeaseLost(name)  # as Lease.renewed raises it once the block exits
+
+    monkeypatch.setattr(pub._locks, "lease", lost)
+    with pytest.raises(TemporalUnavailableError, match="lease lost"):
+        run(pub.publish_amendments(
+            "o", "n", [(("a", "-", "-", "k"), "00000000-0000-0000-0000-000000000001",
+                        lambda served: tm.Amendment("correct", (), (tm.first('"X"'),)))],
+            operation="t",
+        ))  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("version", "journal_version", "committed", "foreign"),
+    [
+        (20, 20, 10, False),  # this build wrote it
+        (20, 10, 10, True),  # another build wrote it, carrying the column it found
+        (20, 0, 10, True),  # another build made the key
+        (20, 10, 20, False),  # already journaled (adopted)
+        (0, 0, 0, False),
+    ],
+)
+def test_a_row_another_build_wrote_is_foreign(
+    version: int, journal_version: int, committed: int, foreign: bool
+) -> None:
+    head = {"version": version, "journal_version": journal_version}
+    assert pub.foreign(head, committed) is foreign
+
+
+def test_a_value_another_build_wrote_is_journaled_as_observed(
+    journal: Journal, monkeypatch
+) -> None:
+    run(pub.publish_rows([mrow('"Paris"')]))
+    first = journal.commits[-1]
+    berlin = mrow('"Berlin"', journal_version=first["row_version"])  # carried by the other build
+
+    async def heads(*_a, **_k):
+        return [berlin]
+
+    async def committed(*_a, **_k):
+        return {("a", "-", "-", "k"): first["row_version"]}
+
+    monkeypatch.setattr(store, "memory_heads", heads)
+    monkeypatch.setattr(store, "newest_row_versions", committed)
+    assert run(pub.adopt("o", "n", [("a", "-", "-", "k")])) == 1
+    observed = journal.commits[-1]
+    assert (observed["operation"], observed["row_version"]) == (
+        "memory.observed",
+        berlin["version"],
+    )
+    assert observed["change_kind"] == "assert" and "Berlin" in observed["assertions"]

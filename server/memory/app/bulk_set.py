@@ -5,6 +5,7 @@ the insert, and the projections and audit that follow it."""
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from contextvars import ContextVar
 from dataclasses import replace
@@ -316,7 +317,10 @@ async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
         await memory_repo.insert_embedding_rows(written, ch=ch)
 
     # A bulk write never replaces a pinned value it does not pin (as memory.set).
-    with write_intent(replace(current_intent(), pin_guard=True)), request_slots(state.row_slot):
+    with (
+        write_intent(replace(current_intent(), pin_guard=True)),
+        request_slots(state.row_slot, state.request_outcomes),
+    ):
         await memory_repo.insert_memory_versions(state.memory_rows, ch=ch, alongside=[_embed])
     _answer_published_versions(state.results, drawn)
     _drop_left_out(state, kept_ids, drawn)
@@ -350,6 +354,40 @@ async def _bulk_retried(input: MemoryBulkSetInput, state: _BulkWriteState) -> No
     prior = await durable_commits(input.org, input.namespace, idents)
     by_slot = {r.request_slot: r for rs in prior.values() for r in rs if r.request_slot >= 0}
     state.retried = by_slot or None
+    recorded = next(
+        (r.request_outcomes for rs in prior.values() for r in rs if r.request_outcomes), ""
+    )
+    state.retried_outcomes = {int(o["s"]): o for o in json.loads(recorded)} if recorded else {}
+
+
+# The answer's lists an entry with no commit can be named in, and where each lives.
+_STATE_LISTS = ("skipped_pinned", "skipped_locked", "identity_duplicates")
+_PLAN_LISTS = ("merged", "rejected_pinned", "duplicates", "conflicted")
+
+
+def _request_outcomes(input: MemoryBulkSetInput, state: _BulkWriteState, plan: Any) -> str:
+    """How this request answers each entry that makes no commit, for its first commit
+    to record (JSON; '' without a retry key): a retry answers them from it, whatever
+    the gate, the blacklist or a verdict would say by then."""
+    from server.core import idempotency
+
+    if not idempotency.request_key_var.get():
+        return ""
+    written = {state.row_slot.get(id(r)) for r in state.memory_rows}
+    out = []
+    for slot, entry in enumerate(input.entries):
+        if slot in written:
+            continue
+        key, res = entry.memory_key, state.slot_result.get(slot)
+        lists = [n for n in _STATE_LISTS if key in getattr(state, n)]
+        lists += [n for n in _PLAN_LISTS if key in getattr(plan, n)]
+        o: dict[str, Any] = {"s": slot, "result": res.model_dump(mode="json") if res else None}
+        if lists:
+            o["lists"] = lists
+        if key in state.identity_duplicates:
+            o["dup"] = state.identity_duplicates[key]
+        out.append(o)
+    return json.dumps(out) if out else ""
 
 
 def _answer_retried(state: _BulkWriteState) -> None:
@@ -734,6 +772,9 @@ async def handle_memory_bulk_set(
     plan = await _bulk_verdicts(input, state, emb_idx_of, value_vectors, _bulk_clock)
 
     _intra_pairs = await _bulk_intra_batch_pairs(ch, input, state)
+    for name, key in state.replayed_lists:
+        getattr(plan, name).append(key)
+    state.request_outcomes = _request_outcomes(input, state, plan)
 
     await _bulk_insert(ch, state)
     _answer_retried(state)

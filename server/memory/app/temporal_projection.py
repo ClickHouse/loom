@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections.abc import Sequence
 from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
@@ -16,6 +17,7 @@ from itertools import takewhile
 from typing import Any
 
 import server.memory.store as memory_repo
+from server.core import instances
 from server.core.datetimes import naive_utc_now
 from server.embedding import get_embedder
 from server.erasure.app import fence
@@ -190,6 +192,15 @@ def _vector_row(
 # checked up to; and one global valid-time cursor for boundaries coming due.
 _CHECKED = "current"
 _BOUNDARY = "current_boundary"
+# The cursor of the foreign-write sweep: microseconds of the last `updated_at` swept.
+_FOREIGN = "foreign_writes"
+# How long after the last older build was seen live the sweep keeps running (its
+# last writes still land), and when this process last saw one (boot counts: writes
+# made before it started are swept once).
+_FOREIGN_TAIL_S = 900.0
+# How far before its first pass the sweep starts (this build's migration ran at boot).
+_FOREIGN_START_S = 300
+_last_mixed = time.monotonic()
 
 
 def _settled(at: datetime | None) -> bool:
@@ -217,7 +228,7 @@ _SETTLE: ContextVar[int] = ContextVar("loom_temporal_settle_s", default=store.SE
 
 
 async def _reconcile_pass(*, limit: int, settle_s: int, only: tuple[str, str] | None) -> int:
-    fixed = 0
+    fixed = await _adopt_foreign_writes(limit=limit)
     # recorded_at is ClickHouse's clock: the cutoff is too.
     settled = await store.server_now() - timedelta(seconds=settle_s)
     for r in await store.unchecked_namespaces(_CHECKED, only=only):
@@ -259,6 +270,49 @@ async def _reconcile_pass(*, limit: int, settle_s: int, only: tuple[str, str] | 
         if len(rows) >= limit:  # a full page: the rest from its last instant
             await store.hold_boundary(org, ns, _to_us(tm.utc(rows[-1]["boundary"]) or now))
     return fixed
+
+
+def _rollout() -> bool:
+    """A build older than this one serves (an older schema in `loom.instances`), or
+    did within the tail: one that does not journal may still be writing."""
+    global _last_mixed
+    if any(
+        int(r.get("schema_version") or 0) < instances.schema_version()
+        for r in instances.live_rows()
+    ):
+        _last_mixed = time.monotonic()
+    return time.monotonic() - _last_mixed < _FOREIGN_TAIL_S
+
+
+async def _adopt_foreign_writes(*, limit: int) -> int:
+    """During a rollout, journal the current rows a build that does not journal wrote
+    (`temporal_publisher.foreign`), a page per pass from a durable cursor, so the
+    journal's reads see them and the reconciler never takes them for drift."""
+    from server.memory.app import temporal_publisher as publisher
+
+    if not _rollout():
+        return 0
+    cursor = await store.watermark("", "", _FOREIGN)
+    if not cursor:
+        # The first pass of the first build that journals: rows written before it are
+        # pre-journal rows, seeded when next written; only those since are swept.
+        cursor = _to_us(datetime.now(UTC) - timedelta(seconds=_FOREIGN_START_S))
+        await store.advance_watermark("", "", cursor, _FOREIGN)
+    since = _from_us(cursor)
+    rows = await store.foreign_rows(since, limit=limit)
+    by_ns: dict[tuple[str, str], list[Ident]] = {}
+    for r in rows:
+        by_ns.setdefault((str(r["org"]), str(r["namespace"])), []).append(ident_of(r))
+    adopted = 0
+    for (org, ns), idents in by_ns.items():
+        try:
+            adopted += await publisher.adopt(org, ns, idents)
+        except Exception as e:  # noqa: BLE001 — one namespace must not stop the others
+            log.warning("temporal adopt: %s/%s failed, retried next pass: %r", org, ns, e)
+            return adopted  # the cursor stays: the page is swept again
+    if rows:
+        await store.advance_watermark("", "", _to_us(tm.utc(rows[-1]["at"]) or since), _FOREIGN)
+    return adopted
 
 
 async def _boundaries(due: list[dict[str, Any]]) -> tuple[int, set[tuple[str, str]]]:
@@ -308,6 +362,10 @@ async def _reconcile_ns(org: str, ns: str, idents: list[Ident]) -> int | None:
     if await fence.scope_held(org, ns, sorted({i[1] for i in idents})):
         log.info("temporal reconcile: %s/%s skipped while an erasure runs", org, ns)
         return None
+    from server.memory.app import temporal_publisher as publisher
+
+    # A row another build wrote is a write to journal, not drift to undo.
+    await publisher.adopt(org, ns, idents)
     cut = await reads.cutoff(org, ns, Axes(valid=datetime.now(UTC), known=None))
     # Compared against the projection: only once it covers every commit. A gap about
     # history (data older than the journal, a truncated page) does not touch the head.
@@ -462,6 +520,8 @@ async def _rewrite_current(
     async with namespace_lock(org, ns):
         if cut_seq is not None and await _committed_since(org, ns, ident, cut_seq):
             return False
+        if await _head_moved_or_foreign(org, ns, ident, head):
+            return False  # the next pass decides again (and adopts a foreign write)
         stamped = await _projection_version(org, ns, ident, head)
         if stamped is None:
             return False
@@ -485,6 +545,23 @@ async def _rewrite_current(
         # deletes the journal first): the row follows it out.
         await _rewrite_current(org, ns, ident, [], cut_seq=None, recheck=False)
     return True
+
+
+async def _head_moved_or_foreign(
+    org: str, ns: str, ident: Ident, head: memory_repo.MemoryRow | None
+) -> bool:
+    """Has a row of the key landed since `head` was read (another build writes no
+    commit for it), or is `head` itself a write the journal has not seen?"""
+    from server.memory.app import temporal_publisher as publisher
+
+    landed = (await store.row_versions(org, ns, [ident])).get(ident, 0)
+    read = int(head.version) if head is not None else 0
+    if landed > read:
+        return True
+    if head is None:
+        return False
+    committed = (await store.newest_row_versions(org, ns, [ident])).get(ident, 0)
+    return publisher.foreign(head.model_dump(), committed)
 
 
 async def _committed_since(org: str, ns: str, ident: tuple[str, str, str, str], seq: int) -> bool:
@@ -672,6 +749,8 @@ def stub_embedding_row(
         expires_at=row.expires_at,
         files=list(getattr(row, "files", None) or []),
         concepts=list(getattr(row, "concepts", None) or []),
+        # The write this vector row mirrors, as the conflict sweep matches it.
+        content_sha256=str(getattr(row, "content_sha256", "") or ""),
         # The version's attestation, if it still binds its content.
         verified=int(
             attests(

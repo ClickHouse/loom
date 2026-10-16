@@ -442,7 +442,7 @@ def test_redirect_version_carries_every_memory_column_of_the_source(
     red = _redirect_row(h.ch)
     assert set(red) == set(MEMORY_PERSISTED_COLS)
     expected = memory_repo.build_memory_version_row(source)
-    changed = {"version", "status", "duplicate_of", "updated_at"}
+    changed = {"version", "journal_version", "status", "duplicate_of", "updated_at"}
     for col in MEMORY_PERSISTED_COLS:
         if col in changed:
             continue

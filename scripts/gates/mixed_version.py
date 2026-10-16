@@ -365,6 +365,7 @@ class Scenario:
         self.all_ready()
         ids = self.memories_read_across()
         for a, b in (("N", "N-1"), ("N-1", "N")):
+            self.value_survives_a_metadata_write(a, b)
             self.run_completes_across(a, b)
             self.verdict_survives(a, b)
         self.unknown_column_survives(ids)
@@ -394,6 +395,23 @@ class Scenario:
             got = self.get(label, f"facts/{other}")
             self.check(got.get("value") == f"by {other}", f"{label} reads what {other} wrote")
         return ids
+
+    def value_survives_a_metadata_write(self, a: str, b: str) -> None:
+        """`a` writes a value, `b` replaces it, then `a` changes only its tags: the
+        value `b` wrote is the one both builds read (a build may keep its own record
+        of the key, but never write that back over the other's newer write)."""
+        key = f"city/{a}"
+        self.call(a, "memory.set", {**self.ident, "memory_key": key, "value": "Paris"})
+        self.call(b, "memory.set", {**self.ident, "memory_key": key, "value": "Berlin"})
+        mid = self.get(a, key)["memory_id"]
+        self.call(
+            a, "memory.update_by_id", {"org": self.ident["org"], "memory_id": mid, "tags": ["t"]}
+        )
+        seen = {label: self.get(label, key).get("value") for label in (a, b)}
+        self.check(
+            seen == {a: "Berlin", b: "Berlin"},
+            f"{b}'s value survives {a}'s tags-only update ({seen})",
+        )
 
     def run_completes_across(self, a: str, b: str) -> None:
         run_id = self.call(a, "run.begin", {**self.ident, "goal": f"begun on {a}"})["run_id"]

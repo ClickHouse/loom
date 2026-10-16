@@ -32,6 +32,9 @@ CREATE TABLE IF NOT EXISTS loom.memory_temporal_commits
     -- Which entry of its request this commit is the outcome of (memory.bulk_set's
     -- entry index), so a retry answers each entry as it was answered; -1 otherwise.
     `request_slot` Int32 DEFAULT -1,
+    -- On a request's first commit: how it answered each entry that made no commit (a
+    -- result or none, the lists naming it), JSON, so a retry answers them the same.
+    `request_outcomes` String DEFAULT '',
     `operation` LowCardinality(String),
     `change_kind` LowCardinality(String),
     `payload_schema` UInt16,
@@ -216,3 +219,75 @@ ALTER TABLE loom.memory_exposures ADD COLUMN IF NOT EXISTS `returned_sha256` Arr
 ALTER TABLE loom.memory_exposures ADD COLUMN IF NOT EXISTS `cutoff_seq` UInt64 DEFAULT 0;
 ALTER TABLE loom.memory_exposures ADD COLUMN IF NOT EXISTS `valid_as_of` Nullable(DateTime64(6, 'UTC')) DEFAULT NULL;
 ALTER TABLE loom.memory_exposures ADD COLUMN IF NOT EXISTS `known_as_of` Nullable(DateTime64(6, 'UTC')) DEFAULT NULL;
+
+-- The version this build wrote its row at. A build that does not journal (the one
+-- serving beside this one during a rolling upgrade) carries the column forward
+-- unchanged, so a row whose version differs is a write the journal has not seen:
+-- the publisher and the reconciler journal it (adopt it) instead of overwriting it.
+ALTER TABLE loom.memory ADD COLUMN IF NOT EXISTS `journal_version` UInt64 DEFAULT 0;
+ALTER TABLE loom.memory_versions ADD COLUMN IF NOT EXISTS `journal_version` UInt64 DEFAULT 0;
+ALTER TABLE loom.memory_versions_mv MODIFY QUERY
+SELECT
+    org,
+    namespace,
+    agent,
+    user_id,
+    session_id,
+    memory_key,
+    memory_type,
+    value,
+    value_json,
+    confidence,
+    source_trace,
+    version,
+    tombstoned_at,
+    created_at,
+    expires_at,
+    pinned,
+    run_id,
+    entities,
+    memory_id,
+    redacted_at,
+    redaction_reason,
+    status,
+    conflict_with,
+    duplicate_of,
+    evidence_count,
+    recall_count,
+    last_recalled_at,
+    cross_promoted_from_memory_id,
+    cross_promoted_from_namespace,
+    tags,
+    files,
+    concepts,
+    superseded_by,
+    rejection_reason,
+    temporal_anchor,
+    temporal_confidence,
+    updated_at,
+    valid_at,
+    valid_to,
+    invalid_at,
+    char_limit,
+    reinforcement_count,
+    last_reinforced_at,
+    mentioned_at,
+    source_resource_id,
+    content_sha256,
+    verified_by,
+    verified_at,
+    verified_sha256,
+    grounding,
+    evidence,
+    sensitivity,
+    actor,
+    source_class,
+    lock_mode,
+    lock_reason,
+    lock_until,
+    locked_by,
+    locked_at,
+    on_expire,
+    expire_reason,
+    journal_version
+FROM loom.memory;

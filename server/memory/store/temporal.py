@@ -102,6 +102,7 @@ COMMIT_COLS: tuple[str, ...] = (
     "idempotency_key",
     "request_sha256",
     "request_slot",
+    "request_outcomes",
     "operation",
     "change_kind",
     "payload_schema",
@@ -443,7 +444,8 @@ async def commits_for_idempotency_key(
     rows = await ch.query_all(
         f"SELECT agent, user_id, session_id, memory_key, toString(memory_id) AS memory_id, "
         f"commit_id, commit_seq, recorded_at, row_version, "
-        f"change_kind, retired_assertion_ids, assertions, request_sha256, request_slot "
+        f"change_kind, retired_assertion_ids, assertions, request_sha256, request_slot, "
+        f"request_outcomes "
         f"FROM {COMMITS} WHERE org = {{org:String}} AND namespace = {{ns:String}} "
         f"AND idempotency_key = {{k:String}} AND {_IDENT} IN {_KEYS} AND {_ON_TIME}"
         + _not_erased("recorded_at", erased, params)
@@ -936,6 +938,21 @@ async def restated_claims(
         )
         for r in rows
     }
+
+
+async def foreign_rows(
+    since: datetime, *, limit: int, ch: _CHClient | None = None
+) -> list[dict[str, Any]]:
+    """Identities with a loom.memory row written since `since` whose version is not
+    the one this build stamped (`journal_version`): another build's writes, oldest
+    first. A superset: `temporal_publisher.adopt` checks each against its head."""
+    ch = ch or _default_client()
+    return await ch.query_all(
+        f"SELECT org, namespace, {_IDENT_COLS}, max(updated_at) AS at FROM loom.memory "
+        "WHERE updated_at >= {since:DateTime64(6, 'UTC')} AND journal_version != version "
+        f"GROUP BY org, namespace, {_IDENT_COLS} ORDER BY at LIMIT {{limit:UInt32}}",
+        params={"since": since, "limit": limit},
+    )
 
 
 async def row_versions(

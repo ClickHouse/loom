@@ -165,15 +165,22 @@ def declared_fields(row: Mapping[str, Any]) -> frozenset[str] | None:
 # Per version row (by object): the index of the request entry it writes, recorded
 # on its commit (`request_slot`) so a retry can answer each entry as it was answered.
 _slots: ContextVar[Mapping[int, int] | None] = ContextVar("loom_temporal_slots", default=None)
+# How the request answered its entries that make no commit, recorded on its first one.
+_outcomes: ContextVar[str] = ContextVar("loom_temporal_outcomes", default="")
 
 
 @contextmanager
-def request_slots(slots: Mapping[int, int]) -> Iterator[None]:
-    token = _slots.set(slots)
+def request_slots(slots: Mapping[int, int], outcomes: str = "") -> Iterator[None]:
+    token, otoken = _slots.set(slots), _outcomes.set(outcomes)
     try:
         yield
     finally:
         _slots.reset(token)
+        _outcomes.reset(otoken)
+
+
+def request_outcomes() -> str:
+    return _outcomes.get()
 
 
 def slot_of(row: Mapping[str, Any]) -> int:

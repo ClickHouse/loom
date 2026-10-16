@@ -39,7 +39,7 @@ _MEMORY_FINAL_PROJECTION = """
             sensitivity, actor, source_class,
             grounding, evidence,
             lock_mode, lock_reason, lock_until, locked_by, locked_at,
-            on_expire, expire_reason
+            on_expire, expire_reason, journal_version
         FROM loom.memory FINAL"""
 
 

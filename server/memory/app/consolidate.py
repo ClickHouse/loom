@@ -238,6 +238,7 @@ def _consolidation_canonical_row(
         # Expiry post-action: a merged row takes the default.
         "on_expire": "",
         "expire_reason": "",
+        "journal_version": 0,  # stamped by the insert funnel
     }
     missing = [c for c in MEMORY_PERSISTED_COLS if c not in row]
     if missing:  # pragma: no cover — schema drift guard

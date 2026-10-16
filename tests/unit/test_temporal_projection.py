@@ -23,6 +23,19 @@ def _server_clock(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(store, "server_now", now)
 
 
+@pytest.fixture(autouse=True)
+def _no_foreign_writes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests reconcile against the journal alone: no other build writes here
+    (adoption has its own tests in test_temporal_publisher.py)."""
+    from server.memory.app import temporal_publisher
+
+    async def none(*_a: Any, **_k: Any) -> int:
+        return 0
+
+    monkeypatch.setattr(temporal_publisher, "adopt", none)
+    monkeypatch.setattr(tp, "_adopt_foreign_writes", none)
+
+
 def _commit(
     seq: int,
     added: list[tm.Assertion],

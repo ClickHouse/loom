@@ -118,6 +118,13 @@ class _BulkWriteState:
     retried: dict[int, Any] | None = None
     # (result, commit) of each retried entry, answered after the insert.
     retried_results: list[tuple[Any, Any]] = field(default_factory=list)
+    # A retry's: how the first attempt answered each entry that made no commit, by index.
+    retried_outcomes: dict[int, dict[str, Any]] = field(default_factory=dict)
+    # A retry's: (plan list, key) of those entries, added once the verdicts are in.
+    replayed_lists: list[tuple[str, str]] = field(default_factory=list)
+    # Per entry index, its result (none: dropped), for the outcomes its commit records.
+    slot_result: dict[int, Any] = field(default_factory=dict)
+    request_outcomes: str = ""
     # (row_idx, embed_text, excerpt, key_text) per searchable kept entry.
     pending: list[tuple[int, str, str, str]] = field(default_factory=list)
     # (entry, serialized_value, tags, entities, expires_at) per kept entry.
@@ -251,22 +258,24 @@ def _bulk_skip_gate(
     return False
 
 
-def _bulk_label_skipped(
-    entry: Any, entry_sha: str, state: _BulkWriteState, identity_dupes: dict[str, tuple[str, str]]
+def _bulk_replay_outcome(
+    entry: Any, outcome: dict[str, Any] | None, state: _BulkWriteState
 ) -> None:
-    """A retried entry that made no commit: the reason the skip gate gives it, named on
-    the answer as the first attempt named it. Labels only: the reinforcement the gate
-    records for a restatement was recorded then."""
-    if state.existing_sha.get(entry.memory_key) == entry_sha:
-        state.skipped_unchanged += 1  # an unchanged restatement is named in no list
-        return
-    dup = identity_dupes.get(entry_sha)
-    if dup is not None:
-        state.identity_duplicates[entry.memory_key] = dup[0]
-    elif _bulk_value_locked(state, entry.memory_key):
-        state.skipped_locked.append(entry.memory_key)
-    elif state.existing_pinned.get(entry.memory_key):
-        state.skipped_pinned.append(entry.memory_key)
+    """A retried entry that made no commit, answered as the first attempt recorded it
+    (`request_outcomes`): its result line, if it had one, and the lists that named it."""
+    if not outcome or outcome.get("result") is None:
+        return  # dropped (a blacklisted entry has no result line)
+    state.results.append(_BulkSetResult(**outcome["result"]))
+    key = entry.memory_key
+    for name in outcome.get("lists", []):
+        if name == "skipped_pinned":
+            state.skipped_pinned.append(key)
+        elif name == "skipped_locked":
+            state.skipped_locked.append(key)
+        elif name == "identity_duplicates":
+            state.identity_duplicates[key] = str(outcome.get("dup") or "")
+        else:
+            state.replayed_lists.append((name, key))
 
 
 def _bulk_append_pending(state: _BulkWriteState, entry: Any, serialized_value: str) -> None:
@@ -331,25 +340,17 @@ async def _bulk_build_rows(
     char_limit (raises 422), blacklist, procedural retype — and append one
     full-column memory row, a result and (when searchable) a pending embed
     item per kept entry to `state`."""
-    from server.memory.app.blacklist_guard import find_match
-
     _seen_keys: set[str] = set()
     retried = state.retried is not None
     commit_of = state.retried or {}
     for slot, entry in enumerate(input.entries):
         entry_sha = _content_sha256(entry.value)
         if retried and slot not in commit_of:
-            # The blacklist dropped it without a result the first time; so does its retry.
-            if (
-                await find_match(
-                    org=input.org, namespace=input.namespace, value=json.dumps(entry.value)
-                )
-                is None
-            ):
-                _bulk_label_skipped(entry, entry_sha, state, identity_dupes)
-                state.results.append(_BulkSetResult(memory_key=entry.memory_key, version=0))
+            # It made no commit: answered as the first attempt recorded, nothing re-judged.
+            _bulk_replay_outcome(entry, state.retried_outcomes.get(slot), state)
             continue
         if not retried and _bulk_skip_gate(entry, entry_sha, state, identity_dupes):
+            state.slot_result[slot] = state.results[-1]
             continue
         version = next_version()
         expires_at = (
@@ -515,6 +516,7 @@ async def _bulk_build_rows(
             state.n_created += 1
         _seen_keys.add(entry.memory_key)
         state.results.append(_BulkSetResult(memory_key=entry.memory_key, version=version))
+        state.slot_result[slot] = state.results[-1]
         if retried:
             state.retried_results.append((state.results[-1], commit_of[slot]))
 

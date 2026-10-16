@@ -55,7 +55,12 @@ def test_snapshot_query_and_restore_row_agree_with_the_model() -> None:
 
     selected = set(SNAPSHOT_COLUMNS)
     assert ATTESTATION <= selected, sorted(ATTESTATION - selected)
-    assert selected == set(MEMORY_PERSISTED_COLS) - {"org", "namespace", "memory_id"}
+    assert selected == set(MEMORY_PERSISTED_COLS) - {
+        "org",
+        "namespace",
+        "memory_id",
+        "journal_version",
+    }
     # a snapshot reads live rows only, so the payload has no tombstoned_at
     payload_fields = set(_SnapshotMemoryRow.model_fields) | {"tombstoned_at"}
     assert payload_fields >= selected, sorted(selected - payload_fields)

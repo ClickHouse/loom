@@ -1950,3 +1950,30 @@ async def test_a_bulk_retry_answers_in_the_first_attempts_shape(
             out.get("identity_duplicates"),
         )
         assert shape(again) == shape(first)
+
+
+async def test_a_bulk_retry_answers_skipped_entries_as_recorded_not_as_judged_now(
+    control_plane_url, mint_test_token
+) -> None:
+    # p was unchanged (a version-0 result), q was written; a blacklist rule matching p
+    # added since does not drop p from the retry's answer.
+    a, _ = await _agent(control_plane_url, mint_test_token, "bulk-retry-recorded")
+    async with a:
+        await a.call("memory.set", {"memory_key": "p", "value": "same value"})
+        key = f"r-{uuid.uuid4().hex}"
+        body = {"entries": [
+            {"memory_key": "p", "value": "same value"}, {"memory_key": "q", "value": "new"},
+        ]}  # fmt: skip
+        first = await a.call("memory.bulk_set", body, idempotency_key=key)
+        await a.call(
+            "blacklist.add", {"pattern": "same value", "scope": "namespace", "sweep": False}
+        )
+        ch = await _ch()
+        try:
+            await _expire_replay(ch, key, "memory.bulk_set")
+        finally:
+            await ch.disconnect()
+        again = await a.call("memory.bulk_set", body, idempotency_key=key)
+        assert [(w["memory_key"], w["version"]) for w in again["written"]] == [
+            (w["memory_key"], w["version"]) for w in first["written"]
+        ]
