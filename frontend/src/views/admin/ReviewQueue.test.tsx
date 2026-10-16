@@ -583,7 +583,8 @@ describe("ReviewQueue", () => {
     render(<ReviewQueue />);
     await userEvent.click(await screen.findByRole("tab", { name: /Auto-resolved/ }, WAIT));
     const retry = await screen.findByRole("button", { name: "Retry" }, WAIT);
-    expect(screen.getByText(/Couldn't load retired memories: boom/)).toBeTruthy();
+    expect(screen.getByText("Couldn't load retired memories")).toBeTruthy();
+    expect(screen.getByText("boom")).toBeTruthy();
     expect(screen.queryByText("Nothing older within 30 days.")).toBeNull();
     fail = false;
     await userEvent.click(retry);

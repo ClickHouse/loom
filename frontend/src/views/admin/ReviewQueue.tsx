@@ -504,7 +504,6 @@ function AutoResolvedPanel() {
 
   useAbortableEffect(
     (signal, live) => {
-      setRows(null);
       setLoadError(null);
       listAutoResolved({ org: identity.org, namespace: identity.namespace }, { signal })
         .then((r) => {
@@ -625,12 +624,12 @@ function AutoResolvedPanel() {
 
   if (loadError != null) {
     return (
-      <p className="text-sm text-[var(--color-text-muted)]">
-        Couldn't load retired memories: {loadError}{" "}
-        <button onClick={() => setReload((n) => n + 1)} className="font-medium text-[var(--color-text)] underline">
-          Retry
-        </button>
-      </p>
+      <EmptyState
+        icon={AlertTriangle}
+        title="Couldn't load retired memories"
+        description={loadError}
+        action={{ label: "Retry", onClick: () => setReload((n) => n + 1) }}
+      />
     );
   }
   if (rows === null) return <Skeleton className="h-40 w-full" />;
