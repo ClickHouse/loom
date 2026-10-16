@@ -1816,7 +1816,6 @@ async def test_a_fallback_marker_closed_in_the_same_second_gets_a_marker_of_its_
     # first, rather than finding it written, and labels both as fallbacks, not Undos.
     from types import SimpleNamespace
 
-    import server.identity.app.namespace_ontology as ontology
     from server.memory.app import entity_projections, graph_undo
 
     closed = datetime(2026, 9, 1, 12, 0, 0)
@@ -1833,11 +1832,6 @@ async def test_a_fallback_marker_closed_in_the_same_second_gets_a_marker_of_its_
         }
 
     stored = [paris(datetime(2026, 9, 1, 11, 0, 0))]
-
-    class _Stored:
-        async def query_all(self, sql, params):
-            return list(stored)
-
     restated: list[tuple[str, str]] = []
 
     async def restate(input, held, *, ch, restore_id, restored_at, adapter_name="row-restore"):
@@ -1846,16 +1840,11 @@ async def test_a_fallback_marker_closed_in_the_same_second_gets_a_marker_of_its_
     async def all_held(org, namespace, triples, *, ch, rows=None):
         return frozenset(triples)
 
-    async def no_declared(org, namespace):
-        return {}
-
     monkeypatch.setattr(graph_undo, "restate_facts", restate)
     monkeypatch.setattr(entity_projections, "stated_by_live_rows", all_held)
-    monkeypatch.setattr(ontology, "load_relation_cardinality", no_declared)
     inp = SimpleNamespace(org="o", namespace="ns", agent="a")
-    gone = [("user", "live_in", "london")]
-    await entity_projections._keep_one_current(inp, gone, ch=_Stored())
+    await entity_projections._keep_one_current(inp, list(stored), ch=None)
     stored.append(paris(closed.replace(microsecond=5)))  # the marker, closed again
-    await entity_projections._keep_one_current(inp, gone, ch=_Stored())
+    await entity_projections._keep_one_current(inp, list(stored), ch=None)
     assert len({restore_id for restore_id, _ in restated}) == 2
     assert {adapter for _, adapter in restated} == {"row-fallback"}

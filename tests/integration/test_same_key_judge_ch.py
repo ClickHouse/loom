@@ -4089,3 +4089,45 @@ async def test_a_fact_that_ended_keeps_no_edge_of_a_dropped_one_open(ch, org) ->
     await _mutations_done(ch, org)
     await asyncio.sleep(1.1)  # the walk counts an edge ended this second as current
     assert await _walked(org, [], labeled=False) == []
+
+
+class _Counted:
+    """`ch`, counting the statements sent through it."""
+
+    def __init__(self, ch: Any) -> None:
+        self._ch, self.sent = ch, 0
+
+    def __getattr__(self, name: str) -> Any:
+        call = getattr(self._ch, name)
+        if name not in ("query_all", "execute", "insert"):
+            return call
+
+        async def counted(*a: Any, **k: Any) -> Any:
+            self.sent += 1
+            return await call(*a, **k)
+
+        return counted
+
+
+async def test_a_follow_of_one_retirement_sends_few_statements(ch, org) -> None:
+    # London's row retires behind Paris's: on the bulk write's response path.
+    from types import SimpleNamespace
+
+    from server.memory import store as M
+    from server.memory.app.entity_projections import follow_row_supersessions
+
+    live = ("user", "live_in")
+    london = await _stated(ch, org, "s1", "I live in London", (*live, "london"))
+    paris = await _stated(ch, org, "s2", "I live in Paris", (*live, "paris"))
+    await _edges_like_triples(ch, org)
+    retired = {**london, "version": M.next_version(), "status": "superseded"}
+    retired["superseded_by"] = str(paris["memory_id"])
+    await M.insert_memory_versions([retired], ch=ch)
+    counted = _Counted(ch)
+    scope = SimpleNamespace(org=org, namespace=NS)
+    pair = (str(london["memory_id"]), str(paris["memory_id"]))
+    await follow_row_supersessions(scope, [pair], ch=counted)
+    # Three to plan, six after: the facts the loser linked and which a live row holds
+    # (two), the later ends, one read of the pair's and the relation's triples, and the
+    # edges to end. Twelve when the edge check asked again what was just asked.
+    assert counted.sent == 9

@@ -537,73 +537,81 @@ async def close_dropped_facts(input: Any, ids: list[str], *, ch: Any) -> None:
     if opened:
         await _write_follow_plan(input, tfr.FollowPlan(closes=sorted(opened), inserts=[]), ch=ch)
     await end_triples_now(ch, org=input.org, namespace=input.namespace, triples=gone)
-    await _after_the_close(input, ids, gone, ch=ch)
+    await _after_the_close(input, ids, gone, held, ch=ch)
 
 
 async def _after_the_close(
-    input: Any, changed: list[str], gone: list[tfr.Triple], *, ch: Any
+    input: Any,
+    changed: list[str],
+    gone: list[tfr.Triple],
+    held: frozenset[tfr.Triple],
+    *,
+    ch: Any,
 ) -> None:
     """What follows a close of the `gone` facts, which no live row holds once the rows
-    `changed` (ids) were revised or retired: their edges end with them, and one value
-    of each single-valued relation stays current. Checked for every value the rows no
-    longer keep, closed now or before: a replay finds the close landed and must still
-    check."""
-    await _close_dropped_edges(input, changed, gone, ch=ch)
-    await _keep_one_current(input, gone, ch=ch)
+    `changed` (ids) were revised or retired (`held`: what the caller found a live row
+    holds): their edges end with them, and one value of each single-valued relation
+    stays current. Checked for every value the rows no longer keep, closed now or
+    before: a replay finds the close landed and must still check. One read of the
+    triples serves both."""
+    from server.identity.app.namespace_ontology import load_relation_cardinality
+    from server.memory.domain.graph_quality import is_single_valued_relation
 
-
-async def _close_dropped_edges(
-    input: Any, changed: list[str], gone: list[tfr.Triple], *, ch: Any
-) -> None:
-    """End the edges of the `gone` facts with them (`tfr.edge_ends`), unless a live row
-    still holds another fact between the same two entities, or a live row other than
-    the `changed` ones names both (`end_edges`)."""
     if not gone:
         return
     names = sorted({e for s, _r, o in gone for e in (s, o)})
-    # On the fly: the closes just made are mutations that may still be pending.
-    rows = await ch.query_all(
-        """
-        SELECT subject, relation, object, valid_to
-        FROM loom.entity_triples
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND subject IN {names:Array(String)} AND object IN {names:Array(String)}
-        SETTINGS select_sequential_consistency = 1, apply_mutations_on_fly = 1
-        """,
-        params={"org": input.org, "ns": input.namespace, "names": names},
-    )
-    same_pairs = sorted({(str(r["subject"]), str(r["relation"]), str(r["object"])) for r in rows})
-    held = await stated_by_live_rows(input.org, input.namespace, same_pairs, ch=ch)
-    ends = tfr.edge_ends(gone, held, rows, naive_utc_now())
-    await end_edges(ch, org=input.org, namespace=input.namespace, ends=ends, changed=changed)
-
-
-async def _keep_one_current(input: Any, values: list[tfr.Triple], *, ch: Any) -> None:
-    """One value of a single-valued relation stays current, never neither. For each
-    relation of `values` with no value valid now, the newest value a live row still
-    holds is stated again from now, as an Undo states it, edge included: London undone
-    over Paris, then revised away, gives Paris back from then on."""
-    from server.identity.app.namespace_ontology import load_relation_cardinality
-    from server.memory.app import graph_undo
-    from server.memory.domain.graph_quality import is_single_valued_relation, observation_key
-
-    if not values:
-        return
     declared = await load_relation_cardinality(input.org, input.namespace)
-    pairs = sorted({(s, r) for s, r, _o in values if is_single_valued_relation(r, declared)})
-    if not pairs:
-        return
+    single = sorted({(s, r) for s, r, _o in gone if is_single_valued_relation(r, declared)})
     # On the fly: the closes just made are mutations that may still be pending.
     rows = await ch.query_all(
         """
         SELECT subject, relation, object, valid_from, valid_to, invalid_at, seen_at
         FROM loom.entity_triples
         WHERE org = {org:String} AND namespace = {ns:String}
-          AND (subject, relation) IN {pairs:Array(Tuple(String, String))}
+          AND ((subject IN {names:Array(String)} AND object IN {names:Array(String)})
+               OR (subject, relation) IN {single:Array(Tuple(String, String))})
         SETTINGS select_sequential_consistency = 1, apply_mutations_on_fly = 1
         """,
-        params={"org": input.org, "ns": input.namespace, "pairs": pairs},
+        params={"org": input.org, "ns": input.namespace, "names": names, "single": single},
     )
+    between = [r for r in rows if r["subject"] in names and r["object"] in names]
+    await _close_dropped_edges(input, changed, gone, held, between, ch=ch)
+    await _keep_one_current(
+        input, [r for r in rows if (r["subject"], r["relation"]) in single], ch=ch
+    )
+
+
+async def _close_dropped_edges(
+    input: Any,
+    changed: list[str],
+    gone: list[tfr.Triple],
+    held: frozenset[tfr.Triple],
+    rows: list[Mapping[str, Any]],
+    *,
+    ch: Any,
+) -> None:
+    """End the edges of the `gone` facts with them (`tfr.edge_ends`), unless a live row
+    still holds another fact between the same two entities, or a live row other than
+    the `changed` ones names both (`end_edges`). `rows` are the stored triples between
+    the entities; only those neither in `gone` nor `held` are asked about."""
+    known = set(gone) | held
+    others = sorted(
+        {(str(r["subject"]), str(r["relation"]), str(r["object"])) for r in rows} - known
+    )
+    held = held | await stated_by_live_rows(input.org, input.namespace, others, ch=ch)
+    ends = tfr.edge_ends(gone, held, rows, naive_utc_now())
+    await end_edges(ch, org=input.org, namespace=input.namespace, ends=ends, changed=changed)
+
+
+async def _keep_one_current(input: Any, rows: list[Mapping[str, Any]], *, ch: Any) -> None:
+    """One value of a single-valued relation stays current, never neither. For each
+    relation of `rows` (the stored triples of the relations a close touched) with no
+    value valid now, the newest value a live row still holds is stated again from now,
+    as an Undo states it, edge included: London undone over Paris, then revised away,
+    gives Paris back from then on."""
+    from server.memory.app import graph_undo
+    from server.memory.domain.graph_quality import observation_key
+
     now = naive_utc_now()
 
     # When each relation's open values start ("moving to Berlin on Dec 1").
@@ -912,7 +920,7 @@ async def follow_row_supersessions(
         stated_ends_only=True,
         ends=plan.ends,
     )
-    await _after_the_close(input, losers, gone, ch=ch)
+    await _after_the_close(input, losers, gone, held, ch=ch)
     if closed or inserted:
         log.info(
             "triples follow rows: of %d pair(s), closed %d and wrote %d successor triple(s)",
