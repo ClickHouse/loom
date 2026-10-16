@@ -318,6 +318,8 @@ def _hook(command: str) -> int:
         "git log | grep -F x",
         "gh pr view 57 --json files --jq '.files[].path'",
         "gh pr view 57 --json files --jq='.files[].path'",
+        "gh pr view 57 -q=.title",
+        "git diff --output-indicator-new=+ HEAD~1",
         "python3 .claude/skills/loom-writing/scripts/check_prose.py AGENTS.md",
     ],
 )
@@ -353,6 +355,9 @@ def test_reviewer_hook_allows_reads(command: str) -> None:
         "git log | tail +1f x",
         "git log | tail --foll x",
         "gh pr view 57 --jq [-][-]web",
+        "gh pr view 57 --jq=[-][-]web",
+        "gh pr view 57 --jq .x [-]w",
+        "git diff --output /tmp/x",
         "git log -p --ext-diff",
         "git diff *",
         "git diff [^a]x",
