@@ -1597,6 +1597,55 @@ async def test_an_undo_leaves_the_graph_to_a_revision_made_while_its_graph_step_
     assert await _open_cities(ch, org, {"berlin"}) == {"berlin"}
 
 
+async def test_an_undo_closes_its_markers_for_a_revision_made_after_its_hash_check(
+    ch, org, monkeypatch
+) -> None:
+    # The revision lands after the Undo checked the row's hash, before its markers:
+    # the revision's own close ran too early to see them, so the Undo closes them.
+    from server.identity.app import namespace_ontology
+    from server.memory.api.models_crud import MemoryRestoreInput
+    from server.memory.app import graph_undo
+    from server.memory.app.restore import handle_memory_restore
+
+    london = await _stated(ch, org, "s1", "I like London", ("user", "like", "london"))
+    paris = await _stated(ch, org, "s2", "I like Paris", ("user", "like", "paris"))
+    await _follow_retirement(ch, org, london, paris)
+    checked, revised = graph_undo.rows_still_holding, []
+    cardinality = namespace_ontology.load_relation_cardinality
+
+    async def check(*args: Any, **kwargs: Any) -> Any:
+        revised.append(False)
+        return await checked(*args, **kwargs)
+
+    async def revised_after_the_check(*args: Any, **kwargs: Any) -> Any:
+        if revised == [False]:
+            revised.append(True)
+            await _revise(
+                "memory.update_by_id", org, london, "I like Rome", (("user", "like", "rome"),)
+            )
+            await _mutations_done(ch, org)
+        return await cardinality(*args, **kwargs)
+
+    monkeypatch.setattr(graph_undo, "rows_still_holding", check)
+    monkeypatch.setattr(namespace_ontology, "load_relation_cardinality", revised_after_the_check)
+    out = await handle_memory_restore(
+        MemoryRestoreInput(
+            org=org,
+            namespace=NS,
+            agent="bot",
+            user_id=USER,
+            session_id="s1",
+            memory_key=KEY,
+            if_superseded_by=str(paris["memory_id"]),
+        )
+    )
+    assert out.restored and True in revised
+    await _mutations_done(ch, org)
+    # The open facts are what the live rows hold: Rome and Paris, not London.
+    want = {("like", "rome"), ("like", "paris")}
+    assert await _open_facts(ch, org, want) == want
+
+
 async def test_undo_makes_the_restored_value_current_and_retires_nothing(
     ch, org, monkeypatch
 ) -> None:

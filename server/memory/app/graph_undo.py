@@ -8,6 +8,7 @@ from datetime import date, datetime, timedelta
 from typing import Any, NamedTuple
 
 from server.memory.app.entity_projections import (
+    close_dropped_facts,
     held_by_unlinked_rows,
     linked_triples,
     stated_by_live_rows,
@@ -68,6 +69,7 @@ async def reopen_held_facts(
 
     if hashes:
         ids = sorted(i for i in ids if i in hashes)
+    held: frozenset[Any] = frozenset()
     while ids:
         held = await _held_now(input, ids, ch=ch)
         if not hashes:
@@ -186,6 +188,15 @@ async def reopen_held_facts(
         for m in markers
     ]
     await repair_intervals(input, restated, ch=ch, at=restored_at)
+    if hashes:
+        # A row revised after the check above ran its own close before these markers
+        # landed: close what it no longer holds now.
+        still = await rows_still_holding(
+            input.org, input.namespace, {i: hashes[i] for i in ids}, ch=ch
+        )
+        changed = [i for i in ids if i not in still]
+        if changed:
+            await close_dropped_facts(input, changed, ch=ch)
 
 
 class _Marker(NamedTuple):
