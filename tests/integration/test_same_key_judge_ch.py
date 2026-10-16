@@ -4333,12 +4333,8 @@ async def _mentions(ch: Any, org: str, row: dict[str, Any], *entities: str) -> N
 
 async def _walks_to(org: str, entity: str, *, seed: str = "alice") -> bool:
     """Whether one unlabelled hop from `seed` reaches `entity`, waiting up to two
-    seconds for it."""
-    for _ in range(10):
-        if entity in await _walked(org, [entity], labeled=False, seed=seed):
-            return True
-        await asyncio.sleep(0.2)
-    return False
+    seconds for it (`_walked` waits; it stops early only on `entity` alone)."""
+    return entity in await _walked(org, [entity], labeled=False, seed=seed)
 
 
 async def test_a_dropped_facts_edge_stays_open_while_another_row_names_both(ch, org) -> None:
