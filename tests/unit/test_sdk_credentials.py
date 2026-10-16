@@ -412,3 +412,30 @@ def test_an_internationalized_server_is_its_own_server(server) -> None:
     assert auth is not None
     with httpx.Client(transport=httpx.MockTransport(server)) as c:
         assert c.get("https://xn--bcher-kva.example/v1/whoami", auth=auth).status_code == 200
+
+
+def test_two_threads_of_one_process_take_the_credentials_lock_in_turn(
+    tmp_path, monkeypatch
+) -> None:
+    # Async requests refresh on worker threads: two must never spend one token.
+    import threading
+    import time as _time
+
+    monkeypatch.setattr(credentials, "CREDENTIALS_FILE", tmp_path / "credentials")
+    # As on a platform with no file lock: the in-process lock alone must hold.
+    monkeypatch.setattr(credentials, "_lock_file", lambda fd: None)
+    monkeypatch.setattr(credentials, "_unlock_file", lambda fd: None)
+    inside: list[str] = []
+
+    def hold(name: str) -> None:
+        with credentials._locked():
+            inside.append(f"{name} in")
+            _time.sleep(0.1)
+            inside.append(f"{name} out")
+
+    threads = [threading.Thread(target=hold, args=(n,)) for n in ("a", "b")]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert inside in (["a in", "a out", "b in", "b out"], ["b in", "b out", "a in", "a out"])

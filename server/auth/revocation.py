@@ -70,6 +70,10 @@ _revoked_before: dict[str, int] = {}
 CUTOFF_PREFIX = "\x00cutoff:"
 # Their snapshot, read beside `_revoked_before`.
 _cut_off: dict[str, int] = {}
+# Bumped by every write folded into the snapshot here: a refresh that read
+# before such a write and returns after it keeps the snapshot as it is (the
+# next one reads the row) instead of dropping the write it never saw.
+_local_writes = 0
 # False until one refresh has succeeded in this process.
 _loaded = False
 # time.monotonic() of the last successful refresh; 0.0 = never.
@@ -129,6 +133,7 @@ async def refresh() -> None:
     from server.core.ch import get_client
 
     global _revoked_jtis, _revoked_before, _cut_off, _loaded, _loaded_at
+    seen = _local_writes
     try:
         ch = get_client()
         # A session whose revocation could not be written gets a
@@ -154,6 +159,8 @@ async def refresh() -> None:
                 full.add(key)
             else:
                 before[key] = cutoff
+        if _loaded and _local_writes != seen:
+            return  # a write landed meanwhile, which this read may not hold
         _revoked_jtis = frozenset(full)
         _revoked_before, _cut_off = before, operator
         _loaded = True
@@ -206,6 +213,8 @@ async def revoke(
     token_id = str(token_id or "").strip()
     if not token_id:
         raise ValueError("revoke: token_id (a jti or a sub) is required")
+    if "\x00" in token_id:  # no subject has one; CUTOFF_PREFIX keys are cut_off's
+        raise ValueError("revoke: a jti or sub may not contain a NUL character")
     now = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
     expires_at = revocation_expiry(expires_at, now)
     if issued_before is not None and issued_before.tzinfo is not None:
@@ -244,12 +253,11 @@ async def cut_off(subject: str, *, issued_before: datetime, reason: str, revoked
             }
         ],
     )
-    # Re-read, so a refresh already in flight cannot finish after this write
-    # and leave the cutoff out; then fold it in even if the re-read missed it.
-    await refresh()
-    global _cut_off
+    await refresh()  # as `revoke` does; the fold below covers a re-read that missed it
+    global _cut_off, _local_writes
     seconds = _cutoff_seconds(cutoff) or 0
     _cut_off = {**_cut_off, subject: max(_cut_off.get(subject, 0), seconds)}
+    _local_writes += 1
 
 
 def revoked_here(jti: str) -> None:
@@ -265,7 +273,8 @@ def _apply_locally(key: str, cutoff: int | None) -> None:
     here until the next refresh. The written row is the newest for its key,
     so it replaces any earlier state of that key. `loaded()` is left as it
     is: one known row is not a snapshot."""
-    global _revoked_jtis, _revoked_before
+    global _revoked_jtis, _revoked_before, _local_writes
+    _local_writes += 1
     before = {k: v for k, v in _revoked_before.items() if k != key}
     if cutoff is None:
         _revoked_jtis = _revoked_jtis | {key}

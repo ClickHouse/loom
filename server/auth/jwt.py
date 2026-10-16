@@ -259,6 +259,9 @@ def mint_token(
     before that read, so a revocation that landed after it still postdates
     the token.
     """
+    if "\x00" in subject:
+        # Reserved: revocation keys an operator's cutoffs by a NUL a subject never has.
+        raise ValueError("a token subject may not contain a NUL character")
     now = int(time.time()) if issued_at is None else issued_at
     payload: dict[str, Any] = {
         "sub": subject,
@@ -404,6 +407,8 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
     org = decoded.get("org", "")
     if not isinstance(org, str):
         raise TokenError("claim 'org' must be a string")
+    if "\x00" in str(decoded["sub"]):
+        raise TokenError("claim 'sub' may not contain a NUL character")
     exp = decoded.get("exp")
 
     return AuthInfo(

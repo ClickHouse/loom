@@ -352,6 +352,8 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
 
 
 def _print_revocations(rows: list[dict[str, Any]], *, as_json: bool) -> int:
+    from server.auth.revocation import CUTOFF_PREFIX
+
     if as_json:
         print(json.dumps(rows, default=str))
         return 0
@@ -362,8 +364,6 @@ def _print_revocations(rows: list[dict[str, Any]], *, as_json: bool) -> int:
         f"{'jti / sub':<40} {'revoked_at':<20} {'expires_at':<20} "
         f"{'issued_before':<20} revoked_by  reason"
     )
-    from server.auth.revocation import CUTOFF_PREFIX
-
     for r in rows:
         before = r.get("issued_before")
         key = str(r.get("jti", ""))

@@ -101,7 +101,8 @@ class TokenMintInput(BaseModel):
     reads on the minted token credited to a consumer rather than answer
     `not_credited (no_consumer)`. `namespaces` may be omitted when `ns_roles` names them."""
 
-    subject: str
+    # No NUL: revocation keeps that byte for its own keys (mint_token refuses it too).
+    subject: str = Field(pattern=r"^[^\x00]+$")
     org: str
     namespaces: list[str] = Field(default_factory=list)
     roles: list[str] = Field(default_factory=lambda: ["writer"])

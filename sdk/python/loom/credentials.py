@@ -26,6 +26,7 @@ import os
 import secrets
 import sys
 import tempfile
+import threading
 import time
 import webbrowser
 from collections.abc import AsyncGenerator, Callable, Generator, Iterator
@@ -82,23 +83,47 @@ def _write(data: dict[str, Any]) -> None:
         raise
 
 
+# The lock between this process's threads (async requests refresh on worker
+# threads); the file lock below is the one between processes.
+_in_process = threading.RLock()
+
+
 @contextlib.contextmanager
 def _locked() -> Iterator[None]:
-    """Hold the credentials lock (a sibling file, so the atomic replace of the
-    credentials themselves never drops it). No-op where flock does not exist."""
+    """Hold the credentials lock: this process's, then a sibling file's (so the
+    atomic replace of the credentials themselves never drops it)."""
     path = _path()
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    try:
-        import fcntl
-    except ImportError:  # Windows: one process per profile is on the user
-        yield
-        return
-    with open(path.with_name(".credentials.lock"), "a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    with _in_process, open(path.with_name(".credentials.lock"), "a") as lock:
+        _lock_file(lock.fileno())
         try:
             yield
         finally:
-            fcntl.flock(lock, fcntl.LOCK_UN)
+            _unlock_file(lock.fileno())
+
+
+if sys.platform == "win32":
+    import msvcrt
+
+    def _lock_file(fd: int) -> None:
+        while True:
+            try:
+                msvcrt.locking(fd, msvcrt.LK_LOCK, 1)  # retries for 10 s, then raises
+                return
+            except OSError:
+                continue
+
+    def _unlock_file(fd: int) -> None:
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+
+else:
+    import fcntl
+
+    def _lock_file(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+
+    def _unlock_file(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_UN)
 
 
 @contextlib.contextmanager

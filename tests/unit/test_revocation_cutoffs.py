@@ -95,3 +95,80 @@ def test_the_list_shows_an_operator_cutoff_without_its_nul(capsys) -> None:
     _print_revocations([row], as_json=False)
     out = capsys.readouterr().out
     assert "cutoff→sa:bot" in out and "\x00" not in out
+
+
+class _StalledTable(_Table):
+    """The first read takes what the table holds at once, then answers late."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.release = asyncio.Event()
+        self._stalled = False
+
+    async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+        rows = await super().query_all(sql, params)
+        if params is None and not self._stalled:
+            self._stalled = True
+            await self.release.wait()
+        return rows
+
+
+@pytest.mark.parametrize("write", ["cut_off", "revoke"])
+def test_a_refresh_that_read_before_a_write_does_not_drop_it(monkeypatch, write) -> None:
+    from server.core import ch
+
+    table = _StalledTable()
+    monkeypatch.setattr(ch, "get_client", lambda: table)
+    monkeypatch.setattr(revocation, "_revoked_jtis", frozenset())
+    monkeypatch.setattr(revocation, "_revoked_before", {})
+    monkeypatch.setattr(revocation, "_cut_off", {})
+    monkeypatch.setattr(revocation, "_loaded", True)
+
+    async def race() -> None:
+        stale = asyncio.create_task(revocation.refresh())  # reads the empty table, then waits
+        await asyncio.sleep(0)
+        if write == "cut_off":
+            later = datetime.now(UTC) + timedelta(seconds=6)
+            await revocation.cut_off("sa:bot", issued_before=later, reason="r", revoked_by="ops")
+        else:
+            await revocation.revoke("sa:bot", reason="leaked")
+        table.release.set()
+        await stale  # returns after the write, with a snapshot that lacks it
+
+    asyncio.run(race())
+    assert revocation.is_revoked("sa:bot", issued_at=int(time.time()))
+
+
+def test_no_subject_can_carry_the_cutoff_marker() -> None:
+    from pydantic import ValidationError
+
+    from server.auth.jwt import mint_token
+    from server.insights.app.admin_models import TokenMintInput
+
+    sneaky = revocation.CUTOFF_PREFIX + "alice"
+    with pytest.raises(ValidationError):
+        TokenMintInput(subject=sneaky, org="acme", namespaces=["a"])
+    with pytest.raises(ValueError):
+        mint_token(subject=sneaky, org="acme", namespaces=["a"], roles=["writer"])
+    with pytest.raises(ValueError):
+        asyncio.run(revocation.revoke(sneaky))
+
+
+def test_a_token_whose_sub_carries_a_nul_is_refused() -> None:
+    import jwt as pyjwt
+
+    from server.auth.jwt import TokenError, mint_token, verify_token
+
+    good = mint_token(subject="alice", org="acme", namespaces=["a"], roles=["writer"])
+    claims = pyjwt.decode(good, options={"verify_signature": False})
+    header = pyjwt.get_unverified_header(good)
+    from server.settings import settings
+
+    forged = pyjwt.encode(
+        {**claims, "sub": "\x00cutoff:alice"},
+        settings.jwt_secret,
+        algorithm=header["alg"],
+        headers={"kid": header.get("kid")},
+    )
+    with pytest.raises(TokenError, match="NUL"):
+        verify_token(forged)

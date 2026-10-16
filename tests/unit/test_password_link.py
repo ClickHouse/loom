@@ -110,3 +110,16 @@ def test_an_account_that_changed_since_the_link_is_left_alone(world) -> None:
 def test_a_made_up_code_is_refused(world) -> None:
     r = _set(TestClient(oauth_app()), "made-up", "correct horse")
     assert r.status_code == 400 and not re.search("Password set", r.text)
+
+
+def test_a_link_survives_a_failure_before_the_password_is_written(world, monkeypatch) -> None:
+    c, code = TestClient(oauth_app(), raise_server_exceptions=False), _code()
+    working = password_link.namespaces.fetch_row
+
+    async def down(org: str, namespace: str) -> Any:
+        raise RuntimeError("ClickHouse away")
+
+    monkeypatch.setattr(password_link.namespaces, "fetch_row", down)
+    assert _set(c, code, "correct horse").status_code == 500
+    monkeypatch.setattr(password_link.namespaces, "fetch_row", working)
+    assert _set(c, code, "correct horse").status_code == 200 and len(world["rows"]) == 1
