@@ -187,13 +187,15 @@ def test_named_make_targets_and_modules_exist(doc: Path) -> None:
         assert base.with_suffix(".py").is_file() or (base / "__init__.py").is_file(), module
 
 
-def _matches(rule: str, command: str) -> bool:
+def _matches(rule: str, command: str, strip_env: bool = True) -> bool:
     """This test's model of Claude Code's Bash rule match: `:*` and `*` are any text.
 
     It proves the rules match the commands below under that model; Claude Code also
-    splits compound commands and strips wrappers, which the model does not.
+    splits compound commands and strips wrappers, which the model does not. Deny and ask
+    rules match past leading VAR=value assignments; allow rules do not (`strip_env=False`).
     """
-    command = re.sub(r"^(?:[A-Z_][A-Z0-9_]*=\S* )+", "", command)  # deny rules skip env assignments
+    if strip_env:
+        command = re.sub(r"^(?:[A-Z_][A-Z0-9_]*=\S* )+", "", command)
     pattern = rule.removeprefix("Bash(").removesuffix(")")
     if pattern.endswith(":*"):
         pattern = pattern[:-2] + "*"
@@ -310,11 +312,15 @@ def test_settings_deny_shared_and_production_commands() -> None:
         assert not any(_matches(r, command) for r in perms["ask"]), command
     # The reviewer runs in the background; anything it runs that is not pre-approved prompts.
     reviewer = (ROOT / ".claude" / "agents" / "loom-reviewer.md").read_text()
-    for command in re.findall(r"`(\.venv/bin/python -m pytest[^`]*)`", reviewer):
-        assert any(_matches(r, command) for r in perms["allow"]), command
+    for command in re.findall(r"`((?:[A-Z_]+=\S* )*\.venv/bin/python -m pytest[^`]*)`", reviewer):
+        assert any(_matches(r, command, strip_env=False) for r in perms["allow"]), command
+    assert not any(
+        _matches(r, "X=1 .venv/bin/python -m pytest tests/unit", strip_env=False)
+        for r in perms["allow"]
+    )
     # Only the whole unit suite runs without asking: a path after it could be anything.
     assert not any(
-        _matches(r, ".venv/bin/python -m pytest tests/unit/x.py tests/integration")
+        _matches(r, ".venv/bin/python -m pytest tests/unit/x.py tests/integration", strip_env=False)
         for r in perms["allow"]
     )
 
