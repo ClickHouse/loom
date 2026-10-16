@@ -2243,6 +2243,30 @@ async def test_a_value_ends_when_the_row_last_stopped_holding_it(ch, org, values
     assert ended == versions[-1]["updated_at"]
 
 
+async def test_a_value_a_retirement_ended_ends_at_the_retirement(ch, org) -> None:
+    # A retirement keeps the row's updated_at and stamps invalid_at: the value ended
+    # when it was retired, not when it was written.
+    from server.memory import store as M
+    from server.memory.app.entity_projections import value_ended_at
+
+    row = _row(org, "s1", "User lives in London", None)
+    await M.insert_memory_versions([row], ch=ch)
+    await asyncio.sleep(1.1)  # the retirement a second after the write
+    assert await M.supersede_duplicates(
+        org, [{**row, "superseded_by": "winner"}], ch=ch, strong=True
+    )
+    versions = await ch.query_all(
+        "SELECT updated_at, invalid_at FROM loom.memory_versions"
+        " WHERE org = {org:String} AND memory_id = {id:UUID} ORDER BY version"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org, "id": str(row["memory_id"])},
+    )
+    written, retired = versions[0]["updated_at"], versions[-1]["invalid_at"]
+    assert retired is not None and retired > written
+    ended = await value_ended_at(org, NS, str(row["memory_id"]), row["content_sha256"], ch=ch)
+    assert ended == retired
+
+
 @pytest.mark.parametrize(
     "extra",
     [

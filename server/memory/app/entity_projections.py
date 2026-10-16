@@ -489,7 +489,9 @@ async def value_ended_at(
     version history. Now when the history has none."""
     row = await ch.query_one(
         f"""
-        SELECT minOrNull(updated_at) AS ended FROM loom.memory_versions
+        -- A retirement keeps the row's updated_at and stamps invalid_at.
+        SELECT argMinOrNull(ifNull(invalid_at, updated_at), version) AS ended
+        FROM loom.memory_versions
         WHERE org = {{org:String}} AND namespace = {{ns:String}} AND memory_id = {{id:UUID}}
           AND version > (
               SELECT maxOrNull(version) FROM loom.memory_versions
