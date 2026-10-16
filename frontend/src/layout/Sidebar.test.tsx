@@ -27,13 +27,13 @@ vi.mock("../api", async (importOriginal) => {
     countNewAgents: vi.fn(async () => 0), // The badge asks for a number
   };
 });
-// The sidebar asks through sharedHasAutoResolved, which imports the admin API on demand.
-vi.mock("../api/admin", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../api/admin")>()),
+// The sidebar asks through sharedHasAutoResolved, which calls api/audit.
+vi.mock("../api/audit", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api/audit")>()),
   hasAutoResolved: vi.fn(async () => false),
 }));
 import { getBudgetStatus, countConflicts, countNewAgents } from "../api";
-import { hasAutoResolved } from "../api/admin";
+import { hasAutoResolved } from "../api/audit";
 
 const row = (namespace: string, role: MyNamespaceEntry["role"]): MyNamespaceEntry => ({
   namespace,

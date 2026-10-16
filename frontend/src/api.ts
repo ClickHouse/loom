@@ -1245,6 +1245,8 @@ export async function getTaxonomy(
 export * from "./api/knowledge";
 export * from "./api/conversations";
 export * from "./api/admin";
+// The audit-log read the sidebar badge calls, kept apart from admin.ts so the shell carries only it.
+export * from "./api/audit";
 export * from "./api/search";
 export * from "./api/profile";
 export * from "./api/code";

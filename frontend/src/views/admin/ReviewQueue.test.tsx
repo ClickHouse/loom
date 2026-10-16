@@ -28,12 +28,12 @@ vi.mock("../../api", async (importOriginal) => {
     restoreMemory: vi.fn(),
   };
 });
-// The page's yes/no probe is shared with the sidebar and loads the admin API on demand.
-vi.mock("../../api/admin", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../api/admin")>()),
+// The page's yes/no probe is shared with the sidebar and lives in api/audit.
+vi.mock("../../api/audit", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../api/audit")>()),
   hasAutoResolved: vi.fn(),
 }));
-import { hasAutoResolved } from "../../api/admin";
+import { hasAutoResolved } from "../../api/audit";
 import {
   listAllowlist,
   listAutoResolved,
