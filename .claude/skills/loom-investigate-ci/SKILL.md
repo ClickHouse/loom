@@ -42,7 +42,7 @@ gh run list --workflow ci.yml --branch main -L 5 --json conclusion,headSha,creat
 | `coding-agent plugins` | a hook, grep-shim or Cursor test; a syntax error in a shipped `.mjs`; a non-executable `integrations/grep-shim/bin/` entry point | the commands of the `integrations/` row in `loom-pre-push` §3, which mirror the job's steps |
 | `tsc (frontend)` | types, bundle budget | `npm --prefix frontend run build && npm --prefix frontend run budget` |
 | `frontend tests (vitest + axe + playwright)` | a vitest or axe failure, or the Playwright Graph smoke or layout-shift assertion | `npm --prefix frontend run test`, then `npx --prefix frontend playwright install --with-deps chromium` once, then `E2E_PORT=<free port> npm --prefix frontend run e2e` |
-| `typescript sdk (...)` | generated types stale, lint, a vitest failure | `.venv/bin/python -m scripts.codegen.sdk_ts_gen`, then `npm --prefix sdk/typescript run check` |
+| `typescript sdk (...)` | generated types stale, lint, a vitest failure, the ESM/CJS dist build, publint or attw | `.venv/bin/python -m scripts.codegen.sdk_ts_gen`, then `npm --prefix sdk/typescript run check && npm --prefix sdk/typescript run check:dist` |
 | `python sdk wheel (...)` | the wheel does not build, or fails its smoke test on the lowest dependency pins | `uv build sdk/python --out-dir dist && python scripts/gates/sdk_wheel_smoke.py dist/*.whl` in a clean virtualenv |
 | `pytest integration` | behaviour change; a test that needs an env CI lacks (self-signup) | the suite against a private server (`loom-dev-setup`); the failure report lists the last requests with `X-Request-Id` to find the server log line |
 

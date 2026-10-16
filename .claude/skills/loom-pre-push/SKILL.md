@@ -44,7 +44,9 @@ Run them in the worktree's `.venv`, on CI's Python (3.12), with `LOOM_ENV_FILE=`
 | `integrations/` | `.venv/bin/python -m scripts.codegen.agent_plugin_sync`; `node --test integrations/claude-code-plugin/tests/*.test.mjs`, `node --test integrations/grep-shim/tests/*.test.mjs`, `bash integrations/cursor/test.sh`, `PYTHON=.venv/bin/python bash integrations/generic/test.sh`, and CI's two loops: `node --check` over every shipped `.mjs` and `test -x` over `integrations/grep-shim/bin/*` (job `agent-plugins` in `.github/workflows/ci.yml`); for a behaviour change, both manifests bumped to a version no open PR uses |
 | `frontend/` | `npm --prefix frontend run test && npm --prefix frontend run build && npm --prefix frontend run budget`; the Playwright run CI adds (`npx --prefix frontend playwright install --with-deps chromium` once, then `E2E_PORT=<free port> npm --prefix frontend run e2e`); `make lint` covers the accessibility rules |
 | `deploy/helm/` | the commands of CI's "lint and validate every overlay" step (`.github/workflows/ci.yml`, job `helm`): a `secrets.jwtSecret` of at least 32 characters (CI uses `openssl rand -hex 32`; `helm lint` passes a shorter one, `helm template` refuses it), `helm lint --strict` and `helm template … \| kubeconform -strict -kubernetes-version 1.30.0` for each overlay, once more with every optional object on |
-| `sdk/typescript/` | `npm --prefix sdk/typescript run check` |
+| `sdk/typescript/` | `npm --prefix sdk/typescript run check && npm --prefix sdk/typescript run check:dist` (the ESM/CJS build, dist tests, publint and attw) |
+| `sdk/python/` packaging or pins | `uv build sdk/python --out-dir dist && python scripts/gates/sdk_wheel_smoke.py dist/*.whl` in a clean virtualenv, as `loom-investigate-ci` gives it |
+| the repository-job sandbox | `LOOM_TEST_REQUIRE_SANDBOX=1 .venv/bin/python -m pytest tests/unit/test_repo_job_sandbox_hostile.py -q` on a host with bubblewrap (without it the test skips; CI fails) |
 | `docs/`, any `.md` | `.venv/bin/python -m pytest tests/unit/test_doc_links.py tests/unit/test_public_copy.py` |
 
 ## 4. Read the regenerated diff

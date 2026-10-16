@@ -9,7 +9,7 @@ metadata:
 
 # Deploying Loom
 
-A deploy changes what every user of the deployment is served. Run it only on an explicit request, from the deployment's own checkout. `.claude/settings.json` denies an agent the state-changing commands (`./redeploy.sh`, `--force`, `--rollback`, `docker` on the deployment's containers): print each one for the operator to run, and read its output back.
+A deploy changes what every user of the deployment is served. Run it only on an explicit request, from the deployment's own checkout. `.claude/settings.json` denies an agent `./redeploy.sh`, its `--force` and `--rollback`, and every `docker` command on the deployment's containers, reads included: print each one for the operator to run, and read its output back.
 
 ## 1. Preflight
 
@@ -36,7 +36,8 @@ The script refuses to swap when the new colour is unhealthy or not ready, a prov
 
 ```bash
 curl -s localhost:7777/v1/health | jq '{status, build_commit, ready: .readiness.ready, schema: .schema.pending, providers_degraded}'
-docker logs --since 5m "loom-$(./redeploy.sh --status | awk '/\(serving\)/ {print $1}')" 2>&1 | grep -iE 'error|traceback' | tail
+# for the operator, with the serving colour from --status:
+docker logs --since 5m loom-<colour> 2>&1 | grep -iE 'error|traceback' | tail
 ```
 
 - `build_commit` is the commit you meant to deploy. The script fetched `origin/main` and rebased onto it (`--autostash`), refused a dirty tree that was behind, and asked `[y/N]` before pulling commits that touch the deploy files; a dirty tree it was not behind ships as it is.
