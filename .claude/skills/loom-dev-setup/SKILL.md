@@ -53,7 +53,7 @@ An agent's shell keeps no variables between calls, and a server started without 
 ```bash
 cd <worktree>
 env | grep -E '^LOOM_(CH_|BASE_URL|ENV_FILE|BACKGROUND_WORKERS|AUTH_REQUIRED|EMBEDDING_MODEL|LLM_PROVIDER)' && {
-  echo "these override .env: unset them first"; exit 1; }
+  echo "these override .env in every later call: remove them from the shell profile, or start each later command with env -u NAME"; exit 1; }
 bash -c '(exec 3<>/dev/tcp/127.0.0.1/7790)' 2>/dev/null && {   # bash's /dev/tcp; zsh has none
   echo "port 7790 is taken: pick another for the label, URL and --port"; exit 1; }
 test -e .env && { echo ".env exists: check its LOOM_CH_* before migrating"; exit 1; }
