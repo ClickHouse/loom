@@ -160,19 +160,32 @@ async def handle_task_create(input: TaskCreateInput) -> TaskCreateOutput:
         patch={"kind": input.kind, "mode": mode, "policy": bool(policy)},
         status=status,
     )
-    try:
-        row, seq = await record(dedup_token=token)
-    except _InsertDropped:
+
+    async def landed_before_us() -> TaskCreateOutput | None:
         # A create with the same key landed between our lookup and our insert:
         # answer with that task, as a later retry would.
         prior = await repo.fetch_task_by_idempotency_key(
             input.org, input.inbox, input.idempotency_key
         )
-        if prior is not None:
-            return TaskCreateOutput(task=_payload(prior), created=False, seq=int(prior["version"]))
+        if prior is None:
+            return None
+        return TaskCreateOutput(task=_payload(prior), created=False, seq=int(prior["version"]))
+
+    try:
+        row, seq = await record(dedup_token=token)
+    except _InsertDropped:
+        if answer := await landed_before_us():
+            return answer
         # No task holds the key: it was erased, and ClickHouse still remembers
-        # the token. A token with this task's id is one it has never seen.
-        row, seq = await record(dedup_token=f"{token}:{task_id}")
+        # the token. Every create after that erasure reads the same generation,
+        # so racing retries share this new token and only one of them lands.
+        generation = await repo.erasure_generation(input.org)
+        try:
+            row, seq = await record(dedup_token=f"{token}:erased:{generation}")
+        except _InsertDropped:
+            if answer := await landed_before_us():
+                return answer
+            raise
     backend = await repo.lease_backend()
     await backend.ensure_row(task_id, input.org, input.inbox, 0)
     nxt = _triage_note(inbox, input.agent, policy) if status == "triage" else ""

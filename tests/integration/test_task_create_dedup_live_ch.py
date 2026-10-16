@@ -8,7 +8,9 @@ Skips cleanly when LOOM_CH_HOST is unset.
 
 from __future__ import annotations
 
+import asyncio
 import os
+import time
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -117,12 +119,28 @@ async def test_a_second_ready_event_with_the_same_id_is_dropped(ch: Any) -> None
     assert await wrepo.ready_event_seq(org, "bot", task_id) == 100
 
 
+async def _erase_tasks(ch: Any, org: str, namespace: str) -> None:
+    """What a namespace erasure does to the task tables: record the request
+    (the saga writes it before any step), then delete the rows."""
+    from server.erasure.store.steps_ledgers import delete_tasks_by_namespace
+
+    row = {
+        "id": str(uuid.uuid4()),
+        "org": org,
+        "scope_type": "namespace",
+        "scope_value": namespace,
+        "requester": "itest",
+        "status": "in_progress",
+        "version": time.time_ns(),
+    }
+    await ch.insert("loom.erasure_requests", [row])
+    await delete_tasks_by_namespace(org, namespace)
+
+
 @pytest.mark.asyncio
 async def test_a_create_after_its_task_was_erased_lands_a_new_task(ch: Any) -> None:
     # ClickHouse keeps an insert's dedup token after DELETE, so the second
     # create's insert is dropped although no task holds the key any more.
-    from server.erasure.store.steps_ledgers import delete_tasks_by_namespace
-
     org = f"itest-erased-{uuid.uuid4().hex[:8]}"
     ident = {"org": org, "namespace": "private", "agent": "admin"}
     await inboxes.handle_inbox_register(
@@ -141,7 +159,7 @@ async def test_a_create_after_its_task_was_erased_lands_a_new_task(ch: Any) -> N
         "idempotency_key": "k1",
     }
     first = await transitions.handle_task_create(wire.TaskCreateInput(**body))
-    await delete_tasks_by_namespace(org, first.task.namespace)
+    await _erase_tasks(ch, org, first.task.namespace)
 
     second = await transitions.handle_task_create(wire.TaskCreateInput(**body))
 
@@ -151,6 +169,48 @@ async def test_a_create_after_its_task_was_erased_lands_a_new_task(ch: Any) -> N
         "SELECT task_id FROM loom.tasks FINAL WHERE org = {org:String}", params={"org": org}
     )
     assert [str(r["task_id"]) for r in rows] == [second.task.task_id]
+
+    # A second erasure of the same key's task: the next create lands again.
+    await _erase_tasks(ch, org, first.task.namespace)
+    third = await transitions.handle_task_create(wire.TaskCreateInput(**body))
+    assert third.created and third.task.task_id != second.task.task_id
+
+
+@pytest.mark.asyncio
+async def test_racing_creates_after_an_erasure_land_one_task(ch: Any) -> None:
+    # Every racer's first insert is dropped (the token outlived the erased
+    # task); their second inserts must still dedup one another.
+    org = f"itest-erased-{uuid.uuid4().hex[:8]}"
+    ident = {"org": org, "namespace": "private", "agent": "admin"}
+    await inboxes.handle_inbox_register(
+        wire.InboxRegisterInput(
+            **ident, inbox="bot", owner_agent="bot", accept_disclosure=["internal"]
+        )
+    )
+    body = {
+        "org": org,
+        "namespace": "public",
+        "agent": "poster",
+        "inbox": "bot",
+        "kind": "chore",
+        "title": "one task",
+        "disclosure": "internal",
+        "idempotency_key": "k1",
+    }
+    first = await transitions.handle_task_create(wire.TaskCreateInput(**body))
+    await _erase_tasks(ch, org, first.task.namespace)
+
+    racers = [transitions.handle_task_create(wire.TaskCreateInput(**body)) for _ in range(4)]
+    outs = await asyncio.gather(*racers)
+
+    winners = [o for o in outs if o.created]
+    assert len(winners) == 1
+    assert {o.task.task_id for o in outs} == {winners[0].task.task_id}
+    rows = await ch.query_all(
+        "SELECT task_id FROM loom.tasks FINAL WHERE org = {org:String} AND is_deleted = 0",
+        params={"org": org},
+    )
+    assert [str(r["task_id"]) for r in rows] == [winners[0].task.task_id]
 
 
 @pytest.mark.asyncio

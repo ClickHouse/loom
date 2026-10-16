@@ -334,10 +334,25 @@ async def fetch_task_by_idempotency_key(
             f"SELECT {TASK_COLS} FROM loom.tasks FINAL "
             "WHERE org = {org:String} AND inbox = {inbox:String} "
             "AND idempotency_key = {key:String} AND is_deleted = 0 "
+            "ORDER BY created_at, task_id "
             "LIMIT 1 SETTINGS select_sequential_consistency = 1",
             params={"org": org, "inbox": inbox, "key": key},
         ),
     )
+
+
+async def erasure_generation(org: str, *, ch: _CHClient | None = None) -> str:
+    """A string that changes with every erasure requested in `org`: the number
+    of requests and the latest one's time. The saga records its request before
+    it deletes anything, so a create that follows an erasure reads the new value."""
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        "SELECT count() AS n, toString(max(requested_at)) AS latest "
+        "FROM loom.erasure_requests FINAL WHERE org = {org:String} "
+        "SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    return f"{row['n']}@{row['latest']}" if row else "0"
 
 
 async def insert_task_version(
