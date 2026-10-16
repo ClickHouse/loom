@@ -55,6 +55,8 @@ def _pytest_ok(args: list[str]) -> bool:
     unit_path = False
     after_k = False
     for arg in args:
+        if arg.startswith("@"):  # pytest reads more arguments from that file
+            return False
         if after_k:  # the -k expression selects tests; it opens nothing
             after_k = False
         elif arg == "-k":
