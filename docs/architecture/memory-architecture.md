@@ -358,9 +358,10 @@ the value it was written or stated for (`carried`):
   Undo's own check of the rows found holding it, newest first and at most eight (a row
   revised or retired meanwhile is left to that change), but labelled `row-fallback`: triple and edge markers, then the
   interval repair, so a newer value written meanwhile wins. Its id is derived from the
-  closes it answers, so a replay finds the markers; one still open beside another open
-  value of its relation was never repaired, and the next check of the relation runs
-  that fallback again by the marker's id, which adds no marker and finishes the repair.
+  closes it answers, so a replay finds the markers. When the repair of a fallback's or
+  an Undo's markers fails, the failure records their id and the closes it had made, as
+  a write's failed repair does; the replay finishes those closes and their edges first
+  (or repairs the markers still open, when none was made), then reconciles as before.
   London undone over Paris and then revised or retired away leaves Paris current from
   then on, and its earlier interval stays as history. A value that ended on its own
   stays ended. A replay of a failed triple, edge or entity-vector write writes only for

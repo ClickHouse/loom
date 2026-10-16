@@ -616,9 +616,11 @@ async def _repair_triples(
     replay: bool,
     repaired: list[IntervalRepair],
     ch: Any,
+    retire: bool = True,
 ) -> None:
     """Close what the write's `triples` contradict, as of its arrival `at`; under
-    `newest_wins` the rows behind the closed triples retire too. A replay never reads
+    `newest_wins` the rows behind the closed triples retire too, unless not `retire`
+    (the triples are markers, which retire no row). A replay never reads
     the clock: it finishes the closes the write recorded (`repaired`) or, with none
     recorded, repairs only the triples still open. A failure raises
     `TriplesRepairFailed` with the closes made, for the next replay to finish."""
@@ -626,7 +628,7 @@ async def _repair_triples(
     try:
         if repairs:
             repairs, reissued = await _finish_recorded_repairs(
-                input, repairs, triples, triple_memories, at=at, ch=ch
+                input, repairs, triples, triple_memories, at=at, retire=retire, ch=ch
             )
             await close_triples(ch, org=input.org, namespace=input.namespace, closes=reissued)
         else:
@@ -643,7 +645,8 @@ async def _repair_triples(
             repairs = await _repair_contradictory_triples(input, triples, at=at, ch=ch)
         if repairs:
             await _repair_contradictory_edges(input, repairs, ch=ch)
-            await _retire_memories_behind_repairs(input, repairs, triple_memories, ch=ch)
+            if retire:
+                await _retire_memories_behind_repairs(input, repairs, triple_memories, ch=ch)
     except TriplesRepairFailed:
         raise
     except Exception as e:
@@ -658,6 +661,7 @@ async def _finish_recorded_repairs(
     *,
     at: datetime,
     ch: Any,
+    retire: bool = True,
 ) -> tuple[list[IntervalRepair], list[tuple[Any, ...]]]:
     """Of the closes a replayed write recorded, the ones it still makes, and those to
     issue again because they never landed. A value restated since is skipped; one
@@ -693,6 +697,7 @@ async def _finish_recorded_repairs(
                 seen=latest.seen,
                 closed_at=closed_at,
                 triple_memories=triple_memories,
+                retire=retire,
                 ch=ch,
             )
             skip.add(value)
@@ -716,10 +721,11 @@ async def _reopen_restated(
     closed_at: datetime,
     triple_memories: list[dict[str, Any]],
     ch: Any,
+    retire: bool = True,
 ) -> None:
     """Undo the write's close of a value stated again while it landed, first repairing
     that restatement (from `valid_from`, seen at `seen`) against the values written
-    since. A newer one closes it again and retires the rows behind it."""
+    since. A newer one closes it again and, with `retire`, retires the rows behind it."""
     restated = {
         "subject": repair.subject,
         "relation": repair.relation,
@@ -750,7 +756,8 @@ async def _reopen_restated(
         namespace=input.namespace,
         closes=[(*value, c.valid_to, c.invalid_at) for c in lost],
     )
-    await _retire_memories_behind_repairs(input, lost, triple_memories, ch=ch)
+    if retire:
+        await _retire_memories_behind_repairs(input, lost, triple_memories, ch=ch)
 
 
 class Restatement(NamedTuple):
@@ -858,8 +865,28 @@ async def repair_intervals(
     made."""
     repairs = await _repair_contradictory_triples(input, triples, at=at, ch=ch)
     if repairs:
-        await _repair_contradictory_edges(input, repairs, ch=ch)
+        try:
+            await _repair_contradictory_edges(input, repairs, ch=ch)
+        except Exception as e:
+            # The triples closed: a replay closes their edges from these repairs.
+            raise TriplesRepairFailed(at, e, repairs) from e
     return repairs
+
+
+async def finish_interval_repair(
+    input: Any,
+    triples: list[dict[str, Any]],
+    *,
+    at: datetime,
+    repaired: list[IntervalRepair],
+    ch: Any,
+) -> None:
+    """Finish a failed `repair_intervals` of `triples` (each with its `seen_at`), as a
+    replay of a write finishes its repair: the closes it made (`repaired`) and their
+    edges, or, with none made, a repair of the triples still open. No row retires."""
+    await _repair_triples(
+        input, triples, [], at=at, replay=True, repaired=repaired, retire=False, ch=ch
+    )
 
 
 # ---------------------------------------------------------------------------

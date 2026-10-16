@@ -40,6 +40,7 @@ from server.memory.app.projection_errors import (
     bulk_projection_payload,
     bulk_source_resource_id,
     record_input_projection_failure,
+    restated_repair_payload,
 )
 from server.memory.app.projection_failures import FOLLOW_ROWS
 from server.memory.app.projections import (
@@ -875,17 +876,20 @@ async def _bulk_follow_row_supersessions(
         from server.memory.app.entity_projections import follow_row_supersessions
 
         first, later = _pairs[:_FOLLOW_MAX], _pairs[_FOLLOW_MAX:]
+        restated: dict[str, Any] = {}
         try:
             later += (await follow_row_supersessions(input, first, ch=ch)).unfollowed
         except Exception as e:  # noqa: BLE001 — the rows are in; the repair follows them later
             log.warning("bulk_set: triples follow rows failed (recorded for repair): %s", e)
             later = _pairs
+            # A fallback's markers whose repair failed: the closes it made.
+            restated = restated_repair_payload(e)
         if later:
             await record_input_projection_failure(
                 input,
                 projection=FOLLOW_ROWS,
                 error=f"supersession pairs left for the repair to follow: {len(later)}",
-                payload={"pairs": [list(p) for p in later]},
+                payload={"pairs": [list(p) for p in later], **restated},
                 source_operation="memory.bulk_set",
                 source_resource_id=bulk_source_resource_id(input),
             )

@@ -29,6 +29,8 @@ TRIPLES_ARRIVED_AT = "triples_arrived_at"
 TRIPLES_INSERTED_AT = "triples_inserted_at"
 TRIPLES_REPAIRS = "triples_repairs"
 TRIPLES_ENTITY_MAP = "triples_entity_map"
+# The id of the Undo or fallback whose markers a failed repair was repairing.
+TRIPLES_RESTORE_ID = "triples_restore_id"
 
 
 class TriplesInsertFailed(Exception):
@@ -59,6 +61,8 @@ class TriplesRepairFailed(Exception):
         self.inserted_at = inserted_at
         self.repairs = repairs or []
         self.entity_map: dict[str, str] = {}
+        # Set when the triples were an Undo's or a fallback's markers (`restore_id`).
+        self.restore_id = ""
 
 
 def messages_source_resource_id(input: Any) -> str:
@@ -154,6 +158,15 @@ def repair_failure_payload(error: TriplesRepairFailed) -> dict[str, Any]:
         ],
         TRIPLES_ENTITY_MAP: dict(error.entity_map),
     }
+
+
+def restated_repair_payload(error: BaseException) -> dict[str, Any]:
+    """The payload keys that carry a failed repair of an Undo's or a fallback's markers
+    to its replay: their id, when they were stated and the closes made. Empty for any
+    other error."""
+    if not isinstance(error, TriplesRepairFailed) or not error.restore_id:
+        return {}
+    return {**repair_failure_payload(error), TRIPLES_RESTORE_ID: error.restore_id}
 
 
 def _writers_read_scope() -> dict[str, Any]:

@@ -14,7 +14,13 @@ from server.memory.app.entity_projections import (
     rows_holding,
     stated_by_live_rows,
 )
-from server.memory.app.projections import entity_edge_row, entity_triple_row, repair_intervals
+from server.memory.app.projection_errors import TriplesRepairFailed
+from server.memory.app.projections import (
+    entity_edge_row,
+    entity_triple_row,
+    finish_interval_repair,
+    repair_intervals,
+)
 from server.memory.domain.graph_quality import (
     canonical_edge_pair,
     is_single_valued_relation,
@@ -217,7 +223,40 @@ async def restate_facts(
         }
         for m in markers
     ]
-    await repair_intervals(input, restated, ch=ch, at=restored_at)
+    try:
+        await repair_intervals(input, restated, ch=ch, at=restored_at)
+    except Exception as e:
+        # Recorded by the caller with this id, for `finish_restated_repair` to finish.
+        failed = e if isinstance(e, TriplesRepairFailed) else TriplesRepairFailed(restored_at, e)
+        failed.restore_id = restore_id
+        if failed is e:
+            raise
+        raise failed from e
+
+
+async def finish_restated_repair(
+    input: Any,
+    restore_id: str,
+    *,
+    restored_at: datetime,
+    repaired: list[Any],
+    ch: Any,
+) -> None:
+    """Finish the interval repair a `restate_facts` with `restore_id` recorded failing,
+    with the closes it had made (`repaired`) and their edges: the markers carrying the
+    id are the triples it was repairing."""
+    markers = await ch.query_all(
+        """
+        SELECT subject, relation, object, valid_from, seen_at
+        FROM loom.entity_triples
+        WHERE org = {org:String} AND namespace = {ns:String} AND restore_id = {rid:String}
+        SETTINGS select_sequential_consistency = 1
+        """,
+        params={"org": input.org, "ns": input.namespace, "rid": restore_id},
+    )
+    await finish_interval_repair(
+        input, [dict(m) for m in markers], at=restored_at, repaired=repaired, ch=ch
+    )
 
 
 class _Marker(NamedTuple):

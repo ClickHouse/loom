@@ -24,6 +24,7 @@ from server.memory.app.projection_errors import (
     TRIPLES_ENTITY_MAP,
     TRIPLES_INSERTED_AT,
     TRIPLES_REPAIRS,
+    TRIPLES_RESTORE_ID,
     TriplesRepairFailed,
     repair_failure_payload,
 )
@@ -474,6 +475,7 @@ async def _retry_follow_rows(failure: ProjectionFailureRow, *, ch: Any) -> str:
     if not pairs:
         raise ValueError("triples_follow_rows retry has no pairs")
     scope = SimpleNamespace(org=failure.org, namespace=failure.namespace, agent=failure.agent)
+    await _finish_restated_repair(failure, scope, ch=ch)
     outcome = await follow_row_supersessions(scope, pairs, ch=ch, hops=REPAIR_CHAIN_HOPS)
     if not outcome.unfollowed:
         return ""
@@ -539,6 +541,25 @@ def _recorded_entity_map(payload: dict[str, Any]) -> dict[str, str] | None:
     return {str(k): str(v) for k, v in names.items()}
 
 
+async def _finish_restated_repair(failure: ProjectionFailureRow, scope: Any, *, ch: Any) -> None:
+    """First finish the repair of an Undo's or a fallback's markers that the failure
+    recorded, with the closes it had made: the relation may look settled since, and the
+    rest of the replay would then repair nothing."""
+    restore_id = str(failure.payload.get(TRIPLES_RESTORE_ID) or "")
+    restored_at = parse_iso_dt(failure.payload.get(TRIPLES_INSERTED_AT) or "")
+    if not restore_id or restored_at is None:
+        return
+    from server.memory.app.graph_undo import finish_restated_repair
+
+    await finish_restated_repair(
+        scope,
+        restore_id,
+        restored_at=restored_at,
+        repaired=_recorded_repairs(failure.payload),
+        ch=ch,
+    )
+
+
 async def _retry_triples_reconcile(failure: ProjectionFailureRow, *, ch: Any) -> str:
     """Reconcile the facts of the rows a revision or an Undo changed, as it would have."""
     from types import SimpleNamespace
@@ -550,6 +571,7 @@ async def _retry_triples_reconcile(failure: ProjectionFailureRow, *, ch: Any) ->
     if not ids:
         return "malformed_payload"
     scope = SimpleNamespace(org=failure.org, namespace=failure.namespace, agent=failure.agent)
+    await _finish_restated_repair(failure, scope, ch=ch)
     if failure.payload.get("reopen"):
         # As of the Undo, by its id: a value stated since stays the newer one, and '' is
         # every other row's id.

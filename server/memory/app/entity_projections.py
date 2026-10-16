@@ -20,6 +20,7 @@ from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry, _Bu
 from server.memory.app.projection_errors import (
     bulk_projection_payload,
     record_input_projection_failure,
+    restated_repair_payload,
 )
 from server.memory.app.projection_failures import TRIPLES_RECONCILE, TRIPLES_REOPEN
 from server.memory.app.projections import (
@@ -535,6 +536,8 @@ async def reconcile_row_facts(
             payload["restored_at"] = restored_at.isoformat()
             payload["restore_id"] = restore_id
             payload["content_sha256"] = dict(hashes or {})
+        # An Undo's or a fallback's markers whose repair failed: the closes it made.
+        payload.update(restated_repair_payload(e))
         await record_input_projection_failure(
             input,
             projection=TRIPLES_RECONCILE,
@@ -645,7 +648,6 @@ async def _keep_one_current(input: Any, rows: list[Mapping[str, Any]], *, ch: An
     from server.memory.app import graph_undo
     from server.memory.domain.graph_quality import observation_key
 
-    await _finish_fallback_repairs(input, rows, ch=ch)
     now = naive_utc_now()
 
     # When each relation's open values start ("moving to Berlin on Dec 1").
@@ -729,69 +731,6 @@ async def _keep_one_current(input: Any, rows: list[Mapping[str, Any]], *, ch: An
 # The rows a fallback asks to state a value again: one is enough, and a few more keep
 # it from failing when the newest is revised meanwhile.
 _FALLBACK_ROWS = 8
-
-
-async def _finish_fallback_repairs(input: Any, rows: list[Mapping[str, Any]], *, ch: Any) -> None:
-    """Run again each fallback of `rows` whose interval repair did not finish. Its
-    markers land before the repair, which may then fail, and a replay would find the
-    relation current and stop there. A marker still open beside another open value of
-    its relation ("moving to Berlin on Dec 1") was never repaired: its fallback runs
-    again by the marker's id, finds its markers, adds none and repairs."""
-    from server.memory.app import graph_undo
-
-    open_values: dict[tuple[str, str], set[str]] = {}
-    for r in rows:
-        if r["valid_to"] is None:
-            open_values.setdefault((r["subject"], r["relation"]), set()).add(r["object"])
-    unrepaired: dict[str, list[Mapping[str, Any]]] = {}
-    for r in rows:
-        if (
-            r["adapter_name"] == "row-fallback"
-            and r["valid_to"] is None
-            and len(open_values[(r["subject"], r["relation"])]) > 1
-        ):
-            unrepaired.setdefault(r["restore_id"], []).append(r)
-    for restore_id, markers in sorted(unrepaired.items()):
-        facts = frozenset((m["subject"], m["relation"], m["object"]) for m in markers)
-        hashes = await _rows_linking(input.org, input.namespace, sorted(facts), ch=ch)
-        await graph_undo.reopen_held_facts(
-            input,
-            sorted(hashes),
-            ch=ch,
-            restore_id=restore_id,
-            # The repair is dated by the second, which the first marker is seen in.
-            restored_at=min(m["seen_at"] for m in markers),
-            hashes=hashes,
-            facts=facts,
-            adapter_name="row-fallback",
-        )
-
-
-async def _rows_linking(
-    org: str, namespace: str, triples: list[tfr.Triple], *, ch: Any
-) -> dict[str, str]:
-    """The live rows linked to `triples`, by their own link or their key's (a row
-    written before rows were linked), with each one's current `content_sha256`."""
-    found = await ch.query_all(
-        f"""
-        SELECT toString(memory_id) AS id, toString(content_sha256) AS sha
-        FROM loom.memory FINAL
-        WHERE org = {{org:String}} AND namespace = {{ns:String}} AND {GRAPH_HOLDER_SQL}
-          AND (memory_id IN (
-                  SELECT memory_id FROM loom.entity_triple_rows
-                  WHERE org = {{org:String}} AND namespace = {{ns:String}}
-                    AND (subject, relation, object) IN
-                        {{triples:Array(Tuple(String, String, String))}})
-               OR memory_key IN (
-                  SELECT memory_key FROM loom.entity_triple_memories
-                  WHERE org = {{org:String}} AND namespace = {{ns:String}}
-                    AND (subject, relation, object) IN
-                        {{triples:Array(Tuple(String, String, String))}}))
-        SETTINGS select_sequential_consistency = 1
-        """,
-        params={"org": org, "ns": namespace, "triples": triples},
-    )
-    return {str(r["id"]): str(r["sha"]) for r in found}
 
 
 def _as_bulk_write(

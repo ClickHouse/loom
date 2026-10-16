@@ -1,3 +1,5 @@
+import json
+from datetime import datetime
 from typing import Any
 
 import pytest
@@ -686,3 +688,44 @@ async def test_an_insert_failure_recorded_without_its_arrival_replays_as_it_did(
         await retry_projection_failure(_graph_failure("entity_triples"), ch=_GraphCH())
     ).resolved
     assert repaired == [now]
+
+
+async def test_a_follow_replay_first_finishes_a_fallbacks_recorded_repair(monkeypatch) -> None:
+    # The follow's fallback closed Paris and failed to close its edge: the replay
+    # finishes that repair from the recorded closes before following the pairs again.
+    from server.memory.app import entity_projections, graph_undo
+    from server.memory.app.projection_errors import TriplesRepairFailed, restated_repair_payload
+    from server.memory.domain.graph_quality import IntervalRepair
+
+    at = datetime(2026, 10, 16, 12, 0, 0)
+    paris = IntervalRepair("user", "live_in", "paris", "berlin", valid_to=datetime(2026, 12, 1))
+    failed = TriplesRepairFailed(at, ConnectionError("edge close"), [paris])
+    failed.restore_id = "r1"
+    calls: list[tuple] = []
+
+    async def finish(input, restore_id, *, restored_at, repaired, ch):
+        calls.append(("finish", restore_id, restored_at, repaired))
+
+    async def follow(input, pairs, *, ch, hops):
+        calls.append(("follow", pairs))
+        return entity_projections.FollowOutcome(0, 0, [])
+
+    monkeypatch.setattr(graph_undo, "finish_restated_repair", finish)
+    monkeypatch.setattr(entity_projections, "follow_row_supersessions", follow)
+    payload = json.loads(json.dumps({"pairs": [["a", "b"]], **restated_repair_payload(failed)}))
+    failure = ProjectionFailureRow(
+        failure_id="f1",
+        org="o",
+        namespace="n",
+        agent="a",
+        projection="triples_follow_rows",
+        source_operation="memory.bulk_set",
+        source_resource_id="",
+        memory_keys=[],
+        error_type="RuntimeError",
+        error_message="boom",
+        payload=payload,
+    )
+    result = await retry_projection_failure(failure, ch=_GraphCH())
+    assert result.resolved
+    assert calls == [("finish", "r1", at, [paris]), ("follow", [("a", "b")])]
