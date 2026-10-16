@@ -528,7 +528,7 @@ def test_a_reader_whose_owner_cannot_be_seen_is_not_replaced(
     assert ch_setup._set_up(ch, "delegate", "someone_elses") == 1
     assert not any(sql.startswith("CREATE USER") for sql in ch.ran)
     captured = capsys.readouterr()
-    assert "someone_elses: missing; 'delegate' may not read system.users" in captured.err
+    assert "someone_elses: missing; 'delegate' cannot see who owns it" in captured.err
     assert "CREATE USER OR REPLACE `someone_elses`" in captured.err  # for an admin to judge
 
 
@@ -903,3 +903,17 @@ def test_a_driver_error_line_keeps_the_server_s_words() -> None:
         == "Code: 36. DB::Exception: Invalid password. (BAD_ARGUMENTS)"
     )
     assert error_line(TimeoutError()) == "TimeoutError"
+
+
+def test_the_recreate_hint_follows_the_admin_sql_only_for_an_existing_reader(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    ch_setup._print_admin_sql("loom_app", "loom_reader")
+    assert "recreate Loom" not in capsys.readouterr().err  # a first install: nothing runs yet
+    ch_setup._print_admin_sql("loom_app", "loom_reader", existing=True)
+    assert "recreate Loom" in capsys.readouterr().err
+
+
+def test_the_admin_sql_grants_nothing_that_lists_other_accounts() -> None:
+    sql = " ".join(ch_setup.admin_sql("loom_app", "loom_reader"))
+    assert "system.users" not in sql and "settings_profile" not in sql
