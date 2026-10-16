@@ -48,16 +48,6 @@ def dev_jwt_secret_warning() -> str | None:
     )
 
 
-def _doctor_conflict_judge_check() -> tuple[str, str, str]:
-    """The `conflict_judge` doctor line: whether the judge runs now and why (an
-    unset value follows the judge's provider and its key, so it can change after
-    boot when a key is saved from the dashboard)."""
-    from server.core.conflict_judge_switch import conflict_judge_on, conflict_judge_reason
-
-    state = "on" if conflict_judge_on() else "off"
-    return ("conflict_judge", PASS, f"{state} ({conflict_judge_reason()})")
-
-
 def _doctor_llm_provider_check() -> tuple[str, str, str]:
     """The `llm_provider` doctor line.
 
@@ -421,7 +411,6 @@ def _run_live_checks() -> list[tuple[str, str, str]]:
     # key is absent — the runtime then falls back to the echo client.
     if settings_ok:
         checks.append(_doctor_llm_provider_check())
-        checks.append(_doctor_conflict_judge_check())
     else:
         checks.append(("llm_provider", PASS, "skipped (settings did not load)"))
 

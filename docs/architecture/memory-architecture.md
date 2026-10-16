@@ -114,10 +114,9 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
     must not retire anyone's fact. The refusal names no row, id or value, so the narrowed
     token learns only that its write was refused.
 
-    With `LOOM_MEMORY_CONFLICT_JUDGE` on (the default while a real LLM provider and its
-    key are configured; off otherwise), an LLM judge (`memory/app/conflict_judge.py`)
-    labels close peers, and peers down to `LOOM_MEMORY_CONFLICT_JUDGE_MIN_SIMILARITY`,
-    as `conflict`, `refines`, `merge` or `clear`. It runs after the insert
+    With `LOOM_MEMORY_CONFLICT_JUDGE` on (off by default), an LLM judge
+    (`memory/app/conflict_judge.py`) labels close peers, and peers down to
+    `LOOM_MEMORY_CONFLICT_JUDGE_MIN_SIMILARITY`, as `conflict`, `refines`, `merge` or `clear`. It runs after the insert
     (`memory/app/conflict_deferred.py`): the row lands `active` with
     `conflict_verdict: pending`, and the verdict is folded on later.
     `await_verdict=true` and `dry_run=true` judge inline.
@@ -529,9 +528,9 @@ for the write's conflict verdicts.
 Without this, "User is Asian American" (05-23) and "The user has mixed Irish and Italian
 ethnicity" (05-30) both stayed live under `user_ethnicity`, and a reader shown both
 merged them into one answer. The point write keeps the documented `auto_reinforce`
-behaviour and its latency: it doesn't call the judge for same-key rows. The judge is on
-by default only where a real LLM can run it (`LOOM_MEMORY_CONFLICT_JUDGE`); with it off,
-same-key rows stay live as before.
+behaviour and its latency: it doesn't call the judge for same-key rows. The judge is off
+by default (`LOOM_MEMORY_CONFLICT_JUDGE=true` turns it on); with it off, same-key rows
+stay live as before.
 
 The extraction also writes its inputs:
 

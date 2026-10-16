@@ -375,14 +375,12 @@ async def provider_report() -> None:
     LOOM_EMBEDDING_DIM mismatch; it falls back gracefully for a fake/keyless
     embedder.
     """
-    from server.core.conflict_judge_switch import log_conflict_judge_resolution
     from server.embedding import embedder as _embedder_mod
     from server.llm.client import log_llm_provider_resolution
     from server.settings import log_unknown_env_keys
 
     log_unknown_env_keys()
     log_llm_provider_resolution()
-    log_conflict_judge_resolution()
     try:
         await _embedder_mod.probe_embedding_dim()
     except Exception as e:  # noqa: BLE001 — an unreachable embedder never fails boot

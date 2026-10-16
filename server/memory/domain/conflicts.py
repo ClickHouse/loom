@@ -337,10 +337,11 @@ def canonical(text: str) -> str:
     return s
 
 
-def query_max_distance(threshold: float, *, judge_on: bool) -> float:
+def query_max_distance(threshold: float) -> float:
     """The cosine-distance ceiling the peer statement filters on. With the
     judge on, the statement reaches down to the judge's band
     floor so band peers (candidates for the judge only) are fetched too."""
+    judge_on = bool(settings.memory_conflict_judge)
     band_floor = float(settings.memory_conflict_judge_min_similarity)
     query_floor = min(threshold, band_floor) if judge_on else threshold
     return 1.0 - query_floor

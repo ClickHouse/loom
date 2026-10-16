@@ -22,12 +22,13 @@ compare the new value with the active rows of the same `memory_type` in the name
 - Cosine at or above the conflict threshold with a different value is a **conflict**:
   the new row and each peer get `status='conflicted'` and are cross-linked through
   `conflict_with`.
-- With the LLM judge on (`LOOM_MEMORY_CONFLICT_JUDGE`: on by default while a real LLM
-  provider and its key are configured, off otherwise; `false` turns it off), one call
+- With the LLM judge on (`LOOM_MEMORY_CONFLICT_JUDGE=true`; off by default), one call
   labels the closest peers as contradiction, elaboration, restatement, related or
   unrelated. The judge also reads peers down to
   `LOOM_MEMORY_CONFLICT_JUDGE_MIN_SIMILARITY` (0.7), which catches an update filed under
-  a different key.
+  a different key. On our benchmark it did not measurably improve answers: a value it
+  retires is no longer returned by search, so a "how did X change" question can lose the
+  earlier value.
 
 A pair on the namespace's allowlist is not flagged.
 
@@ -261,7 +262,7 @@ not erasing: to remove a person's data, use [erasure](./retention-and-erasure.md
 | `LOOM_CONFLICT_THRESHOLD`                       | 0.85                                    | Fallback conflict cosine; 1.0 disables flagging.                                                                                       |
 | `LOOM_DUPLICATE_THRESHOLD`                      | 0.97                                    | Fallback duplicate cosine.                                                                                                             |
 | `LOOM_ADAPTIVE_THRESHOLDS`                      | true                                    | Calibrate both thresholds from the live embedder.                                                                                      |
-| `LOOM_MEMORY_CONFLICT_JUDGE`                    | on with a real LLM provider and its key | LLM labelling of close peers: at most one call per write with a peer at the judge's band, inline on bulk writes; `false` turns it off. |
+| `LOOM_MEMORY_CONFLICT_JUDGE`                    | false   | LLM labelling of close peers: at most one call per write with a peer at the judge's band, inline on bulk writes; `true` turns it on. |
 | `LOOM_MEMORY_CONFLICT_JUDGE_MIN_SIMILARITY`     | 0.7                                     | Lowest cosine the judge reads.                                                                                                         |
 | `LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES`          | 200                                     | Entries per `memory.bulk_set` checked; 0 = none.                                                                                       |
 | `LOOM_BLACKLIST_VERSION_CHECK_INTERVAL_SECONDS` | 2.0                                     | Cross-replica pattern refresh bound.                                                                                                   |

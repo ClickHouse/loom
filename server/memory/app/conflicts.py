@@ -20,7 +20,6 @@ from datetime import datetime
 from typing import Any
 
 from server.core.ch import get_client
-from server.core.conflict_judge_switch import conflict_judge_on
 from server.core.errors import AuthInsufficientError, IdentityIncompleteError
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import (
@@ -126,7 +125,7 @@ async def resolve_conflict_floor(org: str, namespace: str, memory_type: str) -> 
     numbers `check_on_commit` resolves before its statement, exposed so a bulk
     writer resolves them once per type instead of once per fact."""
     threshold = await _resolve_threshold(org, namespace, memory_type=memory_type)
-    return threshold, query_max_distance(threshold, judge_on=conflict_judge_on())
+    return threshold, query_max_distance(threshold)
 
 
 async def candidate_rows_many(
@@ -495,7 +494,7 @@ async def check_on_commit(
     # verdict on their own — so recall widens exactly where the judge's precision pays
     # for it (updates that share only ~20% of their words and sit under different keys
     # are never seen by the 0.85 flag).
-    max_distance = query_max_distance(threshold, judge_on=conflict_judge_on())
+    max_distance = query_max_distance(threshold)
 
     # Excludes our own memory_key (re-write is LWW by version, not a conflict)
     # and filters peers by embedding_dim so cosineDistance gets equal-length
@@ -653,7 +652,7 @@ async def _policy_for(org: str, namespace: str, judged: Any) -> str:
 async def judge_peers(new_value: str, peers: list[Any]) -> Any:
     """One cheap call labels the closest peers (anything with `memory_id` and
     `value`). None when off."""
-    if not conflict_judge_on():
+    if not bool(settings.memory_conflict_judge):
         return None
     from server.memory.app import conflict_judge
 
@@ -671,7 +670,7 @@ async def judge_peers(new_value: str, peers: list[Any]) -> Any:
 
 
 def judge_enabled() -> bool:
-    return conflict_judge_on()
+    return bool(settings.memory_conflict_judge)
 
 
 async def _judge_or_defer(pj: PendingJudge, defer: bool) -> ConflictResult:
