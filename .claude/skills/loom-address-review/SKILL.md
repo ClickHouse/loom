@@ -2,6 +2,8 @@
 name: loom-address-review
 description: Works through review comments on your own Loom PR — verifies each thread, fixes it or answers why not, replies with the fixing commit, and repeats until a fresh review is empty. Use for "address the review", requested changes, or reviewer or bot comments on your PR. Not for reviewing others' changes (loom-review).
 argument-hint: "<pr-number>"
+metadata:
+  internal: true
 ---
 
 # Addressing review on a Loom PR

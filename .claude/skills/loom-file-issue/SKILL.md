@@ -2,6 +2,8 @@
 name: loom-file-issue
 description: Files or updates a Loom GitHub issue — duplicate check, a reproduction with versions, the matching issue form and label, a redacted body. Use when asked to open, file or report an issue, bug, regression or feature request, or to add findings to one. Not for security reports (SECURITY.md).
 argument-hint: "<what is wrong or wanted>"
+metadata:
+  internal: true
 ---
 
 # Filing a Loom issue

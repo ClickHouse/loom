@@ -100,6 +100,9 @@ def test_skill_frontmatter(skill: Path) -> None:
     description = meta.get("description")
     assert isinstance(description, str) and 0 < len(description) <= MAX_DESCRIPTION
     assert body.count("\n") <= MAX_SKILL_LINES
+    # `npx skills add ClickHouse/loom` lists every skill in the repository for users'
+    # projects; `internal` keeps these development skills out of it.
+    assert meta.get("metadata", {}).get("internal") is True
 
 
 @pytest.mark.parametrize("skill", SKILLS, ids=lambda p: p.parent.name)
@@ -416,6 +419,8 @@ def test_reviewer_hook_allows_reads(command: str) -> None:
         "gh pr view 57 --jq .x [-]w",
         "git diff --output /tmp/x",
         "git log -p --ext-diff",
+        "git log -p --textconv",
+        ".venv/bin/python -m pytest tests/unit/../integration -q",
         "git diff *",
         "git diff [^a]x",
         ".venv/bin/python -m pytest -q",

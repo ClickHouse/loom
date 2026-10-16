@@ -2,6 +2,8 @@
 name: loom-bench
 description: Runs and reports a Loom benchmark — when a paid run is allowed, which harness answers the question, proving the treatment ran, judging a delta against noise. Use when asked to benchmark, measure recall or answer accuracy, A/B a setting, or update docs/benchmarks/results.md. Not for test or CI speed.
 argument-hint: "<question to answer>"
+metadata:
+  internal: true
 ---
 
 # Loom benchmarks

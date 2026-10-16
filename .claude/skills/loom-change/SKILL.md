@@ -1,6 +1,8 @@
 ---
 name: loom-change
 description: Lists what else a Loom change must touch in the same PR (generated files, snapshots, erasure classification, docs, manifests) for a new or changed op, field, table, column, migration, setting, flag, worker, provider, CLI command, plugin hook or dashboard page. Use before editing for any of those.
+metadata:
+  internal: true
 ---
 
 # Making a Loom change

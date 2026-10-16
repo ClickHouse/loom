@@ -2,6 +2,8 @@
 name: loom-debug
 description: Finds the cause of a Loom bug before any edit — failing cases from evidence (request id, loom.agent_events, system.query_log, search traces), their pattern, a hypothesis, then a test that fails first. Use when an op, worker, search result or test behaves wrongly. Not for a red CI job (loom-investigate-ci).
 argument-hint: "<symptom, request id or failing test>"
+metadata:
+  internal: true
 ---
 
 # Debugging Loom

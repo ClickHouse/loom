@@ -1,6 +1,8 @@
 ---
 name: loom-writing
 description: Plain technical English for commit messages, PR and issue text, review comments and replies, code comments and docs, with a checker for filler words and internal details. Use before writing or posting any of them, or when asked to make text read less generated. Owns wording, not sections.
+metadata:
+  internal: true
 ---
 
 # Writing in Loom

@@ -2,6 +2,8 @@
 name: loom-review
 description: Reviews a Loom PR or diff against Loom's invariants and area rules and for needless complexity, verifying each finding before reporting it with severity and file:line. Use when asked to review a PR, branch or diff, or to post review comments. After your own push, start the loom-reviewer agent instead.
 argument-hint: "[pr-number | branch | diff-range]"
+metadata:
+  internal: true
 ---
 
 # Loom review

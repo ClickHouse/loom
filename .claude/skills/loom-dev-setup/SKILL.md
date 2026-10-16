@@ -2,6 +2,8 @@
 name: loom-dev-setup
 description: Sets up an isolated Loom environment for one task — a worktree from origin/main, its own virtualenv, its own ClickHouse on free ports, migrations, a server from source. Use when starting a Loom change, or when asked to run the server or the integration tests locally.
 argument-hint: "<branch-name>"
+metadata:
+  internal: true
 ---
 
 # Loom dev setup
