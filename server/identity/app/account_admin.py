@@ -169,6 +169,8 @@ def bot_from(
     agent_claim: str = "",
     owner_claim: str = "",
     jwks_uri: str = "",
+    max_token_s: int = 3600,
+    max_agents: int = 1000,
 ) -> machines.Machine:
     """A bot from what an operator gave; ValueError says what is wrong. With
     `agent_claim`, a trust whose agents each get their own subject and
@@ -209,6 +211,12 @@ def bot_from(
         # Any job on the platform can ask for a token with any audience: only
         # claims (which repository, which branch) tell this bot's job apart.
         raise ValueError("a CI trust needs an https issuer, an audience and at least one claim")
+    if trust and set(wanted) <= {"iss", "aud"}:
+        # They restate what every token of the issuer for Loom carries: the
+        # trust would take all of them, every tenant's into one org.
+        raise ValueError("a CI trust needs a claim beyond iss and aud (a repository, a tenant)")
+    if not 60 <= max_token_s <= 86400 or max_agents < 1:
+        raise ValueError("max_token_s is 60 to 86400 seconds, max_agents at least 1")
     if not (trust or public_key_pem):
         raise ValueError("give the bot a public key or a CI trust")
     jwks_uri = jwks_uri.strip()
@@ -229,6 +237,8 @@ def bot_from(
         "agent_claim": agent_claim,
         "owner_claim": owner_claim,
         "jwks_uri": jwks_uri,
+        "max_token_s": max_token_s,
+        "max_agents": max_agents,
     }
 
 

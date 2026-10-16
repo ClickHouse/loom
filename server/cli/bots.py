@@ -68,6 +68,19 @@ def register_bot_cli(sub: Any) -> None:
         "discovery is not reachable from Loom",
     )
     p_create.add_argument(
+        "--max-token-age",
+        type=int,
+        default=3600,
+        metavar="SECONDS",
+        help="CI trust: the longest a workload token may live (exp less iat) to be taken",
+    )
+    p_create.add_argument(
+        "--max-agents",
+        type=int,
+        default=1000,
+        help="With --agent-claim: how many agents the trust may make",
+    )
+    p_create.add_argument(
         "--agent-claim",
         default="",
         metavar="CLAIM",
@@ -114,6 +127,8 @@ def _cmd_create(args: argparse.Namespace) -> int:
             agent_claim=args.agent_claim,
             owner_claim=args.owner_claim,
             jwks_uri=args.jwks_uri,
+            max_token_s=args.max_token_age,
+            max_agents=args.max_agents,
         )
     except (OSError, ValueError) as e:
         return _fail(str(e))

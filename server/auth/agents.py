@@ -74,6 +74,9 @@ async def ensure_namespace(m: machines.Machine, agent: str, owner_email: str) ->
             if not row["active"]:
                 raise machines.Refused("invalid_grant", f"{org}/{ns} was released")
             return ns
+        if await _made(org, m["name"]) >= m["max_agents"]:
+            # A broken or compromised issuer could name agents without end.
+            raise machines.Refused("invalid_grant", f"trust {m['name']} has made its agents")
         # No contact email: a sign-in by email must never resolve to an agent.
         await provision_account(
             org=org,
@@ -95,6 +98,17 @@ async def ensure_namespace(m: machines.Machine, agent: str, owner_email: str) ->
         subject={"agent": agent, "owner": owner_email},
     )
     return ns
+
+
+async def _made(org: str, trust: str) -> int:
+    """How many agent namespaces the trust has made, released ones too. Two
+    first exchanges at once may each see room for one: a cap, not a quota."""
+    row = await get_client().query_one(
+        "SELECT count() AS n FROM loom.namespaces FINAL "
+        "WHERE org = {org:String} AND has(tags, {tag:String})",
+        params={"org": org, "tag": tag(trust)},
+    )
+    return int((row or {}).get("n") or 0)
 
 
 async def _owner(org: str, owner_email: str) -> str:

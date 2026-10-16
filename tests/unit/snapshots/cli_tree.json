@@ -8712,6 +8712,8 @@
             "audience",
             "claim",
             "jwks_uri",
+            "max_token_age",
+            "max_agents",
             "agent_claim",
             "owner_claim",
             "replace"
@@ -8877,6 +8879,36 @@
            "type": null,
            "required": false,
            "help": "CI trust: where the issuer publishes its keys (https), when its OIDC discovery is not reachable from Loom",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--max-token-age"
+           ],
+           "dest": "max_token_age",
+           "action": "_StoreAction",
+           "default": 3600,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": "builtins:int",
+           "required": false,
+           "help": "CI trust: the longest a workload token may live (exp less iat) to be taken",
+           "metavar": "SECONDS"
+          },
+          {
+           "option_strings": [
+            "--max-agents"
+           ],
+           "dest": "max_agents",
+           "action": "_StoreAction",
+           "default": 1000,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": "builtins:int",
+           "required": false,
+           "help": "With --agent-claim: how many agents the trust may make",
            "metavar": null
           },
           {

@@ -252,7 +252,7 @@ def test_two_creates_at_once_make_one_bot(world, monkeypatch) -> None:
 
 
 def test_an_agent_trust_needs_a_workload_trust_and_may_share_nothing() -> None:
-    trust = {"issuer": "https://ci.example", "audience": "loom", "claims": ["aud=loom"]}
+    trust = {"issuer": "https://ci.example", "audience": "loom", "claims": ["tenant_id=t1"]}
     fleet = account_admin.bot_from(
         name="fleet", org="acme", namespace_roles=[], agent_claim="sub", **trust
     )
@@ -294,7 +294,7 @@ def test_a_replace_running_meanwhile_cannot_undo_a_disable(world, monkeypatch) -
 
 
 def test_agent_trusts_whose_namespaces_could_meet_are_refused(world, monkeypatch) -> None:
-    trust = {"issuer": "https://ci.example", "audience": "loom", "claims": ["aud=loom"]}
+    trust = {"issuer": "https://ci.example", "audience": "loom", "claims": ["tenant_id=t1"]}
 
     def fleet(name: str) -> machines.Machine:
         return account_admin.bot_from(
@@ -314,3 +314,17 @@ def test_agent_trusts_whose_namespaces_could_meet_are_refused(world, monkeypatch
                 asyncio.run(make)
     with pytest.raises(ValueError, match="SSO"):
         fleet("u")  # its agents' namespaces would be u-<agent>
+
+
+@pytest.mark.parametrize("claims", [["aud=loom"], ["iss=https://ci.example", "aud=loom"]])
+def test_a_trust_that_only_restates_issuer_and_audience_is_refused(claims: list[str]) -> None:
+    # It would take every token the issuer signs for Loom: every tenant, every job.
+    with pytest.raises(ValueError, match="beyond iss and aud"):
+        account_admin.bot_from(
+            name="fleet",
+            org="acme",
+            namespace_roles=["a=writer"],
+            issuer="https://ci.example",
+            audience="loom",
+            claims=claims,
+        )

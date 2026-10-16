@@ -56,6 +56,10 @@ class Machine(TypedDict):
     owner_claim: str
     # Where the issuer publishes its keys; '' = its OIDC discovery says.
     jwks_uri: str
+    # The longest a workload token may live to be taken, and how many agents
+    # the trust may make.
+    max_token_s: int
+    max_agents: int
 
 
 class Refused(Exception):
@@ -93,6 +97,8 @@ async def get(name: str, *, active_only: bool = True, ch: Any = None) -> Machine
         "agent_claim": row["agent_claim"],
         "owner_claim": row["owner_claim"],
         "jwks_uri": row["jwks_uri"],
+        "max_token_s": int(row["max_token_s"]),
+        "max_agents": int(row["max_agents"]),
     }
 
 
@@ -137,7 +143,8 @@ async def forget_namespace(org: str, namespace: str, by: str, *, ch: Any = None)
 async def listed() -> list[dict[str, Any]]:
     return await get_client().query_all(
         f"SELECT name, org, ns_roles, public_keys != '' AS has_key, issuer, audience, claims, "
-        f"agent_claim, owner_claim, jwks_uri, active, updated_by, updated_at FROM {TABLE} FINAL "
+        f"agent_claim, owner_claim, jwks_uri, max_token_s, max_agents, active, updated_by, "
+        f"updated_at FROM {TABLE} FINAL "
         "ORDER BY name"
     )
 
@@ -237,6 +244,10 @@ async def verify_workload(token: str, name: str) -> tuple[Machine, dict[str, Any
         raise Refused("temporarily_unavailable", f"the issuer's keys: {e}") from e
     except (jwt.PyJWTError, ValueError, KeyError) as e:
         raise Refused("invalid_grant", f"subject token refused: {e}") from None
+    # A long-lived token is a credential to replay: the platform should not
+    # issue one for this, and Loom does not take it.
+    if int(claims["exp"]) - int(claims["iat"]) > m["max_token_s"]:
+        raise Refused("invalid_grant", f"the subject token may live at most {m['max_token_s']} s")
     for claim, want in m["claims"].items():
         if not matches(str(claims.get(claim, "")), want):
             raise Refused("invalid_grant", f"claim {claim!r} does not match the trust")

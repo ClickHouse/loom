@@ -169,7 +169,15 @@ with more than one admin, registered first, in one org); its tokens are for
 
   Disabling the trust ends every agent's token; `loom revoke-token --subject
 sa:fleet:<agent>` ends one agent's, and `loom claim-release` frees its
-  namespace for good (that agent is refused after).
+  namespace for good (that agent is refused after). An agent the control
+  plane retires keeps its namespace and data until you release or erase it.
+
+  Every trust bounds what it takes: a workload token living longer than
+  `--max-token-age` seconds (exp less iat, default 3600) is refused, an agent
+  trust makes at most `--max-agents` agents (default 1000), and a trust needs
+  a claim beyond `iss` and `aud`, which every token its issuer signs for Loom
+  carries. The signing algorithm follows each published key's type (RS256 or
+  ES256).
 
 - `loom bot list` shows them; `loom bot disable --name …` refuses every later
   proof and revokes the tokens the bot holds, and `loom bot create --replace`

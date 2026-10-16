@@ -20,10 +20,12 @@ _TRUST: machines.Machine = {
     "public_keys": "",
     "issuer": "https://issuer.example",
     "audience": "loom",
-    "claims": {"aud": "loom"},
+    "claims": {"tenant_id": "t1"},
     "agent_claim": "agent_id",
     "owner_claim": "owner",
     "jwks_uri": "",
+    "max_token_s": 3600,
+    "max_agents": 1000,
 }
 
 
@@ -33,6 +35,8 @@ def world(monkeypatch) -> dict[str, Any]:
 
     class _CH:
         async def query_one(self, sql: str, params: dict[str, Any]) -> Any:
+            if "count()" in sql:
+                return {"n": len(state["rows"])}
             return state["rows"].get(params["ns"])
 
     async def provision(**kw: Any) -> None:
@@ -124,3 +128,11 @@ def test_a_caller_cannot_give_a_namespace_a_trusts_mark() -> None:
     stored = {**registry_row(inp, None, _NOW), "tags": ["machine:fleet"]}
     kept = registry_row(inp, stored, _NOW)
     assert kept["tags"] == ["x", "machine:fleet"]  # the trust's own mark stays
+
+
+def test_a_trust_makes_no_more_agents_than_its_limit(world) -> None:
+    trust = {**_TRUST, "max_agents": 1}
+    assert asyncio.run(agents.ensure_namespace(trust, "a1", "")) == "fleet-a1"
+    assert asyncio.run(agents.ensure_namespace(trust, "a1", "")) == "fleet-a1"  # still its own
+    with pytest.raises(machines.Refused, match="made its agents"):
+        asyncio.run(agents.ensure_namespace(trust, "a2", ""))

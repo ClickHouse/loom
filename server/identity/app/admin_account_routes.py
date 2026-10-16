@@ -93,6 +93,8 @@ class BotInput(BaseModel):
     agent_claim: str = ""
     owner_claim: str = ""
     jwks_uri: str = ""
+    max_token_s: int = 3600
+    max_agents: int = 1000
     replace: bool = False
 
 
@@ -115,6 +117,8 @@ async def bots_create(input: BotInput, info: Admin) -> dict[str, Any]:
             agent_claim=input.agent_claim,
             owner_claim=input.owner_claim,
             jwks_uri=input.jwks_uri,
+            max_token_s=input.max_token_s,
+            max_agents=input.max_agents,
         )
     except ValueError as e:
         raise _invalid(e) from None
@@ -155,6 +159,8 @@ async def bots_list() -> dict[str, Any]:
                 "agent_claim": r["agent_claim"],
                 "owner_claim": r["owner_claim"],
                 "jwks_uri": r["jwks_uri"],
+                "max_token_s": int(r["max_token_s"]),
+                "max_agents": int(r["max_agents"]),
                 "updated_by": r["updated_by"],
             }
             for r in rows

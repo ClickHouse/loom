@@ -63,6 +63,8 @@ def bots(monkeypatch) -> dict[str, Any]:
         m.setdefault("agent_claim", "")
         m.setdefault("owner_claim", "")
         m.setdefault("jwks_uri", "")
+        m.setdefault("max_token_s", 3600)
+        m.setdefault("max_agents", 1000)
     made: list[tuple[str, str, str]] = []
 
     async def ensure_namespace(m: machines.Machine, agent: str, owner: str) -> str:
@@ -297,6 +299,8 @@ async def test_a_saved_bot_writes_every_column(monkeypatch) -> None:
         "agent_claim": "",
         "owner_claim": "",
         "jwks_uri": "",
+        "max_token_s": 3600,
+        "max_agents": 1000,
     }
     await machines.save(bot, by="cli:root")
     await machines.save(bot, by="cli:root", active=False)
@@ -523,6 +527,8 @@ def test_a_control_planes_per_agent_token_is_taken_as_issued(bots, monkeypatch) 
         "agent_claim": "agent_id",
         "owner_claim": "",
         "jwks_uri": "https://keys.example/jwks.json",
+        "max_token_s": 3600,
+        "max_agents": 1000,
     }
     monkeypatch.setattr(oidc, "signing_key", lambda uri, token: key.public_key())
     now = int(time.time())
@@ -581,3 +587,10 @@ def test_an_exchange_naming_no_client_finds_its_trust_by_issuer_and_claims(
     bots["registered"]["fleet2"] = {**bots["registered"]["fleet"], "name": "fleet2"}
     r = exchange(_ci_token(bots, agent_id="a1"))
     assert r.status_code == 400 and "several trusts" in r.json()["error_description"]
+
+
+def test_a_workload_token_living_longer_than_the_trust_allows_is_refused(bots) -> None:
+    now = int(time.time())
+    long_lived = _ci_token(bots, iat=now, exp=now + 7200)  # the trust takes an hour at most
+    r = _exchange(TestClient(oauth_app()), long_lived)
+    assert r.status_code == 400 and "at most 3600" in r.json()["error_description"]

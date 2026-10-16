@@ -32,10 +32,12 @@ def _trust() -> machines.Machine:
         "public_keys": "",
         "issuer": "https://issuer.example",
         "audience": "loom",
-        "claims": {"aud": "loom"},
+        "claims": {"tenant_id": "t1"},
         "agent_claim": "agent_id",
         "owner_claim": "",
         "jwks_uri": "",
+        "max_token_s": 3600,
+        "max_agents": 1000,
     }
 
 
