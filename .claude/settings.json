@@ -136,7 +136,8 @@
       "Bash(git push -vf*)",
       "Bash(git push * -vf*)",
       "Bash(git push -fv*)",
-      "Bash(git push * -fv*)"
+      "Bash(git push * -fv*)",
+      "Bash(git push *:main *)"
     ]
   }
 }

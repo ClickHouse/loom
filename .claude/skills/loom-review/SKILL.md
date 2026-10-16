@@ -46,7 +46,7 @@ The code should read as if an experienced Python engineer wrote it by hand. Each
 - a comment that restates the code, narrates the change ("now", "updated to", "per review"), or runs past two lines where one would do;
 - a name that describes the mechanism rather than the domain (`data`, `result2`, `handle_stuff`);
 - duplicated logic where an existing helper in `server/core/` or the domain's `store/` already does it;
-- a compatibility shim, adapter or mode for a replaced path;
+- a compatibility shim, adapter or mode for a replaced internal path (tolerance for build N-1 and `ignored_args` for a removed wire field are required, not shims);
 - a test that asserts the implementation (mock call order) instead of the behaviour (the row read back).
 
 ## 5. Verify before reporting

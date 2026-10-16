@@ -23,8 +23,7 @@ DOCS = sorted(
         ROOT / "integrations" / "README.md",
         ROOT / "sdk" / "python" / "README.md",
         *(ROOT / p for p in tracked(".claude/skills") if p.endswith(".md")),
-        *(ROOT / ".claude" / "rules").rglob("*.md"),
-        *(ROOT / ".claude" / "agents").glob("*.md"),
+        *(ROOT / p for p in tracked(".claude/rules", ".claude/agents") if p.endswith(".md")),
     }
 )
 LINK = re.compile(r"(?<!!)\[[^\]]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")

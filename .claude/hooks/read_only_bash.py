@@ -113,6 +113,19 @@ def _segment_refusal(words: list[str], piped: bool) -> str | None:
     return None
 
 
+def _quoted_separator(command: str) -> bool:
+    # shlex drops quotes, so a quoted "|" would come back as a pipe that bash never sees.
+    quote = ""
+    for char in command:
+        if quote and char == quote:
+            quote = ""
+        elif not quote and char in "'\"":
+            quote = char
+        elif quote and char in "|&":
+            return True
+    return False
+
+
 def refusal(command: str) -> str | None:
     command = re.sub(r"\s2>&1\b|\s2?>\s*/dev/null\b", "", command)
     if not SAFE.fullmatch(command):
@@ -122,6 +135,8 @@ def refusal(command: str) -> str | None:
                 " or find files with the Glob or Grep tool"
             )
         return "it has a character that could start a second command or a shell expansion"
+    if _quoted_separator(command):
+        return "`|` and `&` are allowed only unquoted, between commands"
     lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
     lexer.whitespace_split = True
     segment: list[str] = []

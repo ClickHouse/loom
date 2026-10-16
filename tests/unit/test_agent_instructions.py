@@ -29,8 +29,8 @@ ROOT = Path(__file__).resolve().parents[2]
 TRACKED = set(tracked())
 # Tracked skills only: `npx skills add` may install an ignored skill beside them.
 SKILLS = sorted(ROOT / p for p in TRACKED if re.fullmatch(r"\.claude/skills/[^/]+/SKILL\.md", p))
-RULES = sorted((ROOT / ".claude" / "rules").rglob("*.md"))
-AGENTS = sorted((ROOT / ".claude" / "agents").glob("*.md"))
+RULES = sorted(ROOT / p for p in tracked(".claude/rules") if p.endswith(".md"))
+AGENTS = sorted(ROOT / p for p in tracked(".claude/agents") if p.endswith(".md"))
 INSTRUCTIONS = [ROOT / "AGENTS.md", ROOT / "CLAUDE.md", *RULES, *AGENTS, *SKILLS]
 NAME = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 # The open skill format caps a description at 1024 characters.
@@ -222,6 +222,9 @@ DENIED = (
     "git push origin HEAD --follow-tags",
     "git push origin main -u",
     "git push origin 'HEAD:main'",
+    "git push origin HEAD:main --no-verify",
+    "git push origin HEAD:main -u",
+    "git push origin HEAD:main --force-with-lease",
     "git --no-pager push origin main",
     "git -P push -f origin x",
     "git clean -xdf",
@@ -356,6 +359,9 @@ def test_reviewer_hook_allows_reads(command: str) -> None:
         "git log | tail --foll x",
         "gh pr view 57 --jq [-][-]web",
         "gh pr view 57 --jq=[-][-]web",
+        '.venv/bin/python -m pytest tests/unit/test_cli_demo.py "|" grep --log-file=x',
+        ".venv/bin/python -m pytest tests/unit/test_x.py '&&' gh pr view --junitxml=x",
+        "git log '|' grep x",
         "gh pr view 57 --jq .x [-]w",
         "git diff --output /tmp/x",
         "git log -p --ext-diff",
