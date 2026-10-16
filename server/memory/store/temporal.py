@@ -406,6 +406,20 @@ async def namespaces_broken(*, ch: _CHClient | None = None) -> list[dict[str, An
     )
 
 
+async def request_hashes(
+    org: str, idempotency_key: str, *, ch: _CHClient | None = None
+) -> set[str]:
+    """The request body hashes the journal's commits under this (scoped) retry key
+    carry, in any namespace and for any memory."""
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        f"SELECT DISTINCT request_sha256 AS h FROM {COMMITS} WHERE org = {{org:String}} "
+        "AND idempotency_key = {k:String} AND request_sha256 != '' LIMIT 2",
+        params={"org": org, "k": idempotency_key},
+    )
+    return {str(r["h"]) for r in rows}
+
+
 async def commits_for_idempotency_key(
     org: str,
     namespace: str,

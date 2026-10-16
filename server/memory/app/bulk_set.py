@@ -21,7 +21,6 @@ from server.identity.domain.read_scope import scope_and
 from server.memory.api.models_bulk import (
     MemoryBulkSetInput,
     MemoryBulkSetOutput,
-    _BulkSetResult,
 )
 from server.memory.app.bulk_rows import (
     _BULK_CARRIED_COLS,
@@ -342,28 +341,26 @@ def _winners(state: _BulkWriteState) -> dict[str, dict[str, Any]]:
     return winners
 
 
-async def _bulk_replay(input: MemoryBulkSetInput) -> MemoryBulkSetOutput | None:
-    """A retry of a batch the journal already holds is answered from it, before any
-    filter, policy check or row is built: each entry with the version its commit
-    recorded for it (`request_slot`), the others 0, as they were. Its body is checked
-    against the commits first. The current rows are reconciled, nothing is written."""
-    from server.memory.app.temporal_publisher import durable_commits, refresh_current
+async def _bulk_retried(input: MemoryBulkSetInput, state: _BulkWriteState) -> None:
+    """Phase 0: a retry's earlier commits, by the entry each answers (`request_slot`),
+    read before anything is filtered; its body is checked against them first."""
+    from server.memory.app.temporal_publisher import durable_commits
 
     idents = [(input.agent, input.user_id, input.session_id, e.memory_key) for e in input.entries]
     prior = await durable_commits(input.org, input.namespace, idents)
     by_slot = {r.request_slot: r for rs in prior.values() for r in rs if r.request_slot >= 0}
-    if not by_slot:
-        return None
-    await refresh_current(input.org, input.namespace, sorted(prior))
-    return MemoryBulkSetOutput(
-        written=[
-            _BulkSetResult(
-                memory_key=e.memory_key,
-                version=by_slot[i].row_version if i in by_slot else 0,
-            )
-            for i, e in enumerate(input.entries)
-        ]
-    )
+    state.retried = by_slot or None
+
+
+def _answer_retried(state: _BulkWriteState) -> None:
+    """A retried entry a later step answered with 0 (a verdict) answers with its own
+    commit's version: a late-evidence commit's, the claim it added (as the original)."""
+    from server.memory.app.temporal_publisher import row_assertion
+
+    for res, rc in state.retried_results:
+        if not res.version:
+            own = row_assertion(rc.amendment)
+            res.version = rc.row_version or (own.source_version if own is not None else 0)
 
 
 def _answer_published_versions(results: list[Any], drawn: list[tuple[dict[str, Any], int]]) -> None:
@@ -713,10 +710,8 @@ async def handle_memory_bulk_set(
 
     _bulk_work: dict[str, Any] = {}
     _bulk_clock = StageClock(_bulk_work)
-    replayed = await _bulk_replay(input)
-    if replayed is not None:
-        return replayed
     state = _BulkWriteState()
+    await _bulk_retried(input, state)
     await _bulk_existing_lookup(ch, input, state)
 
     identity_dupes = await _bulk_identity_dupes(ch, input)
@@ -741,6 +736,7 @@ async def handle_memory_bulk_set(
     _intra_pairs = await _bulk_intra_batch_pairs(ch, input, state)
 
     await _bulk_insert(ch, state)
+    _answer_retried(state)
     _bulk_clock.mark("insert")
 
     _value_links = await _bulk_post_insert_links(ch, input, state)

@@ -171,6 +171,13 @@ def replayed(namespace: str, ident: Ident) -> Receipt | None:
     )
 
 
+async def refuse_another_body(org: str, idem: str) -> None:
+    """Refuse a request whose retry key the journal holds with another body: checked on
+    the key alone, so a body that names other memories cannot pass as a new request."""
+    if await store.request_hashes(org, idem) - {idempotency.request_body_var.get()}:
+        raise PreconditionFailedError("Idempotency-Key reused with a different request")
+
+
 async def durable_commits(org: str, ns: str, idents: Sequence[Ident]) -> dict[Ident, list[Receipt]]:
     """Per identity, the receipts of this request's earlier commits under its client
     retry key, in order. A batch reads them before it filters anything out, so a
@@ -178,17 +185,10 @@ async def durable_commits(org: str, ns: str, idents: Sequence[Ident]) -> dict[Id
     idem = idempotency.request_key_var.get()
     if not idem or not idents:
         return {}
+    await refuse_another_body(org, idem)
     prior = await store.commits_for_idempotency_key(
         org, ns, idem, list(dict.fromkeys(idents)), erased=await erased(org, ns)
     )
-    if any(
-        str(c["request_sha256"]) != idempotency.request_body_var.get()
-        for cs in prior.values()
-        for c in cs
-    ):
-        raise PreconditionFailedError(
-            "Idempotency-Key reused with a different request to this memory"
-        )
     return {i: [_receipt(ns, i, c, moved_on=False) for c in cs] for i, cs in prior.items() if cs}
 
 
@@ -204,16 +204,13 @@ async def durable_replay(
     idem = idempotency.request_key_var.get()
     if not idem or (ns, ident) in _request_commits():  # this request's own commit is no retry
         return None
+    await refuse_another_body(org, idem)
     erased_cut = await erased(org, ns)
     prior = (
         await store.commits_for_idempotency_key(org, ns, idem, [ident], erased=erased_cut)
     ).get(ident)
     if not prior:
         return None
-    if str(prior[-1]["request_sha256"]) != idempotency.request_body_var.get():
-        raise PreconditionFailedError(
-            "Idempotency-Key reused with a different request to this memory"
-        )
     last = (await store.last_commits(org, ns, [ident])).get(ident)
     latest = last in {str(c["commit_id"]) for c in prior}
     if latest and not latest_too:
@@ -304,7 +301,7 @@ async def publish_rows(
         except PreconditionFailedError:
             # The key's current row may lag the journal (a due plan): bring it in line,
             # so the re-read the refusal asks for sees what the journal holds.
-            await refresh_current(org, ns, sorted({ident_of(r) for r in batch}))
+            await _refresh_current(org, ns, sorted({ident_of(r) for r in batch}))
             raise
         except LoomServerError:
             raise
@@ -570,7 +567,7 @@ async def publish(
                     ch=ch,
                 )
             if batch.refresh:
-                await refresh_current(org, ns, batch.refresh)
+                await _refresh_current(org, ns, batch.refresh)
             bag = _bag()
             if bag is not None:
                 bag.extend(batch.receipts)
@@ -677,7 +674,7 @@ async def _plan(
     for change in changes:
         change.reset()
         ident = change.ident
-        prior = priors[ident].pop(0) if priors.get(ident) else None
+        prior = _prior_of(priors.get(ident), slot_of(change.row))
         if prior is not None:
             # A retry is answered with the commit its first attempt made, whatever
             # the key serves now; the same key with another body is refused.
@@ -727,6 +724,17 @@ async def _plan(
             _planned(b, change, intent, amendment, active, memory_id, retired, planned_at)
         )
     return b
+
+
+def _prior_of(priors: list[dict[str, Any]] | None, slot: int) -> dict[str, Any] | None:
+    """The earlier commit a retried change answers: the one recorded for its request
+    entry when it has one (a bulk entry), else the key's next one in turn."""
+    if not priors:
+        return None
+    if slot < 0:
+        return priors.pop(0)
+    i = next((i for i, c in enumerate(priors) if int(c.get("request_slot", -1)) == slot), None)
+    return priors.pop(i) if i is not None else None
 
 
 def _planned(
@@ -867,7 +875,7 @@ def _reshapes_current(
     }
 
 
-async def refresh_current(org: str, ns: str, idents: list[Ident]) -> None:
+async def _refresh_current(org: str, ns: str, idents: list[Ident]) -> None:
     from server.memory.app.temporal_projection import reconcile_identities
 
     try:

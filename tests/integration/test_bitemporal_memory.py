@@ -1828,3 +1828,73 @@ async def test_a_bulk_retry_pairs_a_correction_with_its_own_entry(
         again = await a.call("memory.bulk_set", body, idempotency_key=key)
         assert [w["version"] for w in again["written"]] == first
         assert (await a.call("memory.get", {"memory_key": "k"}))["value"] == "B"
+
+
+async def test_a_bulk_retry_restores_what_the_first_attempt_lost_after_its_commits(
+    control_plane_url, mint_test_token
+) -> None:
+    # The first attempt committed, then its vectors were lost (a 5xx after the journal):
+    # the retry answers as before and writes them again, so plain search finds the entry.
+    a, ns = await _agent(control_plane_url, mint_test_token, "bulk-retry-lost")
+    async with a:
+        key = f"r-{uuid.uuid4().hex}"
+        body = {"entries": [{"memory_key": "deploy", "value": "the deploy pipeline runs at noon"}]}
+        first = await a.call("memory.bulk_set", body, idempotency_key=key)
+        ch = await _ch()
+        try:
+            await _delete(
+                ch, "DELETE FROM loom.memory_embeddings WHERE org = {o:String} AND namespace = {n:String}",
+                o=ORG, n=ns,
+            )  # fmt: skip
+            await _expire_replay(ch, key, "memory.bulk_set")
+        finally:
+            await ch.disconnect()
+        again = await a.call("memory.bulk_set", body, idempotency_key=key)
+        assert again["written"][0]["version"] == first["written"][0]["version"]
+        hits = await a.call("memory.search", {"query": "the deploy pipeline runs at noon"})
+        assert any(h["memory_key"] == "deploy" for h in hits["results"])
+
+
+async def test_a_bulk_retry_of_late_evidence_answers_its_original_version(
+    control_plane_url, mint_test_token
+) -> None:
+    a, _ = await _agent(control_plane_url, mint_test_token, "bulk-retry-past")
+    async with a:
+        await a.call("memory.set", {"memory_key": "city", "value": "Paris", "valid_at": jan(10)})
+        key = f"r-{uuid.uuid4().hex}"
+        span = {"valid_at": jan(1), "valid_to": jan(5)}
+        body = {"entries": [{"memory_key": "city", "value": "Lyon", **span}]}
+        first = await a.call("memory.bulk_set", body, idempotency_key=key)
+        assert first["written"][0]["version"]
+        ch = await _ch()
+        try:
+            await _expire_replay(ch, key, "memory.bulk_set")
+        finally:
+            await ch.disconnect()
+        again = await a.call("memory.bulk_set", body, idempotency_key=key)
+        assert again["written"][0]["version"] == first["written"][0]["version"]
+
+
+async def test_a_retry_key_reused_for_other_memories_is_refused(
+    control_plane_url, mint_test_token
+) -> None:
+    a, _ = await _agent(control_plane_url, mint_test_token, "bulk-retry-other")
+    async with a:
+        key = f"r-{uuid.uuid4().hex}"
+        await a.call(
+            "memory.bulk_set",
+            {"entries": [{"memory_key": "k1", "value": "v"}]},
+            idempotency_key=key,
+        )
+        ch = await _ch()
+        try:
+            await _expire_replay(ch, key, "memory.bulk_set")
+        finally:
+            await ch.disconnect()
+        with pytest.raises(Exception, match="PRECONDITION_FAILED|Idempotency-Key"):
+            await a.call(
+                "memory.bulk_set",
+                {"entries": [{"memory_key": "k2", "value": "v"}]},
+                idempotency_key=key,
+            )
+        assert (await a.call("memory.get", {"memory_key": "k2"}))["found"] is False

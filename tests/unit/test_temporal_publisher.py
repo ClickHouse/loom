@@ -127,6 +127,13 @@ class Journal:
     async def landed(self, *_a, **_k):
         return {}
 
+    async def hashes(self, org, idem, **_):
+        return {
+            c["request_sha256"]
+            for c in self.commits
+            if c.get("idempotency_key") == idem and c.get("request_sha256")
+        }
+
     async def erasures(self, *_a, **_k):
         return 0, self.erasures_late
 
@@ -174,6 +181,7 @@ def journal(monkeypatch: pytest.MonkeyPatch) -> Journal:
         "last_commits": j.parents,
         "newest_row_versions": j.row_versions,
         "row_versions": j.landed,
+        "request_hashes": j.hashes,
         "commits_between": j.between,
         "other_commits_at": j.others,
         "withdraw_commits": j.withdraw,

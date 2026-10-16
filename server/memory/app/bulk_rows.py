@@ -112,6 +112,12 @@ class _BulkWriteState:
     # Per memory row (by object), the index of the entry it writes: its commit records
     # it, so a retry answers each entry as it was answered.
     row_slot: dict[int, int] = field(default_factory=dict)
+    # A retry's: the earlier commit per entry index (`durable_commits`), when the
+    # journal holds the request. Those entries are written again past the filters
+    # (the first attempt passed them); the others made no commit and write nothing.
+    retried: dict[int, Any] | None = None
+    # (result, commit) of each retried entry, answered after the insert.
+    retried_results: list[tuple[Any, Any]] = field(default_factory=list)
     # (row_idx, embed_text, excerpt, key_text) per searchable kept entry.
     pending: list[tuple[int, str, str, str]] = field(default_factory=list)
     # (entry, serialized_value, tags, entities, expires_at) per kept entry.
@@ -275,6 +281,27 @@ def _bulk_append_pending(state: _BulkWriteState, entry: Any, serialized_value: s
     )
 
 
+async def _bulk_blacklisted(
+    input: Any, entry: Any, serialized: str, state: _BulkWriteState
+) -> bool:
+    """Refuse (blacklist): the point path 422s; here a match DROPS just the offending
+    entry + logs, rather than failing the whole batch."""
+    from server.memory.app.blacklist_guard import find_match, note_hit
+
+    hit = await find_match(org=input.org, namespace=input.namespace, value=serialized)
+    if hit is None:
+        return False
+    await note_hit(hit.pattern_id)
+    state.skipped_blacklisted += 1
+    log.warning(
+        "bulk_set dropped blacklisted entry key=%r pattern=%s scope=%s",
+        entry.memory_key,
+        hit.pattern_id,
+        hit.scope,
+    )
+    return True
+
+
 async def _bulk_build_rows(
     input: MemoryBulkSetInput,
     state: _BulkWriteState,
@@ -286,12 +313,16 @@ async def _bulk_build_rows(
     char_limit (raises 422), blacklist, procedural retype — and append one
     full-column memory row, a result and (when searchable) a pending embed
     item per kept entry to `state`."""
-    from server.memory.app.blacklist_guard import find_match, note_hit
 
     _seen_keys: set[str] = set()
+    retried = state.retried is not None
+    commit_of = state.retried or {}
     for slot, entry in enumerate(input.entries):
         entry_sha = _content_sha256(entry.value)
-        if _bulk_skip_gate(entry, entry_sha, state, identity_dupes):
+        if retried and slot not in commit_of:
+            state.results.append(_BulkSetResult(memory_key=entry.memory_key, version=0))
+            continue
+        if not retried and _bulk_skip_gate(entry, entry_sha, state, identity_dupes):
             continue
         version = next_version()
         expires_at = (
@@ -331,18 +362,8 @@ async def _bulk_build_rows(
                     "char_limit": entry.char_limit,
                 },
             )
-        # Refuse (blacklist): the point path 422s; here a match DROPS just
-        # the offending entry + logs, rather than failing the whole batch.
-        bl_hit = await find_match(org=input.org, namespace=input.namespace, value=serialized_value)
-        if bl_hit is not None:
-            await note_hit(bl_hit.pattern_id)
-            state.skipped_blacklisted += 1
-            log.warning(
-                "bulk_set dropped blacklisted entry key=%r pattern=%s scope=%s",
-                entry.memory_key,
-                bl_hit.pattern_id,
-                bl_hit.scope,
-            )
+        # A retried entry passed the blacklist the first time.
+        if not retried and await _bulk_blacklisted(input, entry, serialized_value, state):
             continue
         # The procedural type keeps its contract at every door.
         _retype = _procedural_retype(entry.memory_type, entry.value)
@@ -467,6 +488,8 @@ async def _bulk_build_rows(
             state.n_created += 1
         _seen_keys.add(entry.memory_key)
         state.results.append(_BulkSetResult(memory_key=entry.memory_key, version=version))
+        if retried:
+            state.retried_results.append((state.results[-1], commit_of[slot]))
 
         if is_embedded(entry.memory_type, entry_sensitivity):
             _bulk_append_pending(state, entry, serialized_value)
