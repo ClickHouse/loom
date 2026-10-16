@@ -1,7 +1,7 @@
 """Service-account JWT mint + verify (HS256 shared-secret, RS256 via JWKS).
 
 `exp` is optional: tokens are indefinite unless the minter passes
-`ttl_seconds`. Revoke all in-flight tokens by rotating LOOM_JWT_ACTIVE_KID;
+`ttl_seconds`. Revoke every token of a key with `loom signing-key retire`;
 revoke one through `loom revoke-token` (server/auth/revocation.py): by its
 `jti` (every token minted here carries one), by its `sub`, or by `sub` with an
 issued-before cutoff that spares a re-mint.
@@ -40,42 +40,81 @@ def require_real_signing_secret(
     instance_label: str,
     auth_required: bool,
     dev_secret: bool,
-    dev_sealing_secret: bool,
 ) -> None:
     """Refuse to start a deployment (`LOOM_DEPLOYMENT=1`) that requires auth
-    while its signing secret is the checked-in dev default: anyone who has read
-    the repository can mint tokens it accepts. Also while the sealing secret
-    (`LOOM_JWT_SECRET`, which seals stored credentials even when
-    `LOOM_JWT_SECRETS_JSON` signs) is: anyone with the repository and a read of
-    the tables opens them. The local compose stack
+    while its root secret (`LOOM_JWT_SECRET`) is the checked-in dev default:
+    anyone who has read the repository can mint tokens it accepts and open the
+    credentials and signing keys it seals. The local compose stack
     (`LOOM_INSTANCE_LABEL=deploy:dev`) is the explicit exception; processes
     that are not the deployment (tests, isolated servers, CLIs) are not
     refused, and `loom doctor` / `/v1/health` still flag them."""
-    if not (deployment and auth_required and (dev_secret or dev_sealing_secret)):
+    if not (deployment and auth_required and dev_secret):
         return
     if instance_label.strip() == DEV_PROFILE_LABEL:
         return
-    if not dev_secret:
-        raise DevSigningSecretRefused(
-            "refusing to start: LOOM_JWT_SECRET is the checked-in dev default. Tokens are "
-            "signed with LOOM_JWT_SECRETS_JSON, but stored credentials (repository tokens, "
-            "tracker-source passwords, provider keys) are sealed with LOOM_JWT_SECRET, so "
-            "anyone who reads the tables can open them. Set LOOM_JWT_SECRET to a private "
-            "value; credentials sealed with the old one must be entered again."
-        )
     raise DevSigningSecretRefused(
-        "refusing to start: auth is required and the JWT signing secret is the checked-in "
-        "dev default, which anyone can mint accepted tokens with. Set LOOM_JWT_SECRET (or "
-        "LOOM_JWT_SECRETS_JSON + LOOM_JWT_ACTIVE_KID) to a private value; the local dev "
-        f"stack (LOOM_INSTANCE_LABEL={DEV_PROFILE_LABEL}) is the only deployment exempt."
+        "refusing to start: auth is required and LOOM_JWT_SECRET is the checked-in dev "
+        "default, which anyone can mint accepted tokens with. Set it to a private value; "
+        f"the local dev stack (LOOM_INSTANCE_LABEL={DEV_PROFILE_LABEL}) is the only "
+        "deployment exempt."
     )
 
 
-class RevocationUnavailable(TokenError):
-    """The token may be valid, but this process has not loaded the
-    revocation list, or its copy is older than
-    `jwt_revocation_max_stale_seconds`, so it cannot tell whether the token
-    was revoked. Retryable: the list loads on the next refresh."""
+class KeyMapEnvRefused(RuntimeError):
+    """The former kid → key map is still configured; its tokens would 401."""
+
+
+# The kid → key map settings this build replaced with loom.signing_keys.
+REMOVED_KEY_ENV = ("LOOM_JWT_SECRETS_JSON", "LOOM_JWT_ACTIVE_KID", "LOOM_JWT_ALGORITHM")
+
+
+def require_no_key_map_env(env_file: str | None) -> None:
+    """Refuse to start while the former kid → key map, or the former RS256
+    mode, is still configured: this build no longer reads them, so every
+    token of their kids would be refused and nothing could sign. `loom
+    signing-key import` copies them into the keyring."""
+    import os
+
+    values = {k: os.environ.get(k, "") for k in REMOVED_KEY_ENV}
+    if env_file and os.path.isfile(env_file):
+        from dotenv import dotenv_values
+
+        values |= {k: v or "" for k, v in dotenv_values(env_file).items() if k in values}
+    # An active kid of `default` without a map signed with LOOM_JWT_SECRET: nothing to import.
+    if values["LOOM_JWT_ACTIVE_KID"].strip() == "default":
+        values["LOOM_JWT_ACTIVE_KID"] = ""
+    # HS256 signed with LOOM_JWT_SECRET as this build does; RS256 without a map
+    # signed with a PEM LOOM_JWT_SECRET as kid `default`, which this build does too.
+    algorithm_set = values["LOOM_JWT_ALGORITHM"].strip().upper()
+    scalar = not values["LOOM_JWT_SECRETS_JSON"].strip() and not values["LOOM_JWT_ACTIVE_KID"]
+    if algorithm_set == "HS256" or (algorithm_set == "RS256" and scalar):
+        values["LOOM_JWT_ALGORITHM"] = ""
+    set_ = sorted(k for k, v in values.items() if v.strip())
+    if not set_:
+        return
+    algorithm = " --algorithm RS256" if algorithm_set == "RS256" else ""
+    raise KeyMapEnvRefused(
+        f"refusing to start: {', '.join(set_)} is set, and this build keeps signing keys "
+        f"in ClickHouse. Run `loom signing-key import{algorithm} --active "
+        "<LOOM_JWT_ACTIVE_KID, else default>` with the old variables still set, then "
+        "delete them (docs/operations/upgrades.md, signing keys)."
+    )
+
+
+class AuthUnavailable(TokenError):
+    """The token may be valid, but this process cannot judge it yet: a
+    retryable 503 AUTH_UNAVAILABLE, never a 401."""
+
+
+class RevocationUnavailable(AuthUnavailable):
+    """This process has not loaded the revocation list, or its copy is older
+    than `jwt_revocation_max_stale_seconds`, so it cannot tell whether the
+    token was revoked. The list loads on the next refresh."""
+
+
+class KeyringUnavailable(AuthUnavailable):
+    """This process has not read the signing keyring yet, or not within
+    `jwt_revocation_max_stale_seconds`, so a retired kid may not be known."""
 
 
 @dataclass(frozen=True)
@@ -219,7 +258,6 @@ def mint_token(
     ttl_seconds: int | None = None,
     is_service_account: bool = True,
     secret: str | None = None,
-    kid: str | None = None,
     read_scope: str | None = None,
     read_user_id: str | None = None,
     traffic_class: str | None = None,
@@ -245,8 +283,8 @@ def mint_token(
     is the authoritative per-namespace role map (namespace -> role name),
     already capped to the minter's grant; when present it governs
     authorization per namespace instead of the flat `roles`. No `ttl_seconds`
-    => no `exp` => indefinite token. The active kid goes in the header so
-    verifiers pick the matching secret during signing-key rotation.
+    => no `exp` => indefinite token. The signing kid goes in the header so
+    verifiers pick the matching key during signing-key rotation.
     `parents` / `parent_subjects` / `parent_iats` / `creator` are the delegation claims
     `delegation.delegate` computes; a token minted from another token gets
     them from there. `issued_at` (unix seconds; default now) is the `iat`:
@@ -302,46 +340,42 @@ def mint_token(
         payload["exp"] = now + ttl_seconds
     if secret is not None:
         # Raw secret (e.g. test): label kid 'override' so verifiers skip lookup.
-        return jwt.encode(payload, secret, algorithm="HS256", headers={"kid": kid or "override"})
+        return jwt.encode(payload, secret, algorithm="HS256", headers={"kid": "override"})
 
-    secret_map = settings.jwt_secret_map()
-    active_kid = kid or settings.jwt_active_kid
-    if active_kid not in secret_map:
-        raise TokenError(f"active kid {active_kid!r} not in secret map; check settings")
-    algorithm = settings.jwt_algorithm
-    return jwt.encode(
-        payload,
-        secret_map[active_kid],
-        algorithm=algorithm,
-        headers={"kid": active_kid},
-    )
+    from server.auth import keyring
+
+    key = keyring.signing_key()
+    return jwt.encode(payload, key.secret, algorithm=key.algorithm, headers={"kid": key.kid})
 
 
 def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
     """Verify a JWT and return AuthInfo. Raises TokenError on failure.
 
-    The header `kid` picks the key (default `settings.jwt_active_kid`) from the
-    map the header `alg` names, and only configured algorithms are accepted:
-    HS256 when Loom signs with shared secrets, RS256 when it signs with RSA
-    keys or trusts a gateway's public keys. An RS256 deployment's secret map
-    holds private keys, so it never verifies an HS256 token.
+    The header `kid` and `alg` pick the key (`server.auth.keyring`): a keyring
+    key, the root secret (kid `default`, HS256), or a gateway's RS256 public
+    key. A token whose kid has no key under its algorithm is refused.
     """
     if secret is None:
+        from server.auth import keyring
+
+        if not keyring.loaded():
+            raise KeyringUnavailable("the signing keyring is not loaded yet; retry shortly")
+        if keyring.stale():
+            raise KeyringUnavailable("the signing keyring is stale; retry shortly")
         try:
             unverified_header = jwt.get_unverified_header(token)
         except jwt.PyJWTError as e:
             raise TokenError(f"invalid token header: {e}") from e
         algorithm = unverified_header.get("alg")
-        accepted = _accepted_algorithms()
-        if algorithm not in accepted:
-            raise TokenError(f"token alg {algorithm!r} not in accepted set {sorted(accepted)}")
-        token_kid = unverified_header.get("kid", settings.jwt_active_kid)
-        keys = settings.jwt_public_key_map() if algorithm == "RS256" else settings.jwt_secret_map()
-        if not isinstance(token_kid, str) or token_kid not in keys:
-            raise TokenError(f"token kid {token_kid!r} not in the {algorithm} key map")
-        secret = keys[token_kid]
+        token_kid = unverified_header.get("kid", keyring.ROOT_KID)
+        if algorithm not in keyring.ALGORITHMS or not isinstance(token_kid, str):
+            raise TokenError(f"token alg {algorithm!r} is not one of {keyring.ALGORITHMS}")
+        candidates = keyring.verification_keys(token_kid, algorithm)
+        if not candidates:
+            raise TokenError(f"token kid {token_kid!r} has no {algorithm} key")
     else:
-        algorithm = settings.jwt_algorithm
+        algorithm = "HS256"
+        candidates = [secret]
 
     # Loom's own issuer plus the federated issuers in the
     # `jwt_trusted_issuers` CSV.
@@ -352,17 +386,7 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
             trusted_issuers.add(extra)
 
     try:
-        # `issuer=` is checked manually below: PyJWT only supports a single
-        # string, not a set. `exp` is not required (indefinite tokens) but
-        # still enforced when present.
-        decoded = jwt.decode(
-            token,
-            secret,
-            algorithms=[algorithm],
-            audience=settings.jwt_audience,
-            options={"require": ["iat", "sub", "iss", "aud"]},
-            leeway=settings.jwt_leeway_seconds,  # clock-skew tolerance
-        )
+        decoded = _decode(token, candidates, algorithm)
     except jwt.ExpiredSignatureError as e:
         raise TokenError(f"token expired: {e}") from e
     except jwt.PyJWTError as e:  # InvalidKeyError is not an InvalidTokenError
@@ -419,6 +443,26 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
         issued_at=_iat_of(decoded),
         expires_at=int(exp) if exp is not None else None,
     )
+
+
+def _decode(token: str, keys: list[str], algorithm: str) -> dict[str, Any]:
+    """The claims under the first of `keys` the signature matches. `issuer=` is
+    checked by the caller (PyJWT takes one string, not a set); `exp` is not
+    required (indefinite tokens) but enforced when present."""
+    error = jwt.InvalidSignatureError("no key")
+    for key in keys:
+        try:
+            return jwt.decode(
+                token,
+                key,
+                algorithms=[algorithm],
+                audience=settings.jwt_audience,
+                options={"require": ["iat", "sub", "iss", "aud"]},
+                leeway=settings.jwt_leeway_seconds,  # clock-skew tolerance
+            )
+        except jwt.InvalidSignatureError as e:
+            error = e
+    raise error
 
 
 def _check_not_revoked(decoded: dict[str, Any]) -> None:
@@ -485,15 +529,6 @@ def _creator_claim(decoded: dict[str, Any]) -> str:
     if not isinstance(creator, str):
         raise TokenError("claim 'creator' must be a string")
     return creator
-
-
-def _accepted_algorithms() -> frozenset[str]:
-    """The algorithms this deployment's keys can verify: its own signing
-    algorithm, plus RS256 when a gateway's public keys are configured."""
-    accepted = {settings.jwt_algorithm}
-    if settings.jwt_public_key_map():
-        accepted.add("RS256")
-    return frozenset(accepted & {"HS256", "RS256"})
 
 
 def _str_list(decoded: dict[str, Any], claim: str) -> list[str]:

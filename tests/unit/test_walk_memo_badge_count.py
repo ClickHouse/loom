@@ -8,6 +8,7 @@ per seed and arguments. The sidebar counts the agents first seen today with
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -16,13 +17,19 @@ from server.insights.api.models_agents import AgentsConnectedInput
 from server.insights.app import agents as agents_handler
 from server.memory.api.models_facts import FactsTraverseInput, FactsTraverseOutput
 from server.memory.app import facts as facts_handler
+from server.memory.app import graph_write_marks
 from server.transport import mcp_schemas
 
 
 @pytest.fixture(autouse=True)
-def _fresh() -> None:
+def _fresh(monkeypatch: pytest.MonkeyPatch) -> None:
     facts_handler.reset_traverse_cache()
     agents_handler.reset_connected_cache()
+
+    async def _never_written(org: str, ns: str, *, wait_s: float) -> tuple[None, datetime]:
+        return None, datetime.now(UTC)
+
+    monkeypatch.setattr(graph_write_marks, "last_write", _never_written)
 
 
 @pytest.mark.asyncio

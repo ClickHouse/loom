@@ -10,10 +10,13 @@ def _control_request(scope: Scope) -> bool:
     path = scope.get("path", "").rstrip("/")
     if path in ("/v1/health", "/v1/whoami", "/v1/auth/login", "/v1/admin/models"):
         return True
+    if path in ("/v1/health/live", "/v1/health/ready"):
+        return True
     if path.startswith(("/v1/admin/models/", "/oauth/", "/.well-known/")):
         return True
-    return scope.get("method") in ("GET", "HEAD") and (
-        path in ("", "/me") or path.startswith("/me/")
+    # Dashboard page and asset loads: any GET outside the API and MCP roots.
+    return scope.get("method") in ("GET", "HEAD") and not (
+        path in ("/v1", "/mcp") or path.startswith(("/v1/", "/mcp/"))
     )
 
 

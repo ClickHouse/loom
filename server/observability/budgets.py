@@ -27,10 +27,9 @@ A value is an integer (milliseconds) or a string multiplier such as "3x"
 consumer without listing them. The transport then applies the deployment's
 `latency_budget_multiplier` to whatever this resolves.
 
-The runtime table binds every web process of one server: with more than one
-(`LOOM_WEB_WORKERS`) it lives in a per-server file in the runtime directory
-(`server/core/runtime_files.py`), re-read on every op and updated under a lock.
-It is not shared across replicas; the settings map is the fleet-wide half.
+The runtime overrides are the deployment's: the admin route writes them to
+loom.runtime_overrides and every process adopts that table on a timer
+(`adopt`).
 """
 
 from __future__ import annotations
@@ -38,19 +37,16 @@ from __future__ import annotations
 import json
 import logging
 import threading
-from collections.abc import Callable
-from dataclasses import dataclass, replace
 from typing import Any
 
 from server.core.numbers import finite_non_negative
-from server.core.shared_document import SharedDocument, server_document, share_override
 
 log = logging.getLogger(__name__)
 
 ANY_OP = "*"
 
 
-def _parse_value(raw: Any) -> int | float | None:
+def parse_value(raw: Any) -> int | float | None:
     """An override entry: int/float milliseconds, or "<n>x" multiplier
     returned as a float factor. None when unusable (negative, not finite)."""
     if isinstance(raw, bool):
@@ -76,104 +72,42 @@ def _apply(value: int | float, default_ms: int) -> int:
     return int(value)
 
 
-@dataclass(frozen=True)
-class _Budgets:
-    ops: dict[str, int]
-    by_consumer: dict[tuple[str, str], int | float]
-
-
-def _stored_ms(raw: Any) -> int:
+def stored_ms(raw: Any) -> int:
     """An op budget as `set` stores it: whole milliseconds, finite and >= 0."""
     if not isinstance(raw, int) or not finite_non_negative(raw):
         raise ValueError(f"budget_ms must be a whole number of ms >= 0, not {raw!r}")
     return raw
 
 
-def _stored_budget(raw: Any) -> int | float:
-    """A consumer budget as `set_for_consumer` stores it: ms, or a float multiplier."""
-    return raw if isinstance(raw, float) and finite_non_negative(raw) else _stored_ms(raw)
-
-
-def _decode(data: Any) -> _Budgets:
-    return _Budgets(
-        ops={str(k): _stored_ms(v) for k, v in data["ops"].items()},
-        by_consumer={(str(c), str(o)): _stored_budget(v) for c, o, v in data["consumer"]},
-    )
-
-
-def _encode(budgets: _Budgets) -> dict[str, Any]:
-    return {
-        "ops": budgets.ops,
-        "consumer": [[c, o, v] for (c, o), v in budgets.by_consumer.items()],
-    }
-
-
 class BudgetOverrides:
     """Singleton overrides registry: op_name → budget_ms, plus
     (consumer, op_name | "*") → budget_ms or multiplier."""
 
-    def __init__(self, path: str | None = None) -> None:
-        """`path` names the shared file; None = one per server once there are
-        several web workers."""
-        self._path = path
+    def __init__(self) -> None:
         self._overrides: dict[str, int] = {}
         self._by_consumer: dict[tuple[str, str], int | float] = {}
         self._lock = threading.Lock()
         # The settings map, parsed once per distinct raw string.
         self._settings_raw: str | None = None
         self._settings_map: dict[str, dict[str, int | float]] = {}
-        # Shared with the server's other web processes (`_document`).
-        self._doc: SharedDocument[_Budgets] | None = None
-        self._doc_key: int | None = None
-
-    # -- the host file the web processes share -----------------------------
-
-    def _document(self) -> SharedDocument[_Budgets] | None:
-        """This server's runtime overrides file; None with one web process.
-        Resolved once per setting, as the rate limiter's is."""
-        from server.settings import settings
-
-        workers = int(settings.web_workers)
-        if workers != self._doc_key:
-            self._doc_key = workers
-            if self._path:
-                self._doc = SharedDocument(self._path, _decode, _encode)
-            else:
-                self._doc = server_document("budgets", _decode, _encode) if workers > 1 else None
-        return self._doc
-
-    def _poll(self) -> None:
-        """Adopt another worker's change (caller holds `_lock`)."""
-        doc = self._document()
-        latest = doc.poll() if doc is not None else None
-        if latest is not None:
-            self._overrides, self._by_consumer = latest.ops, latest.by_consumer
-
-    def _change(self, change: Callable[[_Budgets], _Budgets]) -> None:
-        """Apply `change` to the overrides of every web process; a change that
-        cannot be shared is refused and this process keeps its own."""
-        with self._lock:
-            mine = _Budgets(self._overrides, self._by_consumer)
-            new = share_override(self._document(), change, mine, what="budget override")
-            self._overrides, self._by_consumer = new.ops, new.by_consumer
 
     # -- per op (unchanged API) -------------------------------------------
 
     def set(self, op_name: str, budget_ms: int) -> None:
-        stored = _stored_ms(budget_ms)  # what every sibling's read takes back
-        self._change(lambda b: replace(b, ops={**b.ops, op_name: stored}))
+        stored = stored_ms(budget_ms)
+        with self._lock:
+            self._overrides[op_name] = stored
 
     def get(self, op_name: str) -> int | None:
         with self._lock:
-            self._poll()
             return self._overrides.get(op_name)
 
     def clear(self, op_name: str) -> None:
-        self._change(lambda b: replace(b, ops={k: v for k, v in b.ops.items() if k != op_name}))
+        with self._lock:
+            self._overrides.pop(op_name, None)
 
     def snapshot(self) -> dict[str, int]:
         with self._lock:
-            self._poll()
             return dict(self._overrides)
 
     # -- per consumer --------------------------------------
@@ -183,33 +117,46 @@ class BudgetOverrides:
         covers every op for the consumer."""
         if not consumer:
             raise ValueError("consumer must be non-empty")
-        parsed = _parse_value(value)
+        parsed = parse_value(value)
         if parsed is None:
             raise ValueError("budget must be a non-negative integer (ms) or '<n>x'")
-        key = (consumer, op_name or ANY_OP)
-        self._change(lambda b: replace(b, by_consumer={**b.by_consumer, key: parsed}))
+        with self._lock:
+            self._by_consumer[(consumer, op_name or ANY_OP)] = parsed
 
     def get_for_consumer(self, consumer: str, op_name: str) -> int | float | None:
         with self._lock:
-            self._poll()
             hit = self._by_consumer.get((consumer, op_name))
             if hit is None:
                 hit = self._by_consumer.get((consumer, ANY_OP))
             return hit
 
     def clear_for_consumer(self, consumer: str, op_name: str = ANY_OP) -> None:
-        key = (consumer, op_name or ANY_OP)
-        self._change(
-            lambda b: replace(b, by_consumer={k: v for k, v in b.by_consumer.items() if k != key})
-        )
+        with self._lock:
+            self._by_consumer.pop((consumer, op_name or ANY_OP), None)
 
     def snapshot_by_consumer(self) -> dict[str, dict[str, int | float]]:
         with self._lock:
-            self._poll()
             out: dict[str, dict[str, int | float]] = {}
             for (consumer, op_name), value in self._by_consumer.items():
                 out.setdefault(consumer, {})[op_name] = value
             return out
+
+    def adopt(self, snapshot: dict[str, dict[tuple[str, ...], Any]]) -> None:
+        """Take the deployment's overrides (a `runtime_overrides.load()` snapshot)."""
+        from server.core import runtime_overrides as ro
+
+        ops = {
+            k[0]: v
+            for k, v in snapshot.get(ro.BUDGET_OP, {}).items()
+            if len(k) == 1 and isinstance(v, int) and not isinstance(v, bool) and v >= 0
+        }
+        consumers = {
+            (k[0], k[1]): parsed
+            for k, v in snapshot.get(ro.BUDGET_CONSUMER, {}).items()
+            if len(k) == 2 and (parsed := parse_value(v)) is not None
+        }
+        with self._lock:
+            self._overrides, self._by_consumer = ops, consumers
 
     def settings_map(self) -> dict[str, dict[str, int | float]]:
         """`latency_budget_overrides_by_consumer` parsed: {consumer: {op: value}}.
@@ -233,7 +180,7 @@ class BudgetOverrides:
                             raise ValueError(f"{consumer!r}: expected an object of op -> value")
                         entry: dict[str, int | float] = {}
                         for op_name, value in ops.items():
-                            v = _parse_value(value)
+                            v = parse_value(value)
                             if v is None:
                                 raise ValueError(
                                     f"{consumer!r}.{op_name!r}: {value!r} is not ms or '<n>x'"
@@ -312,10 +259,31 @@ def effective_budget_ms(op_name: str, declared_ms: int, *, consumer: str | None 
     return int(base * settings.latency_budget_multiplier)
 
 
+def request_time_left_s(op_name: str) -> float:
+    """Seconds left of the bound request's latency budget for `op_name`: 0 once spent,
+    `inf` with no request bound (a worker pass, a test) or no budget for the op."""
+    import time
+
+    from server.core import request_work
+
+    bag = request_work.current()
+    try:
+        from server.operations.registry import OPERATIONS_BY_NAME
+
+        op = OPERATIONS_BY_NAME.get(op_name)
+        budget_ms = effective_budget_ms(op_name, op.budget_p99_ms) if op is not None else 0
+    except Exception:  # noqa: BLE001 — a budget lookup never fails a request
+        budget_ms = 0
+    if bag is None or budget_ms <= 0:
+        return float("inf")
+    return max(0.0, budget_ms / 1000.0 - (time.perf_counter() - bag.began))
+
+
 __all__ = [
     "ANY_OP",
     "BudgetOverrides",
     "declared_budget_ms",
     "effective_budget_ms",
     "get_overrides",
+    "request_time_left_s",
 ]

@@ -752,9 +752,12 @@ def _code_lag_series(
       compiler tier against git_head); 0 when caught up. A watermark that stops
       while git_head moves grows this without bound, whatever a cron log says.
 
-    -1 commits (unknown) is not observed."""
+    -1 commits (unknown) is not observed, nor is a repo whose mirror is not on this
+    host (still cloning, or LOOM_GIT_HISTORY=none)."""
     import time as _time
 
+    if settings.git_history == "none":
+        return {}
     try:
         inputs = state_inputs()
         repos = inputs.code_repos()

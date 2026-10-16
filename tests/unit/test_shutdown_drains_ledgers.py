@@ -41,11 +41,13 @@ def test_the_lifespan_drains_them_before_the_client_disconnects() -> None:
     order = [
         src.index("_policy_gate.drain("),
         src.index("_after_write.drain("),
+        src.index("_graph_marks.drain("),
         src.index("drops.flush_drops()"),
     ]
     assert order == sorted(order)
-    life = inspect.getsource(m.lifespan)
-    assert life.index("await boot.drain_writes()") < life.index("await ch.disconnect()")
+    tail = inspect.getsource(m._shut_down)
+    assert tail.index("_shutdown_drains(") < tail.index("await boot.leave_deployment(")
+    assert "await boot.drain_writes()" in inspect.getsource(m._shutdown_drains)
 
 
 def test_the_writes_drain_before_the_emitter_and_the_http_pool_stop() -> None:
@@ -53,9 +55,9 @@ def test_the_writes_drain_before_the_emitter_and_the_http_pool_stop() -> None:
     the shared HTTP pool and emits its settle row through the event emitter:
     drained after either stops, the call fails on a closed pool and the row
     sits in a queue nothing flushes."""
-    life = inspect.getsource(m.lifespan)
+    life = inspect.getsource(m._shutdown_drains)
     drain = life.index("await boot.drain_writes()")
-    assert life.index("supervisor.stop_all(") < drain
+    assert life.index("_leader.shutdown(lease, supervisor)") < drain
     assert drain < life.index("await emitter.stop()")
     assert drain < life.index("await _http_clients.aclose()")
 

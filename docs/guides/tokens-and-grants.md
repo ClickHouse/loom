@@ -77,15 +77,24 @@ verified for a token: the first thing to check when a call is refused.
 
 ### Signing keys
 
-| Setting                     | Meaning                                                                                                                                                   |
-| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `LOOM_JWT_ALGORITHM`        | `HS256` (default, shared secret) or `RS256` (private keys sign, public keys verify).                                                                      |
-| `LOOM_JWT_SECRET`           | The HS256 secret when no key map is set. Always the key stored credentials are sealed with, key map or not ([Security](../architecture/security.md)).     |
-| `LOOM_JWT_SECRETS_JSON`     | `{kid: secret}` (under RS256, `{kid: PEM private key}`); a token verifies with the key its `kid` names. Empty = `{LOOM_JWT_ACTIVE_KID: LOOM_JWT_SECRET}`. |
-| `LOOM_JWT_ACTIVE_KID`       | The `kid` that signs new tokens (default `default`).                                                                                                      |
-| `LOOM_JWT_PUBLIC_KEYS_JSON` | RS256: `{kid: PEM public key}`, served at `/v1/.well-known/jwks.json`.                                                                                    |
-| `LOOM_JWT_TRUSTED_ISSUERS`  | Extra accepted `iss` values, for a gateway minting Loom-shaped tokens.                                                                                    |
-| `LOOM_JWT_LEEWAY_SECONDS`   | Clock-skew tolerance on `iat` / `exp` (default 30).                                                                                                       |
+`LOOM_JWT_SECRET` is the root secret. It signs and verifies as kid `default` (HS256) and
+seals every stored credential and every other signing key ([Security](../architecture/security.md)).
+The other keys live in `loom.signing_keys`, added by `loom signing-key rotate`
+([rotate](#revoke-and-rotate)). Every process re-reads them every
+`LOOM_JWT_KEYRING_REFRESH_SECONDS` and records that interval in `loom.keyring_readers`;
+the newest active key signs. A PEM `LOOM_JWT_SECRET` (an RS256 deployment of an earlier
+build) seals, and signs RS256 as kid `default` as that build did
+([upgrades](../operations/upgrades.md#from-a-build-that-kept-state-on-the-host)).
+
+| Setting                            | Meaning                                                                                                                             |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `LOOM_JWT_SECRET`                  | The root secret: kid `default`, and the key that seals stored credentials and keyring keys.                                         |
+| `LOOM_JWT_KEYRING_REFRESH_SECONDS` | Seconds between re-reads of `loom.signing_keys` (default 30, at least 1). `rotate` waits out twice the slowest process's.           |
+| `LOOM_JWT_PUBLIC_KEYS_JSON`        | `{kid: PEM public key}` of a gateway whose RS256 tokens this deployment accepts; a token without a `kid` is looked up as `default`. |
+| `LOOM_JWT_TRUSTED_ISSUERS`         | Extra accepted `iss` values, for a gateway minting Loom-shaped tokens.                                                              |
+| `LOOM_JWT_LEEWAY_SECONDS`          | Clock-skew tolerance on `iat` / `exp` (default 30).                                                                                 |
+
+`/v1/.well-known/jwks.json` serves the public keys of the keyring's RS256 keys.
 
 Verification accepts only `HS256` and `RS256`; `alg=none` is rejected. The
 [configuration reference](../reference/configuration.md#auth) lists every auth setting.
@@ -297,7 +306,8 @@ exists. If the classification cannot be read, access is denied.
 - Search fan-out, context packs and org-wide rollups skip the restricted namespaces the
   caller cannot read, and `code.repos` hides them.
 - Each admitted request writes a `namespace.restricted_access` audit row
-  (`LOOM_RESTRICTED_AUDIT_INLINE` commits it before answering). Code search traces keep
+  committed before the answer (`LOOM_RESTRICTED_AUDIT_INLINE=false` writes it beside the
+  request instead, which a killed process can lose). Code search traces keep
   only the query digest.
 - A restricted namespace cannot be made public; its directory row changes only for a caller
   who passes the four checks at `admin`.
@@ -436,14 +446,34 @@ ClickHouse outage keeps the last good copy.
 
 **Every token of a key.** To rotate the signing key:
 
-1. Add the new key to `LOOM_JWT_SECRETS_JSON` under a new `kid`, keeping the old one.
-2. Point `LOOM_JWT_ACTIVE_KID` at the new `kid` and restart; new tokens are signed with it,
-   old tokens still verify by their header `kid`.
-3. Re-mint the tokens you want to keep.
-4. Remove the old `kid` from the map to stop its tokens verifying.
+1. `loom signing-key rotate [--algorithm HS256|RS256]` writes a new key to ClickHouse. It
+   starts signing `--activate-in` seconds later (300 by default). It refuses a value under
+   twice the slowest `LOOM_JWT_KEYRING_REFRESH_SECONDS` a process recorded in the last two
+   hours (this host's own when none did), so every process verifies the key before any
+   token carries it. Old tokens still verify by their header `kid`. No restart.
+2. Re-mint the tokens you want to keep.
+3. `loom signing-key retire <kid>` stops the old key verifying, within one refresh
+   interval. `default` can be retired too, for example in an RS256-only deployment; a
+   retire that would leave no signing key is refused, and a second retire while one runs
+   anywhere in the deployment is refused with "retry in a moment".
 
-With read-replicas, each step applies to every replica too; see
-[Keeping a replica in step](../operations/read-replicas.md#keeping-a-replica-in-step).
+`loom signing-key list` shows the keys. Every replica reads the same table, so a rotation
+needs no step on them.
+
+Run the keyring commands with the servers' `LOOM_JWT_SECRET`. The keyring's `default`
+row records an HMAC of that root secret, written by the workers leader or the first
+keyring command; `rotate`, `import`, `retire` and `loom mint-token` refuse to run where
+it does not match (a key sealed or a token signed there would not open on the servers),
+and the keyring commands refuse when the keyring cannot be read. `/v1/health` reports a
+server that never read the keyring (`keyring_not_loaded`), one whose root differs
+(`keyring_root_mismatch`), keys it cannot unseal (`signing_keys_unsealable`) and a
+keyring that leaves it nothing to sign with (`no_signing_key`; sign-ins answer 503
+`NO_SIGNING_KEY`); `loom doctor`'s `signing_keyring` line names the kid that signs.
+
+Replacing `LOOM_JWT_SECRET` itself re-keys everything: tokens signed as `default`, every
+keyring key and every stored credential sealed with the old value stop opening. Then run
+`loom signing-key record-root` with the new value, so the keyring commands accept it, and
+`loom deployment publish --yes`, so the replicas on the new value are ready.
 
 ## Related
 

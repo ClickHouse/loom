@@ -10,13 +10,24 @@ from server.transport.model_maintenance import ModelMaintenanceMiddleware
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("path", ["/v1/memory.set", "/v1/code.search", "/mcp", "/v1/knowledge.add"])
-async def test_closed_gate_rejects_data_plane_without_running_handler(path):
+@pytest.mark.parametrize(
+    "method,path",
+    [
+        ("POST", "/v1/memory.set"),
+        ("POST", "/v1/code.search"),
+        ("POST", "/mcp"),
+        ("POST", "/v1/knowledge.add"),
+        ("GET", "/v1/task/watch"),
+        ("GET", "/v1/knowledge.download"),
+        ("GET", "/mcp"),
+    ],
+)
+async def test_closed_gate_rejects_data_plane_without_running_handler(method, path):
     gate = ModelWorkGate()
     gate.close("change")
     app, send = AsyncMock(), AsyncMock()
     middleware = ModelMaintenanceMiddleware(app, gate)
-    await middleware({"type": "http", "method": "POST", "path": path}, AsyncMock(), send)
+    await middleware({"type": "http", "method": method, "path": path}, AsyncMock(), send)
     app.assert_not_awaited()
     response = send.await_args_list[0].args[0]
     assert response["status"] == 503
@@ -29,8 +40,11 @@ async def test_closed_gate_rejects_data_plane_without_running_handler(path):
 @pytest.mark.parametrize(
     "method,path",
     [
-        ("GET", "/me"),
-        ("GET", "/me/assets/app.js"),
+        ("GET", "/"),
+        ("GET", "/memories"),
+        ("GET", "/admin/review_queue"),
+        ("GET", "/assets/app.js"),
+        ("GET", "/favicon.svg"),
         ("GET", "/v1/health"),
         ("GET", "/v1/whoami"),
         ("POST", "/v1/auth/login"),

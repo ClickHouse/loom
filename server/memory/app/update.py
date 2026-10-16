@@ -273,6 +273,7 @@ def _update_embedding_row(
     key_embedding: list[float],
     *,
     has_key: bool,
+    conflict_checked_at: Any = None,
 ) -> dict[str, Any]:
     """The loom.memory_embeddings row mirroring an update's version row `memory_row`.
 
@@ -331,6 +332,9 @@ def _update_embedding_row(
             )
             in ("human", "process")
         ),
+        # The pending mark while a deferred judge is owed (`conflict_deferred.checked_at_for`).
+        conflict_checked_at=conflict_checked_at,
+        content_sha256=str(memory_row["content_sha256"] or ""),
     )
 
 
@@ -666,7 +670,13 @@ async def _write_revision(
     emb_rows = (
         [
             _update_embedding_row(
-                existing, memory_row, embedder, embedding, key_embedding, has_key=bool(key_text)
+                existing,
+                memory_row,
+                embedder,
+                embedding,
+                key_embedding,
+                has_key=bool(key_text),
+                conflict_checked_at=_cd.checked_at_for(conflict_result),
             )
         ]
         if embedder is not None
@@ -690,12 +700,16 @@ async def _write_revision(
     # Its version was drawn when the write began: a slow write indexes its own BM25 stats.
     await memory_repo.index_late_rows(emb_rows, ch=ch)
     cfg = await cfg_task
-    _cd.schedule_settle(
-        _settle_identity(input.org, existing, revision_run_id),
-        conflict_result,
-        memory_id=str(existing.memory_id),
-        cfg=cfg,
-    )
+    if emb_rows:  # a deferred judge needs the vector
+        _cd.schedule_settle(
+            _settle_identity(input.org, existing, revision_run_id),
+            conflict_result,
+            memory_id=str(existing.memory_id),
+            version=new_version,
+            created_at=emb_rows[0]["created_at"],
+            content_sha256=emb_rows[0]["content_sha256"],
+            cfg=cfg,
+        )
 
     await _update_post_write(input, existing, conflict_result, ch)
 

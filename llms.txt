@@ -15,12 +15,12 @@ Start with docs/index.md (the map) and docs/getting-started/connect-a-coding-age
 
 ## Operations
 
-- [Backup and recovery](docs/operations/backup-and-recovery.md): A Loom backup is a ClickHouse backup plus the blob volume.
+- [Backup and recovery](docs/operations/backup-and-recovery.md): A Loom backup is a ClickHouse backup.
 - [Code index operations](docs/operations/code-index-operations.md): The code index runs only when an operator enables its workers and configures repositories.
 - [Deployment](docs/operations/deployment.md): Loom is one server image plus ClickHouse.
 - [Maintenance](docs/operations/maintenance.md): Every command here is a `loom` subcommand; run it inside the container that has the deployment's environment (`docker exec loom-server loom …`, or `loom-workers` in a split deployment).
 - [Monitoring](docs/operations/monitoring.md): This page says what to watch.
-- [Read-replicas: more Looms on the same brain](docs/operations/read-replicas.md): A read-replica is another Loom on the same ClickHouse service as your main Loom.
+- [Running N replicas](docs/operations/replicas.md): Every Loom process is a full replica.
 - [Troubleshooting](docs/operations/troubleshooting.md): Each entry gives a symptom, the check that confirms its cause, and the fix.
 - [Upgrades](docs/operations/upgrades.md): An upgrade replaces the image and applies the migrations the new build carries.
 
@@ -32,7 +32,7 @@ Start with docs/index.md (the map) and docs/getting-started/connect-a-coding-age
 - [Code index](docs/features/code-index/overview.md): The code workers are off by default; a deployment turns them on per repository (repositories).
 - [Adding repositories](docs/features/code-index/repositories.md): A fresh install indexes no repository.
 - [Conversations and sessions](docs/features/conversations-and-sessions.md): Loom keeps three kinds of session state, each in its own plane:
-- [The dashboard](docs/features/dashboard.md): The dashboard is a React single-page app the Loom server serves at `/me`.
+- [The dashboard](docs/features/dashboard.md): The dashboard is a React single-page app the Loom server serves at its root URL.
 - [Entity graph](docs/features/entity-graph.md): Entity communities are off by default (`LOOM_ENTITY_COMMUNITIES_ENABLED`).
 - [Claude Code plugin](docs/features/integrations/claude-code.md): The `loom` plugin for Claude Code does three things in one install:
 - [ClickStack and HyperDX](docs/features/integrations/clickstack.md): Loom always emits OpenTelemetry; the HyperDX sources, dashboards and the erasure step need configuring.
@@ -105,6 +105,7 @@ Start with docs/index.md (the map) and docs/getting-started/connect-a-coding-age
 - [LLM and embedding architecture](docs/architecture/llm-architecture.md): Loom has two pluggable providers: an embedder (`server/embedding/`) that turns text into vectors, and an LLM client (`server/llm/`) that completes prompts.
 - [Memory architecture](docs/architecture/memory-architecture.md): The memory plane stores facts in `loom.memory`, makes them searchable through `loom.memory_embeddings`, and derives evidence, chunks, graph rows and statistics from them.
 - [Provider reconfiguration](docs/architecture/provider-reconfiguration.md): Loom stores dashboard model configuration as encrypted, versioned rows in `loom.provider_configuration`.
+- [Rolling upgrades: builds N-1 and N side by side](docs/architecture/rolling-upgrades.md): Every Loom process is a full replica behind one URL, and an upgrade replaces them one at a time.
 - [Security](docs/architecture/security.md): Loom separates tenants by columns: every row carries the identity tuple, and every read filters on it.
 - [Server layout](docs/architecture/server-layout.md): `server/` is organised by domain.
 - [System overview](docs/architecture/system-overview.md): Loom is a Python server (a FastAPI application plus a supervisor of background workers) and one ClickHouse database.

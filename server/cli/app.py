@@ -138,8 +138,8 @@ _SPLIT_PARSERS: tuple[Any, ...] = (
 
 
 def _add_code_okf_up_parsers(sub: Any) -> None:
-    """The `code`, `okf`, `up` and `read-replica` subcommands, registered by
-    their own modules."""
+    """The `code`, `okf`, `up`, `participant`, `deployment`, `signing-key`,
+    `blobs` and `provider-lock` subcommands, registered by their own modules."""
     from server.cli.code import register_code_cli
 
     register_code_cli(sub)
@@ -156,9 +156,21 @@ def _add_code_okf_up_parsers(sub: Any) -> None:
 
     register_ch_setup_cli(sub)
 
-    from server.cli.read_replica import register_read_replica_cli
+    from server.cli.participant import register_participant_cli
 
-    register_read_replica_cli(sub)
+    register_participant_cli(sub)
+
+    from server.cli.deployment import register_deployment_cli
+
+    register_deployment_cli(sub)
+
+    from server.cli.portability import register_portability_cli
+
+    register_portability_cli(sub)
+
+    from server.cli.provider_lock import register_provider_lock_cli
+
+    register_provider_lock_cli(sub)
 
 
 def _add_claim_release_parser(sub: Any) -> None:
@@ -187,15 +199,12 @@ def _add_doctor_report_parsers(sub: Any) -> None:
 
     p_rep = sub.add_parser(
         "report",
-        help="Print a GitHub-Issue-ready bug report with auto-attached `loom doctor` diagnostic.",
+        help="Print the bug form's Environment field: versions and the `loom doctor` checks.",
     )
     p_rep.add_argument(
         "--open",
         action="store_true",
-        help=(
-            "Also open github.com/ClickHouse/loom/issues/new in the "
-            "default browser with a short header pre-filled."
-        ),
+        help="Also open the bug form in the default browser with the versions pre-filled.",
     )
     p_rep.set_defaults(func=_cmd_report)
 

@@ -21,8 +21,7 @@ class RateLimitSettings(BaseModel):
     ratelimit_shared: Literal["auto", "on", "off"] = "auto"
     # Bucket file; "" = one per server in the runtime dir (server/core/runtime_files.py).
     # The file is 0600 and never opened through a symlink. Set it for two servers
-    # sharing one cap; while LOOM_RATELIMIT_SHARED uses the table, their rate-limit
-    # overrides share `<path>.overrides.json`.
+    # sharing one cap.
     ratelimit_shared_path: str = ""
     # Table slots (32 bytes each). Every process of a server must agree; a
     # mismatch falls back to per-process buckets and shows in /v1/health.

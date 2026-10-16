@@ -30,7 +30,7 @@ function collectErrors(page: Page): string[] {
 test("an expand's result is a toast and an inspector line — also when it changed nothing", async ({ page }) => {
   const calls = await installApi(page);
   const errors = collectErrors(page);
-  await page.goto(`/me/graph?seed=${SMALL_SEED}`);
+  await page.goto(`/graph?seed=${SMALL_SEED}`);
   await expect(page.locator(NODE)).toHaveCount(SMALL_HOP1 + 1);
   const tree = page.getByRole("tree", { name: "Walk outline" });
   const rows = tree.getByRole("treeitem");
@@ -92,7 +92,7 @@ test("a re-walk drops the expand it started over: the late result lands nowhere"
   const HOLD_MS = 1_500;
   const calls = await installApi(page, { relatedDelayMs: HOLD_MS });
   const errors = collectErrors(page);
-  await page.goto(`/me/graph?seed=${SMALL_SEED}`);
+  await page.goto(`/graph?seed=${SMALL_SEED}`);
   await expect(page.locator(NODE)).toHaveCount(SMALL_HOP1 + 1);
   const rows = page.getByRole("tree", { name: "Walk outline" }).getByRole("treeitem");
   await rows.nth(1).focus();
@@ -123,7 +123,7 @@ test("an expand clicked while a re-walk loads is dropped when the walk lands", a
   const RELATED_MS = 2_000;
   const calls = await installApi(page, { traverseDelayMs: WALK_MS, relatedDelayMs: RELATED_MS });
   const errors = collectErrors(page);
-  await page.goto(`/me/graph?seed=${SMALL_SEED}`);
+  await page.goto(`/graph?seed=${SMALL_SEED}`);
   await expect(page.locator(NODE)).toHaveCount(SMALL_HOP1 + 1);
   const rows = page.getByRole("tree", { name: "Walk outline" }).getByRole("treeitem");
   await rows.nth(1).click();
@@ -147,7 +147,7 @@ test("an expand clicked while a re-walk loads is dropped when the walk lands", a
 test("with no communities, the Colour facet says what computes them, unclipped", async ({ page }) => {
   await installApi(page);
   const errors = collectErrors(page);
-  await page.goto("/me/graph?seed=alpha");
+  await page.goto("/graph?seed=alpha");
   await expect(page.locator(NODE)).toHaveCount(201);
   const facets = page.getByRole("complementary", { name: "Facets" });
   const none = facets.locator("[data-testid=communities-none]");
@@ -172,7 +172,7 @@ test("with no communities, the Colour facet says what computes them, unclipped",
 test("with communities, the facet counts them and says when, with the absolute time in a tooltip", async ({ page }) => {
   await installApi(page, { taxonomy: taxonomyWithCommunities() });
   const errors = collectErrors(page);
-  await page.goto("/me/graph?seed=alpha");
+  await page.goto("/graph?seed=alpha");
   await expect(page.locator(NODE)).toHaveCount(201);
   const facets = page.getByRole("complementary", { name: "Facets" });
   await expect(facets.getByRole("heading", { name: "Communities" })).toBeVisible();
@@ -192,7 +192,7 @@ test.describe("under a coarse pointer", () => {
   test("a Chip, an IconButton and an outline row are 44 px targets", async ({ page }) => {
     await installApi(page, { trackerBound: true });
     const errors = collectErrors(page);
-    await page.goto(`/me/graph?seed=${SMALL_SEED}`);
+    await page.goto(`/graph?seed=${SMALL_SEED}`);
     await expect(page.locator(NODE)).toHaveCount(SMALL_HOP1 + 1);
     expect(await page.evaluate(() => matchMedia("(pointer: coarse)").matches)).toBe(true);
 

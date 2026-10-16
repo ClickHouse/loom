@@ -2,7 +2,7 @@
 
 Loom is a server that stores memory, documents, conversations, an entity
 graph and a code index for AI agents, as rows in one ClickHouse database. Agents and
-people reach it over MCP, HTTP, the Python and TypeScript SDKs, and the `/me` dashboard.
+people reach it over MCP, HTTP, the Python and TypeScript SDKs, and the dashboard.
 It is Apache-2.0. This page helps you decide whether it fits.
 
 ## What it does
@@ -24,7 +24,7 @@ It is Apache-2.0. This page helps you decide whether it fits.
 
 Memory and the code index are separate planes on one server. Use either alone or both.
 Memory needs a server and a writer token. The code index also needs a repository added
-(`LOOM_CODE_REPOS_JSON`, or **Repositories → Add repository** in `/me` where the
+(`LOOM_CODE_REPOS_JSON`, or **Repositories → Add repository** in the dashboard where the
 [repository-job sandbox](../operations/code-index-operations.md#repository-job-sandbox) runs) and
 `LOOM_CODE_INGEST_ENABLED=true`. The [Claude Code and Codex plugins](connect-a-coding-agent.md)
 use both.

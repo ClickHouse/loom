@@ -311,6 +311,7 @@ async def _write_symbol_stats(repo: Any, org: str, ns: str, result: CodeGraphSta
     previous = await repo.live_symbol_stats_ids(org, ns)
     rows = compute_symbol_stats(org, ns, fan_in_rows, sites, previous_ids=previous)
     for start in range(0, len(rows), 5000):
+        pass_context.check_stop()
         await repo.insert_rows("code_symbol_stats", rows[start : start + 5000])
     result.symbol_stats_rows += len(rows)
 
@@ -397,6 +398,7 @@ async def _run(result: CodeGraphStatsResult) -> None:
         if cfg.label not in due:
             continue
         pass_context.set_namespace(cfg.namespace)  # Where a cut pass stopped
+        pass_context.check_stop()
         try:
             await _run_repo(cfg.org, cfg.namespace, result)
             result.legs_done += 1
@@ -419,6 +421,7 @@ async def _run(result: CodeGraphStatsResult) -> None:
             )
             break
         pass_context.set_namespace(cfg.namespace)
+        pass_context.check_stop()
         try:
             before = result.unit_risk_partial
             await _run_unit_risk(cfg.org, cfg.namespace, result, deadline)
@@ -521,6 +524,7 @@ async def _run_repo(org: str, ns: str, result: CodeGraphStatsResult) -> None:
     try:
         ranks = await asyncio.to_thread(pagerank, edges)
         degs = degrees(edges)
+        pass_context.check_stop()  # the thread ran on past a lost lease
     except Exception as e:
         result.errors.append(f"pagerank: {type(e).__name__}: {e}")
         logger.exception("code_graph_stats: pagerank failed")
@@ -571,6 +575,7 @@ async def _run_repo(org: str, ns: str, result: CodeGraphStatsResult) -> None:
                 )
             rows.append(row)
         for start in range(0, len(rows), 5000):
+            pass_context.check_stop()
             await repo.insert_rows("code_summaries", rows[start : start + 5000])
         result.files_ranked = len(rows)
 

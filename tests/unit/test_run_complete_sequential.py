@@ -45,7 +45,6 @@ async def test_begin_labels_its_ledger_row_with_the_run_id(monkeypatch):
     client = _Client()
     monkeypatch.setattr(run_handlers, "get_client", lambda: client)
     # No Keeper: the claim adds no read here.
-    monkeypatch.setattr(run_handlers.runs_store, "_claims_atomic", False)
     set_ledger_run("")
     out = await run_handlers.handle_run_begin(
         RunBeginInput(org="o", namespace="n", agent="a", goal="triage", run_id="r1")

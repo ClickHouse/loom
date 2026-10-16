@@ -64,6 +64,9 @@ async def table(monkeypatch: pytest.MonkeyPatch) -> _Table:
         return await fn()
 
     monkeypatch.setattr(ch_mod.CHClient, "_with_retry", _no_retry)
+    from server.core import rmt_carry
+
+    monkeypatch.setattr(rmt_carry, "carries", lambda _table: False)  # its own tests
     ch_mod.describe_cache_clear()
     table = _Table(3072)
     await codes_state.probe(table)

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime
 from typing import Any
 
@@ -832,6 +832,7 @@ async def apply_refines(
     relation: str = "refines",
     new_value: str = "",
     record_into: dict[str, list[dict[str, Any]]] | None = None,
+    expected_sha256: str = "",
 ) -> int:
     """The `refines` verdict, after the new row is in: every
     non-pinned refined peer is superseded (status, superseded_by = the new
@@ -843,11 +844,14 @@ async def apply_refines(
     price, a date, a month) keeps its row — the new statement elaborates a facet but
     truncates the record, and the question that needs the measure ("how long did it
     take") would read "not recorded". The edge is still written. `new_value` is the new
-    row's text; when the caller has none it is read from the store.
+    row's text; when the caller has none it is read from the store. With
+    `expected_sha256` (a deferred verdict) nothing is retired or linked once the
+    new row is another revision's, read sequentially right before the supersede.
 
     The peers that did retire are recorded as `memory.auto_supersede`
     (`auto_resolution`): into `record_into` (reason -> entries) when the caller
     writes one record for many verdicts (a bulk write), else beside the response."""
+    from server.core.ch import sequential_reads
     from server.memory.store import get_by_id, supersede_duplicates
 
     # A proposal (a fact on trial) retires nothing — whichever
@@ -872,6 +876,16 @@ async def apply_refines(
         for p in refined_peers
         if not p.pinned and p.memory_id and p.memory_id != new_memory_id and p.memory_id not in keep
     ]
+    if expected_sha256:
+        # The verdict takes effect at this read: a revision committed after it is
+        # the serial order "A refined its peers, then B replaced A", which leaves
+        # the same rows. Fencing B itself would put a lock on every memory.set.
+        # One difference: B's own inline judge saw a peer active that this then
+        # retires, so B's conflict_with can name a superseded row (review queue only).
+        with sequential_reads():
+            current = await get_by_id(new_memory_id, org=org, ch=ch, scope=WHOLE_NAMESPACE)
+        if current is None or str(current.content_sha256 or "") != expected_sha256:
+            return 0
     n = 0
     if victims:
         from server.memory.app.auto_resolution import (
@@ -1010,11 +1024,15 @@ async def mark_peers_conflicted(
     org: str,
     new_memory_id: str,
     peer_ids: list[str],
-) -> None:
+    expected_sha256: str = "",
+) -> bool:
     """Cross-link the new row with its peers still live (or on trial) and flag
     them `conflicted`; a proposal keeps its status. With no live peer, or a new
     row retired or deleted since the verdict, nothing is written, peers
-    included. Writes new RMT version rows, every column carried."""
+    included. Writes new RMT version rows, every column carried. With
+    `expected_sha256` (a deferred verdict), only the judged write is flagged
+    (`judged_write`). False, and no peer touched, when the new row was not
+    flagged: a newer write replaced it, or it was retired since."""
     import server.memory.store as memory_repo
 
     def _merged(existing: list[str], additions: list[str]) -> list[str]:
@@ -1044,7 +1062,7 @@ async def mark_peers_conflicted(
         if row is not None and row.status in _MARKABLE
     ]
     if not live:
-        return
+        return True  # nothing left to flag: the verdict stands, the write is not moved
 
     # A proposal (a fact on trial) keeps its status and only
     # records the contradiction; it is surfaced when the proposal is accepted
@@ -1063,15 +1081,21 @@ async def mark_peers_conflicted(
     # Strong: the row was just written (or revised under its own id), and a stale
     # read would rebuild the version before it at a higher one. A row retired since
     # (a late verdict, the deferred judge's) is left retired, and so are its peers.
+    judged_skip, version = judged_write(expected_sha256)
+
+    def _skip_new(row: Any) -> bool:
+        return row.status not in _MARKABLE or (judged_skip is not None and judged_skip(row))
+
     marked = await memory_repo.write_versions_by_ids(
         org,
         [new_memory_id],
-        _new,
-        skip=lambda row: row.status not in _MARKABLE,
+        lambda row: _new(row) | version(row),
+        skip=_skip_new,
         strong=True,
+        judged=judged_skip is not None,
     )
     if not marked or new_is_proposal:
-        return
+        return bool(marked)
     await memory_repo.write_versions_by_ids(
         org,
         live,
@@ -1082,4 +1106,20 @@ async def mark_peers_conflicted(
         # Retired between the read above and this write: left as it is.
         skip=lambda row: row.status not in _MARKABLE,
         strong=True,
+    )
+    return True
+
+
+def judged_write(
+    sha: str,
+) -> tuple[Callable[[Any], bool] | None, Callable[[Any], dict[str, Any]]]:
+    """(skip, version) for `write_versions_by_ids` landing a deferred verdict on the
+    write it judged: a row of other content is left alone, and the new version is
+    the read's + 1, so a revision committed after the read stays the newest row.
+    No-ops without `sha` (an inline verdict, or a row from before 038)."""
+    if not sha:
+        return None, lambda _row: {}
+    return (
+        lambda row: str(getattr(row, "content_sha256", "") or "") != sha,
+        lambda row: {"version": int(row.version) + 1},
     )

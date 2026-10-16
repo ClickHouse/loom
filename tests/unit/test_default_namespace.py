@@ -1,6 +1,6 @@
 """LOOM_DEFAULT_NAMESPACE — the auth-disabled default namespace.
 
-The setting feeds three consumers: the /me dashboard's boot snippet
+The setting feeds three consumers: the dashboard's boot snippet
 (window.__LOOM_DEFAULT_NAMESPACE, which the SPA's auth-off identity
 synthesis reads as the one namespace that mode serves), the auth-off
 `loom.namespaces` bootstrap (provisioned like a real account: row + admin
@@ -112,7 +112,7 @@ def test_valid_names_accepted(monkeypatch, value: str) -> None:  # type: ignore[
 
 
 # --- boot-snippet escaping -------------------------------------------------
-# Every value in the /me boot snippet is operator-supplied config. A broken
+# Every value in the dashboard's boot snippet is operator-supplied config. A broken
 # literal isn't cosmetic: the <script> block carries __LOOM_AUTH_DISABLED, so a
 # SyntaxError in any one assignment drops an auth-off deployment onto a login
 # screen it has no credentials for.
@@ -127,7 +127,7 @@ def test_valid_names_accepted(monkeypatch, value: str) -> None:  # type: ignore[
         "has'quote",
         'has"doublequote',
         "line\nbreak",
-        "https://sso.example.com/login?next=/me&x=1",
+        "https://sso.example.com/login?next=/settings&x=1",
     ],
 )
 def test_js_string_round_trips(value: str) -> None:
@@ -135,7 +135,7 @@ def test_js_string_round_trips(value: str) -> None:
     which is the same guarantee a JS parser gives for these forms."""
     import json
 
-    from server.identity.app.me_routes import _js_string
+    from server.identity.app.dashboard_routes import _js_string
 
     literal = _js_string(value)
     assert literal.startswith('"') and literal.endswith('"')
@@ -145,7 +145,7 @@ def test_js_string_round_trips(value: str) -> None:
 def test_js_string_neutralises_script_close() -> None:
     """`</script>` inside a value ends the element at the HTML level, which no
     amount of JS-level escaping prevents — so the sequence must not survive."""
-    from server.identity.app.me_routes import _js_string
+    from server.identity.app.dashboard_routes import _js_string
 
     literal = _js_string("</script><img src=x onerror=alert(1)>")
     assert "</script>" not in literal
@@ -156,7 +156,7 @@ def test_js_string_neutralises_comment_open() -> None:
     """`<!--` flips the HTML tokenizer into script-data-escaped state, where
     the snippet's real `</script>` stops closing the element and the parser
     swallows the rest of index.html scanning for `-->`."""
-    from server.identity.app.me_routes import _js_string
+    from server.identity.app.dashboard_routes import _js_string
 
     literal = _js_string("<!--<script>steal()</script>-->")
     assert "<!--" not in literal
@@ -166,7 +166,7 @@ def test_js_string_neutralises_comment_open() -> None:
 def test_js_string_survives_trailing_backslash() -> None:
     """A trailing backslash must not eat the closing quote and SyntaxError
     the whole snippet, as a quote-only escape would."""
-    from server.identity.app.me_routes import _js_string
+    from server.identity.app.dashboard_routes import _js_string
 
     literal = _js_string("team\\")
     # The value's backslash is escaped, so the closing quote still closes.
@@ -231,7 +231,7 @@ def _wire(monkeypatch, ch) -> None:  # type: ignore[no-untyped-def]
 async def test_bootstrap_provisions_once_then_caches(  # type: ignore[no-untyped-def]
     bootstrap, monkeypatch
 ) -> None:
-    """The row can only need creating once per process; /me must not pay for a
+    """The row can only need creating once per process; the dashboard must not pay for a
     blocking FINAL lookup on every page load. Provisioning goes through
     provision_account: namespaces row + an admin grant for the single-user
     subject, so list_mine works and the namespace stays administrable after
@@ -348,7 +348,7 @@ async def test_bootstrap_warns_about_stranded_namespaces_on_insert(  # type: ign
     bootstrap, monkeypatch, caplog
 ) -> None:
     """Renaming the default strands the old namespace's data: reachable by
-    SDK/MCP, invisible in /me. Say so on the boot that (re)provisions the row —
+    SDK/MCP, invisible in the dashboard. Say so on the boot that (re)provisions the row —
     exactly when the operator who changed the setting is watching."""
     import logging
 
@@ -456,20 +456,20 @@ async def test_boot_snippet_survives_hostile_config() -> None:
 
     from starlette.requests import Request
 
-    from server.identity.app import me_routes as me_mod
+    from server.identity.app import dashboard_routes as me_mod
     from server.settings import settings
 
     if not (me_mod._FRONTEND_DIST / "index.html").is_file():
         pytest.skip("frontend not built (npm --prefix frontend run build)")
 
-    request = Request({"type": "http", "method": "GET", "path": "/me/setup", "headers": []})
+    request = Request({"type": "http", "method": "GET", "path": "/settings", "headers": []})
     with (
         # auth on: no ClickHouse round-trip on this path.
         patch.object(settings, "auth_required", True),
         patch.object(settings, "identity_provider", "gateway"),
         patch.object(settings, "default_namespace", "team\\"),
     ):
-        response = await me_mod.memory_dashboard(request, spa_path="setup")
+        response = await me_mod.dashboard_page(request)
 
     html = response.body.decode()
     globals_found = dict(re.findall(r"window\.__LOOM_([A-Z_]+) = (.+?);", html))

@@ -459,7 +459,7 @@ async def handle_namespace_list_mine(
 
     Union of the JWT's `namespaces` claim and the caller's active rows in
     `loom.namespace_grants`. Also auto-claims `personal-<sub>` if it
-    doesn't yet exist — `/me` calls this on dashboard load, so the
+    doesn't yet exist — the dashboard calls this on load, so the
     personal namespace lazily-creates on first visit.
     """
     ch = get_client()

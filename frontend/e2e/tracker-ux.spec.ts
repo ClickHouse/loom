@@ -271,7 +271,7 @@ async function setup(page: Page, opts: { bound?: string | string[]; checkPasses?
     const dry = !(isRecord(body) && body.dry_run === false);
     return r.fulfill(json(opts.checkPasses ? mapped(dry) : failing(dry)));
   });
-  await page.goto("/me/repositories");
+  await page.goto("/repositories");
   await expect(page.getByRole("heading", { name: "Repositories" })).toBeVisible();
 }
 

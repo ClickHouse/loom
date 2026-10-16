@@ -203,8 +203,8 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-Run it, then open `http://localhost:7777/me/memories` to see the rows with their writer
-agent, `/me/runs` for the run, and `/me/conversations` for the thread. Blocking code uses
+Run it, then open `http://localhost:7777/memories` to see the rows with their writer
+agent, `/runs` for the run, and `/conversations` for the thread. Blocking code uses
 `loom.SyncAgent`, which takes the same arguments and exposes every method as a blocking
 call.
 

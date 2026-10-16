@@ -20,6 +20,10 @@ def _lock_dir(monkeypatch, tmp_path):
     from server.settings import settings
 
     monkeypatch.setattr(settings, "code_scip_lock_dir", str(tmp_path / "locks"))
+    # The deployment-wide entry lease is ClickHouse's; tests hold a fake one.
+    from tests.unit.claims_fake import held_leases
+
+    held_leases(monkeypatch)
 
 
 def _Cfg() -> Any:

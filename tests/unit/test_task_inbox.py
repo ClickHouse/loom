@@ -24,7 +24,7 @@ from server.tasks.api import models_task as wire
 from server.tasks.api import ops_task
 from server.tasks.app import common, inboxes, reads, sweep, transitions, trust
 from server.tasks.store import repo as repo
-from server.tasks.store.repo import ClaimResult, KeeperLeases, LogLeases, resolve_policy
+from server.tasks.store.repo import ClaimResult, KeeperLeases, resolve_policy
 
 ORG = "acme"
 
@@ -83,6 +83,10 @@ class FakeRepo:
 
     TASK_FIELDS = repo.TASK_FIELDS
     next_version = staticmethod(repo.next_version)
+
+    async def server_version(self, floor=0):
+        return max(repo.next_version(), int(floor) + 1)
+
     resolve_policy = staticmethod(repo.resolve_policy)
 
     def __init__(self) -> None:
@@ -228,7 +232,7 @@ class FakeRepo:
         return [e for e in self.events if e["org"] == org and e["task_id"] == str(task_id)][:limit]
 
     async def events_since(
-        self, org, *, since_seq, watermark, inbox=None, from_subject=None, limit=200
+        self, org, *, since_seq, lag_s, inbox=None, from_subject=None, limit=200
     ):
         rows = [e for e in self.events if e["org"] == org and e["seq"] > since_seq]
         if inbox:
@@ -1002,34 +1006,10 @@ async def test_keeper_leases_are_a_strict_mode_cas_with_read_back() -> None:
 
 
 @pytest.mark.asyncio
-async def test_log_leases_take_the_earliest_writer_for_the_fence() -> None:
-    ch = StubCH()
-    leases = LogLeases(ch)
-    ch.query_one_returns = [{"winner": "a"}]
-    won = await leases.try_claim("t1", "a", expected_fence=0, lease_until=datetime(2030, 1, 1))
-    assert won.won and won.fence == 1
-    assert ch.insert_calls[0][0] == "loom.task_claims" and ch.insert_calls[0][1][0]["fence"] == 1
-    ch.query_one_returns = [{"winner": "a"}]
-    lost = await leases.try_claim("t1", "b", expected_fence=0, lease_until=datetime(2030, 1, 1))
-    assert not lost.won and lost.owner == "a"
-
-
-@pytest.mark.asyncio
-async def test_lease_backend_follows_the_setting_or_the_table(settings_override) -> None:
+async def test_lease_backend_is_keeper() -> None:
     repo.reset_lease_backend()
     try:
-        settings_override(task_lease_backend="log")
-        assert (await repo.lease_backend(ch=StubCH())).name == "log"
-        repo.reset_lease_backend()
-        settings_override(task_lease_backend="keeper")
         assert (await repo.lease_backend(ch=StubCH())).name == "keeper"
-        repo.reset_lease_backend()
-        settings_override(task_lease_backend="auto")
-        ch = StubCH()
-        ch.query_one_returns = [{"engine": "KeeperMap"}]
-        assert (await repo.lease_backend(ch=ch)).name == "keeper"
-        repo.reset_lease_backend()
-        assert (await repo.lease_backend(ch=StubCH())).name == "log"
     finally:
         repo.reset_lease_backend()
 

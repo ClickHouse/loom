@@ -36,7 +36,9 @@ class _CH:
         self.inserts: list[tuple[str, list[dict[str, Any]]]] = []
 
     async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
-        self.inserts.append((table, rows))
+        """The graph-write marks a scheduled projection flushes are not the write under test."""
+        if table not in ("loom.namespace_write_marks", "loom.graph_projections"):
+            self.inserts.append((table, rows))
 
     async def query_one(self, *_: Any, **__: Any) -> dict[str, Any] | None:
         return None

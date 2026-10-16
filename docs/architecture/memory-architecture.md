@@ -149,6 +149,23 @@ latency at the insert's. The deterministic verdicts stay inline because they dec
 whether a row is written. The cost is a window where a row is `active` with a pending
 verdict.
 
+**How a deferred verdict settles** (`memory/app/conflict_deferred.py`). The row is
+inserted `active` and the response says `conflict_verdict: pending`, `verdict_at:
+deferred`. A task in the request's context then runs the judge-and-fold the inline path
+runs (`conflicts.settle_deferred_judgement`): `conflict` writes the conflict marks,
+`refines` supersedes and links the peers, `merge` and `duplicate` make this row
+`status=duplicate, duplicate_of=<peer>` (a merge cannot un-insert), and `clear` writes
+nothing. `memory.get` shows the settled status and a derived `conflict_verdict`, which
+is `pending` while the row's embedding carries the pending mark.
+
+- `await_verdict: true` keeps the inline behaviour; `dry_run` always judges inline.
+- Each settle writes one `memory_drops` row (`stage=conflict.deferred`,
+  `reason=<verdict>`), and the process drains in-flight judges on shutdown.
+- The embedding is written with `conflict_checked_at` at the pending mark
+  (`store.conflict_marks`) and the settle stamps it, so every replica reads the same
+  state. A judge lost to a crash leaves the mark, and the leader's conflict sweep
+  (`workers.conflict_sweep`) re-judges the row.
+
 ## `memory.bulk_set` and `memory.set_from_messages`
 
 `memory.bulk_set` (`handle_memory_bulk_set` in `memory/app/bulk_set.py`) is the

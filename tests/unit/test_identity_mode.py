@@ -89,38 +89,24 @@ def test_unknown_mode_rejected() -> None:
         ("identity_provider", "oidc"),
         ("oauth_login_provider", "OIDC"),
         ("self_signup", "Open"),
-        ("jwt_algorithm", "hs256"),
     ]:
         with pytest.raises(ValidationError, match=field):
             AuthSettings(**{field: bad})
 
 
-def test_signing_key_contradictions_fail_at_load() -> None:
-    """A signing kid missing from the secret map mints nothing; under RS256 a
-    signing kid without a public key mints tokens nothing here verifies; a
-    malformed key map would fail every request. All three refuse at load."""
-    import json
-
-    import pytest
+def test_a_malformed_gateway_key_map_fails_at_load() -> None:
+    """A malformed key map would fail every request, so it refuses at load."""
     from pydantic import ValidationError
 
     from server.settings._auth import AuthSettings
 
     AuthSettings()  # the defaults are consistent
-    AuthSettings(jwt_secrets_json=json.dumps({"k2": "s" * 32}), jwt_active_kid="k2")
-    with pytest.raises(ValidationError, match="LOOM_JWT_ACTIVE_KID"):
-        AuthSettings(jwt_secrets_json=json.dumps({"k1": "s" * 32}), jwt_active_kid="k2")
-    with pytest.raises(ValidationError, match="RS256 requires a public key"):
-        AuthSettings(jwt_algorithm="RS256")
-    with pytest.raises(ValidationError, match="RS256 requires a public key"):
-        AuthSettings(jwt_algorithm="RS256", jwt_public_keys_json=json.dumps({"other": "pem"}))
-    AuthSettings(jwt_algorithm="RS256", jwt_public_keys_json=json.dumps({"default": "pem"}))
     with pytest.raises(ValidationError, match="jwt_public_keys_json"):
         AuthSettings(jwt_public_keys_json="{not json")
 
 
 def test_key_maps_decode_once_per_value(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Mint and verify read the key maps per token; the JSON is decoded once
+    """Verify reads the gateway key map per token; the JSON is decoded once
     per configured value, and a changed value (an override) takes effect."""
     import json
 
@@ -136,12 +122,12 @@ def test_key_maps_decode_once_per_value(monkeypatch: pytest.MonkeyPatch) -> None
 
     monkeypatch.setattr(_env, "_decode_json_or_b64", counting)
     _env.json_map_items.cache_clear()
-    s = AuthSettings(jwt_secrets_json=json.dumps({"k9": "a" * 32}), jwt_active_kid="k9")
+    s = AuthSettings(jwt_public_keys_json=json.dumps({"k9": "pem-a"}))
     for _ in range(5):
-        assert s.jwt_secret_map() == {"k9": "a" * 32}
-    assert calls.count("jwt_secrets_json") == 1
-    s.jwt_secret_map()["k9"] = "mutated"
-    assert s.jwt_secret_map() == {"k9": "a" * 32}
-    s.jwt_secrets_json = json.dumps({"k9": "b" * 32})
-    assert s.jwt_secret_map() == {"k9": "b" * 32}
+        assert s.jwt_public_key_map() == {"k9": "pem-a"}
+    assert calls.count("jwt_public_keys_json") == 1
+    s.jwt_public_key_map()["k9"] = "mutated"
+    assert s.jwt_public_key_map() == {"k9": "pem-a"}
+    s.jwt_public_keys_json = json.dumps({"k9": "pem-b"})
+    assert s.jwt_public_key_map() == {"k9": "pem-b"}
     _env.json_map_items.cache_clear()

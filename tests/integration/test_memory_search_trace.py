@@ -1,7 +1,7 @@
 """memory.search_trace — per-candidate scoring breakdown.
 
 The complement to memory.search: returns every component that fed into
-the rank_score for each candidate, so /me Recall Lab can show "why did
+the rank_score for each candidate, so the dashboard's Recall Lab can show "why did
 this row land at rank N" and operators can debug ranking.
 
 Covered:

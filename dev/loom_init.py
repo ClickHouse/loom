@@ -39,6 +39,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "sdk" / "python"))
 
+from server.auth import keyring  # noqa: E402
 from server.auth.jwt import mint_token  # noqa: E402
 from server.cli.doctor import dev_jwt_secret_warning  # noqa: E402
 
@@ -211,7 +212,7 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Service-account token TTL in days. Omit for an indefinite "
         "token (the default). Invalidation in that case is via "
-        "kid rotation (LOOM_JWT_ACTIVE_KID).",
+        "`loom revoke-token` or `loom signing-key retire`.",
     )
     parser.add_argument(
         "--roles",
@@ -246,6 +247,7 @@ def main(argv: list[str] | None = None) -> int:
     if warning := dev_jwt_secret_warning():
         print(f"! {warning}", file=sys.stderr)
 
+    keyring.load_for_offline_mint()
     subject = f"sa-{args.namespace}-{args.agent}"
     api_key = mint_token(
         subject=subject,

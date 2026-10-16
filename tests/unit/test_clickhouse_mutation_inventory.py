@@ -30,6 +30,8 @@ _EXPECTED_MUTATIONS = Counter(
         ("server/memory/app/projections.py", "entity_triples", "UPDATE"): 3,
         ("server/memory/store/blacklist.py", "blacklist", "UPDATE"): 1,
         ("server/memory/store/conflicts.py", "conflict_allowlist", "UPDATE"): 1,
+        # `loom blobs import` stamps the old blob directory's rows once their files are gone.
+        ("server/knowledge/store/documents.py", "documents", "UPDATE"): 1,
         ("server/knowledge/store/conversations.py", "conversation_embeddings", "UPDATE"): 1,
         ("server/knowledge/store/conversations.py", "conversation_threads", "UPDATE"): 1,
         # tombstone_thread and conversation.compact's tombstone_messages.
@@ -44,10 +46,13 @@ _EXPECTED_MUTATIONS = Counter(
         # run.complete drops a run id claim, also a KeeperMap key (the erasure saga's
         # drop goes through erasure.store.mutations.run_keeper_delete).
         ("server/tasks/store/runs.py", "agent_run_claims", "DELETE"): 1,
-        # The OAuth exchange and grant change claims are KeeperMap keys
-        # (server/core/keeper_claims.py, its statements built per table, so not
-        # listed here): a release drops a znode, the boot sweep drops the stale
-        # ones, and a stale claim's takeover is a compare-and-swap on it.
+        # KeeperMap keys only (elsewhere an end is a row): a projection's end drops its
+        # slot key, a begin clears a slot a dead process left, and a graph write raises
+        # its namespace's write key (a version-checked UPDATE).
+        ("server/memory/store/graph_projections.py", "graph_projections", "DELETE"): 2,
+        ("server/memory/store/graph_projections.py", "graph_projections", "UPDATE"): 1,
+        # The leader's hourly sweep of the slot keys of projections that died.
+        ("server/core/leases.py", "graph_projections", "DELETE"): 1,
         # Conditional Keeper key recovery, only after a kernel death proof and
         # a server-side quiescence check; not a MergeTree data mutation.
         ("server/insights/store/provider_lock.py", "_migration_lock", "DELETE"): 1,

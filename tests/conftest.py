@@ -277,6 +277,14 @@ async def agent(control_plane_url: str):
         yield a
 
 
+def pytest_sessionstart(session: pytest.Session) -> None:
+    """A test process mints its tokens itself without reading the server's
+    keyring: it signs as kid `default`, which the server under test verifies."""
+    from server.auth import keyring
+
+    keyring.sign_with_root_only()
+
+
 @pytest.fixture
 def mint_test_token():
     """A callable minting a service-account JWT for the test's own org, for

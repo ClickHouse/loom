@@ -318,7 +318,9 @@ class _CH:
         self.inserts: list[tuple[str, list[dict[str, Any]]]] = []
 
     async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
-        self.inserts.append((table, rows))
+        """The graph-write marks a scheduled projection flushes are not the write under test."""
+        if table not in ("loom.namespace_write_marks", "loom.graph_projections"):
+            self.inserts.append((table, rows))
 
     async def query_one(self, *_: Any, **__: Any) -> dict[str, Any] | None:
         return None
@@ -358,7 +360,22 @@ def _pending(peers: list[ConflictPeer]) -> ConflictResult:
 
 
 def _wire(monkeypatch: pytest.MonkeyPatch, verdict: ConflictResult) -> tuple[_CH, NS]:
-    ch, calls = _CH(), NS(check=[], marked=[], refined=[], versions=[], usage=[], audit=[])
+    ch, calls = (
+        _CH(),
+        NS(
+            check=[],
+            marked=[],
+            refined=[],
+            versions=[],
+            usage=[],
+            audit=[],
+            stamped=[],
+            stamp_sha=[],
+            current=[],
+            still_current=True,
+            row_sha=None,  # the live row's hash; None = the write's own
+        ),
+    )
     monkeypatch.setattr(mem_handlers, "get_client", lambda: ch)
     monkeypatch.setattr(_stack_mod, "get_client", lambda: ch)
     monkeypatch.setattr(_restore_mod, "get_client", lambda: ch)
@@ -384,15 +401,21 @@ def _wire(monkeypatch: pytest.MonkeyPatch, verdict: ConflictResult) -> tuple[_CH
         calls.check.append(kw)
         return verdict
 
-    async def _mark(**kw: Any) -> None:
+    async def _mark(**kw: Any) -> bool:
         calls.marked.append(kw)
+        return True
 
     async def _refines(**kw: Any) -> int:
         calls.refined.append(kw)
         return 1
 
-    async def _versions(org: str, ids: list[str], update: Any, **kw: Any) -> int:
-        calls.versions.append((org, ids, update(NS(memory_id=ids[0], conflict_with=[]))))
+    async def _versions(org: str, ids: list[str], update: Any, skip: Any = None, **kw: Any) -> int:
+        written = [r for t, rows in ch.inserts if t == "loom.memory" for r in rows]
+        sha = calls.row_sha if calls.row_sha is not None else written[-1]["content_sha256"]
+        row = NS(memory_id=ids[0], conflict_with=[], version=7, content_sha256=sha)
+        if skip is not None and skip(row):
+            return 0
+        calls.versions.append((org, ids, update(row)))
         return 1
 
     async def _usage(**kw: Any) -> None:
@@ -402,6 +425,17 @@ def _wire(monkeypatch: pytest.MonkeyPatch, verdict: ConflictResult) -> tuple[_CH
         calls.audit.append({"event_type": event_type, **kw})
         return "hash"
 
+    async def _stamp(ident: Any, **kw: Any) -> int:
+        calls.stamped.append(ident.memory_key)
+        calls.stamp_sha.append(kw.get("content_sha256"))
+        return 1
+
+    async def _current(ident: Any, sha: str) -> bool:
+        calls.current.append(sha)
+        return calls.still_current
+
+    monkeypatch.setattr(cd, "stamp_checked", _stamp)
+    monkeypatch.setattr(cd, "still_current", _current)
     monkeypatch.setattr(cf, "check_on_commit", _check)
     monkeypatch.setattr(cf, "mark_peers_conflicted", _mark)
     monkeypatch.setattr(cf, "apply_refines", _refines)
@@ -457,14 +491,41 @@ async def test_a_pending_write_lands_active_and_says_so(monkeypatch) -> None:
     assert calls.check[0]["defer_judge"] is True
     assert calls.audit[0]["subject"]["verdict"] == "pending"
     assert cd.is_pending(out.memory_id), "the judge is in flight after the response"
+    (emb,) = [rows[0] for t, rows in ch.inserts if t == "loom.memory_embeddings"]
+    assert emb["conflict_checked_at"] == cd.conflict_marks.PENDING_MARK, "owed, on the row"
+    assert calls.stamped == []
     gate.set()
     await _settled()
     assert not cd.is_pending(out.memory_id)
+    assert calls.stamped == ["release_day"], "the settle stamps the row"
+    assert calls.stamp_sha == [emb["content_sha256"]], "by the write's content hash"
     assert calls.marked == [] and calls.refined == [] and calls.versions == []
     from server.memory.app import drops
 
     rows = [r for r in drops._peek_for_tests() if r["stage"] == cd.DROP_STAGE]
     assert [(r["reason"], r["item"]) for r in rows] == [("clear", "release_day")]
+
+
+@pytest.mark.asyncio
+async def test_a_verdict_for_a_write_a_newer_revision_replaced_lands_nothing(monkeypatch) -> None:
+    """The key's memory_id is shared by its revisions: a judge that settles after a
+    newer write must not land its verdict on that write, nor stamp its mark."""
+    ch, calls = _wire(monkeypatch, _pending([_peer()]))
+
+    async def _settle(pj: PendingJudge) -> ConflictResult:
+        calls.still_current = False  # memory.update_by_id landed while the judge ran
+        return ConflictResult(verdict="conflict", peers=[_peer()], judged={_P1: "contradiction"})
+
+    monkeypatch.setattr(cf, "settle_deferred_judgement", _settle)
+    await write_mod.handle_memory_set(_input())
+    await _settled()
+    (emb,) = [rows[0] for t, rows in ch.inserts if t == "loom.memory_embeddings"]
+    assert calls.current == [emb["content_sha256"]] and emb["content_sha256"]
+    assert calls.marked == [] and calls.stamped == []
+    from server.memory.app import drops
+
+    rows = [r for r in drops._peek_for_tests() if r["stage"] == cd.DROP_STAGE]
+    assert [r["reason"] for r in rows] == [cd.MOVED]
 
 
 @pytest.mark.asyncio
@@ -477,7 +538,15 @@ async def test_a_settled_conflict_marks_the_new_row_and_its_peers(monkeypatch) -
     monkeypatch.setattr(cf, "settle_deferred_judgement", _settle)
     out = await write_mod.handle_memory_set(_input())
     await _settled()
-    assert calls.marked == [{"org": "test", "new_memory_id": out.memory_id, "peer_ids": [_P1]}]
+    (emb,) = [rows[0] for t, rows in ch.inserts if t == "loom.memory_embeddings"]
+    assert calls.marked == [
+        {
+            "org": "test",
+            "new_memory_id": out.memory_id,
+            "peer_ids": [_P1],
+            "expected_sha256": emb["content_sha256"],
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -515,7 +584,7 @@ async def test_a_settled_merge_makes_this_row_the_duplicate_and_reinforces_the_p
     out = await write_mod.handle_memory_set(_input())
     await _settled()
     assert calls.versions == [
-        ("test", [out.memory_id], {"status": "duplicate", "duplicate_of": _P1})
+        ("test", [out.memory_id], {"status": "duplicate", "duplicate_of": _P1, "version": 8})
     ]
     assert len(calls.usage) == 1 and calls.usage[0]["memory_id"] == _P1
     assert calls.usage[0]["event_type"] == "evidence"
@@ -536,7 +605,7 @@ async def test_a_settled_duplicate_points_at_the_peer_without_reinforcing(monkey
     out = await write_mod.handle_memory_set(_input(run_id="r1"))
     await _settled()
     assert calls.versions == [
-        ("test", [out.memory_id], {"status": "duplicate", "duplicate_of": _P1})
+        ("test", [out.memory_id], {"status": "duplicate", "duplicate_of": _P1, "version": 8})
     ]
     assert calls.usage == []
 
@@ -552,6 +621,7 @@ async def test_a_failing_settle_leaves_the_row_and_records_error(monkeypatch) ->
     out = await write_mod.handle_memory_set(_input())
     await _settled()
     assert not cd.is_pending(out.memory_id)
+    assert calls.stamped == [], "a failed settle leaves the mark for the conflict sweep"
     from server.memory.app import drops
 
     rows = [r for r in drops._peek_for_tests() if r["stage"] == cd.DROP_STAGE]
@@ -560,10 +630,13 @@ async def test_a_failing_settle_leaves_the_row_and_records_error(monkeypatch) ->
 
 @pytest.mark.asyncio
 async def test_await_verdict_and_dry_run_keep_the_inline_judge(monkeypatch) -> None:
-    _, calls = _wire(monkeypatch, ConflictResult(verdict="conflict", peers=[_peer()]))
+    ch, calls = _wire(monkeypatch, ConflictResult(verdict="conflict", peers=[_peer()]))
     out = await write_mod.handle_memory_set(_input(await_verdict=True))
     assert calls.check[-1]["defer_judge"] is False
     assert out.conflict_verdict == "conflict" and out.verdict_at == "inline"
+    (emb,) = [rows[0] for t, rows in ch.inserts if t == "loom.memory_embeddings"]
+    assert not cd.conflict_marks.is_mark(emb["conflict_checked_at"]), "settled inline"
+    assert emb["conflict_checked_at"] is not None
     assert len(calls.marked) == 1, "the inline conflict still marks its peers on the write"
     out = await write_mod.handle_memory_set(_input(dry_run=True))
     assert calls.check[-1]["defer_judge"] is False and out.verdict_at == "inline"
@@ -608,7 +681,8 @@ def test_verdict_from_row_derives_from_status_and_pending() -> None:
     assert cd.verdict_from_row("m", "superseded") == "superseded"
     assert cd.verdict_from_row("m", None) == ""
     cd._PENDING["m"] = 0.0
-    assert cd.verdict_from_row("m", "active") == "pending"
+    assert cd.verdict_from_row("m", "active") == "clear", "process memory decides nothing"
+    assert cd.verdict_from_row("m", "active", pending=True) == "pending"
     cd._reset_for_tests()
 
 
@@ -652,3 +726,71 @@ async def test_drain_waits_for_in_flight_judges() -> None:
     assert await cd.drain(timeout_s=1.0) == 1
     assert t.done() and await cd.drain(timeout_s=0.1) == 0
     cd._reset_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_a_revision_committed_after_the_check_keeps_its_own_status(monkeypatch) -> None:
+    """still_current() passes, then revision B commits before the verdict lands:
+    the duplicate flip carries the judged write's hash and leaves B alone."""
+    ch, calls = _wire(monkeypatch, _pending([_peer()]))
+
+    async def _settle(pj: PendingJudge) -> ConflictResult:
+        return ConflictResult(verdict="duplicate", peers=[_peer()], duplicate_of_id=_P1)
+
+    async def _current(ident: Any, sha: str) -> bool:
+        calls.current.append(sha)
+        calls.row_sha = "b" * 64  # B commits right after the check
+        return True
+
+    monkeypatch.setattr(cf, "settle_deferred_judgement", _settle)
+    monkeypatch.setattr(cd, "still_current", _current)
+    await write_mod.handle_memory_set(_input())
+    await _settled()
+    assert calls.current and calls.versions == [] and calls.stamped == []
+    from server.memory.app import drops
+
+    rows = [r for r in drops._peek_for_tests() if r["stage"] == cd.DROP_STAGE]
+    assert [r["reason"] for r in rows] == [cd.MOVED]
+
+
+async def test_a_refines_verdict_retires_no_peer_once_a_newer_revision_took_the_row(
+    monkeypatch,
+) -> None:
+    """B commits between still_current() and apply_refines(): its re-read right
+    before the supersede sees B's hash, so no peer is retired or linked."""
+    from types import SimpleNamespace
+
+    import server.memory.store as memory_repo
+    from server.memory.app import ops
+
+    reads = iter([SimpleNamespace(status="active", content_sha256="a" * 64)])
+
+    async def _get(*_: Any, **__: Any) -> Any:
+        return next(reads, SimpleNamespace(status="active", content_sha256="b" * 64))
+
+    retired: list[Any] = []
+    linked: list[Any] = []
+
+    async def _supersede(org: str, victims: list[Any], **_: Any) -> int:
+        retired.extend(victims)
+        return len(victims)
+
+    async def _no_truncation(*_: Any, **__: Any) -> set[str]:
+        return set()
+
+    async def _link(inp: Any) -> None:
+        linked.append(inp)
+
+    monkeypatch.setattr(memory_repo, "get_by_id", _get)
+    monkeypatch.setattr(memory_repo, "supersede_duplicates", _supersede)
+    monkeypatch.setattr(cf, "_truncating_refines", _no_truncation)
+    monkeypatch.setattr(ops, "handle_memory_link", _link)
+    n = await cf.apply_refines(
+        org="o",
+        namespace="n",
+        new_memory_id="new",
+        new_memory_key="k-new",
+        refined_peers=[_peer()],
+        expected_sha256="a" * 64,
+    )
+    assert n == 0 and retired == [] and linked == []

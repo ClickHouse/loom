@@ -11,11 +11,32 @@ import pytest
 
 from server.auth import grant_claims
 from server.core.errors import BackendUnavailableError, GrantBusyError
-from server.core.keeper_claims import Claim
+from server.core.leases import LeaseUnavailable
 from server.identity.api.models_grants import GrantsApproveInput, GrantsCreateInput
 from server.identity.app import grants as grants_app
 from server.identity.domain.grants import GrantState
 from server.identity.store import grants as grants_repo
+from tests.unit.claims_fake import MemoryClaims
+
+
+class _Lease:
+    def __init__(self, released: list[str], name: str) -> None:
+        self.released = released
+        self.name = name
+
+    async def release(self) -> None:
+        self.released.append(self.name)
+
+
+def _held(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Every claim is granted at once; the list collects the names released."""
+    released: list[str] = []
+
+    async def _take(name: str, **_k: Any) -> _Lease:
+        return _Lease(released, name)
+
+    monkeypatch.setattr(grant_claims, "take", _take)
+    return released
 
 
 async def _change(log: list[str], name: str, key: tuple[str, str, str], hold: float) -> None:
@@ -25,7 +46,11 @@ async def _change(log: list[str], name: str, key: tuple[str, str, str], hold: fl
         log.append(f"{name} out")
 
 
-def test_without_a_keeper_two_changes_of_one_grant_run_one_after_the_other() -> None:
+def test_two_changes_of_one_grant_run_one_after_the_other(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    claims = MemoryClaims()
+    monkeypatch.setattr(grant_claims, "take", claims.take)
     log: list[str] = []
 
     async def _both() -> None:
@@ -34,7 +59,7 @@ def test_without_a_keeper_two_changes_of_one_grant_run_one_after_the_other() -> 
 
     asyncio.run(_both())
     assert log == ["a in", "a out", "b in", "b out"]
-    assert len(grant_claims._local) == 0, "the last change out drops the key's lock"
+    assert not claims.held, "the last change out releases the claim"
 
 
 def test_reads_under_a_claim_see_the_last_holder_s_write() -> None:
@@ -50,21 +75,12 @@ def test_reads_under_a_claim_see_the_last_holder_s_write() -> None:
 def test_a_change_that_outruns_its_bound_is_cut_off_and_released(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    released: list[str] = []
-
-    async def _held(ch: Any, key: str) -> tuple[Claim, str]:
-        return Claim.HELD, "me"
-
-    async def _release(ch: Any, key: str, holder: str) -> None:
-        released.append(holder)
-
-    monkeypatch.setattr(grant_claims.CLAIMS, "claim", _held)
-    monkeypatch.setattr(grant_claims.CLAIMS, "release_shielded", _release)
+    released = _held(monkeypatch)
     monkeypatch.setattr(grant_claims, "CHANGE_S", 0.05)
     log: list[str] = []
     with pytest.raises(BackendUnavailableError):
         asyncio.run(_change(log, "slow", ("acme", "team", "alice"), 1.0))
-    assert log == ["slow in"] and released == ["me"], "no write after the bound"
+    assert log == ["slow in"] and len(released) == 1, "no write after the bound"
 
 
 def test_changes_of_different_grants_do_not_wait_on_each_other() -> None:
@@ -83,25 +99,26 @@ def test_changes_of_different_grants_do_not_wait_on_each_other() -> None:
 def test_a_change_waits_for_the_holder_then_gives_up_retryably(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    claims: list[str] = []
+    waits: list[float] = []
 
-    async def _taken(ch: Any, key: str) -> tuple[Claim, str]:
-        claims.append(key)
-        return Claim.TAKEN, ""
+    async def _taken(name: str, *, wait_s: float = 0.0, **_k: Any) -> None:
+        waits.append(wait_s)
+        return None
 
-    monkeypatch.setattr(grant_claims.CLAIMS, "claim", _taken)
-    monkeypatch.setattr(grant_claims, "WAIT_S", 0.12)
+    monkeypatch.setattr(grant_claims, "take", _taken)
     with pytest.raises(GrantBusyError) as busy:
         asyncio.run(_change([], "a", ("acme", "team", "alice"), 0))
-    assert len(claims) > 1, "it retried before giving up"
+    assert waits == [grant_claims.WAIT_S], "it waited for the holder before giving up"
     assert busy.value.status_code == 503 and busy.value.extra["retry_after_s"] == 1
 
 
-def test_a_keeper_that_cannot_answer_refuses_retryably(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def _down(ch: Any, key: str) -> tuple[Claim, str]:
-        raise TimeoutError
+def test_a_lease_store_that_cannot_answer_refuses_retryably(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _down(name: str, **_k: Any) -> None:
+        raise LeaseUnavailable("down")
 
-    monkeypatch.setattr(grant_claims.CLAIMS, "claim", _down)
+    monkeypatch.setattr(grant_claims, "take", _down)
     with pytest.raises(BackendUnavailableError):
         asyncio.run(_change([], "a", ("acme", "team", "alice"), 0))
 
@@ -110,16 +127,7 @@ def test_a_keeper_that_cannot_answer_refuses_retryably(monkeypatch: pytest.Monke
 def test_a_held_claim_is_released_when_the_change_ends(
     monkeypatch: pytest.MonkeyPatch, fails: bool
 ) -> None:
-    released: list[tuple[str, str]] = []
-
-    async def _held(ch: Any, key: str) -> tuple[Claim, str]:
-        return Claim.HELD, "me"
-
-    async def _release(ch: Any, key: str, holder: str) -> None:
-        released.append((key, holder))
-
-    monkeypatch.setattr(grant_claims.CLAIMS, "claim", _held)
-    monkeypatch.setattr(grant_claims.CLAIMS, "release_shielded", _release)
+    released = _held(monkeypatch)
 
     async def _run() -> None:
         async with grant_claims.grant_change("acme", "team", "alice"):
@@ -131,7 +139,7 @@ def test_a_held_claim_is_released_when_the_change_ends(
             asyncio.run(_run())
     else:
         asyncio.run(_run())
-    assert released == [('["acme", "team", "alice"]', "me")]
+    assert released == ['grant:["acme", "team", "alice"]']
 
 
 def test_a_promotion_during_an_approval_waits_for_it_instead_of_being_written_over(
@@ -180,44 +188,6 @@ def test_a_promotion_during_an_approval_waits_for_it_instead_of_being_written_ov
 
     asyncio.run(_both())
     assert [r["role"] for r in rows] == ["writer", "admin"]
-
-
-def test_without_a_keeper_a_change_waits_no_longer_than_with_one(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(grant_claims, "WAIT_S", 0.05)
-    log: list[str] = []
-
-    async def _both() -> None:
-        key = ("acme", "team", "alice")
-        holder = asyncio.ensure_future(_change(log, "a", key, 0.3))
-        await asyncio.sleep(0)
-        with pytest.raises(GrantBusyError):
-            await _change(log, "b", key, 0)
-        await holder
-
-    asyncio.run(_both())
-    assert log == ["a in", "a out"]
-    assert len(grant_claims._local) == 0, "the waiter that gave up left no lock behind"
-
-
-def test_a_cancelled_wait_for_a_local_lock_leaves_nothing_behind() -> None:
-    from server.core.keyed_locks import KeyedLocks
-
-    locks = KeyedLocks()
-
-    async def _run() -> None:
-        async with locks.hold("k"):
-            waiter = asyncio.ensure_future(locks.hold("k", wait_s=5).__aenter__())
-            await asyncio.sleep(0)
-            waiter.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await waiter
-        async with locks.hold("k", wait_s=0.1):
-            pass  # the lock is free again
-
-    asyncio.run(_run())
-    assert len(locks) == 0
 
 
 def test_two_admins_revoked_at_once_leave_one(monkeypatch: pytest.MonkeyPatch) -> None:

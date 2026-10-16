@@ -11,8 +11,9 @@ against what is stored, and how rows change over time.
 
 Memories, document chunks, conversation turns, entity edges, code symbols, runs, audit
 entries and erasure requests are all rows in one ClickHouse database, created by
-numbered migrations the server applies on boot. Outside ClickHouse, Loom keeps only
-uploaded document originals (the blob volume) and the code index's git mirrors.
+numbered migrations the server applies on boot. Uploaded document originals are rows
+too (`loom.document_blobs`). Outside ClickHouse, Loom keeps only the code index's git
+mirrors, a cache of the remotes ClickHouse records.
 
 - **The identity tuple leads the sort keys.** `loom.memory` is ordered by
   `(org, namespace, agent, user_id, session_id, memory_key)`, so scoping a read to a
@@ -324,7 +325,8 @@ Links are kept against the trunk. On another branch, a lesson compares the branc
 definition, under any of the link's last 16 names, with the text the memory was written
 against: a release branch that still has the old text reads `fresh` after trunk changed
 it, and one that has code trunk removed still gets its lesson. Where the branch's files
-cannot be read (a read replica has no git mirror), a lesson carries trunk's last state.
+cannot be read (a host with `LOOM_GIT_HISTORY=none` has no git mirror), a lesson carries
+trunk's last state.
 
 The links are read where the code is:
 

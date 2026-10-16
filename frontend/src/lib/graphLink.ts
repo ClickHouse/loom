@@ -2,11 +2,11 @@
  * The Graph is a drill-down, not a destination. It left the sidebar; the way in is an
  * entity on something you are already reading (a memory's entities, a related memory's
  * shared entities). These helpers build that link so every entry point lands the Explorer
- * on the same `/me/graph?seed=<entity>` walk (`seed` is the Explorer's own query key).
+ * on the same `/graph?seed=<entity>` walk (`seed` is the Explorer's own query key).
  */
 import { useStore } from "./state";
 
-const GRAPH_PATH = "/me/graph";
+const GRAPH_PATH = "/graph";
 
 /** The href a seed walk lives at — for anchors, so cmd-click opens a tab. */
 export function graphSeedHref(entity: string): string {

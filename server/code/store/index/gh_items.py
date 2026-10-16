@@ -27,6 +27,21 @@ class GhItemsMixin(CodeRepoBase):
         )
         return [int(r["number"]) for r in rows]
 
+    async def open_pr_heads(self, org: str, ns: str, *, limit: int = 4000) -> dict[int, str]:
+        """PR number → the head sha the ledger holds for each open PR (the leader's
+        mirror's `refs/pull/N/head`), newest activity first."""
+        rows = await self._ch.query_all(
+            """
+            SELECT number, head_sha FROM loom.code_gh_items FINAL
+            WHERE org = {org:String} AND namespace = {ns:String}
+              AND tombstoned_at IS NULL AND is_pr AND state = 'open' AND head_sha != ''
+            ORDER BY updated_at DESC, number DESC
+            LIMIT {limit:UInt32}
+            """,
+            {"org": org, "ns": ns, "limit": int(limit)},
+        )
+        return {int(r["number"]): str(r["head_sha"]) for r in rows}
+
     async def open_prs_for_head_fill(
         self, org: str, ns: str, *, limit: int = 200
     ) -> list[dict[str, Any]]:

@@ -5,10 +5,10 @@ repositories people add themselves and the operator's configuration. When both n
 same namespace, the operator's entry wins. One code namespace is one branch
 ([overview](overview.md#one-namespace-is-one-branch)).
 
-| Path                | How                                                                                                                       | Built by                               | Tiers                                              |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- | -------------------------------------------------- |
-| Self-service        | **Repositories → Add repository** in the dashboard, or **Add branch** on a card you maintain                              | the `code_ingest` worker, in slices    | fast tier; optional compiler tiers                 |
-| Operator-configured | an entry in `LOOM_CODE_REPOS_JSON` (or the scalar `LOOM_CODE_*` settings), then `loom code init` and `loom code backfill` | the operator, with the `loom code` CLI | fast tier, plus the compiler tier where configured |
+| Path                | How                                                                                                  | Built by                               | Tiers                                              |
+| ------------------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------- | -------------------------------------------------- |
+| Self-service        | **Repositories → Add repository** in the dashboard, or **Add branch** on a card you maintain         | the `code_ingest` worker, in slices    | fast tier; optional compiler tiers                 |
+| Operator-configured | an entry in `LOOM_CODE_REPOS_JSON` (or the scalar `LOOM_CODE_*` settings), then `loom code backfill` | the operator, with the `loom code` CLI | fast tier, plus the compiler tier where configured |
 
 Self-service needs no operator or shell access for the fast tier. Compiler tiers are
 optional precision upgrades and need their language toolchain in the worker image.

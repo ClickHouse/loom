@@ -4,9 +4,11 @@
 #
 #   curl -fsSL …/install.sh | sh                      # with its own ClickHouse
 #   curl -fsSL …/install.sh | sh -s -- --clickhouse https://loom@host:8443
+#   curl -fsSL …/install.sh | sh -s -- --bundled      # back to its own ClickHouse
 #
 # --clickhouse (or LOOM_CH_URL) points Loom at a self-managed server or a
-# ClickHouse Cloud service instead. The password comes from LOOM_CH_PASSWORD,
+# ClickHouse Cloud service instead; --bundled switches an install back (and wins
+# over LOOM_CH_URL). The password comes from LOOM_CH_PASSWORD,
 # a prompt, or the URL (where `ps` and shell history see it); it is written
 # only to .env (mode 600).
 
@@ -17,6 +19,8 @@ INSTALL_DIR=${LOOM_INSTALL_DIR:-"$HOME/.loom"}
 REQUESTED_VERSION=${LOOM_VERSION:-latest}
 SKIP_START=${LOOM_SKIP_START:-0}
 CH_URL=${LOOM_CH_URL:-}
+BUNDLED=0
+CH_URL_FLAG=0
 
 fail() {
   printf 'Loom installer: %s\n' "$*" >&2
@@ -47,15 +51,25 @@ while [ $# -gt 0 ]; do
     --clickhouse)
       [ $# -ge 2 ] || fail "--clickhouse needs a URL"
       CH_URL=$2
+      CH_URL_FLAG=1
       shift 2
       ;;
     --clickhouse=*)
       CH_URL=${1#--clickhouse=}
+      CH_URL_FLAG=1
       shift
       ;;
-    *) fail "unknown argument: $1 (the only option is --clickhouse URL)" ;;
+    --bundled)
+      BUNDLED=1
+      shift
+      ;;
+    *) fail "unknown argument: $1 (the options are --clickhouse URL and --bundled)" ;;
   esac
 done
+if [ "$BUNDLED" = 1 ]; then
+  [ "$CH_URL_FLAG" = 0 ] || fail "--bundled and --clickhouse are exclusive"
+  CH_URL= # --bundled overrides a LOOM_CH_URL left in the environment
+fi
 
 command -v docker >/dev/null 2>&1 || fail "Docker is required: https://docs.docker.com/get-docker/"
 compose_version=$(docker compose version --short 2>/dev/null) || fail "the Docker Compose v2 plugin is required"
@@ -290,6 +304,14 @@ if [ -n "$CH_URL" ]; then
   [ -n "${KEEP_PASSWORD:-}" ] || set_env LOOM_CH_PASSWORD "$(dotenv_quote "$CH_PASSWORD")"
   printf 'Loom will use ClickHouse at %s:%s as %s\n' "$CH_HOST" "$CH_PORT" "$CH_USER"
 fi
+if [ "$BUNDLED" = 1 ]; then
+  # The bundled server again: the outside one's connection settings go with it.
+  awk '!/^LOOM_CH_(HOST|PORT|SECURE|USER|PASSWORD|READER_USER)=/' \
+    "$INSTALL_DIR/.env" >"$tmp_dir/env.updated"
+  mv "$tmp_dir/env.updated" "$INSTALL_DIR/.env"
+  set_env COMPOSE_PROFILES bundled
+  printf 'Loom will use its bundled ClickHouse\n'
+fi
 for key in $KEPT_SETTINGS; do
   [ -z "$(given "$key")" ] || set_env "$key" "$(given "$key")"
 done
@@ -317,8 +339,13 @@ case ",$(get_env COMPOSE_PROFILES)," in
   *)
     # Your own ClickHouse: create the database and the reader user, or stop
     # here with the SQL an admin has to run.
-    compose run --rm --no-deps loom loom ch-setup \
-      || fail "ClickHouse is not ready for Loom (above); fix it and run the installer again"
+    status=0
+    compose run --rm --no-deps loom loom ch-setup || status=$?
+    case $status in
+      0) ;;
+      3) fail "that ClickHouse has no Keeper, which Loom needs (above). Give it one and run the installer again, or run it with --bundled to use the bundled ClickHouse, which runs its own" ;;
+      *) fail "ClickHouse is not ready for Loom (above); fix it and run the installer again" ;;
+    esac
     ;;
 esac
 compose up -d
@@ -337,7 +364,7 @@ attempt=0
 while [ "$attempt" -lt 90 ]; do
   if curl -fsS "$health" 2>/dev/null | grep -q '"status"[[:space:]]*:[[:space:]]*"ok"'; then
     printf '\nLoom is ready.\n'
-    printf 'Dashboard: http://%s:%s/me\n' "$host" "$port"
+    printf 'Dashboard: http://%s:%s/\n' "$host" "$port"
     printf 'Files:     %s\n' "$INSTALL_DIR"
     printf 'Logs:      docker compose --project-directory %s logs -f loom\n' "$INSTALL_DIR"
     # --profile bundled also stops a bundled server left from before a switch.

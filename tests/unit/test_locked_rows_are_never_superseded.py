@@ -62,7 +62,7 @@ async def test_supersede_leaves_a_locked_victim_live_in_both_tables(monkeypatch)
         embedded.extend(key[5] for key, _ in items)
         return 0
 
-    async def _mirror(rows: Any, *, ch: Any = None) -> None:
+    async def _mirror(rows: Any, *, ch: Any = None, **_: Any) -> None:
         embedded.extend(r["memory_key"] for r in rows)
 
     monkeypatch.setattr(lc, "get_by_id", _get)

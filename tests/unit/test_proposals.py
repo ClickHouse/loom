@@ -187,7 +187,7 @@ def test_mark_peers_keeps_a_proposal_on_trial(monkeypatch: pytest.MonkeyPatch) -
 
     writes: list[tuple[list[str], dict[str, Any]]] = []
 
-    async def _write(org: str, ids: list[str], update: Any, *, ch: Any = None, **kw: Any) -> int:
+    async def _write(org: str, ids: list[str], update: Any, *, ch: Any = None, **_: Any) -> int:
         row = _Row("new", "proposed") if ids == ["new"] else _Row("peer", "active")
         writes.append((ids, update(row)))
         return 1

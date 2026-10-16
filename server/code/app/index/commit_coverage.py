@@ -18,8 +18,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from server.settings import settings
-
 SHA_RE = re.compile(r"^[0-9a-fA-F]{7,40}$")
 
 # (git_dir, commit, watermark) -> bool | None; bounded, positive answers only
@@ -41,7 +39,7 @@ async def _commits_since(git_dir: str, commit: str, watermark: str) -> int:
 
     if commit.lower() == watermark.lower():
         return 0
-    if settings.read_replica:
+    if not git_dir:
         return -1
     key = (git_dir, commit.lower(), watermark.lower())
     if key in _COUNT_MEMO:
@@ -61,7 +59,7 @@ async def _paths_since(git_dir: str, commit: str, head: str) -> list[str] | None
 
     if commit.lower() == head.lower():
         return []
-    if settings.read_replica:
+    if not git_dir:
         return None
     key = (git_dir, commit.lower(), head.lower())
     if key in _PATHS_MEMO:
@@ -89,7 +87,7 @@ async def _covered(git_dir: str, commit: str, watermark: str) -> bool | None:
         return None
     if commit.lower() == watermark.lower():
         return True
-    if settings.read_replica:
+    if not git_dir:
         return None  # no mirror here to walk the history with
     key = (git_dir, commit.lower(), watermark.lower())
     if key in _MEMO:
@@ -111,13 +109,15 @@ async def commit_coverage(
     git_head: str,
     tiers: list[dict[str, Any]],
     paths: list[str] | None = None,
+    gap: str = "",
 ) -> dict[str, Any]:
     """The coverage block `code.index_status` returns for `commit`.
 
     `tiers` are the status's compiler tiers (producer, label, watermark_key,
     commit). Every tier whose watermark is set is required: `ready` is true
     only when the fast tier and all of them reach the commit. `waiting_on`
-    names the tiers that do not yet, in the status's order."""
+    names the tiers that do not yet, in the status's order. An empty `git_dir`
+    is a host without the mirror; `gap` says why (`mirrors.history_dir`)."""
     commit = (commit or "").strip()
     paths_asked = [p for p in (paths or []) if isinstance(p, str) and p][:2000]
     out: dict[str, Any] = {
@@ -173,8 +173,8 @@ async def commit_coverage(
     out["in_mirror"] = known
     if not known:
         waiting = [
-            "commit not checked: this read-replica has no git mirror"
-            if settings.read_replica
+            f"commit not checked: {gap or 'no git mirror on this host'}"
+            if not git_dir
             else "commit not in the index's mirror yet"
         ]
     out["waiting_on"] = waiting

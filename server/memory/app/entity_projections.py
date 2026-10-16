@@ -370,6 +370,7 @@ async def project_memory_set_entities(
     ch: Any = None,
     wait_visible: bool = False,
     memory_id: str = "",
+    ents: list[str] | None = None,
 ) -> int:
     """Fail-open entity projection for a single `memory.set`.
 
@@ -378,12 +379,14 @@ async def project_memory_set_entities(
     Returns the count of distinct candidates projected (0 when <2).
     `wait_visible` is for the projection that runs beside the response: its
     edges are readable once it returns. With `memory_id`, the edges are linked
-    to that row and its value (`entity_edge_rows`).
+    to that row and its value (`entity_edge_rows`). `ents`: the caller's own
+    `set_entities_for_projection(input, value)`, not mined again.
     """
     from server.observability.otel import traced
 
-    with traced("entities.extract"):
-        ents = set_entities_for_projection(input, value)
+    if ents is None:
+        with traced("entities.extract"):
+            ents = set_entities_for_projection(input, value)
     if len(ents) < 2:
         # <2 entities = no co-occurrence pair. Lone nodes come from the
         # bulk/worker path; edges are what point-writes were missing.
@@ -1307,7 +1310,7 @@ async def live_holders(
 
 # The migration that started linking rows to triples: a value first written before it
 # was applied has no links of its own.
-_ROW_LINKS_MIGRATION = "033_entity_triple_rows.sql"
+_ROW_LINKS_MIGRATION = "039_entity_triple_rows.sql"
 
 
 async def held_by_unlinked_rows(

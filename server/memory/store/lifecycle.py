@@ -44,12 +44,16 @@ async def write_versions_by_ids(
     strong: bool = False,
     on_written: Callable[[list[dict[str, Any]]], None] | None = None,
     on_unconfirmed: Callable[[list[dict[str, Any]]], Awaitable[None]] | None = None,
+    judged: bool = False,
 ) -> int:
     """Write a new version of each live row in `memory_ids`: `update(existing)`'s
     overrides on every persisted column carried forward, a fresh `version` unless it
     sets one. `skip` leaves a row as it is; `strong` reads read-your-writes.
     `on_written` / `on_unconfirmed` hear what the re-read confirmed or could not (see
-    Lifecycle in memory-architecture.md). Returns the rows written, or confirmed."""
+    Lifecycle in memory-architecture.md). `judged`: the rows land a deferred verdict
+    on the write it judged (`conflicts.judged_write`), and the status mirror copies
+    only that write's vector rows (`mirror_status_to_embeddings(judged=True)`).
+    Returns the rows written, or confirmed."""
 
     if not memory_ids:
         return 0
@@ -105,7 +109,7 @@ async def write_versions_by_ids(
     # admitting superseded and unpenalised conflicted rows.
     status_changes = [r for r in rows if r.get("status") and r.get("status") != "active"]
     if status_changes:
-        await mirror_status_to_embeddings(status_changes, ch=ch)
+        await mirror_status_to_embeddings(status_changes, ch=ch, judged=judged)
     return len(confirmed)
 
 

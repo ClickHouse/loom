@@ -76,24 +76,30 @@ def test_tampered_cursor_is_rejected() -> None:
         paging.decode("not-a-cursor", kind="s", params=_ph(inp))
 
 
-def test_cursors_are_signed_with_the_active_signing_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    """With a key map set, `jwt_secret` is not the signing key: a cursor keyed
-    on it is not one this server issued, and a rotation retires old cursors."""
+def test_cursors_are_signed_with_the_root_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every process holds the root secret, so a cursor one issues decodes on
+    another whatever key signs tokens; a changed root secret retires it."""
+    from datetime import datetime
+
+    from server.auth import keyring
+
     inp = _inp()
 
     def _cursor() -> str:
         return paging.encode(kind="s", run_id="r1", offset=5, params=_ph(inp), indexed_commit="")
 
-    monkeypatch.setattr(settings, "jwt_secret", "flat-secret")
-    monkeypatch.setattr(settings, "jwt_secrets_json", "")
-    keyed_on_flat = _cursor()
-    monkeypatch.setattr(settings, "jwt_secrets_json", '{"k1": "old-key", "k2": "new-key"}')
-    monkeypatch.setattr(settings, "jwt_active_kid", "k2")
-    with pytest.raises(paging.CursorError, match="checksum"):
-        paging.decode(keyed_on_flat, kind="s", params=_ph(inp))
+    monkeypatch.setattr(settings, "jwt_secret", "root-secret")
     issued = _cursor()
-    assert paging.decode(issued, kind="s", params=_ph(inp))["o"] == 5
-    monkeypatch.setattr(settings, "jwt_active_kid", "k1")
+    monkeypatch.setattr(
+        keyring,
+        "_view",
+        keyring._View(
+            loaded=True, keys={"k2": keyring.SigningKey("k2", "HS256", "new-key", "", datetime.min)}
+        ),
+    )
+    for cursor in (issued, _cursor()):
+        assert paging.decode(cursor, kind="s", params=_ph(inp))["o"] == 5
+    monkeypatch.setattr(settings, "jwt_secret", "another-root-secret")
     with pytest.raises(paging.CursorError, match="checksum"):
         paging.decode(issued, kind="s", params=_ph(inp))
 

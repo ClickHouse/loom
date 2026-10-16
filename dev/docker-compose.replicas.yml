@@ -1,0 +1,102 @@
+# Reference N-replica deployment: identical Loom replicas behind nginx, one
+# ClickHouse (from .env, as in docker-compose.cloud.yml), no shared volumes.
+#
+#   docker compose --env-file .env -f dev/docker-compose.replicas.yml up -d --build
+#
+# Every replica runs the same image and env with LOOM_BACKGROUND_WORKERS=auto:
+# the one holding the ClickHouse lease runs the workers in a child process,
+# so it serves requests as fast as the others. Add a replica by copying a
+# service and naming it in deploy/proxy/replicas.conf. Documents, keys and
+# configuration live in ClickHouse; git mirrors are per-replica disk.
+#
+# Healthchecks read /v1/health/ready: a replica is healthy once it can serve
+# and turns unhealthy while it drains after SIGTERM. The nginx in front does
+# not read them (passive checks only, deploy/proxy/replicas.conf); a balancer
+# that probes /v1/health/ready is in docs/operations/deployment.md.
+
+x-loom-replica: &loom-replica
+  build:
+    context: ..
+    dockerfile: Dockerfile
+    args:
+      LOOM_EMBEDDING_MODEL: "${LOOM_EMBEDDING_MODEL:-text-embedding-3-small}"
+      LOOM_BUILD_COMMIT: "${LOOM_BUILD_COMMIT:-unknown}"
+  image: loom:replicas
+  restart: unless-stopped
+  init: true
+  # The per-server runtime files (server/core/runtime_files.py), empty on every start.
+  tmpfs:
+    - /run/loom:uid=999,gid=999,mode=0700
+  # 15 s not ready while serving, uvicorn ≤ 10 s, lifespan drains ≤ 40 s.
+  stop_grace_period: 75s
+  ulimits:
+    nofile:
+      soft: 65536
+      hard: 65536
+  env_file:
+    - ../.env
+  environment: &loom-replica-env
+    PORT: "7777"
+    LOOM_DEPLOYMENT: "1"
+    LOOM_BACKGROUND_WORKERS: "auto"
+    LOOM_SHUTDOWN_READY_DELAY_S: "15"
+    # Only the proxy's X-Forwarded-For names the client (sign-in limits).
+    LOOM_TRUSTED_PROXIES: "172.30.77.10"
+    LOOM_BIND_HOST: "0.0.0.0"
+  healthcheck:
+    test:
+      [
+        "CMD",
+        "python",
+        "-c",
+        "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:7777/v1/health/ready', timeout=3).status==200 else 1)",
+      ]
+    interval: 5s
+    timeout: 3s
+    retries: 2
+    # A boot can wait up to 900 s on another replica's migration lease.
+    start_period: 900s
+  networks:
+    loom-replicas:
+
+services:
+  loom-1:
+    <<: *loom-replica
+    container_name: loom-1
+    environment:
+      <<: *loom-replica-env
+      LOOM_INSTANCE_LABEL: "deploy:replica-1"
+
+  loom-2:
+    <<: *loom-replica
+    container_name: loom-2
+    environment:
+      <<: *loom-replica-env
+      LOOM_INSTANCE_LABEL: "deploy:replica-2"
+
+  proxy:
+    image: nginx:1.28.3-alpine@sha256:a8b39bd9cf0f83869a2162827a0caf6137ddf759d50a171451b335cecc87d236
+    container_name: loom-replicas-proxy
+    restart: unless-stopped
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - "${LOOM_BIND_HOST:-127.0.0.1}:7777:7777"
+    volumes:
+      - ../deploy/proxy/replicas.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      loom-1:
+        condition: service_healthy
+      loom-2:
+        condition: service_healthy
+    networks:
+      loom-replicas:
+        ipv4_address: 172.30.77.10
+
+networks:
+  loom-replicas:
+    ipam:
+      config:
+        - subnet: 172.30.77.0/24

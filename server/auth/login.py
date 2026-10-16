@@ -23,6 +23,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from server.auth import attempts
 from server.auth.attempts import Attempts, client_address
 from server.auth.jwt import mint_token
 from server.auth.passwords import hash_password, verify_password_off_loop
@@ -57,13 +58,25 @@ Identity = tuple[str, str, list[str], list[str]]
 _BAD_CREDS = {"code": "AUTH_INVALID", "message": "Invalid email or password."}
 
 # Failed sign-ins per identifier (guessing one account's password) and per
-# client address (spraying many accounts), per 15 minutes.
-_failures_by_identifier = Attempts(10, 900)
-_failures_by_address = Attempts(50, 900)
+# client address (spraying many accounts), per 15 minutes. Each attempt is
+# recorded and recounted before its password is checked, so a concurrent burst
+# reaches the check at most `limit` times.
+_by_identifier = Attempts("login.identifier", 10, 900)
+_by_address = Attempts("login.address", 50, 900)
 
 
 class LoginThrottled(Exception):
     """Too many failed sign-ins for this identifier or address; retry later."""
+
+    retry_after_s = 900
+    message = "Too many failed sign-ins; try again later."
+
+
+class LoginBusy(LoginThrottled):
+    """This process is checking as many sign-ins as it takes at once; retry shortly."""
+
+    retry_after_s = 1
+    message = "Too many sign-ins at once; try again in a second."
 
 
 class SignInUnavailable(Exception):
@@ -91,16 +104,30 @@ async def resolve_user_credentials(
     password hash so response timing doesn't leak account existence.
     """
     ident = identifier.strip().lower()
-    if _failures_by_identifier.blocked(ident) or (
-        address and _failures_by_address.blocked(address)
-    ):
-        raise LoginThrottled
-    resolved = await _check_credentials(ident, password)
-    if resolved is None:
-        _failures_by_identifier.record(ident)
-        if address:
-            _failures_by_address.record(address)
-    return resolved
+    gates = [(_by_identifier, ident)] + ([(_by_address, address)] if address else [])
+    try:
+        async with attempts.slot():
+            admitted = await attempts.admit(gates)
+            if admitted is None:
+                raise LoginThrottled
+            try:
+                resolved = await _check_credentials(ident, password)
+            except BaseException:
+                # A check that crashed (a ClickHouse timeout) judged nothing.
+                await _release_quietly(admitted)
+                raise
+            if resolved is not None:
+                await attempts.release(admitted)
+            return resolved
+    except attempts.Busy as e:
+        raise LoginBusy from e
+
+
+async def _release_quietly(admitted: attempts.Admission) -> None:
+    try:
+        await attempts.release(admitted)
+    except Exception as e:  # noqa: BLE001 — the check's own error is the one to raise
+        log.warning("login: could not release a crashed attempt: %s", e)
 
 
 async def _check_credentials(ident: str, password: str) -> Identity | None:
@@ -303,9 +330,9 @@ async def login(input: LoginInput, request: Request) -> LoginOutput:
             status_code=429,
             detail={
                 "code": "RATE_LIMITED",
-                "message": "Too many failed sign-ins; try again later.",
+                "message": e.message,
             },
-            headers={"Retry-After": "900"},
+            headers={"Retry-After": str(e.retry_after_s)},
         ) from e
     if resolved is None:
         raise HTTPException(status_code=401, detail=_BAD_CREDS)

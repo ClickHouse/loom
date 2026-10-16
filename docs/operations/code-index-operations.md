@@ -123,11 +123,24 @@ default is off.
 ## First index
 
 ```bash
-docker exec loom-workers loom code init     --namespace code-myrepo --org acme   # bare clone + index state
+docker exec loom-workers loom code init     --namespace code-myrepo --org acme   # optional: bare clone + index state
 docker exec loom-workers loom code backfill --namespace code-myrepo --org acme --embed
 docker exec loom-workers loom code backfill-prs --namespace code-myrepo --org acme --months 12
 ```
 
+- `init` is optional: the ingest pass clones a missing mirror in the background, for an
+  operator-configured entry too, and logs the path it clones into (`loom doctor`'s
+  `code_mirrors` line names an operator `git_dir` that is missing, so a mistyped path
+  is not a silent multi-GB clone). The mirror is a cache of the remote ClickHouse
+  records: every serving host clones the mirrors of indexed entries at boot
+  (`LOOM_CODE_MIRROR_WARMUP`) and, every `LOOM_CODE_MIRROR_FETCH_INTERVAL_S`, fetches
+  the refs the leader's pass recorded in ClickHouse that it lacks (no `ls-remote`, and
+  no network call when it is current). Until a host has the mirror, its history reads
+  answer `no_git_mirror: cloning <entry>`; `/v1/health?include=mirrors` lists the host's
+  mirrors under `mirrors`. Disk: every host holds a copy of every mirror (N replicas, N copies), and
+  an operator `git_dir` must be writable by the `loom` user. Network: a host with an
+  empty disk makes one full clone per indexed repository; keep `LOOM_CODE_REPOS_ROOT`
+  on a persistent volume so a rollout does not re-clone every mirror on every pod.
 - `backfill` parses, chunks, extracts symbols and edges, and embeds each file. It is
   resumable: re-run it after an interruption. `--phase index` then `--phase embed` splits
   the work, since the unembedded rows are the embed phase's queue. `--commit <sha>` pins
@@ -180,9 +193,11 @@ cadence setting and default is in the [workers reference](../reference/workers.m
 The per-language compiler-tier workers are in the next section.
 
 **Push-triggered refresh.** A CI job can call `POST /v1/code.refresh` (`WRITER`) right
-after a merge. It runs the same ingest pass immediately for that namespace, coalesces
-concurrent triggers, and answers 404 for a namespace no entry configures, so the pusher
-never decides what gets indexed. It works with the poller disabled.
+after a merge. It runs the same ingest pass immediately for that namespace on the replica
+that received it, under the namespace's lease (`code_refresh:<org>/<namespace>`), so
+triggers landing on different replicas coalesce into one pass. It answers 404 for a
+namespace no entry configures, so the pusher never decides what gets indexed. It works
+with the poller disabled.
 
 Open pull requests are not indexed; the working tree stays the client's own.
 
@@ -220,6 +235,11 @@ prerequisites are absent records a skip in `workers.status`; the Tree-sitter tie
 remains available. TypeScript projects have their dependencies installed automatically
 in their checkout. C/C++ projects need a compilation database and scip-clang (upstream
 publishes Linux binaries only for x86_64).
+The C/C++ tier is a dedicated-host option: scip-clang, clang, CMake and ninja
+are not in the image (about 0.5 GB more per replica, for a tier whose full index of a
+large project needs its full build tree and tens of GB of memory). Run it from the
+[host cron](#host-cron) on one host with the toolchain and the configured build tree.
+The other tiers' working trees are created on whichever host holds the worker lease.
 
 - **C/C++ delta cap.** The worker indexes changed translation units, including those
   that include a changed header, up to `LOOM_CODE_SCIP_DELTA_MAX_TUS` (200); above the
@@ -235,7 +255,20 @@ publishes Linux binaries only for x86_64).
   (`loom code scip-lock-path --org ORG --namespace NS` prints it). A full pass waits for
   a delta already on its entry; a delta skips an entry a full pass holds and names it
   under `skipped` ("entry lock held (full pass running)"). Different entries run side by
-  side. Shell callers lock the same file with `flock(1)`.
+  side. Every pass also takes the entry's key in ClickHouse (`scip_entry:<org>/<namespace>`
+  in `loom._migration_lock`), so
+  passes on two hosts exclude each other too; a dead holder's key expires after 120 s.
+  A pass that cannot take the key (ClickHouse or Keeper unreachable) fails instead of
+  running on the host's file alone. A holder counts its key lost after 60 s without a
+  renewal (a pause included), before another host can take it, and writes no further
+  index row or watermark: every such write checks the key first, and the pass ends with
+  `EntryLockLost`. The cron's crossref and Python steps run under
+  `loom code entry-lock --org ORG --namespace NS -- <command>`, which takes both locks,
+  exits 75 when another pass holds the entry, and kills the command (exit 3) if the key
+  is lost. It hands the command the key's holder (`LOOM_ENTRY_LEASE_HOLDER`), which the
+  harness's uploads carry: `code.scip_ingest` refuses a part (409 `ENTRY_LEASE_NOT_HELD`)
+  once that holder no longer has the key, so a pass that lost its entry completes no
+  batch for `scip_apply`.
 - **TypeScript dependencies are automatic.** Fresh checkouts install dependencies
   before compiler indexing, including development dependencies containing type
   definitions. Loom uses npm, pnpm, Yarn (classic or modern) or Bun according to the
@@ -273,10 +306,10 @@ dependency installs and the compiler-tier harnesses) inside one boundary built o
   (`clone3` answers `ENOSYS`, so the C library falls back to `clone`);
 - only system directories, the toolchains and the job's own paths are mounted. A
   toolchain is mounted only where it exposes none of Loom's data: never a directory
-  that is or holds `var/`, the mirrors and checkouts, the blob store, the env file, the
+  that is or holds `var/`, the mirrors and checkouts, `LOOM_BLOB_DIR`, the env file, the
   install root or `HOME`, nor one inside `var/` or under `HOME` (the default
   `var/bin/scip-clang` is mounted as that one file). Where one of those paths lies
-  inside any other mounted directory (the blob store inside the server's Python
+  inside any other mounted directory (`LOOM_BLOB_DIR` inside the server's Python
   prefix, `var/` under a system path), an empty mount covers it inside the sandbox.
   The install root is the exception, since the server's Python may run from it. A host
   whose Python prefix or a system path is, or sits inside, one of Loom's data paths
@@ -318,8 +351,7 @@ host SSH key: use an HTTPS remote with an access token.
 
 **Which stacks run the sandbox.** The blue/green colours `redeploy.sh` deploys
 (`dev/docker-compose.colour.yml`) set the container options below. The other Compose
-files (`compose.yaml`, `dev/docker-compose.cloud.yml`,
-`dev/docker-compose.read-replica.yml`) do not: an
+files (`compose.yaml`, `dev/docker-compose.cloud.yml`) do not: an
 AppArmor profile the host has not loaded stops a container from starting, so they keep
 Docker's defaults, the probe fails and every repository job runs as a plain process (see
 _Without the sandbox_). To run it there, once the host has the profile:
@@ -528,6 +560,14 @@ install -m 755 deploy/cron/scip-delta.sh deploy/cron/scip-full.sh deploy/cron/re
 0 3 * * 0    <loom root>/var/cron/scip-full.sh
 0 4 * * 6    <loom root>/var/cron/repo-gc.sh
 ```
+
+Each serving process runs `git gc --no-prune` on its host's mirrors every
+`LOOM_CODE_MIRROR_GC_INTERVAL_H` (low CPU and IO priority, only with room for a second
+copy plus `LOOM_CODE_MIRROR_GC_MARGIN_GB`, 5 GB by default; without it the gc waits
+another interval and logs a warning), and sweeps `LOOM_CODE_REPOS_ROOT` of the mirrors,
+`checkout-*` trees and mirror lock files no active entry names, so a removed repository leaves
+every host, not only the one `code.repo.remove` reached. `repo-gc.sh` remains for a
+host with operator checkouts the scip passes use.
 
 `repo-gc.sh` owns git housekeeping for `var/code_repos`: it turns git's auto-gc off in every
 repository (a repack of a large checkout writes a temporary pack as big as the repository,

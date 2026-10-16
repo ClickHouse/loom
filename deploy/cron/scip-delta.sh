@@ -3,11 +3,13 @@
 # worker loops entries itself), then per-entry SQL<->C++ crossref and the
 # Python compiler tier.
 #
-# Locks: scip-delta.lock keeps two delta passes apart. Each entry has its own
-# lock (`loom code scip-lock-path`), shared with scip-full.sh: the C++ pass
-# skips an entry a full re-index holds (named in its RESULT line), and the
-# crossref + Python steps below skip it too, with a line in the log. Every
-# other entry goes on.
+# Locks: scip-delta.lock keeps two delta passes apart on this host. Each entry
+# has its own lock, this host's file plus the deployment's ClickHouse lease,
+# shared with scip-full.sh on every host: the C++ pass skips an entry a full
+# re-index holds (named in its RESULT line), and the crossref + Python steps
+# below run under `loom code entry-lock`, which skips it too (exit 75, a line in
+# the log) and kills a step whose lease is lost (exit 3). A lease that cannot be
+# taken (ClickHouse unreachable) fails the step (exit 1). Every other entry goes on.
 #
 # Each step runs under a timeout far above its observed duration, so a hung
 # step ends and frees the pass lock instead of skipping every later pass.
@@ -40,6 +42,22 @@ step() {
   echo "STEP $name ns=$ns exit=$rc seconds=$((SECONDS - t0))"
 }
 
+# entry_step <id> <org> <namespace> <timeout> <command...>: step under the entry
+# lock; returns 75 when another pass holds the entry.
+entry_step() {
+  local name=$1 org=$2 ns=$3 limit=$4 rc=0 t0=$SECONDS
+  shift 4
+  echo "=== $(stamp) $name $ns ==="
+  timeout --kill-after=5m "$limit" .venv/bin/python -m server.cli code entry-lock \
+    --org "$org" --namespace "$ns" -- "$@" || rc=$?
+  if [ "$rc" -eq 75 ]; then
+    echo "=== $(stamp) skip $ns: entry lock held (full pass running) ==="
+    echo "STEP entry-lock ns=$ns exit=0 seconds=0 reason=held-by-full-pass"
+    return 75
+  fi
+  echo "STEP $name ns=$ns exit=$rc seconds=$((SECONDS - t0))"
+}
+
 exec 9>"$CRON_DIR/scip-delta.lock"
 if ! flock -n 9; then
   echo "=== $(stamp) scip-delta: previous pass still running — skipped ===" >>"$LOG"
@@ -55,22 +73,18 @@ if ! ENTRIES=$(
   exit 1
 fi
 WRITER_TOKEN=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['token'])" "$CRON_DIR/loom_writer_token.json" 2>>"$LOG" || true)
-while read -r ORG NS CHECKOUT LOCK; do
+while read -r ORG NS CHECKOUT _LOCK; do
   [ -n "$NS" ] || continue
   [[ "$CHECKOUT" == /* ]] || CHECKOUT=$LOOM_ROOT/$CHECKOUT
   [ -d "$CHECKOUT" ] || {
     echo "skip $NS: no checkout at $CHECKOUT" >>"$LOG"
     continue
   }
-  mkdir -p "$(dirname "$LOCK")"
   (
-    if ! flock -n 8; then
-      echo "=== $(stamp) skip $NS: entry lock held (full pass running) ==="
-      echo "STEP entry-lock ns=$NS exit=0 seconds=0 reason=held-by-full-pass"
-      exit 0
-    fi
-    step crossref "$NS" "$CROSSREF_TIMEOUT" \
-      .venv/bin/python -m server.cli code crossref --org "$ORG" --namespace "$NS"
+    rc=0
+    entry_step crossref "$ORG" "$NS" "$CROSSREF_TIMEOUT" \
+      .venv/bin/python -m server.cli code crossref --org "$ORG" --namespace "$NS" || rc=$?
+    [ "$rc" -ne 75 ] || exit 0
     if [ -z "$WRITER_TOKEN" ]; then
       echo "STEP python-scip ns=$NS exit=1 seconds=0 reason=no-writer-token"
       exit 0
@@ -78,7 +92,7 @@ while read -r ORG NS CHECKOUT LOCK; do
     LOOM_API_KEY=$WRITER_TOKEN \
       SCIP_PYTHON=$LOOM_ROOT/var/scip-python/node_modules/.bin/scip-python \
       PYTHON=$LOOM_ROOT/.venv/bin/python \
-      step python-scip "$NS" "$PY_TIMEOUT" \
-      bash "$LOOM_ROOT/scripts/scip_harness/run_python_delta.sh" "$CHECKOUT" http://localhost:7777 "$ORG" "$NS"
-  ) 8>"$LOCK" >>"$LOG" 2>&1 || true
+      entry_step python-scip "$ORG" "$NS" "$PY_TIMEOUT" \
+      bash "$LOOM_ROOT/scripts/scip_harness/run_python_delta.sh" "$CHECKOUT" http://localhost:7777 "$ORG" "$NS" || true
+  ) >>"$LOG" 2>&1 || true
 done <<<"$ENTRIES"

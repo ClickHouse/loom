@@ -13,7 +13,7 @@ test("dragging a to-do card onto In progress claims it, on the board and in the 
     claims.push(body.task_id);
     await route.fulfill({ json: { task: { task_id: body.task_id, status: "in_progress" }, seq: 2 } });
   });
-  await page.goto("/me/tasks");
+  await page.goto("/tasks");
   const title = "Task 2: a regression the public bot found";
 
   await page.getByRole("button", { name: "Board", exact: true }).click();

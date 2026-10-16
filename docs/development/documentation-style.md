@@ -66,7 +66,7 @@ Use these spellings everywhere; the [glossary](../glossary.md) defines them.
 | worker                             | job, cron (unless it is a cron)              |
 | abstain                            | empty result                                 |
 | tombstone                          | hard delete                                  |
-| the dashboard (`/me`)              | UI, console                                  |
+| the dashboard                      | UI, console                                  |
 | ClickHouse Cloud / ClickHouse OSS  | CH (in prose)                                |
 
 ## Formatting

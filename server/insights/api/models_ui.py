@@ -1,6 +1,6 @@
 """ui.vitals — the dashboard reports its own paint.
 
-One call per page view from the /me dashboard, two seconds after the view
+One call per page view from the dashboard, two seconds after the view
 settled or when the viewer leaves it: the route, the paint and long-task
 times the browser measured, the node and call counts, the bundle's build.
 The ledger row the transport writes for every operation is the record;

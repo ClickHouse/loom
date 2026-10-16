@@ -5,7 +5,7 @@ import { useStore, viewHref, type View } from "../lib/state";
  * Memories and Recall are one section with two tabs, not two rail destinations. Recall is
  * the "why did this rank here" tool over the same namespace's memories — a mode of
  * reading them, so it sits under the Memories heading. Both pages render this strip under
- * their title; the routes (`/me/memories`, `/me/recall`) are unchanged, so deep links and
+ * their title; the routes (`/memories`, `/recall`) are unchanged, so deep links and
  * the route budget still hold.
  */
 const MEMORY_TABS: Array<{ id: View; label: string; icon: typeof Clock }> = [

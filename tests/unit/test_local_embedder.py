@@ -400,7 +400,7 @@ def test_an_unset_width_is_the_local_models_own(
 ) -> None:
     """The schema is sized from `embedding_dim`, so a coded table created at the
     default 3072 would refuse every vector a 384-dim local model writes. An
-    inferred width is not the env's choice: a read-replica takes the main Loom's."""
+    inferred width is not the env's choice."""
     from server.settings import Settings
 
     for var in ("LOOM_EMBEDDING_MODEL", "LOOM_EMBEDDING_DIM", "LOOM_EMBEDDING_PROVIDER"):

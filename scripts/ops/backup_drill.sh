@@ -97,15 +97,16 @@ fail_with_log() {
   fail "$1"
 }
 
-# This list is the dump's table list (TABLES in dev/backup_loom.py); the
-# manifest check below fails when the two drift apart.
-TABLES=(namespaces memory memory_embeddings documents chunks shared
-  erasure_requests agent_events audit_log idempotency)
-
 log "Target"
 echo "  ${SCHEME}://${LOOM_CH_HOST}:${LOOM_CH_PORT} database ${LOOM_CH_DATABASE} user ${LOOM_CH_USER} password $([[ -n "${LOOM_CH_PASSWORD:-}" ]] && echo set || echo unset)"
 version=$(ch_query "SELECT version()") || fail "ClickHouse does not answer"
 echo "  server $version"
+
+# The tables a backup must carry (TABLES_SQL in dev/backup_loom.py): every
+# MergeTree-family table but the migration runner's; the manifest check below
+# fails when the dump leaves one out.
+mapfile -t TABLES < <(ch_query "SELECT name FROM system.tables WHERE database = '${LOOM_CH_DATABASE}' AND engine LIKE '%MergeTree' AND NOT startsWith(name, '_') AND NOT startsWith(name, '.') ORDER BY name")
+[[ ${#TABLES[@]} -gt 0 ]] || fail "no tables in ${LOOM_CH_DATABASE}"
 [[ $FULL_RESTORE -eq 1 ]] && echo "  scratch database for the restore: $DRILL_DB (dropped and recreated)"
 
 log "Snapshotting row counts"
@@ -167,15 +168,24 @@ if [[ $FULL_RESTORE -eq 1 ]]; then
     *) fail_with_log "the restore failed (exit $rc)" "$SCRATCH/restore.log" ;;
   esac
   bad=0
+  # A table that collapses rows of one key (Replacing, Aggregating, Summing,
+  # Collapsing) may merge in the scratch database right after its attach, so
+  # fewer rows than dumped is expected there once a merge has run (an active
+  # part spanning more than one block). Any other difference fails.
   while IFS=$'\t' read -r t want; do
     have=$(ch_query "SELECT count() FROM \`$DRILL_DB\`.\`$t\`")
     if [[ "$have" == "$want" ]]; then
       printf "  %-28s %s\n" "$t" "$have"
+      continue
+    fi
+    merged=$(ch_query "SELECT countIf(min_block_number < max_block_number) > 0 AND any(t.engine) NOT IN ('MergeTree', 'ReplicatedMergeTree', 'SharedMergeTree') FROM system.parts AS p INNER JOIN system.tables AS t ON t.database = p.database AND t.name = p.table WHERE p.database = '$DRILL_DB' AND p.table = '$t' AND p.active")
+    if [[ "$merged" == "1" && "$have" -lt "$want" ]]; then
+      printf "  \033[1;33m!\033[0m %-26s restored=%s manifest=%s (collapsed by a merge after the attach)\n" "$t" "$have" "$want"
     else
       printf "  \033[1;31m✗\033[0m %-26s restored=%s manifest=%s\n" "$t" "$have" "$want" >&2
       bad=$((bad + 1))
     fi
-  done < <(jq -r '.tables[] | [.name, .rows] | @tsv' "$MANIFEST")
+  done < <(jq -r '.tables[] | select(has("rows")) | [.name, .rows] | @tsv' "$MANIFEST")
   [[ $bad -eq 0 ]] || fail "$bad tables restored a row count other than the manifest's"
   ok "every restored table matches the manifest"
 fi

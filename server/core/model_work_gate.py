@@ -9,6 +9,8 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+from server.core import readiness
+
 
 class ModelChangeInProgress(RuntimeError):
     """New data-plane work must retry after the model transition."""
@@ -87,3 +89,7 @@ _gate = ModelWorkGate()
 
 def get_model_work_gate() -> ModelWorkGate:
     return _gate
+
+
+def readiness_check() -> readiness.CheckResult:
+    return readiness.result(not _gate.closed, "model change in progress")

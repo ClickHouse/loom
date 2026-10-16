@@ -327,10 +327,18 @@ def test_consumers_aggregate_counts_claimed_rows_from_the_args_source() -> None:
 # ---------------------------------------------------------------- CLI
 
 
-def test_cli_mint_token_takes_a_consumer(capsys, settings_override) -> None:
-    from server import cli
+def test_cli_mint_token_takes_a_consumer(monkeypatch, capsys, settings_override) -> None:
+    import asyncio
 
-    secret = settings.jwt_secret_map()[settings.jwt_active_kid]
+    from server import cli
+    from server.cli import access
+
+    class _NoKeys:
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            return []
+
+    monkeypatch.setattr(access, "run_connected", lambda run: asyncio.run(run(_NoKeys())))
+    secret = settings.jwt_secret  # an empty keyring signs with the root secret
     rc = cli.main(
         [
             "mint-token",

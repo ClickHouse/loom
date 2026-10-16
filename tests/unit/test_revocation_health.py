@@ -20,7 +20,6 @@ def _codes(age: float | None, *, auth_on: bool = True) -> set[str]:
     cfg.jwt_revocation_max_stale_seconds = 600.0
     for name in (
         "jwt_secret_is_dev_default",
-        "jwt_sealing_secret_is_dev_default",
         "llm_provider_inferred",
         "llm_provider_source",
     ):

@@ -20,13 +20,14 @@ import dataclasses
 import json
 import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from server.code.domain.coverage_watch import CoverageWatch
 from server.code.domain.index.state import IndexState
 from server.code.store import coverage_watches as repo
 from server.core.datetimes import naive_utc_now
-from server.tasks.app.inboxes import next_version
+from server.tasks.app.inboxes import next_version, server_version
 
 log = logging.getLogger(__name__)
 
@@ -37,10 +38,13 @@ async def coverage_for(cfg: Any, commit: str, state: IndexState) -> dict[str, An
     """`code.index_status`'s `commit_coverage` block for `commit`, judged
     against the heads in `state` (the namespace's `code_index_state` rows)."""
     from server.code.app.index.commit_coverage import commit_coverage
+    from server.code.app.index.mirrors import history_dir
     from server.code.domain.index.compiler_tiers import compiler_tiers, state_value
 
     tiers = compiler_tiers(cfg.scip_producer, state, {})
-    return await commit_coverage(cfg.git_dir, commit, state_value(state, "git_head"), tiers)
+    git_dir, gap = await history_dir(cfg)
+    head = state_value(state, "git_head")
+    return await commit_coverage(git_dir, commit, head, tiers, gap=gap)
 
 
 def tier_summary(coverage: dict[str, Any]) -> list[dict[str, Any]]:
@@ -98,9 +102,12 @@ def next_watch_version(
     )
 
 
-def _event_row(watch: CoverageWatch, task_id: str, tiers: list[dict[str, Any]]) -> dict[str, Any]:
+def _event_row(
+    watch: CoverageWatch, task_id: str, tiers: list[dict[str, Any]], seq: int
+) -> dict[str, Any]:
+    """`seq` is from the server's clock (`server_version`), as every task event's:
+    the task cursors order by it across replicas."""
     payload = {"namespace": watch.namespace, "commit": watch.commit_sha, "tiers": tiers}
-    seq = next_version()
     return {
         "org": watch.org,
         "inbox": watch.inbox,
@@ -118,7 +125,7 @@ def _event_row(watch: CoverageWatch, task_id: str, tiers: list[dict[str, Any]]) 
         "reason": "",
         "patch": json.dumps(payload, sort_keys=True),
         "note": f"{watch.namespace}@{watch.commit_sha[:12]} is covered by every index tier",
-        "ts": naive_utc_now(),
+        "ts": datetime.fromtimestamp(seq / 1_000_000, UTC).replace(tzinfo=None),
     }
 
 
@@ -131,7 +138,8 @@ async def deliver(watch: CoverageWatch, coverage: dict[str, Any]) -> tuple[bool,
     task_id = repo.event_id(org, watch.namespace, watch.commit_sha, inbox)
     emitted = False
     if not await repo.ready_event_exists(org, inbox, task_id):
-        await repo.insert_ready_event(_event_row(watch, task_id, tier_summary(coverage)))
+        seq = await server_version()
+        await repo.insert_ready_event(_event_row(watch, task_id, tier_summary(coverage), seq))
         emitted = True
         task_wakeups.notify(
             task_wakeups.inbox_key(org, inbox),

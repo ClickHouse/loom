@@ -20,7 +20,6 @@ from server.code.app.bisect_facts import (
 )
 from server.code.app.spans import code_span
 from server.code.domain.index import blame_introduced as intro
-from server.code.domain.index.repos import default_git_dir
 from server.code.store.index import CodeRepo
 from server.settings import settings
 from server.tracker.domain import bisect as bi
@@ -308,7 +307,7 @@ async def _fix_blame_stage(
     `code.blame_range`, name the PR that wrote them; those PRs go first with `blamed_by_fix`.
     Bounded (a few ranges, a wall budget) and fail-open: the pool as it was, and a summary
     saying why."""
-    from server.code.app.blame import handle_code_blame_range, repo_siblings
+    from server.code.app.blame import handle_code_blame_range, history_git_dir, repo_siblings
     from server.code.app.index import gitrepo
     from server.code.domain.index import fix_blame as fb
 
@@ -322,7 +321,10 @@ async def _fix_blame_stage(
             summary["skipped"] = "fix_not_in_ledger"
             return pool, summary
         cfg, _ = repo_siblings(org, ns)
-        git_dir = (cfg.git_dir if cfg is not None else "") or default_git_dir()
+        git_dir, gap = await history_git_dir(cfg, "code.bisect_candidates")
+        if gap:
+            summary["skipped"] = gap
+            return pool, summary
         parent = (await gitrepo.run(git_dir, "rev-parse", f"{merge}^1")).strip()
         diff = await gitrepo.run(git_dir, "diff", "-U0", "--no-color", parent, merge)
         ranges = fb.pre_image_ranges(diff)

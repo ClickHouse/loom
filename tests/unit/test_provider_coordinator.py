@@ -2,13 +2,14 @@
 
 import json
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import pytest
 
+from server.core.embedding_space import fingerprint as embedding_space_fingerprint
 from server.insights.app import provider_coordinator as coordinator
-from server.insights.domain.provider_serving_policy import embedding_space_fingerprint
 from server.settings import settings
 
 
@@ -19,6 +20,7 @@ def setup(monkeypatch):
     monkeypatch.setattr(coordinator, "configurations", AsyncMock(return_value=[row]))
     monkeypatch.setattr(coordinator, "acknowledge_drain", AsyncMock(return_value=True))
     monkeypatch.setattr(coordinator, "distributed_drain", AsyncMock(return_value=True))
+    monkeypatch.setattr(coordinator, "sweep_stopped", AsyncMock())
     monkeypatch.setattr(coordinator, "_target", lambda _: (None, identity))
     monkeypatch.setattr(coordinator, "rebuild_target", Mock())
     monkeypatch.setattr(coordinator, "capture_rebuild_views", AsyncMock(return_value=()))
@@ -27,17 +29,19 @@ def setup(monkeypatch):
     monkeypatch.setattr(coordinator, "write_configuration", writes)
     monkeypatch.setattr(coordinator, "run_rebuild_step", step)
     owned = []
+    held = SimpleNamespace(held=True)
 
     @asynccontextmanager
     async def lock():
         owned.append(True)
         try:
-            yield
+            yield held
         finally:
             owned.pop()
 
     monkeypatch.setattr(coordinator, "configuration_lock", lock)
     monkeypatch.setattr(settings, "code_vector_tables", "{}")
+    monkeypatch.setattr(coordinator, "_is_leader", lambda: True)
     return row, identity, writes, step, owned
 
 
@@ -45,7 +49,7 @@ def setup(monkeypatch):
 async def test_freezes_recipe_before_step_under_exclusive_owner(setup):
     row, identity, writes, step, owned = setup
 
-    async def run(current, backend):
+    async def run(current, backend, write):
         assert owned
         writes.assert_awaited_once()
         recipe = json.loads(current["progress"])["recipe"]
@@ -94,19 +98,19 @@ async def test_restart_keeps_original_prefix_recipe(setup, monkeypatch):
             }
         ),
     )
-    frozen = await coordinator._freeze_recipe(row, identity)
+    frozen = await coordinator._freeze_recipe(row, identity, writes)
     assert json.loads(frozen["progress"])["recipe"]["prefix_dimensions"] == [4]
     monkeypatch.setattr(settings, "code_vector_tables", "{}")
-    assert await coordinator._freeze_recipe(frozen, identity) == frozen
+    assert await coordinator._freeze_recipe(frozen, identity, writes) == frozen
     writes.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_restart_rejects_changed_target(setup):
-    row, identity, _, _, _ = setup
-    frozen = await coordinator._freeze_recipe(row, identity)
+    row, identity, writes, _, _ = setup
+    frozen = await coordinator._freeze_recipe(row, identity, writes)
     with pytest.raises(ValueError, match="Frozen rebuild"):
-        await coordinator._freeze_recipe(frozen, (*identity[:3], "http://other/v1", False))
+        await coordinator._freeze_recipe(frozen, (*identity[:3], "http://other/v1", False), writes)
 
 
 @pytest.mark.asyncio
@@ -123,3 +127,29 @@ async def test_unsupported_view_recipe_becomes_retryable_without_exposing_ddl(se
     assert written["state"] == "failed" and written["error_code"] == "rebuild_recipe_failed"
     assert written["progress"] == row["progress"]
     assert "private credentials" not in str(written)
+
+
+@pytest.mark.asyncio
+async def test_a_lost_lock_commits_nothing(setup, monkeypatch):
+    """The lock's renewal can fail while the step runs: the writes that
+    follow are refused, not raced against the next holder."""
+    _, _, writes, step, _ = setup
+
+    @asynccontextmanager
+    async def lost():
+        yield SimpleNamespace(held=False)
+
+    monkeypatch.setattr(coordinator, "configuration_lock", lost)
+    await coordinator.coordinate_once()
+    writes.assert_not_awaited()
+    step.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_only_the_workers_leader_sweeps_participants(setup, monkeypatch):
+    monkeypatch.setattr(coordinator, "_is_leader", lambda: False)
+    await coordinator.coordinate_once()
+    coordinator.sweep_stopped.assert_not_awaited()
+    monkeypatch.setattr(coordinator, "_is_leader", lambda: True)
+    await coordinator.coordinate_once()
+    coordinator.sweep_stopped.assert_awaited_once()

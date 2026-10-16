@@ -4,7 +4,7 @@ Loom does NOT auto-capture turns: there is no run/chat loop in the SDK, and
 MCP only sees tool calls the model chooses to make. When you own the chat
 loop, you record each turn deterministically with one `conversations.append`
 call per message — nothing is ever missed. The logged thread shows up in
-`/me` → Sessions, and the background seeder mines memory candidates from it.
+the dashboard's Conversations page, and the background seeder mines memory candidates from it.
 
 Run against a local server:
 
@@ -56,7 +56,7 @@ async def main() -> None:
             # One append per message; msg_id is caller-minted so retries dedup.
             await agent.conversations.append(thread_id, uuid.uuid4().hex, role, content)
 
-    print(f"Logged {len(TURNS)} turns to thread {thread_id} — open /me → Sessions.")
+    print(f"Logged {len(TURNS)} turns to thread {thread_id} — open Conversations in the dashboard.")
 
 
 if __name__ == "__main__":

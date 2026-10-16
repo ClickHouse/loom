@@ -16,6 +16,8 @@ import pytest
 from server.code.app import index_status
 from tests.unit.code_fixtures import repo_config
 
+pytestmark = pytest.mark.usefixtures("mirror_here")
+
 _STATE = {
     "git_head": {"value": "a" * 40, "detail": "", "updated_at": "2026-09-18 10:00:00"},
     "scip_commit": {"value": "b" * 40, "detail": "", "updated_at": "2026-09-18 09:00:00"},

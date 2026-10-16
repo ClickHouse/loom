@@ -1,299 +1,76 @@
-"""The boot-time migration lease.
+"""The blocking variant of `server.core.leases`, for the callers that cannot await:
+the boot migrator (`server/core/schema/migrate.py`, before the event loop and in
+`loom migrate`) and the workers supervisor's lease, stepped from a thread on its own
+short-timeout client so a hung call never stalls the serving loop.
 
-Two implementations share one shape (`acquire` / `held` / `outcome` /
-`waited_s` / `renew_if_due` / `release`). `KeeperLock` is the lock: one
-KeeperMap key under `keeper_map_strict_mode = 1`, where Keeper rejects an
-INSERT of an existing key and checks the znode version on every UPDATE, so of
-two contenders exactly one write lands. `MigrationLease`, below, is the
-fallback for a server without a Keeper.
-
-`server/core/schema/migrate.py` runs in every loom process at boot. The processes of one
-container take an fcntl file lock in turn; two CONTAINERS of one colour (web +
-workers) share no filesystem, so without a shared lock both can find the same
-migrations pending, apply them and record them twice. This module serialises the appliers across
-containers with one row per contender in `loom._migration_lease`:
-
-    insert my row → settle → read every row back (sequential consistency)
-    → hold the lease when mine is the earliest-acquired live row
-    → otherwise poll until the holder releases or its lease expires.
-
-A row is live while `released = false` and `renewed_at + ttl_s` has not
-passed — both on the server's clock, so contenders on different hosts order
-the rows the same way. The holder renews between migration files and
-releases when done; a holder that crashes stops renewing and is replaced
-after `ttl_s`. `acquired_at` never changes, so a contender's place in the
-queue is fixed the moment its first row lands; a tie on the millisecond is
-broken by the holder string.
-
-Fail-open like the file lock only before this contender's row lands: a
-database the migrator has not reached yet has no lease table, and a first
-insert the server refuses is reported and the run proceeds unleased — file
-lock only, with the `_record` belt (the ledger re-read for the filename
-before it is written) still in place. Once the row has landed, a failed
-read-back is retried until `wait_s` (then `timeout`), never read as "no
-holder".
+`KeeperLock` is one key of the KeeperMap table `loom._migration_lock` under
+`keeper_map_strict_mode = 1` (`acquire` / `held` / `outcome` / `waited_s` /
+`renew_if_due` / `release` / `peek_free`). `cluster_lock` gives one for a named key.
+The boot migrator takes `boot_migrate` before applying, so two containers never
+apply the same pending files. A server without a Keeper raises `KeeperRequired`:
+ClickHouse has no atomic arbitration without one, so Loom does not run there.
 """
 
 from __future__ import annotations
 
-import os
-import socket
+import contextlib
 import threading
 import time
-import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
 from server.core.ch_errors import error_code
-from server.core.datetimes import as_aware_utc
-
-LEASE_TABLE = "loom._migration_lease"
-LEASE_NAME = "boot_migrate"
-
-# Every contender's latest row (FINAL: a renewal or release supersedes) with
-# its liveness decided on the server's clock. Sequential consistency: every
-# insert the service acknowledged before this read began is visible.
-ROWS_SQL = (
-    "SELECT holder, acquired_at, renewed_at, ttl_s, released, "
-    "(renewed_at + toIntervalSecond(ttl_s)) > now64(3) AS live "
-    f"FROM {LEASE_TABLE} FINAL WHERE name = {{name:String}}"
+from server.core.leases import (
+    ENGINE_SQL,
+    LOCK_HOLDER,
+    LOCK_INSERT,
+    LOCK_RELEASE,
+    LOCK_RENEW,
+    LOCK_TABLE,
+    LOCK_TAKEOVER,
+    default_holder,
+    key_exists,
+    lost_race,
 )
-ROWS_SETTINGS = {"select_sequential_consistency": 1}
+
+LEASE_NAME = "boot_migrate"
 
 
 @dataclass(frozen=True)
 class LeaseConfig:
     """`ttl_s`: a holder that stops renewing is replaced after this long.
     `wait_s`: how long a contender waits for the holder before giving up.
-    `settle_s`: the pause between a contender's insert and its first read-back.
-    `poll_s` / `poll_max_s`: the wait between read-backs, growing 1.5× a poll."""
+    `poll_s` / `poll_max_s`: the wait between read-backs, growing 1.5× a poll.
+    `renew_after_s`: a renewal is due this long after the last one (default a
+    third of the TTL).
+    `lose_after_s`: a holder that has not renewed for this long counts the lease
+    lost (default half the TTL), well before another can take it over. Both are
+    measured from when the last good renewal was sent, never from its answer."""
 
     ttl_s: int = 300
     wait_s: float = 900.0
-    settle_s: float = 1.0
     poll_s: float = 2.0
     poll_max_s: float = 10.0
+    renew_after_s: float | None = None
+    lose_after_s: float | None = None
 
+    @property
+    def renew_after(self) -> float:
+        return self.renew_after_s if self.renew_after_s is not None else self.ttl_s / 3
 
-@dataclass(frozen=True)
-class LeaseRow:
-    holder: str
-    acquired_at: datetime
-    renewed_at: datetime
-    ttl_s: int
-    released: bool
-    live: bool
-
-
-def winner(rows: list[LeaseRow]) -> LeaseRow | None:
-    """The earliest-acquired live row: the contender that holds the lease.
-    Every contender computes this over the same rows, so they agree."""
-    live = [r for r in rows if not r.released and r.live]
-    if not live:
-        return None
-    return min(live, key=lambda r: (r.acquired_at, r.holder))
-
-
-def default_holder() -> str:
-    return f"{socket.gethostname()[:64]}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
+    @property
+    def lose_after(self) -> float:
+        return self.lose_after_s if self.lose_after_s is not None else self.ttl_s / 2
 
 
 def describe_error(e: BaseException) -> str:
     if error_code(e) == 60:
-        return f"table {LEASE_TABLE} absent (not applied here yet)"
+        return f"table {LOCK_TABLE} absent"
     return f"{type(e).__name__}: {str(e)[:160]}"
 
 
-class MigrationLease:
-    """One contender's view of the lease.
-
-    `acquire()` returns `"held"`, `"timeout"` (the holder never released
-    within `wait_s`, or read-backs kept failing that long) or `"unleased"`
-    (no table, a first insert the server refused, or a server that never
-    shows my row: the caller runs without the lease). `release()` is safe to call
-    after any outcome. `sleep` / `clock` / `out` are injectable for tests."""
-
-    kind = "table"
-
-    def __init__(
-        self,
-        ch: Any,
-        *,
-        cfg: LeaseConfig | None = None,
-        holder: str | None = None,
-        build_commit: str = "",
-        sleep: Callable[[float], None] = time.sleep,
-        clock: Callable[[], float] = time.monotonic,
-        out: Callable[[str], None] = print,
-    ) -> None:
-        self.ch = ch
-        self.cfg = cfg or LeaseConfig()
-        self.holder = holder or default_holder()
-        self.build_commit = build_commit[:64]
-        self.sleep = sleep
-        self.clock = clock
-        self.out = out
-        self.held = False
-        self.outcome = ""
-        self.waited_s = 0.0
-        self._acquired_at: datetime | None = None
-        self._inserted = False
-        self._version = 0
-        self._last_renew = 0.0
-
-    # -- rows -----------------------------------------------------------------
-
-    def _next_version(self) -> int:
-        # The holder's own clock, monotonic within this process; `version` only
-        # competes with this holder's earlier rows (ORDER BY (name, holder)).
-        self._version = max(time.time_ns(), self._version + 1)
-        return self._version
-
-    def _insert(self, *, released: bool) -> None:
-        cols = ["name", "holder", "ttl_s", "released", "build_commit", "version"]
-        row: list[Any] = [
-            LEASE_NAME,
-            self.holder,
-            int(self.cfg.ttl_s),
-            released,
-            self.build_commit,
-            self._next_version(),
-        ]
-        if self._acquired_at is not None:
-            # A renewal or release keeps the queue position; the first insert
-            # lets the server stamp acquired_at (and every renewed_at). The value
-            # read back is naive UTC, and the driver reads a naive one as local.
-            cols.append("acquired_at")
-            row.append(as_aware_utc(self._acquired_at))
-        self.ch.insert(LEASE_TABLE, [row], column_names=cols)
-        self._inserted = True
-        self._last_renew = self.clock()
-
-    def _rows(self) -> list[LeaseRow]:
-        rows = self.ch.query(
-            ROWS_SQL, parameters={"name": LEASE_NAME}, settings=ROWS_SETTINGS
-        ).result_rows
-        return [
-            LeaseRow(
-                holder=str(r[0]),
-                acquired_at=r[1],
-                renewed_at=r[2],
-                ttl_s=int(r[3]),
-                released=bool(r[4]),
-                live=bool(r[5]),
-            )
-            for r in rows
-        ]
-
-    # -- protocol -------------------------------------------------------------
-
-    def acquire(self) -> str:
-        started = self.clock()
-        try:
-            self._insert(released=False)
-            self.sleep(self.cfg.settle_s)
-            self.outcome = self._wait(started)
-        except Exception as e:  # noqa: BLE001 — fail open, like the file lock
-            self.outcome = "unleased"
-            self.out(
-                f"  · migration lease: {describe_error(e)} — running without it "
-                "(file lock only; the ledger is re-read before every record)"
-            )
-        return self.outcome
-
-    def _wait(self, started: float) -> str:
-        poll = self.cfg.poll_s
-        announced: str | None = None
-        unseen = 0
-        while True:
-            try:
-                rows: list[LeaseRow] | None = self._rows()
-            except Exception as e:  # noqa: BLE001 — my row landed: keep waiting, bounded by wait_s
-                # The table exists (my insert landed), so a failed read-back is
-                # no evidence the holder is gone: running unleased now could
-                # apply beside it. Retry until wait_s, then time out.
-                self.out(f"  · migration lease: read-back failed ({describe_error(e)}) — retrying")
-                rows = None
-            if rows is not None:
-                mine = next((r for r in rows if r.holder == self.holder), None)
-                if mine is not None and self._acquired_at is None:
-                    self._acquired_at = mine.acquired_at
-                if mine is None and self._acquired_at is None:
-                    # My own acknowledged insert is in a sequentially consistent
-                    # read; a server (or a fake) that never shows it would hold
-                    # the boot for wait_s. Three misses: run without the lease.
-                    unseen += 1
-                    if unseen >= 3:
-                        raise RuntimeError("own lease row not visible after 3 read-backs")
-                top = winner(rows)
-                if mine is not None and top is not None and top.holder == self.holder:
-                    self.waited_s = self.clock() - started
-                    self.held = True
-                    return "held"
-                if top is not None and top.holder != announced:
-                    announced = top.holder
-                    self.out(
-                        f"  · migration lease: held by {top.holder} since "
-                        f"{top.acquired_at:%H:%M:%S}Z (ttl {top.ttl_s} s) — waiting"
-                    )
-            self.waited_s = self.clock() - started
-            if self.waited_s >= self.cfg.wait_s:
-                return "timeout"
-            self.renew_if_due()
-            self.sleep(poll)
-            poll = min(poll * 1.5, self.cfg.poll_max_s)
-
-    def renew_if_due(self) -> None:
-        """Re-stamp `renewed_at` once a third of the TTL has passed, so a
-        holder applying a long file (or a contender waiting) stays live.
-        Only once the first row has been read back: a renewal before that
-        would change the queue position.
-
-        A holder reads the rows first. When one statement outlasted the TTL
-        its row expired, and a contender may have taken the lease since;
-        renewing then would make the old row live again with the earlier
-        `acquired_at` and two processes would apply at once. A live row of
-        another holder at the top means the lease is lost: `held` goes
-        False (the runner stops) and nothing is re-inserted. A failed read
-        renews only while the row cannot have expired yet (less than `ttl_s`
-        since the last renewal); past that the lease counts as lost."""
-        if self._acquired_at is None:
-            return
-        if self.clock() - self._last_renew < self.cfg.ttl_s / 3:
-            return
-        if self.held:
-            try:
-                top = winner(self._rows())
-            except Exception as e:  # noqa: BLE001 — fails closed once the row may have expired
-                self.out(f"  · migration lease: holder check failed ({describe_error(e)})")
-                if self.clock() - self._last_renew >= self.cfg.ttl_s:
-                    self.held = False
-                    self.out("  · migration lease: lost (row may have expired, holder unknown)")
-                    return
-                top = None
-            if top is not None and top.holder != self.holder:
-                self.held = False
-                self.out(f"  · migration lease: expired while applying; now held by {top.holder}")
-                return
-        try:
-            self._insert(released=False)
-        except Exception as e:  # noqa: BLE001 — a missed renewal is a WARNING
-            self.out(f"  · migration lease: renewal failed ({describe_error(e)})")
-
-    def release(self) -> None:
-        if not self._inserted:
-            return
-        try:
-            self._insert(released=True)
-        except Exception as e:  # noqa: BLE001 — the row expires by TTL
-            self.out(f"  · migration lease: release failed ({describe_error(e)})")
-        self.held = False
-        self._inserted = False
-
-
-LOCK_TABLE = "loom._migration_lock"
 # Tables the runner creates itself, before any migration file runs.
 RUNNER_TABLES: frozenset[str] = frozenset({LOCK_TABLE.removeprefix("loom.")})
 LOCK_DDL = (
@@ -302,54 +79,24 @@ LOCK_DDL = (
     "ttl_s UInt32, build_commit String) "
     "ENGINE = KeeperMap('/loom/migration_lock') PRIMARY KEY name"
 )
-# No Keeper or no keeper_map_path_prefix: the tolerated codes of the task lease table.
-NO_KEEPER_CODES = frozenset({999, 139, 36})
-_STRICT = "SETTINGS keeper_map_strict_mode = 1"
-LOCK_INSERT = (
-    f"INSERT INTO {LOCK_TABLE} (name, holder, acquired_at, renewed_at, ttl_s, build_commit) "
-    f"{_STRICT}, async_insert = 0 "
-    "VALUES ({name:String}, {me:String}, now64(3), now64(3), {ttl:UInt32}, {commit:String})"
-)
-LOCK_ROW = (
-    "SELECT holder, acquired_at, ttl_s, (renewed_at + toIntervalSecond(ttl_s)) < now64(3) "
-    f"FROM {LOCK_TABLE} WHERE name = {{name:String}}"
-)
-# The staleness test sits in the WHERE, so it is evaluated on the znode version
-# the CAS checks: a holder that renewed a moment ago is not taken over.
-LOCK_TAKEOVER = (
-    f"ALTER TABLE {LOCK_TABLE} UPDATE holder = {{me:String}}, acquired_at = now64(3), "
-    "renewed_at = now64(3), ttl_s = {ttl:UInt32}, build_commit = {commit:String} "
-    "WHERE name = {name:String} AND holder = {old:String} "
-    f"AND (renewed_at + toIntervalSecond(ttl_s)) < now64(3) {_STRICT}"
-)
-LOCK_RENEW = (
-    f"ALTER TABLE {LOCK_TABLE} UPDATE renewed_at = now64(3) "
-    f"WHERE name = {{name:String}} AND holder = {{me:String}} {_STRICT}"
-)
-LOCK_RELEASE = (
-    f"ALTER TABLE {LOCK_TABLE} DELETE "
-    f"WHERE name = {{name:String}} AND holder = {{me:String}} {_STRICT}"
-)
+# A server with no Keeper configured (no keeper_map_path_prefix).
+NO_KEEPER_CODES = frozenset({139, 36})
 
 
-def key_exists(e: BaseException) -> bool:
-    return "Node exists" in str(e)
+class KeeperRequired(RuntimeError):
+    """The server has no ClickHouse Keeper (or no `keeper_map_path_prefix`)."""
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(
+            f"Loom needs a ClickHouse Keeper ({detail}): its leases and claims are "
+            "KeeperMap keys. Run ClickHouse with deploy/clickhouse-config/keeper.xml "
+            "(the bundled stacks do), or point LOOM_CH_* at a server that has one "
+            "(ClickHouse Cloud does)."
+        )
 
 
-# Run ids are claimed in Keeper only where 025_agent_run_claims.sql created its
-# KeeperMap table (a server with a Keeper). run.begin, erasure and the doctor
-# all decide it with this one read and `is_keeper_table`.
-RUN_CLAIMS_TABLE_SQL = (
-    "SELECT engine FROM system.tables WHERE database = 'loom' AND name = 'agent_run_claims'"
-)
-
-
-def is_keeper_table(row: dict[str, Any] | None) -> bool:
-    return row is not None and row.get("engine") == "KeeperMap"
-
-
-def lost_race(e: BaseException) -> bool:
-    return "Bad version" in str(e) or "KEEPER_EXCEPTION" in str(e)
+# A Keeper that is there but failing: retried, never a fallback.
+KEEPER_ERROR_CODE = 999
 
 
 class KeeperLock:
@@ -360,10 +107,9 @@ class KeeperLock:
     conditional UPDATE naming it; Keeper's version check lets one taker win.
     Renew and release are conditional on `holder = me`, so a process that lost
     the lock changes nothing. `outcome` is `held`, `timeout`, or `unleased`
-    (Keeper refused the first insert: the caller falls back)."""
+    (the server refused the first statement: the caller stops)."""
 
     kind = "keeper"
-    label = "migration lock"  # how its messages name it
 
     def __init__(
         self,
@@ -373,6 +119,7 @@ class KeeperLock:
         holder: str | None = None,
         build_commit: str = "",
         lock_name: str = LEASE_NAME,
+        label: str = "migration",
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
         out: Callable[[str], None] = print,
@@ -382,13 +129,17 @@ class KeeperLock:
         self.holder = holder or default_holder()
         self.build_commit = build_commit[:64]
         self.lock_name = lock_name
+        self.label = label
         self.sleep = sleep
         self.clock = clock
         self.out = out
         self.held = False
         self.outcome = ""
         self.waited_s = 0.0
+        # The last failed round's error ('' after a clean one), and its code.
         self.error = ""
+        self.error_code: int | None = None
+        self._ever_held = False
         self._last_renew = 0.0
         self._mutex = threading.Lock()
         self._stop = threading.Event()
@@ -404,7 +155,7 @@ class KeeperLock:
         }
 
     def _holder_row(self) -> tuple[str, datetime, int, bool] | None:
-        rows = self.ch.query(LOCK_ROW, parameters={"name": self.lock_name}).result_rows
+        rows = self.ch.query(LOCK_HOLDER, parameters={"name": self.lock_name}).result_rows
         if not rows:
             return None
         r = rows[0]
@@ -428,26 +179,54 @@ class KeeperLock:
         row = self._holder_row()
         return row is not None and row[0] == self.holder
 
-    def _attempt(self) -> tuple[bool, tuple[str, datetime, int, bool] | None]:
-        """One round: insert, else take over a stale holder. (won, holder row)."""
-        if self._try_insert():
-            return True, None
+    def _try_retake(self) -> bool:
+        """The key still names me (I counted it lost after failed renewals and
+        nobody took it over): renew it back. Conditional on `holder = me`."""
+        self.ch.command(LOCK_RENEW, parameters=self._params())
         row = self._holder_row()
-        if row is None:  # released between the insert and the read
-            return False, None
+        return row is not None and row[0] == self.holder
+
+    def _attempt(self) -> tuple[bool, tuple[str, datetime, int, bool] | None]:
+        """One round: read the key; insert when there is none, else take my
+        own key back, else take over a stale holder. (won, holder row). The
+        read comes first: an INSERT that finds the key is a KEEPER_EXCEPTION
+        in the server's log, every round of every waiting contender."""
+        sent = self.clock()
+        row = self._holder_row()
+        if row is None:
+            if self._try_insert():
+                self._last_renew = sent
+                return True, None
+            row = self._holder_row()
+            if row is None:  # released between the insert and the read
+                return False, None
+        if row[0] == self.holder and self._try_retake():
+            self._last_renew = sent
+            self.out(f"  · {self.label} lock: renewed again after missed renewals")
+            return True, None
         if row[3] and self._try_takeover(row[0]):
-            self.out(f"  · {self.label}: took over from {row[0]} (stopped renewing)")
+            self._last_renew = sent
+            self.out(f"  · {self.label} lock: took over from {row[0]} (stopped renewing)")
             return True, None
         return False, row
+
+    @property
+    def last_renew(self) -> float:
+        """When the last renewal that landed was sent (`clock`)."""
+        return self._last_renew
 
     def acquire(self) -> str:
         started = self.clock()
         try:
             won, row = self._attempt()
-        except Exception as e:  # noqa: BLE001 — the caller falls back to the lease table
-            self.error = describe_error(e)
-            self.outcome = "unleased"
-            return self.outcome
+            self.error, self.error_code = "", None
+        except Exception as e:  # noqa: BLE001 — a Keeper or network error retries below; a refusal stops
+            self.error, self.error_code = describe_error(e), error_code(e)
+            if not _transient(e):
+                self.outcome = "unleased"
+                return self.outcome
+            self.out(f"  · {self.label} lock: {self.error} — retrying")
+            won, row = False, None
         poll = self.cfg.poll_s
         announced: str | None = None
         while not won:
@@ -458,24 +237,30 @@ class KeeperLock:
             if row is not None and row[0] != announced:
                 announced = row[0]
                 self.out(
-                    f"  · {self.label}: held by {row[0]} since "
+                    f"  · {self.label} lock: held by {row[0]} since "
                     f"{row[1]:%H:%M:%S}Z (ttl {row[2]} s) — waiting"
                 )
             self.sleep(poll)
             poll = min(poll * 1.5, self.cfg.poll_max_s)
             try:
                 won, row = self._attempt()
+                self.error, self.error_code = "", None
             except Exception as e:  # noqa: BLE001 — a failed round; the wait is bounded
-                self.out(f"  · {self.label}: {describe_error(e)} — retrying")
+                self.error, self.error_code = describe_error(e), error_code(e)
+                self.out(f"  · {self.label} lock: {self.error} — retrying")
                 won, row = False, None
         self.waited_s = self.clock() - started
-        self.held = True
-        self._last_renew = self.clock()
+        self.held = self._ever_held = True
         self.outcome = "held"
         return self.outcome
 
+    def peek_free(self) -> bool:
+        """No key, or a stale one: free to take (one read, no write)."""
+        row = self._holder_row()
+        return row is None or row[3] or row[0] == self.holder
+
     def renew_if_due(self) -> None:
-        """Re-stamp `renewed_at` once a third of the TTL has passed. A renewal
+        """Re-stamp `renewed_at` once `renew_after` has passed. A renewal
         that finds another holder clears `held`: the lock was taken over."""
         self._renew(self.ch)
 
@@ -483,19 +268,28 @@ class KeeperLock:
         with self._mutex:
             if not self.held:
                 return
-            if not force and self.clock() - self._last_renew < self.cfg.ttl_s / 3:
+            if not force and self.clock() - self._last_renew < self.cfg.renew_after:
                 return
+            sent = self.clock()
             try:
                 ch.command(LOCK_RENEW, parameters=self._params())
-                rows = ch.query(LOCK_ROW, parameters={"name": self.lock_name}).result_rows
-            except Exception as e:  # noqa: BLE001 — a missed renewal is a WARNING
-                self.out(f"  · {self.label}: renewal failed ({describe_error(e)})")
+                rows = ch.query(LOCK_HOLDER, parameters={"name": self.lock_name}).result_rows
+            except Exception as e:  # noqa: BLE001 — a missed renewal is a WARNING until lose_after
+                self.out(f"  · {self.label} lock: renewal failed ({describe_error(e)})")
+                if self.clock() - self._last_renew >= self.cfg.lose_after:
+                    # No renewal for lose_after: stop while the key is still
+                    # ours, before another process can take it over.
+                    self.held = False
+                    self.out(f"  · {self.label} lock: lost (no renewal in time)")
                 return
-            self._last_renew = self.clock()
             now = str(rows[0][0]) if rows else ""
-            if now != self.holder:
+            if now == self.holder:
+                self._last_renew = sent
+            else:
                 self.held = False
-                self.out(f"  · {self.label}: lost to {now or 'nobody'} (renewal came too late)")
+                self.out(
+                    f"  · {self.label} lock: lost to {now or 'nobody'} (renewal came too late)"
+                )
 
     def start_heartbeat(self, client: Callable[[], Any]) -> None:
         """Renew from a thread on its own connection, so a statement that
@@ -506,13 +300,17 @@ class KeeperLock:
         try:
             ch = client()
         except Exception as e:  # noqa: BLE001 — renewals between files remain
-            self.out(f"  · {self.label}: no heartbeat connection ({describe_error(e)})")
+            self.out(f"  · {self.label} lock: no heartbeat connection ({describe_error(e)})")
             return
         interval = max(self.cfg.ttl_s / 3, 1.0)
 
         def beat() -> None:
-            while not self._stop.wait(interval):
-                self._renew(ch, force=True)
+            try:
+                while not self._stop.wait(interval):
+                    self._renew(ch, force=True)
+            finally:
+                with contextlib.suppress(Exception):
+                    ch.close()
 
         self._beat = threading.Thread(target=beat, name="migration-lock-heartbeat", daemon=True)
         self._beat.start()
@@ -523,46 +321,88 @@ class KeeperLock:
             self._beat.join(timeout=5)
             self._beat = None
         with self._mutex:
-            if not self.held:
+            # A holder that counted the key lost still deletes it while it
+            # names this holder (conditional), so a successor need not wait T.
+            if not self._ever_held:
                 return
             try:
                 self.ch.command(LOCK_RELEASE, parameters=self._params())
             except Exception as e:  # noqa: BLE001 — the key expires by TTL
-                self.out(f"  · {self.label}: release failed ({describe_error(e)})")
-            self.held = False
+                self.out(f"  · {self.label} lock: release failed ({describe_error(e)})")
+            self.held = self._ever_held = False
 
 
-def bootstrap_keeper_lock(ch: Any) -> str | None:
-    """Create the lock table. None when it is usable, else why not."""
+def _transient(e: BaseException) -> bool:
+    """A Keeper error or no server answer at all: worth a retry. A server
+    refusal (privileges, a bad argument) is not."""
+    code = error_code(e)
+    return code is None or code == KEEPER_ERROR_CODE
+
+
+class KeeperUnavailable(RuntimeError):
+    """The Keeper (or the server) kept failing for the whole wait."""
+
+
+def bootstrap_keeper_lock(
+    ch: Any,
+    *,
+    wait_s: float = 0.0,
+    poll_s: float = 2.0,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> None:
+    """Create the lock table. KeeperRequired when the server has no Keeper; a
+    Keeper error is retried for `wait_s`, then raises `KeeperUnavailable`; any
+    other refusal raises as it is."""
+    started = clock()
+    while True:
+        try:
+            ch.command(LOCK_DDL)
+            return
+        except Exception as e:  # a missing Keeper stops, a Keeper error is retried
+            code = error_code(e)
+            if code in NO_KEEPER_CODES:
+                raise KeeperRequired(f"code {code}") from e
+            if not _transient(e):
+                raise
+            if clock() - started >= wait_s:
+                raise KeeperUnavailable(describe_error(e)) from e
+        sleep(poll_s)
+
+
+def cluster_lock(
+    ch: Any,
+    *,
+    name: str,
+    label: str,
+    cfg: LeaseConfig,
+    out: Callable[[str], None] = print,
+) -> KeeperLock:
+    """A lock named `name` that every process of the deployment sees: a key of
+    the Keeper lock table. KeeperRequired without a Keeper; any other error
+    raises (the caller retries)."""
     try:
-        ch.command(LOCK_DDL)
-        return None
-    except Exception as e:  # noqa: BLE001 — every refusal means the fallback lease
-        code = error_code(e)
-        if code in NO_KEEPER_CODES:
-            return f"no Keeper on this server (code {code})"
-        return describe_error(e)
+        rows = ch.query(ENGINE_SQL, parameters={"table": "_migration_lock"}).result_rows
+        if not rows or rows[0][0] != "KeeperMap":
+            ch.command(LOCK_DDL)
+    except Exception as e:
+        if error_code(e) in NO_KEEPER_CODES:
+            raise KeeperRequired(f"code {error_code(e)}") from e
+        raise
+    return KeeperLock(ch, cfg=cfg, lock_name=name, label=label, out=out)
 
 
 __all__ = [
+    "KEEPER_ERROR_CODE",
     "LEASE_NAME",
-    "LEASE_TABLE",
     "LOCK_DDL",
-    "LOCK_TABLE",
     "NO_KEEPER_CODES",
+    "RUNNER_TABLES",
     "KeeperLock",
-    "LOCK_INSERT",
-    "LOCK_RELEASE",
-    "LOCK_TAKEOVER",
-    "bootstrap_keeper_lock",
-    "ROWS_SETTINGS",
-    "ROWS_SQL",
+    "KeeperRequired",
+    "KeeperUnavailable",
     "LeaseConfig",
-    "LeaseRow",
-    "MigrationLease",
-    "default_holder",
-    "key_exists",
-    "lost_race",
+    "bootstrap_keeper_lock",
+    "cluster_lock",
     "describe_error",
-    "winner",
 ]

@@ -18,6 +18,7 @@ export {
   BackendUnavailable,
   errorFromResponse,
   IdempotentConflict,
+  IdempotentInProgress,
   INVALID_RESPONSE_CODE,
   LoomError,
   NETWORK_ERROR_CODE,

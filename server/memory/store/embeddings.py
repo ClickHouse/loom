@@ -35,7 +35,7 @@ _log = logging.getLogger(__name__)
 # are identical across a row's versions, so filtering on them before FINAL
 # cannot drop a newer version; `tombstoned_at` is not a key column and stays
 # in WHERE, after the merge.
-_EMB_KEY_PREWHERE = (
+EMB_KEY_PREWHERE = (
     "org = {org:String} AND namespace = {ns:String}"
     " AND agent = {a:String} AND user_id = {u:String}"
     " AND session_id = {s:String} AND memory_key = {k:String}"
@@ -57,7 +57,7 @@ async def live_embedding_rows_for_key(
     return await ch.query_all(
         f"""
         SELECT * FROM loom.memory_embeddings FINAL
-        PREWHERE {_EMB_KEY_PREWHERE}
+        PREWHERE {EMB_KEY_PREWHERE}
         WHERE tombstoned_at IS NULL
         """,
         params={
@@ -78,6 +78,7 @@ async def mirror_status_to_embeddings(
     dry_run: bool = False,
     batch: int = 500,
     strict: bool = False,
+    judged: bool = False,
 ) -> int:
     """Re-emit each identity's live memory_embeddings rows with the memory
     row's `status` (and `invalid_at`, and `tombstoned_at` when the memory row is
@@ -93,9 +94,18 @@ async def mirror_status_to_embeddings(
     mirror row with one identity's status. One keyed read per `batch`
     identities and one insert. Never raises past a logged warning: the
     memory write already landed, the mirror is a projection. `strict` raises
-    instead, for a caller (the repair) that must not count a failed mirror done."""
+    instead, for a caller (the repair) that must not count a failed mirror done.
+
+    `judged` (a deferred verdict, its memory row at the judged version + 1): only
+    vector rows of the memory row's `content_sha256` are copied, at a version
+    drawn before a sequential read. Every metadata copy of that vector sits at
+    its read + 1, far below, on either side of the mirror; a newer revision's
+    vector has another hash, or was written after the draw and stays newer. A
+    vector a retire hid meanwhile (status not served) is left hidden."""
     ch = ch or _default_client()
+    drawn = next_version() if judged else 0
     wanted: dict[EmbeddingKey, dict[str, Any]] = {}
+    shas: dict[EmbeddingKey, str] = {}
     for m in memory_rows:
         key = (
             str(m.get("org") or ""),
@@ -110,7 +120,10 @@ async def mirror_status_to_embeddings(
             overrides["invalid_at"] = m.get("invalid_at")
         if m.get("tombstoned_at") is not None:
             overrides["tombstoned_at"] = m.get("tombstoned_at")
-        if m.get("version"):
+        if judged:
+            overrides["version"] = drawn
+            shas[key] = str(m.get("content_sha256") or "")
+        elif m.get("version"):
             overrides["version"] = int(m["version"])
         wanted[key] = overrides
     keys = list(wanted)
@@ -119,7 +132,7 @@ async def mirror_status_to_embeddings(
     for start in range(0, len(keys), step):
         chunk = keys[start : start + step]
         try:
-            rows = await _live_rows_for_keys(ch, chunk)
+            rows = await _live_rows_for_keys(ch, chunk, sequential=judged)
         except Exception as e:  # a mirror, never the write; strict re-raises
             if strict:
                 raise
@@ -127,6 +140,10 @@ async def mirror_status_to_embeddings(
             continue
         for r in rows:
             want = wanted.get(embedding_key(r))
+            if judged and str(r.get("content_sha256") or "") != shas.get(embedding_key(r)):
+                continue  # another revision's vector
+            if judged and str(r.get("status") or "") not in SERVED_STATUSES:
+                continue  # a retire (a refines supersede) won meanwhile
             if want is None or (
                 str(r.get("status") or "") == str(want["status"]) and "tombstoned_at" not in want
             ):
@@ -299,7 +316,7 @@ async def reemit_embedding_rows_for_key(
         session_id=session_id,
         memory_key=memory_key,
     )
-    return await _reemit_rows(rows, overrides, ch=ch)
+    return await reemit_rows(rows, overrides, ch=ch)
 
 
 # (org, namespace, agent, user_id, session_id, memory_key)
@@ -367,7 +384,7 @@ async def _live_rows_for_keys(
     ch: _CHClient, keys: list[EmbeddingKey], *, sequential: bool = False
 ) -> list[dict[str, Any]]:
     """Every live memory_embeddings row of the given identity keys, in one
-    keyed FINAL read (the key tuple in PREWHERE, see `_EMB_KEY_PREWHERE`)."""
+    keyed FINAL read (the key tuple in PREWHERE, see `EMB_KEY_PREWHERE`)."""
     from server.memory.store.sql import _SEQUENTIAL
 
     if not keys:
@@ -417,9 +434,11 @@ def _copy_row(r: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any] | 
     )
 
 
-async def _reemit_rows(
+async def reemit_rows(
     rows: list[dict[str, Any]], overrides: dict[str, Any], *, ch: _CHClient
 ) -> int:
+    """Re-emit read rows as new versions with `overrides` (see `_copy_row`); returns
+    the rows written."""
     out = [row for r in rows if (row := _copy_row(r, overrides)) is not None]
     if out:
         await insert_embedding_rows(out, ch=ch)
@@ -538,7 +557,7 @@ async def reemit_shared_embedding_rows(
     rows = await live_shared_embedding_rows_for_key(
         ch, org=org, namespace=namespace, memory_key=memory_key
     )
-    return await _reemit_rows(rows, overrides, ch=ch)
+    return await reemit_rows(rows, overrides, ch=ch)
 
 
 async def tombstone_embeddings_for_key(

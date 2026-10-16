@@ -225,7 +225,6 @@ the org (`inbox.principals`, admin).
 | ----------------------------------- | ------- | ------------------------------------------------------------------------------------ |
 | `LOOM_TASK_LEASE_SWEEP_ENABLED`     | true    | Runs the sweeper: expired leases, deferred tasks reaching `resume_at`, stale triage. |
 | `LOOM_TASK_WEBHOOK_DELIVER_ENABLED` | true    | Posts one signed notice per new event batch to an inbox's `webhook_url`.             |
-| `LOOM_TASK_LEASE_BACKEND`           | `auto`  | Claim arbitration: `auto`, `keeper` or `log`.                                        |
 
 See [configuration: task inbox](../reference/configuration.md#task-inbox).
 

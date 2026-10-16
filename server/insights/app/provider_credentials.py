@@ -12,7 +12,7 @@ _PURPOSE = "model-provider-configuration"
 
 def seal_configuration(setup: ProviderSetupInput, existing_keys: Mapping[str, str]) -> str:
     """Keep omitted keys; an explicit replacement wins over the saved value."""
-    if settings.jwt_sealing_secret_is_dev_default() or len(settings.jwt_secret) < 32:
+    if settings.jwt_secret_is_dev_default() or len(settings.jwt_secret) < 32:
         raise ValueError(
             "Set a unique LOOM_JWT_SECRET of at least 32 characters before saving keys"
         )

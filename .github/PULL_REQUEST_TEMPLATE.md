@@ -1,24 +1,56 @@
-## Why
+<!--
+Linked issues and pull requests. Full GitHub URLs, one relationship per line; delete the lines you don't need.
 
-The problem this solves and why this is the fix. The diff says what changed;
-this says why. Link the issue if there is one.
+Closes: https://github.com/ClickHouse/loom/issues/NNN   (closes the issue when this merges into main)
+Related: https://github.com/ClickHouse/loom/pull/NNN
+-->
 
-## Scope and risk
+### Changelog category (leave one):
 
-What this touches, what it deliberately leaves alone, and what could break:
-concurrency, stored data, auth, hooks running in a user's session.
+- New Feature
+- Improvement
+- Performance Improvement
+- Backward Incompatible Change
+- Bug Fix (user-visible misbehavior in a release)
+- Critical Bug Fix (data loss, cross-tenant read, auth bypass)
+- Build/Testing/Packaging Improvement
+- Documentation (changelog entry is not required)
+- CI Fix or Improvement (changelog entry is not required)
+- Not for changelog (changelog entry is not required)
 
-## Compatibility, rollout and rollback
+### Changelog entry (one or two sentences a user of Loom can read without the diff; the release pull request collects these into the release notes):
 
-- Wire: name every op or field added, changed or removed, and any changed default.
+...
+
+### Why
+
+The problem this solves and why this is the fix. The diff says what changed; this says why.
+
+### Scope and risk
+
+What this touches, what it deliberately leaves alone, and what could break: concurrency, stored data,
+auth and tenant isolation, hooks running in a user's session.
+
+### Compatibility, rollout and rollback
+
+- Wire: every op or field added, changed or removed, and any changed default.
 - Operator steps: new settings, a backfill, a re-index, the order to deploy in. Say "none" if none.
 - Rollback: what reverting leaves behind (rows, migrations, generated files).
 
-## Tests
+### Tests
 
-What you ran and what it showed. For behaviour with no test, say why.
+What you ran and what it showed. For behaviour with no test, say why. A measurement that justifies
+the change goes here with the command that reproduces it.
 
-## Checklist
+### AI assistance in the code (leave one; writing this description with AI is fine):
+
+- None
+- AI-assisted (completion, or questions while writing it)
+- AI-generated (an agent wrote most of the diff): name the tool and say what you checked yourself
+
+- [ ] I can explain every line of this diff and how it interacts with the rest of Loom.
+
+### Checklist
 
 - [ ] `make format-check`, `make lint`, `make typecheck` and `make test-unit` pass; the integration suite passes if server behaviour changed.
 - [ ] Generated files are regenerated in this PR, not by hand: the SDK op tables, `docs/reference/configuration.md` and the `docs/reference/` tables (`python scripts/codegen/docs_reference.py`), the reach manifest, `schemas/schema.sql` (`make schema-dump`) and the Codex plugin copies (`python3 scripts/codegen/agent_plugin_sync.py`).

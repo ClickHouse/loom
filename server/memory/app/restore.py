@@ -217,6 +217,7 @@ async def _restore_embedding_mirror(
             entities=list(existing.entities or []),
             # Carried forward so restore doesn't zero them under FINAL.
             files=list(getattr(existing, "files", None) or []),
+            content_sha256=str(getattr(existing, "content_sha256", "") or ""),
             concepts=list(getattr(existing, "concepts", None) or []),
             status=str(existing.status or "active"),
             temporal_anchor=existing.temporal_anchor,

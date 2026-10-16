@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 import httpx
+import jwt as pyjwt
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -48,11 +49,8 @@ async def test_whoami_with_valid_token(control_plane_url: str) -> None:
     assert body["namespaces"] == ["eng-tooling"]
     assert set(body["roles"]) == {"VIEWER", "WRITER"}
     assert body["is_service_account"] is True
-    # kid comes from settings.jwt_active_kid; don't hardcode "default"
-    # since the server may run in a rotated-kid configuration.
-    from server.settings import settings
-
-    assert body["kid"] == settings.jwt_active_kid
+    # the signing kid: `default` (the root secret) unless a keyring key signs
+    assert body["kid"] == pyjwt.get_unverified_header(token)["kid"]
     assert body["exp"] > 0
 
 
@@ -75,12 +73,9 @@ async def test_whoami_rejects_invalid_token(control_plane_url: str) -> None:
 
 @pytest.mark.asyncio
 async def test_whoami_surfaces_kid_during_rotation(control_plane_url: str) -> None:
-    """A token minted with an explicit kid is reported back."""
+    """A token's signing kid is reported back."""
     from server.auth.jwt import mint_token
-    from server.settings import settings
 
-    # mint_token supports explicit kid only against the active map; here we
-    # use the legacy default kid path that already exists in dev settings.
     token = mint_token(
         subject="sa-kid-test",
         org="clickhouse",
@@ -93,4 +88,4 @@ async def test_whoami_surfaces_kid_during_rotation(control_plane_url: str) -> No
         headers={"Authorization": f"Bearer {token}"},
     ) as c:
         body = (await c.get("/v1/whoami")).json()
-    assert body["kid"] == settings.jwt_active_kid
+    assert body["kid"] == pyjwt.get_unverified_header(token)["kid"]

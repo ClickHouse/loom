@@ -293,7 +293,11 @@ async def _adopt_run(ch: Any, args: argparse.Namespace) -> int:
     import server.operations  # noqa: F401 — wires handlers before importing one
     from server.identity.api.models import NamespaceRegisterInput
     from server.identity.app.namespace import registry_row
-    from server.identity.app.namespace_autoregister import AUTO_REGISTER_TAG, classify_kind
+    from server.identity.app.namespace_autoregister import (
+        AUTO_REGISTER_TAG,
+        AUTO_ROW_VERSION,
+        classify_kind,
+    )
     from server.identity.store import namespace_census
 
     rows = await namespace_census.unregistered_live(org=args.org, ch=ch)
@@ -342,6 +346,8 @@ async def _adopt_run(ch: Any, args: argparse.Namespace) -> int:
         )
         for name, kind, _ in plan
     ]
+    for row in batch:
+        row["updated_at"] = AUTO_ROW_VERSION  # an explicit row always wins
     for i in range(0, len(batch), 500):
         await ch.insert("loom.namespaces", batch[i : i + 500])
     print(f"adopted {len(batch)} namespace(s); retention_days=0 on every row, no TTL altered")

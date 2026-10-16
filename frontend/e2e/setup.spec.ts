@@ -87,7 +87,7 @@ test("an empty personal namespace lands on the getting-started checklist", async
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(String(e)));
 
-  await page.goto("/me/settings");
+  await page.goto("/settings");
   const region = page.getByRole("region", { name: "Getting started" });
   await expect(region).toBeVisible();
   await expect(region.getByRole("listitem")).toHaveCount(4);
@@ -124,7 +124,7 @@ test.describe("settings tabs", () => {
     });
     const errors: string[] = [];
     page.on("pageerror", (e) => errors.push(String(e)));
-    await page.goto("/me/settings");
+    await page.goto("/settings");
     await expect(page.getByRole("tab", { name: "Tokens" })).toHaveAttribute("aria-selected", "true");
     // The list first; the form folded behind New token.
     await expect(page.getByText("Claude Code", { exact: true }).first()).toBeVisible();
@@ -157,17 +157,17 @@ test.describe("settings tabs", () => {
     await page.keyboard.press("Escape");
 
     // A deep link opens the tab it names.
-    await page.goto("/me/settings?tab=memory");
+    await page.goto("/settings?tab=memory");
     await expect(page.getByRole("tab", { name: "Memory" })).toHaveAttribute("aria-selected", "true");
     expect(errors).toEqual([]);
   });
 
   test("an old System link opens Tokens", async ({ page }) => {
     await installApi(page);
-    await page.goto("/me/settings");
+    await page.goto("/settings");
     await expect(page.getByRole("tab", { name: "Tokens" })).toBeVisible();
     await expect(page.getByRole("tab", { name: "System" })).toHaveCount(0);
-    await page.goto("/me/settings?tab=system");
+    await page.goto("/settings?tab=system");
     await expect(page.getByRole("tab", { name: "Tokens" })).toHaveAttribute("aria-selected", "true");
   });
 
@@ -178,7 +178,7 @@ test.describe("settings tabs", () => {
       await page.route("**/v1/me/service_accounts", (route) =>
         route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ rows: TOKENS }) }),
       );
-      await page.goto("/me/settings");
+      await page.goto("/settings");
       await expect(page.getByRole("button", { name: "New token" })).toBeVisible();
       const doc = await page.evaluate(() => ({
         sw: document.documentElement.scrollWidth,

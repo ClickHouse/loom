@@ -15,6 +15,8 @@ from pathlib import Path
 import httpx
 import pytest
 
+from tests.integration._eventually import overrides_adopted
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "sdk" / "python"))
 sys.path.insert(0, str(ROOT))
@@ -38,6 +40,7 @@ async def _set_ns_override(
         },
     )
     assert r.status_code == 200, r.text
+    await overrides_adopted()
 
 
 async def _set_org_override(
@@ -53,6 +56,7 @@ async def _set_org_override(
         },
     )
     assert r.status_code == 200, r.text
+    await overrides_adopted()
 
 
 @pytest.mark.asyncio

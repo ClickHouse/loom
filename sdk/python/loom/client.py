@@ -857,24 +857,6 @@ class DecisionOps:
         )
 
 
-class EmbeddingOps:
-    """The `embedding.*` operations."""
-
-    # SyncAgent proxies a nested client's coroutines as blocking calls.
-    _loom_nested_client = True
-
-    def __init__(self, agent: Agent) -> None:
-        self._agent = agent
-
-    async def embed(
-        self, body: _ops.EmbeddingEmbedBody | None = None, /, **options: Any
-    ) -> _ops.EmbeddingEmbedOutput:
-        """`embedding.embed`."""
-        return cast(
-            "_ops.EmbeddingEmbedOutput", await self._agent.call("embedding.embed", body, **options)
-        )
-
-
 class ErasureOps:
     """The `erasure.*` operations."""
 
@@ -1228,24 +1210,6 @@ class LearningsOps:
         return cast(
             "_ops.LearningsReviewOutput",
             await self._agent.call("learnings.review", body, **options),
-        )
-
-
-class LlmOps:
-    """The `llm.*` operations."""
-
-    # SyncAgent proxies a nested client's coroutines as blocking calls.
-    _loom_nested_client = True
-
-    def __init__(self, agent: Agent) -> None:
-        self._agent = agent
-
-    async def complete(
-        self, body: _ops.LlmCompleteBody | None = None, /, **options: Any
-    ) -> _ops.LlmCompleteOutput:
-        """`llm.complete`."""
-        return cast(
-            "_ops.LlmCompleteOutput", await self._agent.call("llm.complete", body, **options)
         )
 
 
@@ -2870,14 +2834,12 @@ class OpsClient:
         self.conversation = ConversationOps(agent)
         self.cost = CostOps(agent)
         self.decision = DecisionOps(agent)
-        self.embedding = EmbeddingOps(agent)
         self.erasure = ErasureOps(agent)
         self.facts = FactsOps(agent)
         self.grants = GrantsOps(agent)
         self.inbox = InboxOps(agent)
         self.knowledge = KnowledgeOps(agent)
         self.learnings = LearningsOps(agent)
-        self.llm = LlmOps(agent)
         self.memory = MemoryOps(agent)
         self.memory_schema = MemorySchemaOps(agent)
         self.mentor = MentorOps(agent)

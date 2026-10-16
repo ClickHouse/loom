@@ -21,29 +21,33 @@ Loom uses engines, indexes and views, and how migrations run.
 "Written by" names the code or [worker](../reference/workers.md) that inserts rows.
 Retention is in [Partitioning and TTL](#partitioning-and-ttl).
 
-| Family                       | Main tables                                                                                                                                                                                                                                         | Written by                                                                                                             |
-| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| Memory facts                 | `memory`, `memory_versions`, `shared`, `working_memory`                                                                                                                                                                                             | `memory.set`, `memory.bulk_set`, lifecycle ops, `working_memory.*`; `memory_versions_mv` fills the history             |
-| Memory embeddings            | `memory_embeddings`, `memory_reinforcement`, `memory_term_freq`, `memory_doc_stats`                                                                                                                                                                 | The same write paths (`build_embedding_row`); `embedding_worker` fills stubs; `usage_fold`; refreshable views for BM25 |
-| Evidence and chunks          | `memory_evidence`, `memory_chunks`, `memory_chunk_sources`, `memory_belief_sources`, `session_summaries`, `derived_facts`                                                                                                                           | `set_from_messages` projections, consolidation                                                                         |
-| Records and taxonomy         | `memory_records`, `memory_record_versions`, `memory_record_fields`, `memory_record_conflicts`, `memory_schemas`, `memory_schema_fields`, `categories`, `memory_categories`                                                                          | `memory.record.*`, `namespace.*`, category assignment                                                                  |
-| Write-path state             | `memory_extraction_queue`, `memory_projection_failures`, `memory_drops`, `blacklist`, `blacklist_version`, `conflict_allowlist`, `learnings_queue`, `consolidation_runs`, `memory_ask_precedents`                                                   | Deferred extraction, fail-open projections, `blacklist.*`, `conflicts.resolve`, `memory.consolidate`, `memory.ask`     |
-| Knowledge                    | `documents`, `chunks`, `chunk_supersessions`, `chunk_term_freq`                                                                                                                                                                                     | `knowledge.add`; `chunk_term_freq_mv`                                                                                  |
-| Conversations                | `conversations`, `conversation_threads`, `conversation_embeddings`                                                                                                                                                                                  | `conversation.*`; `conversation_titler`                                                                                |
-| Entity graph                 | `entity_edges`, `entity_degree`, `entity_triples`, `entity_edge_memories`, `entity_edge_rows`, `entity_triple_memories`, `entity_triple_rows`, `entity_vectors`, `entity_summaries`, `entity_canonical_map`, `entity_communities`, `operator_edges` | The `memory.set` after-write projection, `entity_extractor`, `entity_communities`; `entity_degree_mv`                  |
-| Code index                   | `code_files`, `code_chunks`, `code_symbols`, `code_edges`, `code_pr_history` and the other `code_*` tables                                                                                                                                          | `code_ingest`, the `code_scip_*` workers, `code_pr_history`, `code_embed_recovery`, `code_summary`, `code_graph_stats` |
-| Tracker                      | `qa_sources`, `qa_item_embeddings`, `qa_link_candidates`, `qa_test_daily`, `qa_rollup_days`, `qa_fail_hours`                                                                                                                                        | `tracker.source.add`, `tracker_embed`, `tracker_links`, `tracker_test_daily`                                           |
-| Runs, tasks, briefs          | `agent_runs`, `agent_turn_usage`, `session_outcomes_by_user`, `procedure_runs`, `tasks`, `task_events`, `task_claims`, `task_leases`, `agent_run_claims`, `task_inboxes`, `session_briefs`, `context_blobs` and neighbours                          | `run.*`, `task.*` / `inbox.*`, `session.brief_*`, `context.offload`, `reflection_distill`                              |
-| Namespaces, auth, governance | `namespaces`, `namespace_grants`, `namespace_policies`, `namespace_types`, `namespace_snapshots`, `namespace_calibration_*`, `service_accounts`, `user_state`, `revoked_tokens`, `oauth_state`, `idempotency`, `policy_decisions` and neighbours    | `namespace.*`, `grants.*`, sign-up and claim flows, `recalibration`, the idempotency cache                             |
-| Telemetry, audit, cost       | `events`, `agent_events`, `agent_cost_rollup_daily`, `audit_log`, `audit_checkpoints`, `search_trace_log`, `memory_exposures`, `memory_usage_events`, `memory_usage_totals`, `code_search_trace`, `worker_status` and neighbours                    | The events stream, the op ledger, `observability/audit.py`, `audit_verifier`, the supervisor                           |
-| Erasure                      | `erasure_requests`, `erasure_reversals`                                                                                                                                                                                                             | `erasure.request`, `erasure_recovery`, `memory.restore`                                                                |
-| Provider caches              | `embedding_cache`, `llm_response_cache`                                                                                                                                                                                                             | The embedder and LLM client wrappers                                                                                   |
+| Family                       | Main tables                                                                                                                                                                                                                                                                                            | Written by                                                                                                             |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| Memory facts                 | `memory`, `memory_versions`, `shared`, `working_memory`                                                                                                                                                                                                                                                | `memory.set`, `memory.bulk_set`, lifecycle ops, `working_memory.*`; `memory_versions_mv` fills the history             |
+| Memory embeddings            | `memory_embeddings`, `memory_reinforcement`, `memory_term_freq`, `memory_doc_stats`                                                                                                                                                                                                                    | The same write paths (`build_embedding_row`); `embedding_worker` fills stubs; `usage_fold`; refreshable views for BM25 |
+| Evidence and chunks          | `memory_evidence`, `memory_chunks`, `memory_chunk_sources`, `memory_belief_sources`, `session_summaries`, `derived_facts`                                                                                                                                                                              | `set_from_messages` projections, consolidation                                                                         |
+| Records and taxonomy         | `memory_records`, `memory_record_versions`, `memory_record_fields`, `memory_record_conflicts`, `memory_schemas`, `memory_schema_fields`, `categories`, `memory_categories`                                                                                                                             | `memory.record.*`, `namespace.*`, category assignment                                                                  |
+| Write-path state             | `memory_extraction_queue`, `memory_projection_failures`, `memory_drops`, `blacklist`, `blacklist_version`, `conflict_allowlist`, `learnings_queue`, `consolidation_runs`, `memory_ask_precedents`                                                                                                      | Deferred extraction, fail-open projections, `blacklist.*`, `conflicts.resolve`, `memory.consolidate`, `memory.ask`     |
+| Knowledge                    | `documents`, `document_blobs` (uploaded originals), `chunks`, `chunk_supersessions`, `chunk_term_freq`                                                                                                                                                                                                 | `knowledge.add`; `chunk_term_freq_mv`                                                                                  |
+| Conversations                | `conversations`, `conversation_threads`, `conversation_embeddings`                                                                                                                                                                                                                                     | `conversation.*`; `conversation_titler`                                                                                |
+| Entity graph                 | `entity_edges`, `entity_degree`, `entity_triples`, `entity_edge_memories`, `entity_edge_rows`, `entity_triple_memories`, `entity_triple_rows`, `entity_vectors`, `entity_summaries`, `entity_canonical_map`, `entity_communities`, `operator_edges`                                                    | The `memory.set` after-write projection, `entity_extractor`, `entity_communities`; `entity_degree_mv`                  |
+| Code index                   | `code_files`, `code_chunks`, `code_symbols`, `code_edges`, `code_pr_history` and the other `code_*` tables                                                                                                                                                                                             | `code_ingest`, the `code_scip_*` workers, `code_pr_history`, `code_embed_recovery`, `code_summary`, `code_graph_stats` |
+| Tracker                      | `qa_sources`, `qa_item_embeddings`, `qa_link_candidates`, `qa_test_daily`, `qa_rollup_days`, `qa_fail_hours`                                                                                                                                                                                           | `tracker.source.add`, `tracker_embed`, `tracker_links`, `tracker_test_daily`                                           |
+| Runs, tasks, briefs          | `agent_runs`, `agent_turn_usage`, `session_outcomes_by_user`, `procedure_runs`, `tasks`, `task_events`, `task_claims`, `task_leases`, `agent_run_claims`, `task_inboxes`, `session_briefs`, `context_blobs` and neighbours                                                                             | `run.*`, `task.*` / `inbox.*`, `session.brief_*`, `context.offload`, `reflection_distill`                              |
+| Namespaces, auth, governance | `namespaces`, `namespace_grants`, `namespace_policies`, `namespace_types`, `namespace_snapshots`, `namespace_calibration_*`, `service_accounts`, `user_state`, `revoked_tokens`, `signing_keys`, `auth_attempts`, `runtime_overrides`, `oauth_state`, `idempotency`, `policy_decisions` and neighbours | `namespace.*`, `grants.*`, sign-up and claim flows, `recalibration`, the idempotency cache                             |
+| Telemetry, audit, cost       | `events`, `agent_events`, `agent_cost_rollup_daily`, `audit_log`, `audit_checkpoints`, `search_trace_log`, `memory_exposures`, `memory_usage_events`, `memory_usage_totals`, `code_search_trace`, `worker_status` and neighbours                                                                       | The events stream, the op ledger, `observability/audit.py`, `audit_verifier`, the supervisor                           |
+| Erasure                      | `erasure_requests`, `erasure_reversals`                                                                                                                                                                                                                                                                | `erasure.request`, `erasure_recovery`, `memory.restore`                                                                |
+| Provider caches              | `embedding_cache`, `llm_response_cache`                                                                                                                                                                                                                                                                | The embedder and LLM client wrappers                                                                                   |
 
-**State outside ClickHouse.** Two kinds of durable state live on the filesystem: uploaded
-document originals, content-addressed by SHA-256 under `LOOM_BLOB_DIR`
-(`server/storage/blob_store.py`), and the code plane's git mirrors under `var/code_repos`.
-The mirrors can be re-cloned; the originals need the volume's own backup. Process caches
-and file locks are listed in [system overview](system-overview.md#deployment-topology).
+**State outside ClickHouse.** Uploaded document originals are rows of `document_blobs`,
+addressed per namespace by SHA-256 (`server/knowledge/store/blobs.py`). The token signing
+keys (`signing_keys`), admin runtime overrides (`runtime_overrides`), sign-in attempt
+counts (`auth_attempts`), graph-walk marks (`graph_projections`: the projections in flight
+and each namespace's last graph write), each namespace's last write (`namespace_write_keys`) and the supervisor lease are in ClickHouse too, so a new
+Loom pointed at this database gets every feature back. On the filesystem: the code plane's git mirrors under `var/code_repos`, a cache of
+the remotes ClickHouse records that a host without them re-clones. The root secret `LOOM_JWT_SECRET`,
+which seals the signing keys and stored credentials, is in the env. Process caches and
+file locks are listed in [system overview](system-overview.md#deployment-topology).
 
 ## Conventions every table follows
 
@@ -92,7 +96,14 @@ and file locks are listed in [system overview](system-overview.md#deployment-top
 | `MergeTree`                                        | Append-only logs: `events`, `agent_events`, `audit_log`, `conversations`, `task_events`, `entity_edges`, traces                                                                                         | Rows are facts about a moment.                                                        |
 | `SummingMergeTree`                                 | Counters: `entity_degree`, `memory_usage_totals`, `code_unit_signal`                                                                                                                                    | A counter is an INSERT of a delta, never a read-modify-write.                         |
 | `AggregatingMergeTree`                             | Non-additive rollups: `memory_term_freq`, `chunk_term_freq`, `code_term_freq`, `agent_cost_rollup_daily`, `memory_exposure_breadth_hourly`, `query_nodes`, `namespace_write_marks`, `subject_last_seen` | Partial aggregate states (a distinct count cannot be summed), finished with `-Merge`. |
-| `KeeperMap`                                        | `task_leases`, `agent_run_claims`, `oauth_claims`, `grant_claims` and the migration lock `loom._migration_lock`                                                                                         | Linearizable compare-and-swap across processes.                                       |
+| `KeeperMap`                                        | `task_leases`, `agent_run_claims` and the migration lock `loom._migration_lock` (also the `workers_supervisor` lease, the claims and the compiler-tier `scip_entry:*` keys)                             | Linearizable compare-and-swap across processes.                                       |
+
+**One `keeper_map_path_prefix` per deployment.** The KeeperMap paths are fixed in the
+migrations (`/loom/migration_lock`, `/loom/instances`, `/loom/task_leases`,
+`/loom/agent_run_claims`, `/loom/graph_projections`, `/loom/namespace_write_keys`), and
+ClickHouse puts them under the server's `keeper_map_path_prefix`. Two deployments whose
+ClickHouse servers share a Keeper and a prefix share these keys: one workers lease, one
+migration lock and every claim between them. Give each deployment its own prefix.
 
 **Why `ReplacingMergeTree` for mutable state.** `ALTER … UPDATE` rewrites whole parts
 asynchronously with no read-your-write guarantee. Lightweight `UPDATE` writes patch parts
@@ -395,33 +406,47 @@ with `purge=true` and runner state.
 - **Remaining `ALTER … UPDATE/DELETE` call sites** are listed in
   `tests/unit/test_clickhouse_mutation_inventory.py`, which fails on a new one until it is
   classified there.
-- **Provider lock recovery** conditionally deletes one `loom._migration_lock`
-  Keeper key under strict mode after a kernel-held process proof confirms the
-  previous owner stopped and residual queries, mutations and asynchronous inserts
-  have drained. This is a Keeper operation, not a MergeTree content mutation;
-  elapsed TTL alone never permits provider-lock takeover.
+- **Provider lock recovery** takes over one `loom._migration_lock` Keeper key with a
+  conditional `UPDATE` under strict mode, once the key expired and the previous
+  owner's participant counts as stopped (retired, or no heartbeat for its
+  `stale_after_s` and no query tagged with its id in `system.processes`).
+  `loom provider-lock clear` deletes the key the same way. Both are Keeper
+  operations, not MergeTree content mutations; an elapsed TTL alone never permits
+  provider-lock takeover.
 - **Run id claims** (`loom.agent_run_claims`, KeeperMap) live only inside one
   `run.begin`: claim, read the run row, write it, drop the claim. A later begin that
   takes the free claim reads the row and goes to a fresh id. `run.complete` and the
   erasure saga's `agent_runs.delete` step also drop claims, for a key a process that
   died mid-begin left behind. All are Keeper key drops, not MergeTree mutations.
-- **OAuth exchange claims** (`loom.oauth_claims`, KeeperMap) live only inside one
-  `/oauth/token` exchange: claim the credential's key, read it, decide, consume, drop
-  the claim. A claim a dead exchange left is taken over after two minutes by an
-  `ALTER … UPDATE` whose staleness test Keeper's compare-and-swap checks, so of two
-  takers one wins. A claim is kept, to go stale, when the consume did not finish, and
-  each boot sweeps the claims older than two minutes with one strict-mode
-  `ALTER … DELETE`. The drop and the sweep are Keeper key drops, not MergeTree mutations.
-- **Grant change claims** (`loom.grant_claims`, KeeperMap) work the same way, around one
-  grant change: an op that reads a grant and then writes it holds the grant's key from
-  the read to the write, so a concurrent change to the same grant waits for it. Its reads
-  are sequentially consistent, and it is cut off after 20 s (each statement after 10 s),
-  well before its claim may be taken over at 60 s. A repository maintainer's change across
-  branches (a revoke's fan-out, a sync's mirrors) first holds one claim per (repository,
-  subject), `repo:<owner/name>`, then its branches' claims in namespace order, and writes
-  the branches in one insert inside that bound. A change that may remove an admin first
-  holds the namespace's admins claim (the key with an empty subject) and counts the
-  admins under it.
+- **OAuth exchange and grant change claims** are leases (`server.core.leases`): keys
+  of `loom._migration_lock`. An
+  exchange claims its credential, reads it, decides, consumes and releases; when the
+  consume did not finish the claim is kept to expire after two minutes. A grant change
+  holds the grant's claim from its read to its write, so a concurrent change of the same
+  grant waits for it. Its reads are sequentially consistent, and it is cut off after 20 s
+  (each statement after 10 s), well before its 60 s claim may be taken over. A repository
+  maintainer's change across branches (a revoke's fan-out, a sync's mirrors) first holds
+  one claim per (repository, subject), `repo:<owner/name>`, then its branches' claims in
+  namespace order, and writes the branches in one insert inside that bound. A change that
+  may remove an admin first holds the namespace's admins claim (the key with no subject)
+  and counts the admins under it. `loom.oauth_claims` and `loom.grant_claims`, the
+  KeeperMap tables builds before 033 claimed in, are no longer written.
+- **Graph projections and graph writes** (`loom.graph_projections`, KeeperMap where the
+  server has a Keeper): a projection holds one of 32 slot keys of its namespace and its
+  end drops it (a begin whose insert failed uncertainly leaves its slot to go stale); a
+  begin that finds a slot older than 15 s (its process died) drops that one first; a
+  graph write raises the namespace's write key with a version-checked UPDATE, one in
+  flight per namespace per process. All are Keeper key operations. On a server without a
+  Keeper the table is a MergeTree and every begin, end and write is a row under a 1-day
+  TTL.
+- **Dead lease and slot keys.** The leader's hourly `keeper_sweep` worker deletes the
+  `loom._migration_lock` keys (leases and claims) an hour past their expiry and the
+  `loom.graph_projections` slot keys a day old: keys whose holder died before its own
+  delete. One strict-mode Keeper delete per table; a key written meanwhile fails it and
+  the next sweep retries.
+- **Namespace write keys** (`loom.namespace_write_keys`, KeeperMap, only where the server
+  has a Keeper): a write to a memory plane overwrites its namespace's key in the request
+  tail. One Keeper write, no part, no mutation.
 
 **Classification for erasure.** `server/erasure/store/census.py` puts every table in
 `schemas/schema.sql` in exactly one list, and `tests/unit/test_every_table_is_classified.py`
@@ -504,11 +529,34 @@ adds `select_sequential_consistency = 1` where it matters:
 
 - **Point reads after the caller's own write** (working memory, a document, a memory by
   key, a profile section) run inside `own_write_reads()`.
-- **Searches of a namespace this process wrote recently** (within
+- **Searches of a namespace written recently** (within
   `LOOM_CH_READ_YOUR_WRITES_WINDOW_S`, 20 s) run under `sequential_reads()`; an empty pool
-  re-runs the search that way (`LOOM_CH_READ_YOUR_WRITES`).
+  re-runs the search that way (`LOOM_CH_READ_YOUR_WRITES`). A write by this process is
+  known in-process; one by another process through `loom.namespace_write_keys`, one Keeper
+  key per namespace that a write sets, stamped by the server's clock, before it answers.
 
 The scope is a context variable, so spawned tasks inherit it.
+
+**What sequential consistency covers.** On SharedMergeTree (ClickHouse Cloud) a
+sequentially consistent read sees every insert acknowledged before it began. On a
+self-hosted ReplicatedMergeTree it waits only for inserts written with `insert_quorum`
+and `insert_quorum_parallel = 0`, which ClickHouse refuses for async inserts (and which
+serializes every insert into a table), so a read on one replica can still miss a row
+another replica acknowledged a moment ago. The guarantees built on it, the sign-in attempt
+recounts and the single signing-key retire among them, hold exactly on Cloud and a
+single server. A self-hosted replicated cluster must send every Loom process to one
+replica; `loom doctor`'s `replica_consistency` line warns while `loom.auth_attempts` or
+`loom.signing_keys` has more than one.
+
+**Keeper reads.** The Keeper keys that carry state between replicas (the namespace write
+keys, graph projections and writes, claims and leases) are read through each replica's own
+Keeper session. A Keeper node answers reads from its local state, which can trail the
+leader for a moment, so a key one replica just wrote can be missing from another's read.
+Writes, and the version checks of compare-and-swap, always go through the leader. For
+read-after-write across replicas on a self-hosted Keeper ensemble, set
+`<coordination_settings><quorum_reads>true</quorum_reads></coordination_settings>` in
+`keeper_server`: every read then goes through the leader too, at a round trip each. A
+single Keeper node, as in `deploy/clickhouse-config/keeper.xml`, needs nothing.
 
 ## Migrations
 
@@ -522,15 +570,14 @@ The scope is a context variable, so spawned tasks inherit it.
   that the repository no longer carries. A fresh database applies it; a database that
   already holds a superseded file records it without running.
 - The server applies pending migrations at boot (`LOOM_BOOT_MIGRATE`). Set it to `false`
-  for a branch server against a shared database. One host's processes serialise on a file
-  lock (`LOOM_BOOT_MIGRATE_LOCK_PATH`); containers on the KeeperMap lock
-  `loom._migration_lock`, or a lease row in `loom._migration_lease` without Keeper.
+  for a branch server against a shared database. Every process serialises on the KeeperMap
+  lock `loom._migration_lock`; a server without a Keeper is refused.
 - Every `ALTER` is sent with `alter_sync`, a mutating one also with `mutations_sync`, where
   the user may change them. After a file the runner polls `system.mutations`; a failed
   mutation, or one still running after `LOOM_MIGRATE_MUTATION_WAIT_S`, fails the file.
 - `-- loom: tolerate-error <code>` lets a statement that only some servers accept fail with
-  that code (for example `KeeperMap` without Keeper, or `MODIFY SETTING index_granularity`
-  on OSS `ReplacingMergeTree`, code 472).
+  that code (for example `MODIFY SETTING index_granularity` on OSS `ReplacingMergeTree`,
+  code 472).
 - Fresh-install rewrites (vector codec, `code_chunks` partition key) happen in the runner,
   so the files stay byte-identical.
 - `schemas/schema.sql` is regenerated by `scripts/ops/dump_schema.py`; CI checks it.
@@ -580,7 +627,7 @@ Supported server versions are in
 | Lightweight updates                | Supported on recent versions; `ALTER UPDATE` fallback otherwise.                          | Each `UPDATE` is a patch part plus a Keeper entry; statements are batched and back off while mutations are pending.                 |
 | `OPTIMIZE … FINAL`                 | Returns after the merge.                                                                  | Returns before the merge completes; code compaction polls `system.merges` on every replica.                                         |
 | Filesystem cache                   | No effect on a local disk.                                                                | The client sends `enable_filesystem_cache = 1` on every session.                                                                    |
-| Task leases                        | `task_leases` needs Keeper; without it `LOOM_TASK_LEASE_BACKEND=auto` uses `task_claims`. | Keeper is available.                                                                                                                |
+| Keeper                             | Required: the bundled stack runs an embedded one (`deploy/clickhouse-config/keeper.xml`). | Keeper is available.                                                                                                                |
 | Durability                         | A single node has no replication or backups unless you add them.                          | Replication and backups are managed by the service.                                                                                 |
 
 Before 26.8, a vector-search read with a `WHERE` clause can record wrong entries in the
@@ -626,8 +673,8 @@ rows. When any replica is older, every Loom session turns the cache off when it 
 - `server/memory/app/after_write.py`: fail-open projections.
 - `server/observability/events_stream.py`, `server/observability/audit.py`: telemetry and
   audit rows.
-- `server/storage/retention_overrides.py`, `server/storage/blob_store.py`: TTL composition
-  and document originals.
+- `server/storage/retention_overrides.py`: TTL composition;
+  `server/knowledge/store/blobs.py`: document originals.
 - `server/insights/app/ops.py` (`_clickhouse_parts_check`): the parts and merges check.
 - `scripts/ops/dump_schema.py`, `table_rebuild.py`, `vector_codec_rebuild.py`: operator
   tools.

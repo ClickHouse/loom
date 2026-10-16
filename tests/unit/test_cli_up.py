@@ -258,7 +258,7 @@ def test_up_single_user_boots_and_prints_connect_snippets(root: Path, stack, cap
     ]
     assert not [c for c in fake.calls if c[:2] == ["docker", "exec"]]
     # the connect block
-    assert "http://localhost:7777/me" in out
+    assert "http://localhost:7777/" in out
     assert "/mcp?toolset=coding" in out
     assert "single-user mode" in out
     assert '"namespace": "local"' in out and 'namespace="local"' in out
@@ -321,7 +321,7 @@ def test_up_rerun_on_running_stack_reconciles_without_rebuilding(root: Path, sta
     assert all(c[-5:] == ["up", "-d", "--force-recreate", "--no-deps", "loom"] for c in compose)
     out = capsys.readouterr().out
     assert out.count("reconciling configuration") == 2
-    assert out.count("http://localhost:7777/me") >= 2
+    assert out.count("http://localhost:7777/") >= 2
 
 
 def test_up_rebuild_runs_compose_even_when_healthy(root: Path, stack) -> None:
@@ -400,7 +400,7 @@ def test_up_open_launches_the_dashboard(root: Path, stack, monkeypatch: pytest.M
 
     monkeypatch.setattr(webbrowser, "open", lambda url: opened.append(url) or True)
     assert up._cmd_up(_args(root, open=True)) == 0
-    assert opened == ["http://localhost:7777/me"]
+    assert opened == ["http://localhost:7777/"]
 
 
 # ---- the command: auth on ---------------------------------------------------------

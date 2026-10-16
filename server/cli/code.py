@@ -40,7 +40,7 @@ from server.cli.code_prs import (
     _backfill_reviews,
 )
 from server.cli.code_run import _identity, _run
-from server.cli.code_scip import _entries, _scip_delta, _scip_full, _scip_retry
+from server.cli.code_scip import _entries, _entry_locked, _scip_delta, _scip_full, _scip_retry
 
 
 def _add_common(p: argparse.ArgumentParser) -> None:
@@ -125,6 +125,16 @@ def _add_scip_full_parser(csub: Any) -> None:
     )
     _add_common(p_lock)
     p_lock.set_defaults(func=_print_scip_lock_path)
+
+    p_run = csub.add_parser(
+        "entry-lock",
+        help="Run a command under the entry's compiler-tier lock (this host's file and "
+        "the deployment's lease): exit 75 when another pass holds it, 3 when the "
+        "lease is lost mid-run (the command is stopped).",
+    )
+    _add_common(p_run)
+    p_run.add_argument("command", nargs=argparse.REMAINDER, help="-- <command> [args…]")
+    p_run.set_defaults(func=_cmd_entry_lock)
 
 
 def _add_backfill_parser(csub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -548,6 +558,10 @@ def _print_scip_lock_path(args: argparse.Namespace) -> int:
     org, ns = _identity(args)
     print(entry_lock_path(org, ns).resolve())
     return 0
+
+
+def _cmd_entry_lock(args: argparse.Namespace) -> int:
+    return _run("entry-lock", _entry_locked(args))
 
 
 def _cmd_scip_full(args: argparse.Namespace) -> int:

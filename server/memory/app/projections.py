@@ -103,7 +103,7 @@ async def write_entity_edges(
     *,
     ch: Any,
     entity_map: dict[str, str] | None = None,
-    wait_visible: bool = False,
+    wait_visible: bool = True,
     dedup_token: str = "",
 ) -> None:
     """Emit pairwise entity edges + edge-to-memory rows per entry, and the row links
@@ -112,9 +112,10 @@ async def write_entity_edges(
     Per memory with N entities, emits C(N, 2) canonical pairs
     (entity_a <= entity_b lexically), capped at _MAX_PAIRS_PER_MEMORY.
     Always-on side effect of writes; read-side (search_mode=graph) is opt-in.
-    Fail-open. `wait_visible` acks only once the async-insert buffer has
-    flushed, so the rows are readable when the call returns: for a caller off
-    the response path, which pays nothing for the wait.
+    Fail-open. `wait_visible` (the default) acks only once the async-insert
+    buffer has flushed, so the rows are readable before the graph write mark
+    the insert leaves is recorded. `bulk_set` pays nothing for it: its
+    triples, awaited beside its edges, wait already.
     """
     now = naive_utc_now()
     edges: list[dict[str, Any]] = []
@@ -958,9 +959,9 @@ async def close_triples(
         issued += 1
     if issued:
         # A mutation is no INSERT, so the client's graph-write mark does not see it.
-        from server.memory.app.graph_write_marks import marks as _graph_marks
+        from server.memory.app import graph_write_marks as _graph_marks
 
-        _graph_marks().note_write(org, namespace)
+        _graph_marks.note_write(org, namespace)
     return issued
 
 
@@ -1072,7 +1073,7 @@ _OPEN_EDGES_WHERE = f"""org = {{org:String}} AND namespace = {{ns:String}}
 
 # The migration that started linking rows to edges: a value first written before it
 # was applied has no edge links of its own.
-_EDGE_ROW_LINKS_MIGRATION = "037_entity_edge_rows.sql"
+_EDGE_ROW_LINKS_MIGRATION = "043_entity_edge_rows.sql"
 
 # The pairs of {pairs} a live row still names: its current value has a link to the
 # pair, or it is a row whose value was first written before rows were linked to

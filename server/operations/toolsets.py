@@ -26,7 +26,7 @@ _MCP_HIDDEN_OPS: frozenset[str] = frozenset(
         # for chat; namespace.list stays on /v1/* + SDK for operators.
         "namespace.list",
         # The dashboard's own paint telemetry — one row per page view,
-        # posted by the /me shell; nothing an agent calls.
+        # posted by the dashboard shell; nothing an agent calls.
         "ui.vitals",
         # Dashboard-only paging over precomputed PR packs; an agent wants
         # ONE pack (code.context_pack), never the catalogue.
@@ -34,10 +34,6 @@ _MCP_HIDDEN_OPS: frozenset[str] = frozenset(
         # The repository card's "opened by agents" counts — a dashboard view
         # over the event ledger, nothing an agent asks.
         "knowledge.reads",
-        # A read-replica's own calls to the main Loom's embedder and LLM; they
-        # serve only a replica's service token.
-        "embedding.embed",
-        "llm.complete",
         # ---- Operator / admin surface ----
         # Memory housekeeping.
         "memory.dedup_list",
@@ -172,7 +168,7 @@ _MCP_CORE_OPS: frozenset[str] = frozenset(
         "profile.set",
         "profile.append",
         # Conversation history — the agent opens a thread once per session
-        # and logs each turn, so the transcript shows in /me. MCP is
+        # and logs each turn, so the transcript shows in the dashboard. MCP is
         # pull-based (the server
         # only sees what the model calls), so these must be visible for any
         # transcript to land at all; recall of past threads stays folded

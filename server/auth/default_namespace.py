@@ -10,7 +10,7 @@ can't drift from the real creation paths). The grant is what makes
 namespace administrable after auth is later enabled.
 
 Runs at most once per process — the row can only need creating once, and
-the `/me` dashboard would otherwise re-run a blocking `FINAL` lookup on
+the dashboard would otherwise re-run a blocking `FINAL` lookup on
 every page load. Mirrors `ensure_personal_namespace_cached`: best-effort,
 errors are logged and the cache is *not* set on failure so the next call
 retries. An `asyncio.Lock` keeps N concurrent first requests from each
@@ -28,7 +28,7 @@ log = logging.getLogger(__name__)
 _bootstrapped = False
 _lock = asyncio.Lock()
 
-# The shared single-user subject: the MCP transport, `/me`'s user_state
+# The shared single-user subject: the MCP transport, the dashboard's user_state
 # key and this bootstrap must agree on one name or the grant is invisible.
 _SINGLE_USER_SUBJECT = "you"
 
@@ -89,7 +89,7 @@ async def _warn_on_stranded_namespaces(ch: Any, org: str, namespace: str) -> Non
     log.warning(
         "auth is disabled and LOOM_DEFAULT_NAMESPACE=%s, but org %r has %d "
         "other namespace(s): %s. The dashboard can only reach %s — data in the "
-        "others stays queryable via SDK/MCP but is invisible in /me, and a "
+        "others stays queryable via SDK/MCP but is invisible in the dashboard, and a "
         "later auth-enabled migration sees it as ownerless. Point "
         "LOOM_DEFAULT_NAMESPACE at the one you meant, or enable auth to reach "
         "them all.",

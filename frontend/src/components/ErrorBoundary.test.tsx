@@ -53,7 +53,7 @@ describe("ErrorBoundary", () => {
   it("copies message, stack, route and build commit", async () => {
     const writeText = vi.fn(async (_text: string) => undefined);
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
-    history.replaceState(null, "", "/me/memories?x=1");
+    history.replaceState(null, "", "/memories?x=1");
     render(
       <ErrorBoundary>
         <Boom when={true} />
@@ -64,7 +64,7 @@ describe("ErrorBoundary", () => {
     const text = writeText.mock.calls.at(0)?.[0];
     expect(text).toBeDefined();
     expect(text).toContain("message: card exploded");
-    expect(text).toContain("route: /me/memories?x=1");
+    expect(text).toContain("route: /memories?x=1");
     expect(text).toContain("build: abc1234");
     expect(text).toContain("stack:");
     expect(await screen.findByRole("button", { name: "Copied" })).toBeInTheDocument();

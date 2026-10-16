@@ -261,7 +261,7 @@ def _unlisted(ops: tuple[str, ...]) -> str:
         if op in _MCP_HIDDEN_OPS:
             # Name who acts, never a route an agent could chase.
             if op.startswith("conflicts."):
-                return " (the user resolves conflicts at /me, in Review)"
+                return " (the user resolves conflicts in the dashboard's Review queue)"
             return f" ({op} is not an agent tool; skip it over MCP)"
         if "core" not in sets:
             return f" (call {op} via loom_op)"

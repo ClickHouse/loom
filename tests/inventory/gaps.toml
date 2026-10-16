@@ -6,6 +6,8 @@
 [gaps]
 "ch:code_scip_parts" = { owner = "code", reason = "No test names this object; only schema-check pins its DDL." }
 "ch:code_unit_signal" = { owner = "code", reason = "No test names this object; only schema-check pins its DDL." }
+"ch:oauth_claims" = { owner = "platform", reason = "No longer written: builds before 033 claimed OAuth exchanges in it." }
+"ch:task_claims" = { owner = "memory", reason = "No longer written: builds before 033 arbitrated task claims in it without a Keeper." }
 "cli:entity-export" = { owner = "platform", reason = "No test invokes this command." }
 "cli:export-actions" = { owner = "platform", reason = "No test invokes this command." }
 "cli:import-recall" = { owner = "platform", reason = "No test invokes this command." }
@@ -48,7 +50,6 @@
 "setting:audit_checkpoint_verify_windows" = { owner = "platform", reason = "No test names this setting or its LOOM_ env var." }
 "setting:audit_verifier_enabled" = { owner = "platform", reason = "No test names this setting or its LOOM_ env var." }
 "setting:audit_verifier_interval_seconds" = { owner = "platform", reason = "No test names this setting or its LOOM_ env var." }
-"setting:boot_migrate_lock_path" = { owner = "platform", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_ask_llm_model" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_backport_gaps_interval_seconds" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_bisect_history_days" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
@@ -68,8 +69,6 @@
 "setting:code_embed_recovery_interval_seconds" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_fan_in_prior_cap" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_gh_items_backfill_days" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
-"setting:code_git_ledger_merge_batch" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
-"setting:code_git_ledger_merge_page" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_ingest_dependents_concurrency" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_ingest_dependents_pending_max" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_ingest_ignore_file" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
@@ -234,7 +233,6 @@
 "setting:retention_reconcile_interval_seconds" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:sensitivity_sweep_enabled" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:sensitivity_sweep_interval_seconds" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
-"setting:supervisor_lease_retry_s" = { owner = "platform", reason = "No test names this setting or its LOOM_ env var." }
 "setting:task_lease_sweep_enabled" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:task_lease_sweep_idle_interval_seconds" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:task_lease_sweep_interval_seconds" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }

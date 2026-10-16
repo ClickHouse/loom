@@ -1,4 +1,4 @@
-"""A pending join request is not a grant on the /me token paths.
+"""A pending join request is not a grant on the caller API's token paths.
 
 `namespace.join` on an approval-gated namespace writes a row with
 `status='pending'` and `role` = the role asked for. The Setup and

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
+from datetime import datetime, timedelta
 from typing import Any
 
 from server.core.ch import get_client
@@ -324,52 +325,53 @@ async def handle_facts_related(input: FactsRelatedInput) -> FactsRelatedOutput:
 
 
 _TRAVERSE_TTL_S = 60.0
-# How long a walk waits for the in-flight graph projections of its namespace, its own
-# process's and the server's other processes' together.
+# How long a walk waits for the graph projections of its namespace in flight when it
+# starts, its own process's and the server's other processes' together.
 _OWN_PROJECTION_WAIT_S = 3.0
+
+
+async def _after_own_projections(org: str, ns: str) -> tuple[datetime | None, datetime]:
+    """Wait (at most `_OWN_PROJECTION_WAIT_S`) for the graph projections of
+    (org, ns) in flight, so a walk sees the edges a write just made. Returns
+    `graph_write_marks.last_write`'s (last write, server clock)."""
+    import time
+
+    from server.memory.app import after_write
+    from server.memory.app import graph_write_marks as marks
+
+    t0 = time.monotonic()
+    await after_write.settle(org, ns, timeout_s=_OWN_PROJECTION_WAIT_S)
+    return await marks.last_write(org, ns, wait_s=_OWN_PROJECTION_WAIT_S - (time.monotonic() - t0))
 
 
 class _WalkMemo:
     """Walks remembered per seed and arguments, checked against the graph-write marks.
+    Entries are (expires at, read started at, walk), on the ClickHouse server's clock:
+    the marks are shared across processes and stamped by that clock too, and the
+    start is read before the walk is."""
 
-    `marks` is the process's `GraphWriteMarks` (a callable, so the settings resolve on first
-    use). Entries are (expires at, read started at, walk), in wall-clock ns: the marks are
-    shared across processes, and only the wall clock is common to them."""
-
-    def __init__(self, marks: Any = None) -> None:
-        self.cache: dict[tuple[Any, ...], tuple[int, int, FactsTraverseOutput]] = {}
-        self._marks = marks
-
-    def marks(self) -> Any:
-        if self._marks is not None:
-            return self._marks
-        from server.memory.app.graph_write_marks import marks as _marks
-
-        return _marks()
+    def __init__(self) -> None:
+        self.cache: dict[tuple[Any, ...], tuple[datetime, datetime, FactsTraverseOutput]] = {}
 
     async def walk(self, input: FactsTraverseInput) -> FactsTraverseOutput:
-        import time
 
         from server.core.ch import sequential_reads, sequential_reads_active
-        from server.memory.app import after_write
         from server.memory.store import read_your_writes_enabled
         from server.settings import settings
 
         org, ns = input.org, input.namespace
-        marks = self.marks()
-        t0 = time.monotonic()
-        await after_write.settle(org, ns, timeout_s=_OWN_PROJECTION_WAIT_S)
-        await marks.wait_pending(
-            org, ns, timeout_s=_OWN_PROJECTION_WAIT_S - (time.monotonic() - t0)
-        )
+        try:
+            # A write in the walk's own millisecond retires it (`>` below).
+            wrote, started = await _after_own_projections(org, ns)
+        except Exception as e:  # noqa: BLE001 — a walk never fails on its memo's marks
+            log.warning("facts.traverse: graph marks unread (%s); walking without the memo", e)
+            return await _handle_facts_traverse_uncached(input)
         key = _traverse_key(input)
-        started = time.time_ns()
-        wrote = marks.written_at_ns(org, ns)
         hit = self.cache.get(key)
         if hit is not None and hit[0] > started and (wrote is None or hit[1] > wrote):
             return hit[2].model_copy(deep=True)
-        window_ns = int(float(settings.ch_read_your_writes_window_s) * 1e9)
-        settling = wrote is not None and started - wrote < window_ns
+        window = timedelta(seconds=float(settings.ch_read_your_writes_window_s))
+        settling = wrote is not None and started - wrote < window
         if settling and read_your_writes_enabled() and not sequential_reads_active():
             with sequential_reads():
                 out = await _handle_facts_traverse_uncached(input)
@@ -379,8 +381,8 @@ class _WalkMemo:
             return out
         if len(self.cache) > 512:
             self.cache.clear()
-        ttl_ns = int(_TRAVERSE_TTL_S * 1e9)
-        self.cache[key] = (started + ttl_ns, started, out.model_copy(deep=True))
+        expires = started + timedelta(seconds=_TRAVERSE_TTL_S)
+        self.cache[key] = (expires, started, out.model_copy(deep=True))
         return out
 
 
@@ -388,10 +390,8 @@ _memo = _WalkMemo()
 
 
 def reset_traverse_cache() -> None:
-    """Tests: forget remembered walks and this process's own graph-write marks, which decide
-    whether a walk is remembered."""
+    """Tests: forget remembered walks."""
     _memo.cache.clear()
-    _memo.marks().forget_local()
 
 
 def _traverse_key(input: FactsTraverseInput) -> tuple[Any, ...]:
@@ -420,12 +420,12 @@ async def handle_facts_traverse(input: FactsTraverseInput) -> FactsTraverseOutpu
     same nodes.
 
     Read-your-writes, across the server's processes: a walk first waits (bounded) for the
-    graph projections of its namespace still being written beside a `memory.set` response,
-    in this process and in the others that share the marks
-    (server/memory/app/graph_write_marks.py). A
-    remembered walk read before the namespace's last graph write is not served, a walk inside
-    the replication window after that write reads with sequential consistency, and such a
-    walk is not remembered — its edges may still be landing."""
+    graph projections of its namespace that began before it and are still being written
+    beside a `memory.set` response, in this process and in the others that share the marks
+    (server/memory/app/graph_write_marks.py); one still in flight after the wait counts as a
+    write. A remembered walk read before the namespace's last graph write is not served, a
+    walk inside the replication window after that write reads with sequential consistency,
+    and such a walk is not remembered — its edges may still be landing."""
     return await _memo.walk(input)
 
 
@@ -755,6 +755,10 @@ async def handle_facts_path(input: FactsPathInput) -> FactsPathOutput:
             truncated=False,
         )
 
+    try:
+        await _after_own_projections(input.org, input.namespace)
+    except Exception as e:  # noqa: BLE001 — a path never fails on the graph marks
+        log.warning("facts.path: graph marks unread (%s); walking now", e)
     ch = get_client()
     params: dict[str, Any] = {
         "org": input.org,
@@ -907,9 +911,9 @@ async def handle_facts_expire_by_adapter(
     if t_count > 0 or tm_count > 0:
         # A mutation is no INSERT, so the client's graph-write mark does not see it; without
         # the mark a walk remembered before the delete keeps serving the expired triples.
-        from server.memory.app.graph_write_marks import marks as _graph_marks
+        from server.memory.app import graph_write_marks as _graph_marks
 
-        _graph_marks().note_write(input.org, input.namespace)
+        _graph_marks.note_write(input.org, input.namespace)
 
     return FactsExpireByAdapterOutput(
         expired_triples=t_count,

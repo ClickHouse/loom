@@ -23,7 +23,7 @@ from tests.integration._resources import unique_org
 from tests.integration._spawn import loom_server
 
 _SECRET = secrets.token_urlsafe(48)
-_KID = "it-grant-revocation"
+_KID = "default"  # the root secret signs as `default`
 _ISS, _AUD = "it-grant-revocation-issuer", "it-grant-revocation-audience"
 ORG = unique_org("grant-revocation")
 
@@ -33,8 +33,6 @@ def base(control_plane_url: str) -> Iterator[str]:
     env = {
         "LOOM_AUTH_REQUIRED": "true",
         "LOOM_JWT_SECRET": _SECRET,
-        "LOOM_JWT_SECRETS_JSON": "",
-        "LOOM_JWT_ACTIVE_KID": _KID,
         "LOOM_JWT_ISSUER": _ISS,
         "LOOM_JWT_AUDIENCE": _AUD,
         "LOOM_JWT_PUBLIC_KEYS_JSON": "",

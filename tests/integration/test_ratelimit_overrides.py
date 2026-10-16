@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT / "sdk" / "python"))
 sys.path.insert(0, str(ROOT))
 
 from server.core.ratelimit import Limit, get_limiter  # noqa: E402
+from tests.integration._eventually import overrides_adopted  # noqa: E402
 
 
 def _auth_headers() -> dict[str, str]:
@@ -97,6 +98,7 @@ async def _set_override(
         },
     )
     assert r.status_code == 200, r.text
+    await overrides_adopted()
 
 
 async def _clear_override(c: httpx.AsyncClient, ns: str, op_class: str) -> None:
@@ -109,6 +111,7 @@ async def _clear_override(c: httpx.AsyncClient, ns: str, op_class: str) -> None:
         },
     )
     assert r.status_code == 200, r.text
+    await overrides_adopted()
 
 
 @pytest.mark.asyncio

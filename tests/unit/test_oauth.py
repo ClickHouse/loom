@@ -12,6 +12,7 @@ import asyncio
 import base64
 import hashlib
 import time
+from typing import Any
 
 import pytest
 from fastapi import FastAPI
@@ -25,20 +26,26 @@ pytestmark = pytest.mark.usefixtures("subjects_not_revoked", "keeper")
 
 @pytest.fixture
 def keeper(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """Every exchange holds its Keeper claim; returns the keys released. The
-    claim itself is tested in test_oauth_claims.py."""
-    from server.auth import oauth_claims
+    """Claims held in process memory; returns the names released."""
+    from server.core import leases
+    from tests.unit.claims_fake import MemoryClaims
 
+    claims = MemoryClaims()
     released: list[str] = []
 
-    async def _held(ch: object, key: str) -> tuple[oauth_claims.Claim, str]:
-        return oauth_claims.Claim.HELD, "me"
+    async def _take(name: str, **kw: Any) -> Any:
+        lease = await claims.take(name, **kw)
+        if lease is not None:
+            inner = lease.release
 
-    async def _release(ch: object, key: str, holder: str) -> None:
-        released.append(key)
+            async def _release() -> None:
+                released.append(name)
+                await inner()
 
-    monkeypatch.setattr(oauth_claims.CLAIMS, "claim", _held)
-    monkeypatch.setattr(oauth_claims.CLAIMS, "release", _release)
+            lease.release = _release
+        return lease
+
+    monkeypatch.setattr(leases, "take", _take)
     return released
 
 
@@ -591,18 +598,18 @@ def test_an_unreadable_revocation_store_mints_nothing(monkeypatch: pytest.Monkey
 def test_a_concurrent_exchange_of_a_claimed_credential_is_told_to_retry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Another exchange of the code holds its Keeper claim: this one may be
-    the owner retrying, so it gets a retryable 503, never a final
-    invalid_grant, and the code is left for the exchange that holds it."""
-    from server.auth import oauth_claims
+    """Another exchange of the code holds its claim: this one may be the owner
+    retrying, so it gets a retryable 503, never a final invalid_grant, and the
+    code is left for the exchange that holds it."""
+    from server.core import leases
 
-    async def _taken(ch: object, key: str) -> tuple[oauth_claims.Claim, str]:
-        return oauth_claims.Claim.TAKEN, ""
+    async def _taken(name: str, **_k: Any) -> None:
+        return None
 
     c = _client()
     code, verifier = _seed_code()
     with monkeypatch.context() as racing:
-        racing.setattr(oauth_claims.CLAIMS, "claim", _taken)
+        racing.setattr(leases, "take", _taken)
         refused = _exchange(c, code, verifier)
     assert refused.status_code == 503 and refused.headers["retry-after"] == "5"
     assert _exchange(c, code, verifier).status_code == 200
@@ -613,7 +620,7 @@ def test_an_exchange_past_its_bound_is_told_to_retry(monkeypatch: pytest.MonkeyP
     slow one never runs beside a taker; the code is left for the retry."""
     import asyncio
 
-    from server.auth import oauth_claims, revocation
+    from server.auth import revocation
 
     async def _slow(subjects: list[str], *, issued_at: int) -> bool:
         await asyncio.sleep(1)
@@ -622,7 +629,7 @@ def test_an_exchange_past_its_bound_is_told_to_retry(monkeypatch: pytest.MonkeyP
     c = _client()
     code, verifier = _seed_code()
     with monkeypatch.context() as slow:
-        slow.setattr(oauth_claims, "EXCHANGE_TIMEOUT_S", 0.05)
+        slow.setattr(oauth, "_EXCHANGE_TIMEOUT_S", 0.05)
         slow.setattr(revocation, "subjects_revoked", _slow)
         assert _exchange(c, code, verifier).status_code == 503
     assert _exchange(c, code, verifier).status_code == 200
@@ -636,8 +643,6 @@ def test_a_slow_consume_that_landed_is_never_answered_with_a_retry(
     tokens."""
     import asyncio
 
-    from server.auth import oauth_claims
-
     store = oauth._store
     consume = store.consume_code
 
@@ -645,7 +650,7 @@ def test_a_slow_consume_that_landed_is_never_answered_with_a_retry(
         await consume(code, grant)
         await asyncio.sleep(0.3)
 
-    monkeypatch.setattr(oauth_claims, "EXCHANGE_TIMEOUT_S", 0.2)
+    monkeypatch.setattr(oauth, "_EXCHANGE_TIMEOUT_S", 0.2)
     monkeypatch.setattr(store, "consume_code", _slow)
     c = _client()
     code, verifier = _seed_code()
@@ -693,8 +698,6 @@ def test_a_find_past_its_bound_is_told_to_retry(monkeypatch: pytest.MonkeyPatch)
     age its claim is taken over at."""
     import asyncio
 
-    from server.auth import oauth_claims
-
     store = oauth._store
     find = store.find_code
 
@@ -705,7 +708,7 @@ def test_a_find_past_its_bound_is_told_to_retry(monkeypatch: pytest.MonkeyPatch)
     c = _client()
     code, verifier = _seed_code()
     with monkeypatch.context() as slow:
-        slow.setattr(oauth_claims, "EXCHANGE_TIMEOUT_S", 0.05)
+        slow.setattr(oauth, "_EXCHANGE_TIMEOUT_S", 0.05)
         slow.setattr(store, "find_code", _slow)
         assert _exchange(c, code, verifier).status_code == 503
     assert _exchange(c, code, verifier).status_code == 200
@@ -719,7 +722,7 @@ def test_a_decided_exchange_releases_its_claim(
     c = _client()
     code, seeded = _seed_code()
     assert _exchange(c, code, verifier or seeded).status_code == status
-    assert keeper == [f"code:{oauth._token_id(code)}"]
+    assert keeper == [f"oauth:code:{oauth._token_id(code)}"]
     assert _exchange(c, code, seeded).status_code == 400
 
 
@@ -827,22 +830,27 @@ async def test_an_exchange_cancelled_before_its_consume_still_releases(
     though the request is cancelled again while it waits (anyio repeats it)."""
     import asyncio
 
-    from server.auth import oauth_claims
+    from server.core import leases
 
     released: list[str] = []
     releasing = asyncio.Event()
     finding = asyncio.Event()
 
-    async def _held(ch: object, key: str) -> tuple[oauth_claims.Claim, str]:
-        return oauth_claims.Claim.HELD, "me"
+    class _Lease:
+        name = "lease"
 
-    async def _release(ch: object, key: str, holder: str) -> None:
-        releasing.set()
-        await asyncio.sleep(0.05)
-        released.append(key)
+        def __init__(self, name: str) -> None:
+            self.claim = name
 
-    monkeypatch.setattr(oauth_claims.CLAIMS, "claim", _held)
-    monkeypatch.setattr(oauth_claims.CLAIMS, "release", _release)
+        async def release(self) -> None:
+            releasing.set()
+            await asyncio.sleep(0.05)
+            released.append(self.claim)
+
+    async def _held(name: str, **_k: Any) -> _Lease:
+        return _Lease(name)
+
+    monkeypatch.setattr(leases, "take", _held)
 
     reads: list[str] = []
 
@@ -866,51 +874,17 @@ async def test_an_exchange_cancelled_before_its_consume_still_releases(
     with pytest.raises(asyncio.CancelledError):
         await task
     await asyncio.sleep(0.1)
-    assert released == ["code:" + oauth._token_id("c")]
+    assert released == ["oauth:code:" + oauth._token_id("c")]
 
 
-def test_without_a_keeper_the_credential_is_used_up_before_the_decision(
+def test_a_made_up_credential_is_refused_before_any_claim(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Nothing keeps two presenters apart but the consume, so it comes first,
-    as before the claim existed. A decision that fails then has burnt the
-    code, so the answer says so instead of asking for a retry."""
-    from server.auth import oauth_claims
+    from server.core import leases
 
-    async def _unclaimed(ch: object, key: str) -> tuple[oauth_claims.Claim, str]:
-        return oauth_claims.Claim.UNCLAIMED, ""
-
-    monkeypatch.setattr(oauth_claims.CLAIMS, "claim", _unclaimed)
-    store = oauth._store
-    order: list[str] = []
-    consume = store.consume_code
-
-    async def _consume(code: str, grant: dict) -> None:
-        order.append("consume")
-        await consume(code, grant)
-
-    async def _down(token: str, grant: dict) -> None:
-        order.append("issue")
-        raise RuntimeError("replica away")
-
-    monkeypatch.setattr(store, "consume_code", _consume)
-    monkeypatch.setattr(store, "save_refresh", _down)
-    c = _client()
-    code, verifier = _seed_code()
-    r = _exchange(c, code, verifier)
-    assert r.status_code == 400 and r.json()["detail"]["error"] == "invalid_grant"
-    assert order == ["consume", "issue"]
-    assert _exchange(c, code, verifier).status_code == 400
-
-
-def test_a_made_up_credential_is_refused_before_any_keeper_write(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from server.auth import oauth_claims
-
-    async def _no_claim(ch: object, key: str) -> tuple[oauth_claims.Claim, str]:
+    async def _no_claim(name: str, **_k: Any) -> None:
         raise AssertionError("claimed a credential that does not exist")
 
-    monkeypatch.setattr(oauth_claims.CLAIMS, "claim", _no_claim)
+    monkeypatch.setattr(leases, "take", _no_claim)
     r = _exchange(_client(), "no-such-code", "v")
     assert r.status_code == 400 and r.json()["detail"]["error"] == "invalid_grant"

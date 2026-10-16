@@ -10,9 +10,24 @@ The [development guide](./docs/development/repository-guide.md) goes deeper: [re
 - **Search existing issues.** The bug may already be tracked.
 - **Keep changes focused.** One concern per pull request. A refactor, a bug fix and a feature do not share a commit.
 
-## Filing a bug
+## Filing an issue
 
-`loom report` prints an issue-ready Markdown body with the `loom doctor` diagnostic attached. `--open` also opens the new-issue page:
+Every issue goes through a form in `.github/ISSUE_TEMPLATE/`; pick the one that fits:
+
+| Form                             | For                                                                                                                |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Question                         | How to do something with Loom.                                                                                     |
+| Feature request                  | A workflow Loom should support, starting from the use case.                                                        |
+| Bug report                       | An op, SDK call, CLI command, worker, migration or plugin hook does the wrong thing.                               |
+| Recall or answer quality         | Search, ask or a context pack returned a wrong result, missed a memory, or answered when it should have abstained. |
+| Performance issue                | Something is slower, or reads more from ClickHouse, than expected.                                                 |
+| Upgrade or compatibility issue   | An upgrade broke a client, a migration failed, or a field or setting changed behaviour.                            |
+| Installation or deployment issue | Loom does not install, build, boot or connect to ClickHouse.                                                       |
+| Documentation issue              | A page is wrong, missing or unclear.                                                                               |
+
+The forms ask which component is affected, whether the problem reproduces on the latest release or `main`, related issues and pull requests (`Caused by:` names the pull request behind a regression), and how the problem was found: AI tools are welcome, and saying whether a person reproduced the problem tells a maintainer how much to trust the reproduction. Each form asks you to confirm that tokens, keys, passwords and personal or customer data are removed.
+
+`loom report` prints the Environment field the forms ask for: Loom, Python and platform versions and the `loom doctor` diagnostic. `--open` also opens the bug form with the versions filled in:
 
 ```bash
 loom report --open
@@ -20,17 +35,7 @@ loom report | pbcopy                        # macOS
 loom report | xclip -selection clipboard    # Linux
 ```
 
-The diagnostic holds Python and Loom versions, platform, ClickHouse reachability, and worker and embedder configuration. It records only whether `LOOM_JWT_SECRET` and `LOOM_CH_PASSWORD` are set, never their values.
-
-The bug form (`.github/ISSUE_TEMPLATE/bug.yml`) asks for:
-
-- what you ran (op, SDK call, `loom` or `make` command, plugin hook) and what came back, with its `error.code`;
-- the expected behaviour;
-- the smallest reproduction. For state-dependent failures, add the latest applied migration: `SELECT max(filename) FROM loom._migrations`;
-- the environment (paste `loom report`) and the relevant logs;
-- confirmation that tokens, keys, passwords and personal or customer data are removed.
-
-Blank issues stay enabled, because `loom report --open` opens one with the report's header filled in. Security issues go through [SECURITY.md](./SECURITY.md), never a public issue.
+The diagnostic holds ClickHouse reachability and worker and embedder configuration. It records only whether `LOOM_JWT_SECRET` and `LOOM_CH_PASSWORD` are set, never their values. Security issues go through [SECURITY.md](./SECURITY.md), never a public issue.
 
 ## Development setup
 
@@ -59,7 +64,7 @@ make server
 # → http://localhost:7777
 ```
 
-This runs the same server as the Docker image, with `--reload` and without a supervisor ([deployment](./docs/operations/deployment.md)). The `/me` dashboard returns 503 until you run `npm --prefix frontend run build`. Admin ops stay reachable at `/v1/admin/*` either way.
+This runs the same server as the Docker image, with `--reload` and without a supervisor ([deployment](./docs/operations/deployment.md)). The dashboard returns 503 until you run `npm --prefix frontend run build`. Admin ops stay reachable at `/v1/admin/*` either way.
 
 For Loom and ClickHouse together, use the dev compose stack:
 
@@ -152,14 +157,14 @@ Docs follow the [documentation style guide](./docs/development/documentation-sty
 ## Pull requests
 
 - **Title:** a sentence saying what is now true, as in `git log` (e.g. `MCP reads the bearer from the Authorization header only, never from ?token=`).
-- **Body:** fill the template (`.github/PULL_REQUEST_TEMPLATE.md`): **Why** (link the issue), **Scope and risk**, **Compatibility, rollout and rollback** (ops and fields added, changed or removed, operator steps, what a revert leaves behind) and **Tests** (what you ran and what it showed). Its checklist matches what CI and repository policy enforce.
+- **Body:** fill the template (`.github/PULL_REQUEST_TEMPLATE.md`). It opens with the linked issues (`Closes:` / `Related:`, full URLs) and a **changelog category** with a one- or two-sentence **changelog entry** a user can read without the diff; the release pull request collects those entries into its release notes. Then **Why**, **Scope and risk**, **Compatibility, rollout and rollback** (ops and fields added, changed or removed, operator steps, what a revert leaves behind), **Tests** (what you ran and what it showed) and how AI tools were used. Its checklist matches what CI and repository policy enforce.
 - **Measurements** that justify a change go in the description with the command that reproduces them, not in code comments or docs.
 - CI must be green before merge. Squash-merge is the default: one logical change per pull request.
 
 ## Asking questions
 
-- **Questions and design discussion:** GitHub Issues.
-- **Bugs and feature requests:** GitHub Issues with the bug or feature template.
+- **Questions and design discussion:** GitHub Issues, with the question or feature request form.
+- **Bugs:** GitHub Issues, with the form that fits (see [Filing an issue](#filing-an-issue)).
 - **Security:** see [SECURITY.md](./SECURITY.md). Do not file public issues for vulnerabilities.
 
 ## Code of conduct

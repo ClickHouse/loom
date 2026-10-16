@@ -59,28 +59,30 @@ curl -s 'http://localhost:7777/v1/health?include=workers' | jq '.workers_leader'
 - **`problems`** is a list of `{code, severity, message, fix, source}`, worst first. The
   same list is printed by `loom doctor` and shown as the dashboard banner.
 
-| Problem code                              | Severity                                             | Meaning                                                                                                                                             |
-| ----------------------------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `fake_embedder`, `fake_llm`               | warn (error with `LOOM_REQUIRE_REAL_PROVIDERS=true`) | a fake provider is configured                                                                                                                       |
-| `embedder_key_missing`, `llm_key_missing` | warn (same)                                          | a real provider is configured without its key; the process runs on the fake client                                                                  |
-| `embedding_dim_mismatch`                  | error                                                | the embedder returns a different width from `LOOM_EMBEDDING_DIM`                                                                                    |
-| `coded_width_mismatch`                    | error                                                | a coded vector column's width differs from what its writes carry; those writes fail                                                                 |
-| `provider_failing:<name>`                 | error                                                | the last call to that provider failed; clears on the next success                                                                                   |
-| `jwt_secret_empty`                        | error                                                | tokens cannot be signed                                                                                                                             |
-| `dev_jwt_secret`                          | warn                                                 | the checked-in dev secret with auth on                                                                                                              |
-| `dev_sealing_secret`                      | warn                                                 | `LOOM_JWT_SECRET` is the checked-in dev secret while `LOOM_JWT_SECRETS_JSON` signs: stored credentials are sealed with it                           |
-| `main_loom_unreachable`                   | error                                                | a read-replica's main Loom did not answer its last call or check: blame, and the embeddings and LLM calls it sends there, fail                      |
-| `revocation_not_loaded`                   | error                                                | auth on and this process never read `loom.revoked_tokens`: every bearer gets 503                                                                    |
-| `revocation_stale`                        | warn                                                 | the revocation snapshot is older than max(300 s, 10 × `LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS`): a token revoked since then still authenticates here |
-| `revocation_too_stale`                    | error                                                | the snapshot is older than `LOOM_JWT_REVOCATION_MAX_STALE_SECONDS` (600 s): every bearer gets 503 until a refresh lands                             |
-| `pending_migrations`                      | error                                                | the schema lacks migrations this build expects                                                                                                      |
-| `instance_label_missing`                  | warn                                                 | a process outside the compose files has no `LOOM_INSTANCE_LABEL`                                                                                    |
-| `workers_lease_absent`                    | info                                                 | this process runs no workers (expected on a web-only container)                                                                                     |
-| `otel_erasure_index`                      | warn                                                 | ClickStack metrics tables lack the index erasure needs ([maintenance](./maintenance.md#clickstack-erasure-index))                                   |
+| Problem code                              | Severity                                             | Meaning                                                                                                                                                     |
+| ----------------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fake_embedder`, `fake_llm`               | warn (error with `LOOM_REQUIRE_REAL_PROVIDERS=true`) | a fake provider is configured                                                                                                                               |
+| `embedder_key_missing`, `llm_key_missing` | warn (same)                                          | a real provider is configured without its key; the process runs on the fake client                                                                          |
+| `embedding_dim_mismatch`                  | error                                                | the embedder returns a different width from `LOOM_EMBEDDING_DIM`                                                                                            |
+| `coded_width_mismatch`                    | error                                                | a coded vector column's width differs from what its writes carry; those writes fail                                                                         |
+| `provider_failing:<name>`                 | error                                                | the last call to that provider failed; clears on the next success                                                                                           |
+| `jwt_secret_empty`                        | error                                                | tokens cannot be signed                                                                                                                                     |
+| `dev_jwt_secret`                          | warn                                                 | the checked-in dev secret with auth on                                                                                                                      |
+| `config_drift`                            | error                                                | this process's root secret or MUST_MATCH settings differ from the deployment's published configuration: it is not ready ([running N replicas](replicas.md)) |
+| `revocation_not_loaded`                   | error                                                | auth on and this process never read `loom.revoked_tokens`: every bearer gets 503                                                                            |
+| `revocation_stale`                        | warn                                                 | the revocation snapshot is older than max(300 s, 10 × `LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS`): a token revoked since then still authenticates here         |
+| `revocation_too_stale`                    | error                                                | the snapshot is older than `LOOM_JWT_REVOCATION_MAX_STALE_SECONDS` (600 s): every bearer gets 503 until a refresh lands                                     |
+| `pending_migrations`                      | error                                                | the schema lacks migrations this build expects                                                                                                              |
+| `instance_label_missing`                  | warn                                                 | a process outside the compose files has no `LOOM_INSTANCE_LABEL`                                                                                            |
+| `workers_lease_absent`                    | info                                                 | this process runs no workers (expected on every replica but the leader)                                                                                     |
+| `workers_lease_unreachable`               | warn                                                 | this process could not ask ClickHouse for the workers lease; if every process says so, nothing runs the workers                                             |
+| `workers_lease_given_up`                  | warn                                                 | this process released the workers lease and stopped contending (it is draining, or its workers child kept failing to start); another process takes them     |
+| `otel_erasure_index`                      | warn                                                 | ClickStack metrics tables lack the index erasure needs ([maintenance](./maintenance.md#clickstack-erasure-index))                                           |
 
 Other body fields: `providers` (per-provider call state), `fake_embedding`, `fake_llm`,
 `providers_degraded`, `embedding_dim_mismatch`, `adaptive_thresholds` (the similarity
-gates the boot probe derived from the embedder), `ratelimit.backend` (`shared` or
+gates derived from the embedder, with `calibration_hash` — equal on every replica serving
+the same gates — and `source`: `shared` or this replica's own `probe`), `ratelimit.backend` (`shared` or
 `per-process`), and `mode` (`ch`, plus `langfuse` and `clickstack` when
 configured). `?include=` accepts `workers`, `langfuse`, `otel`, `embedding_cache` and
 `llm_cache`; each subsystem is reported on its own and only ClickHouse decides the HTTP
@@ -96,8 +98,8 @@ exit code is 1 when any line is `FAIL`. `--json` prints `{ok, checks, problems}`
 `--client` also checks this machine as a coding-agent client: the server URL and token
 the hooks would use (`--server-url`, `--token` override them), whether the token is
 accepted and can write its namespace, the Claude Code or Codex wiring, and capture jobs
-that never reached the server. `loom report` wraps the doctor output in a bug-report
-body ([filing a bug](../../CONTRIBUTING.md#filing-a-bug)).
+that never reached the server. `loom report` prints the doctor output for a bug
+report's Environment field ([filing an issue](../../CONTRIBUTING.md#filing-an-issue)).
 
 ### ops.health
 
@@ -152,7 +154,7 @@ extracting a deferred batch, indexing a commit.
   (kept 30 days), so a web-only container shows the passes the workers container ran.
   The dashboard's admin **Health** view shows the same.
 - `/v1/health?include=workers` → `workers_leader.reason` says whether this process holds
-  the workers lease and, if not, who does.
+  the deployment's workers lease (`workers_supervisor` in ClickHouse).
 - Metrics: `loom.worker.consecutive_failures{worker}` and
   `loom.worker.partial_failures{worker}`.
 - `ops.projection_failures.list` (`ORG_ADMIN`) lists secondary projections that failed
@@ -342,8 +344,10 @@ own, smaller buckets (`LOOM_RATELIMIT_CLASS_FRACTIONS`) and lower ClickHouse pri
 so a benchmark cannot spend production's budget. Limits are enforced per replica; see
 `LOOM_REPLICA_COUNT` in [failure and recovery](../architecture/failure-and-recovery.md).
 `POST /v1/admin/ratelimit.set` with `{namespace|org, op_class, capacity, rate}` (or
-`clear: true`) overrides a bucket in the process that receives it; the override is lost
-on restart.
+`clear: true`) overrides a bucket. The override is stored in `loom.runtime_overrides`, and
+every process adopts it within `LOOM_RUNTIME_OVERRIDES_REFRESH_SECONDS` (default 10); it
+survives a restart. `POST /v1/admin/budget.set` stores latency-budget overrides the same
+way. Bucket fill itself stays per host.
 
 ## Related
 

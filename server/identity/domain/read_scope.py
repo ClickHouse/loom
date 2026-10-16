@@ -400,8 +400,6 @@ NARROW_SAFE_OPS: dict[str, str] = {
     # Not audit.list: a row's subject carries memory keys, ids and content hashes of
     # any user (and erasure targets), with no user axis to pin.
     "calibration.get": "embedder calibration numbers",
-    "embedding.embed": "vectors of the caller's own text",
-    "llm.complete": "a completion of the caller's own prompt",
     "ui.vitals": "browser timing beacons",
     # Not erasure.*: an erasure's target is a namespace or a user_id, checked for admin
     # authority only, so a token narrowed to one user would erase every user's rows

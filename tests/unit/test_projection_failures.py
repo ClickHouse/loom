@@ -729,3 +729,20 @@ async def test_a_follow_replay_first_finishes_a_fallbacks_recorded_repair(monkey
     result = await retry_projection_failure(failure, ch=_GraphCH())
     assert result.resolved
     assert calls == [("finish", "r1", at, [paris]), ("follow", [("a", "b")])]
+async def test_a_failure_row_is_committed_not_left_in_a_buffer() -> None:
+    """The ledger row is the only record of a lost projection: the insert
+    waits for the async-insert flush."""
+    from server.memory.app.projection_failures import record_projection_failure
+
+    seen: list[tuple[str, dict]] = []
+
+    class _CH:
+        async def insert(self, table, rows, settings=None):
+            seen.append((table, settings or {}))
+
+    await record_projection_failure(
+        org="o", namespace="n", projection="entity_edges", error="boom", ch=_CH()
+    )
+    assert seen == [
+        ("loom.memory_projection_failures", {"async_insert": 1, "wait_for_async_insert": 1})
+    ]

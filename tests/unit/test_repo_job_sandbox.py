@@ -384,6 +384,7 @@ async def test_a_refused_clone_records_an_error_stage(tmp_path: Path, monkeypatc
     monkeypatch.setattr(settings, "code_sandbox_required", True)
     cfg = repo_config(git_dir=str(tmp_path / "m.git"), git_remote=str(tmp_path / "src.git"))
     repo = AsyncMock()
+    repo.get_state.return_value = ""  # not indexed yet: the card shows the stage
     assert await bootstrap.clone_if_missing(cfg, repo) is False
     stage = repo.set_state.await_args_list[-1]
     assert stage.args[2:4] == (bootstrap.STAGE_KEY, "error")

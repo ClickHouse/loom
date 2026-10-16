@@ -17,8 +17,8 @@ def test_default_excludes_the_health_path(settings_override) -> None:
     assert otel._fastapi_excluded_urls() == "/v1/health"
     settings_override(otel_excluded_urls="")
     assert otel._fastapi_excluded_urls() is None
-    settings_override(otel_excluded_urls=" /v1/health,/me/assets ")
-    assert otel._fastapi_excluded_urls() == "/v1/health,/me/assets"
+    settings_override(otel_excluded_urls=" /v1/health,/assets ")
+    assert otel._fastapi_excluded_urls() == "/v1/health,/assets"
 
 
 def _fake_instrumentor(calls: list[dict]) -> types.ModuleType:

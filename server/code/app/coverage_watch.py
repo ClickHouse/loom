@@ -63,8 +63,13 @@ async def _full_sha(cfg: Any, commit: str) -> str:
         return sha
     if not _SHORT_SHA.match(sha):
         raise ValidationError("commit must be 7..40 hex characters")
+    from server.code.app.index.mirrors import history_dir
+
+    git_dir, gap = await history_dir(cfg)
+    if gap:
+        raise ValidationError(f"commit {commit!r} not resolved ({gap}); pass the full 40-hex SHA")
     try:
-        return await gitrepo.resolve_commit(cfg.git_dir, sha)
+        return await gitrepo.resolve_commit(git_dir, sha)
     except (ValueError, gitrepo.GitError) as e:
         raise ValidationError(
             f"commit {commit!r} is not in the mirror yet; pass the full 40-hex SHA"

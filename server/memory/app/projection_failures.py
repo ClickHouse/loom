@@ -137,7 +137,9 @@ async def record_projection_failure(
                 "resolved_at": None,
             }
         ],
-        settings={"async_insert": 1, "wait_for_async_insert": 0},
+        # Committed: the row is the only record of the lost projection, and a
+        # fire-and-forget buffer dies with the replica that holds it.
+        settings={"async_insert": 1, "wait_for_async_insert": 1},
     )
 
 
