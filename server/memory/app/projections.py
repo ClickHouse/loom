@@ -949,10 +949,16 @@ async def reopen_triples(
 
 
 async def end_triples_now(
-    ch: Any, *, org: str, namespace: str, triples: list[tuple[str, str, str]]
+    ch: Any,
+    *,
+    org: str,
+    namespace: str,
+    triples: list[tuple[str, str, str]],
+    stated_ends_only: bool = False,
 ) -> None:
     """End now the intervals of `triples` that end later ("until Dec 1"), as a close
-    does: no row states them any longer. One read, and an UPDATE only when one does."""
+    does: no row states them any longer. With `stated_ends_only`, a later end a close
+    gave (it stamps `invalid_at`) is kept. One read, and an UPDATE only when one does."""
     if not triples:
         return
     now = naive_utc_now().replace(microsecond=0)  # as the DateTime columns store it
@@ -960,6 +966,8 @@ async def end_triples_now(
     where = """org = {org:String} AND namespace = {ns:String}
           AND (subject, relation, object) IN {triples:Array(Tuple(String, String, String))}
           AND valid_to > {now:DateTime}"""
+    if stated_ends_only:
+        where += " AND invalid_at IS NULL"
     later = await ch.query_all(
         f"SELECT 1 FROM loom.entity_triples WHERE {where} LIMIT 1"
         " SETTINGS select_sequential_consistency = 1",
@@ -981,17 +989,27 @@ async def end_triples_now(
     _graph_marks().note_write(org, namespace)
 
 
-async def end_edges_now(ch: Any, *, org: str, namespace: str, pairs: list[tuple[str, str]]) -> None:
-    """End now the edges of `pairs` still valid now or later, as `end_triples_now`
-    ends their triples. No `invalid_at`: the edge walk never walks a retired edge, and
-    the fact did hold until now. One read, and an UPDATE only when one is found."""
-    if not pairs:
+async def end_edges(
+    ch: Any, *, org: str, namespace: str, ends: list[tuple[str, str, datetime]]
+) -> None:
+    """End each edge (entity_a, entity_b, end) still valid after its `end`, as a close
+    ends a triple. No `invalid_at`: the edge walk never walks a retired edge, and the
+    fact did hold until then. One read, and an UPDATE only when one is found."""
+    if not ends:
         return
-    now = naive_utc_now().replace(microsecond=0)
-    params = {"org": org, "ns": namespace, "pairs": pairs, "now": now}
-    where = """org = {org:String} AND namespace = {ns:String}
-          AND (entity_a, entity_b) IN {pairs:Array(Tuple(String, String))}
-          AND invalid_at IS NULL AND (valid_to IS NULL OR valid_to > {now:DateTime})"""
+    params = {
+        "org": org,
+        "ns": namespace,
+        "pairs": [(a, b) for a, b, _end in ends],
+        "ends": [end.replace(microsecond=0) for _a, _b, end in ends],
+    }
+    end = (
+        "arrayElement({ends:Array(DateTime)},"
+        " indexOf({pairs:Array(Tuple(String, String))}, (entity_a, entity_b)))"
+    )
+    where = f"""org = {{org:String}} AND namespace = {{ns:String}}
+          AND (entity_a, entity_b) IN {{pairs:Array(Tuple(String, String))}}
+          AND invalid_at IS NULL AND (valid_to IS NULL OR valid_to > {end})"""
     found = await ch.query_all(
         f"SELECT 1 FROM loom.entity_edges WHERE {where} LIMIT 1"
         " SETTINGS select_sequential_consistency = 1",
@@ -1002,7 +1020,7 @@ async def end_edges_now(ch: Any, *, org: str, namespace: str, pairs: list[tuple[
     await ch.execute(
         f"""
         ALTER TABLE loom.entity_edges
-        UPDATE valid_to = greatest({{now:DateTime}}, ifNull(valid_from, {{now:DateTime}}))
+        UPDATE valid_to = greatest({end}, ifNull(valid_from, {end}))
         WHERE {where}
         """,
         params=params,

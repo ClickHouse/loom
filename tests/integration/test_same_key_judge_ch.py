@@ -3379,6 +3379,122 @@ async def test_a_recovered_value_starts_at_the_revision_and_walks_on_both_planes
     assert await _walked(org, ["london"], labeled=False, as_of=between) == ["london"]
 
 
+async def test_a_retired_rows_edge_ends_with_its_triple(ch, org) -> None:
+    # London's row retires behind Paris's: both walks reach Paris only. A favourite
+    # city may have many values, so Paris's own write does not close London.
+    london = await _stated(ch, org, "s1", "I like London")
+    paris = await _stated(ch, org, "s2", "I like Paris")
+    await _edges_like_triples(ch, org)
+    await _follow_retirement(ch, org, london, paris)
+    assert await _walked(org, ["paris"], labeled=True) == ["paris"]
+    assert await _walked(org, ["paris"], labeled=False) == ["paris"]
+
+
+async def _replay_follow(ch: Any, org: str, loser: dict[str, Any], winner: dict[str, Any]) -> None:
+    """Replay the follow of `loser` retired behind `winner`, as the repair replays the
+    pairs a failed follow recorded."""
+    from server.memory.app.projection_failures import (
+        FOLLOW_ROWS,
+        ProjectionFailureRow,
+        retry_projection_failure,
+    )
+
+    failure = ProjectionFailureRow(
+        failure_id=str(uuid.uuid4()),
+        org=org,
+        namespace=NS,
+        agent="bot",
+        projection=FOLLOW_ROWS,
+        source_operation="memory.bulk_set",
+        source_resource_id="memory.bulk_set:replay",
+        memory_keys=[KEY],
+        error_type="RuntimeError",
+        error_message="follow failed",
+        payload={"pairs": [[str(loser["memory_id"]), str(winner["memory_id"])]]},
+    )
+    assert (await retry_projection_failure(failure, ch=ch)).resolved
+    await _mutations_done(ch, org)
+
+
+async def test_a_replayed_follow_ends_the_edge_its_failure_left_open(ch, org, monkeypatch) -> None:
+    # London's close lands and its edge end fails: the replay plans no close, as
+    # London is closed, and still ends the edge.
+    from server.memory.app import entity_projections
+
+    london = await _stated(ch, org, "s1", "I like London")
+    paris = await _stated(ch, org, "s2", "I like Paris")
+    await _edges_like_triples(ch, org)
+
+    async def _fails(*a: Any, **k: Any) -> None:
+        raise RuntimeError("edges down")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(entity_projections, "end_edges", _fails)
+        with pytest.raises(RuntimeError):
+            await _follow_retirement(ch, org, london, paris)
+    await _mutations_done(ch, org)
+    assert await _open_cities(ch, org, {"paris"}) == {"paris"}
+    assert await _walked(org, ["london", "paris"], labeled=False) == ["london", "paris"]
+    await _replay_follow(ch, org, london, paris)
+    assert await _walked(org, ["paris"], labeled=False) == ["paris"]
+
+
+async def test_a_replayed_follow_keeps_one_value_current(ch, org, monkeypatch) -> None:
+    # London undone over Paris, then retired behind Rome: the follow closes London and
+    # fails to state Paris again. The replay finds London closed and still does.
+    from server.memory.app import graph_undo
+
+    london = await _london_undone_over_paris(ch, org, "live_in")
+    rome = await _stated(ch, org, "s3", "I like Rome", ("user", "like", "rome"))
+
+    async def _fails(*a: Any, **k: Any) -> None:
+        raise RuntimeError("restate down")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(graph_undo, "restate_facts", _fails)
+        with pytest.raises(RuntimeError):
+            await _follow_retirement(ch, org, london, rome)
+    await _mutations_done(ch, org)
+    assert await _open_facts(ch, org, {("like", "rome")}) == {("like", "rome")}
+    await _replay_follow(ch, org, london, rome)
+    want = {("live_in", "paris"), ("like", "rome")}
+    assert await _open_facts(ch, org, want) == want
+
+
+async def test_a_retired_rows_edge_ends_when_a_winner_dated_ahead_starts(ch, org) -> None:
+    # Paris's row retires behind Berlin's, dated next month: Paris holds until then on
+    # both walks, and only Berlin after.
+    from server.memory import store as M
+
+    ahead = naive_utc_now().replace(microsecond=0) + timedelta(days=30)
+    paris = await _stated(ch, org, "s1", "I like Paris")
+    berlin = await _stated(ch, org, "s2", "I like Berlin", valid_at=ahead)
+    berlin = {**berlin, "valid_at": ahead, "version": M.next_version()}
+    await M.insert_memory_versions([berlin], ch=ch)
+    await _edges_like_triples(ch, org)
+    await _follow_retirement(ch, org, paris, berlin)
+    both = ["berlin", "paris"]
+    assert await _walked(org, both, labeled=True) == both
+    assert await _walked(org, both, labeled=False) == both
+    later = ahead + timedelta(days=1)
+    assert await _walked(org, ["berlin"], labeled=True, as_of=later) == ["berlin"]
+    assert await _walked(org, ["berlin"], labeled=False, as_of=later) == ["berlin"]
+
+
+async def test_a_retirement_ends_now_a_fact_its_row_stated_until_later(ch, org) -> None:
+    # "I work at Acme" until next month, retired behind "I like Rome": Acme ends now on
+    # both walks, as a revision away ends it.
+    until = naive_utc_now() + timedelta(days=20)
+    job = await _stated(
+        ch, org, "s1", "I work at Acme", ("user", "work_at", "acme"), fact_valid_to=until
+    )
+    rome = await _stated(ch, org, "s2", "I like Rome")
+    await _edges_like_triples(ch, org)
+    await _follow_retirement(ch, org, job, rome)
+    assert await _walked(org, ["rome"], labeled=True) == ["rome"]
+    assert await _walked(org, ["rome"], labeled=False) == ["rome"]
+
+
 async def test_a_revision_ends_now_a_value_still_valid_until_a_later_move(ch, org) -> None:
     # After the Undo, a move to Berlin dated ahead ends London then. London's row is then
     # revised away: London ends now, and Paris holds until Berlin starts.

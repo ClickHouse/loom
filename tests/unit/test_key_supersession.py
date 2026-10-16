@@ -1068,7 +1068,12 @@ async def test_the_repair_follows_the_pairs_a_write_left(monkeypatch) -> None:
     async def abandoned(**kw):
         marked.append(kw["reason"])
 
+    async def no_links(*a, **k):
+        return []
+
     monkeypatch.setattr(entity_projections, "_plan_chunk", chunk)
+    # The follow reads the losers' links after its plan; these rows have none.
+    monkeypatch.setattr(entity_projections, "linked_triples", no_links)
     monkeypatch.setattr(projection_failures, "mark_projection_failures_resolved", resolved)
     monkeypatch.setattr(projection_failures, "mark_projection_failure_abandoned", abandoned)
     failure = SimpleNamespace(
@@ -1177,6 +1182,15 @@ class _Graph:
     async def query_all(self, sql, params):
         if "pairs" in params:
             return []  # the relation's stored values: none beyond the open ones here
+        if "names" in params or "now" in params:
+            return []  # no stored intervals or later ends: open triples only
+        if "SELECT DISTINCT subject, relation, object" in sql and "ids" in params:
+            # The triples linked to rows, whatever value each holds now.
+            return [
+                {"subject": s, "relation": r, "object": o}
+                for i, _h, s, r, o, _inf in sorted(self.links)
+                if i in params["ids"]
+            ]
         if "WITH keyed AS" in sql:
             # Live rows with no row link, of a key a triple is linked to.
             linked = {link[0] for link in self.links}

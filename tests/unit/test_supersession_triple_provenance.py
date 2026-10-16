@@ -49,6 +49,8 @@ class _CH:
             ]
         if "triples" in (params or {}):
             return []  # no successor is open yet
+        if "names" in (params or {}):
+            return []  # the closed fact's stored rows, for its edge: none here
         assert "provenance" in sql, "the open-triple read must fetch provenance"
         return [
             {

@@ -24,7 +24,7 @@ from server.memory.app.projection_errors import (
 from server.memory.app.projection_failures import TRIPLES_RECONCILE, TRIPLES_REOPEN
 from server.memory.app.projections import (
     close_triples,
-    end_edges_now,
+    end_edges,
     end_triples_now,
     entity_triple_row,
     open_triples_among,
@@ -537,32 +537,39 @@ async def close_dropped_facts(input: Any, ids: list[str], *, ch: Any) -> None:
     if opened:
         await _write_follow_plan(input, tfr.FollowPlan(closes=sorted(opened), inserts=[]), ch=ch)
     await end_triples_now(ch, org=input.org, namespace=input.namespace, triples=gone)
+    await _after_the_close(input, gone, ch=ch)
+
+
+async def _after_the_close(input: Any, gone: list[tfr.Triple], *, ch: Any) -> None:
+    """What follows a close of the `gone` facts, which no live row holds: their edges
+    end with them, and one value of each single-valued relation stays current. Checked
+    for every value the rows no longer keep, closed now or before: a replay finds the
+    close landed and must still check."""
     await _close_dropped_edges(input, gone, ch=ch)
-    # Checked for every value the rows no longer keep, closed now or before: a replay
-    # finds the close landed and must still check.
     await _keep_one_current(input, gone, ch=ch)
 
 
 async def _close_dropped_edges(input: Any, gone: list[tfr.Triple], *, ch: Any) -> None:
-    """End the edges of the `gone` facts too, unless a live row still holds another
-    fact between the same two entities."""
+    """End the edges of the `gone` facts with them (`tfr.edge_ends`), unless a live row
+    still holds another fact between the same two entities."""
     if not gone:
         return
     names = sorted({e for s, _r, o in gone for e in (s, o)})
+    # On the fly: the closes just made are mutations that may still be pending.
     rows = await ch.query_all(
         """
-        SELECT DISTINCT subject, relation, object
+        SELECT subject, relation, object, valid_to
         FROM loom.entity_triples
         WHERE org = {org:String} AND namespace = {ns:String}
           AND subject IN {names:Array(String)} AND object IN {names:Array(String)}
-        SETTINGS select_sequential_consistency = 1
+        SETTINGS select_sequential_consistency = 1, apply_mutations_on_fly = 1
         """,
         params={"org": input.org, "ns": input.namespace, "names": names},
     )
-    same_pairs = [(str(r["subject"]), str(r["relation"]), str(r["object"])) for r in rows]
+    same_pairs = sorted({(str(r["subject"]), str(r["relation"]), str(r["object"])) for r in rows})
     held = await stated_by_live_rows(input.org, input.namespace, same_pairs, ch=ch)
-    pairs = tfr.edges_no_row_holds(gone, held)
-    await end_edges_now(ch, org=input.org, namespace=input.namespace, pairs=pairs)
+    ends = tfr.edge_ends(gone, held, rows, naive_utc_now())
+    await end_edges(ch, org=input.org, namespace=input.namespace, ends=ends)
 
 
 async def _keep_one_current(input: Any, values: list[tfr.Triple], *, ch: Any) -> None:
@@ -868,7 +875,18 @@ async def follow_row_supersessions(
         plans, kept=await stated_by_live_rows(input.org, input.namespace, closing, ch=ch)
     )
     closed, inserted = await _write_follow_plan(input, plan, ch=ch)
-    await _keep_one_current(input, plan.closes, ch=ch)
+    # Read again, not taken from the plan: a replay plans no close for a fact an
+    # attempt closed, and must still end what came after it.
+    losers = sorted({lo for lo, _wi in followed})
+    linked = sorted({*await linked_triples(input, losers, ch=ch), *plan.closes})
+    held = await stated_by_live_rows(input.org, input.namespace, linked, ch=ch)
+    gone = [t for t in linked if t not in held]
+    # A fact the loser stated until later ends now; a close's own later end (a winner
+    # dated ahead) stays.
+    await end_triples_now(
+        ch, org=input.org, namespace=input.namespace, triples=gone, stated_ends_only=True
+    )
+    await _after_the_close(input, gone, ch=ch)
     if closed or inserted:
         log.info(
             "triples follow rows: of %d pair(s), closed %d and wrote %d successor triple(s)",

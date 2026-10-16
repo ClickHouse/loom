@@ -790,9 +790,28 @@ def test_a_name_with_a_comma_or_a_dot_is_one_clause(text, triple) -> None:
     assert tfr._still_says(tfr.RowSupersession(loser_text=text, winner_text=text), triple)
 
 
-def test_a_dropped_fact_closes_its_edge_unless_another_fact_of_the_pair_is_held() -> None:
+def test_a_dropped_facts_edge_ends_with_its_triples_unless_another_fact_is_held() -> None:
+    from datetime import datetime
+
+    now, dec = datetime(2026, 10, 1), datetime(2026, 12, 1)
+
+    def row(obj: str, valid_to: datetime | None, relation: str = "live_in") -> dict:
+        return {"subject": "user", "relation": relation, "object": obj, "valid_to": valid_to}
+
     gone = [("user", "live_in", "london"), ("user", "live_in", "rome")]
-    held = frozenset({("user", "work_in", "london"), ("user", "live_in", "paris")})
-    assert tfr.edges_no_row_holds(gone, held) == [("rome", "user")]
-    assert tfr.edges_no_row_holds(gone, frozenset()) == [("london", "user"), ("rome", "user")]
-    assert tfr.edges_no_row_holds([], held) == []
+    rows = [row("london", datetime(2026, 9, 1)), row("rome", dec), row("rome", now)]
+    # London's edge ends now, though its triple ended before; Rome's at its latest end.
+    assert tfr.edge_ends(gone, frozenset(), rows, now) == [
+        ("london", "user", now),
+        ("rome", "user", dec),
+    ]
+    # Another fact of the pair a live row holds keeps the edge.
+    held = frozenset({("user", "work_in", "london")})
+    assert tfr.edge_ends(gone, held, rows, now) == [("rome", "user", dec)]
+    # A gone triple still open keeps its edge open too.
+    assert tfr.edge_ends(gone, frozenset(), [*rows, row("rome", None)], now) == [
+        ("london", "user", now)
+    ]
+    # Rows of triples not gone say nothing.
+    assert tfr.edge_ends(gone[:1], frozenset(), rows, now) == [("london", "user", now)]
+    assert tfr.edge_ends([], held, rows, now) == []

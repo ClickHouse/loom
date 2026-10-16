@@ -652,8 +652,22 @@ def merge_plans(plans: list[FollowPlan], kept: frozenset[Triple] = frozenset()) 
     return FollowPlan(closes=closes, inserts=inserts, closed_at=closed_at, kept=all_kept)
 
 
-def edges_no_row_holds(gone: list[Triple], held: frozenset[Triple]) -> list[tuple[str, str]]:
-    """The edges of the `gone` triples that no `held` triple keeps. An edge is just a
-    pair of entities, so "works in London" keeps the edge "lives in London" dropped."""
+def edge_ends(
+    gone: list[Triple], held: frozenset[Triple], rows: Sequence[Mapping[str, Any]], now: Any
+) -> list[tuple[str, str, Any]]:
+    """Where the edges of the `gone` triples end: with the latest end of their stored
+    `rows`, now at the earliest. An edge is just a pair of entities, so one a `held`
+    triple keeps ("works in London" keeps "lives in London" dropped) does not end, nor
+    does one with a gone triple still open."""
     kept = {canonical_edge_pair(s, o) for s, _r, o in held}
-    return sorted({canonical_edge_pair(s, o) for s, _r, o in gone} - kept)
+    dropped = set(gone)
+    found: dict[tuple[str, str], list[Any]] = {}
+    for r in rows:
+        s, rel, o = str(r["subject"]), str(r["relation"]), str(r["object"])
+        if (s, rel, o) in dropped:
+            found.setdefault(canonical_edge_pair(s, o), []).append(r["valid_to"])
+    return sorted(
+        (a, b, max([now, *ends]))
+        for (a, b), ends in found.items()
+        if (a, b) not in kept and None not in ends
+    )
