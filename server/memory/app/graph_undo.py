@@ -95,11 +95,18 @@ async def reopen_held_facts(
 
 
 async def restate_facts(
-    input: Any, held: frozenset[Any], *, ch: Any, restore_id: str, restored_at: datetime
+    input: Any,
+    held: frozenset[Any],
+    *,
+    ch: Any,
+    restore_id: str,
+    restored_at: datetime,
+    adapter_name: str = "row-restore",
 ) -> None:
     """Write the markers for the facts `held`, stated again at `restored_at`, and repair
     them. An Undo writes them, and so does a revision that leaves a relation with no
-    current value (`entity_projections._keep_one_current`)."""
+    current value (`entity_projections._keep_one_current`), whose markers are labelled
+    `row-fallback` by `adapter_name`."""
     from server.identity.app.namespace_ontology import load_relation_cardinality
 
     now = restored_at.replace(microsecond=0)  # as the DateTime columns store it
@@ -177,7 +184,7 @@ async def restate_facts(
             m.row["object"],
             provenance=m.row["provenance"],
             confidence=float(m.row["confidence"]),
-            adapter_name="row-restore",
+            adapter_name=adapter_name,
             last_seen=now,
             seen_at=m.seen,
             # Dated at the Undo; a closed interval before it stays as history.

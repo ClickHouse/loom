@@ -1806,3 +1806,56 @@ async def test_the_repair_reads_a_chain_a_write_could_not(monkeypatch) -> None:
 def _index(state) -> None:
     # The id -> key map `_bulk_verdicts` builds once the rows that land are known.
     state.key_of = {r["memory_id"]: r.get("memory_key", "") for r in state.memory_rows}
+
+
+async def test_a_fallback_marker_closed_in_the_same_second_gets_a_marker_of_its_own(
+    monkeypatch,
+) -> None:
+    # Paris is stated again after London's close, and that marker is closed again in
+    # the second Paris first closed. The next check names its marker apart from the
+    # first, rather than finding it written, and labels both as fallbacks, not Undos.
+    from types import SimpleNamespace
+
+    import server.identity.app.namespace_ontology as ontology
+    from server.memory.app import entity_projections, graph_undo
+
+    closed = datetime(2026, 9, 1, 12, 0, 0)
+
+    def paris(seen: datetime) -> dict:
+        return {
+            "subject": "user",
+            "relation": "live_in",
+            "object": "paris",
+            "valid_from": None,
+            "valid_to": closed,
+            "invalid_at": closed,
+            "seen_at": seen,
+        }
+
+    stored = [paris(datetime(2026, 9, 1, 11, 0, 0))]
+
+    class _Stored:
+        async def query_all(self, sql, params):
+            return list(stored)
+
+    restated: list[tuple[str, str]] = []
+
+    async def restate(input, held, *, ch, restore_id, restored_at, adapter_name="row-restore"):
+        restated.append((restore_id, adapter_name))
+
+    async def all_held(org, namespace, triples, *, ch, rows=None):
+        return frozenset(triples)
+
+    async def no_declared(org, namespace):
+        return {}
+
+    monkeypatch.setattr(graph_undo, "restate_facts", restate)
+    monkeypatch.setattr(entity_projections, "stated_by_live_rows", all_held)
+    monkeypatch.setattr(ontology, "load_relation_cardinality", no_declared)
+    inp = SimpleNamespace(org="o", namespace="ns", agent="a")
+    gone = [("user", "live_in", "london")]
+    await entity_projections._keep_one_current(inp, gone, ch=_Stored())
+    stored.append(paris(closed.replace(microsecond=5)))  # the marker, closed again
+    await entity_projections._keep_one_current(inp, gone, ch=_Stored())
+    assert len({restore_id for restore_id, _ in restated}) == 2
+    assert {adapter for _, adapter in restated} == {"row-fallback"}

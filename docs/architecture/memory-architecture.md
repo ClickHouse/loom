@@ -344,7 +344,7 @@ the value it was written or stated for (`carried`):
   row with no value valid now (a value a close ended later counts only while an open
   value starts by that end: Paris holds until the move to Berlin it was closed for), the newest
   value a live row still holds and a close ended is stated again from now, as an Undo
-  states it: triple and edge markers, then the interval repair, so a newer value written
+  states it, but labelled `row-fallback`: triple and edge markers, then the interval repair, so a newer value written
   meanwhile wins. London undone over Paris and then revised or retired away leaves Paris
   current from then on, and its earlier interval stays as history. A value that ended on
   its own stays ended. A replay of a failed triple, edge or entity-vector write writes

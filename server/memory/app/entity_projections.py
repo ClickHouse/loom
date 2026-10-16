@@ -642,13 +642,15 @@ async def _keep_one_current(input: Any, values: list[tfr.Triple], *, ch: Any) ->
             newest[(r["subject"], r["relation"])] = r
     # A value that ended on its own stays ended; a close stamps `invalid_at`.
     back = sorted(
-        (r["subject"], r["relation"], r["object"], str(r["invalid_at"]))
+        (r["subject"], r["relation"], r["object"], str(r["invalid_at"]), str(r["seen_at"]))
         for r in newest.values()
         if r["invalid_at"] is not None
     )
     if not back:
         return
     # Named by the closes it answers, so a replay finds the markers an attempt wrote.
+    # The row's own seen_at (microseconds) too: a marker closed again in the second of
+    # the close it answered is another row, and needs a marker of its own.
     restore_id = uuid.uuid5(uuid.NAMESPACE_OID, repr(back)).hex
     await graph_undo.restate_facts(
         input,
@@ -656,6 +658,7 @@ async def _keep_one_current(input: Any, values: list[tfr.Triple], *, ch: Any) ->
         ch=ch,
         restore_id=restore_id,
         restored_at=now,
+        adapter_name="row-fallback",
     )
 
 

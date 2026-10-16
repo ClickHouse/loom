@@ -3325,6 +3325,16 @@ async def test_a_revision_dropping_the_undone_value_makes_the_value_it_beat_curr
     await _mutations_done(ch, org)
     want = {("live_in", "paris"), ("like", "rome")}
     assert await _open_facts(ch, org, want) == want
+    # London's marker is the Undo's; Paris's, stated again for want of a value, is not.
+    markers = await ch.query_all(
+        "SELECT object, adapter_name FROM loom.entity_triples WHERE org = {org:String}"
+        " AND restore_id != '' ORDER BY object SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert [(m["object"], m["adapter_name"]) for m in markers] == [
+        ("london", "row-restore"),
+        ("paris", "row-fallback"),
+    ]
 
 
 async def test_a_retirement_of_the_undone_value_makes_the_value_it_beat_current(ch, org) -> None:
