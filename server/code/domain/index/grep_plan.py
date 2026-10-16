@@ -143,6 +143,14 @@ def plan_regex(pattern: str, *, ignore_case: bool = False, spell_folds: bool = T
         return SCAN
 
 
+def _sets_ignore_case(pattern: str) -> bool:
+    """A leading global ``(?i)``."""
+    try:
+        return bool(_sre_parser.parse(pattern).state.flags & re.IGNORECASE)
+    except (re.error, ValueError, OverflowError, RecursionError):
+        return False
+
+
 # Under (?i) RE2 also matches k and s to these; lower() leaves both alone.
 _FOLD_PARTNERS = {"k": "\u212a", "s": "\u017f"}
 # k/s letters one case-insensitive run may spell both ways (2**n spellings), tried in order.
@@ -377,10 +385,13 @@ def content_predicate(
     ``match(content, pat)`` (``(?i)`` prepended when not case-sensitive),
     ``position(content, pat) > 0``, ``positionCaseInsensitive(content, pat) > 0``.
     """
+    ignore_case = not case_sensitive
     if regex:
         exact = f"match(content, {{{param}:String}})"
         params: dict[str, Any] = {param: pattern if case_sensitive else "(?i)" + pattern}
-        plan = plan_regex(pattern, ignore_case=not case_sensitive)
+        ignore_case = ignore_case or _sets_ignore_case(pattern)
+        # the scan's needles skip the spellings: a long needle list costs more than RE2 saves
+        plan = plan_regex(pattern, ignore_case=ignore_case, spell_folds=index_guard)
     elif case_sensitive:
         exact = f"position(content, {{{param}:String}}) > 0"
         params = {param: pattern}
@@ -390,14 +401,7 @@ def content_predicate(
         params = {param: pattern}
         plan = plan_literal(pattern)
     if not index_guard:
-        needles = (
-            scan_needles(
-                plan_regex(pattern, ignore_case=not case_sensitive, spell_folds=False),
-                ignore_case=not case_sensitive,
-            )
-            if regex
-            else []
-        )
+        needles = scan_needles(plan, ignore_case=ignore_case) if regex else []
         if not needles:
             return exact, params
         params[f"{prefix}_any"] = needles

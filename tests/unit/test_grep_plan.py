@@ -233,6 +233,17 @@ def test_scan_predicate_guards_only_an_alternation() -> None:
     )
 
 
+def test_a_leading_inline_ignore_case_gets_the_case_insensitive_needles() -> None:
+    sql, params = gp.content_predicate(
+        r"(?i)StorageReplicatedMergeTree::\w+Part",
+        regex=True,
+        case_sensitive=True,
+        index_guard=False,
+    )
+    assert sql.startswith("multiSearchAnyCaseInsensitive(content, {gp_any:Array(String)}) AND ")
+    assert params["gp_any"] == ["toragereplicatedmergetree::"]
+
+
 def test_short_literal_emits_exactly_the_old_statement() -> None:
     assert gp.content_predicate("ab", regex=False, case_sensitive=True) == (
         "position(content, {pat:String}) > 0",
