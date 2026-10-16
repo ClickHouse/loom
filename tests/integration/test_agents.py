@@ -109,3 +109,15 @@ async def test_an_agent_is_never_a_sign_in_and_its_owner_gets_admin(ch: Any) -> 
         (f"sa:{m['name']}:a1", "admin"),
     ]
     assert other == f"{m['name']}-a2"
+
+
+async def test_two_new_agents_at_once_stay_within_the_trusts_limit(ch: Any) -> None:
+    m = {**_trust(), "max_agents": 1}
+    outcomes = await asyncio.gather(
+        agents.ensure_namespace(m, "a1", ""),
+        agents.ensure_namespace(m, "a2", ""),
+        return_exceptions=True,
+    )
+    made = [o for o in outcomes if isinstance(o, str)]
+    refused = [o for o in outcomes if isinstance(o, machines.Refused)]
+    assert len(made) == 1 and len(refused) == 1, outcomes

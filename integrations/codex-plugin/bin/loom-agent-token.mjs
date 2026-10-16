@@ -3,7 +3,7 @@
 // outlives the workload token) and save it, 0600, where resolveToken reads it
 // (lib/loom-client.mjs, agent mode). resolveToken runs this when it is due.
 // Exits 1 when the exchange did not happen; writes nothing else.
-import { agentTokenPath, resolveServerUrl, workloadToken, writePrivateFile } from "../lib/loom-client.mjs";
+import { agentTokenPath, proofHash, resolveServerUrl, workloadToken, writePrivateFile } from "../lib/loom-client.mjs";
 
 const TOKEN_EXCHANGE = "urn:ietf:params:oauth:grant-type:token-exchange";
 
@@ -25,7 +25,14 @@ export async function exchange({ env = process.env, fetchImpl = fetch, now = Dat
   const body = r.ok ? await r.json() : {};
   if (!body.access_token) return false;
   const ttl = Number(body.expires_in || 0);
-  const saved = { server, client_id: env.LOOM_CLIENT_ID, token: body.access_token, exp: now + ttl, ttl };
+  const saved = {
+    server,
+    client_id: env.LOOM_CLIENT_ID,
+    proof: proofHash(env),
+    token: body.access_token,
+    exp: now + ttl,
+    ttl,
+  };
   writePrivateFile(agentTokenPath(env), JSON.stringify(saved));
   return true;
 }

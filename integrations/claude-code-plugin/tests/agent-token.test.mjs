@@ -1,5 +1,5 @@
-// An agent with no Loom token of its own: its workload token is exchanged
-// for an hour-long one, saved 0600, and renewed only when it is about to run out.
+// An agent with no Loom token of its own: its workload token is exchanged for
+// a Loom token, saved 0600 for that proof only, and renewed when it is due.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 process.env.LOOM_HOOK_NO_MAIN = "1";
-const { agentToken, agentTokenPath } = await import("../lib/loom-client.mjs");
+const { agentToken, agentTokenPath, proofHash, resolveToken } = await import("../lib/loom-client.mjs");
 const { exchange } = await import("../bin/loom-agent-token.mjs");
 
 const SERVER = "https://loom.example";
@@ -26,8 +26,10 @@ function agentEnv() {
 
 function save(env, saved) {
   fs.mkdirSync(path.dirname(agentTokenPath(env)), { recursive: true });
-  fs.writeFileSync(agentTokenPath(env), JSON.stringify(saved));
+  fs.writeFileSync(agentTokenPath(env), JSON.stringify({ proof: proofHash(env), ...saved }));
 }
+
+const now = () => Date.now() / 1000;
 
 test("no client id or workload token: not an agent", () => {
   const env = agentEnv();
@@ -36,41 +38,81 @@ test("no client id or workload token: not an agent", () => {
 
 test("a saved token with time left is used as it is", () => {
   const env = agentEnv();
-  save(env, { server: SERVER, client_id: "fleet", token: "t1", exp: Date.now() / 1000 + 3000 });
+  save(env, { server: SERVER, client_id: "fleet", token: "t1", exp: now() + 3000 });
   assert.equal(agentToken({ env, renew: assert.fail }), "t1");
 });
 
 test("one about to run out is renewed first", () => {
   const env = agentEnv();
-  save(env, { server: SERVER, client_id: "fleet", token: "t1", exp: Date.now() / 1000 + 60 });
-  const renew = () => save(env, { server: SERVER, client_id: "fleet", token: "t2", exp: Date.now() / 1000 + 3600 });
+  save(env, { server: SERVER, client_id: "fleet", token: "t1", exp: now() + 60 });
+  const renew = () => save(env, { server: SERVER, client_id: "fleet", token: "t2", exp: now() + 3600 });
   assert.equal(agentToken({ env, renew }), "t2");
 });
 
 test("a five-minute token is renewed halfway, not on every call", () => {
   const env = agentEnv();
-  const now = Date.now() / 1000;
-  save(env, { server: SERVER, client_id: "fleet", token: "t1", exp: now + 200, ttl: 300 });
+  const t = now();
+  save(env, { server: SERVER, client_id: "fleet", token: "t1", exp: t + 200, ttl: 300 });
   assert.equal(agentToken({ env, renew: assert.fail }), "t1");
-  save(env, { server: SERVER, client_id: "fleet", token: "t1", exp: now + 100, ttl: 300 });
-  const renew = () => save(env, { server: SERVER, client_id: "fleet", token: "t2", exp: now + 300, ttl: 300 });
+  save(env, { server: SERVER, client_id: "fleet", token: "t1", exp: t + 100, ttl: 300 });
+  const renew = () => save(env, { server: SERVER, client_id: "fleet", token: "t2", exp: t + 300, ttl: 300 });
   assert.equal(agentToken({ env, renew }), "t2");
 });
 
 test("a renewal that fails keeps the token until its last half-minute", () => {
   const env = agentEnv();
-  save(env, { server: SERVER, client_id: "fleet", token: "t1", exp: Date.now() / 1000 + 60 });
+  save(env, { server: SERVER, client_id: "fleet", token: "t1", exp: now() + 60 });
   assert.equal(agentToken({ env, renew: () => {} }), "t1");
-  save(env, { server: SERVER, client_id: "fleet", token: "t1", exp: Date.now() / 1000 + 10 });
+  save(env, { server: SERVER, client_id: "fleet", token: "t1", exp: now() + 10 });
   assert.equal(agentToken({ env, renew: () => {} }), "");
+});
+
+test("a failed renewal is not tried again on every call", () => {
+  const env = agentEnv();
+  const t = now();
+  save(env, { server: SERVER, client_id: "fleet", token: "t1", exp: t + 20 });
+  let tries = 0;
+  const renew = () => tries++;
+  for (let i = 0; i < 5; i++) agentToken({ env, renew, now: t });
+  assert.equal(tries, 1);
+  agentToken({ env, renew, now: t + 31 });
+  assert.equal(tries, 2);
 });
 
 test("a token saved for another server or trust is never sent here", () => {
   const env = agentEnv();
-  save(env, { server: "https://elsewhere.example", client_id: "fleet", token: "x", exp: Date.now() / 1000 + 3000 });
+  save(env, { server: "https://elsewhere.example", client_id: "fleet", token: "x", exp: now() + 3000 });
   assert.equal(agentToken({ env, renew: () => {} }), "");
-  save(env, { server: SERVER, client_id: "other", token: "x", exp: Date.now() / 1000 + 3000 });
+  save(env, { server: SERVER, client_id: "other", token: "x", exp: now() + 3000 });
   assert.equal(agentToken({ env, renew: () => {} }), "");
+});
+
+test("a saved token serves only the proof it was exchanged for", () => {
+  const env = agentEnv();
+  save(env, { server: SERVER, client_id: "fleet", token: "of-a1", exp: now() + 3000 });
+  // Another agent sharing the home, even one with the same iss and sub (a
+  // trust telling agents apart by agent_id), exchanges its own proof.
+  const b = {
+    ...env,
+    LOOM_WORKLOAD_TOKEN: jwt({ iss: "https://issuer.example", sub: "tenants/t/agents/a1", agent_id: "b" }),
+  };
+  let renewed = 0;
+  assert.equal(agentToken({ env: b, renew: () => renewed++ }), "");
+  assert.equal(renewed, 1);
+});
+
+test("an agent whose exchange fails signs in as no one, not as a person", () => {
+  const env = agentEnv();
+  const cfg = path.join(env.HOME, ".loom", "config.json");
+  fs.mkdirSync(path.dirname(cfg), { recursive: true });
+  fs.writeFileSync(cfg, JSON.stringify({ token: "a-persons-token" }));
+  const set = { ...env, LOOM_CONFIG_FILE: cfg, LOOM_CLIENT_ID: "fleet-unknown" };
+  for (const [k, v] of Object.entries(set)) process.env[k] = v;
+  try {
+    assert.equal(resolveToken(), "");
+  } finally {
+    for (const k of ["LOOM_CLIENT_ID", "LOOM_WORKLOAD_TOKEN", "LOOM_CONFIG_FILE"]) delete process.env[k];
+  }
 });
 
 test("the exchange sends the workload token and saves the answer 0600", async () => {
@@ -86,7 +128,14 @@ test("the exchange sends the workload token and saves the answer 0600", async ()
   assert.equal(sent.form.client_id, "fleet");
   assert.equal(sent.form.subject_token, A1);
   const saved = JSON.parse(fs.readFileSync(agentTokenPath(env), "utf8"));
-  assert.deepEqual(saved, { server: SERVER, client_id: "fleet", token: "t1", exp: 4600, ttl: 3600 });
+  assert.deepEqual(saved, {
+    server: SERVER,
+    client_id: "fleet",
+    proof: proofHash(env),
+    token: "t1",
+    exp: 4600,
+    ttl: 3600,
+  });
   assert.equal(fs.statSync(agentTokenPath(env)).mode & 0o777, 0o600);
 });
 
@@ -95,29 +144,4 @@ test("a refused exchange saves nothing", async () => {
   const fetchImpl = async () => new Response(JSON.stringify({ error: "invalid_grant" }), { status: 400 });
   assert.equal(await exchange({ env, fetchImpl }), false);
   assert.equal(fs.existsSync(agentTokenPath(env)), false);
-});
-
-test("two agents sharing a home never read each other's token", () => {
-  const env = agentEnv();
-  save(env, { server: SERVER, client_id: "fleet", token: "of-a1", exp: Date.now() / 1000 + 3000 });
-  const b = { ...env, LOOM_WORKLOAD_TOKEN: jwt({ iss: "https://issuer.example", sub: "tenants/t/agents/b" }) };
-  assert.equal(agentToken({ env: b, renew: () => {} }), "");
-  // A rotated token of the same agent still finds its saved one.
-  const a1Again = {
-    ...env,
-    LOOM_WORKLOAD_TOKEN: jwt({ iss: "https://issuer.example", sub: "tenants/t/agents/a1", jti: "2" }),
-  };
-  assert.equal(agentToken({ env: a1Again, renew: assert.fail }), "of-a1");
-});
-
-test("a failed renewal is not tried again on every call", () => {
-  const env = agentEnv();
-  const now = Date.now() / 1000;
-  save(env, { server: SERVER, client_id: "fleet", token: "t1", exp: now + 20 });
-  let tries = 0;
-  const renew = () => tries++;
-  for (let i = 0; i < 5; i++) agentToken({ env, renew, now });
-  assert.equal(tries, 1);
-  agentToken({ env, renew, now: now + 31 });
-  assert.equal(tries, 2);
 });

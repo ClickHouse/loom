@@ -174,7 +174,7 @@ def _device(r: dict[str, Any]) -> Device:
 _REFRESH_TYPE = "session_refresh"
 
 
-def _refresh_row(rid: str, g: Grant) -> dict[str, Any]:
+def _refresh_row(rid: str, g: Grant, version: int) -> dict[str, Any]:
     return {
         "record_type": _REFRESH_TYPE,
         "id": rid,
@@ -187,7 +187,7 @@ def _refresh_row(rid: str, g: Grant) -> dict[str, Any]:
         "family": g["family"],
         "generation": g.get("generation", 0),
         "upstream_refresh": seal(UPSTREAM_PURPOSE, g["upstream_refresh"]),
-        "version": time.time_ns(),
+        "version": version,
     }
 
 
@@ -308,7 +308,18 @@ class ClickHouseStore:
             raise claims.Changed(key)
 
     async def _save_refresh_grant(self, rid: str, g: Grant) -> None:
-        await self._ch().insert(_T, [_refresh_row(rid, g)])
+        from server.core.ch import own_write_reads
+
+        # Past the stored row, whichever replica's clock wrote it: a grant put
+        # back with the IdP token it rotated must win under FINAL.
+        with own_write_reads():
+            row = await self._ch().query_one(
+                f"SELECT max(version) AS v FROM {_T} "
+                "WHERE record_type = {t:String} AND id = {id:String}",
+                params={"t": _REFRESH_TYPE, "id": rid},
+            )
+        version = max(time.time_ns(), int((row or {}).get("v") or 0) + 1)
+        await self._ch().insert(_T, [_refresh_row(rid, g, version)])
 
     async def _refresh_grant(self, rid: str) -> Grant | None:
         from server.core.ch import own_write_reads

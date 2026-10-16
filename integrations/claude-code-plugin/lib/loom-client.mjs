@@ -133,8 +133,8 @@ export function loomConfig() {
 export function resolveToken() {
   const fromEnv = (process.env.LOOM_API_KEY || "").trim();
   if (fromEnv) return fromEnv;
-  const fromAgent = agentToken();
-  if (fromAgent) return fromAgent;
+  // An agent signs in as itself or not at all: never as a credential a person left here.
+  if (agentMode()) return agentToken();
   // The plugin's install-time option: Claude Code exports
   // `userConfig` values to hook processes as CLAUDE_PLUGIN_OPTION_<KEY>.
   const fromOption = (process.env.CLAUDE_PLUGIN_OPTION_TOKEN || "").trim();
@@ -170,14 +170,17 @@ export function workloadToken(env = process.env) {
   }
 }
 
-/** One saved token per agent: keyed by the workload token's issuer and subject
- *  (which name the agent and survive its rotation), so agents sharing a home
- *  never read each other's. */
 export function agentTokenPath(env = process.env) {
-  const claims = decodeTokenClaims(workloadToken(env));
-  const who = claims.iss && claims.sub ? `${claims.iss}|${claims.sub}` : workloadToken(env);
-  const key = createHash("sha256").update(`${env.LOOM_CLIENT_ID}|${who}`).digest("hex").slice(0, 16);
+  const key = createHash("sha256").update(String(env.LOOM_CLIENT_ID)).digest("hex").slice(0, 16);
   return join(env.HOME || homedir(), ".loom", `agent-token-${key}.json`);
+}
+
+/** The saved token is bound to the workload token it was exchanged for, so it
+ *  serves only the agent holding that proof: one sharing this home, or one
+ *  handed another agent's token, never gets it. A new proof is a new exchange
+ *  (the Loom token never outlives the proof anyway). */
+export function proofHash(env = process.env) {
+  return createHash("sha256").update(workloadToken(env)).digest("hex");
 }
 
 // Renewed halfway through its life, at most five minutes before it runs out
@@ -188,7 +191,8 @@ const AGENT_LAST_S = 30;
 const AGENT_RETRY_S = 30;
 
 function usable(saved, env, now, minLeft) {
-  const ours = saved.client_id === env.LOOM_CLIENT_ID && saved.server === resolveServerUrl();
+  const ours =
+    saved.client_id === env.LOOM_CLIENT_ID && saved.server === resolveServerUrl() && saved.proof === proofHash(env);
   return ours && Number(saved.exp) - now > minLeft && Boolean(saved.token);
 }
 
@@ -202,12 +206,12 @@ export function agentToken({ env = process.env, renew = renewAgentToken, now = D
   const path = agentTokenPath(env);
   let saved = readConfigFile(path);
   if (usable(saved, env, now, renewDue(saved))) return String(saved.token);
-  if (!(Number(saved.retry_at) > now)) {
+  if (!(Number(saved.retry_at) > now && saved.proof === proofHash(env))) {
     renew(env);
     saved = readConfigFile(path);
     if (usable(saved, env, now, renewDue(saved))) return String(saved.token);
     try {
-      writePrivateFile(path, JSON.stringify({ ...saved, retry_at: now + AGENT_RETRY_S }));
+      writePrivateFile(path, JSON.stringify({ ...saved, proof: proofHash(env), retry_at: now + AGENT_RETRY_S }));
     } catch {
       // nowhere to note it: the next call tries again
     }

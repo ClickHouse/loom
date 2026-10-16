@@ -142,7 +142,8 @@ def registry_row(
     return {
         "org": input.org,
         "namespace": input.namespace,
-        "owner_email": input.owner_email,
+        # An agent's namespace is bound to the agent (its exchange checks it).
+        "owner_email": existing["owner_email"] if existing and stored else input.owner_email,
         "description": _set_or_stored(input.description, existing, "description", ""),
         # A fresh row with no explicit kind is classified by name, the same call the
         # first-write hook makes, so registering a bench-prefixed name first and writing

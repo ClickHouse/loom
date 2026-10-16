@@ -301,3 +301,32 @@ async def test_the_sweep_worker_drops_keys_once_their_credential_expired(store: 
     await sweep()
     assert await claims.get(ch, old) is None
     assert await claims.get(ch, fresh) == "y"
+
+
+async def test_a_grant_put_back_wins_over_one_a_replica_ahead_wrote(store: Any) -> None:
+    # A faster replica wrote the grant; this one puts it back with the IdP
+    # token it rotated, and that one must be what FINAL serves.
+    from server.auth.oauth_store import _REFRESH_TYPE, UPSTREAM_PURPOSE
+    from server.core.ch import get_client
+    from server.core.secrets_at_rest import seal
+
+    rid, grant = token_id(secrets.token_urlsafe(32)), _grant("loom-mcp")
+    ahead = time.time_ns() + 4 * 10**9
+    row = {
+        "record_type": _REFRESH_TYPE,
+        "id": rid,
+        "client_id": grant["client_id"],
+        "subject": grant["subject"],
+        "org": grant["org"],
+        "namespaces": grant["namespaces"],
+        "roles": grant["roles"],
+        "expires_at": int(grant["exp"]),
+        "family": grant["family"],
+        "generation": 0,
+        "upstream_refresh": seal(UPSTREAM_PURPOSE, "spent-upstream"),
+        "version": ahead,
+    }
+    await get_client().insert("loom.oauth_state", [row])
+    await store._save_refresh_grant(rid, {**grant, "upstream_refresh": "rotated-upstream"})
+    kept = await store._refresh_grant(rid)
+    assert kept is not None and kept["upstream_refresh"] == "rotated-upstream"

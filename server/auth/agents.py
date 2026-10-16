@@ -56,10 +56,12 @@ async def ensure_namespace(m: machines.Machine, agent: str, owner_email: str) ->
     """The agent's namespace, made on its first exchange. Held as a release
     holds it (its reads are sequential under the claim), so two first
     exchanges make one, and one released since is not made again."""
-    from server.auth.self_signup import insert_owner_grant, provision_account
+    from server.auth.grant_claims import bot_change
+    from server.auth.self_signup import provision_account
 
     org, ns, who = m["org"], namespace(m["name"], agent), subject(m["name"], agent)
     owner = await _owner(org, owner_email)  # before the row: it names no email
+    made = False
     async with account_change(org, ns):
         row = await get_client().query_one(
             "SELECT active, tags, owner_email FROM loom.namespaces FINAL "
@@ -73,36 +75,57 @@ async def ensure_namespace(m: machines.Machine, agent: str, owner_email: str) ->
                 raise machines.Refused("invalid_grant", f"{org}/{ns} is not this trust's")
             if not row["active"]:
                 raise machines.Refused("invalid_grant", f"{org}/{ns} was released")
-            return ns
-        if await _made(org, m["name"]) >= m["max_agents"]:
-            # A broken or compromised issuer could name agents without end.
-            raise machines.Refused("invalid_grant", f"trust {m['name']} has made its agents")
-        # No contact email: a sign-in by email must never resolve to an agent.
-        await provision_account(
+        else:
+            # The trust's own claim: two new agents at once must not both see room.
+            async with bot_change(m["name"]):
+                if await _made(org, m["name"]) >= m["max_agents"]:
+                    # A broken or compromised issuer could name agents without end.
+                    raise machines.Refused(
+                        "invalid_grant", f"trust {m['name']} has made its agents"
+                    )
+                # No contact email: a sign-in by email must never resolve to an agent.
+                await provision_account(
+                    org=org,
+                    namespace=ns,
+                    subject=who,
+                    contact_email="",
+                    description=f"Agent {agent} of {m['name']}.",
+                    tags=[tag(m["name"])],
+                )
+            made = True
+        await _finish_grants(org, ns, [who, owner] if owner else [who])
+    if made:
+        from server.observability import audit
+
+        await audit.emit(
+            "auth.agent_provisioned",
             org=org,
             namespace=ns,
-            subject=who,
-            contact_email="",
-            description=f"Agent {agent} of {m['name']}.",
-            tags=[tag(m["name"])],
+            actor=machines.subject(m["name"]),
+            subject={"agent": agent, "owner": owner_email},
         )
-        if owner:
-            await insert_owner_grant(org, ns, owner)
-    from server.observability import audit
-
-    await audit.emit(
-        "auth.agent_provisioned",
-        org=org,
-        namespace=ns,
-        actor=machines.subject(m["name"]),
-        subject={"agent": agent, "owner": owner_email},
-    )
     return ns
 
 
+async def _finish_grants(org: str, ns: str, subjects: list[str]) -> None:
+    """The agent's and its owner's admin grants, for any never written (a first
+    exchange cut off after the namespace row). One revoked since leaves a row,
+    so it stays revoked."""
+    from server.auth.self_signup import insert_owner_grant
+
+    rows = await get_client().query_all(
+        "SELECT DISTINCT subject FROM loom.namespace_grants WHERE org = {org:String} "
+        "AND namespace = {ns:String} AND subject IN {subjects:Array(String)}",
+        params={"org": org, "ns": ns, "subjects": subjects},
+    )
+    granted = {r["subject"] for r in rows}
+    for subject in subjects:
+        if subject not in granted:
+            await insert_owner_grant(org, ns, subject)
+
+
 async def _made(org: str, trust: str) -> int:
-    """How many agent namespaces the trust has made, released ones too. Two
-    first exchanges at once may each see room for one: a cap, not a quota."""
+    """How many agent namespaces the trust has made, released ones too."""
     row = await get_client().query_one(
         "SELECT count() AS n FROM loom.namespaces FINAL "
         "WHERE org = {org:String} AND has(tags, {tag:String})",

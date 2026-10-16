@@ -31,9 +31,18 @@ _TRUST: machines.Machine = {
 
 @pytest.fixture
 def world(monkeypatch) -> dict[str, Any]:
-    state: dict[str, Any] = {"rows": {}, "made": [], "granted": [], "people": {}}
+    state: dict[str, Any] = {
+        "rows": {},
+        "made": [],
+        "granted": [],
+        "people": {},
+        "grant_rows": set(),
+    }
 
     class _CH:
+        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+            return [{"subject": s} for ns, s in state["grant_rows"] if ns == params["ns"]]
+
         async def query_one(self, sql: str, params: dict[str, Any]) -> Any:
             if "count()" in sql:
                 return {"n": len(state["rows"])}
@@ -41,6 +50,7 @@ def world(monkeypatch) -> dict[str, Any]:
 
     async def provision(**kw: Any) -> None:
         state["made"].append(kw)
+        state["grant_rows"].add((kw["namespace"], kw["subject"]))
         state["rows"][kw["namespace"]] = {
             "active": True,
             "tags": kw["tags"],
@@ -49,6 +59,7 @@ def world(monkeypatch) -> dict[str, Any]:
 
     async def grant(org: str, ns: str, subject: str) -> None:
         state["granted"].append((org, ns, subject))
+        state["grant_rows"].add((ns, subject))
 
     async def person(email: str) -> Any:
         return state["people"].get(email)
@@ -125,9 +136,14 @@ def test_a_caller_cannot_give_a_namespace_a_trusts_mark() -> None:
         org="acme", namespace="fleet-victim", owner_email="mallory", tags=["machine:fleet", "x"]
     )
     assert registry_row(inp, None, _NOW)["tags"] == ["x"]
-    stored = {**registry_row(inp, None, _NOW), "tags": ["machine:fleet"]}
+    stored = {
+        **registry_row(inp, None, _NOW),
+        "tags": ["machine:fleet"],
+        "owner_email": "sa:fleet:victim",
+    }
     kept = registry_row(inp, stored, _NOW)
     assert kept["tags"] == ["x", "machine:fleet"]  # the trust's own mark stays
+    assert kept["owner_email"] == "sa:fleet:victim"  # and its binding to the agent
 
 
 def test_a_trust_makes_no_more_agents_than_its_limit(world) -> None:
@@ -136,3 +152,31 @@ def test_a_trust_makes_no_more_agents_than_its_limit(world) -> None:
     assert asyncio.run(agents.ensure_namespace(trust, "a1", "")) == "fleet-a1"  # still its own
     with pytest.raises(machines.Refused, match="made its agents"):
         asyncio.run(agents.ensure_namespace(trust, "a2", ""))
+
+
+def test_a_first_exchange_cut_off_before_its_grants_is_finished_by_the_next(
+    world, monkeypatch
+) -> None:
+    world["people"] = {"lee@acme.io": ("lee", "acme", ["lee"], ["writer"])}
+    calls = {"n": 0}
+    real = self_signup.insert_owner_grant
+
+    async def fails_once(org: str, ns: str, subject: str) -> None:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("ClickHouse away")
+        await real(org, ns, subject)
+
+    monkeypatch.setattr(self_signup, "insert_owner_grant", fails_once)
+    with pytest.raises(RuntimeError):
+        _ensure("lee@acme.io")
+    _ensure("lee@acme.io")  # the retry finds the namespace and finishes it
+    assert ("acme", "fleet-a1", "lee") in world["granted"]
+
+
+def test_a_grant_revoked_since_stays_revoked(world) -> None:
+    world["people"] = {"lee@acme.io": ("lee", "acme", ["lee"], ["writer"])}
+    _ensure("lee@acme.io")
+    world["granted"].clear()  # its row (revoked or not) stays in grant_rows
+    _ensure("lee@acme.io")
+    assert world["granted"] == []
