@@ -486,3 +486,16 @@ def test_a_session_that_did_end_is_still_given_up(server) -> None:
     with pytest.raises(AuthInvalid, match="run `loom login`"):
         credentials.access_token(refused=credentials._read()["profiles"]["default"]["access_token"])
     assert credentials.stored_login(_SERVER) is None
+
+
+def test_a_replay_s_warning_survives_the_second_ask(server) -> None:
+    credentials.login(_SERVER, open_browser=False, echo=lambda _: None)
+    replayed = "this session was ended because a spent refresh token was presented again"
+    server.queued["/oauth/token"] = [
+        httpx.Response(400, json={"error": "invalid_grant", "error_description": replayed}),
+        httpx.Response(
+            400, json={"error": "invalid_grant", "error_description": "this session has ended"}
+        ),
+    ]
+    with pytest.raises(AuthInvalid, match="service_accounts"):
+        credentials.access_token(refused=credentials._read()["profiles"]["default"]["access_token"])

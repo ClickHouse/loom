@@ -360,7 +360,9 @@ def _refresh(profile: str, refused: str, server: str | None) -> dict[str, Any]:
             r = client.post(endpoint, data=form, timeout=_REFRESH_TIMEOUT_S)
     if r.status_code == 400 and _oauth_error(r) == "invalid_grant":
         _drop(profile)
-        why = _oauth_description(r) or _oauth_description(first)
+        # The first answer says why (a replay's, say); the second, only that
+        # the session has ended, or nothing if the first came from a previous build.
+        why = _oauth_description(first) or _oauth_description(r)
         if "presented again" in why:
             # Maybe a stolen copy: what it could have minted is the owner's to check.
             why += "; if you did not just lose a refresh, check `loom call /v1/me/service_accounts`"

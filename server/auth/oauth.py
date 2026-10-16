@@ -1284,7 +1284,7 @@ async def _ask_identity_provider(grant: Grant, refresh_token: str) -> str:
         # Family only: the IdP also says this when its refresh token merely
         # expired, which is no reason to end the person's machine tokens.
         if grant.get("taken_over"):  # likely the token the dead process had rotated
-            await end_session(grant, "refresh abandoned mid-rotation")
+            await end_session(grant, "identity provider refused a taken-over refresh")
             unfinished = "this sign-in's last refresh did not finish; sign in again"
             raise _invalid_grant(unfinished) from None
         await end_session(grant, "identity provider refused the user")
