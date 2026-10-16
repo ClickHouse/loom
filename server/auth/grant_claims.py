@@ -56,6 +56,14 @@ def admins_change(org: str, namespace: str) -> AbstractAsyncContextManager[None]
     return _claimed(json.dumps([org, namespace]), f"the admins of {org}/{namespace}")
 
 
+def account_change(org: str, namespace: str) -> AbstractAsyncContextManager[None]:
+    """Hold the registry row of (org, namespace) from a read to its write: a
+    release and a password set each rewrite the whole row, so one must not
+    write back what it read over the other. Four elements: no grant or admins
+    key is the same."""
+    return _claimed(json.dumps([org, namespace, "", "account"]), f"the account {org}/{namespace}")
+
+
 @asynccontextmanager
 async def _claimed(key: str, what: str) -> AsyncIterator[None]:
     ch = get_client()

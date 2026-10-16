@@ -172,3 +172,31 @@ def test_a_token_whose_sub_carries_a_nul_is_refused() -> None:
     )
     with pytest.raises(TokenError, match="NUL"):
         verify_token(forged)
+
+
+class _LaggingTable(_Table):
+    """A replica behind: it takes writes, but its full reads hold none yet."""
+
+    async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+        return [] if params is None else await super().query_all(sql, params)
+
+
+def test_writes_made_here_survive_a_replica_that_has_not_seen_them(monkeypatch) -> None:
+    from server.core import ch
+
+    monkeypatch.setattr(ch, "get_client", lambda: _LaggingTable())
+    later = datetime.now(UTC) + timedelta(seconds=6)
+    for owner in ("owner1", "owner2"):  # an adopt's loop
+        asyncio.run(revocation.cut_off(owner, issued_before=later, reason="r", revoked_by="ops"))
+    for jti in ("t1", "t2"):  # two logouts
+        asyncio.run(revocation.revoke(jti, reason="logout"))
+    asyncio.run(revocation.refresh())  # the next tick, from that replica
+    now = int(time.time())
+    assert all(revocation.is_revoked(k, issued_at=now) for k in ("owner1", "owner2", "t1", "t2"))
+
+
+def test_a_full_revoke_read_from_elsewhere_stands_over_a_cutoff_made_here(table) -> None:
+    asyncio.run(revocation.revoke("sub1", issued_before=datetime.now(UTC) - timedelta(hours=1)))
+    table.rows["sub1"] = {"jti": "sub1", "issued_before": None}  # another replica, later
+    asyncio.run(revocation.refresh())
+    assert revocation.is_revoked("sub1", issued_at=int(time.time()) + 3600)

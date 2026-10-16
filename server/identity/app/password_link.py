@@ -13,6 +13,7 @@ from __future__ import annotations
 import html
 import logging
 import secrets
+from contextlib import AsyncExitStack
 from datetime import UTC, datetime
 from typing import Any
 
@@ -20,8 +21,9 @@ from fastapi import APIRouter, Request
 from fastapi.responses import Response
 
 from server.auth import oauth, sso_links
+from server.auth.grant_claims import account_change
 from server.auth.oauth_store import token_id
-from server.core.ch import get_client
+from server.core.ch import get_client, own_write_reads
 from server.identity.store import namespaces
 from server.observability import audit
 from server.settings import settings
@@ -125,30 +127,35 @@ async def set_password(request: Request) -> Response:
         return _form(code, f"Use {_MIN_LENGTH} to {_MAX_LENGTH} characters.", 400)
     if password != f.get("repeat", ""):
         return _form(code, "The two passwords differ.", 400)
-    # Hashed first: the rows are read after the slow step, so an edit landing
-    # meanwhile is what gets carried forward, not overwritten.
-    password_hash = await hash_password_off_loop(password)
+    password_hash = await hash_password_off_loop(password)  # the slow step, before any claim
     email, org = held["email"], held["org"]
-    rows = []
-    for ns in held["namespaces"]:
-        row = await namespaces.fetch_row(org, ns)
-        # Still that email's SSO account: one changed since the link was made is left alone.
-        if row and row["active"] and not row["password_hash"] and row["contact_email"] == email:
-            rows.append(row)
-    if not rows:
-        return _closed()
-    # Spent only now: a failure hashing or reading above leaves the link to retry.
-    if await oauth.store.take_pending(token_id(code)) is None:
-        return _closed()  # the form sent twice: the other one set it
-    now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
-    # Insert-as-replace carrying every other column forward.
-    await get_client().insert(
-        "loom.namespaces",
-        [
-            {**r, "password_hash": password_hash, "updated_at": max(now, r["updated_at"])}
-            for r in rows
-        ],
-    )
+    async with AsyncExitStack() as claimed:
+        # Each account held from its read to its write, as a release holds it.
+        for ns in sorted(held["namespaces"]):
+            await claimed.enter_async_context(account_change(org, ns))
+        rows = []
+        with own_write_reads():
+            for ns in held["namespaces"]:
+                row = await namespaces.fetch_row(org, ns)
+                # Still that email's SSO account, with no password yet: one
+                # changed since the link was made is left alone, and so is one
+                # this link set already (a retry after a write that landed).
+                if row and row["active"] and not row["password_hash"]:
+                    if row["contact_email"] == email:
+                        rows.append(row)
+        if not rows:
+            return _closed()
+        now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+        # Insert-as-replace carrying every other column forward. Written before
+        # the link is spent, so a write that failed leaves the link to retry.
+        await get_client().insert(
+            "loom.namespaces",
+            [
+                {**r, "password_hash": password_hash, "updated_at": max(now, r["updated_at"])}
+                for r in rows
+            ],
+        )
+        await oauth.store.take_pending(token_id(code))
     accounts = [(org, r["namespace"]) for r in rows]
     await sso_links.link(email, accounts, "password-link")
     await audit.emit(

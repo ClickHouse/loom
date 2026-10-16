@@ -95,6 +95,15 @@ async def release_claim(
     """
     if ch is None:
         ch = get_client()
+    from server.auth.grant_claims import account_change
+
+    async with account_change(org, namespace):  # a password set rewrites the same row
+        return await _release(org, namespace, reason, actor_subject, ch)
+
+
+async def _release(
+    org: str, namespace: str, reason: str, actor_subject: str, ch: CHClient
+) -> ClaimReleaseOutput | None:
     # SELECT * so the release row mirrors EVERY column forward: loom.namespaces is
     # ReplacingMergeTree(updated_at), and an omitted column would reset to its schema
     # default under FINAL (a restricted namespace would read back as standard).

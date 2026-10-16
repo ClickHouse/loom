@@ -123,3 +123,34 @@ def test_a_link_survives_a_failure_before_the_password_is_written(world, monkeyp
     assert _set(c, code, "correct horse").status_code == 500
     monkeypatch.setattr(password_link.namespaces, "fetch_row", working)
     assert _set(c, code, "correct horse").status_code == 200 and len(world["rows"]) == 1
+
+
+def test_a_link_survives_an_insert_that_failed(world, monkeypatch) -> None:
+    c, code = TestClient(oauth_app(), raise_server_exceptions=False), _code()
+
+    class _Down:
+        async def insert(self, table: str, rows: list[dict[str, Any]]) -> None:
+            raise RuntimeError("ClickHouse away before the write")
+
+    working = password_link.get_client
+    monkeypatch.setattr(password_link, "get_client", lambda: _Down())
+    assert _set(c, code, "correct horse").status_code == 500
+    monkeypatch.setattr(password_link, "get_client", working)
+    assert _set(c, code, "correct horse").status_code == 200 and len(world["rows"]) == 1
+    # And once set, the same link changes nothing more.
+    assert _set(c, code, "another pass").status_code == 400 and len(world["rows"]) == 1
+
+
+def test_a_release_that_lands_first_is_not_undone(world, monkeypatch) -> None:
+    # The account is read only once its claim is held: a release that held it
+    # first (owner cleared, deactivated) is what the password set sees.
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def released_meanwhile(org: str, namespace: str) -> Any:
+        world["accounts"][0].update(active=False, contact_email="")
+        yield
+
+    monkeypatch.setattr(password_link, "account_change", released_meanwhile)
+    r = _set(TestClient(oauth_app()), _code(), "correct horse")
+    assert r.status_code == 400 and not world["rows"]

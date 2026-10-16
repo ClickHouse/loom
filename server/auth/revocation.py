@@ -70,9 +70,11 @@ _revoked_before: dict[str, int] = {}
 CUTOFF_PREFIX = "\x00cutoff:"
 # Their snapshot, read beside `_revoked_before`.
 _cut_off: dict[str, int] = {}
-# Writes folded into the snapshot here, kept a while: a refresh whose read
-# began before one lays it over what it read, so the snapshot it swaps in
-# never loses it. (kind, key, cutoff, when): kind "revoke" or "cut_off".
+# Writes folded into the snapshot here, kept a while: every refresh lays them
+# over what it read, so neither a read already in flight nor one from a replica
+# behind drops them. Laid back, they only ever tighten: a revocation made
+# weaker here within that while stays at its stronger form in this process.
+# (kind, key, cutoff, when): kind "revoke" or "cut_off".
 _recent: list[tuple[str, str, int | None, float]] = []
 _RECENT_S = 300.0  # far longer than a read takes
 # False until one refresh has succeeded in this process.
@@ -134,7 +136,6 @@ async def refresh() -> None:
     from server.core.ch import get_client
 
     global _revoked_jtis, _revoked_before, _cut_off, _loaded, _loaded_at
-    began = time.monotonic()
     try:
         ch = get_client()
         # A session whose revocation could not be written gets a
@@ -160,10 +161,14 @@ async def refresh() -> None:
                 full.add(key)
             else:
                 before[key] = cutoff
-        # Writes made here since the read began, which it may not hold.
-        for kind, key, cutoff, when in _recent:
-            if when >= began:
-                _fold(kind, key, cutoff, full, before, operator)
+        # Writes made here lately, which the read (in flight, or behind) may lack.
+        for kind, key, cutoff, _ in _recent:
+            if kind == "cut_off":
+                operator[key] = max(operator.get(key, 0), cutoff or 0)
+            elif cutoff is None:
+                full.add(key)
+            elif key not in full:
+                before[key] = max(before.get(key, 0), cutoff)
         _revoked_jtis = frozenset(full)
         _revoked_before, _cut_off = before, operator
         _loaded = True
@@ -259,9 +264,7 @@ async def cut_off(subject: str, *, issued_before: datetime, reason: str, revoked
     await refresh()  # as `revoke` does; the fold below covers a re-read that missed it
     global _cut_off
     seconds = _cutoff_seconds(cutoff) or 0
-    operator = dict(_cut_off)
-    _fold("cut_off", subject, seconds, set(), {}, operator)
-    _cut_off = operator
+    _cut_off = {**_cut_off, subject: max(_cut_off.get(subject, 0), seconds)}
     _remember("cut_off", subject, seconds)
 
 
@@ -279,30 +282,14 @@ def _apply_locally(key: str, cutoff: int | None) -> None:
     so it replaces any earlier state of that key. `loaded()` is left as it
     is: one known row is not a snapshot."""
     global _revoked_jtis, _revoked_before
-    full, before = set(_revoked_jtis), dict(_revoked_before)
-    _fold("revoke", key, cutoff, full, before, {})
-    _revoked_jtis, _revoked_before = frozenset(full), before
-    _remember("revoke", key, cutoff)
-
-
-def _fold(
-    kind: str,
-    key: str,
-    cutoff: int | None,
-    full: set[str],
-    before: dict[str, int],
-    operator: dict[str, int],
-) -> None:
-    """Lay one write made here over a snapshot: a revoke is the newest row of
-    its key, a cut_off only ever raises the operator cutoff."""
-    if kind == "cut_off":
-        operator[key] = max(operator.get(key, 0), cutoff or 0)
-    elif cutoff is None:
-        full.add(key)
-        before.pop(key, None)
+    before = {k: v for k, v in _revoked_before.items() if k != key}
+    if cutoff is None:
+        _revoked_jtis = _revoked_jtis | {key}
     else:
-        full.discard(key)
+        _revoked_jtis = _revoked_jtis - {key}
         before[key] = cutoff
+    _revoked_before = before
+    _remember("revoke", key, cutoff)
 
 
 def _remember(kind: str, key: str, cutoff: int | None) -> None:
