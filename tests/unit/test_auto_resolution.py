@@ -1051,6 +1051,37 @@ async def test_a_mark_with_every_peer_retired_writes_nothing(monkeypatch) -> Non
     assert await _marks(monkeypatch, {"q": "superseded", "erased": None}) == []
 
 
+@pytest.mark.parametrize(
+    ("sha", "status", "marked"),
+    [("judged", "active", True), ("revised", "active", False), ("judged", "superseded", False)],
+)
+async def test_a_deferred_mark_with_every_peer_retired_says_if_the_row_moved(
+    monkeypatch, sha, status, marked
+) -> None:
+    # Nothing to flag, but a judged write revised or retired since is moved, not "conflict".
+    import server.memory.store as memory_repo
+    from server.memory.app.conflicts import mark_peers_conflicted
+
+    rows = {
+        "n1": SimpleNamespace(status=status, conflict_with=[], content_sha256=sha),
+        "q": SimpleNamespace(status="superseded", conflict_with=[], content_sha256="q"),
+    }
+
+    async def get_by_id(mid, **kw):
+        assert kw["strong"]
+        return rows.get(mid)
+
+    async def write(*_a, **_kw):
+        raise AssertionError("nothing is written")
+
+    monkeypatch.setattr(memory_repo, "get_by_id", get_by_id)
+    monkeypatch.setattr(memory_repo, "write_versions_by_ids", write)
+    landed = await mark_peers_conflicted(
+        org="o", new_memory_id="n1", peer_ids=["q"], expected_sha256="judged"
+    )
+    assert landed is marked
+
+
 async def test_a_peer_retiring_after_the_read_is_not_marked(monkeypatch) -> None:
     # The accepted window: the new row still names it, but it is never revived.
     wrote = await _marks(monkeypatch, {"p": "active"}, at_write={"p": "superseded"})

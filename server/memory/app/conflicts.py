@@ -1032,7 +1032,8 @@ async def mark_peers_conflicted(
     included. Writes new RMT version rows, every column carried. With
     `expected_sha256` (a deferred verdict), only the judged write is flagged
     (`judged_write`). False, and no peer touched, when the new row was not
-    flagged: a newer write replaced it, or it was retired since."""
+    flagged: a newer write replaced it, or it was retired since. With no live
+    peer that is checked for a deferred verdict only; an inline one answers True."""
     import server.memory.store as memory_repo
 
     def _merged(existing: list[str], additions: list[str]) -> list[str]:
@@ -1062,7 +1063,18 @@ async def mark_peers_conflicted(
         if row is not None and row.status in _MARKABLE
     ]
     if not live:
-        return True  # nothing left to flag: the verdict stands, the write is not moved
+        if not expected_sha256:
+            return True  # nothing left to flag: the verdict stands
+        # A deferred verdict still says whether it would have flagged the row, as the
+        # write below does: a revision since owes its own judge, so this one is moved.
+        row = await memory_repo.get_by_id(
+            new_memory_id, org=org, scope=WHOLE_NAMESPACE, fresh=True, strong=True
+        )
+        return (
+            row is not None
+            and row.status in _MARKABLE
+            and str(row.content_sha256 or "") == expected_sha256
+        )
 
     # A proposal (a fact on trial) keeps its status and only
     # records the contradiction; it is surfaced when the proposal is accepted
