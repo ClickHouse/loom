@@ -484,17 +484,19 @@ async def close_late_edges(
 async def value_ended_at(
     org: str, namespace: str, memory_id: str, content_sha256: str, *, ch: Any
 ) -> datetime:
-    """When the row stopped holding the value `content_sha256`: the first later
-    version that holds another value or none (a revision, a retirement, a delete),
-    read from the version history. Now when the history has none."""
+    """When the row last stopped holding the value `content_sha256`: the first version
+    after the last one that held it, holding another value or none (a revision, a
+    retirement, a delete), read from the version history. Now when the history has
+    none."""
     row = await ch.query_one(
         f"""
         SELECT minOrNull(updated_at) AS ended FROM loom.memory_versions
         WHERE org = {{org:String}} AND namespace = {{ns:String}} AND memory_id = {{id:UUID}}
           AND version > (
-              SELECT minOrNull(version) FROM loom.memory_versions
+              SELECT maxOrNull(version) FROM loom.memory_versions
               WHERE org = {{org:String}} AND namespace = {{ns:String}}
-                AND memory_id = {{id:UUID}} AND content_sha256 = {{sha:String}})
+                AND memory_id = {{id:UUID}} AND content_sha256 = {{sha:String}}
+                AND {HOLDS_VALUE_SQL})
           AND NOT (content_sha256 = {{sha:String}} AND {HOLDS_VALUE_SQL})
         SETTINGS select_sequential_consistency = 1
         """,

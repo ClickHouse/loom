@@ -2196,6 +2196,44 @@ async def test_a_late_cleanup_keeps_the_end_another_row_gave_the_pair(ch, org) -
 
 
 @pytest.mark.parametrize(
+    "values",
+    [
+        ["Alice lives in London", "Alice likes jazz"],
+        ["Alice lives in London", "Alice likes jazz", "Alice lives in London", "Alice likes blues"],
+    ],
+    ids=["once", "held-again"],
+)
+async def test_a_value_ends_when_the_row_last_stopped_holding_it(ch, org, values) -> None:
+    # A row held London, then other values, maybe London again in between: its
+    # London ended with the last revision away from it, not the first.
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import after_write
+    from server.memory.app.entity_projections import value_ended_at
+    from server.memory.app.write import handle_memory_set
+
+    for i, value in enumerate(values):
+        if i:
+            await asyncio.sleep(1.1)  # one version per second of updated_at
+        out = await handle_memory_set(
+            MemorySetInput(
+                org=org, namespace=NS, agent="bot", user_id=USER, memory_key="alice", value=value
+            )
+        )
+    await after_write.drain()
+    memory_id = str(out.memory_id)
+    versions = await ch.query_all(
+        "SELECT content_sha256, updated_at FROM loom.memory_versions"
+        " WHERE org = {org:String} AND memory_id = {id:UUID} ORDER BY version"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org, "id": memory_id},
+    )
+    assert len(versions) == len(values)
+    london = versions[0]["content_sha256"].decode()
+    ended = await value_ended_at(org, NS, memory_id, london, ch=ch)
+    assert ended == versions[-1]["updated_at"]
+
+
+@pytest.mark.parametrize(
     "extra",
     [
         {},
