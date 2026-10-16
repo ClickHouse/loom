@@ -1187,3 +1187,24 @@ async def test_a_replay_leaves_open_a_value_dated_after_the_newest_closer(
 ) -> None:
     # London at +1 µs but dated on a later day than Madrid: stated since, left open.
     assert await _replay_of_paris_then_madrid(monkeypatch, datetime(2026, 10, 1)) == ["paris"]
+
+
+@pytest.mark.asyncio
+async def test_end_edges_reads_only_the_live_rows_that_link_the_pairs() -> None:
+    # loom.memory FINAL prunes on org and namespace only: unnarrowed, the keep-open
+    # check reads every row of the namespace on the write's response path.
+    from server.memory.app.projections import end_edges
+
+    ch = StubCH()
+    await end_edges(
+        ch,
+        org="clickhouse",
+        namespace="agent-memory",
+        ends=[("alice", "london", _T)],
+        changed=[],
+    )
+    sql, params = ch.query_all_calls[0]
+    live = " ".join(sql.split("FROM loom.memory FINAL", 1)[1].split())
+    assert "memory_key IN ( SELECT memory_key FROM loom.entity_edge_memories" in live
+    assert "(entity_a, entity_b) IN {pairs:Array(Tuple(String, String))}" in live
+    assert params["pairs"] == [("alice", "london")]

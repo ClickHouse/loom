@@ -1052,6 +1052,11 @@ async def end_edges(
                 AND memory_key IN (
                     SELECT memory_key FROM loom.memory FINAL
                     WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                      -- Only the keys that link a pair, not the whole namespace.
+                      AND memory_key IN (
+                          SELECT memory_key FROM loom.entity_edge_memories
+                          WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                            AND (entity_a, entity_b) IN {{pairs:Array(Tuple(String, String))}})
                       AND {GRAPH_HOLDER_SQL}))
         SETTINGS select_sequential_consistency = 1
         """,
