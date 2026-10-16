@@ -7,7 +7,7 @@ from server.memory.domain.graph_quality import (
     canonical_entity,
     canonical_entity_text,
     canonical_relation,
-    ended_state,
+    ended_verb,
     is_single_valued_relation,
     order_ended_before_dated,
     triple_interval_repairs,
@@ -438,20 +438,23 @@ def test_within_one_write_an_ended_value_restated_with_a_date_does_not_move() ->
 
 
 @pytest.mark.parametrize(
-    ("text", "ended"),
+    ("verb", "ended"),
     [
-        ("user lived in london", True),
-        ("user used to work at acme", True),
-        ("user previously worked at acme", True),
-        ("user was living in london", True),
-        ("user lives in paris", False),
-        ("user moved to paris", False),
-        ("user has lived in paris for years", False),
-        ("i ve lived here since 2019", False),
+        ("lived_in", True),
+        ("Lived in", True),
+        ("worked_at", True),
+        ("was_based_in", True),
+        ("lives_in", False),
+        ("live_in", False),
+        ("works_at", False),
+        ("has_lived_in", False),
+        ("moved_to", False),
+        ("joined", False),
+        ("livestreamed", False),
     ],
 )
-def test_ended_state_wording(text: str, ended: bool) -> None:
-    assert ended_state(text) is ended
+def test_ended_verb(verb: str, ended: bool) -> None:
+    assert ended_verb(verb) is ended
 
 
 @pytest.mark.parametrize("berlin_first", [True, False])

@@ -958,10 +958,10 @@ def test_a_restatement_is_judged_with_the_namespace_cardinality() -> None:
 
 
 async def _stored_batch(
-    monkeypatch, *values: tuple[str, datetime | None], said: dict[str, str] | None = None
+    monkeypatch, *values: tuple[str, datetime | None], verbs: dict[str, str] | None = None
 ) -> list[dict]:
     """The triple rows one bulk write stores for `values`, stated in that order (each
-    city's sentence is "I live in <city>" unless `said` words it otherwise)."""
+    city's triple says `live_in` unless `verbs` names its verb)."""
     from server.memory.app import projections as proj
 
     async def no_repair(*a: Any, **k: Any) -> None:
@@ -972,8 +972,8 @@ async def _stored_batch(
     entries = [
         _BulkSetEntry(
             memory_key=f"k{i}",
-            value=(said or {}).get(city, f"I live in {city}"),
-            relations=[("user", "live_in", city)],
+            value=f"I live in {city}",
+            relations=[("user", (verbs or {}).get(city, "live_in"), city)],
             valid_at=day,
         )
         for i, (city, day) in enumerate(values)
@@ -1083,18 +1083,53 @@ async def test_a_batch_keeps_the_value_with_the_newest_observation(monkeypatch, 
 async def test_a_batch_with_an_ended_undated_value_keeps_the_dated_one(
     monkeypatch, _declared, london_first: bool
 ) -> None:
-    # One write on Sep 12, in either order: "I lived in London" and "I moved to Paris
-    # on Sep 1". Paris is current, and London closes when Paris began.
+    # One write on Sep 12, in either order: "user lived_in london" and "user live_in
+    # paris" from Sep 1. Paris is current, and London closes when Paris began.
     values = [("london", None), ("paris", datetime(2026, 9, 1))]
     rows = await _stored_batch(
         monkeypatch,
         *(values if london_first else values[::-1]),
-        said={"london": "I lived in London", "paris": "I moved to Paris"},
+        verbs={"london": "lived_in"},
     )
     assert _current(rows) == {"paris"}
     ch = _Triples([{**r, "invalid_at": None} for r in rows])
     repairs = await _repair_contradictory_triples(_bulk_input(), rows, ch=ch, at=_T)
     assert [(r.old_object, r.valid_to) for r in repairs] == [("london", datetime(2026, 9, 1))]
+
+
+@pytest.mark.asyncio
+async def test_one_sentence_stating_a_past_and_a_current_value_keeps_the_current(
+    monkeypatch, _declared
+) -> None:
+    # "User worked at Acme before joining Globex" ("worked_at acme", "works_at globex")
+    # next to "User started at Acme in 2015": only the Acme triple's verb is past, so
+    # Globex stays current.
+    from server.memory.app import projections as proj
+
+    async def no_repair(*a: Any, **k: Any) -> None:
+        return None
+
+    monkeypatch.setattr(proj, "_repair_triples", no_repair)
+    monkeypatch.setattr(proj, "naive_utc_now", lambda: _T.replace(microsecond=7))
+    entries = [
+        _BulkSetEntry(
+            memory_key="k0",
+            value="User worked at Acme before joining Globex",
+            relations=[("user", "worked_at", "acme"), ("user", "works_at", "globex")],
+        ),
+        _BulkSetEntry(
+            memory_key="k1",
+            value="User started at Acme in 2015",
+            relations=[("user", "works_at", "acme")],
+            valid_at=datetime(2015, 1, 1),
+        ),
+    ]
+    write = MemoryBulkSetInput(org="o", namespace="n", agent="a", entries=entries)
+    results = [_BulkSetResult(memory_key=e.memory_key, version=1, memory_id="") for e in entries]
+    ch = StubCH()
+    await proj.write_entity_triples(write, results, ch=ch, entity_map={})
+    (rows,) = [r for t, r, _ in ch.insert_calls if t == "loom.entity_triples"]
+    assert _current([{**r, "valid_to": None} for r in rows]) == {"globex"}
 
 
 @pytest.mark.asyncio

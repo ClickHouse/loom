@@ -47,9 +47,9 @@ never fails the write. A `high`-sensitivity bulk entry projects nothing.
    interval; a write that states the older value again while that close runs keeps it open. Values order by the day
    they start (an undated value starts when it arrives), then by arrival to the microsecond, so racing writers agree
    on one current value: the later day, or on one day the later arrival (within one write, the later-stated value).
-   Within one write, an undated value worded as ended is older than a dated one, in either order: "I lived in London"
-   and "I moved to Paris on Oct 1" leave Paris current, while "I live in Paris" next to "I moved to London in 2019"
-   keeps Paris.
+   Within one write, an undated value whose own verb is past (`lived_in`, `worked_at`) is older than a dated one, in
+   either order: "user lived_in london" next to Paris from Oct 1 leaves Paris current, while "I live in Paris" next to
+   "I moved to London in 2019" keeps Paris.
    A value is judged at its newest row: "London from Oct 15, Paris from Oct 14, London from Oct 13" leaves London
    current. An Undo (`memory.restore`) makes the restored value current from the restore on: the restored fact and its
    edge are stored again starting at the restore (or at the fact's own later start: "moving to Berlin on Dec 1" starts

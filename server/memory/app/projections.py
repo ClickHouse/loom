@@ -24,7 +24,7 @@ from server.memory.app import conflicts as _conflicts
 from server.memory.app.projection_errors import TriplesInsertFailed, TriplesRepairFailed
 from server.memory.domain.graph_quality import (
     MAX_TRIPLES_PER_ROW,
-    ended_state,
+    ended_verb,
     observation_key,
     order_ended_before_dated,
     restates_current,
@@ -380,7 +380,7 @@ async def write_entity_triples(
     triples: list[dict[str, Any]] = []
     triple_memories: list[dict[str, Any]] = []
     triple_rows: list[dict[str, Any]] = []
-    # The triples whose fact is worded as a state that has ended.
+    # The triples whose own verb states a state that has ended (`ended_verb`).
     ended: set[int] = set()
     # The names this write resolved to something else, for a replay to reuse.
     resolved_names: dict[str, str] = {}
@@ -432,6 +432,7 @@ async def write_entity_triples(
             conf: float,
             *,
             provenance: str = "",
+            ended_: bool = False,
             _cn: str = _carrier_norm,
             _vf: Any = _entry_valid_from,
             _vt: Any = _entry_valid_to,
@@ -446,7 +447,7 @@ async def write_entity_triples(
                 return
             if not provenance:
                 provenance = _tp.classify(s, o, _cn)
-            if ended_state(_cn):
+            if ended_:
                 ended.add(len(triples))
             triples.append(
                 entity_triple_row(
@@ -497,7 +498,9 @@ async def write_entity_triples(
             for raw, name in ((rel[0], s), (rel[2], o)):
                 if canonical_entity_text(str(raw)) != name:
                     resolved_names[canonical_entity_text(str(raw))] = name
-            _append_triple(s, relation.verb, o, min(_conf, relation.confidence))
+            _append_triple(
+                s, relation.verb, o, min(_conf, relation.confidence), ended_=ended_verb(str(rel[1]))
+            )
 
         fact_verbs = [str(r[1]) for r in rels if isinstance(r, (list, tuple)) and len(r) == 3]
         facets = facet_triples(input.agent, fact_verbs, entry_files, entry_concepts, entry_topics)

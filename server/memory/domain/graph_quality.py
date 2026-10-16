@@ -534,17 +534,18 @@ def observation_key(
     return (start.date(), seen, obj)
 
 
-# An undated value worded as a state that has ended ("I lived in London", "used to
-# work at Acme"), not one that still holds ("I've lived here for years").
-_ENDED_STATE_RE = re.compile(
-    r"\b(?:used to|previously|formerly|no longer|"
-    r"(?<!has )(?<!have )(?<!ve )(?:lived|worked|stayed|(?:was|were) (?:living|working|based)))\b"
+# A triple's own verb, as the extractor copied it from the text, in a past form of a
+# state ("lived_in", "worked_at", "was_based_in"): the state has ended. "has_lived_in"
+# and "lives_in" still hold. Changing this changes the `seen_at` a replay of an old
+# write computes, so keep it to forms that only mean an ended state.
+_ENDED_VERB_RE = re.compile(
+    r"(?:lived|worked|resided|(?:was|were)_(?:based|living|working))(?:_|$)"
 )
 
 
-def ended_state(text_norm: str) -> bool:
-    """Whether normalised prose words its fact as a state that has ended."""
-    return bool(_ENDED_STATE_RE.search(text_norm))
+def ended_verb(raw_verb: str) -> bool:
+    """Whether a triple's verb, before canonicalisation, states a state that has ended."""
+    return bool(_ENDED_VERB_RE.match(re.sub(r"[\s_]+", "_", raw_verb.strip().lower())))
 
 
 def order_ended_before_dated(
@@ -552,14 +553,14 @@ def order_ended_before_dated(
     ended: Collection[int],
     declared: Mapping[str, str] | None = None,
 ) -> None:
-    """In one write, an undated value worded as an ended state (the triples at `ended`:
-    "I lived in London") is older than a dated value of the same single-valued relation
-    ("I moved to Paris on Oct 1"), whichever is stated first. An undated row starts when
-    it was seen, so its `seen_at` moves to just before the earliest start of another
-    value of that relation in the write, when that start is earlier. A value that still
-    holds ("I live in Paris") and a dated restatement of the same value move nothing:
-    the order statements come in says nothing about which is current. In place, before
-    the insert, so the stored key carries it."""
+    """In one write, an undated value whose own verb states an ended state (the triples
+    at `ended`: "user lived_in london") is older than a dated value of the same
+    single-valued relation ("user live_in paris" from Oct 1), whichever is stated
+    first. An undated row starts when it was seen, so its `seen_at` moves to just before
+    the earliest start of another value of that relation in the write, when that start
+    is earlier. A value that still holds ("lives_in") and a dated restatement of the
+    same value move nothing: the order statements come in says nothing about which is
+    current. In place, before the insert, so the stored key carries it."""
     keys: list[tuple[tuple[str, str], str] | None] = []
     starts: dict[tuple[str, str], list[tuple[datetime, str]]] = {}
     for t in triples:
