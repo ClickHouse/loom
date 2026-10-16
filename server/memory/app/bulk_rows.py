@@ -109,6 +109,9 @@ class _BulkWriteState:
     left_out: set[str] = field(default_factory=set)
     # Of those, late evidence the journal took (it is audited like a written row).
     past_only_rows: list[dict[str, Any]] = field(default_factory=list)
+    # A retry's earlier commits per memory_key, in order (`durable_commits`): its
+    # entries skip the filters below and answer as those commits did.
+    retried: dict[str, list[Any]] = field(default_factory=dict)
     # (row_idx, embed_text, excerpt, key_text) per searchable kept entry.
     pending: list[tuple[int, str, str, str]] = field(default_factory=list)
     # (entry, serialized_value, tags, entities, expires_at) per kept entry.
@@ -204,6 +207,8 @@ def _bulk_skip_gate(
     """Phase 4a, per entry: True when the entry writes nothing — an unchanged
     restatement, an identity duplicate, a value-locked or a pinned target. Each still gets a
     version-0 result row so the response shape is unchanged."""
+    if entry.memory_key in state.retried:
+        return False  # the publisher answers a retried entry from its commit
     # Re-ingest skip-gate: a byte-identical live value skips the
     # rewrite+re-embed+re-project. Caller still gets a result row
     # (version 0) so the response shape is unchanged.

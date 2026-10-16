@@ -1501,3 +1501,50 @@ def test_a_recheck_under_the_lock_refuses_the_whole_batch(journal: Journal) -> N
             )  # fmt: skip
         )
     assert journal.commits == []
+
+
+def test_a_raised_version_reaches_the_claims_later_rows_of_the_batch_carry(
+    journal: Journal, monkeypatch
+) -> None:
+    # One batch: C, then C again with new tags (an assessment carrying C's claim). A
+    # projection lands above both drawn versions before the lock: every claim the
+    # batch commits names a version one of its rows was written at.
+    run(pub.publish_rows([mrow('"A"')]))
+    c1, c2 = mrow('"C"'), mrow('"C"', tags=["x"])
+    drawn = {c1["version"], c2["version"]}
+    landed = {"v": 0}
+    real_head = journal.head
+    calls = {"n": 0}
+
+    async def head(*a, **k):
+        calls["n"] += 1
+        if calls["n"] == 2:  # under the lock
+            landed["v"] = max(drawn) + 5
+        return await real_head(*a, **k)
+
+    async def versions(*_a, **_k):
+        return {("a", "-", "-", "k"): landed["v"]} if landed["v"] else {}
+
+    monkeypatch.setattr(store, "head", head)
+    monkeypatch.setattr(store, "row_versions", versions)
+    rows = run(pub.publish_rows([c1, c2]))
+    written = {r["version"] for r in rows}
+    assert written.isdisjoint(drawn)
+    claims = [a for c in journal.commits[1:] for a in json.loads(c["assertions"])]
+    assert claims and {a["source_version"] for a in claims} <= written
+
+
+def test_a_bulk_entry_answers_with_the_version_its_row_was_published_at() -> None:
+    from server.memory.api.models_bulk import _BulkSetResult
+    from server.memory.app.bulk_set import _answer_published_versions
+
+    first, second, skipped = (
+        _BulkSetResult(memory_key="k", version=10),
+        _BulkSetResult(memory_key="k", version=11),
+        _BulkSetResult(memory_key="j", version=0),
+    )
+    rows = [{"memory_key": "k", "version": 10}, {"memory_key": "k", "version": 11}]
+    drawn = [(r, int(r["version"])) for r in rows]
+    rows[0]["version"], rows[1]["version"] = 20, 21  # the publisher raised both
+    _answer_published_versions([first, second, skipped], drawn)
+    assert (first.version, second.version, skipped.version) == (20, 21, 0)

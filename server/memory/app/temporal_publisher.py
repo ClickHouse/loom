@@ -100,6 +100,9 @@ class Receipt:
     # version committed first), locked (a change the key's lock in force refuses), restated
     # (nothing changed and the value is not what applies now).
     left_out: str = ""
+    # The version row this receipt answers for (a row-writing change's): a batch can
+    # carry several rows of one key, each with its own outcome.
+    row: Mapping[str, Any] | None = field(default=None, compare=False, repr=False)
 
     @property
     def memory_key(self) -> str:
@@ -145,6 +148,11 @@ def committed_memory_id(namespace: str, ident: Ident) -> str:
     )
 
 
+def receipt_of(row: Mapping[str, Any]) -> Receipt | None:
+    """The receipt this request's publication gave this very row."""
+    return next((r for r in reversed(_bag() or []) if r.row is row), None)
+
+
 def replayed(namespace: str, ident: Ident) -> Receipt | None:
     """The receipt of this identity whose row was not written: a retry whose key
     has moved on, a write that only filled the past, or one left out."""
@@ -158,6 +166,27 @@ def replayed(namespace: str, ident: Ident) -> Receipt | None:
         ),
         None,
     )
+
+
+async def durable_commits(org: str, ns: str, idents: Sequence[Ident]) -> dict[Ident, list[Receipt]]:
+    """Per identity, the receipts of this request's earlier commits under its client
+    retry key, in order. A batch reads them before it filters anything out, so a
+    retry answers as its commits did; the same key with another body is refused."""
+    idem = idempotency.request_key_var.get()
+    if not idem or not idents:
+        return {}
+    prior = await store.commits_for_idempotency_key(
+        org, ns, idem, list(dict.fromkeys(idents)), erased=await erased(org, ns)
+    )
+    if any(
+        str(c["request_sha256"]) != idempotency.request_body_var.get()
+        for cs in prior.values()
+        for c in cs
+    ):
+        raise PreconditionFailedError(
+            "Idempotency-Key reused with a different request to this memory"
+        )
+    return {i: [_receipt(ns, i, c, moved_on=False) for c in cs] for i, cs in prior.items() if cs}
 
 
 async def durable_replay(
@@ -261,13 +290,11 @@ async def publish_rows(
         if intent_for(r, intent).journaled:
             continue
         groups.setdefault((str(r.get("org", "")), str(r.get("namespace", ""))), []).append(r)
-    stale: set[tuple[str, ...]] = set()
-    # A retry's row is written as its commit recorded it: the id, and the expiry
-    # its assertions carry (the row's), not ones drawn anew.
-    recorded: dict[tuple[str, ...], dict[str, Any]] = {}
-    rows_by = {
-        (str(r["org"]), str(r["namespace"]), *ident_of(r)): str(r.get("value")) for r in rows
-    }
+    # Per row (by object: a batch can carry several rows of one key), whether it is
+    # written, and a retry's as its commit recorded it: the id, and the expiry its
+    # assertions carry (the row's), not ones drawn anew.
+    stale: set[int] = set()
+    recorded: dict[int, dict[str, Any]] = {}
     for (org, ns), batch in groups.items():
         try:
             receipts = await publish(org, ns, [_RowChange(r) for r in batch], intent, ch=ch)
@@ -280,10 +307,14 @@ async def publish_rows(
             raise
         except Exception as e:  # re-raised as one named 503
             raise TemporalUnavailableError(f"temporal journal unavailable: {e}") from e
-        stale |= {(org, ns, *r.ident) for r in receipts if r.moved_on or r.past_only or r.left_out}
+        stale |= {
+            id(r.row)
+            for r in receipts
+            if r.row is not None and (r.moved_on or r.past_only or r.left_out)
+        }
         for rc in receipts:
-            if rc.retried_memory_id:
-                own = row_assertion(rc.amendment, rows_by.get((org, ns, *rc.ident)))
+            if rc.retried_memory_id and rc.row is not None:
+                own = row_assertion(rc.amendment, str(rc.row.get("value")))
                 # A restatement's commit holds no assertion: its row is the one the
                 # history mirror kept at the commit's version.
                 was = (
@@ -291,7 +322,7 @@ async def publish_rows(
                     if own is None and rc.row_version
                     else None
                 )
-                recorded[(org, ns, *rc.ident)] = (
+                recorded[id(rc.row)] = (
                     {k: v for k, v in (was or {}).items() if k not in _NOT_RESTORED}
                     | {"memory_id": rc.retried_memory_id}
                     | ({"expires_at": own.expires_at} if own is not None else {})
@@ -299,11 +330,10 @@ async def publish_rows(
                 )
     out = []
     for r in rows:
-        at = (str(r["org"]), str(r["namespace"]), *ident_of(r))
-        if at in stale:
+        if id(r) in stale:
             continue
-        if at in recorded:  # in place, as a stamped version is: the caller's row is the commit's
-            cast(dict[str, Any], r).update(recorded[at])
+        if id(r) in recorded:  # in place, as a stamped version is: the caller's row is the commit's
+            cast(dict[str, Any], r).update(recorded[id(r)])
         out.append(r)
     return out
 
@@ -315,7 +345,7 @@ _NOT_RESTORED = frozenset({"org", "namespace", "agent", "user_id", "session_id",
 async def refence_rows(rows: Sequence[Mapping[str, Any]], *, ch: _CHClient | None = None) -> None:
     """Once a batch's current rows are in: an erasure of their scope requested since
     the write began takes them back out, vectors too, and refuses the write.
-    ponytail: a process lost between the insert and this check leaves the rows to
+    A process lost between the insert and this check leaves the rows to
     the saga's census, or to an operator once the saga has completed."""
     import server.memory.store as memory_repo
     from server.core.datetimes import naive_utc_now
@@ -657,9 +687,8 @@ async def _plan(
             receipt = _receipt(ns, ident, prior, moved_on=moved_on)
             assert receipt.amendment is not None  # read back from the commit
             held = [x.a for x in served.get(ident, {}).values()]
-            b.receipts.append(
-                replace(receipt, past_only=_retry_past_only(receipt.amendment, held, planned_at))
-            )
+            past = _retry_past_only(receipt.amendment, held, planned_at)
+            b.receipts.append(replace(receipt, past_only=past, row=change.row))
             continue
         current = served.setdefault(ident, {})
         if not current and ident not in parents:
@@ -677,7 +706,9 @@ async def _plan(
                 change.row, row_intent, current, head_rows.get(ident), floor, ident, planned_at
             )
             if isinstance(planned, str):
-                b.receipts.append(_no_commit(ns, ident, planned_at, planned))
+                b.receipts.append(
+                    replace(_no_commit(ns, ident, planned_at, planned), row=change.row)
+                )
                 note_left_out((org, ns, *ident), planned)
                 continue
             amendment = planned
@@ -1321,6 +1352,16 @@ def _no_commit(ns: str, ident: Ident, at: datetime, why: str) -> Receipt:
     return Receipt(ns, ident, "", 0, at, "", left_out=why)
 
 
+async def serving(org: str, ns: str, keys: Sequence[Ident]) -> set[Ident]:
+    """The identities among `keys` whose journal still serves a claim (now or planned)."""
+    if not keys:
+        return set()
+    ch = _default_client()
+    seq, _, _ = await store.head(org, ns, ch=ch)
+    served = await _served(org, ns, keys, seq, await erased(org, ns), ch)
+    return {ident for ident, claims in served.items() if claims}
+
+
 async def _above_landed(b: _Batch, ch: _CHClient) -> None:
     """Raise the batch's row versions above any loom.memory row of its keys that
     landed since the plan read its floor (a projection, which moves no sequence), so
@@ -1328,24 +1369,26 @@ async def _above_landed(b: _Batch, ch: _CHClient) -> None:
     if not any(p.row.get("version") and not p.past_only for p in b.planned):
         return
     newest = dict(await store.row_versions(b.org, b.ns, b.keys, ch=ch))
+    # Per key, each version this batch drew and raised: a later row of the batch can
+    # carry a claim an earlier one added. Versions already committed stay as they are.
+    raised_from: dict[Ident, dict[int, int]] = {}
     for p in b.planned:
         drawn = int(p.row.get("version") or 0)
-        if not drawn or p.past_only:
-            continue
-        if newest.get(p.ident, 0) >= drawn:
-            raised = newest[p.ident] + 1
-            cast(dict[str, Any], p.row)["version"] = raised
-            # The claims this row added name its version; carried segments keep theirs.
+        if drawn and not p.past_only:
+            if newest.get(p.ident, 0) >= drawn:
+                raised_from.setdefault(p.ident, {})[drawn] = newest[p.ident] + 1
+                cast(dict[str, Any], p.row)["version"] = drawn = newest[p.ident] + 1
+            newest[p.ident] = max(newest.get(p.ident, 0), drawn)
+        moved = raised_from.get(p.ident)
+        if moved and any(a.source_version in moved for a in p.amendment.added):
             p.amendment = replace(
                 p.amendment,
                 added=tuple(
-                    replace(a, source_version=raised) if a.source_version == drawn else a
+                    replace(a, source_version=moved.get(a.source_version, a.source_version))
                     for a in p.amendment.added
                 ),
             )
             p.payload_sha = p.amendment.payload_sha256()
-            drawn = raised
-        newest[p.ident] = max(newest.get(p.ident, 0), drawn)
 
 
 async def _touched(b: _Batch, head: int, ch: _CHClient) -> bool:
@@ -1393,6 +1436,7 @@ def _stamp(b: _Batch, seq: int, last_at: datetime, now: datetime) -> None:
                 p.amendment.change_kind,
                 p.amendment,
                 past_only=p.past_only,
+                row=p.row,
             )
         )
 

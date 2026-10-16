@@ -353,7 +353,8 @@ def _vec_state(entries: list[tuple[str, int]], *, lookup_ok: bool = True) -> Any
         row = {**ident, "memory_key": "k", "memory_type": "semantic"}
         state.memory_rows.append({**row, "sensitivity": sensitivity, "version": version})
         if sensitivity != "high":
-            state.embedding_rows.append({**row, "content_excerpt": "plain"})
+            # As bulk_rows builds it: at its row's version.
+            state.embedding_rows.append({**row, "content_excerpt": "plain", "version": version})
     return state
 
 
@@ -458,7 +459,8 @@ def test_an_entry_the_journal_left_out_runs_nothing_after_the_insert() -> None:
     state = _vec_state([("", 1)])
     state.memory_rows.append({**state.memory_rows[0], "memory_key": "gone", "version": 2})
     state.results = [_BulkSetResult(memory_key=k, version=v) for k, v in (("k", 1), ("gone", 2))]
-    _bulk_set_mod._drop_left_out(state, {"k"})
+    drawn = [(r, int(r["version"])) for r in state.memory_rows]
+    _bulk_set_mod._drop_left_out(state, {id(state.memory_rows[0])}, drawn)
     assert [r["memory_key"] for r in state.memory_rows] == ["k"] and state.left_out == {"gone"}
     assert [(r.memory_key, r.version) for r in state.results] == [("k", 1), ("gone", 0)]
 
@@ -486,3 +488,16 @@ async def test_a_batch_at_another_width_is_refused_before_it_embeds(
         _bulk_input([_BulkSetEntry(memory_key="rv/ep/a", memory_type="episodic", value="ran")])
     )
     assert [r.memory_key for r in out.written] == ["rv/ep/a"] and captured == []
+
+
+def test_a_historical_entry_left_out_keeps_the_current_one_of_its_key() -> None:
+    # One batch: "A" (late evidence, left out) and "C" (what applies now) under one key.
+    from server.memory.api.models_bulk import _BulkSetResult
+
+    state = _vec_state([("", 1), ("", 2)])
+    past, now = state.memory_rows
+    state.results = [_BulkSetResult(memory_key="k", version=v) for v in (1, 2)]
+    drawn = [(r, int(r["version"])) for r in state.memory_rows]
+    _bulk_set_mod._drop_left_out(state, {id(now)}, drawn)
+    assert state.memory_rows == [now] and state.left_out == set()
+    assert [r.version for r in state.results] == [0, 2]

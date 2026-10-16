@@ -300,18 +300,26 @@ async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
     # Each is a ~260 ms committed insert on ClickHouse Cloud, so the embedding rows
     # go with the version rows, once the journal accepted them (as `memory.set`).
     # A row it left out (a moved-on retry, late evidence) touches no vector.
+    # The journal can re-stamp a row's version (a retry's commit, a projection that
+    # landed first): each entry, row and vector follows its own row by the version it
+    # was drawn at (unique), even when a key repeats in the batch.
+    drawn = [(r, int(r["version"])) for r in state.memory_rows]
+    by_drawn = {v: r for r, v in drawn}
     kept_keys: set[str] = set()
+    kept_ids: set[int] = set()
     written: list[dict[str, Any]] = []
 
     async def _embed(kept: Any) -> None:
         kept_keys.update(str(r["memory_key"]) for r in kept)
-        written.extend(memory_repo.kept_embedding_rows(kept, state.embedding_rows))
+        kept_ids.update(id(r) for r in kept)
+        written.extend(memory_repo.kept_embedding_rows(kept, state.embedding_rows, by_drawn))
         await memory_repo.insert_embedding_rows(written, ch=ch)
 
     # A bulk write never replaces a pinned value it does not pin (as memory.set).
     with write_intent(replace(current_intent(), pin_guard=True)):
         await memory_repo.insert_memory_versions(state.memory_rows, ch=ch, alongside=[_embed])
-    _drop_left_out(state, kept_keys)
+    _answer_published_versions(state.results, drawn)
+    _drop_left_out(state, kept_ids, drawn)
     # The entries' versions were drawn before the batch embedded: a slow batch indexes
     # its own BM25 stats.
     await memory_repo.index_late_rows(written, ch=ch)
@@ -333,27 +341,64 @@ def _winners(state: _BulkWriteState) -> dict[str, dict[str, Any]]:
     return winners
 
 
-def _drop_left_out(state: _BulkWriteState, kept: set[str]) -> None:
+async def _bulk_retried(input: MemoryBulkSetInput, state: _BulkWriteState) -> None:
+    """Phase 0: a retry's earlier commits, before any filter drops an entry (a value
+    now unchanged, a pin or lock set since): its body is checked against them first."""
+    from server.memory.app.temporal_publisher import durable_commits
+
+    idents = [(input.agent, input.user_id, input.session_id, e.memory_key) for e in input.entries]
+    prior = await durable_commits(input.org, input.namespace, idents)
+    state.retried = {ident[3]: receipts for ident, receipts in prior.items()}
+
+
+def _answer_retried(state: _BulkWriteState) -> None:
+    """A retried entry a later step still answered with version 0 (a verdict, a row
+    the journal left out) answers with its earlier commit's version: a key's results
+    and its commits pair up in order."""
+    left = {k: list(rs) for k, rs in state.retried.items()}
+    for res in state.results:
+        receipts = left.get(res.memory_key)
+        if receipts:
+            rc = receipts.pop(0)
+            if not res.version:
+                res.version = rc.row_version
+
+
+def _answer_published_versions(results: list[Any], drawn: list[tuple[dict[str, Any], int]]) -> None:
+    """Each entry's answer takes its row's version as published. Drawn versions are
+    unique, so an entry finds its own row even when a key repeats in the batch."""
+    by_drawn = {res.version: res for res in results if res.version}
+    for row, v in drawn:
+        if v in by_drawn:
+            by_drawn[v].version = int(row["version"])
+
+
+def _drop_left_out(
+    state: _BulkWriteState, kept: set[int], drawn: list[tuple[dict[str, Any], int]]
+) -> None:
     """Rows the journal left out (a retry its key moved past, late evidence) were
     not written: nothing after the insert runs for them, and each entry answers
-    with the version its commit holds."""
-    from server.memory.app.temporal_publisher import replayed, row_assertion
+    with the version its commit holds. Per row: another entry of the same key may
+    have committed what applies now."""
+    from server.memory.app.temporal_publisher import receipt_of, row_assertion
 
-    gone = {str(r["memory_key"]): r for r in state.memory_rows if str(r["memory_key"]) not in kept}
+    gone = [(r, v) for r, v in drawn if id(r) not in kept]
     if not gone:
         return
-    state.memory_rows = [r for r in state.memory_rows if str(r["memory_key"]) in kept]
-    state.left_out = set(gone)
-    for res in state.results:
-        r = gone.get(res.memory_key)
-        if r is not None:
-            ident = (r["agent"], r["user_id"], r["session_id"], r["memory_key"])
-            receipt = replayed(str(r["namespace"]), ident)
+    state.memory_rows = [r for r in state.memory_rows if id(r) in kept]
+    state.left_out = {str(r["memory_key"]) for r, _ in gone} - {
+        str(r["memory_key"]) for r in state.memory_rows
+    }
+    by_drawn = {res.version: res for res in state.results if res.version}
+    for r, v in gone:
+        receipt = receipt_of(r)
+        res = by_drawn.get(v)
+        if res is not None:
             own = row_assertion(getattr(receipt, "amendment", None))
             res.version = own.source_version if own is not None else 0
             res.left_out = receipt.left_out if receipt is not None else ""
-            if receipt is not None and receipt.past_only:
-                state.past_only_rows.append(r)  # journaled: a write, so it is audited
+        if receipt is not None and receipt.past_only:
+            state.past_only_rows.append(r)  # journaled: a write, so it is audited
 
 
 def _high_winners(state: _BulkWriteState, kept: set[str]) -> list[tuple[Any, int]]:
@@ -667,6 +712,7 @@ async def handle_memory_bulk_set(
     _bulk_work: dict[str, Any] = {}
     _bulk_clock = StageClock(_bulk_work)
     state = _BulkWriteState()
+    await _bulk_retried(input, state)
     await _bulk_existing_lookup(ch, input, state)
 
     identity_dupes = await _bulk_identity_dupes(ch, input)
@@ -691,6 +737,7 @@ async def handle_memory_bulk_set(
     _intra_pairs = await _bulk_intra_batch_pairs(ch, input, state)
 
     await _bulk_insert(ch, state)
+    _answer_retried(state)
     _bulk_clock.mark("insert")
 
     _value_links = await _bulk_post_insert_links(ch, input, state)

@@ -1688,3 +1688,69 @@ async def test_a_namespace_wide_delete_retracts_the_plan_written_last(
         # c's went; b's is still due (a read as c would find b's namespace-wide).
         got = await a.call("memory.get", {"memory_key": "q", "agent": "b", "valid_as_of": due})
         assert got["value"] == "from b"
+
+
+async def test_deleting_a_key_planned_by_two_agents_retracts_both_in_turn(
+    control_plane_url, mint_test_token
+) -> None:
+    from loom import Agent
+
+    a, ns = await _agent(control_plane_url, mint_test_token, "delete-twice")
+    tok = mint_test_token(org=ORG, namespaces=[ns], roles=["admin"])
+    later = datetime.now(UTC) + timedelta(days=30)
+    due = {"memory_key": "q", "valid_as_of": (later + timedelta(days=1)).isoformat()}
+    plan = {"memory_key": "q", "change_kind": "transition", "effective_at": later.isoformat()}
+    async with a:
+        for name in ("b", "c"):
+            async with Agent(
+                org=ORG, namespace=ns, agent=name, base_url=control_plane_url, api_key=tok
+            ) as w:
+                await w.call("memory.amend", {**plan, "value": f"from {name}"})
+        # A retracted plan is not a match: the second delete reaches the other one.
+        for _ in range(2):
+            assert (await a.call("memory.delete", {"memory_key": "q"}))["found"] is True
+        assert (await a.call("memory.delete", {"memory_key": "q"}))["found"] is False
+        for name in ("b", "c"):
+            assert (await a.call("memory.get", {**due, "agent": name}))["found"] is False
+
+
+async def test_a_bulk_write_of_late_evidence_and_a_current_value_keeps_the_current_one(
+    control_plane_url, mint_test_token
+) -> None:
+    a, _ = await _agent(control_plane_url, mint_test_token, "bulk-past-now")
+    async with a:
+        await a.call("memory.set", {"memory_key": "k", "value": "B", "valid_at": jan(1)})
+        span = {"valid_at": datetime(2025, 12, 1, tzinfo=UTC).isoformat(), "valid_to": jan(1)}
+        await a.call(
+            "memory.bulk_set",
+            {
+                "entries": [
+                    {"memory_key": "k", "value": "A", **span},
+                    {"memory_key": "k", "value": "C"},
+                ]
+            },
+        )
+        now = datetime.now(UTC).isoformat()
+        assert await _value_at(a, "k", now) == "C"
+        assert (await a.call("memory.get", {"memory_key": "k"}))["value"] == "C"
+
+
+async def test_a_durable_bulk_retry_answers_as_its_commit_and_refuses_another_body(
+    control_plane_url, mint_test_token
+) -> None:
+    a, _ = await _agent(control_plane_url, mint_test_token, "bulk-retry")
+    async with a:
+        key = f"r-{uuid.uuid4().hex}"
+        body = {"entries": [{"memory_key": "k", "value": "V"}]}
+        first = await a.call("memory.bulk_set", body, idempotency_key=key)
+        ch = await _ch()
+        try:
+            await _expire_replay(ch, key, "memory.bulk_set")
+        finally:
+            await ch.disconnect()
+        again = await a.call("memory.bulk_set", body, idempotency_key=key)
+        assert again["written"][0]["version"] == first["written"][0]["version"] != 0
+        # Another body under the same key, though its value is the one stored: refused.
+        other = {"entries": [{"memory_key": "k", "value": "V", "tags": ["x"]}]}
+        with pytest.raises(Exception, match="PRECONDITION_FAILED|Idempotency-Key"):
+            await a.call("memory.bulk_set", other, idempotency_key=key)

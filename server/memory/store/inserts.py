@@ -44,23 +44,34 @@ def _ident(r: Mapping[str, Any]) -> tuple[Any, ...]:
 
 
 def kept_embedding_rows(
-    kept: Rows, embedding_rows: Sequence[Mapping[str, Any]]
+    kept: Rows,
+    embedding_rows: Sequence[Mapping[str, Any]],
+    drawn: Mapping[int, Mapping[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """The embedding rows of the version rows the hooks kept, at the version and
     with the expiry those were given (stamped by the publisher; a retry's are its
     commit's). A row the journal left unembedded (high, or a type never embedded)
-    keeps no vector: its embedding row is dropped."""
+    keeps no vector: its embedding row is dropped. `drawn` (version drawn -> its row)
+    matches each embedding row to its own row, for a batch with several of one key."""
     from server.memory.domain.memory_types import is_embedded
 
-    kept_by = {_ident(r): r for r in kept}
-    return [
-        {**e, "version": kept_by[k]["version"], "expires_at": kept_by[k].get("expires_at")}
-        for e in embedding_rows
-        if (k := _ident(e)) in kept_by
-        and is_embedded(
-            str(kept_by[k].get("memory_type")), str(kept_by[k].get("sensitivity") or "")
-        )
-    ]
+    kept_ids = {id(r) for r in kept}
+    by_ident = {_ident(r): r for r in kept}
+
+    def row_of(e: Mapping[str, Any]) -> Mapping[str, Any] | None:
+        if drawn is None:
+            return by_ident.get(_ident(e))
+        row = drawn.get(int(e.get("version") or 0))
+        return row if row is not None and id(row) in kept_ids else None
+
+    out = []
+    for e in embedding_rows:
+        row = row_of(e)
+        if row is not None and is_embedded(
+            str(row.get("memory_type")), str(row.get("sensitivity") or "")
+        ):
+            out.append({**e, "version": row["version"], "expires_at": row.get("expires_at")})
+    return out
 
 
 def check_memory_rows(rows: Sequence[Mapping[str, Any]]) -> None:

@@ -273,7 +273,7 @@ async def scope_erasure_times(
     gone, so a read must never serve it. `requested_at` holds whole seconds; the
     time is rounded up, so the second of the request counts as before it. Read
     from the ledger alone: which users have content can change while a read runs.
-    ponytail: every erased user of the org rides each read's cut; past some
+    Every erased user of the org rides each read's cut; past some
     thousands, join the ledger inside the content query instead."""
     ch = ch or _default_client()
     rows = await ch.query_all(

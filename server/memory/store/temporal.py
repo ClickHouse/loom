@@ -196,7 +196,7 @@ async def insert_commits(rows: Sequence[Mapping[str, Any]], *, ch: _CHClient | N
     await ch.insert(
         COMMITS,
         [dict(r) for r in rows],
-        # ponytail: the publisher's read-back is exact on the supported targets
+        # The publisher's read-back is exact on the supported targets
         # (Cloud, one OSS node); on self-managed replication it is best-effort.
         # Claim sequences in Keeper (strict KeeperMap rows) if that is supported.
         settings={
@@ -353,7 +353,7 @@ async def repair_namespace(org: str, namespace: str, *, ch: _CHClient | None = N
     """At each recent sequence holding more than one payload (a lost race whose
     withdrawal failed), keep the commit that landed first, which a caller may have
     been told of, and delete the others. Returns the sequences repaired.
-    ponytail: "first" is the server's inserted_at; the loser inserted after the
+    "First" is the server's inserted_at; the loser inserted after the
     winner's read-back, a round trip later, so replica clock skew past that
     misorders them. Claim sequences in Keeper if that ever shows up."""
     ch = ch or _default_client()
@@ -378,7 +378,7 @@ async def repair_namespace(org: str, namespace: str, *, ch: _CHClient | None = N
 
 async def delete_orphan_vectors(*, ch: _CHClient | None = None) -> int:
     """Delete the vectors no assertion uses any more: retention expired their last
-    one. ponytail: a full anti-join per pass; bound it by namespace if it grows."""
+    one. A full anti-join per pass; bound it by namespace if it grows."""
     ch = ch or _default_client()
     orphan = (
         f"(org, namespace, embed_input_sha256) NOT IN "
@@ -538,7 +538,7 @@ async def rows_before_journal(
     the append-only history mirror, which merges never thin. A write draws its
     version before it commits, so "well before" is an hour. Cached per process: a
     namespace's journal start only moves when an erasure removes its first commits.
-    ponytail: a write slower than an hour reads as pre-journal."""
+    A write slower than an hour reads as pre-journal."""
     key = (org, namespace, first_at)
     if key in _BEFORE_JOURNAL:
         return _BEFORE_JOURNAL[key]
@@ -1059,11 +1059,11 @@ async def journal_only_identities(
     memory_key: str | None = None,
     scope: ReadFilters | None = None,
     ch: _CHClient | None = None,
-) -> list[tuple[tuple[str, str, str, str], str, str]]:
-    """The (identity, memory_id, actor of its last commit) of every key of the scope the
-    journal has a commit for and loom.memory serves no live row of (a plan an amendment
-    made, not yet due): what `memory.clear` and `memory.delete` retract in the journal
-    itself. The most recently written first, as a namespace-wide row lookup picks."""
+) -> list[tuple[tuple[str, str, str, str], str]]:
+    """The (identity, memory_id) of every key of the scope the journal has a commit for
+    and loom.memory serves no live row of (a plan an amendment made, not yet due):
+    what `memory.clear` and `memory.delete` retract in the journal itself. The most
+    recently written first, as a namespace-wide row lookup picks."""
     ch = ch or _default_client()
     where = ["org = {org:String}", "namespace = {ns:String}"]
     params: dict[str, Any] = {"org": org, "ns": namespace}
@@ -1084,8 +1084,7 @@ async def journal_only_identities(
     cond = " AND ".join(where)
     rows = await ch.query_all(
         "SELECT agent, user_id, session_id, memory_key, "
-        "toString(argMax(memory_id, commit_seq)) AS memory_id, "
-        "argMax(actor, commit_seq) AS actor "
+        "toString(argMax(memory_id, commit_seq)) AS memory_id "
         f"FROM {COMMITS} WHERE {cond} "
         f"AND {_IDENT} NOT IN (SELECT {_IDENT} FROM loom.memory FINAL "
         f"WHERE {cond} AND tombstoned_at IS NULL) "
@@ -1097,7 +1096,6 @@ async def journal_only_identities(
         (
             (str(r["agent"]), str(r["user_id"]), str(r["session_id"]), str(r["memory_key"])),
             str(r["memory_id"]),
-            str(r["actor"]),
         )
         for r in rows
     ]

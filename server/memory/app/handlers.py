@@ -845,7 +845,12 @@ def _retract_unless_locked(served: list[Any]) -> Any:
 
 
 async def _retract_journal_only(
-    org: str, namespace: str, idents: list[tuple[tuple[str, str, str, str], str]], op: str
+    org: str,
+    namespace: str,
+    idents: list[tuple[tuple[str, str, str, str], str]],
+    op: str,
+    *,
+    build: Any = _retract_unless_locked,
 ) -> tuple[list[Any], bool]:
     """Retract keys only the journal holds (a plan not yet due has no current row to
     tombstone), then bring their current rows in line: one can come due while this
@@ -859,7 +864,7 @@ async def _retract_journal_only(
         receipts = await publisher.publish_amendments(
             org,
             namespace,
-            [(ident, mid, _retract_unless_locked) for ident, mid in idents[i : i + _CLEAR_CHUNK]],
+            [(ident, mid, build) for ident, mid in idents[i : i + _CLEAR_CHUNK]],
             operation=op,
         )
         done += [r for r in receipts if r.commit_seq]
@@ -883,21 +888,22 @@ async def _clear_journal_only(input: MemoryClearInput) -> tuple[int, bool]:
     found = await temporal_store.journal_only_identities(
         input.org, input.namespace, user_id=input.user_id, agent=input.agent
     )
-    done, pending = await _retract_journal_only(
-        input.org, input.namespace, [(i, mid) for i, mid, _ in found], "memory.clear"
-    )
+    done, pending = await _retract_journal_only(input.org, input.namespace, found, "memory.clear")
     return len(done), pending
 
 
 async def _delete_journal_only(input: MemoryDeleteInput) -> MemoryDeleteOutput | None:
     """A delete of a key only the journal holds, found as the row lookup finds a row:
-    the caller's exact identity first, else one match namespace-wide for its user, in
-    the request's read scope. Its claims retracted, or None when there is none."""
+    the caller's exact identity first, else the newest match namespace-wide for its
+    user, in the request's read scope, among the identities still serving a claim.
+    Its claims retracted, or None when there is none."""
     from server.memory.app import temporal_publisher as publisher
     from server.memory.store import temporal as temporal_store
 
-    def lookup(agent: str | None = None, session_id: str | None = None) -> Any:
-        return temporal_store.journal_only_identities(
+    async def lookup(
+        agent: str | None = None, session_id: str | None = None
+    ) -> list[tuple[tuple[str, str, str, str], str]]:
+        found = await temporal_store.journal_only_identities(
             input.org,
             input.namespace,
             user_id=input.user_id,
@@ -906,6 +912,8 @@ async def _delete_journal_only(input: MemoryDeleteInput) -> MemoryDeleteOutput |
             memory_key=input.memory_key,
             scope=request_scope(),
         )
+        live = await publisher.serving(input.org, input.namespace, [i for i, _ in found])
+        return [(i, mid) for i, mid in found if i in live]
 
     found = []
     if input.agent != "*":
@@ -913,11 +921,16 @@ async def _delete_journal_only(input: MemoryDeleteInput) -> MemoryDeleteOutput |
     found = found or await lookup()
     if not found:
         return None
-    ident, memory_id, actor = found[0]
-    # A member of a code namespace retracts only the rules they wrote.
-    assert_own_author(actor, key=input.memory_key, ns=input.namespace, op="memory.delete")
+
+    def retract_own(served: list[Any]) -> Any:
+        # Run on the claims being retired, on every plan: a member of a code namespace
+        # retracts only the rules they wrote, a plan another author put in place too.
+        for a in served:
+            assert_own_author(a.actor, key=input.memory_key, ns=input.namespace, op="memory.delete")
+        return _retract_unless_locked(served)
+
     done, pending = await _retract_journal_only(
-        input.org, input.namespace, [(ident, memory_id)], "memory.delete"
+        input.org, input.namespace, [found[0]], "memory.delete", build=retract_own
     )
     if not done:  # served nothing, or a lock in force kept it
         return None

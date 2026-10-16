@@ -167,7 +167,7 @@ async def test_clear_retracts_a_key_only_the_journal_holds_unless_a_lock_keeps_i
     from server.memory.domain import temporal_model as tm
 
     ident = ("a", "alice", "-", "plan")
-    clear["journal"] = [(ident, "00000000-0000-0000-0000-000000000009", "human:alice")]
+    clear["journal"] = [(ident, "00000000-0000-0000-0000-000000000009")]
     out = await handle_memory_clear(
         MemoryClearInput(org="o", namespace="n", user_id="alice", confirm_subject="alice")
     )
@@ -187,35 +187,44 @@ async def test_delete_of_a_journal_only_key_prefers_the_exact_identity_and_check
 ) -> None:
     from server.memory.api.models_crud import MemoryDeleteInput
     from server.memory.app import handlers as hm
+    from server.memory.app import temporal_publisher as publisher
+    from server.memory.domain import temporal_model as tm
     from server.memory.store import temporal as temporal_store
 
     asked: list[dict] = []
-    mine, theirs = ("a", "u", "s1", "k"), ("b", "u", "s2", "k")
+    mine, theirs, spent = ("a", "u", "s1", "k"), ("b", "u", "s2", "k"), ("c", "u", "s3", "k")
 
     async def _journal_only(org: str, ns: str, **k: Any) -> list:
         asked.append(k)
-        exact = k.get("agent") == "a"
-        return (
-            [(mine, "m1", "human:me")] if exact else [(theirs, "m2", "human:x"), (mine, "m1", "")]
-        )
+        if k.get("agent") == "a":
+            return [(spent, "m3")] if len(asked) == 1 else [(mine, "m1")]
+        return [(spent, "m3"), (theirs, "m2"), (mine, "m1")]
+
+    async def _serving(org: str, ns: str, keys: list) -> set:
+        return {i for i in keys if i != spent}  # c's plan was retracted already
 
     retracted: list = []
+    builds: list = []
 
-    async def _retract(org: str, ns: str, idents: list, op: str) -> tuple[list, bool]:
+    async def _retract(org: str, ns: str, idents: list, op: str, *, build: Any) -> tuple:
         retracted.extend(idents)
+        builds.append(build)
         return [type("R", (), {"commit_seq": 3, "ident": idents[0][0]})()], False
 
     authors: list[str] = []
     monkeypatch.setattr(temporal_store, "journal_only_identities", _journal_only)
+    monkeypatch.setattr(publisher, "serving", _serving)
     monkeypatch.setattr(hm, "_retract_journal_only", _retract)
     monkeypatch.setattr(hm, "assert_own_author", lambda actor, **_k: authors.append(actor))
     monkeypatch.setattr(hm, "request_scope", lambda: "scope")
-    monkeypatch.setattr("server.memory.app.temporal_publisher.read_token", lambda r: "t")
-    out = await hm._delete_journal_only(
-        MemoryDeleteInput(
-            org="o", namespace="n", agent="a", user_id="u", session_id="s1", memory_key="k"
-        )
+    monkeypatch.setattr(publisher, "read_token", lambda r: "t")
+    inp = MemoryDeleteInput(
+        org="o", namespace="n", agent="a", user_id="u", session_id="s1", memory_key="k"
     )
-    assert out is not None and out.found and out.commit_seq == 3
-    assert retracted == [(mine, "m1")] and authors == ["human:me"]
+    # The exact identity serves nothing any more: the newest live match goes instead.
+    out = await hm._delete_journal_only(inp)
+    assert out is not None and out.found and retracted == [(theirs, "m2")]
     assert asked[0]["scope"] == "scope" and asked[0]["session_id"] == "s1"
+    # The author is checked on the claims being retired, when the publisher plans them.
+    plan = tm.first('"launch"', actor="human:bob")
+    assert builds[0]([plan]).retired == (plan.assertion_id,) and authors == ["human:bob"]

@@ -333,7 +333,7 @@ async def _reconcile_ns(org: str, ns: str, idents: list[Ident]) -> int | None:
             include_high=True,
         )
         if any(g.startswith("truncated") for g in cut.gaps[seen:]):
-            # ponytail: an identity past the read cap is skipped, not reduced in SQL;
+            # An identity past the read cap is skipped, not reduced in SQL;
             # its row stays as it is while the namespace's others are repaired.
             log.warning("temporal reconcile: %s/%s %r serves past the read cap", org, ns, ident)
             del cut.gaps[seen:]
