@@ -1532,3 +1532,15 @@ def test_a_retried_logout_is_confirmed_without_ending_the_session_again(_world) 
         assert r.status_code == 200
     reasons = [kw["subject"]["reason"] for n, kw in _world["events"] if n == "auth.session_revoked"]
     assert reasons == ["logout"]
+
+
+def test_an_old_copy_logging_out_an_ended_session_only_confirms(_world) -> None:
+    c = _client()
+    old = _signed_in_tokens(c)["refresh_token"]
+    new = _refresh(c, old).json()["refresh_token"]  # rotated: `old` is a stale copy now
+    c.post("/oauth/revoke", data={"token": new, "client_id": "loom-cli"})
+    for _ in range(2):  # a second terminal still holding the old token logs out
+        r = c.post("/oauth/revoke", data={"token": old, "client_id": "loom-cli"})
+        assert r.status_code == 200
+    reasons = [kw["subject"]["reason"] for n, kw in _world["events"] if n == "auth.session_revoked"]
+    assert reasons == ["logout"]

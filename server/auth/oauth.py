@@ -1224,11 +1224,7 @@ async def end_replayed_session(e: CodeReplayed, what: str) -> OAuthError:
     so a theft is not taken for an expiry. While the end is not recorded
     anywhere, the answer is "retry", not a final refusal."""
     family = e.grant["family"]
-    try:
-        ended = bool(family) and await store.session_ended(family)
-    except Exception:  # unknown: treat it as the replay it may be
-        log.exception("oauth: could not read whether session %s has ended", family)
-        ended = False
+    ended = bool(family) and await _ended(family)
     if ended:  # a logout spent it, or an earlier replay ended the session
         log.warning("oauth: a spent %s of ended session %s was presented again", what, family)
         return _invalid_grant("this session has ended; sign in again")
@@ -1545,16 +1541,14 @@ async def revoke_token(request: Request) -> Response:
     reason = "logout"
     try:
         grant = spent = await store.take_refresh(token_value, client_id)
-    except SessionRetired as e:
-        # A logout retried, or a refusal that may not have ended the session:
-        # one that did end is only confirmed, any other is ended now.
+    except (SessionRetired, CodeReplayed) as e:
+        # A logout retried, an old copy (a later token was issued), or a
+        # refusal that may not have ended the session: one that did end is
+        # only confirmed, any other is ended now, the audit keeping which.
         if await _ended(e.grant["family"]):
             return Response(status_code=200)
-        grant, reason = e.grant, "logout (token already retired)"
-    except CodeReplayed as e:
-        # An old copy (a later token was issued). Still a logout, but the
-        # audit keeps the difference.
-        grant, reason = e.grant, "logout (token already spent)"
+        spent_how = "retired" if isinstance(e, SessionRetired) else "spent"
+        grant, reason = e.grant, f"logout (token already {spent_how})"
     if grant is not None:
         try:
             await end_session(grant, reason)
