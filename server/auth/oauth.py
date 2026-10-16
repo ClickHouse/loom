@@ -1543,12 +1543,18 @@ async def revoke_token(request: Request) -> Response:
         grant = spent = await store.take_refresh(token_value, client_id)
     except (SessionRetired, CodeReplayed) as e:
         # A logout retried, an old copy (a later token was issued), or a
-        # refusal that may not have ended the session: one that did end is
-        # only confirmed, any other is ended now, the audit keeping which.
-        if await _ended(e.grant["family"]):
-            return Response(status_code=200)
+        # refusal that may not have ended the session; the audit keeps which.
         spent_how = "retired" if isinstance(e, SessionRetired) else "spent"
         grant, reason = e.grant, f"logout (token already {spent_how})"
+    if grant is not None and await _ended(grant["family"]):
+        # Ended already (a logout, a replay): only confirmed, so its first
+        # reason stands. A token this logout took has nothing to replace it.
+        if spent is not None:
+            try:
+                await store.retire_refresh(spent)
+            except Exception:  # its session has ended: an unretired key refreshes nothing
+                log.exception("oauth: logout could not retire a token of ended session")
+        return Response(status_code=200)
     if grant is not None:
         try:
             await end_session(grant, reason)

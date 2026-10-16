@@ -1544,3 +1544,21 @@ def test_an_old_copy_logging_out_an_ended_session_only_confirms(_world) -> None:
         assert r.status_code == 200
     reasons = [kw["subject"]["reason"] for n, kw in _world["events"] if n == "auth.session_revoked"]
     assert reasons == ["logout"]
+
+
+@pytest.mark.parametrize("ended_by", ["old copy's logout", "replay"])
+def test_a_current_token_logging_out_an_ended_session_keeps_its_first_reason(
+    _world, ended_by: str
+) -> None:
+    c = _client()
+    old = _signed_in_tokens(c)["refresh_token"]
+    new = _refresh(c, old).json()["refresh_token"]
+    if ended_by == "replay":
+        _refresh(c, old)  # a stolen copy turns up: the session ends as replayed
+        first = "refresh token replayed"
+    else:
+        c.post("/oauth/revoke", data={"token": old, "client_id": "loom-cli"})
+        first = "logout (token already spent)"
+    assert c.post("/oauth/revoke", data={"token": new, "client_id": "loom-cli"}).status_code == 200
+    reasons = [kw["subject"]["reason"] for n, kw in _world["events"] if n == "auth.session_revoked"]
+    assert reasons == [first]  # the theft's reason is not overwritten by a logout
