@@ -10,7 +10,6 @@ locally.
 
 from __future__ import annotations
 
-import glob
 import json
 import re
 import shlex
@@ -37,11 +36,12 @@ COMMANDS = (
 # Allowed only after a pipe, reading the previous command's output.
 FILTERS = {"head", "tail", "wc", "grep"}
 GIT_WRITE_FLAGS = ("--output", "--ext-diff", "--textconv")
-TAIL_FOLLOW = re.compile(r"-[a-zA-Z0-9+]*[fF][a-zA-Z0-9]*|--follow(=.*)?")
-# Everything a listed command needs. Leaving out newline, #, ;, $, braces, parentheses,
-# backslash and backticks rules out a second command and the expansions that could
-# hide a flag; a glob is checked against what it would expand to.
-SAFE = re.compile(r"[\w .,/:=@+^~%*'\"|&\[\]-]*")
+# tail and head read the pipe: a line count, nothing to follow.
+LINE_COUNT = re.compile(r"(-n ?\d+|-\d+|-q)( (-n ?\d+|-\d+|-q))*")
+# Everything a listed command needs. Leaving out newline, #, ;, $, *, braces,
+# parentheses, backslash and backticks rules out a second command and every expansion
+# that could hide a flag; brackets are allowed only in a pytest node id.
+SAFE = re.compile(r"[\w .,/:=@+^~%'\"|&\[\]-]*")
 PYTEST = (".venv/bin/python", "-m", "pytest")
 PYTEST_FLAG = re.compile(
     r"-q|-qq|-v|-x|-rA|--tb=\w+|-p|no:randomly|--randomly-seed=\d+|--no-header"
@@ -68,14 +68,14 @@ def _pytest_ok(args: list[str]) -> bool:
 def _segment_ok(words: list[str], piped: bool) -> bool:
     if any(w.startswith("--watch") for w in words):
         return False  # it never exits
-    if words[0] == "tail" and any(TAIL_FOLLOW.fullmatch(w) for w in words):
-        return False
-    if any(m.startswith("-") for w in words if "*" in w or "[" in w for m in glob.glob(w)):
-        return False  # a file named like a flag, reached by a glob
+    if piped and words[0] in {"head", "tail"}:
+        return len(words) == 1 or bool(LINE_COUNT.fullmatch(" ".join(words[1:])))
     if piped:
         return words[0] in FILTERS
     if tuple(words[:3]) == PYTEST:
         return _pytest_ok(words[3:])
+    if any("[" in w or "]" in w for w in words):
+        return False
     if words[0] == "git" and any(w.startswith(GIT_WRITE_FLAGS) for w in words):
         return False
     return any(tuple(words[: len(c)]) == c for c in COMMANDS)

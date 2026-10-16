@@ -344,6 +344,10 @@ def test_reviewer_hook_allows_reads(command: str) -> None:
         "gh pr checks 57 --watch",
         "gh pr checks 57 --watch=true",
         "git log | tail -qf x",
+        "git log | tail +1f x",
+        "git log | tail --foll x",
+        "git diff *",
+        "git diff [^a]x",
         ".venv/bin/python -m pytest -q",
         ".venv/bin/python -m pytest -k x",
         "git log | tail -f",
@@ -356,6 +360,14 @@ def test_reviewer_hook_allows_reads(command: str) -> None:
 )
 def test_reviewer_hook_blocks_everything_else(command: str) -> None:
     assert _hook(command) == 2
+
+
+def test_tracked_files_outside_git_lists_files_and_links(tmp_path: Path) -> None:
+    (tmp_path / "skills" / "a").mkdir(parents=True)
+    (tmp_path / "skills" / "a" / "SKILL.md").write_text("x")
+    (tmp_path / "links").mkdir()
+    (tmp_path / "links" / "a").symlink_to("../skills/a")
+    assert tracked(root=tmp_path) == ["links/a", "skills/a/SKILL.md"]
 
 
 def _check_prose(*args: str, stdin: str = "") -> subprocess.CompletedProcess[str]:
