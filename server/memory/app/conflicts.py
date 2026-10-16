@@ -1025,16 +1025,17 @@ async def mark_peers_conflicted(
     new_memory_id: str,
     peer_ids: list[str],
     expected_sha256: str = "",
-) -> bool:
+) -> str:
     """Cross-link the new row with its peers still live (or on trial) and flag
     them `conflicted`; a proposal keeps its status. With no live peer, or a new
     row retired or deleted since the verdict, nothing is written, peers
     included. Writes new RMT version rows, every column carried. With
     `expected_sha256` (a deferred verdict), only the judged write is flagged
-    (`judged_write`). False, and no peer touched, when the new row was not
-    flagged: a newer write replaced it, or it was retired since. With no live
-    peer, a deferred verdict reads the row and answers whether it would have been
-    flagged; an inline one answers True."""
+    (`judged_write`). Returns the verdict that landed: `conflict`; `moved`, and no
+    peer touched, when the new row was not flagged (a newer write replaced it, or it
+    was retired since); `clear` when no peer was live to flag it against. With no
+    live peer, a deferred verdict reads the row and answers `moved` if it would not
+    have been flagged."""
     import server.memory.store as memory_repo
 
     def _merged(existing: list[str], additions: list[str]) -> list[str]:
@@ -1073,13 +1074,13 @@ async def mark_peers_conflicted(
 
     if not live:
         if judged_skip is None:
-            return True  # an inline verdict: nothing left to flag
+            return "clear"  # an inline verdict: nothing left to flag
         # A deferred one says whether it would have flagged the row, by the write's
         # own rule: a revision since owes its own judge, so this one is moved.
         row = await memory_repo.get_by_id(
             new_memory_id, org=org, scope=WHOLE_NAMESPACE, fresh=True, strong=True
         )
-        return row is not None and not _skip_new(row)
+        return "clear" if row is not None and not _skip_new(row) else "moved"
 
     # A proposal (a fact on trial) keeps its status and only
     # records the contradiction; it is surfaced when the proposal is accepted
@@ -1103,8 +1104,10 @@ async def mark_peers_conflicted(
         strong=True,
         judged=judged_skip is not None,
     )
-    if not marked or new_is_proposal:
-        return bool(marked)
+    if not marked:
+        return "moved"
+    if new_is_proposal:
+        return "conflict"
     await memory_repo.write_versions_by_ids(
         org,
         live,
@@ -1116,7 +1119,7 @@ async def mark_peers_conflicted(
         skip=lambda row: row.status not in _MARKABLE,
         strong=True,
     )
-    return True
+    return "conflict"
 
 
 def judged_write(

@@ -626,11 +626,21 @@ async def _bulk_settle_verdicts(
     if plan.conflict_marks:
         from server.memory.app.conflicts import mark_peers_conflicted
 
+        clear: set[str] = set()
         for new_id, peer_ids in plan.conflict_marks:
             try:
-                await mark_peers_conflicted(org=input.org, new_memory_id=new_id, peer_ids=peer_ids)
+                landed = await mark_peers_conflicted(
+                    org=input.org, new_memory_id=new_id, peer_ids=peer_ids
+                )
             except Exception as e:  # noqa: BLE001 — the rows are in; the link is best-effort
                 log.warning("bulk_set: mark_peers_conflicted failed for %s: %s", new_id, e)
+            else:
+                if landed == "clear":
+                    clear.add(new_id)
+        if clear:
+            # Every peer retired since the verdict: the row stays active, unflagged.
+            plan.conflict_marks = [(n, p) for n, p in plan.conflict_marks if n not in clear]
+            _settle_results(state, plan)
     if plan.refines:
         from server.memory.app.auto_resolution import record_auto_supersessions
         from server.memory.app.conflicts import apply_refines

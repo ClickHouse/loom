@@ -377,8 +377,8 @@ async def apply(
                 peer_ids=[p.memory_id for p in result.peers],
                 expected_sha256=content_sha256,
             )
-        if not landed:
-            return MOVED
+        if landed != "conflict":
+            return landed  # moved, or clear: no live peer was left to flag it against
     elif (
         verdict == "refines"
         and result.refined_peers

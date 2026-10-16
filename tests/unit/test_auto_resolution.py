@@ -546,6 +546,31 @@ async def test_a_bulk_writes_one_record_for_all_its_refines_verdicts(monkeypatch
     assert _ids(ev) == ["old-n0", "old-n1", "old-n2"]
 
 
+async def test_a_bulk_mark_with_no_live_peer_left_answers_clear(monkeypatch) -> None:
+    # Another writer retired the peer after the verdict: the row stays active, unflagged.
+    from server.memory.api.models_bulk import _BulkSetResult
+    from server.memory.api.models_common import MemorySetPeer
+    from server.memory.app import bulk_set, conflicts
+    from server.memory.app.bulk_rows import _BulkWriteState
+    from server.memory.app.bulk_verdicts import BulkVerdictPlan
+
+    async def mark(**kw):
+        return "clear"
+
+    monkeypatch.setattr(conflicts, "mark_peers_conflicted", mark)
+    state = _BulkWriteState()
+    state.memory_rows = [{"memory_id": "n1", "memory_key": "user_city"}]
+    _index(state)
+    peer = MemorySetPeer(memory_id="p", memory_key="user_city")
+    state.results = [
+        _BulkSetResult(memory_key="user_city", version=1, conflict_verdict="conflict", peers=[peer])
+    ]
+    plan = BulkVerdictPlan()
+    plan.conflicted, plan.conflict_marks = ["user_city"], [("n1", ["p"])]
+    await bulk_set._bulk_settle_verdicts(None, _Input(), state, plan)
+    assert state.results[0].conflict_verdict == "clear" and plan.conflicted == []
+
+
 def _peer(mid: str, key: str = "user_city") -> Any:
     from server.memory.domain.conflicts import ConflictPeer
 
@@ -1053,12 +1078,16 @@ async def test_a_mark_with_every_peer_retired_writes_nothing(monkeypatch) -> Non
 
 @pytest.mark.parametrize(
     ("sha", "status", "marked"),
-    [("judged", "active", True), ("revised", "active", False), ("judged", "superseded", False)],
+    [
+        ("judged", "active", "clear"),
+        ("revised", "active", "moved"),
+        ("judged", "superseded", "moved"),
+    ],
 )
 async def test_a_deferred_mark_with_every_peer_retired_says_if_the_row_moved(
     monkeypatch, sha, status, marked
 ) -> None:
-    # Nothing to flag, but a judged write revised or retired since is moved, not "conflict".
+    # Nothing to flag: the row stands `clear`, or is moved when revised or retired since.
     import server.memory.store as memory_repo
     from server.memory.app.conflicts import mark_peers_conflicted
 
@@ -1079,7 +1108,7 @@ async def test_a_deferred_mark_with_every_peer_retired_says_if_the_row_moved(
     landed = await mark_peers_conflicted(
         org="o", new_memory_id="n1", peer_ids=["q"], expected_sha256="judged"
     )
-    assert landed is marked
+    assert landed == marked
 
 
 async def test_a_peer_retiring_after_the_read_is_not_marked(monkeypatch) -> None:

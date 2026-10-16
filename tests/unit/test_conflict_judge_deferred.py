@@ -374,6 +374,7 @@ def _wire(monkeypatch: pytest.MonkeyPatch, verdict: ConflictResult) -> tuple[_CH
             current=[],
             still_current=True,
             row_sha=None,  # the live row's hash; None = the write's own
+            mark_answer="conflict",  # what the peer mark reports
         ),
     )
     monkeypatch.setattr(mem_handlers, "get_client", lambda: ch)
@@ -401,9 +402,9 @@ def _wire(monkeypatch: pytest.MonkeyPatch, verdict: ConflictResult) -> tuple[_CH
         calls.check.append(kw)
         return verdict
 
-    async def _mark(**kw: Any) -> bool:
+    async def _mark(**kw: Any) -> str:
         calls.marked.append(kw)
-        return True
+        return calls.mark_answer
 
     async def _refines(**kw: Any) -> int:
         calls.refined.append(kw)
@@ -547,6 +548,24 @@ async def test_a_settled_conflict_marks_the_new_row_and_its_peers(monkeypatch) -
             "expected_sha256": emb["content_sha256"],
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_a_settled_conflict_with_every_peer_retired_since_is_clear(monkeypatch) -> None:
+    # Another writer retired the peers: nothing is flagged, and the row stands active.
+    ch, calls = _wire(monkeypatch, _pending([_peer()]))
+    calls.mark_answer = "clear"
+
+    async def _settle(pj: PendingJudge) -> ConflictResult:
+        return ConflictResult(verdict="conflict", peers=[_peer()], judged={_P1: "contradiction"})
+
+    monkeypatch.setattr(cf, "settle_deferred_judgement", _settle)
+    await write_mod.handle_memory_set(_input())
+    await _settled()
+    from server.memory.app import drops
+
+    rows = [r for r in drops._peek_for_tests() if r["stage"] == cd.DROP_STAGE]
+    assert [r["reason"] for r in rows] == ["clear"]
 
 
 @pytest.mark.asyncio
