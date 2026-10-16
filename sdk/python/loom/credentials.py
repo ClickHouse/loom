@@ -352,6 +352,7 @@ def _refresh(profile: str, refused: str, server: str | None) -> dict[str, Any]:
             # (A lost answer cannot be asked again: the server spent the token,
             # and presenting it twice ends the session.)
             r = client.post(endpoint, data=form, timeout=_REFRESH_TIMEOUT_S)
+        first = r
         if r.status_code == 400 and _oauth_error(r) == "invalid_grant":
             # Once more before giving the session up: during a rolling upgrade
             # the answer may be a previous build's, which knows no session. A
@@ -359,7 +360,7 @@ def _refresh(profile: str, refused: str, server: str | None) -> dict[str, Any]:
             r = client.post(endpoint, data=form, timeout=_REFRESH_TIMEOUT_S)
     if r.status_code == 400 and _oauth_error(r) == "invalid_grant":
         _drop(profile)
-        why = _oauth_description(r)
+        why = _oauth_description(r) or _oauth_description(first)
         if "presented again" in why:
             # Maybe a stolen copy: what it could have minted is the owner's to check.
             why += "; if you did not just lose a refresh, check `loom call /v1/me/service_accounts`"

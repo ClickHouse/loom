@@ -57,6 +57,8 @@ class Grant(TypedDict):
     # A code's: when its identity was resolved, the cutoff for revocations.
     since: NotRequired[int]
     held: NotRequired[dict[str, str]]
+    # A refresh taken over from a process that died mid-spend.
+    taken_over: NotRequired[bool]
 
 
 class Device(TypedDict):
@@ -359,6 +361,10 @@ class ClickHouseStore:
             return {**grant, "held": {key: spending}}
         if now is None:
             return None  # the session's key is gone: it has expired
+        if now == _current(generation + 1, "ended"):
+            # Retired by a refusal or a logout: nothing replaced it, so presenting
+            # it again (a client asking twice) is refused, not taken for a theft.
+            return None
         # A read may lag behind Keeper, never run ahead of it: a later
         # generation seen is one that was issued, so this token was spent.
         if _generation(now) > generation:
@@ -368,7 +374,7 @@ class ClickHouseStore:
             # handed out: this token is still the session's. One presenter
             # takes the spend over.
             if await self._swap(key, now, spending, grant["exp"]) == spending:
-                return {**grant, "held": {key: spending}}
+                return {**grant, "held": {key: spending}, "taken_over": True}
         raise claims.Busy(f"{key} is being spent")  # or this read is behind: retry
 
     async def retire_refresh(self, g: Grant) -> None:

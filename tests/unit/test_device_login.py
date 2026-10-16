@@ -1434,7 +1434,7 @@ def test_a_refresh_after_logout_is_refused_without_a_replay_verdict(_world) -> N
     c.post("/oauth/revoke", data={"token": tokens["refresh_token"], "client_id": "loom-cli"})
     r = _refresh(c, tokens["refresh_token"])  # a stale process still holds it
     assert _error(r) == "invalid_grant"
-    assert "other hands" not in r.json()["error_description"]
+    assert "other hands" not in r.json().get("error_description", "")
     reasons = [kw["subject"]["reason"] for n, kw in _world["events"] if n == "auth.session_revoked"]
     assert reasons == ["logout"]
 
@@ -1490,3 +1490,19 @@ def test_wrong_codes_sent_at_once_are_held_to_the_limit(_world, monkeypatch) -> 
     outcomes = asyncio.run(burst())
     assert len(looked) <= 10
     assert sum(isinstance(o, device._TooManyWrong) for o in outcomes) >= 10
+
+
+def test_a_taken_over_refresh_the_idp_refuses_is_named_as_loom_s_loss(sso, monkeypatch) -> None:
+    # The dead process may have rotated the IdP's token: the session ends, but
+    # the person is not told the identity provider ended it.
+    c = _client()
+    grant = _start(c)
+    _approve(c, grant["user_code"], _sso_round_trip(c, grant["user_code"]).text)
+    rt = _poll(c, grant["device_code"]).json()["refresh_token"]
+    store = oauth.store
+    family = store.refresh[oauth.token_id(rt)]["family"]
+    started = int(time.time())
+    store.keeper[f"family:{family}"] = f"0:spending:{started - 600}:n"  # died long ago
+    sso["upstream"] = "refused"
+    r = _refresh(c, rt)
+    assert r.status_code == 400 and "did not finish" in r.json()["error_description"]

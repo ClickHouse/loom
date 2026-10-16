@@ -18,6 +18,13 @@ from server.settings._models import (
 # The providers' own APIs: a gateway's token never goes there (server/llm/gateway.py).
 PROVIDER_API_HOSTS = frozenset({"api.openai.com", "api.anthropic.com"})
 
+
+def is_provider_api(url: str) -> bool:
+    """Whether `url` is a provider's own API, a regional host of it too."""
+    host = (urlsplit(url).hostname or "").rstrip(".")
+    return any(host == h or host.endswith("." + h) for h in PROVIDER_API_HOSTS)
+
+
 # A configured rerank endpoint's name: what a request or a namespace sends instead of a URL.
 RERANK_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 
@@ -230,7 +237,7 @@ class ProviderSettings(ModelSettings):
             ("LOOM_OPENAI_BASE_URL", self.openai_base_url),
             ("LOOM_ANTHROPIC_BASE_URL", self.anthropic_base_url),
         ):
-            if urlsplit(url).hostname in PROVIDER_API_HOSTS:
+            if is_provider_api(url):
                 raise ValueError(f"LOOM_INFERENCE_TOKEN_URL needs {name} at the gateway")
         return self
 

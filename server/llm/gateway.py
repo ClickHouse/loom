@@ -21,7 +21,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from server.settings import settings
-from server.settings._providers import PROVIDER_API_HOSTS
+from server.settings._providers import is_provider_api
 
 log = logging.getLogger(__name__)
 
@@ -55,8 +55,8 @@ async def bearer(provider_key: str, url: str) -> str:
     gets no gateway token."""
     if not exchanging():
         return provider_key
-    host = urlsplit(url).hostname
-    if host in PROVIDER_API_HOSTS:
+    if is_provider_api(url):
+        host = urlsplit(url).hostname
         raise GatewayUnavailable(f"{host} is not the gateway: point its base URL at the gateway")
     if time.time() < _renew_at and _token:
         return _token
@@ -88,8 +88,9 @@ async def _renew() -> None:
         token, life = body["access_token"], float(body.get("expires_in", 900))
         if not isinstance(token, str) or not token:
             raise ValueError("no access_token")
-        if not math.isfinite(life) or not 0 < life <= _MAX_LIFE_S:
+        if not math.isfinite(life) or life <= 0:
             raise ValueError(f"expires_in {life}")
+        life = min(life, _MAX_LIFE_S)  # kept no longer than a day, whatever it says
     except (OSError, httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError) as e:
         # The gateway's status and error code, never a token.
         log.warning("inference gateway token exchange failed: %s", e)

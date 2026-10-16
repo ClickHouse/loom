@@ -14,6 +14,7 @@ import hashlib
 import json
 import secrets
 import time
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -716,3 +717,24 @@ async def test_shutdown_lands_a_put_back_its_cancelled_request_left_running() ->
     assert not saved.is_set()
     await shielded.drain(timeout_s=1)  # what shutdown does before ClickHouse goes
     assert saved.is_set()
+
+
+def test_a_refused_refresh_presented_again_is_no_theft(monkeypatch) -> None:
+    # A client that asks twice (the SDK retries once) after an honest refusal
+    # must not be told a copy is in other hands, nor have its session ended for it.
+    events: list[tuple[str, dict[str, Any]]] = []
+
+    async def emit(event_type: str, **kw: Any) -> str:
+        events.append((event_type, kw))
+        return ""
+
+    monkeypatch.setattr(oauth.audit, "emit", emit)
+    c = _client()
+    rt = _refresh_token_for_alice(c)
+    _revoke_subject(monkeypatch, None)
+    first, again = _refresh(c, rt), _refresh(c, rt)
+    assert first.status_code == again.status_code == 400
+    assert "presented again" not in again.json().get("error_description", "")
+    assert not [
+        kw for name, kw in events if kw.get("subject", {}).get("reason") == "refresh token replayed"
+    ]

@@ -252,7 +252,13 @@ def test_health_does_not_call_an_exchanging_deployment_keyless(gw: _Gateway, mon
 
 
 @pytest.mark.parametrize(
-    "url", ["https://api.anthropic.com/v1/messages", "https://API.openai.com/v1/embeddings"]
+    "url",
+    [
+        "https://api.anthropic.com/v1/messages",
+        "https://API.openai.com/v1/embeddings",
+        "https://api.openai.com./v1/chat/completions",  # a trailing dot
+        "https://eu.api.openai.com/v1/chat/completions",  # a regional host
+    ],
 )
 def test_the_gateway_token_never_goes_to_a_providers_own_api(gw: _Gateway, url: str) -> None:
     # Whatever path picked the provider: a model named per request, the dashboard's check.
@@ -328,3 +334,11 @@ def test_a_gateway_error_page_is_logged_with_its_status(gw: _Gateway, monkeypatc
     with pytest.raises(gateway.GatewayUnavailable):
         asyncio.run(gateway.bearer("", _GW))
     assert "502" in caplog.text
+
+
+def test_a_long_lived_gateway_token_is_kept_a_day_at_most(gw: _Gateway, monkeypatch) -> None:
+    gw.life = 7 * 86400
+    now = [1000.0]
+    monkeypatch.setattr(gateway.time, "time", lambda: now[0])
+    assert asyncio.run(gateway.bearer("", _GW)) == "gw-1"
+    assert gateway._expires_at == 1000.0 + 86400
