@@ -917,3 +917,17 @@ def test_the_recreate_hint_follows_the_admin_sql_only_for_an_existing_reader(
 def test_the_admin_sql_grants_nothing_that_lists_other_accounts() -> None:
     sql = " ".join(ch_setup.admin_sql("loom_app", "loom_reader"))
     assert "system.users" not in sql and "settings_profile" not in sql
+
+
+@pytest.mark.parametrize(("logged_in", "hint"), [(False, False), (True, True)])
+def test_an_unknown_owner_gets_the_recreate_hint_only_for_a_reader_that_exists(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    logged_in: bool,
+    hint: bool,
+) -> None:
+    problem = ch_setup.PROFILE_DIFFERS if logged_in else "it does not exist"
+    monkeypatch.setattr(ch_setup, "reader_objects", lambda ch, r: "unknown")
+    monkeypatch.setattr(ch_setup, "reader_status", lambda r: (logged_in, problem))
+    assert ch_setup._set_up(FakeCH(), "loom_app", "loom_reader") == 1
+    assert ("recreate Loom" in capsys.readouterr().err) is hint

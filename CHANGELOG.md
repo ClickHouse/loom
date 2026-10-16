@@ -91,8 +91,9 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
 - `deploy/standalone/compose.yaml` is replaced by `compose.yaml`;
   `dev/docker-compose.dev.yml` is now an override of it that builds from the checkout.
   Releases before this one installed `clickhouse-config/` and `lemmagen3/` at the top of
-  `~/.loom`; the installer moves them under `deploy/` and keeps an existing install on
-  the bundled ClickHouse.
+  `~/.loom`; the installer replaces them with the bundle's copies under `deploy/` (as
+  every rerun did, local edits there are not kept) and keeps an existing install on the
+  bundled ClickHouse.
 - **Breaking:** `rerank` (`memory.search`, `memory.search_trace`, `code.search`, `code.ask`)
   and a namespace's `rerank_endpoint` take a name, not a URL: `none`, `builtin:openai[:model]`,
   `builtin:cohere[:model]`, or an endpoint the operator names in `LOOM_RERANK_ENDPOINTS_JSON`.

@@ -322,7 +322,8 @@ def _ensure_reader(ch: Any, user: str, reader: str) -> bool:
             f"{reader}: {problem}; {user!r} cannot see who owns it, so an admin has to "
             "run the SQL below"
         )
-        _print_admin_sql(user, reader, existing=True)
+        # Only a reader that logged in exists for sure; a first install has none.
+        _print_admin_sql(user, reader, existing=bool(logged_in))
         return False
     if not logged_in:
         return _refuse(f"{reader} exists but does not accept LOOM_CH_PASSWORD. {drop_hint}")
