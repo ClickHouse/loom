@@ -453,9 +453,9 @@ value (read from `loom.memory_versions`: a tombstone's stamp, else a retirement'
 `invalid_at` when it differs from the one the value was held with, back-dated or not, else
 the next write), not when the cleanup runs. When that cleanup fails, the row, value and that
 moment are recorded (`entity_edges_close`) for `projection_repair`. `memory.bulk_set`
-does the same for the rows it revised, and `memory.update_by_id` and `memory.update`
-project a changed value's edges the same way (a failure is recorded for
-`projection_repair` as `entity_edges`). The follow reads the retired rows' facts again
+does the same for the rows it revised that wrote an edge, with one read for all of them,
+and `memory.update_by_id` and `memory.update` project a changed value's edges the same
+way (a failure is recorded for `projection_repair` as `entity_edges`). The follow reads the retired rows' facts again
 after its plan, so a replay of a follow whose close landed still ends the rest.
 
 ### One value current

@@ -97,6 +97,45 @@ def graph_insert_settings(table: str, *, wait: bool, dedup_token: str) -> dict[s
     return {"async_insert": 1, "wait_for_async_insert": 1 if wait else 0}
 
 
+def edge_nodes(entry: Any, entity_map: dict[str, str]) -> list[str]:
+    """The sorted graph nodes `write_entity_edges` pairs for `entry`: its resolved
+    entities and its facet nodes. Fewer than two means it writes no edge."""
+    from server.memory.domain.graph_quality import canonical_entity_text, is_lexical_junk_entity
+
+    # A pronoun, interjection or contraction fragment the
+    # extractor emitted as an entity or topic is never a graph node.
+    ents = [
+        e
+        for e in resolved_entity_list(entry.entities or [], entity_map)
+        if not is_lexical_junk_entity(e)
+    ]
+    # Facet nodes join the co-occurrence plane as ordinary entity nodes,
+    # canonicalized identically so write and read land on one node:
+    # code-native files + concepts (coding facts), and the extractor's
+    # `topics` — the concept phrases a fact is ABOUT — for every fact,
+    # so two memories about one idea connect even when
+    # they name different entities.
+    facet_nodes: list[str] = []
+    for raw in [
+        *(getattr(entry, "files", None) or []),
+        *(getattr(entry, "concepts", None) or []),
+        *(getattr(entry, "topics", None) or []),
+    ]:
+        node = (
+            str(raw).lower()
+            if str(raw).lower().startswith(("commit:", "error:"))
+            else canonical_entity_text(str(raw))
+        )
+        if (
+            len(node) >= 2
+            and node not in ents
+            and node not in facet_nodes
+            and not is_lexical_junk_entity(node)
+        ):
+            facet_nodes.append(node)
+    return sorted(set(ents) | set(facet_nodes))
+
+
 async def write_entity_edges(
     input: MemoryBulkSetInput,
     results: list[_BulkSetResult],
@@ -129,41 +168,8 @@ async def write_entity_edges(
             ch=ch,
         )
 
-    from server.memory.domain.graph_quality import canonical_entity_text, is_lexical_junk_entity
-
     for entry, result in zip(input.entries, results, strict=True):
-        # A pronoun, interjection or contraction fragment the
-        # extractor emitted as an entity or topic is never a graph node.
-        ents = [
-            e
-            for e in resolved_entity_list(entry.entities or [], entity_map)
-            if not is_lexical_junk_entity(e)
-        ]
-        # Facet nodes join the co-occurrence plane as ordinary entity nodes,
-        # canonicalized identically so write and read land on one node:
-        # code-native files + concepts (coding facts), and the extractor's
-        # `topics` — the concept phrases a fact is ABOUT — for every fact,
-        # so two memories about one idea connect even when
-        # they name different entities.
-        facet_nodes: list[str] = []
-        for raw in [
-            *(getattr(entry, "files", None) or []),
-            *(getattr(entry, "concepts", None) or []),
-            *(getattr(entry, "topics", None) or []),
-        ]:
-            node = (
-                str(raw).lower()
-                if str(raw).lower().startswith(("commit:", "error:"))
-                else canonical_entity_text(str(raw))
-            )
-            if (
-                len(node) >= 2
-                and node not in ents
-                and node not in facet_nodes
-                and not is_lexical_junk_entity(node)
-            ):
-                facet_nodes.append(node)
-        ents = sorted(set(ents) | set(facet_nodes))
+        ents = edge_nodes(entry, entity_map)
         if len(ents) < 2:
             continue
         # Edge validity window from the memory's valid_at / valid_to (extractor

@@ -5437,3 +5437,38 @@ async def test_a_follow_of_one_retirement_sends_few_statements(ch, org) -> None:
     # (two), the later ends, one read of the pair's and the relation's triples, and the
     # edges to end. Twelve when the edge check asked again what was just asked.
     assert counted.sent == 9
+
+
+@pytest.mark.parametrize("n", [2, 8])
+async def test_a_bulk_checking_its_revised_rows_edges_reads_once(ch, org, n) -> None:
+    # A re-ingest revising every key asks once which rows still hold their values,
+    # not once per row; an entry naming fewer than two entities wrote no edge to end.
+    from server.core.hashing import sha256_value
+    from server.memory import store as M
+    from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetResult
+    from server.memory.app.bulk_set import _close_overtaken_edges
+
+    entries, results = [], []
+    for i in range(n):
+        value = f"Alice met Bob in city {i}"
+        row = _row(
+            org,
+            "s1",
+            value,
+            datetime(2026, 5, 1),
+            memory_key=f"k{i}",
+            content_sha256=sha256_value(value),
+        )
+        await M.insert_memory_versions([row], ch=ch)
+        entities = ["alice", "bob"] if i % 2 else []
+        entries.append({"memory_key": f"k{i}", "value": value, "entities": entities})
+        results.append(
+            _BulkSetResult(
+                memory_key=f"k{i}", version=row["version"], memory_id=str(row["memory_id"])
+            )
+        )
+    write = MemoryBulkSetInput(org=org, namespace=NS, agent="bot", user_id=USER, entries=entries)
+    counted = _Counted(ch)
+    revised = {r.memory_id for r in results}
+    await _close_overtaken_edges(write, results, revised, entity_map={}, ch=counted)
+    assert counted.sent == 1

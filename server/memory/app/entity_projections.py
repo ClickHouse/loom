@@ -483,25 +483,47 @@ async def close_late_edges(
 
 
 async def end_overtaken_edges(
-    input: Any, memory_id: str, memory_key: str, content_sha256: str, *, op: str, ch: Any
+    input: Any, versions: list[tuple[str, str, str]], *, op: str, ch: Any
 ) -> None:
-    """After a revision wrote its edges: another revision since may have closed this
-    value before they landed, so end them at the moment the row stopped holding it.
-    A failure is recorded for the projection repair."""
+    """After revisions wrote their edges: another write since may have revised or
+    retired one of these `versions` (memory_id, memory_key, content_sha256) before
+    they landed, so end its edges at the moment the row stopped holding it. One read
+    asks which rows still hold theirs. A failure is recorded for the projection repair."""
+    held: set[str] = set()
     try:
-        await close_late_edges(input.org, input.namespace, memory_id, content_sha256, ch=ch)
-    except Exception as e:  # noqa: BLE001 — recorded; the projection repair ends them
-        await record_projection_failure(
-            org=input.org,
-            namespace=input.namespace,
-            agent=input.agent,
-            projection=EDGES_CLOSE,
-            source_operation=op,
-            memory_keys=[memory_key],
-            error=e,
-            payload={"memory_id": memory_id, "content_sha256": content_sha256},
-            ch=ch,
+        holding = [(memory_id, sha) for memory_id, _, sha in versions]
+        held = await rows_holding(
+            input.org, input.namespace, holding, ch=ch, holder_sql=HOLDS_VALUE_SQL
         )
+    except Exception as e:  # noqa: BLE001 — recorded; the projection repair ends them
+        for memory_id, memory_key, sha in versions:
+            await _record_edges_close(input, memory_id, memory_key, sha, e, op=op, ch=ch)
+        return
+    for memory_id, memory_key, sha in versions:
+        if memory_id in held:
+            continue
+        try:
+            ended_at = await value_ended_at(input.org, input.namespace, memory_id, sha, ch=ch)
+            await _end_edges_of(input, memory_id, sha, ended_at, ch=ch)
+        except Exception as e:  # noqa: BLE001 — recorded; the projection repair ends them
+            await _record_edges_close(input, memory_id, memory_key, sha, e, op=op, ch=ch)
+
+
+async def _record_edges_close(
+    input: Any, memory_id: str, memory_key: str, sha: str, error: Exception, *, op: str, ch: Any
+) -> None:
+    """Record a failed `end_overtaken_edges` close for the projection repair."""
+    await record_projection_failure(
+        org=input.org,
+        namespace=input.namespace,
+        agent=input.agent,
+        projection=EDGES_CLOSE,
+        source_operation=op,
+        memory_keys=[memory_key],
+        error=error,
+        payload={"memory_id": memory_id, "content_sha256": sha},
+        ch=ch,
+    )
 
 
 async def value_ended_at(
@@ -589,9 +611,8 @@ async def project_revised_edges(row: Mapping[str, Any], value: Any, *, op: str, 
             source_resource_id=f"{op}:{results[0].memory_id}",
         )
         return
-    await end_overtaken_edges(
-        write, results[0].memory_id, entry.memory_key, value_sha256(entry), op=op, ch=ch
-    )
+    version = (results[0].memory_id, entry.memory_key, value_sha256(entry))
+    await end_overtaken_edges(write, [version], op=op, ch=ch)
 
 
 async def project_stated_relations(

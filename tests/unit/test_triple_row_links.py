@@ -242,8 +242,8 @@ async def test_a_bulk_write_reconciles_only_the_rows_it_revised(monkeypatch) -> 
 
     closed: list = []
 
-    async def end_overtaken(input, memory_id, memory_key, sha, *, op, ch):
-        closed.append(memory_id)
+    async def end_overtaken(input, versions, *, op, ch):
+        closed.extend(memory_id for memory_id, _, _ in versions)
 
     monkeypatch.setattr(bulk_set, "reconcile_row_facts", reconcile)
     monkeypatch.setattr(bulk_set, "end_overtaken_edges", end_overtaken)
@@ -251,7 +251,10 @@ async def test_a_bulk_write_reconciles_only_the_rows_it_revised(monkeypatch) -> 
         org="o",
         namespace="n",
         agent="a",
-        entries=[{"memory_key": "old", "value": "v1"}, {"memory_key": "new", "value": "v2"}],
+        entries=[
+            {"memory_key": "old", "value": "v1", "entities": ["alice", "bob"]},
+            {"memory_key": "new", "value": "v2", "entities": ["alice", "bob"]},
+        ],
     )
     state = _BulkWriteState(existing_ids={"old": "id-old"})
     state.results = [

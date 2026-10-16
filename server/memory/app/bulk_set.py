@@ -45,6 +45,7 @@ from server.memory.app.projection_errors import (
 )
 from server.memory.app.projection_failures import FOLLOW_ROWS
 from server.memory.app.projections import (
+    edge_nodes,
     value_sha256,
     write_entity_edges,
     write_entity_triples,
@@ -858,22 +859,30 @@ async def _bulk_run_projections(
     existed = set(state.existing_ids.values())
     revised = [r.memory_id for r in state.results if r.version and r.memory_id in existed]
     if revised:
-        await _close_overtaken_edges(p_input, p_results, set(revised), ch=ch)
+        await _close_overtaken_edges(
+            p_input, p_results, set(revised), entity_map=entity_resolution, ch=ch
+        )
         await reconcile_row_facts(p_input, revised, reopen=False, op="memory.bulk_set", ch=ch)
 
 
 async def _close_overtaken_edges(
-    input: MemoryBulkSetInput, results: list[Any], revised: set[str], *, ch: Any
+    input: MemoryBulkSetInput,
+    results: list[Any],
+    revised: set[str],
+    *,
+    entity_map: dict[str, str],
+    ch: Any,
 ) -> None:
     """The revised rows' edges end with their value if another write revised it
-    again while they were written (`end_overtaken_edges`)."""
+    again while they were written (`end_overtaken_edges`). An entry with fewer than
+    two graph nodes wrote no edge."""
     versions = {
         (res.memory_id, res.memory_key, value_sha256(entry))
         for entry, res in zip(input.entries, results, strict=True)
-        if res.memory_id in revised
+        if res.memory_id in revised and len(edge_nodes(entry, entity_map)) >= 2
     }
-    for memory_id, memory_key, sha in sorted(versions):
-        await end_overtaken_edges(input, memory_id, memory_key, sha, op="memory.bulk_set", ch=ch)
+    if versions:
+        await end_overtaken_edges(input, sorted(versions), op="memory.bulk_set", ch=ch)
 
 
 # The most supersession pairs one write follows in the request.
