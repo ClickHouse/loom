@@ -10475,7 +10475,7 @@
     },
     {
      "dest": "report",
-     "help": "Print a GitHub-Issue-ready bug report with auto-attached `loom doctor` diagnostic.",
+     "help": "Print the bug form's Environment field: versions and the `loom doctor` checks.",
      "metavar": "report"
     },
     {

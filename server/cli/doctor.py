@@ -544,13 +544,13 @@ def _cmd_report(args: argparse.Namespace) -> int:
         if opened:
             print(
                 "\nOpened the bug form in your browser. "
-                "Paste the diagnostic above into its Environment field.",
+                "Replace its Environment field with the output above.",
             )
         else:
             print(
                 "\nCould not open a browser. Visit:\n  "
                 f"https://github.com/ClickHouse/loom/issues/new?template={BUG_FORM}\n"
-                "and paste the output above into its Environment field.",
+                "and put the output above in its Environment field.",
             )
     return 0
 

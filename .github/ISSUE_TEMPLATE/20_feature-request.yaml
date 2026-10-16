@@ -5,7 +5,6 @@ body:
   - type: markdown
     attributes:
       value: |
-        > (you don't have to strictly follow this form)
         > Search [existing issues](https://github.com/ClickHouse/loom/issues?q=is%3Aissue) first. A change to storage, the identity model, auth or a new external dependency is discussed here before any pull request.
   - type: textarea
     attributes:

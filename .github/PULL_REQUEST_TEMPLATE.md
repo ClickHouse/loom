@@ -18,7 +18,7 @@ Related: https://github.com/ClickHouse/loom/pull/NNN
 - CI Fix or Improvement (changelog entry is not required)
 - Not for changelog (changelog entry is not required)
 
-### Changelog entry (one or two sentences a user of Loom can read without the diff; the release notes are built from these):
+### Changelog entry (one or two sentences a user of Loom can read without the diff; the release pull request collects these into the release notes):
 
 ...
 
@@ -42,11 +42,12 @@ auth and tenant isolation, hooks running in a user's session.
 What you ran and what it showed. For behaviour with no test, say why. A measurement that justifies
 the change goes here with the command that reproduces it.
 
-### AI assistance (about the code, not this description):
+### AI assistance in the code (leave one; writing this description with AI is fine):
 
-- [ ] No AI assistance
-- [ ] AI-assisted (completion, or questions while writing it)
-- [ ] AI-generated (an agent wrote most of the diff); I name the tool below and say what I checked myself
+- None
+- AI-assisted (completion, or questions while writing it)
+- AI-generated (an agent wrote most of the diff): name the tool and say what you checked yourself
+
 - [ ] I can explain every line of this diff and how it interacts with the rest of Loom.
 
 ### Checklist

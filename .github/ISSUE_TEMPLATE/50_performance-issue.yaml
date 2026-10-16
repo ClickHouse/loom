@@ -5,7 +5,6 @@ body:
   - type: markdown
     attributes:
       value: |
-        > (you don't have to strictly follow this form)
         > [Performance tuning](https://github.com/ClickHouse/loom/blob/main/docs/guides/performance-tuning.md) covers the settings that matter most.
         > **Never paste tokens, API keys, JWTs, passwords or customer data.** `loom report` output is safe to paste: it records only whether each secret is set.
         > A security issue goes to security@clickhouse.com, not here ([SECURITY.md](https://github.com/ClickHouse/loom/blob/main/SECURITY.md)).

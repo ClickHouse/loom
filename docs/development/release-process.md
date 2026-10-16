@@ -29,7 +29,9 @@ Two plugin pull requests that bump to the same number merge without a conflict, 
 
 The run that creates the GitHub Release generates its notes from the commits since the previous tag; a
 re-run or the later registry dispatch keeps them as they are. What commits cannot say goes in a "Release
-notes" section of the release pull request's description, so it is reviewed before the tag: operator
+notes" section of the release pull request's description, so it is reviewed before the tag: the
+changelog entries of the pull requests merged since the previous tag, grouped by their changelog category
+(entries marked as not required are left out), then operator
 steps (new settings, backfills, table rebuilds) and client-visible wire changes, including every removed
 request field and retired flag. No registry of removed fields exists, so the release notes are where a
 client learns of one. Generate the wire diff instead of writing it:

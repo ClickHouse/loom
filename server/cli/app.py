@@ -187,12 +187,12 @@ def _add_doctor_report_parsers(sub: Any) -> None:
 
     p_rep = sub.add_parser(
         "report",
-        help="Print a GitHub-Issue-ready bug report with auto-attached `loom doctor` diagnostic.",
+        help="Print the bug form's Environment field: versions and the `loom doctor` checks.",
     )
     p_rep.add_argument(
         "--open",
         action="store_true",
-        help=("Also open the bug form in the default browser with the versions pre-filled."),
+        help="Also open the bug form in the default browser with the versions pre-filled.",
     )
     p_rep.set_defaults(func=_cmd_report)
 
