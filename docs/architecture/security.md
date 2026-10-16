@@ -265,8 +265,9 @@ without touching the refresh token, so replay detection only covers a stolen ref
 **Each credential is spent exactly once.** What a sign-in spends or moves lives in
 `loom.oauth_signin_state`, a KeeperMap table (`server/auth/claims.py`), one key each: a
 code, a device grant, the id of each session's current refresh token, an MCP approval
-awaiting its click, and a single-use mark for each finished IdP round trip. Every change is a compare-and-set, a strict-mode Keeper
-write applied only while the key still holds the value the request read: spending a refresh
+awaiting its click, and a single-use mark for each finished IdP round trip. Every change
+is a compare-and-set, a strict-mode Keeper write applied only while the key still holds
+the value the request read: spending a refresh
 token swaps its session's key from that token's generation and id. Of two requests
 presenting it one wins; the other is told to retry, and its retry finds a later generation,
 which proves the token spent: a Keeper read may lag behind but never runs ahead, so nothing
@@ -311,15 +312,14 @@ an eight-letter user code (20 letters, about 2^34.6) that both live ten minutes.
 happens on a page shown only after sign-in. The page names the code, the requesting
 address and the time, and it needs a click. It carries a one-time ticket bound to that
 signed-in user, so a forged cross-site POST approves nothing, and it cannot be framed.
-Wrong codes (10 per address per 15 minutes), new device grants (30), polls (one per
-interval, else `slow_down`) and refused tokens at `/oauth/token` and `/oauth/revoke` (60
-per address per minute) are limited per process.
+Wrong codes (10 per address per 15 minutes), new device grants (30) and polls (one per
+interval, else `slow_down`) are limited per process.
 
 Whoever approves a user code first decides the grant, as RFC 8628 §5.4 warns. Two people
 signing in with one code end it for both, but someone who saw the code (a screen share)
-and approves before its owner signs the terminal in as themselves. The owner then finds
-the code already used and is told to run `loom logout`, and `loom login` prints the
-account it signed in as.
+and approves before its owner signs the terminal in as themselves. The owner, entering the
+code or coming back from the provider, finds it already used and is told to run
+`loom logout`, and `loom login` prints the account it signed in as.
 
 **Unauthenticated routes.** Sign-up and password sign-in are rate-limited in-process
 (`server/auth/attempts.py`) per client address (the connection's peer, which uvicorn

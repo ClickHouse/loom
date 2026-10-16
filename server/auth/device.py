@@ -151,14 +151,7 @@ async def device_sign_in(request: Request) -> Response:
         _wrong_codes_by_address.record(address_key(address))
         return _code_form(typed, "That code is wrong or has expired.", 400)
     if device["status"] != "pending":
-        # Approved by whoever entered it first: if that was not this person,
-        # the terminal is signed in as someone else.
-        return _code_form(
-            "",
-            "That code was already used. If you did not approve it, run loom logout"
-            " in that terminal.",
-            400,
-        )
+        return _decided_page(device)
     if settings.oauth_login_provider == "oidc":
         return await oauth.start_oidc_login(
             "device",
@@ -174,6 +167,16 @@ async def device_sign_in(request: Request) -> Response:
     if identity is None:
         return _code_form(typed, "Invalid email or password.", 401)
     return await signed_in(user_code, identity, "")
+
+
+def _decided_page(device: Device) -> Response:
+    # Approved by whoever entered the code first: if that was not this person,
+    # the terminal is signed in as someone else.
+    if device["status"] == "approved":
+        error = "That code was already used. If you did not approve it, run loom logout there."
+    else:
+        error = "That sign-in was ended. Run loom login again."
+    return _code_form("", error, 400)
 
 
 def _expired_page() -> Response:
@@ -218,9 +221,9 @@ async def signed_in(
     ticket = secrets.token_urlsafe(32)
     try:
         for attempt in range(3):
-            device = await _undecided(user_code)
-            if device is None:
-                outcome, dropped = "expired", [upstream_refresh]
+            device = await oauth.store.device_by_user_code(_user_code_id(user_code))
+            if device is None or device["status"] != "pending":
+                outcome, dropped = "decided", [upstream_refresh]
                 break
             try:
                 outcome, dropped = await _sign_in(device, identity, upstream_refresh, ticket)
@@ -233,8 +236,10 @@ async def signed_in(
         await _revoke_all(upstream_refresh)
         return _busy_page()
     await _revoke_all(*dropped)
-    if outcome == "expired" or device is None:
+    if device is None:
         return _expired_page()
+    if outcome == "decided":
+        return _decided_page(device)
     if outcome == "conflict":
         return oauth.html_page(
             "Sign-in stopped",

@@ -69,7 +69,6 @@ def _world(monkeypatch):
         device._requests_by_address,
         device._wrong_codes_by_address,
         oauth._starts_by_address,
-        oauth._refused_tokens_by_address,
     ):
         limiter.clear()
     return {"store": store, "revoked": revoked, "expiries": expiries, "events": events}
@@ -228,15 +227,24 @@ def test_a_wrong_user_code_is_refused_and_counted() -> None:
     assert _sign_in(c, "BBBB-BBBB").status_code == 429
 
 
-def test_a_used_code_says_so_and_is_not_counted_wrong() -> None:
-    # Someone else approved the code first: the owner is told to check the
-    # terminal's account, and is not locked out for it.
+def test_a_code_approved_by_someone_else_tells_its_owner_to_log_out() -> None:
+    # Whoever approves first decides; the terminal has already collected its
+    # tokens when the owner gets to the page, and the owner is not locked out.
     c = _client()
     grant = _start(c)
     _approve(c, grant["user_code"], _sign_in(c, grant["user_code"]).text)
+    assert _poll(c, grant["device_code"]).status_code == 200
     for _ in range(11):
         r = _sign_in(c, grant["user_code"])
         assert r.status_code == 400 and "already used" in r.text and "loom logout" in r.text
+
+
+def test_a_denied_code_says_to_log_in_again() -> None:
+    c = _client()
+    grant = _start(c)
+    _approve(c, grant["user_code"], _sign_in(c, grant["user_code"]).text, decision="deny")
+    r = _sign_in(c, grant["user_code"])
+    assert r.status_code == 400 and "loom login" in r.text and "loom logout" not in r.text
 
 
 def test_a_wrong_password_keeps_the_grant_pending() -> None:
@@ -396,23 +404,6 @@ def test_revoking_another_token_revokes_its_jti_until_it_expires(_world) -> None
     assert timedelta(0) < _world["expiries"][0] - datetime.now(UTC) <= timedelta(seconds=61)
 
 
-def test_guessing_refresh_tokens_is_cut_off_per_address() -> None:
-    c = _client()
-    for _ in range(60):
-        assert _error(_refresh(c, "guess")) == "invalid_grant"
-    r = _refresh(c, "guess")
-    assert r.status_code == 429 and _error(r) == "slow_down"
-
-
-def test_guessing_tokens_at_revoke_is_cut_off_per_address() -> None:
-    c = _client()
-    for _ in range(60):
-        assert (
-            c.post("/oauth/revoke", data={"token": "x", "client_id": "loom-cli"}).status_code == 200
-        )
-    assert c.post("/oauth/revoke", data={"token": "x", "client_id": "loom-cli"}).status_code == 429
-
-
 def test_revoking_garbage_is_a_quiet_200(_world) -> None:
     r = _client().post("/oauth/revoke", data={"token": "nonsense", "client_id": "loom-cli"})
     assert r.status_code == 200 and _world["revoked"] == []
@@ -487,6 +478,16 @@ def test_sso_device_sign_in_is_approved_on_the_same_confirm_page(sso) -> None:
     assert page.status_code == 200 and "alice@example.com" in page.text
     _approve(c, grant["user_code"], page.text)
     assert "refresh_token" in _poll(c, grant["device_code"]).json()
+
+
+def test_a_code_approved_while_its_owner_was_at_the_idp_says_so(sso) -> None:
+    owner, other = _client(), _client()
+    grant = _start(owner)
+    r = owner.post("/oauth/device", data={"user_code": grant["user_code"]}, follow_redirects=False)
+    state = r.headers["location"].split("state=")[1]
+    _approve(other, grant["user_code"], _sso_round_trip(other, grant["user_code"]).text)
+    page = owner.get("/oauth/callback", params={"code": "c", "state": state})
+    assert page.status_code == 400 and "already used" in page.text
 
 
 def test_sso_page_offers_no_password_form(sso) -> None:

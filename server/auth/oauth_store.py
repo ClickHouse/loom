@@ -5,9 +5,9 @@ by compare-and-set: a code, a device grant, a single-use mark per identity
 provider callback the provider vouched for (`callback:<state>`), an MCP
 approval awaiting its click (`pending`), and which refresh token is each
 session's current one (`family:<id>`). Of two requests spending the same
-credential exactly one wins. The rest is in `loom.oauth_state` (ClickHouse): registered clients,
-refresh tokens' grants (written before the token is handed out, read with
-sequential consistency) and owed revocations.
+credential exactly one wins. The rest is in `loom.oauth_state` (ClickHouse):
+registered clients, refresh tokens' grants (written before the token is handed
+out, read with sequential consistency) and owed revocations.
 
 Codes, refresh tokens and device codes are bearer secrets, so they are keyed by
 `token_id(token)` (sha256 hex), never the token: a key or row read out of
@@ -440,12 +440,13 @@ class ClickHouseStore:
         return found[0] if found and not found[1]["spent"] else None
 
     async def device_by_user_code(self, user_code_id: str) -> Device | None:
-        """The live device grant whose user code keys to this, decided or not."""
+        """The unexpired device grant whose user code keys to this: pending,
+        decided, or already collected by the terminal."""
         pointer = await self._load(f"user_code:{user_code_id}")
-        d = await self.device(pointer[0]["id"]) if pointer else None
-        if d is None or d["exp"] < int(time.time()):
+        found = await self._device(pointer[0]["id"]) if pointer else None
+        if found is None or found[0]["exp"] < int(time.time()):
             return None
-        return d
+        return found[0]
 
     async def take_device(self, device_code: str) -> Device | None:
         """The device grant as the polling client sees it. An approved or
