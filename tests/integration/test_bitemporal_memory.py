@@ -1898,3 +1898,25 @@ async def test_a_retry_key_reused_for_other_memories_is_refused(
                 idempotency_key=key,
             )
         assert (await a.call("memory.get", {"memory_key": "k2"}))["found"] is False
+
+
+async def test_a_bulk_retry_names_why_an_entry_was_skipped(
+    control_plane_url, mint_test_token
+) -> None:
+    a, _ = await _agent(control_plane_url, mint_test_token, "bulk-retry-labels")
+    async with a:
+        await a.call("memory.set", {"memory_key": "p", "value": "kept", "pinned": True})
+        key = f"r-{uuid.uuid4().hex}"
+        body = {
+            "entries": [{"memory_key": "p", "value": "over"}, {"memory_key": "q", "value": "new"}]
+        }
+        first = await a.call("memory.bulk_set", body, idempotency_key=key)
+        assert first["skipped_pinned"] == ["p"]
+        ch = await _ch()
+        try:
+            await _expire_replay(ch, key, "memory.bulk_set")
+        finally:
+            await ch.disconnect()
+        again = await a.call("memory.bulk_set", body, idempotency_key=key)
+        assert [w["version"] for w in again["written"]] == [w["version"] for w in first["written"]]
+        assert again["skipped_pinned"] == ["p"]

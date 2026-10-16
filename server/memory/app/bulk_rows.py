@@ -251,6 +251,21 @@ def _bulk_skip_gate(
     return False
 
 
+def _bulk_label_skipped(
+    entry: Any, entry_sha: str, state: _BulkWriteState, identity_dupes: dict[str, tuple[str, str]]
+) -> None:
+    """A retried entry that made no commit: the reason the skip gate gives it, named on
+    the answer as the first attempt named it. Labels only: the reinforcement the gate
+    records for a restatement was recorded then."""
+    dup = identity_dupes.get(entry_sha)
+    if dup is not None:
+        state.identity_duplicates[entry.memory_key] = dup[0]
+    elif _bulk_value_locked(state, entry.memory_key):
+        state.skipped_locked.append(entry.memory_key)
+    elif state.existing_pinned.get(entry.memory_key):
+        state.skipped_pinned.append(entry.memory_key)
+
+
 def _bulk_append_pending(state: _BulkWriteState, entry: Any, serialized_value: str) -> None:
     """Phase 4b, per searchable kept entry (the one just appended to
     `state.memory_rows`): queue its embed text, clean excerpt and key-axis
@@ -320,6 +335,7 @@ async def _bulk_build_rows(
     for slot, entry in enumerate(input.entries):
         entry_sha = _content_sha256(entry.value)
         if retried and slot not in commit_of:
+            _bulk_label_skipped(entry, entry_sha, state, identity_dupes)
             state.results.append(_BulkSetResult(memory_key=entry.memory_key, version=0))
             continue
         if not retried and _bulk_skip_gate(entry, entry_sha, state, identity_dupes):
