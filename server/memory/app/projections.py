@@ -956,7 +956,7 @@ async def end_triples_now(
     namespace: str,
     triples: list[tuple[str, str, str]],
     stated_ends_only: bool = False,
-    ends: Mapping[tuple[str, str, str], Any] | None = None,
+    ends: Mapping[tuple[str, str, str], datetime | None] | None = None,
 ) -> None:
     """End now the intervals of `triples` that end later ("until Dec 1"), as a close
     does: no row states them any longer. One with a later date in `ends` (a retired
@@ -972,9 +972,7 @@ async def end_triples_now(
         "ns": namespace,
         "triples": triples,
         "now": now,
-        "ends": [
-            max(now, d.replace(microsecond=0)) if isinstance(d, datetime) else now for d in dates
-        ],
+        "ends": [max(now, d.replace(microsecond=0)) if d else now for d in dates],
     }
     end = (
         "arrayElement({ends:Array(DateTime)}, indexOf("

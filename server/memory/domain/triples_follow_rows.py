@@ -30,6 +30,7 @@ import re
 import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, NamedTuple
 
 from server.memory.domain.graph_quality import (
@@ -243,7 +244,7 @@ class RowSupersession:
     winner_sha256: str = ""
     winner_user_id: str = ""
     # When the loser's own row was replaced.
-    loser_valid_to: Any = None
+    loser_valid_to: datetime | None = None
     # The triples each row's current value stated (`entity_triple_rows`). Empty for a
     # row written before rows were linked: its triples are then found by its text.
     loser_triples: frozenset[Triple] = frozenset()
@@ -295,7 +296,7 @@ class FollowPlan:
     kept: set[Triple] = field(default_factory=set)
     # When each triple a loser's row linked stopped holding there, open or not: the
     # latest `loser_valid_to` of the losers linking it.
-    ends: dict[Triple, Any] = field(default_factory=dict)
+    ends: dict[Triple, datetime | None] = field(default_factory=dict)
 
 
 def _later(a: Any, b: Any) -> Any:
@@ -625,7 +626,7 @@ def plan_follow(open_triples: list[dict[str, Any]], pairs: list[RowSupersession]
             )
     closes = [t for t in closes if t not in kept]
     closed_at = {t: at for t, at in closed_at.items() if t not in kept}
-    ends: dict[Triple, Any] = {}
+    ends: dict[Triple, datetime | None] = {}
     for pair in pairs:
         for linked in pair.loser_triples | pair.loser_inferred:
             end = pair.loser_valid_to
@@ -644,7 +645,7 @@ def merge_plans(plans: list[FollowPlan], kept: frozenset[Triple] = frozenset()) 
     closed_at: dict[Triple, Any] = {}
     inserts: list[Successor] = []
     written: set[tuple[Triple, str, str]] = set()
-    ends: dict[Triple, Any] = {}
+    ends: dict[Triple, datetime | None] = {}
     for plan in plans:
         for t, end in plan.ends.items():
             ends[t] = _later(ends[t], end) if t in ends else end
