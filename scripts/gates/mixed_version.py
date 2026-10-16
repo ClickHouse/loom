@@ -214,6 +214,7 @@ class Server:
             LOOM_CH_PASSWORD=CH_PASSWORD,
             LOOM_CH_SECURE="false",
             LOOM_AUTH_REQUIRED="true",
+            LOOM_OAUTH_ENABLED="true",  # a sign-in on every build, so they answer each other's
             LOOM_JWT_SECRET=JWT_SECRET,
             LOOM_EMBEDDING_MODEL="fake-ngram-1024",
             LOOM_LLM_PROVIDER="fake",
@@ -543,17 +544,17 @@ class Scenario:
         to ask again, N's ends it."""
         sys.path.insert(0, str(ROOT / "sdk" / "python"))
         from loom import credentials
-        from loom.errors import AuthInvalid, BackendUnavailable
+        from loom.errors import AuthInvalid, BackendUnavailable, LoomError
 
         real = credentials.CREDENTIALS_FILE
         with tempfile.TemporaryDirectory() as tmp:
             credentials.CREDENTIALS_FILE = Path(tmp) / "credentials"
             spent = {"access_token": "x", "refresh_token": "not-a-token", "expires_in": 0}
-            credentials._save("gate", url, spent, session="s")
+            credentials._save("gate", url, spent, session="s", marked=True)
             failed: Exception | None = None
             try:
                 credentials.access_token("gate", refused="x")
-            except (AuthInvalid, BackendUnavailable) as e:
+            except LoomError as e:
                 failed = e
             finally:
                 stored = credentials.stored_login(url, "gate") is not None

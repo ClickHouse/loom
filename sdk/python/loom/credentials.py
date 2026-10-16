@@ -43,8 +43,10 @@ CREDENTIALS_FILE = Path("~/.loom/credentials")
 DEFAULT_SERVER = "http://localhost:7777"
 CLIENT_ID = "loom-cli"
 _DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
-# Sent by every build that keeps sessions; an answer without it came from a
-# previous build during a rolling upgrade, which cannot know this session.
+# On every sign-in answer of a build that keeps sessions. Once a server has
+# sent it, an answer without it came from a previous build during a rolling
+# upgrade, which cannot know this session. A server never seen sending it (a
+# proxy may strip it) has its refusals taken as they are.
 _SESSIONS_HEADER = "Loom-Sessions"
 # Refresh this long before the access token expires, so a call never leaves
 # with a token that dies in flight.
@@ -183,17 +185,20 @@ def _endpoints(client: httpx.Client, *, signed_in: bool = False) -> dict[str, st
     """The server's sign-in endpoints, each checked to be on the server itself,
     so a code or token only ever goes where the user chose to sign in."""
     r = client.get("/.well-known/oauth-authorization-server")
-    if r.status_code == 404 and signed_in:
-        # It signed this session in, so a previous build answered: ask again later.
-        raise BackendUnavailable(f"{client.base_url} answered from a build without sign-in; retry")
-    if r.status_code == 404:
+    if r.status_code not in (200, 404):
+        raise _failed(r, "reading the server's sign-in endpoints")
+    meta = _json(r) if r.status_code == 200 else {}
+    if "device_authorization_endpoint" not in meta:  # no sign-in, or none of `loom login`'s
+        if signed_in:
+            # It signed this session in, so a previous build answered: ask again later.
+            raise BackendUnavailable(
+                f"{client.base_url} answered from a build without `loom login`; retry "
+                "(if it no longer signs in, run `loom logout`)"
+            )
         raise LoomError(
             f"{client.base_url} has no sign-in: it runs without auth (no login needed) "
             "or predates `loom login`"
         )
-    if r.status_code != 200:
-        raise _failed(r, "reading the server's sign-in endpoints")
-    meta = _json(r)
     endpoints = {}
     for name in ("device_authorization_endpoint", "token_endpoint", "revocation_endpoint"):
         url = str(meta.get(name, ""))
@@ -232,12 +237,16 @@ def _oauth_error(r: httpx.Response) -> str:
     return str(detail.get("error", "")) if isinstance(detail, dict) else ""
 
 
-def _save(profile: str, server: str, tokens: dict[str, Any], session: str) -> None:
-    """`session` names one sign-in: a login makes a new one, a refresh keeps it."""
+def _save(
+    profile: str, server: str, tokens: dict[str, Any], session: str, *, marked: bool = False
+) -> None:
+    """`session` names one sign-in: a login makes a new one, a refresh keeps it.
+    `marked`: the server's answer carried the sessions header."""
     data = _read()
     data["profiles"][profile] = {
         "server": server,
         "session": session,
+        "marked": marked,
         "access_token": tokens["access_token"],
         "refresh_token": tokens.get("refresh_token", ""),
         "expires_at": int(time.time()) + int(tokens.get("expires_in", 3600)),
@@ -278,10 +287,17 @@ def login(
         if open_browser and sys.stdout.isatty():
             with contextlib.suppress(webbrowser.Error):
                 webbrowser.open(grant["verification_uri_complete"])
-        tokens = _poll(client, meta["token_endpoint"], grant)
+        marked = _SESSIONS_HEADER in r.headers
+        answer = _poll(client, meta["token_endpoint"], grant, marked=marked)
     with _locked():  # another process may be rotating a profile in the same file
         replaced = _read()["profiles"].get(profile)
-        _save(profile, server, tokens, session=secrets.token_hex(8))
+        _save(
+            profile,
+            server,
+            _json(answer),
+            session=secrets.token_hex(8),
+            marked=_SESSIONS_HEADER in answer.headers,
+        )
     if replaced:  # the session this sign-in replaces ends too, on its own server
         _end_session(replaced)
     info = whoami(profile=profile)
@@ -290,7 +306,9 @@ def login(
     return info
 
 
-def _poll(client: httpx.Client, token_endpoint: str, grant: dict[str, Any]) -> dict[str, Any]:
+def _poll(
+    client: httpx.Client, token_endpoint: str, grant: dict[str, Any], *, marked: bool
+) -> httpx.Response:
     interval = int(grant.get("interval", 5))
     deadline = time.monotonic() + int(grant.get("expires_in", 600))
     while time.monotonic() < deadline:
@@ -311,8 +329,8 @@ def _poll(client: httpx.Client, token_endpoint: str, grant: dict[str, Any]) -> d
         if r.status_code >= 500:
             continue
         if r.status_code == 200:
-            return _json(r)
-        if _SESSIONS_HEADER not in r.headers:
+            return r
+        if marked and _SESSIONS_HEADER not in r.headers:
             continue  # a previous build's: the grant lives on the one that started it
         error = _oauth_error(r)
         if error == "authorization_pending":
@@ -352,7 +370,8 @@ def _refresh(profile: str, refused: str, server: str | None) -> dict[str, Any]:
         "client_id": CLIENT_ID,
     }
     with _server(entry["server"]) as client:
-        endpoint = _endpoints(client, signed_in=True)["token_endpoint"]
+        marked = bool(entry.get("marked"))
+        endpoint = _endpoints(client, signed_in=marked)["token_endpoint"]
         try:
             r = client.post(endpoint, data=form, timeout=_REFRESH_TIMEOUT_S)
         except (httpx.ConnectError, httpx.ConnectTimeout):
@@ -360,7 +379,7 @@ def _refresh(profile: str, refused: str, server: str | None) -> dict[str, Any]:
             # (A lost answer cannot be asked again: the server spent the token,
             # and presenting it twice ends the session.)
             r = client.post(endpoint, data=form, timeout=_REFRESH_TIMEOUT_S)
-    if r.status_code != 200 and _SESSIONS_HEADER not in r.headers and r.status_code < 500:
+    if marked and 400 <= r.status_code < 500 and _SESSIONS_HEADER not in r.headers:
         raise BackendUnavailable(
             f"{entry['server']} answered from a build that predates this session; retry"
         )
@@ -376,7 +395,13 @@ def _refresh(profile: str, refused: str, server: str | None) -> dict[str, Any]:
     if r.status_code != 200:
         # A 503 spent nothing (the identity provider could not be asked): retry later.
         raise _failed(r, f"refreshing the session at {entry['server']}")
-    _save(profile, entry["server"], _json(r), session=entry.get("session", ""))
+    _save(
+        profile,
+        entry["server"],
+        _json(r),
+        session=entry.get("session", ""),
+        marked=_SESSIONS_HEADER in r.headers,
+    )
     return dict(_read()["profiles"][profile])
 
 

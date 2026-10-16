@@ -258,9 +258,10 @@ before adopting accounts or relying on a logout or a bot disable.
 
 A browser sign-in whose steps land on both builds (a code exchanged, an
 identity provider's callback) fails and is started again. The SDK and `loom
-login` ride it out: this build marks its token answers with a `Loom-Sessions`
-header, so a refusal without it is the previous build's, and they keep the
-session (a refresh says retry) or keep polling (a device sign-in). Roll
+login` ride it out: this build marks its token and device sign-in answers with
+a `Loom-Sessions` header, so once a server has sent it, a refusal without it is
+the previous build's, and they keep the session (a refresh says retry) or keep
+polling (a device sign-in). A proxy that strips the header only loses this. Roll
 the upgrade quickly so few sign-ins span it: with the Helm chart, a surge of
 the whole replica count at once.
 

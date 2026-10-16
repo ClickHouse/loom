@@ -89,11 +89,8 @@ def test_a_name_the_trust_did_not_make_is_refused(world) -> None:
 
 
 def test_a_released_agent_namespace_is_not_made_again(world) -> None:
-    world["rows"]["fleet-a1"] = {
-        "active": False,
-        "tags": ["machine:fleet"],
-        "owner_email": "sa:fleet:a1",
-    }
+    # As release_claim leaves it: inactive, its owner cleared.
+    world["rows"]["fleet-a1"] = {"active": False, "tags": ["machine:fleet"], "owner_email": ""}
     with pytest.raises(machines.Refused, match="released"):
         _ensure()
 
@@ -181,3 +178,5 @@ def test_the_repair_holds_the_grants_claim(world, monkeypatch) -> None:
     _ensure()
     assert held == [("acme", "fleet-a1", "sa:fleet:a1")]
     assert world["granted"] == [("acme", "fleet-a1", "sa:fleet:a1")]
+    _ensure()  # granted now: an exchange takes no claim for it
+    assert held == [("acme", "fleet-a1", "sa:fleet:a1")]

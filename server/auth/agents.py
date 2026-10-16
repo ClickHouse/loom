@@ -73,11 +73,14 @@ async def ensure_namespace(m: machines.Machine, agent: str) -> str:
         if row is not None:
             # Only the trust provisions its tag (a caller's is dropped at
             # register), and only for the agent it names.
-            if tag(m["name"]) not in row["tags"] or row["owner_email"] != who:
+            if tag(m["name"]) not in row["tags"]:
                 raise machines.Refused("invalid_grant", f"{org}/{ns} is not this trust's")
-            if not row["active"]:
+            if not row["active"]:  # a release clears its owner too
                 raise machines.Refused("invalid_grant", f"{org}/{ns} was released")
-            await _finish_grant(org, ns, who)
+            if row["owner_email"] != who:
+                raise machines.Refused("invalid_grant", f"{org}/{ns} is not this trust's")
+            if not await _granted(org, ns, who):
+                await _finish_grant(org, ns, who)
         else:
             # The trust's own claim: two new agents at once must not both see room.
             async with bot_change(m["name"]):
@@ -109,19 +112,24 @@ async def ensure_namespace(m: machines.Machine, agent: str) -> str:
     return ns
 
 
+async def _granted(org: str, ns: str, who: str) -> bool:
+    """Whether the agent's owner grant was ever written; revoked, it leaves a row."""
+    row = await get_client().query_one(
+        "SELECT 1 AS x FROM loom.namespace_grants WHERE org = {org:String} "
+        "AND namespace = {ns:String} AND subject = {who:String} LIMIT 1",
+        params={"org": org, "ns": ns, "who": who},
+    )
+    return row is not None
+
+
 async def _finish_grant(org: str, ns: str, who: str) -> None:
-    """The agent's owner grant, if never written, held as a grant change is
-    held from its read to its write, so a revocation is never written over."""
+    """The agent's owner grant, held as a grant change is held from its read
+    to its write, so a revocation is never written over."""
     from server.auth.grant_claims import grant_change
     from server.auth.self_signup import insert_owner_grant
 
     async with grant_change(org, ns, who):
-        row = await get_client().query_one(
-            "SELECT 1 AS x FROM loom.namespace_grants WHERE org = {org:String} "
-            "AND namespace = {ns:String} AND subject = {who:String} LIMIT 1",
-            params={"org": org, "ns": ns, "who": who},
-        )
-        if row is None:
+        if not await _granted(org, ns, who):
             await insert_owner_grant(org, ns, who)
 
 

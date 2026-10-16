@@ -738,3 +738,18 @@ def test_a_refused_refresh_presented_again_is_no_theft(monkeypatch) -> None:
     assert not [
         kw for name, kw in events if kw.get("subject", {}).get("reason") == "refresh token replayed"
     ]
+
+
+def test_every_token_answer_says_this_build_keeps_sessions() -> None:
+    # The SDK takes a refusal without it for a previous build's, mid-upgrade.
+    from types import SimpleNamespace
+
+    c = _client()
+    answers = [
+        _refresh(c, _refresh_token_for_alice(c)),
+        _refresh(c, "not-a-token"),
+        c.post("/oauth/token", data={"grant_type": "password"}),
+        oauth._busy_response(SimpleNamespace(url=SimpleNamespace(path="/oauth/token")), OSError()),
+    ]
+    assert [r.status_code for r in answers] == [200, 400, 400, 503]
+    assert all(r.headers.get(oauth.SESSIONS_HEADER) == "1" for r in answers)

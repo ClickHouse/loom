@@ -141,7 +141,7 @@ async def device_authorization(request: Request) -> JSONResponse:
             "expires_in": _DEVICE_TTL,
             "interval": _INTERVAL,
         },
-        headers={"Cache-Control": "no-store"},
+        headers={"Cache-Control": "no-store", oauth.SESSIONS_HEADER: "1"},
     )
 
 

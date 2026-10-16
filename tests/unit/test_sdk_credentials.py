@@ -43,6 +43,7 @@ class _Server:
         self.refresh_ok = True
         self.n = 0
         self.while_revoking: Any = None  # run while a revoke is in flight
+        self.marks = True  # False: a proxy in front strips the Loom-Sessions header
 
     def tokens(self) -> dict[str, Any]:
         self.n += 1
@@ -50,7 +51,8 @@ class _Server:
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         r = self.answer(request)
-        if request.url.path == "/oauth/token" and not r.extensions.get("previous_build"):
+        marks = ("/oauth/token", "/oauth/device_authorization")
+        if self.marks and request.url.path in marks and not r.extensions.get("previous_build"):
             r.headers["Loom-Sessions"] = "1"  # as this build signs its answers
         return r
 
@@ -501,9 +503,13 @@ def test_a_previous_build_without_sign_in_keeps_the_session(server) -> None:
     from loom.errors import BackendUnavailable
 
     credentials.login(_SERVER, open_browser=False, echo=lambda _: None)
-    server.queued["/.well-known/oauth-authorization-server"] = [httpx.Response(404)]
-    with pytest.raises(BackendUnavailable, match="without sign-in"):
-        credentials.access_token(refused="a1")
+    server.queued["/.well-known/oauth-authorization-server"] = [
+        httpx.Response(404),  # no sign-in
+        httpx.Response(200, json={"token_endpoint": f"{_SERVER}/oauth/token"}),  # MCP only
+    ]
+    for _ in range(2):
+        with pytest.raises(BackendUnavailable, match="without `loom login`"):
+            credentials.access_token(refused="a1")
     assert credentials.access_token(refused="a1") == "a2"
 
 
@@ -515,6 +521,18 @@ def test_login_keeps_polling_through_a_previous_build_s_answers(server, monkeypa
     ]
     credentials.login(_SERVER, open_browser=False, echo=lambda _: None)
     assert _stored()["profiles"]["default"]["access_token"]
+
+
+def test_behind_a_proxy_that_strips_the_mark_a_refusal_is_taken_as_it_is(server) -> None:
+    server.marks = False
+    credentials.login(_SERVER, open_browser=False, echo=lambda _: None)
+    server.refresh_ok = False
+    with pytest.raises(AuthInvalid, match="run `loom login`"):
+        credentials.access_token(refused=credentials._read()["profiles"]["default"]["access_token"])
+    assert credentials.stored_login(_SERVER) is None
+    server.queued["/oauth/token"] = [httpx.Response(400, json={"error": "access_denied"})]
+    with pytest.raises(AuthInvalid, match="denied"):
+        credentials.login(_SERVER, open_browser=False, echo=lambda _: None)
 
 
 def test_a_session_that_did_end_is_still_given_up(server) -> None:
@@ -533,3 +551,10 @@ def test_a_replay_s_warning_is_kept(server) -> None:
     ]
     with pytest.raises(AuthInvalid, match="service_accounts"):
         credentials.access_token(refused=credentials._read()["profiles"]["default"]["access_token"])
+
+
+def test_a_refresh_answered_without_the_mark_still_rotates(server) -> None:
+    # The server spent the old token: its answer is kept whatever its headers.
+    credentials.login(_SERVER, open_browser=False, echo=lambda _: None)
+    server.marks = False
+    assert credentials.access_token(refused="a1") == "a2"

@@ -77,9 +77,9 @@ class OAuthError(Exception):
         self.headers = headers or {}
 
 
-# On every sign-in answer of a build that keeps sessions: a client told
-# invalid_grant without it heard a previous build mid-upgrade, which knows
-# none, and keeps its session to ask again.
+# On every token and device sign-in answer of a build that keeps sessions: a
+# client that has seen it, told invalid_grant without it, heard a previous
+# build mid-upgrade, which knows none, and keeps its session to ask again.
 SESSIONS_HEADER = "Loom-Sessions"
 
 
