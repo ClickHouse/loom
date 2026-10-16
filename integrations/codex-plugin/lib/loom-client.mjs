@@ -128,10 +128,13 @@ export function loomConfig() {
   return _loomConfigCache;
 }
 
-/** Resolve the Loom bearer token: env, then ~/.loom/config.json, then ~/.loom/token. */
+/** Resolve the Loom bearer token: env, an agent's exchanged token, then
+ *  ~/.loom/config.json, then ~/.loom/token. */
 export function resolveToken() {
   const fromEnv = (process.env.LOOM_API_KEY || "").trim();
   if (fromEnv) return fromEnv;
+  const fromAgent = agentToken();
+  if (fromAgent) return fromAgent;
   // The plugin's install-time option: Claude Code exports
   // `userConfig` values to hook processes as CLAUDE_PLUGIN_OPTION_<KEY>.
   const fromOption = (process.env.CLAUDE_PLUGIN_OPTION_TOKEN || "").trim();
@@ -145,6 +148,55 @@ export function resolveToken() {
     // no token file; caller decides whether to no-op
   }
   return "";
+}
+
+// --- an agent with no Loom token of its own ------------------------------------
+// LOOM_CLIENT_ID names a workload trust (`loom bot create --agent-claim`), and
+// LOOM_WORKLOAD_TOKEN or LOOM_WORKLOAD_TOKEN_FILE holds the OIDC token the
+// agent's control plane issued it. bin/loom-agent-token.mjs exchanges that for
+// an hour-long Loom token (RFC 8693) and saves it here, so nothing long-lived
+// sits on the agent's machine.
+
+export function agentTokenPath(env = process.env) {
+  return join(env.HOME || homedir(), ".loom", "agent-token.json");
+}
+
+export function agentMode(env = process.env) {
+  return Boolean(env.LOOM_CLIENT_ID && (env.LOOM_WORKLOAD_TOKEN || env.LOOM_WORKLOAD_TOKEN_FILE));
+}
+
+// Renewed halfway through its life (at most five minutes before it runs out,
+// as a workload token may live only minutes); used to its last half-minute if
+// Loom is away.
+const AGENT_RENEW_S = 300;
+const AGENT_LAST_S = 30;
+
+/** The saved token for this trust and server with more than `minLeft(ttl)`
+ *  seconds left, else "". */
+export function savedAgentToken(minLeft, { env = process.env, now = Date.now() / 1000 } = {}) {
+  const saved = readConfigFile(agentTokenPath(env));
+  const ours = saved.client_id === env.LOOM_CLIENT_ID && saved.server === resolveServerUrl();
+  const left = Number(saved.exp) - now;
+  return ours && left > minLeft(Number(saved.ttl) || 0) ? String(saved.token || "") : "";
+}
+
+/** In agent mode, the saved token, renewed first when it is due. */
+export function agentToken({ env = process.env, renew = renewAgentToken } = {}) {
+  if (!agentMode(env)) return "";
+  const fresh = savedAgentToken((ttl) => Math.min(AGENT_RENEW_S, ttl / 2 || AGENT_RENEW_S), { env });
+  if (fresh) return fresh;
+  renew(env);
+  return savedAgentToken(() => AGENT_LAST_S, { env });
+}
+
+function renewAgentToken(env) {
+  // A child, so every caller stays synchronous; at most once an hour.
+  const script = new URL("../bin/loom-agent-token.mjs", import.meta.url);
+  try {
+    execFileSync(process.execPath, [script.pathname], { env, timeout: 3000, stdio: "ignore" });
+  } catch {
+    // Loom away or the workload token refused: what is saved still serves.
+  }
 }
 
 // A plugin may ship `plugin-defaults.json` at its root

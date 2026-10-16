@@ -63,7 +63,10 @@ account keeps its subject, grants, namespaces and data; no new one is made.
 - **Right after turning SSO on**, link your people's accounts in one go:
   `loom sso adopt --domain example.com` lists the password accounts at that
   domain with their owners, and `--apply` links them (it refuses while SSO is
-  off: the passwords would still sign in, past the revocation below). It vouches that the
+  off: the passwords would still sign in, past the revocation below). It reads
+  the settings of where it runs, so run it with the servers' (inside their
+  container, or with the same environment), or call `/v1/admin/sso.adopt`,
+  which a running server answers. It vouches that the
   domain's addresses are the provider's people, so read the list: an address
   someone else registered is linked too. It skips an email whose accounts are
   in several orgs or have several owners, or that SSO already reaches. It
@@ -134,6 +137,37 @@ with more than one admin, registered first, in one org); its tokens are for
   client in the job exchanges it as often as it needs while it is valid, and
   Loom's token never outlives it.
 
+- **Many agents, one trust.** A control plane that issues each agent its own
+  OIDC token registers one trust for all of them. `--agent-claim` names the
+  claim that says which agent a token is for (letters, digits and `-`). Each
+  agent gets the subject `sa:<trust>:<agent>` and its own namespace
+  `<trust>-<agent>` in the trust's org, made on its first exchange. The
+  `--namespace-role`s are what every agent shares besides its own. The trust
+  never reaches a namespace it did not make, and a claim never picks the org.
+  `--owner-claim` names the claim carrying the agent's owner's email: that
+  person, when they have an account in the org, gets admin on the agent's
+  namespace.
+
+  ```bash
+  loom bot create --name fleet --org acme --issuer https://issuer.example \
+    --audience loom --claim tenant_id=acme-prod --agent-claim agent_id \
+    --jwks-uri https://keys.issuer.example/jwks.json
+  # on each agent: its token in a file, renewed by the control plane
+  LOOM_CLIENT_ID=fleet LOOM_WORKLOAD_TOKEN_FILE=/run/agent/oidc-token python agent.py
+  ```
+
+  A claim such as `tenant_id` (or `sub=tenants/acme-prod/*`) keeps one trust
+  to one tenant, so each tenant's agents land in their own org. `--jwks-uri`
+  names where the issuer publishes its keys when its discovery document is not
+  reachable from Loom. A token that lives minutes is fine: Loom's never
+  outlives it, and the SDK and the coding-agent plugins renew halfway through.
+  Instead of the agent holding its token, a proxy in front of it can make the
+  same exchange and add the `Authorization` header itself.
+
+  Disabling the trust ends every agent's token; `loom revoke-token --subject
+sa:fleet:<agent>` ends one agent's, and `loom claim-release` frees its
+  namespace for good (that agent is refused after).
+
 - `loom bot list` shows them; `loom bot disable --name …` refuses every later
   proof and revokes the tokens the bot holds, and `loom bot create --replace`
   (a new key, fewer roles) revokes them too. A platform admin does the same
@@ -182,7 +216,7 @@ person's offboarding, so long-running bots use one of the above.
   ended session writes an `auth.*` row to the audit log:
   `auth.sso_signin`, `auth.signin_denied`, `auth.device_approved`,
   `auth.device_denied`, `auth.connect_approved`, `auth.connect_denied`,
-  `auth.jit_provisioned`, `auth.sso_linked`, `auth.sso_unlinked`, `auth.sso_link_declined`, `auth.password_set`, `auth.machine_created`, `auth.machine_token`, `auth.machine_disabled`,
+  `auth.jit_provisioned`, `auth.sso_linked`, `auth.sso_unlinked`, `auth.sso_link_declined`, `auth.password_set`, `auth.machine_created`, `auth.machine_token`, `auth.machine_disabled`, `auth.agent_provisioned`,
   `auth.session_revoked`.
 
 ## Behind a proxy

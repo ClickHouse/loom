@@ -54,6 +54,9 @@ def calls(monkeypatch) -> list[tuple[str, Any]]:
                 "issuer": "",
                 "audience": "",
                 "claims": {},
+                "agent_claim": "",
+                "owner_claim": "",
+                "jwks_uri": "",
                 "updated_by": "cli:root",
             }
         ]
@@ -189,3 +192,27 @@ def test_a_password_link_is_absolute_without_an_issuer_set(calls, monkeypatch) -
     monkeypatch.setattr(admin_account_routes.oauth.settings, "public_base_url", "")
     link = _client().post("/v1/admin/sso.password_link", json={"email": "lee@acme.io"}).json()
     assert link["url"] == "http://testserver/oauth/set-password?code=the-code"
+
+
+def test_a_bot_whose_claim_was_never_had_hands_out_no_key(calls, monkeypatch) -> None:
+    from server.auth.grant_claims import NotClaimed
+    from server.core.errors import GrantBusyError
+
+    for refusal in (GrantBusyError("another change to the bot t is running"), NotClaimed("x")):
+
+        async def not_had(
+            bot: Any, *, by: str, replace: bool, refusal: Exception = refusal
+        ) -> None:
+            raise refusal
+
+        monkeypatch.setattr(account_admin, "create_bot", not_had)
+        with pytest.raises(type(refusal)):
+            _client().post(
+                "/v1/admin/bots.create",
+                json={
+                    "name": "t",
+                    "org": "acme",
+                    "namespace_roles": ["t=writer"],
+                    "generate_key": True,
+                },
+            )

@@ -249,3 +249,45 @@ def test_two_creates_at_once_make_one_bot(world, monkeypatch) -> None:
 
     outcomes = asyncio.run(both())
     assert sorted(type(o).__name__ for o in outcomes) == ["NoneType", "ValueError"]
+
+
+def test_an_agent_trust_needs_a_workload_trust_and_may_share_nothing() -> None:
+    trust = {"issuer": "https://ci.example", "audience": "loom", "claims": ["aud=loom"]}
+    fleet = account_admin.bot_from(
+        name="fleet", org="acme", namespace_roles=[], agent_claim="sub", **trust
+    )
+    assert fleet["agent_claim"] == "sub" and fleet["ns_roles"] == []
+    for wrong in (
+        {"public_key_pem": _KEY, "agent_claim": "sub"},  # a key is one bot
+        {"owner_claim": "email", **trust},  # an owner of no agents
+        {"public_key_pem": _KEY},  # a plain bot still names a namespace
+        {"jwks_uri": "http://keys.example/jwks.json", "agent_claim": "sub", **trust},
+    ):
+        with pytest.raises(ValueError):
+            account_admin.bot_from(name="fleet", org="acme", namespace_roles=[], **wrong)
+
+
+def test_a_replace_running_meanwhile_cannot_undo_a_disable(world, monkeypatch) -> None:
+    asyncio.run(account_admin.create_bot(_bot(["triage=writer"]), by="ops", replace=False))
+    free_get, free_save = machines.get, machines.save
+    steps: list[str] = []
+
+    async def slow_get(name: str, **kw: Any) -> Any:
+        steps.append("read")
+        found = await free_get(name, **kw)
+        await asyncio.sleep(0.01)  # the other change runs here, unless it waits its turn
+        return found
+
+    async def save(m: Any, **kw: Any) -> None:
+        steps.append("write")
+        await free_save(m, **kw)
+
+    monkeypatch.setattr(machines, "get", slow_get)
+    monkeypatch.setattr(machines, "save", save)
+
+    async def both() -> None:
+        replace = account_admin.create_bot(_bot(["triage=viewer"]), by="ops", replace=True)
+        await asyncio.gather(replace, account_admin.disable_bot("triage", by="ops"))
+
+    asyncio.run(both())
+    assert steps == ["read", "write", "read", "write"]  # one after the other, never interleaved

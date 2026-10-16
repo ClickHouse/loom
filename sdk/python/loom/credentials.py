@@ -273,11 +273,11 @@ def login(
             with contextlib.suppress(webbrowser.Error):
                 webbrowser.open(grant["verification_uri_complete"])
         tokens = _poll(client, meta["token_endpoint"], grant)
-    replaced = _read()["profiles"].get(profile)
+    with _locked():  # another process may be rotating a profile in the same file
+        replaced = _read()["profiles"].get(profile)
+        _save(profile, server, tokens, session=secrets.token_hex(8))
     if replaced:  # the session this sign-in replaces ends too, on its own server
         _end_session(replaced)
-    with _locked():  # another process may be rotating a profile in the same file
-        _save(profile, server, tokens, session=secrets.token_hex(8))
     info = whoami(profile=profile)
     # Said every time: a code someone else approved signs you in as them.
     echo(f"Signed in to {server} as {info.get('subject')} ({info.get('org')}).")

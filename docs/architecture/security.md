@@ -376,6 +376,18 @@ outlive it. The cutoffs an operator action writes (a bot replaced or disabled, a
 adopted) sit in their own revocation row beside the subject's, so an outright revocation
 written at any moment is never replaced by one.
 
+**Agents of one trust** (`server/auth/agents.py`). A workload trust with an agent claim
+issues each agent its own subject, `sa:<trust>:<agent>`, and namespace, `<trust>-<agent>`:
+the claim's value is used as given (lower-case letters, digits, `-`) or refused, never
+rewritten into another agent's name. The namespace is made on the agent's first exchange
+under the account's claim, tagged `machine:<trust>`, and only a namespace carrying that tag
+is ever reached: an agent claim cannot name a person's namespace, another trust's or a
+released one, and the org is the trust's. An agent's token names the trust as its parent
+subject, so the trust's disable cutoff ends every agent's. The trust's issuer is trusted
+for every agent name it signs, and with an owner claim for the owner's email too: that
+person gets admin on the agent's namespace (never the reverse), so register an owner claim
+only for an issuer that asserts it.
+
 **Unauthenticated routes.** Sign-up and password sign-in are rate-limited
 (`server/auth/attempts.py`) per client address (the connection's peer, which uvicorn
 replaces with the `X-Forwarded-For` client only when the peer is in

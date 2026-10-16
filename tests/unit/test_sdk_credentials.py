@@ -455,9 +455,13 @@ def test_a_child_forked_mid_refresh_can_still_refresh() -> None:
 
 
 def test_signing_in_elsewhere_ends_the_session_it_replaces(server, monkeypatch) -> None:
-    ended: list[str] = []
-    monkeypatch.setattr(credentials, "_end_session", lambda entry: ended.append(entry["server"]))
+    ended: list[tuple[str, str]] = []
+
+    def end(entry: dict[str, Any]) -> None:  # the new session is saved by then
+        ended.append((entry["server"], credentials._read()["profiles"]["default"]["server"]))
+
+    monkeypatch.setattr(credentials, "_end_session", end)
     old = {"access_token": "old", "refresh_token": "rold", "expires_in": 3600}
     credentials._save("default", "https://old.example", old, session="s0")
     credentials.login(_SERVER, open_browser=False, echo=lambda _: None)
-    assert ended == ["https://old.example"]  # not left running there for 30 days
+    assert ended == [("https://old.example", _SERVER)]  # not left running there for 30 days

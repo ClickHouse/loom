@@ -51,6 +51,11 @@ class Machine(TypedDict):
     issuer: str
     audience: str
     claims: dict[str, str]
+    # A trust that tells agents apart (server/auth/agents.py); '' for one bot.
+    agent_claim: str
+    owner_claim: str
+    # Where the issuer publishes its keys; '' = its OIDC discovery says.
+    jwks_uri: str
 
 
 class Refused(Exception):
@@ -65,13 +70,13 @@ def subject(name: str) -> str:
     return f"sa:{name}"
 
 
-async def get(name: str, *, active_only: bool = True) -> Machine | None:
+async def get(name: str, *, active_only: bool = True, ch: Any = None) -> Machine | None:
     """The machine identity `name` (only an active one, unless `active_only` is
     off for an operator finishing a disable), read as of every write that
     landed: a replica a moment behind must not mint for a bot just disabled."""
     active = " AND active = 1" if active_only else ""
     with own_write_reads():
-        row = await get_client().query_one(
+        row = await (ch or get_client()).query_one(
             f"SELECT * FROM {TABLE} FINAL WHERE name = {{name:String}}{active}",
             params={"name": name},
         )
@@ -85,6 +90,9 @@ async def get(name: str, *, active_only: bool = True) -> Machine | None:
         "issuer": row["issuer"],
         "audience": row["audience"],
         "claims": dict(row["claims"]),
+        "agent_claim": row["agent_claim"],
+        "owner_claim": row["owner_claim"],
+        "jwks_uri": row["jwks_uri"],
     }
 
 
@@ -102,23 +110,46 @@ async def live_roles(m: Machine) -> list[tuple[str, str]]:
     return [(ns, role) for ns, role in m["ns_roles"] if ns in active]
 
 
+async def forget_namespace(org: str, namespace: str, by: str, *, ch: Any = None) -> list[str]:
+    """Drop (org, namespace) from every active bot naming it: it was released,
+    and a next holder of the name is not who the bot was made for. Returns the
+    bots changed."""
+    ch = ch or get_client()
+    with own_write_reads():
+        rows = await ch.query_all(
+            f"SELECT name FROM {TABLE} FINAL WHERE org = {{org:String}} AND active = 1 "
+            "AND arrayExists(r -> r.1 = {ns:String}, ns_roles)",
+            params={"org": org, "ns": namespace},
+        )
+    changed = []
+    for r in rows:
+        m = await get(r["name"], ch=ch)
+        if m is not None:
+            m["ns_roles"] = [(ns, role) for ns, role in m["ns_roles"] if ns != namespace]
+            await save(m, by=by, ch=ch)
+            changed.append(m["name"])
+    return changed
+
+
 async def listed() -> list[dict[str, Any]]:
     return await get_client().query_all(
         f"SELECT name, org, ns_roles, public_keys != '' AS has_key, issuer, audience, claims, "
-        f"active, updated_by, updated_at FROM {TABLE} FINAL ORDER BY name"
+        f"agent_claim, owner_claim, jwks_uri, active, updated_by, updated_at FROM {TABLE} FINAL "
+        "ORDER BY name"
     )
 
 
-async def save(m: Machine, *, by: str, active: bool = True) -> None:
+async def save(m: Machine, *, by: str, active: bool = True, ch: Any = None) -> None:
     # Past the name's newest row, whichever replica's clock wrote it: under
     # FINAL a later change with a lower version would be lost.
+    ch = ch or get_client()
     with own_write_reads():
-        row = await get_client().query_one(
+        row = await ch.query_one(
             f"SELECT max(version) AS v FROM {TABLE} WHERE name = {{name:String}}",
             params={"name": m["name"]},
         )
     version = max(time.time_ns(), int((row or {}).get("v") or 0) + 1)
-    await get_client().insert(
+    await ch.insert(
         TABLE,
         [
             {
@@ -188,7 +219,7 @@ async def verify_workload(token: str, name: str) -> tuple[Machine, dict[str, Any
     from server.auth import oidc
 
     try:
-        jwks_uri = await _jwks_uri(m["issuer"])
+        jwks_uri = m["jwks_uri"] or await _jwks_uri(m["issuer"])
         key = await asyncio.to_thread(oidc.signing_key, jwks_uri, token)
         claims: dict[str, Any] = jwt.decode(
             token,

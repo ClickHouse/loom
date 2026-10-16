@@ -1780,7 +1780,10 @@ CREATE TABLE IF NOT EXISTS loom.machine_identities
     `active` UInt8,
     `updated_by` String,
     `updated_at` DateTime64(3, 'UTC'),
-    `version` UInt64
+    `version` UInt64,
+    `agent_claim` String DEFAULT '',
+    `owner_claim` String DEFAULT '',
+    `jwks_uri` String DEFAULT ''
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY name

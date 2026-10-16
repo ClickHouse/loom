@@ -55,8 +55,8 @@ class _FakeCH:
         return {"c": 1}
 
     async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
-        if "sso_links" in sql:
-            return []  # no SSO links to drop
+        if "sso_links" in sql or "machine_identities" in sql:
+            return []  # no SSO links or bots to drop
         return [{"subject": "alice@acme.test", "role": "admin", "granted_by": "alice@acme.test"}]
 
     async def insert(self, table: str, rows: list[dict[str, Any]], settings: Any = None) -> None:

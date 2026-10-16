@@ -24,6 +24,9 @@ def _args(key: Path) -> argparse.Namespace:
         issuer="",
         audience="",
         claim=[],
+        jwks_uri="",
+        agent_claim="",
+        owner_claim="",
         replace=False,
     )
 

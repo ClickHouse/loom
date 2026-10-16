@@ -48,6 +48,8 @@ class _CH:
     async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
         if "sso_links" in sql:
             return [{"email": "alice@example.com"}]  # linked for SSO before the release
+        if "machine_identities" in sql:
+            return []  # no bot names the namespace
         return [{"subject": "alice", "role": "admin", "granted_by": "alice"}]
 
     async def insert(self, table: str, rows: list[dict[str, Any]], **k: Any) -> None:
@@ -143,3 +145,22 @@ def test_auth_off_releases_as_local(env: Any, monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(settings, "identity_provider", "single-user")
     _, ch = run("")
     assert ch.inserts["loom.namespaces"][0]["description"].startswith("Released by local")
+
+
+def test_a_release_ends_the_tokens_of_the_bots_and_agent_it_reached(monkeypatch) -> None:
+    from server.auth import machines
+    from server.identity.app import account_admin
+
+    ended: list[str] = []
+
+    async def forget(org: str, ns: str, by: str, *, ch: Any) -> list[str]:
+        return ["triage"]
+
+    async def end_tokens(subject: str, *, by: str, reason: str) -> Any:
+        ended.append(subject)
+
+    monkeypatch.setattr(machines, "forget_namespace", forget)
+    monkeypatch.setattr(account_admin, "end_tokens", end_tokens)
+    row = {"tags": ["machine:fleet"], "owner_email": "sa:fleet:a1"}
+    asyncio.run(cr._forget_machines("acme", "fleet-a1", row, "root", ch=None))
+    assert ended == ["sa:triage", "sa:fleet:a1"]

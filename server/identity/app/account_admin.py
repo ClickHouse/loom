@@ -86,7 +86,10 @@ async def adopt(plan: list[dict[str, Any]], *, by: str, keep_tokens: bool) -> in
     on: before, the account's password still signs in, and whoever registered
     the address would mint a token past the cutoff."""
     if settings.oauth_login_provider != "oidc":
-        raise ValueError("turn SSO on first (LOOM_OAUTH_LOGIN_PROVIDER=oidc), then adopt")
+        raise ValueError(
+            "turn SSO on first (LOOM_OAUTH_LOGIN_PROVIDER=oidc), then adopt with the "
+            "servers' settings: where they run, or through /v1/admin/sso.adopt"
+        )
     adoptable: dict[str, list[dict[str, Any]]] = {}
     for a in plan:
         if not a["skip"]:
@@ -102,6 +105,8 @@ async def adopt(plan: list[dict[str, Any]], *, by: str, keep_tokens: bool) -> in
                 owner, issued_before=_after_this_second(), reason="sso adopt", revoked_by=by
             )
         live = await sso_links.link_live(email, [(org, a["namespace"]) for a in accounts], by)
+        if not live:
+            continue  # released meanwhile: nothing was linked
         linked += len(live)
         await audit.emit(
             "auth.sso_linked",
@@ -123,10 +128,10 @@ async def unlink(email: str, org: str = "", *, by: str) -> list[tuple[str, str]]
     """Stop new SSO sign-ins with `email` reaching its linked accounts (in `org`)."""
     accounts = [a for a in await sso_links.linked(email) if org in ("", a[0])]
     await sso_links.unlink(email, accounts, by)
-    for org, namespace in accounts:
+    for account_org, namespace in accounts:
         await audit.emit(
             "auth.sso_unlinked",
-            org=org,
+            org=account_org,
             namespace=namespace,
             actor=by,
             subject={"email": email.strip().lower()},
@@ -160,8 +165,13 @@ def bot_from(
     issuer: str = "",
     audience: str = "",
     claims: list[str] | None = None,
+    agent_claim: str = "",
+    owner_claim: str = "",
+    jwks_uri: str = "",
 ) -> machines.Machine:
-    """A bot from what an operator gave; ValueError says what is wrong."""
+    """A bot from what an operator gave; ValueError says what is wrong. With
+    `agent_claim`, a trust whose agents each get their own subject and
+    namespace (server/auth/agents.py); its namespace roles are what they share."""
     from server.auth.authz import GRANT_ROLES
 
     if not _BOT_NAME.fullmatch(name):
@@ -181,8 +191,11 @@ def bot_from(
         if not ns or "*" in ns or "," in ns or any(c.isspace() for c in ns):
             raise ValueError(f"a namespace role names one namespace, got {item!r}")
         ns_roles[ns] = role
-    if not ns_roles:
+    agent_claim, owner_claim = agent_claim.strip(), owner_claim.strip()
+    if not ns_roles and not agent_claim:
         raise ValueError("a bot needs at least one namespace role")
+    if owner_claim and not agent_claim:
+        raise ValueError("an owner claim belongs to a trust that tells agents apart")
     wanted: dict[str, str] = {}
     for item in claims or []:
         claim, sep, value = item.partition("=")
@@ -197,6 +210,11 @@ def bot_from(
         raise ValueError("a CI trust needs an https issuer, an audience and at least one claim")
     if not (trust or public_key_pem):
         raise ValueError("give the bot a public key or a CI trust")
+    jwks_uri = jwks_uri.strip()
+    if jwks_uri and not (trust and jwks_uri.startswith("https://")):
+        raise ValueError("a jwks_uri is the https address of a CI trust's issuer keys")
+    if agent_claim and (public_key_pem or not trust):
+        raise ValueError("an agent claim needs a workload trust and no key: a key is one bot")
     return {
         "name": name,
         "org": org,
@@ -205,6 +223,9 @@ def bot_from(
         "issuer": issuer,
         "audience": audience,
         "claims": wanted,
+        "agent_claim": agent_claim,
+        "owner_claim": owner_claim,
+        "jwks_uri": jwks_uri,
     }
 
 
@@ -229,7 +250,7 @@ async def create_bot(bot: machines.Machine, *, by: str, replace: bool) -> None:
         # The cutoff is taken after the save, so a request that read the old
         # row falls under it; returning once it has passed lets the new key's
         # first token live.
-        await _wait_until(await _end_tokens(name, by=by, reason="bot replaced"))
+        await _wait_until(await end_tokens(machines.subject(name), by=by, reason="bot replaced"))
     try:
         await audit.emit(
             "auth.machine_created",
@@ -245,22 +266,22 @@ async def create_bot(bot: machines.Machine, *, by: str, replace: bool) -> None:
 async def disable_bot(name: str, *, by: str) -> bool:
     """Refuse the bot's proofs and revoke the tokens it holds; False if there
     is no such bot. Run again, it finishes a disable that stopped part way."""
-    bot = await machines.get(name, active_only=False)
-    if bot is None:
-        return False
-    await machines.save(bot, by=by, active=False)
+    async with bot_change(name):  # a replace running now must not save it active again
+        bot = await machines.get(name, active_only=False)
+        if bot is None:
+            return False
+        await machines.save(bot, by=by, active=False)
     # Waited out, as a replace's is, so a bot made again at once is not refused.
-    await _wait_until(await _end_tokens(name, by=by, reason="bot disabled"))
+    await _wait_until(await end_tokens(machines.subject(name), by=by, reason="bot disabled"))
     await audit.emit(
         "auth.machine_disabled", org=bot["org"], namespace="-", actor=by, subject={"name": name}
     )
     return True
 
 
-async def _end_tokens(name: str, *, by: str, reason: str) -> datetime:
-    """Its tokens live an hour; revoked now, not when they run out. Returns the cutoff."""
+async def end_tokens(subject: str, *, by: str, reason: str) -> datetime:
+    """A bot's or an agent's tokens live an hour; revoked now, not when they
+    run out. Returns the cutoff."""
     cutoff = _from_now_on()
-    await revocation.cut_off(
-        machines.subject(name), issued_before=cutoff, reason=reason, revoked_by=by
-    )
+    await revocation.cut_off(subject, issued_before=cutoff, reason=reason, revoked_by=by)
     return cutoff

@@ -19,7 +19,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from server.auth import sso_links
+from server.auth import machines, sso_links
 from server.auth.authz import Role
 from server.auth.jwt import AuthInfo
 from server.core import grant_cache
@@ -163,6 +163,7 @@ async def _release(
     row["updated_at"] = max(now, existing.get("updated_at") or now)
     await ch.insert("loom.namespaces", [row])
     await sso_links.forget_account(org, namespace, actor_subject, ch=ch)
+    await _forget_machines(org, namespace, existing, actor_subject, ch)
     # The claim cap reads which accounts tie a person's spellings from this table.
     grant_cache.invalidate(org)
 
@@ -180,6 +181,21 @@ async def _release(
         previous_owner=previous_owner,
         grants_revoked=grants_count,
     )
+
+
+async def _forget_machines(
+    org: str, namespace: str, row: dict[str, Any], by: str, ch: CHClient
+) -> None:
+    """Bots naming the namespace lose it, and the tokens they hold now end; so do
+    an agent's, when it is the agent's own namespace (its owner is the agent)."""
+    from server.identity.app import account_admin
+
+    forgotten = await machines.forget_namespace(org, namespace, by, ch=ch)
+    ended = [machines.subject(name) for name in forgotten]
+    if any(str(t).startswith("machine:") for t in row.get("tags") or []):
+        ended.append(str(row.get("owner_email") or ""))
+    for subject in filter(None, ended):
+        await account_admin.end_tokens(subject, by=by, reason="namespace released")
 
 
 async def _may_release(info: AuthInfo, org: str, namespace: str) -> bool:

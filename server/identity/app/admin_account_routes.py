@@ -10,7 +10,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from server.auth import machines, oauth
+from server.auth.grant_claims import NotClaimed
 from server.auth.jwt import AuthInfo
+from server.core.errors import GrantBusyError
 from server.identity.app import account_admin
 from server.insights.app.admin_routes import require_admin
 
@@ -88,6 +90,9 @@ class BotInput(BaseModel):
     issuer: str = ""
     audience: str = ""
     claims: list[str] = []
+    agent_claim: str = ""
+    owner_claim: str = ""
+    jwks_uri: str = ""
     replace: bool = False
 
 
@@ -107,6 +112,9 @@ async def bots_create(input: BotInput, info: Admin) -> dict[str, Any]:
             issuer=input.issuer,
             audience=input.audience,
             claims=input.claims,
+            agent_claim=input.agent_claim,
+            owner_claim=input.owner_claim,
+            jwks_uri=input.jwks_uri,
         )
     except ValueError as e:
         raise _invalid(e) from None
@@ -117,6 +125,8 @@ async def bots_create(input: BotInput, info: Admin) -> dict[str, Any]:
         await account_admin.create_bot(bot, by=_by(info), replace=input.replace)
     except ValueError as e:
         raise _invalid(e) from None
+    except (GrantBusyError, NotClaimed):
+        raise  # its claim was not had: nothing is saved, so the key is worth nothing
     except Exception:  # it may be saved: its only key must not be lost
         if not private:
             raise
@@ -142,6 +152,9 @@ async def bots_list() -> dict[str, Any]:
                 "issuer": r["issuer"],
                 "audience": r["audience"],
                 "claims": dict(r["claims"]),
+                "agent_claim": r["agent_claim"],
+                "owner_claim": r["owner_claim"],
+                "jwks_uri": r["jwks_uri"],
                 "updated_by": r["updated_by"],
             }
             for r in rows

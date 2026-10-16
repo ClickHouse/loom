@@ -14,7 +14,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 
-from server.auth import machines, oauth, oidc, revocation
+from server.auth import agents, machines, oauth, oidc, revocation
 from tests.unit.oauth_store_fake import MemoryOAuthStore, oauth_app
 
 pytestmark = pytest.mark.filterwarnings("default")
@@ -47,7 +47,27 @@ def bots(monkeypatch) -> dict[str, Any]:
             "audience": "loom",
             "claims": {"repository": "acme/app", "ref": "refs/heads/*"},
         },
+        "fleet": {
+            "name": "fleet",
+            "org": "acme",
+            "ns_roles": [("docs", "viewer")],
+            "public_keys": "",
+            "issuer": CI,
+            "audience": "loom",
+            "claims": {"repository": "acme/app"},
+            "agent_claim": "agent_id",
+            "owner_claim": "owner",
+        },
     }
+    for m in registered.values():
+        m.setdefault("agent_claim", "")
+        m.setdefault("owner_claim", "")
+        m.setdefault("jwks_uri", "")
+    made: list[tuple[str, str, str]] = []
+
+    async def ensure_namespace(m: machines.Machine, agent: str, owner: str) -> str:
+        made.append((m["name"], agent, owner))
+        return f"{m['name']}-{agent}"
 
     async def get(name: str) -> machines.Machine | None:
         return registered.get(name)
@@ -68,11 +88,18 @@ def bots(monkeypatch) -> dict[str, Any]:
 
     monkeypatch.setattr(machines, "get", get)
     monkeypatch.setattr(machines, "live_roles", live_roles)
+    monkeypatch.setattr(agents, "ensure_namespace", ensure_namespace)
     monkeypatch.setattr(machines, "_jwks_uri", jwks_uri)
     monkeypatch.setattr(oidc, "signing_key", lambda uri, token: ci_key.public_key())
     monkeypatch.setattr(oauth.audit, "emit", emit)
     monkeypatch.setattr(revocation, "subjects_revoked", not_revoked)
-    return {"key": private, "ci_key": ci_key, "registered": registered, "active": active}
+    return {
+        "key": private,
+        "ci_key": ci_key,
+        "registered": registered,
+        "active": active,
+        "made": made,
+    }
 
 
 def _assertion(key: Any, **over: Any) -> str:
@@ -267,6 +294,9 @@ async def test_a_saved_bot_writes_every_column(monkeypatch) -> None:
         "issuer": "",
         "audience": "",
         "claims": {},
+        "agent_claim": "",
+        "owner_claim": "",
+        "jwks_uri": "",
     }
     await machines.save(bot, by="cli:root")
     await machines.save(bot, by="cli:root", active=False)
@@ -382,3 +412,54 @@ def test_a_slow_revocation_lookup_does_not_stretch_a_token_past_its_proof(
     r = _exchange(TestClient(oauth_app()), _ci_token(bots, exp=proof_exp))
     claims = pyjwt.decode(r.json()["access_token"], options={"verify_signature": False})
     assert claims["exp"] <= proof_exp and r.json()["expires_in"] <= proof_exp - int(clock[0])
+
+
+def test_each_agent_gets_its_own_subject_and_namespace(bots) -> None:
+    c = TestClient(oauth_app())
+    token = _ci_token(bots, agent_id="a1", owner="Lee@Acme.io")
+    r = _exchange(c, token, client_id="fleet")
+    assert r.status_code == 200
+    claims = pyjwt.decode(r.json()["access_token"], options={"verify_signature": False})
+    assert claims["sub"] == "sa:fleet:a1"
+    assert claims["ns_roles"] == {"fleet-a1": "writer", "docs": "viewer"}  # its own, then shared
+    assert claims["parent_subjects"] == ["sa:fleet"]  # disabling the trust ends it
+    assert bots["made"] == [("fleet", "a1", "lee@acme.io")]
+
+
+@pytest.mark.parametrize("agent", [None, "", "A1", "a/b", "-a", "a" * 64])
+def test_a_token_naming_no_agent_loom_takes_is_refused(bots, agent: str | None) -> None:
+    over = {} if agent is None else {"agent_id": agent}
+    r = _exchange(TestClient(oauth_app()), _ci_token(bots, **over), client_id="fleet")
+    assert r.status_code == 400 and r.json()["error"] == "invalid_grant"
+    assert bots["made"] == []
+
+
+def test_disabling_the_trust_ends_its_agents_tokens(bots) -> None:
+    from server.auth import revocation
+    from server.auth.jwt import TokenError, verify_token
+
+    r = _exchange(TestClient(oauth_app()), _ci_token(bots, agent_id="a1"), client_id="fleet")
+    token = r.json()["access_token"]
+    assert verify_token(token).subject == "sa:fleet:a1"
+    revocation._cut_off["sa:fleet"] = int(time.time()) + 1  # the cutoff a disable writes
+    with pytest.raises(TokenError):
+        verify_token(token)
+
+
+def test_a_trust_with_its_keys_address_skips_discovery(bots, monkeypatch) -> None:
+    # The issuer's discovery may be reachable only where it runs; its keys
+    # are published elsewhere.
+    fetched: list[str] = []
+
+    async def no_discovery(issuer: str) -> str:
+        raise AssertionError("discovery was asked")
+
+    def signing_key(uri: str, token: str) -> Any:
+        fetched.append(uri)
+        return bots["ci_key"].public_key()
+
+    bots["registered"]["fleet"]["jwks_uri"] = "https://keys.example/jwks.json"
+    monkeypatch.setattr(machines, "_jwks_uri", no_discovery)
+    monkeypatch.setattr(oidc, "signing_key", signing_key)
+    r = _exchange(TestClient(oauth_app()), _ci_token(bots, agent_id="a1"), client_id="fleet")
+    assert r.status_code == 200 and fetched == ["https://keys.example/jwks.json"]

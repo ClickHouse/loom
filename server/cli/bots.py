@@ -22,7 +22,9 @@ def register_bot_cli(sub: Any) -> None:
     p_create = bot.add_parser(
         "create",
         help="Register a bot: its namespaces, and a key (--generate-key or --public-key) "
-        "and/or a CI trust (--issuer, --audience, --claim). Its tokens are for sa:<name>.",
+        "and/or a CI trust (--issuer, --audience, --claim). Its tokens are for sa:<name>; "
+        "with --agent-claim, each agent the trust's tokens name gets sa:<name>:<agent> and "
+        "its own namespace <name>-<agent>.",
     )
     p_create.add_argument(
         "--name", required=True, help="Its client_id: lower-case letters, digits, '-'"
@@ -31,9 +33,10 @@ def register_bot_cli(sub: Any) -> None:
     p_create.add_argument(
         "--namespace-role",
         action="append",
-        required=True,
+        default=[],
         metavar="NS=ROLE",
-        help="viewer|writer|admin on a namespace (repeatable; first = searched first)",
+        help="viewer|writer|admin on a namespace (repeatable; first = searched first); "
+        "with --agent-claim, what every agent shares beside its own",
     )
     key = p_create.add_mutually_exclusive_group()
     key.add_argument(
@@ -57,6 +60,26 @@ def register_bot_cli(sub: Any) -> None:
         metavar="NAME=VALUE",
         help="CI trust: a claim the token must carry; VALUE ending in * matches a prefix "
         "(repeatable; at least one, e.g. sub=repo:org/repo:ref:refs/heads/main)",
+    )
+    p_create.add_argument(
+        "--jwks-uri",
+        default="",
+        help="CI trust: where the issuer publishes its keys (https), when its OIDC "
+        "discovery is not reachable from Loom",
+    )
+    p_create.add_argument(
+        "--agent-claim",
+        default="",
+        metavar="CLAIM",
+        help="CI trust: the claim naming the agent (e.g. sub); each agent gets its own "
+        "subject and namespace, made on its first sign-in",
+    )
+    p_create.add_argument(
+        "--owner-claim",
+        default="",
+        metavar="CLAIM",
+        help="With --agent-claim: the claim naming the agent's owner's email; that person, "
+        "when they have an account in the org, gets admin on the agent's namespace",
     )
     p_create.add_argument("--replace", action="store_true", help="Replace a bot of the same name")
     p_create.set_defaults(func=_cmd_create)
@@ -88,6 +111,9 @@ def _cmd_create(args: argparse.Namespace) -> int:
             issuer=args.issuer,
             audience=args.audience,
             claims=args.claim,
+            agent_claim=args.agent_claim,
+            owner_claim=args.owner_claim,
+            jwks_uri=args.jwks_uri,
         )
     except (OSError, ValueError) as e:
         return _fail(str(e))
@@ -124,6 +150,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
     async def _run(ch: Any) -> int:
         for r in await machines.listed():
             proofs = ["key"] * bool(r["has_key"]) + [f"CI {r['issuer']}"] * bool(r["issuer"])
+            proofs += [f"agents by {r['agent_claim']}"] * bool(r["agent_claim"])
             state = "active" if r["active"] else "disabled"
             roles = ", ".join(f"{ns}={role}" for ns, role in r["ns_roles"])
             print(f"  {r['name']:<24} {state:<8} {r['org']:<16} {roles:<40} {' + '.join(proofs)}")

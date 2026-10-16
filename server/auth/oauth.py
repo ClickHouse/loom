@@ -28,7 +28,7 @@ import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
-from server.auth import claims, machines, shielded, sso_links
+from server.auth import agents, claims, machines, shielded, sso_links
 from server.auth.attempts import Attempts, address_key, client_address
 from server.auth.delegation import SESSION_TTL
 from server.auth.jwt import AuthInfo, mint_token, new_jti
@@ -42,6 +42,7 @@ from server.auth.oauth_store import (
     OAuthStore,
     token_id,
 )
+from server.core.errors import BackendUnavailableError, GrantBusyError
 from server.core.secrets_at_rest import open_sealed, seal, unseal
 from server.observability import audit
 from server.settings import settings
@@ -1409,31 +1410,46 @@ async def _token_exchange_grant(f: dict[str, str]) -> dict[str, Any]:
     if f.get("subject_token_type") not in machines.SUBJECT_TOKEN_TYPES or not token:
         raise OAuthError("invalid_request", description="send the workload's OIDC token as a jwt")
     since = int(time.time())  # before the bot is read: see _machine_tokens
+    agent = own = ""
     try:
         m, proof = await machines.verify_workload(token, f.get("client_id", ""))
+        if m["agent_claim"]:
+            agent = agents.agent_of(m, proof)
+            owner = str(proof.get(m["owner_claim"], "")) if m["owner_claim"] else ""
+            own = await agents.ensure_namespace(m, agent, owner.strip().lower())
     except machines.Refused as e:
         raise _refused(e) from None
+    except (GrantBusyError, BackendUnavailableError):  # its first exchange, made elsewhere now
+        raise _unavailable() from None
     # The token never outlives the proof; `since` stays the issue time
     # revocation is judged by.
     ends = min(int(proof["exp"]), int(time.time()) + machines.TOKEN_TTL)
     issued = await _machine_tokens(
-        m, since, ends, {"by": "workload", "workload_sub": str(proof["sub"])}
+        m, since, ends, {"by": "workload", "workload_sub": str(proof["sub"])}, agent, own
     )
     return {**issued, "issued_token_type": "urn:ietf:params:oauth:token-type:access_token"}
 
 
 async def _machine_tokens(
-    m: machines.Machine, since: int, ends: int, how: dict[str, str]
+    m: machines.Machine,
+    since: int,
+    ends: int,
+    how: dict[str, str],
+    agent: str = "",
+    own: str = "",
 ) -> dict[str, Any]:
-    """The token for bot `m`, good until `ends` (epoch seconds). `since` was
-    taken before `m` was read, so a disable the read missed has a later
-    cutoff, and revokes this token."""
+    """The token for bot `m`, or for its `agent` on the agent's `own`
+    namespace, good until `ends` (epoch seconds). `since` was taken before `m`
+    was read, so a disable the read missed has a later cutoff, and revokes
+    this token. An agent's token names the trust as its parent: disabling the
+    trust ends every agent's."""
     from server.auth.revocation import subjects_revoked
 
-    subject = machines.subject(m["name"])
-    if await subjects_revoked([subject], issued_at=since):
+    trust = machines.subject(m["name"])
+    subject = agents.subject(m["name"], agent) if agent else trust
+    if await subjects_revoked([trust, subject], issued_at=since):
         raise OAuthError("invalid_client", 401, description="this bot is revoked")
-    ns_roles = await machines.live_roles(m)
+    ns_roles = ([(own, "writer")] if own else []) + await machines.live_roles(m)
     if not ns_roles:
         raise OAuthError(
             "invalid_client", 401, description="none of this bot's namespaces is active"
@@ -1451,6 +1467,8 @@ async def _machine_tokens(
         is_service_account=True,
         jti=jti,
         issued_at=since,
+        parent_subjects=[trust] if agent else None,
+        parent_iats=[since] if agent else None,
     )
     await audit.emit(
         "auth.machine_token",

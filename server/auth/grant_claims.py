@@ -30,6 +30,10 @@ CHANGE_S = 20.0
 _STATEMENT_S = 10
 
 
+class NotClaimed(BackendUnavailableError):
+    """The claim could not be taken: the change did not start."""
+
+
 def grant_change(org: str, namespace: str, subject: str) -> AbstractAsyncContextManager[None]:
     """Hold the grant row of (org, namespace, subject) from a read to its write."""
     return _claimed(
@@ -65,7 +69,7 @@ async def _claimed(name: str, what: str) -> AsyncIterator[None]:
     try:
         lease = await take(name, ttl_s=TTL_S, wait_s=WAIT_S, poll_s=0.05, poll_max_s=0.8)
     except LeaseUnavailable as e:
-        raise BackendUnavailableError(
+        raise NotClaimed(
             f"changes to {what} cannot be claimed; retry shortly", operation="grant_change"
         ) from e
     if lease is None:

@@ -281,7 +281,7 @@ python scripts/codegen/docs_reference.py
 | `loom sso unlink` | Undo the links of one email. | `--email`, `--apply`, `--dry-run` |
 | `loom sso password-link` | Print a one-time link (a day) that sets the password of an email's SSO accounts, for after single sign-on is turned off. | `--email`, `--org` |
 | `loom bot` | Bots and CI jobs that sign in with a key or their CI's identity. |  |
-| `loom bot create` | Register a bot: its namespaces, and a key (--generate-key or --public-key) and/or a CI trust (--issuer, --audience, --claim). | `--name`, `--org`, `--namespace-role`, `--generate-key`, `--public-key`, `--issuer`, `--audience`, `--claim`, `--replace` |
+| `loom bot create` | Register a bot: its namespaces, and a key (--generate-key or --public-key) and/or a CI trust (--issuer, --audience, --claim). | `--name`, `--org`, `--namespace-role`, `--generate-key`, `--public-key`, `--issuer`, `--audience`, `--claim`, `--jwks-uri`, `--agent-claim`, `--owner-claim`, `--replace` |
 | `loom bot list` | Every bot, active or disabled. |  |
 | `loom bot disable` | Refuse its proofs and revoke the tokens it holds. | `--name` |
 | `loom doctor` | Diagnose pre-boot misconfig (Python version, settings, JWT, CH reachability) and print the problem list /v1/health carries, each with its fix. | `--json`, `--client`, `--server-url`, `--token` |
