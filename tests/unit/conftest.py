@@ -723,3 +723,16 @@ def _clickhouse_preflight_passes() -> Iterator[None]:
     preflight.require_ready = lambda **_: ready  # type: ignore[assignment]
     yield
     preflight.require_ready = before  # type: ignore[assignment]
+
+
+@pytest.fixture(autouse=True)
+def _no_revocations_left_behind() -> Iterator[None]:
+    """A test's revocations stay in it: the process snapshot and the recent
+    local writes a later refresh would lay over its read."""
+    from server.auth import revocation
+
+    saved = (revocation._revoked_jtis, revocation._revoked_before, revocation._cut_off)
+    revocation._recent.clear()
+    yield
+    revocation._revoked_jtis, revocation._revoked_before, revocation._cut_off = saved
+    revocation._recent.clear()

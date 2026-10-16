@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import errno
 import json
 import os
 import secrets
@@ -85,7 +86,7 @@ def _write(data: dict[str, Any]) -> None:
 
 # The lock between this process's threads (async requests refresh on worker
 # threads); the file lock below is the one between processes.
-_in_process = threading.RLock()
+_in_process = threading.Lock()
 
 
 @contextlib.contextmanager
@@ -110,8 +111,9 @@ if sys.platform == "win32":
             try:
                 msvcrt.locking(fd, msvcrt.LK_LOCK, 1)  # retries for 10 s, then raises
                 return
-            except OSError:
-                continue
+            except OSError as e:
+                if e.errno not in (errno.EDEADLOCK, errno.EACCES):  # not just still held
+                    raise
 
     def _unlock_file(fd: int) -> None:
         msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)

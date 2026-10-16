@@ -412,27 +412,16 @@ async def me_service_accounts_revoke(
 
     # Also revoke the JWT itself. SA tokens carry no `jti`, so revoke by
     # `sub` (the sa_subject); verify_token checks both. Without this the
-    # token keeps authenticating until its TTL.
-    from server.auth.revocation import revocation_expiry
+    # token keeps authenticating until its TTL. Through `revoke`, so this
+    # replica holds it at once, whatever a refresh in flight reads.
+    from server.auth.revocation import revoke
 
-    revocation_expires = revocation_expiry(row.get("expires_at"), now)
-    await ch.insert(
-        "loom.revoked_tokens",
-        [
-            {
-                "jti": row["sa_subject"],
-                "revoked_at": now,
-                "expires_at": revocation_expires,
-                "reason": f"service_account.revoke name={name}",
-                "revoked_by": subject,
-            }
-        ],
+    await revoke(
+        str(row["sa_subject"]),
+        expires_at=row.get("expires_at"),
+        reason=f"service_account.revoke name={name}",
+        revoked_by=subject,
     )
-    # Refresh so this replica sees the revocation immediately; other
-    # replicas pick it up on the next worker tick.
-    from server.auth.revocation import refresh
-
-    await refresh()
     # The token's own restricted grants die with it.
     grants_revoked = await token_grants.revoke_token_grants(org, str(row["sa_subject"]))
 

@@ -125,6 +125,9 @@ async def set_password(request: Request) -> Response:
         return _form(code, f"Use {_MIN_LENGTH} to {_MAX_LENGTH} characters.", 400)
     if password != f.get("repeat", ""):
         return _form(code, "The two passwords differ.", 400)
+    # Hashed first: the rows are read after the slow step, so an edit landing
+    # meanwhile is what gets carried forward, not overwritten.
+    password_hash = await hash_password_off_loop(password)
     email, org = held["email"], held["org"]
     rows = []
     for ns in held["namespaces"]:
@@ -134,8 +137,7 @@ async def set_password(request: Request) -> Response:
             rows.append(row)
     if not rows:
         return _closed()
-    password_hash = await hash_password_off_loop(password)
-    # Spent only now: a failure reading or hashing above leaves the link to retry.
+    # Spent only now: a failure hashing or reading above leaves the link to retry.
     if await oauth.store.take_pending(token_id(code)) is None:
         return _closed()  # the form sent twice: the other one set it
     now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)

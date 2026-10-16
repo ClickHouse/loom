@@ -70,10 +70,11 @@ _revoked_before: dict[str, int] = {}
 CUTOFF_PREFIX = "\x00cutoff:"
 # Their snapshot, read beside `_revoked_before`.
 _cut_off: dict[str, int] = {}
-# Bumped by every write folded into the snapshot here: a refresh that read
-# before such a write and returns after it keeps the snapshot as it is (the
-# next one reads the row) instead of dropping the write it never saw.
-_local_writes = 0
+# Writes folded into the snapshot here, kept a while: a refresh whose read
+# began before one lays it over what it read, so the snapshot it swaps in
+# never loses it. (kind, key, cutoff, when): kind "revoke" or "cut_off".
+_recent: list[tuple[str, str, int | None, float]] = []
+_RECENT_S = 300.0  # far longer than a read takes
 # False until one refresh has succeeded in this process.
 _loaded = False
 # time.monotonic() of the last successful refresh; 0.0 = never.
@@ -133,7 +134,7 @@ async def refresh() -> None:
     from server.core.ch import get_client
 
     global _revoked_jtis, _revoked_before, _cut_off, _loaded, _loaded_at
-    seen = _local_writes
+    began = time.monotonic()
     try:
         ch = get_client()
         # A session whose revocation could not be written gets a
@@ -159,8 +160,10 @@ async def refresh() -> None:
                 full.add(key)
             else:
                 before[key] = cutoff
-        if _loaded and _local_writes != seen:
-            return  # a write landed meanwhile, which this read may not hold
+        # Writes made here since the read began, which it may not hold.
+        for kind, key, cutoff, when in _recent:
+            if when >= began:
+                _fold(kind, key, cutoff, full, before, operator)
         _revoked_jtis = frozenset(full)
         _revoked_before, _cut_off = before, operator
         _loaded = True
@@ -254,10 +257,12 @@ async def cut_off(subject: str, *, issued_before: datetime, reason: str, revoked
         ],
     )
     await refresh()  # as `revoke` does; the fold below covers a re-read that missed it
-    global _cut_off, _local_writes
+    global _cut_off
     seconds = _cutoff_seconds(cutoff) or 0
-    _cut_off = {**_cut_off, subject: max(_cut_off.get(subject, 0), seconds)}
-    _local_writes += 1
+    operator = dict(_cut_off)
+    _fold("cut_off", subject, seconds, set(), {}, operator)
+    _cut_off = operator
+    _remember("cut_off", subject, seconds)
 
 
 def revoked_here(jti: str) -> None:
@@ -273,15 +278,37 @@ def _apply_locally(key: str, cutoff: int | None) -> None:
     here until the next refresh. The written row is the newest for its key,
     so it replaces any earlier state of that key. `loaded()` is left as it
     is: one known row is not a snapshot."""
-    global _revoked_jtis, _revoked_before, _local_writes
-    _local_writes += 1
-    before = {k: v for k, v in _revoked_before.items() if k != key}
-    if cutoff is None:
-        _revoked_jtis = _revoked_jtis | {key}
+    global _revoked_jtis, _revoked_before
+    full, before = set(_revoked_jtis), dict(_revoked_before)
+    _fold("revoke", key, cutoff, full, before, {})
+    _revoked_jtis, _revoked_before = frozenset(full), before
+    _remember("revoke", key, cutoff)
+
+
+def _fold(
+    kind: str,
+    key: str,
+    cutoff: int | None,
+    full: set[str],
+    before: dict[str, int],
+    operator: dict[str, int],
+) -> None:
+    """Lay one write made here over a snapshot: a revoke is the newest row of
+    its key, a cut_off only ever raises the operator cutoff."""
+    if kind == "cut_off":
+        operator[key] = max(operator.get(key, 0), cutoff or 0)
+    elif cutoff is None:
+        full.add(key)
+        before.pop(key, None)
     else:
-        _revoked_jtis = _revoked_jtis - {key}
+        full.discard(key)
         before[key] = cutoff
-    _revoked_before = before
+
+
+def _remember(kind: str, key: str, cutoff: int | None) -> None:
+    now = time.monotonic()
+    _recent[:] = [w for w in _recent if now - w[3] < _RECENT_S]
+    _recent.append((kind, key, cutoff, now))
 
 
 async def subjects_revoked(subjects: list[str], *, issued_at: int) -> bool:
