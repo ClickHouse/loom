@@ -528,7 +528,7 @@ def test_a_reader_whose_owner_cannot_be_seen_is_not_replaced(
     assert ch_setup._set_up(ch, "delegate", "someone_elses") == 1
     assert not any(sql.startswith("CREATE USER") for sql in ch.ran)
     captured = capsys.readouterr()
-    assert "someone_elses: missing; 'delegate' may not list users" in captured.err
+    assert "someone_elses: missing; 'delegate' may not read system.users" in captured.err
     assert "CREATE USER OR REPLACE `someone_elses`" in captured.err  # for an admin to judge
 
 
@@ -850,7 +850,8 @@ def test_a_reader_rebuilt_for_new_caps_says_to_recreate_loom(
     assert ch_setup._set_up(FakeCH(), "loom", "loom_reader") == 0
     assert "--force-recreate loom" in capsys.readouterr().out
     # Rebuilt for its grants, the caps are unchanged: nothing to recreate.
-    monkeypatch.setattr(ch_setup, "reader_status", lambda r: (True, "its grants are wider"))
+    wider = "its grants are not SELECT on loom.* alone"
+    monkeypatch.setattr(ch_setup, "reader_status", lambda r: (True, wider))
     assert ch_setup._set_up(FakeCH(), "loom", "loom_reader") == 0
     assert "--force-recreate" not in capsys.readouterr().out
 
@@ -865,5 +866,40 @@ def test_a_reader_the_server_rejects_is_one_line_not_a_traceback(
             return super().command(sql, **kwargs)
 
     monkeypatch.setattr(ch_setup, "reader_objects", lambda ch, r: "")
-    assert ch_setup._set_up(Rejects(), "loom", "loom_reader") == 1
+    ch = Rejects()
+    assert ch_setup._set_up(ch, "loom", "loom_reader") == 1
     assert "could not create loom_reader: Code: 70." in capsys.readouterr().err
+    assert "DROP SETTINGS PROFILE IF EXISTS `loom_reader`" in ch.ran  # half-made, dropped
+
+
+@pytest.mark.parametrize(
+    ("setting", "value", "refused"),
+    [
+        ("ch_caller_shaped_max_execution_s", 0.01, True),
+        ("ch_caller_shaped_max_execution_s", -5.0, True),
+        ("ch_caller_shaped_max_rows_to_read", -1, True),
+        ("ch_caller_shaped_max_execution_s", 0.0, False),
+        ("ch_caller_shaped_max_execution_s", 0.05, False),
+    ],
+)
+def test_a_cap_the_profile_cannot_hold_is_refused(
+    monkeypatch: pytest.MonkeyPatch, setting: str, value: float, refused: bool
+) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, setting, value)
+    assert bool(ch_setup.caps_problem()) is refused
+
+
+def test_a_driver_error_line_keeps_the_server_s_words() -> None:
+    from server.core.ch_errors import error_line
+
+    raw = (
+        "Received ClickHouse exception, code: 36, server response: Code: 36. DB::Exception: "
+        "Invalid password. (BAD_ARGUMENTS) (for url http://h:8123)\ntraceback"
+    )
+    assert (
+        error_line(RuntimeError(raw))
+        == "Code: 36. DB::Exception: Invalid password. (BAD_ARGUMENTS)"
+    )
+    assert error_line(TimeoutError()) == "TimeoutError"

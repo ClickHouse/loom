@@ -64,8 +64,9 @@ Sizing (web replicas, uvicorn processes, the workers container) is in
   stops and prints the SQL for an admin, with the password as a placeholder.
   `loom ch-setup --print-sql` prints it without connecting. The SQL grants the Loom user
   everything the admin holds on `loom.*` through `GRANT CURRENT GRANTS` (ClickHouse Cloud
-  does not accept `GRANT ALL`), `SELECT` on the system tables Loom reads, and
-  `READ ON REMOTE`, which `clusterAllReplicas` needs to ask every replica for its version
+  does not accept `GRANT ALL`), `SELECT` on the system tables Loom reads and on
+  `system.users` and the settings-profile tables (so `ch-setup` can tell who owns a
+  reader of that name), and `READ ON REMOTE`, which `clusterAllReplicas` needs to ask every replica for its version
   (a self-managed server shows it as `REMOTE` in `SHOW GRANTS`; writes through `remote()`
   are still refused). It creates the reader with `OR REPLACE`, so check that no other
   account has that name; `ch-setup` running the SQL itself refuses one it cannot prove is

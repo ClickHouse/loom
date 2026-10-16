@@ -24,12 +24,15 @@ import re
 import sys
 from typing import Any, Literal, NamedTuple
 
-from server.core.ch_errors import error_code
+from server.core.ch_errors import error_code, error_line
 from server.core.schema import preflight
 
 DEFAULT_READER = "loom_reader"
 _PASSWORD_PLACEHOLDER = "'<LOOM_CH_PASSWORD>'"
 PROFILE_DIFFERS = "its profile does not match the current caps and constraints"
+# The tables reader_objects reads to tell who owns a reader of the name.
+OWNERSHIP_TABLES = ("users", "settings_profiles", "settings_profile_elements")
+RECREATE = "docker compose --project-directory <install dir> up -d --force-recreate loom"
 # Names go into the SQL between backticks; anything else is refused.
 _NAME = re.compile(r"^[A-Za-z0-9_.@-]+$")
 
@@ -68,6 +71,26 @@ def _profile() -> dict[str, Setting]:
     return profile
 
 
+def caps_problem() -> str:
+    """Why a caller-shaped cap cannot be pinned as a profile constraint ('' when
+    all can): one under its floor, or negative, would refuse every read."""
+    from server.code.domain.deadline import STATEMENT_FLOOR_S
+    from server.settings import settings
+
+    caps = {
+        "LOOM_CH_CALLER_SHAPED_MAX_EXECUTION_S": (
+            settings.ch_caller_shaped_max_execution_s,
+            STATEMENT_FLOOR_S,
+        ),
+        "LOOM_CH_CALLER_SHAPED_MAX_MEMORY_BYTES": (settings.ch_caller_shaped_max_memory_bytes, 1),
+        "LOOM_CH_CALLER_SHAPED_MAX_ROWS_TO_READ": (settings.ch_caller_shaped_max_rows_to_read, 1),
+    }
+    for name, (cap, floor) in caps.items():
+        if cap < 0 or 0 < cap < floor:
+            return f"{name}={cap:g} cannot be pinned: use 0 (no cap) or at least {floor:g}"
+    return ""
+
+
 def reader_sql(reader: str, password: str) -> list[str]:
     """The reader's profile, user and grant; `password` is an SQL literal."""
     settings = []
@@ -100,8 +123,11 @@ def admin_sql(user: str, reader: str | None) -> list[str]:
         # system.query_log and system.processes among them show every user's past
         # and running queries; docs/operations/deployment.md says how to narrow them.
         f"GRANT {', '.join(f'SELECT ON system.{t}' for t in preflight.SYSTEM_TABLES)} TO `{user}`",
+        # Who owns a reader of the name, read before ch-setup replaces anything.
+        f"GRANT {', '.join(f'SELECT ON system.{t}' for t in OWNERSHIP_TABLES)} TO `{user}`",
         # clusterAllReplicas, which asks every replica for its version. READ only:
-        # on Cloud plain REMOTE also grants writes to any host through remote().
+        # on Cloud plain REMOTE also grants writes to any host through remote();
+        # a self-managed server shows it as REMOTE but still refuses those writes.
         f"GRANT READ ON REMOTE TO `{user}`",
         *reader_part,
     ]
@@ -147,7 +173,7 @@ def reader_status(reader: str) -> tuple[bool | None, str]:
     except Exception as e:  # noqa: BLE001 — every failure is a reason the reader is not ready
         if error_code(e) in preflight.AUTH_FAILED:
             return False, "it does not exist or does not accept LOOM_CH_PASSWORD"
-        return None, str(e).splitlines()[0][:160]
+        return None, error_line(e, 160)
     actual = {row[0]: _setting(*row[1:]) for row in rows}
     # `readonly` cannot be changed under readonly anyway, so only its value counts.
     actual["readonly"] = Setting(actual["readonly"].value)
@@ -234,6 +260,12 @@ def _print_admin_sql(user: str, reader: str | None) -> None:
         file=err,
     )
     print("install directory (`loom ch-setup` from a checkout).", file=err)
+    if reader:
+        print(
+            f"If the reader's caps changed, recreate Loom after (`{RECREATE}`); the installer "
+            "does that itself.",
+            file=err,
+        )
 
 
 def _refuse(message: str) -> bool:
@@ -287,8 +319,8 @@ def _ensure_reader(ch: Any, user: str, reader: str) -> bool:
     if found == "unknown":
         # It may be someone else's account: replace nothing that cannot be seen.
         _refuse(
-            f"{reader}: {problem}; {user!r} may not list users and settings profiles, so "
-            "cannot tell who owns it"
+            f"{reader}: {problem}; {user!r} may not read system."
+            f"{', system.'.join(OWNERSHIP_TABLES)}, so cannot tell who owns it"
         )
         _print_admin_sql(user, reader)
         return False
@@ -299,7 +331,7 @@ def _ensure_reader(ch: Any, user: str, reader: str) -> bool:
         return False
     if problem == PROFILE_DIFFERS:
         print(
-            "  recreate Loom (`docker compose up -d --force-recreate loom`) so its sessions "
+            f"  recreate Loom (`{RECREATE}`; `make dev` from a checkout) so its sessions "
             "use the new caps: if a cap was lowered, caller-shaped reads fail until then"
         )
     return True
@@ -316,7 +348,7 @@ def _create_reader(ch: Any, user: str, reader: str, *, fresh: bool) -> bool:
         if fresh:
             _drop_reader(ch, reader)
         if error_code(e) != preflight.ACCESS_DENIED:
-            return _refuse(f"could not create {reader}: {str(e).splitlines()[0][:200]}")
+            return _refuse(f"could not create {reader}: {error_line(e)}")
         _refuse(f"{user!r} may not create the reader or grant it SELECT on {preflight.DATABASE}.*")
         _print_admin_sql(user, reader)
         return False
@@ -385,6 +417,9 @@ def _cmd_ch_setup(args: argparse.Namespace) -> int:
         return 2
     if reader == user:
         print("✗ LOOM_CH_READER_USER must differ from LOOM_CH_USER", file=sys.stderr)
+        return 2
+    if reader and (problem := caps_problem()):
+        print(f"✗ {problem}", file=sys.stderr)
         return 2
     if args.print_sql:
         for stmt in admin_sql(user, reader):

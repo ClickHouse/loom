@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from server.core.ch_errors import error_code
+from server.core.ch_errors import error_code, error_line
 from server.core.paths import MIGRATIONS_DIR
 
 if TYPE_CHECKING:
@@ -128,6 +128,16 @@ def _connect_failure(e: Exception) -> str:
     return f"{reason}; check LOOM_CH_HOST, LOOM_CH_PORT and LOOM_CH_SECURE"
 
 
+def host_problem(host: str) -> str:
+    """Why LOOM_CH_HOST cannot be a host name ('' when it can)."""
+    if "://" in host or "/" in host:
+        return (
+            f"LOOM_CH_HOST={host!r} is not a host name: "
+            "set the host alone, the port in LOOM_CH_PORT and TLS in LOOM_CH_SECURE"
+        )
+    return ""
+
+
 def connect() -> Client:
     """A client on the `LOOM_CH_*` settings with no database selected, so it
     works before `loom` exists. Raises PreflightError for a wrong address or
@@ -138,11 +148,8 @@ def connect() -> Client:
     from server.settings import settings
 
     where = f"{settings.ch_host}:{settings.ch_port} ({'TLS' if ch_secure() else 'plain HTTP'})"
-    if "://" in settings.ch_host or "/" in settings.ch_host:
-        raise PreflightError(
-            f"LOOM_CH_HOST={settings.ch_host!r} is not a host name: "
-            "set the host alone, the port in LOOM_CH_PORT and TLS in LOOM_CH_SECURE"
-        )
+    if problem := host_problem(settings.ch_host):
+        raise PreflightError(problem)
     # The driver logs its own traceback line for every failed connect; the
     # PreflightError below says it once.
     driver_log = logging.getLogger("clickhouse_connect")
@@ -225,7 +232,7 @@ def oldest_version(
                     needs_admin=True,
                 )
             else:
-                reason = str(e).splitlines()[0].split(" (for url")[0][:200]
+                reason = error_line(e)
                 refusal = PreflightError(
                     f"cannot read every replica's version: {reason}; retry once every replica is up"
                 )

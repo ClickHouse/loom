@@ -164,6 +164,28 @@ def _doctor_otel_erasure_index_check(settings: Any) -> tuple[str, str, str]:
     )
 
 
+def _doctor_ch_reachable(settings: Any, ch_host: str) -> tuple[bool, str]:
+    """Whether ClickHouse answers /ping at LOOM_CH_HOST, and what to print."""
+    from server.core.schema.preflight import host_problem
+
+    if problem := host_problem(ch_host):
+        return False, problem
+    base, auth = _doctor_ch_endpoint(settings)
+    try:
+        import httpx
+
+        # 10s covers serverless cold-start without dragging out a real
+        # outage's failure feedback.
+        with httpx.Client(timeout=10.0) as c:
+            r = c.get(f"{base}/ping", auth=auth)
+    except Exception as e:  # noqa: BLE001 — doctor reports any probe failure
+        # The probed host is the first thing an operator needs on a
+        # timeout: it tells a wrong `.env` from a blocked path.
+        return False, f"{base} → {type(e).__name__}: {e}"
+    ok = r.status_code == 200
+    return ok, f"{base} → HTTP {r.status_code}" + ("" if ok else " (expected 200)")
+
+
 def _doctor_preflight_check() -> tuple[str, str, str]:
     """The `clickhouse_preflight` line: FAIL with the fix where boot would
     refuse this ClickHouse; WARN, with every reason, when boot will create the
@@ -365,32 +387,17 @@ def _run_live_checks() -> list[tuple[str, str, str]]:
     checks.append(("jwt_secret", jwt_grade, jwt_detail))
 
     # 4. ClickHouse reachability. HTTP probe avoids spinning up asyncio.
-    ch_ok = False
-    ch_detail = ""
     if not settings_ok or not ch_host:
-        ch_detail = "skipped (no LOOM_CH_HOST configured)"
+        ch_ok, ch_detail = False, "skipped (no LOOM_CH_HOST configured)"
     else:
-        base, auth = _doctor_ch_endpoint(settings)
-        try:
-            import httpx
-
-            # 10s covers serverless cold-start without dragging out a real
-            # outage's failure feedback.
-            with httpx.Client(timeout=10.0) as c:
-                r = c.get(f"{base}/ping", auth=auth)
-            ch_ok = r.status_code == 200
-            ch_detail = f"{base} → HTTP {r.status_code}" + ("" if ch_ok else " (expected 200)")
-        except Exception as e:  # noqa: BLE001 — doctor reports any probe failure
-            # The probed host is the first thing an operator needs on a
-            # timeout: it tells a wrong `.env` from a blocked path.
-            ch_detail = f"{base} → {type(e).__name__}: {e}"
+        ch_ok, ch_detail = _doctor_ch_reachable(settings, ch_host)
     checks.append(("clickhouse_reachable", _grade(ch_ok), ch_detail))
 
     # 4a. The checks boot runs before it migrates: version, database, grants.
     checks.append(
         _doctor_preflight_check()
         if settings_ok and ch_ok
-        else ("clickhouse_preflight", PASS, "skipped (ClickHouse not reachable)")
+        else ("clickhouse_preflight", WARN, "skipped (ClickHouse not reachable)")
     )
 
     # 4b. OTel erasure index: only once ClickHouse answered.
