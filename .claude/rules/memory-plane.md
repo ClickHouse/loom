@@ -20,6 +20,7 @@ The design, its invariants and the code paths are in [memory architecture](../..
 - Every write that creates or changes memory leaves one hash-only audit row (`memory.set` and `memory.bulk_set` alike).
 - `memory.set` and `memory.bulk_set` both run conflict surfacing, the blacklist and the pinned-peer check before the insert; a new write path that skips any of them is a bug ([conflicts and refusal](../../docs/features/memory/conflicts-and-refusal.md)).
 - `memory.set` / `memory.update_by_id` honour `if_match_sha256`; the current hash rides `memory.get` / `memory.get_by_id`.
+- `namespace.snapshot` / `restore` carry `version`, `content_sha256` and the attestation columns; a restore never strips `verified_by`.
 - Working memory (`working_memory.*`) is not embedded or ranked; a durable fact goes through `memory.set`.
 
 ## Bi-temporal memory

@@ -51,7 +51,7 @@ Keep a list of every container, compose project and volume you start, and remove
 An agent's shell keeps no variables between calls, and a server started without them falls back to `localhost:8123` and migrates whatever answers there at boot. Put the worktree's values in its own `.env` (ignored; a fresh worktree has none), which the server, `make migrate` and the tests all read. `LOOM_CH_PORT` is the HTTP port §3 started ClickHouse on (18123 there; change both if you picked others). A variable already exported in the agent's environment wins over `.env`, so check for one first:
 
 ```bash
-cd <worktree>
+cd <worktree> || exit 1
 env | grep -E '^LOOM_(CH_|BASE_URL|ENV_FILE|BACKGROUND_WORKERS|AUTH_REQUIRED|EMBEDDING_MODEL|LLM_PROVIDER)' && {
   echo "these override .env in every later call: remove them from the shell profile, or start each later command with env -u NAME"; exit 1; }
 bash -c '(exec 3<>/dev/tcp/127.0.0.1/7790)' 2>/dev/null && {   # bash's /dev/tcp; zsh has none

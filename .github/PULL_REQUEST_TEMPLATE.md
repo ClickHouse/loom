@@ -55,7 +55,7 @@ the change goes here with the command that reproduces it.
 - [ ] `make format-check`, `make lint`, `make typecheck` and `make test-unit` pass; the integration suite passes if server behaviour changed.
 - [ ] Generated files are regenerated in this PR, not by hand: the SDK op tables, `docs/reference/configuration.md` and the `docs/reference/` tables (`python scripts/codegen/docs_reference.py`), the reach manifest, `schemas/schema.sql` (`make schema-dump`) and the Codex plugin copies (`python3 scripts/codegen/agent_plugin_sync.py`).
 - [ ] A new migration is additive and numbered after the latest on `main`; no merged migration is edited.
-- [ ] A behaviour change to any file a plugin ships (`hooks/`, `lib/`, `bin/`, `skills/`, `.mcp.json`) bumps both plugin manifests' version, and no other open PR uses that version.
+- [ ] A behaviour change to any file a plugin ships (`hooks/`, `lib/`, `bin/`, `skills/`, `.mcp.json`, the Codex `plugin-defaults.json`) bumps both plugin manifests' version, and no other open PR uses that version.
 - [ ] The frontend builds (`npm --prefix frontend run build`) and its tests pass, if `frontend/` changed.
 - [ ] Docs under `docs/` describe the system as it now is, and this description names any operator steps and wire changes.
 - [ ] Repository text has no dates, people, host names, internal namespaces, ticket or decision numbers; the history goes in this description (`tests/unit/test_public_copy.py`).
