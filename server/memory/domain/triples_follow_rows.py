@@ -657,13 +657,15 @@ def edge_ends(
 ) -> list[tuple[str, str, Any]]:
     """Where the edges of the `gone` triples end: with the latest end of their stored
     `rows`, now at the earliest. An edge is just a pair of entities, so one a `held`
-    triple keeps ("works in London" keeps "lives in London" dropped) does not end, nor
-    does one with a gone triple still open."""
-    kept = {canonical_edge_pair(s, o) for s, _r, o in held}
+    triple still valid keeps ("works in London" keeps "lives in London" dropped) does
+    not end, nor does one with a gone triple still open."""
     dropped = set(gone)
+    kept: set[tuple[str, str]] = set()
     found: dict[tuple[str, str], list[Any]] = {}
     for r in rows:
         s, rel, o = str(r["subject"]), str(r["relation"]), str(r["object"])
+        if (s, rel, o) in held and (r["valid_to"] is None or r["valid_to"] > now):
+            kept.add(canonical_edge_pair(s, o))
         if (s, rel, o) in dropped:
             found.setdefault(canonical_edge_pair(s, o), []).append(r["valid_to"])
     return sorted(

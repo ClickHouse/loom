@@ -336,7 +336,7 @@ the value it was written or stated for (`carried`):
   `triples_reconcile`. A dropped fact still valid later ("until Dec 1") ends now, and so
   does one a retired row stated until later (a later end the follow's close gave, for a
   winner dated ahead, stays). Its edge ends with its triples, at their latest end, unless
-  a live row still holds another fact between the same two entities, or a live row of
+  a live row still holds another fact valid now between the same two entities, or a live row of
   another key names both (`entity_edge_memories`: the edge is that row's co-occurrence
   too); the edge keeps no `invalid_at`, so a walk at an earlier time still finds it. The follow reads the
   retired rows' facts again after its plan, so a replay of a follow whose close landed

@@ -807,13 +807,20 @@ def test_a_dropped_facts_edge_ends_with_its_triples_unless_another_fact_is_held(
         ("london", "user", now),
         ("rome", "user", dec),
     ]
-    # Another fact of the pair a live row holds keeps the edge.
+    # Another fact of the pair a live row holds keeps the edge while it is valid.
     held = frozenset({("user", "work_in", "london")})
-    assert tfr.edge_ends(gone, held, rows, now) == [("rome", "user", dec)]
+    work = [*rows, row("london", dec, "work_in")]
+    assert tfr.edge_ends(gone, held, work, now) == [("rome", "user", dec)]
+    # Not one that ended: "I worked in London until 2020" keeps no edge.
+    worked = [*rows, row("london", datetime(2020, 1, 1), "work_in")]
+    assert tfr.edge_ends(gone, held, worked, now) == [
+        ("london", "user", now),
+        ("rome", "user", dec),
+    ]
     # A gone triple still open keeps its edge open too.
     assert tfr.edge_ends(gone, frozenset(), [*rows, row("rome", None)], now) == [
         ("london", "user", now)
     ]
     # Rows of triples not gone say nothing.
     assert tfr.edge_ends(gone[:1], frozenset(), rows, now) == [("london", "user", now)]
-    assert tfr.edge_ends([], held, rows, now) == []
+    assert tfr.edge_ends([], held, work, now) == []

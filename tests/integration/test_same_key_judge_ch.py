@@ -4049,3 +4049,18 @@ async def test_a_dropped_facts_edge_stays_open_while_another_row_names_both(ch, 
     await asyncio.sleep(1.1)  # the walk counts an edge ended this second as current
     assert await _walked(org, [], labeled=True, seed="alice") == []
     assert await _walked(org, ["london"], labeled=False, seed="alice") == ["london"]
+
+
+async def test_a_fact_that_ended_keeps_no_edge_of_a_dropped_one_open(ch, org) -> None:
+    # A live row says London was home until 2020. London's liked row is revised
+    # away: the pair's only fact valid now is gone, so the edge ends.
+    lived = ("user", "live_in", "london")
+    await _stated(
+        ch, org, "s1", "I lived in London", lived, memory_key="home", fact_valid_to=_past()
+    )
+    london = await _stated(ch, org, "s2", "I like London")
+    await _edges_like_triples(ch, org)
+    await _revise("memory.update_by_id", org, london, "I like Rome")
+    await _mutations_done(ch, org)
+    await asyncio.sleep(1.1)  # the walk counts an edge ended this second as current
+    assert await _walked(org, [], labeled=False) == []
