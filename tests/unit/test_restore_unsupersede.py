@@ -21,6 +21,7 @@ def _key_locks(monkeypatch: pytest.MonkeyPatch) -> None:
     locks = kl.KeyWriteLocks(FakeLockTable(), wait_s=0.3)  # type: ignore[arg-type]
     monkeypatch.setattr(kl, "key_write_locks", locks)
 
+
 # --- memory.restore on a superseded row -------------------------------------
 
 
