@@ -1297,6 +1297,15 @@ async def _ask_identity_provider(grant: Grant, refresh_token: str) -> str:
         raise OAuthError("temporarily_unavailable", 503, headers={"Retry-After": "5"}) from e
 
 
+async def _ended(family: str) -> bool:
+    """Whether the session has ended, from storage; unknown counts as not."""
+    try:
+        return await store.session_ended(family)
+    except Exception:  # unreadable: ending it again is harmless
+        log.exception("oauth: could not read whether session %s has ended", family)
+        return False
+
+
 async def _revoke_upstream(grant: Grant | Device) -> None:
     """Best effort: revoke the session's IdP refresh token once Loom's ends."""
     if grant["upstream_refresh"] and settings.oauth_login_provider == "oidc":
@@ -1537,12 +1546,14 @@ async def revoke_token(request: Request) -> Response:
     try:
         grant = spent = await store.take_refresh(token_value, client_id)
     except SessionRetired as e:
-        # Retired by a refusal that may not have ended the session: a logout
-        # ends it now (twice is harmless), and leaves the key retired.
-        grant, reason = e.grant, "logout (session already retired)"
+        # A logout retried, or a refusal that may not have ended the session:
+        # one that did end is only confirmed, any other is ended now.
+        if await _ended(e.grant["family"]):
+            return Response(status_code=200)
+        grant, reason = e.grant, "logout (token already retired)"
     except CodeReplayed as e:
-        # Spent already: a logout retried, or an old copy. Still a logout,
-        # but the audit keeps the difference.
+        # An old copy (a later token was issued). Still a logout, but the
+        # audit keeps the difference.
         grant, reason = e.grant, "logout (token already spent)"
     if grant is not None:
         try:

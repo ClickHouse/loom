@@ -1520,3 +1520,15 @@ def test_a_logout_with_a_refused_sessions_token_still_ends_it(_world, sso, monke
     family = oauth.store.refresh[oauth.token_id(rt)]["family"]
     r = c.post("/oauth/revoke", data={"token": rt, "client_id": device.DEVICE_CLIENT_ID})
     assert r.status_code == 200 and family in _world["revoked"]
+
+
+def test_a_retried_logout_is_confirmed_without_ending_the_session_again(_world) -> None:
+    c = _client()
+    tokens = _signed_in_tokens(c)
+    for _ in range(3):  # `loom logout` retried
+        r = c.post(
+            "/oauth/revoke", data={"token": tokens["refresh_token"], "client_id": "loom-cli"}
+        )
+        assert r.status_code == 200
+    reasons = [kw["subject"]["reason"] for n, kw in _world["events"] if n == "auth.session_revoked"]
+    assert reasons == ["logout"]
