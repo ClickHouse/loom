@@ -41,7 +41,7 @@ Run them in the worktree's `.venv`, on CI's Python (3.12), with `LOOM_ENV_FILE=`
 | auth, write paths, erasure, migrations, the worker supervisor | the per-module branch-coverage floors CI enforces (about 10 minutes): `.venv/bin/python -m pytest tests/unit -q --cov=server --cov-branch --cov-report=json:coverage.json && .venv/bin/python -m tests.inventory.coverage_floors coverage.json` |
 | `integrations/` | `.venv/bin/python -m scripts.codegen.agent_plugin_sync`; `node --test` in the plugin; both manifests bumped to a version no open PR uses |
 | `frontend/` | `npm --prefix frontend run test && npm --prefix frontend run build && npm --prefix frontend run budget` (`make lint` covers the accessibility rules) |
-| `deploy/helm/` | `helm lint --strict deploy/helm/loom -f deploy/helm/loom/values-kind.yaml --set secrets.jwtSecret=x`, the same for `values-eks.yaml`, and `helm template` of each through `kubeconform -strict` |
+| `deploy/helm/` | the commands of CI's "lint and validate every overlay" step (`.github/workflows/ci.yml`, job `helm`): a 64-hex `secrets.jwtSecret` (the chart refuses a shorter one), `helm lint --strict` and `helm template … \| kubeconform -strict -kubernetes-version 1.30.0` for each overlay, once more with every optional object on |
 | `sdk/typescript/` | `npm --prefix sdk/typescript run check` |
 | `docs/`, any `.md` | `.venv/bin/python -m pytest tests/unit/test_doc_links.py tests/unit/test_public_copy.py` |
 

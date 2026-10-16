@@ -4,6 +4,8 @@ paths:
   - "server/knowledge/**"
   - "server/erasure/**"
   - "server/identity/app/namespace_snapshot.py"
+  - "server/identity/app/namespace_rollback.py"
+  - "server/wiring.py"
   - "server/observability/audit.py"
 ---
 
@@ -14,7 +16,7 @@ The design, its invariants and the code paths are in [memory architecture](../..
 ## Writes
 
 - A new version row of `loom.memory` or `loom.shared` (set, tombstone, restore, touch, `update_by_id`, `bulk_set`, promote, demote) goes through `build_memory_version_row` / `build_embedding_row` in `server/memory/store/rows.py`. Both tables are `ReplacingMergeTree(version)` read with `FINAL`, so a column the new row omits reads as zero for everyone.
-- A new column reaches those builders and every projection that feeds them in the same change; a new `loom.memory` column also goes into `loom.memory_versions` and `memory_versions_mv` (`migrations` rule). History, redact and rollback read `loom.memory_versions`, never the merged rows.
+- A new column reaches those builders and every projection that feeds them in the same change; a new `loom.memory` column also goes into `loom.memory_versions` and `memory_versions_mv` (`migrations` rule). History and redact read `loom.memory_versions`, never the merged rows; `namespace.rollback` is planned and committed in the bi-temporal journal.
 - Every write that creates or changes memory leaves one hash-only audit row (`memory.set` and `memory.bulk_set` alike).
 - `memory.set` and `memory.bulk_set` both run conflict surfacing, the blacklist and the pinned-peer check before the insert; a new write path that skips any of them is a bug ([conflicts and refusal](../../docs/features/memory/conflicts-and-refusal.md)).
 - `memory.set` / `memory.update_by_id` honour `if_match_sha256`; the current hash rides `memory.get` / `memory.get_by_id`.
@@ -23,7 +25,7 @@ The design, its invariants and the code paths are in [memory architecture](../..
 ## Bi-temporal memory
 
 - `loom.memory_temporal_commits` is the authority ([bi-temporal memory](../../docs/architecture/bitemporal-memory.md)): every `insert_memory_versions` batch is journaled first by the namespace publisher (`server/memory/app/temporal_publisher.py`, registered in `server/wiring.py`). A new memory writer that bypasses `insert_memory_versions` publishes through the publisher.
-- Nothing takes a row out of service in place: `memory.clear` and `memory.reject` write versioned rows through the same path, and `memory.amend` makes a bounded correction.
+- Nothing takes a row out of service in place: `memory.clear` and `memory.reject` write versioned rows through the same path, `memory.amend` corrects another span or records a future transition, and `memory.set` writes only what applies now or earlier.
 - Reads take `valid_as_of` / `known_as_of` ([reads](../../docs/architecture/bitemporal-memory.md#reads)).
 
 ## Ranking
