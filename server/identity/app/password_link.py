@@ -47,18 +47,28 @@ async def sso_accounts(email: str, org: str = "") -> list[dict[str, Any]]:
     )
 
 
-async def make_link(email: str, accounts: list[dict[str, Any]]) -> str:
-    """A code that sets the password of `accounts` (one org's), once."""
-    code = secrets.token_urlsafe(32)
+async def make_link(email: str, accounts: list[dict[str, Any]], *, by: str) -> str:
+    """A code that sets the password of `accounts` (one org's), once; `by`
+    (who made it) is audited now and again when it is used."""
+    code, org = secrets.token_urlsafe(32), accounts[0]["org"]
+    namespaces = [a["namespace"] for a in accounts]
     await oauth.store.save_pending(
         token_id(code),
         {
             "kind": "set_password",
             "email": email.strip().lower(),
-            "org": accounts[0]["org"],
-            "namespaces": [a["namespace"] for a in accounts],
+            "org": org,
+            "namespaces": namespaces,
+            "by": by,
         },
         ttl=LINK_TTL,
+    )
+    await audit.emit(
+        "auth.password_link_made",
+        org=org,
+        namespace="-",
+        actor=by,
+        subject={"email": email.strip().lower(), "namespaces": namespaces},
     )
     return code
 
@@ -143,7 +153,7 @@ async def set_password(request: Request) -> Response:
         org=org,
         namespace="-",
         actor=email,
-        subject={"namespaces": [ns for _, ns in accounts], "by": "password-link"},
+        subject={"namespaces": [ns for _, ns in accounts], "link_by": held.get("by", "")},
     )
     return oauth.html_page(
         "Set your Loom password",

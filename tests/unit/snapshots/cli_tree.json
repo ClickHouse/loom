@@ -7837,8 +7837,8 @@
            "nargs": null,
            "type": null,
            "required": false,
-           "help": "The bot's own public key (P-256, Ed25519 or RSA)",
-           "metavar": "PEM"
+           "help": "The bot's own public key, a PEM file (P-256, Ed25519 or RSA)",
+           "metavar": "PATH"
           },
           {
            "option_strings": [

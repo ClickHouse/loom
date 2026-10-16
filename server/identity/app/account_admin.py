@@ -12,6 +12,8 @@ from server.auth import machines, revocation, sso_links
 from server.observability import audit
 
 _BOT_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
+# One concrete org or namespace: never empty, never the `*` that means "all".
+_PLACE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 
 
 def _from_now_on() -> datetime:
@@ -105,7 +107,7 @@ async def unlink(email: str, *, by: str) -> list[tuple[str, str]]:
     return accounts
 
 
-async def password_link(email: str, org: str = "") -> tuple[str, list[str]]:
+async def password_link(email: str, org: str = "", *, by: str) -> tuple[str, list[str]]:
     """A one-time code that sets the password of `email`'s SSO accounts, and
     their names. Raises ValueError when there is nothing, or more than one org."""
     from server.identity.app import password_link as links
@@ -116,7 +118,7 @@ async def password_link(email: str, org: str = "") -> tuple[str, list[str]]:
     orgs = sorted({a["org"] for a in accounts})
     if len(orgs) > 1:
         raise ValueError(f"{email} has accounts in {orgs}; name the org")
-    return await links.make_link(email, accounts), [a["namespace"] for a in accounts]
+    return await links.make_link(email, accounts, by=by), [a["namespace"] for a in accounts]
 
 
 # ── bots ──────────────────────────────────────────────────────────────────
@@ -137,12 +139,16 @@ def bot_from(
 
     if not _BOT_NAME.fullmatch(name):
         raise ValueError("name: lower-case letters, digits and '-', at most 63")
+    if not _PLACE.fullmatch(org):
+        raise ValueError(f"org must name one org, got {org!r}")
     ns_roles: dict[str, str] = {}
     for item in namespace_roles:
         ns, sep, role = item.partition("=")
         ns, role = ns.strip(), role.strip().lower()
-        if not sep or not ns or role not in GRANT_ROLES:
-            raise ValueError(f"a namespace role is NS=viewer|writer|admin, got {item!r}")
+        if not sep or not _PLACE.fullmatch(ns) or role not in GRANT_ROLES:
+            raise ValueError(
+                f"a namespace role is NS=viewer|writer|admin on one namespace, got {item!r}"
+            )
         ns_roles[ns] = role
     if not ns_roles:
         raise ValueError("a bot needs at least one namespace role")
@@ -152,6 +158,7 @@ def bot_from(
         if not sep or not claim.strip() or not value or value == "*":
             raise ValueError(f"a claim is NAME=VALUE (a bare * matches anything), got {item!r}")
         wanted[claim.strip()] = value
+    issuer = issuer.rstrip("/")  # a token's `iss` is compared exactly
     trust = bool(issuer or audience or wanted)
     if trust and not (issuer.startswith("https://") and audience and wanted):
         # Any job on the platform can ask for a token with any audience: only
@@ -171,9 +178,21 @@ def bot_from(
 
 
 async def create_bot(bot: machines.Machine, *, by: str, replace: bool) -> None:
-    if await machines.get(bot["name"]) is not None and not replace:
-        raise ValueError(f"bot {bot['name']!r} exists; replace it to change it")
+    from server.identity.store import namespaces
+
+    name, org = bot["name"], bot["org"]
+    missing = [ns for ns, _ in bot["ns_roles"] if not await namespaces.is_active(org, ns)]
+    if missing:
+        raise ValueError(f"no namespace {', '.join(missing)} in org {org!r}; register it first")
+    if await revocation.revoked_outright(machines.subject(name)):
+        raise ValueError(f"{machines.subject(name)} is revoked outright; it could never sign in")
+    existing = await machines.get(name)
+    if existing is not None and not replace:
+        raise ValueError(f"bot {name!r} exists; replace it to change it")
     await machines.save(bot, by=by)
+    if existing is not None:
+        # Tokens from its old key or wider roles end now, not within the hour.
+        await _end_tokens(name, by=by, reason="bot replaced")
     await audit.emit(
         "auth.machine_created",
         org=bot["org"],
@@ -189,16 +208,16 @@ async def disable_bot(name: str, *, by: str) -> bool:
     if bot is None:
         return False
     await machines.save(bot, by=by, active=False)
-    # Its tokens live an hour; revoked now, not when they run out (unless
-    # revoked outright already, which a cutoff must not weaken).
-    if not await revocation.revoked_outright(machines.subject(name)):
-        await revocation.revoke(
-            machines.subject(name),
-            issued_before=_from_now_on(),
-            reason="bot disabled",
-            revoked_by=by,
-        )
+    await _end_tokens(name, by=by, reason="bot disabled")
     await audit.emit(
         "auth.machine_disabled", org=bot["org"], namespace="-", actor=by, subject={"name": name}
     )
     return True
+
+
+async def _end_tokens(name: str, *, by: str, reason: str) -> None:
+    """Its tokens live an hour; revoked now, not when they run out (unless
+    revoked outright already, which a cutoff must not weaken)."""
+    subject = machines.subject(name)
+    if not await revocation.revoked_outright(subject):
+        await revocation.revoke(subject, issued_before=_from_now_on(), reason=reason, revoked_by=by)

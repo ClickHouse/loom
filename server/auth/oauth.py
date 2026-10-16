@@ -21,7 +21,7 @@ import secrets
 import time
 from collections.abc import Coroutine
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 import httpx
@@ -733,10 +733,11 @@ async def _finish_oidc_login(request: Request) -> Response:
     resolved = await _account_for(email, pending, upstream) if email else None
     if isinstance(resolved, Response):
         return resolved
-    if resolved is None or isinstance(resolved, str):
-        reason = resolved or (
-            "no loom account for this email" if email else "verified email required"
-        )
+    if resolved is None or isinstance(resolved, _Denied):
+        if isinstance(resolved, _Denied):
+            reason = resolved.reason
+        else:
+            reason = "no loom account for this email" if email else "verified email required"
         await _signin_denied(str(id_claims.get("email") or ""), reason)
         await oidc.revoke(upstream)
         if kind == "device":
@@ -745,9 +746,15 @@ async def _finish_oidc_login(request: Request) -> Response:
     return await _signed_in_as(pending, resolved, upstream)
 
 
+class _Denied(NamedTuple):
+    """A verified email that signs in to no account, and why."""
+
+    reason: str
+
+
 async def _account_for(
     email: str, pending: dict[str, Any], upstream: str
-) -> Identity | Response | str | None:
+) -> Identity | Response | _Denied | None:
     """The account a verified `email` signs in to, a page to answer instead
     (link a password account, or try again later), why it signs in to none,
     or None: no account."""
@@ -762,7 +769,7 @@ async def _account_for(
             return resolved
         if await sso_links.reaching(email):
             # Linked accounts that disagree (owners, orgs): fail closed, saying so.
-            return "this email's linked accounts do not resolve to one account"
+            return _Denied("this email's linked accounts do not resolve to one account")
         if await sso_links.unlinked_accounts(email):
             # Their password account: proving it links it, no new one is made.
             return await _offer_link(pending, email, upstream)
@@ -1380,6 +1387,7 @@ async def _client_credentials_grant(f: dict[str, str], audiences: list[str]) -> 
         raise OAuthError(
             "invalid_client", 401, description="send a private_key_jwt client assertion"
         )
+    since = int(time.time())  # before the bot is read: see _machine_tokens
     try:
         m, proof = await machines.verify_assertion(assertion, f.get("client_id", ""), audiences)
     except machines.Refused as e:
@@ -1390,33 +1398,38 @@ async def _client_credentials_grant(f: dict[str, str], audiences: list[str]) -> 
         raise OAuthError(
             "invalid_client", 401, description="this client assertion was used already"
         )
-    return await _machine_tokens(m, {"by": "key"})
+    return await _machine_tokens(m, since, machines.TOKEN_TTL, {"by": "key"})
 
 
 async def _token_exchange_grant(f: dict[str, str]) -> dict[str, Any]:
     """A CI job's own OIDC token for the bot whose workload trust it meets
-    (RFC 8693): an hour-long token."""
+    (RFC 8693). Exchanged as often as the job's clients need while it lives,
+    and the token issued never outlives it."""
     token = f.get("subject_token", "")
     if f.get("subject_token_type") not in machines.SUBJECT_TOKEN_TYPES or not token:
         raise OAuthError("invalid_request", description="send the workload's OIDC token as a jwt")
+    since = int(time.time())  # before the bot is read: see _machine_tokens
     try:
         m, proof = await machines.verify_workload(token, f.get("client_id", ""))
     except machines.Refused as e:
         raise _refused(e) from None
-    once = str(proof.get("jti") or hashlib.sha256(token.encode()).hexdigest())
-    if not await store.use_once(
-        f"workload:{token_id(m['name'] + ':' + once)}", int(proof["exp"]) + 60
-    ):
-        raise OAuthError("invalid_grant", description="this subject token was used already")
-    issued = await _machine_tokens(m, {"by": "workload", "workload_sub": str(proof["sub"])})
+    ttl = max(60, min(machines.TOKEN_TTL, int(proof["exp"]) - since))
+    issued = await _machine_tokens(
+        m, since, ttl, {"by": "workload", "workload_sub": str(proof["sub"])}
+    )
     return {**issued, "issued_token_type": "urn:ietf:params:oauth:token-type:access_token"}
 
 
-async def _machine_tokens(m: machines.Machine, how: dict[str, str]) -> dict[str, Any]:
+async def _machine_tokens(
+    m: machines.Machine, since: int, ttl: int, how: dict[str, str]
+) -> dict[str, Any]:
+    """The token for bot `m`, issued as of `since`, taken before `m` was read:
+    a disable that lands after that read cuts off at a later second, so this
+    token falls under it, and one that landed before it, the read saw."""
     from server.auth.revocation import subjects_revoked
 
-    subject, now = machines.subject(m["name"]), int(time.time())
-    if await subjects_revoked([subject], issued_at=now):
+    subject = machines.subject(m["name"])
+    if await subjects_revoked([subject], issued_at=since):
         raise OAuthError("invalid_client", 401, description="this bot is revoked")
     jti = new_jti()
     token = mint_token(
@@ -1425,10 +1438,10 @@ async def _machine_tokens(m: machines.Machine, how: dict[str, str]) -> dict[str,
         namespaces=[ns for ns, _ in m["ns_roles"]],
         roles=[],
         ns_roles=dict(m["ns_roles"]),
-        ttl_seconds=machines.TOKEN_TTL,
+        ttl_seconds=ttl,
         is_service_account=True,
         jti=jti,
-        issued_at=now,
+        issued_at=since,
     )
     await audit.emit(
         "auth.machine_token",
@@ -1437,7 +1450,7 @@ async def _machine_tokens(m: machines.Machine, how: dict[str, str]) -> dict[str,
         actor=subject,
         subject={"jti": jti, **how},
     )
-    return {"access_token": token, "token_type": "Bearer", "expires_in": machines.TOKEN_TTL}
+    return {"access_token": token, "token_type": "Bearer", "expires_in": ttl}
 
 
 @router.post("/oauth/token")

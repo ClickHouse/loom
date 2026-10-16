@@ -44,6 +44,7 @@ def world(monkeypatch) -> dict[str, Any]:
         written["links"].append((email, linked, by))
 
     async def emit(event_type: str, **kw: Any) -> str:
+        written.setdefault("events", []).append((event_type, kw))
         return ""
 
     async def fetch_row(org: str, namespace: str) -> dict[str, Any] | None:
@@ -60,7 +61,7 @@ def world(monkeypatch) -> dict[str, Any]:
 
 def _code() -> str:
     accounts = asyncio.run(password_link.sso_accounts("lee@acme.com"))
-    return asyncio.run(password_link.make_link("lee@acme.com", accounts))
+    return asyncio.run(password_link.make_link("lee@acme.com", accounts, by="admin:ops"))
 
 
 def _set(c: TestClient, code: str, password: str, repeat: str | None = None) -> Any:
@@ -78,6 +79,9 @@ def test_a_link_sets_the_password_once_and_links_the_account(world) -> None:
     [row] = world["rows"]
     assert row["namespace"] == "u-lee-1a2b3c4d" and row["password_hash"].startswith("$argon2")
     assert world["links"] == [("lee@acme.com", [("acme", "u-lee-1a2b3c4d")], "password-link")]
+    made, used = world["events"]
+    assert (made[0], made[1]["actor"]) == ("auth.password_link_made", "admin:ops")
+    assert (used[0], used[1]["subject"]["link_by"]) == ("auth.password_set", "admin:ops")
     assert _set(c, code, "another pass").status_code == 400  # spent
     assert len(world["rows"]) == 1
 

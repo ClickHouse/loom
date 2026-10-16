@@ -103,7 +103,7 @@ def _cmd_password_link(args: argparse.Namespace) -> int:
 
     async def _run(ch: Any) -> int:
         try:
-            code, namespaces = await account_admin.password_link(args.email, args.org)
+            code, namespaces = await account_admin.password_link(args.email, args.org, by=_by())
         except ValueError as e:
             print(f"  ✗ {e}", file=sys.stderr)
             return 2

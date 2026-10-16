@@ -31,7 +31,7 @@ def calls(monkeypatch) -> list[tuple[str, Any]]:
         seen.append(("unlink", email))
         return [("acme", "lee")]
 
-    async def password_link(email: str, org: str = "") -> tuple[str, list[str]]:
+    async def password_link(email: str, org: str = "", *, by: str) -> tuple[str, list[str]]:
         if email == "nobody@acme.io":
             raise ValueError("nobody@acme.io has no SSO account")
         return "the-code", ["u-lee-1"]
@@ -54,7 +54,7 @@ def calls(monkeypatch) -> list[tuple[str, Any]]:
                 "issuer": "",
                 "audience": "",
                 "claims": {},
-                "created_by": "cli:root",
+                "updated_by": "cli:root",
             }
         ]
 
@@ -137,3 +137,17 @@ def test_only_a_platform_admin_reaches_them(calls, monkeypatch) -> None:
         headers={"Authorization": f"Bearer {admin}"},
     )
     assert r.status_code == 200 and calls[-1] == ("disable", "triage")
+
+
+def test_generating_a_key_and_giving_one_is_refused(calls) -> None:
+    r = _client().post(
+        "/v1/admin/bots.create",
+        json={
+            "name": "x",
+            "org": "acme",
+            "namespace_roles": ["a=writer"],
+            "generate_key": True,
+            "public_key_pem": "-----BEGIN PUBLIC KEY-----",
+        },
+    )
+    assert r.status_code == 422 and not calls

@@ -1665,7 +1665,7 @@ CREATE TABLE IF NOT EXISTS loom.machine_identities
     `audience` String,
     `claims` Map(String, String),
     `active` UInt8,
-    `created_by` String,
+    `updated_by` String,
     `updated_at` DateTime64(3, 'UTC'),
     `version` UInt64
 )

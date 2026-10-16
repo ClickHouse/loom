@@ -4,9 +4,9 @@ either
 
 - a key (LOOM_CLIENT_KEY_FILE): it signs a short client assertion
   (private_key_jwt; needs `pip install clickhouse-loom[machine]`), or
-- its CI job's own OIDC token: read from LOOM_WORKLOAD_TOKEN_FILE, or asked of
-  the CI platform when it offers one on request (ACTIONS_ID_TOKEN_REQUEST_URL),
-  for LOOM_WORKLOAD_AUDIENCE,
+- its CI job's own OIDC token: LOOM_WORKLOAD_TOKEN or LOOM_WORKLOAD_TOKEN_FILE,
+  or asked of the CI platform when it offers one on request
+  (ACTIONS_ID_TOKEN_REQUEST_URL), for LOOM_WORKLOAD_AUDIENCE,
 
 and gets an hour-long token from /oauth/token, renewed before it runs out and
 kept in memory only.
@@ -56,20 +56,28 @@ class MachineLogin(httpx.Auth):
         self.server = server.rstrip("/")
         self.profile = client_id  # how the transport names the credential
         self._key_file, self._audience = key_file, audience
-        self._token, self._expires_at = "", 0.0
+        self._token, self._expires_at, self._renew_at, self._token_endpoint = "", 0.0, 0.0, ""
         self._lock = threading.Lock()
 
     def current_token(self) -> str:
-        return self._token
+        """The token in hand, got first if there is none: what the CLI reads
+        the bot's org and namespaces from before its first request."""
+        return self._token or self.token()
 
     def token(self, refused: str = "") -> str:
         with self._lock:
-            if (
-                not self._token
-                or self._token == refused
-                or time.time() > self._expires_at - _RENEW_BEFORE_S
-            ):
-                self._token, self._expires_at = self._fetch()
+            if not self._token or self._token == refused or time.time() > self._renew_at:
+                try:
+                    self._token, self._expires_at = self._fetch()
+                    # Five minutes before it runs out, or halfway for a token
+                    # a short-lived CI proof capped.
+                    life = self._expires_at - time.time()
+                    self._renew_at = self._expires_at - min(_RENEW_BEFORE_S, life / 2)
+                except AuthInvalid:
+                    # A renewal that failed (a CI token already spent) leaves
+                    # the token in hand good until it runs out.
+                    if self._token == refused or time.time() >= self._expires_at:
+                        raise
             return self._token
 
     def _fetch(self) -> tuple[str, float]:
@@ -79,7 +87,7 @@ class MachineLogin(httpx.Auth):
                 "grant_type": "client_credentials",
                 "client_id": self.profile,
                 "client_assertion_type": ASSERTION_TYPE,
-                "client_assertion": self._assertion(endpoint),
+                "client_assertion": self._assertion(self._audience_of_assertion()),
             }
         else:
             form = {
@@ -98,6 +106,15 @@ class MachineLogin(httpx.Auth):
                 f"{body.get('error_description', '')}".strip()
             )
         return str(body["access_token"]), time.time() + float(body.get("expires_in", 3600))
+
+    def _audience_of_assertion(self) -> str:
+        """The token endpoint the server names itself by, which a bot reaching it
+        by another (internal) URL must still sign for."""
+        if not self._token_endpoint:
+            r = httpx.get(f"{self.server}/.well-known/oauth-authorization-server", timeout=30.0)
+            r.raise_for_status()
+            self._token_endpoint = str(r.json()["token_endpoint"])
+        return self._token_endpoint
 
     def _assertion(self, endpoint: str) -> str:
         try:
@@ -156,7 +173,12 @@ class MachineLogin(httpx.Auth):
 
 
 def _workload_token(audience: str) -> str:
-    """This CI job's OIDC token: a file the platform wrote, or one asked for."""
+    """This CI job's OIDC token: given in the environment or a file (a platform
+    that hands jobs one token, which must rotate it for jobs past an hour), or
+    asked for anew."""
+    given = os.environ.get("LOOM_WORKLOAD_TOKEN", "").strip()
+    if given:
+        return given
     path = os.environ.get("LOOM_WORKLOAD_TOKEN_FILE", "")
     if path:
         return Path(path).read_text().strip()
@@ -167,11 +189,8 @@ def _workload_token(audience: str) -> str:
             "LOOM_CLIENT_ID is set but there is no key (LOOM_CLIENT_KEY_FILE) or CI token "
             "(LOOM_WORKLOAD_TOKEN_FILE, or a CI job with LOOM_WORKLOAD_AUDIENCE)"
         )
-    r = httpx.get(
-        url,
-        params={"audience": audience},
-        headers={"Authorization": f"Bearer {bearer}"},
-        timeout=30.0,
-    )
+    # The runner's URL carries its own query (an API version): the audience joins it.
+    asked = httpx.URL(url).copy_merge_params({"audience": audience})
+    r = httpx.get(str(asked), headers={"Authorization": f"Bearer {bearer}"}, timeout=30.0)
     r.raise_for_status()
     return str(r.json()["value"])

@@ -27,7 +27,7 @@ def token_endpoint(monkeypatch) -> list[dict[str, str]]:
         return httpx.Response(200, json=body)
 
     monkeypatch.setattr(machine.httpx, "post", post)
-    for var in ("LOOM_WORKLOAD_TOKEN_FILE", "ACTIONS_ID_TOKEN_REQUEST_URL"):
+    for var in ("LOOM_WORKLOAD_TOKEN", "LOOM_WORKLOAD_TOKEN_FILE", "ACTIONS_ID_TOKEN_REQUEST_URL"):
         monkeypatch.delenv(var, raising=False)
     return sent
 
@@ -44,15 +44,17 @@ def test_a_ci_token_from_a_file_is_exchanged(token_endpoint, tmp_path, monkeypat
 def test_a_ci_job_is_asked_for_its_token_with_the_audience(token_endpoint, monkeypatch) -> None:
     asked: dict[str, Any] = {}
 
-    def get(url: str, *, params: dict[str, str], headers: dict[str, str], timeout: float) -> Any:
-        asked.update(url=url, params=params, auth=headers["Authorization"])
+    def get(url: str, *, headers: dict[str, str], timeout: float) -> Any:
+        asked.update(url=url, auth=headers["Authorization"])
         return httpx.Response(200, json={"value": "ci-token"}, request=httpx.Request("GET", url))
 
     monkeypatch.setattr(machine.httpx, "get", get)
-    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://ci.example/token?v=1")
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://ci.example/token?api-version=2.0")
     monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "job-bearer")
     machine.MachineLogin("https://loom.example", "deploy", audience="loom").token()
-    assert asked["params"] == {"audience": "loom"} and asked["auth"] == "Bearer job-bearer"
+    # The runner's own query stays, the audience joins it.
+    assert httpx.URL(asked["url"]).params == httpx.QueryParams("api-version=2.0&audience=loom")
+    assert asked["auth"] == "Bearer job-bearer"
     assert token_endpoint[0]["subject_token"] == "ci-token"
 
 
@@ -68,7 +70,7 @@ def test_the_token_is_kept_until_shortly_before_it_runs_out(
     monkeypatch.setenv("LOOM_WORKLOAD_TOKEN_FILE", str(tmp_path / "oidc"))
     login = machine.MachineLogin("https://loom.example", "deploy")
     assert login.token() == login.token() == "t1"
-    login._expires_at = 0  # an hour later
+    login._renew_at = login._expires_at = 0  # an hour later
     assert login.token() == "t2"
     assert login.token(refused="t2") == "t3"  # the server said 401 to it
 
@@ -79,3 +81,74 @@ def test_a_bots_token_goes_only_to_its_server(token_endpoint, tmp_path, monkeypa
     login = machine.MachineLogin("https://loom.example", "deploy")
     with pytest.raises(AuthInvalid):
         next(login.sync_auth_flow(httpx.Request("GET", "https://elsewhere.example/v1/x")))
+
+
+def test_a_ci_token_given_in_the_environment_is_exchanged(token_endpoint, monkeypatch) -> None:
+    monkeypatch.setenv("LOOM_WORKLOAD_TOKEN", "env-token")
+    machine.MachineLogin("https://loom.example", "deploy").token()
+    assert token_endpoint[0]["subject_token"] == "env-token"
+
+
+def test_a_renewal_that_fails_keeps_the_token_until_it_runs_out(monkeypatch, tmp_path) -> None:
+    # The platform handed the job one CI token: spent on the first exchange.
+    spent = {"error": "invalid_grant", "error_description": "used already"}
+    answers = [
+        httpx.Response(200, json={"access_token": "t1", "expires_in": 3600}),
+        httpx.Response(400, json=spent),
+        httpx.Response(400, json=spent),
+    ]
+    monkeypatch.setattr(machine.httpx, "post", lambda *a, **k: answers.pop(0))
+    monkeypatch.setenv("LOOM_WORKLOAD_TOKEN", "once")
+    login = machine.MachineLogin("https://loom.example", "deploy")
+    assert login.token() == "t1"
+    login._renew_at, login._expires_at = 0, machine.time.time() + 60  # inside the renewal window
+    assert login.token() == "t1"
+    login._renew_at = login._expires_at = 0
+    with pytest.raises(AuthInvalid):
+        login.token()
+
+
+def test_a_key_signs_for_the_endpoint_the_server_names(monkeypatch, tmp_path) -> None:
+    import jwt as pyjwt
+
+    from server.auth import machines
+
+    private, _ = machines.generate_key()
+    (tmp_path / "bot.pem").write_bytes(private)
+    sent: list[dict[str, str]] = []
+
+    def get(url: str, timeout: float) -> httpx.Response:
+        assert url == "http://loom.svc:7777/.well-known/oauth-authorization-server"
+        meta = {"token_endpoint": "https://loom.example.com/oauth/token"}
+        return httpx.Response(200, json=meta, request=httpx.Request("GET", url))
+
+    def post(url: str, *, data: dict[str, str], timeout: float) -> httpx.Response:
+        assert url == "http://loom.svc:7777/oauth/token"  # sent where the bot reaches it
+        sent.append(data)
+        return httpx.Response(200, json={"access_token": "t", "expires_in": 3600})
+
+    monkeypatch.setattr(machine.httpx, "get", get)
+    monkeypatch.setattr(machine.httpx, "post", post)
+    login = machine.MachineLogin(
+        "http://loom.svc:7777", "triage", key_file=str(tmp_path / "bot.pem")
+    )
+    login.token()
+    claims = pyjwt.decode(sent[0]["client_assertion"], options={"verify_signature": False})
+    assert claims["aud"] == "https://loom.example.com/oauth/token"
+
+
+def test_a_short_token_is_renewed_halfway(monkeypatch) -> None:
+    answers = [
+        httpx.Response(200, json={"access_token": f"t{i}", "expires_in": 240}) for i in (1, 2)
+    ]
+    monkeypatch.setattr(machine.httpx, "post", lambda *a, **k: answers.pop(0))
+    monkeypatch.setenv("LOOM_WORKLOAD_TOKEN", "ci")
+    login = machine.MachineLogin("https://loom.example", "deploy")
+    assert login.token() == "t1"
+    assert login._expires_at - login._renew_at == pytest.approx(120, abs=2)
+
+
+def test_the_cli_reads_a_bots_claims_before_its_first_request(token_endpoint, monkeypatch) -> None:
+    monkeypatch.setenv("LOOM_WORKLOAD_TOKEN", "ci")
+    login = machine.MachineLogin("https://loom.example", "deploy")
+    assert login.current_token() == "t1" and len(token_endpoint) == 1

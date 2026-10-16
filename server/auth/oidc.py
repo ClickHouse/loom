@@ -191,7 +191,7 @@ async def check_callback_issuer(iss: str) -> bool:
     return iss.rstrip("/") == str(doc["issuer"]).rstrip("/")
 
 
-def _signing_key(jwks_uri: str, id_token: str) -> Any:
+def signing_key(jwks_uri: str, id_token: str) -> Any:
     """Resolve the IdP signing key for this token. Sync (PyJWKClient's fetch);
     callers run it off the event loop. One client per jwks_uri keeps its key
     cache, and an unknown `kid` refetches once, which follows IdP rotation."""
@@ -205,7 +205,7 @@ async def verify_id_token(id_token: str, *, nonce: str) -> dict[str, Any]:
     """Verify the IdP id_token (signature against JWKS, iss, aud, exp) and the
     nonce, returning the claims. Raises on any failure."""
     doc = await _discover()
-    key = await asyncio.to_thread(_signing_key, doc["jwks_uri"], id_token)
+    key = await asyncio.to_thread(signing_key, doc["jwks_uri"], id_token)
     claims: dict[str, Any] = jwt.decode(
         id_token,
         key,

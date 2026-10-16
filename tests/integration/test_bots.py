@@ -9,7 +9,9 @@ import asyncio
 import sys
 import uuid
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -42,9 +44,24 @@ def _admin(base: str, path: str, body: dict, *, roles: list[str]) -> httpx.Respo
 
 
 def test_a_bot_signs_in_with_its_key_and_is_cut_off_when_disabled(
-    base: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    base: str, ch_client: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     org, ns, name = unique_org("bots"), f"bot-{uuid.uuid4().hex[:6]}", f"b-{uuid.uuid4().hex[:6]}"
+    # A bot is given namespaces that exist.
+    now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+    ch_client.insert(
+        "loom.namespaces",
+        [[org, ns, "ops@example.com", "bots e2e", True, now, now]],
+        column_names=[
+            "org",
+            "namespace",
+            "owner_email",
+            "description",
+            "active",
+            "created_at",
+            "updated_at",
+        ],
+    )
     body = {"name": name, "org": org, "namespace_roles": [f"{ns}=writer"], "generate_key": True}
     assert _admin(base, "/v1/admin/bots.create", body, roles=["writer"]).status_code == 403
     r = _admin(base, "/v1/admin/bots.create", body, roles=["platform_admin"])

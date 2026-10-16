@@ -40,7 +40,9 @@ def register_bot_cli(sub: Any) -> None:
         "--generate-key", metavar="PATH", help="Write a new P-256 private key here (0600)"
     )
     key.add_argument(
-        "--public-key", metavar="PEM", help="The bot's own public key (P-256, Ed25519 or RSA)"
+        "--public-key",
+        metavar="PATH",
+        help="The bot's own public key, a PEM file (P-256, Ed25519 or RSA)",
     )
     p_create.add_argument(
         "--issuer", default="", help="CI trust: the platform's OIDC issuer (https)"
@@ -91,9 +93,19 @@ def _cmd_create(args: argparse.Namespace) -> int:
         return _fail(str(e))
 
     async def _run(ch: Any) -> int:
+        if args.generate_key:
+            # Never over an existing file, and gone again if the bot is not saved.
+            try:
+                fd = os.open(args.generate_key, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            except OSError as e:
+                return _fail(str(e))
+            with os.fdopen(fd, "wb") as f:
+                f.write(private)
         try:
             await account_admin.create_bot(bot, by=f"cli:{getpass.getuser()}", replace=args.replace)
         except ValueError as e:
+            if args.generate_key:
+                os.remove(args.generate_key)
             return _fail(str(e))
         print(f"bot {args.name}: tokens for {machines.subject(args.name)} in {args.org}")
         if bot["public_keys"]:
@@ -103,15 +115,6 @@ def _cmd_create(args: argparse.Namespace) -> int:
             print(f"  CI:   LOOM_CLIENT_ID={args.name} LOOM_WORKLOAD_AUDIENCE={args.audience}")
         return 0
 
-    if args.generate_key:
-        # Written first, and never over an existing file: no bot is saved
-        # whose key could not be kept.
-        try:
-            fd = os.open(args.generate_key, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        except OSError as e:
-            return _fail(str(e))
-        with os.fdopen(fd, "wb") as f:
-            f.write(private)
     return run_connected(_run)
 
 

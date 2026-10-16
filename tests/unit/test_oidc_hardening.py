@@ -93,7 +93,7 @@ def test_one_jwk_client_per_jwks_uri(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(oidc, "PyJWKClient", _Client)
     oidc._jwk_clients.clear()
     for _ in range(3):
-        assert oidc._signing_key("https://idp/jwks", "t") == "k"
+        assert oidc.signing_key("https://idp/jwks", "t") == "k"
     assert built == ["https://idp/jwks"]
 
 

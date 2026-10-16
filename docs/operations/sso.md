@@ -101,8 +101,8 @@ The provider can never grant admin.
 
 A bot never signs in at the provider, and should hold no long-lived secret.
 Register it with the namespaces its data belongs in (usually a team namespace
-with more than one admin); its tokens are for `sa:<name>`, last an hour, and
-its writes are stamped `actor=process:sa:<name>`.
+with more than one admin, registered first, in one org); its tokens are for
+`sa:<name>`, last an hour, and its writes are stamped `actor=process:sa:<name>`.
 
 - **A key.** Loom keeps the public half; the bot signs a short assertion for
   each hour-long token (OAuth client credentials with `private_key_jwt`).
@@ -128,8 +128,14 @@ its writes are stamped `actor=process:sa:<name>`.
   LOOM_CLIENT_ID=deploy LOOM_WORKLOAD_AUDIENCE=loom python deploy.py
   ```
 
+  A platform that hands the job its token instead puts it in
+  `LOOM_WORKLOAD_TOKEN` (or a file named by `LOOM_WORKLOAD_TOKEN_FILE`). Every
+  client in the job exchanges it as often as it needs while it is valid, and
+  Loom's token never outlives it.
+
 - `loom bot list` shows them; `loom bot disable --name …` refuses every later
-  proof and revokes the tokens the bot holds. A platform admin does the same
+  proof and revokes the tokens the bot holds, and `loom bot create --replace`
+  (a new key, fewer roles) revokes them too. A platform admin does the same
   from anywhere with `loom call /v1/admin/bots.create --data '{…}'` (with
   `"generate_key": true` the answer carries the private key, once),
   `/v1/admin/bots.list` and `/v1/admin/bots.disable`; `/v1/admin/sso.adopt`,

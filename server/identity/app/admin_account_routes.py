@@ -65,10 +65,10 @@ async def sso_unlink(input: EmailInput, info: Admin) -> dict[str, Any]:
 
 
 @router.post("/v1/admin/sso.password_link")
-async def sso_password_link(input: EmailInput) -> dict[str, Any]:
+async def sso_password_link(input: EmailInput, info: Admin) -> dict[str, Any]:
     """A one-time link (a day) that gives the email's SSO accounts a password."""
     try:
-        code, namespaces = await account_admin.password_link(input.email, input.org)
+        code, namespaces = await account_admin.password_link(input.email, input.org, by=_by(info))
     except ValueError as e:
         raise _invalid(e) from None
     base = (settings.oauth_issuer or settings.public_base_url).rstrip("/")
@@ -91,6 +91,8 @@ class BotInput(BaseModel):
 async def bots_create(input: BotInput, info: Admin) -> dict[str, Any]:
     """Register a bot. With `generate_key` the answer carries its private key,
     once: Loom keeps only the public half."""
+    if input.generate_key and input.public_key_pem:
+        raise _invalid(ValueError("give a public key or ask for one to be generated, not both"))
     private, public = machines.generate_key() if input.generate_key else (b"", b"")
     try:
         bot = account_admin.bot_from(
@@ -125,7 +127,7 @@ async def bots_list() -> dict[str, Any]:
                 "issuer": r["issuer"],
                 "audience": r["audience"],
                 "claims": dict(r["claims"]),
-                "created_by": r["created_by"],
+                "updated_by": r["updated_by"],
             }
             for r in rows
         ]

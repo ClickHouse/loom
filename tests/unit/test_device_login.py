@@ -1110,6 +1110,28 @@ def test_two_people_on_one_code_end_the_grant_for_both(_world, monkeypatch) -> N
         assert _error(_poll(c, grant["device_code"])) == "access_denied"
 
 
+def test_the_same_name_in_another_org_is_another_person(_world, monkeypatch) -> None:
+    other_alice = ("alice@example.com", "globex", ["alice"], ["writer"])
+
+    async def credentials(identifier: str, password: str, *, address: str = "") -> Any:
+        return {"acme": _USER, "globex": other_alice}.get(password)
+
+    monkeypatch.setattr(login, "resolve_user_credentials", credentials)
+    c = _client()
+    grant = _start(c)
+    for org in ("acme", "globex"):
+        seen = c.post(
+            "/oauth/device",
+            data={
+                "user_code": grant["user_code"],
+                "identifier": "alice@example.com",
+                "password": org,
+            },
+        )
+    assert seen.status_code == 409
+    assert _error(_poll(c, grant["device_code"])) == "access_denied"
+
+
 def test_a_refused_sso_sign_in_revokes_the_idp_token_it_got(sso, monkeypatch) -> None:
     revoked: list[str] = []
 

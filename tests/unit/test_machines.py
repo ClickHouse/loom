@@ -4,6 +4,7 @@ once, and nothing else does."""
 
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
 from typing import Any
@@ -62,7 +63,7 @@ def bots(monkeypatch) -> dict[str, Any]:
 
     monkeypatch.setattr(machines, "get", get)
     monkeypatch.setattr(machines, "_jwks_uri", jwks_uri)
-    monkeypatch.setattr(oidc, "_signing_key", lambda uri, token: ci_key.public_key())
+    monkeypatch.setattr(oidc, "signing_key", lambda uri, token: ci_key.public_key())
     monkeypatch.setattr(oauth.audit, "emit", emit)
     monkeypatch.setattr(revocation, "subjects_revoked", not_revoked)
     return {"key": private, "ci_key": ci_key, "registered": registered}
@@ -170,14 +171,16 @@ def _exchange(c: TestClient, token: str, client_id: str = "deploy") -> Any:
     )
 
 
-def test_a_ci_jobs_token_gets_the_bots_token_once(bots) -> None:
-    c, token = TestClient(oauth_app()), _ci_token(bots)
+def test_a_ci_jobs_token_gets_tokens_that_never_outlive_it(bots) -> None:
+    c, token = TestClient(oauth_app()), _ci_token(bots)  # lives five minutes
     r = _exchange(c, token)
-    assert r.status_code == 200
+    assert r.status_code == 200 and 240 <= r.json()["expires_in"] <= 300
     assert r.json()["issued_token_type"] == "urn:ietf:params:oauth:token-type:access_token"
     claims = pyjwt.decode(r.json()["access_token"], options={"verify_signature": False})
     assert claims["sub"] == "sa:deploy" and claims["namespaces"] == ["deploys"]
-    assert _exchange(c, token).status_code == 400  # spent
+    assert claims["exp"] <= pyjwt.decode(token, options={"verify_signature": False})["exp"]
+    # Another client of the same job, or a renewal, exchanges it again.
+    assert _exchange(c, token).status_code == 200
 
 
 @pytest.mark.parametrize(
@@ -248,3 +251,49 @@ async def test_a_saved_bot_writes_every_column(monkeypatch) -> None:
     await machines.save(bot, by="cli:root")
     await machines.save(bot, by="cli:root", active=False)
     assert [sorted(r) for r in rows] == [sorted(column_names("machine_identities"))] * 2
+
+
+def test_a_bot_disabled_while_its_token_is_made_gets_a_dead_one(bots, monkeypatch) -> None:
+    # The disable lands just after the proof read the bot as active: its
+    # cutoff is a later second, and the token is issued as of before the read.
+    read = machines.get
+
+    async def read_then_disabled(name: str) -> machines.Machine | None:
+        found = await read(name)
+        revocation._apply_locally(machines.subject(name), int(time.time()) + 1)
+        await asyncio.sleep(1.1)  # the request waits past the disable's cutoff
+        return found
+
+    async def subjects_revoked(subjects: list[str], *, issued_at: int) -> bool:
+        return False  # the check ran before the disable
+
+    monkeypatch.setattr(revocation, "_loaded", True)
+    monkeypatch.setattr(revocation, "_revoked_jtis", frozenset())
+    monkeypatch.setattr(revocation, "_revoked_before", {})
+    monkeypatch.setattr(machines, "get", read_then_disabled)
+    monkeypatch.setattr(revocation, "subjects_revoked", subjects_revoked)
+    r = _with_key(TestClient(oauth_app()), _assertion(bots["key"]))
+    claims = pyjwt.decode(r.json()["access_token"], options={"verify_signature": False})
+    assert revocation.is_revoked(claims["sub"], issued_at=claims["iat"])
+
+
+def test_two_clients_of_one_job_share_its_token_file(bots, monkeypatch, tmp_path) -> None:
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "sdk" / "python"))
+    from loom import machine
+
+    server = TestClient(oauth_app())
+    monkeypatch.setattr(
+        machine.httpx,
+        "post",
+        lambda url, *, data, timeout: server.post(url.removeprefix("http://testserver"), data=data),
+    )
+    (tmp_path / "oidc").write_text(_ci_token(bots))  # the platform wrote it once
+    monkeypatch.setenv("LOOM_WORKLOAD_TOKEN_FILE", str(tmp_path / "oidc"))
+    monkeypatch.delenv("LOOM_WORKLOAD_TOKEN", raising=False)
+    first, second = (machine.MachineLogin("http://testserver", "deploy") for _ in range(2))
+    assert first.token() and second.token()
+    first._renew_at = 0  # a renewal, from the unchanged file
+    assert first.token(refused=first.token())

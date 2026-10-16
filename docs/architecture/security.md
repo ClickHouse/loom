@@ -342,8 +342,11 @@ assertion it signs (RFC 7523 `private_key_jwt`: issuer and subject its name, aud
 this token endpoint, at most five minutes long, its `jti` spent once in Keeper, ES256,
 RS256 or EdDSA only), or as a CI job, by token exchange (RFC 8693) of the OIDC token its
 platform issued for the run, checked against the registered issuer's keys (fetched only
-for a registered issuer), the audience and every registered claim, and spent once. A CI
-trust must name at least one claim: any job on a platform can ask for any audience.
+for a registered issuer), the audience and every registered claim. A CI token may be
+exchanged again while it lives (every client of the job, each renewal), and the token
+issued never outlives it. A CI trust must name at least one claim: any job on a platform
+can ask for any audience. A token is issued as of the moment before the bot is read, so a
+disable landing during the exchange still cuts it off.
 Disabling a bot refuses later proofs and revokes its tokens; no refresh token exists to
 outlive it.
 

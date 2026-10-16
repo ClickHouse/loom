@@ -277,7 +277,8 @@ async def _sign_in(
     """Record who signed in on `device`: the outcome, and the IdP tokens no
     longer needed."""
     subject, org, namespaces, roles = identity
-    if device["subject"] not in ("", subject):
+    # One principal is its (org, subject): an `alice` of another org is someone else.
+    if device["subject"] and (device["org"], device["subject"]) != (org, subject):
         await oauth.store.save_device(
             device | {"status": "denied", "ticket": "", "upstream_refresh": ""}
         )

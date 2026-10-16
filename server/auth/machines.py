@@ -66,11 +66,15 @@ def subject(name: str) -> str:
 
 
 async def get(name: str) -> Machine | None:
-    """The active machine identity `name`."""
-    row = await get_client().query_one(
-        f"SELECT * FROM {TABLE} FINAL WHERE name = {{name:String}} AND active = 1",
-        params={"name": name},
-    )
+    """The active machine identity `name`, read as of every write that landed:
+    a replica a moment behind must not mint for a bot just disabled."""
+    from server.core.ch import own_write_reads
+
+    with own_write_reads():
+        row = await get_client().query_one(
+            f"SELECT * FROM {TABLE} FINAL WHERE name = {{name:String}} AND active = 1",
+            params={"name": name},
+        )
     if row is None:
         return None
     return {
@@ -87,7 +91,7 @@ async def get(name: str) -> Machine | None:
 async def listed() -> list[dict[str, Any]]:
     return await get_client().query_all(
         f"SELECT name, org, ns_roles, public_keys != '' AS has_key, issuer, audience, claims, "
-        f"active, created_by, updated_at FROM {TABLE} FINAL ORDER BY name"
+        f"active, updated_by, updated_at FROM {TABLE} FINAL ORDER BY name"
     )
 
 
@@ -98,7 +102,7 @@ async def save(m: Machine, *, by: str, active: bool = True) -> None:
             {
                 **m,
                 "active": int(active),
-                "created_by": by,
+                "updated_by": by,
                 "updated_at": datetime.now(UTC),
                 "version": time.time_ns(),
             }
@@ -163,7 +167,7 @@ async def verify_workload(token: str, name: str) -> tuple[Machine, dict[str, Any
 
     try:
         jwks_uri = await _jwks_uri(m["issuer"])
-        key = await asyncio.to_thread(oidc._signing_key, jwks_uri, token)
+        key = await asyncio.to_thread(oidc.signing_key, jwks_uri, token)
         claims: dict[str, Any] = jwt.decode(
             token,
             key,
@@ -173,8 +177,8 @@ async def verify_workload(token: str, name: str) -> tuple[Machine, dict[str, Any
             options={"require": ["exp", "iat", "iss", "aud", "sub"]},
             leeway=_LEEWAY_S,
         )
-    except (httpx.HTTPError, jwt.PyJWKClientConnectionError) as e:
-        raise Refused("temporarily_unavailable", f"the issuer's keys: {type(e).__name__}") from e
+    except (httpx.HTTPError, jwt.PyJWKClientConnectionError, _Undiscovered) as e:
+        raise Refused("temporarily_unavailable", f"the issuer's keys: {e!r}") from e
     except (jwt.PyJWTError, ValueError, KeyError) as e:
         raise Refused("invalid_grant", f"subject token refused: {e}") from None
     for claim, want in m["claims"].items():
@@ -190,19 +194,33 @@ def matches(value: str, want: str) -> bool:
     return value == want
 
 
-_discovered: dict[str, str] = {}
+class _Undiscovered(Exception):
+    """The issuer's discovery document could not be read, or does not name it."""
+
+
+_DISCOVERY_TTL_S = 3600
+_discovered: dict[str, tuple[str, float]] = {}  # issuer -> (jwks_uri, read at)
 
 
 async def _jwks_uri(issuer: str) -> str:
-    if issuer not in _discovered:
-        async with httpx.AsyncClient(timeout=10.0) as c:
-            r = await c.get(f"{issuer.rstrip('/')}/.well-known/openid-configuration")
-            r.raise_for_status()
-            doc = r.json()
-        if doc.get("issuer") != issuer or not str(doc.get("jwks_uri", "")).startswith("https://"):
-            raise ValueError("the issuer's discovery document does not match it")
-        _discovered[issuer] = doc["jwks_uri"]
-    return _discovered[issuer]
+    from server.clients._http import get_client as http
+
+    cached = _discovered.get(issuer)
+    if cached and time.monotonic() - cached[1] < _DISCOVERY_TTL_S:
+        return cached[0]
+    try:
+        r = await http().get(f"{issuer}/.well-known/openid-configuration", timeout=10.0)
+        r.raise_for_status()
+        doc = r.json()
+    except (httpx.HTTPError, ValueError) as e:
+        raise _Undiscovered(type(e).__name__) from e
+    if not isinstance(doc, dict) or doc.get("issuer") != issuer:
+        raise _Undiscovered("its discovery document names another issuer")
+    jwks_uri = str(doc.get("jwks_uri", ""))
+    if not jwks_uri.startswith("https://"):
+        raise _Undiscovered("its discovery document names no https jwks_uri")
+    _discovered[issuer] = (jwks_uri, time.monotonic())
+    return jwks_uri
 
 
 # The members an RFC 7638 thumbprint hashes, per key type.
