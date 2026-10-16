@@ -1125,10 +1125,24 @@ async def _refresh_session(grant: Grant, refresh_token: str) -> dict[str, Any]:
     )
 
 
+# Credentials refused at /oauth/token and /oauth/revoke, per address: each
+# costs a store read, so guessing tokens is cut off; a real client is refused
+# once and signs in again.
+_refused_tokens_by_address = Attempts(60, 60)
+
+
+def _check_refusals(request: Request) -> str:
+    address = address_key(client_address(request))
+    if _refused_tokens_by_address.blocked(address):
+        raise OAuthError("slow_down", 429, headers={"Retry-After": "60"})
+    return address
+
+
 @router.post("/oauth/token")
 async def token(request: Request) -> JSONResponse:
     from server.auth import device
 
+    address = _check_refusals(request)
     f = await form_body(request)
     grant_type = f.get("grant_type", "")
     grants = {
@@ -1138,7 +1152,12 @@ async def token(request: Request) -> JSONResponse:
     }
     if grant_type not in grants:
         raise OAuthError("unsupported_grant_type")
-    body = await grants[grant_type](f)  # Keeper not answering is _busy_response's
+    try:
+        body = await grants[grant_type](f)  # Keeper not answering is _busy_response's
+    except OAuthError as e:
+        if e.error == "invalid_grant":
+            _refused_tokens_by_address.record(address)
+        raise
     return JSONResponse(body, headers={"Cache-Control": "no-store"})
 
 
@@ -1158,6 +1177,7 @@ async def revoke_token(request: Request) -> Response:
     from server.auth.jwt import TokenError, verify_token
     from server.auth.revocation import revoke
 
+    address = _check_refusals(request)
     f = await form_body(request)
     token_value = f.get("token", "")
     client_id = f.get("client_id", "")
@@ -1190,6 +1210,7 @@ async def revoke_token(request: Request) -> Response:
     try:
         info = verify_token(token_value)
     except TokenError:
+        _refused_tokens_by_address.record(address)
         return Response(status_code=200)  # unknown, expired or already revoked
     # A session's access token ends its whole session; any other token itself.
     key = info.session_id or info.token_id

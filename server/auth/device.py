@@ -150,6 +150,15 @@ async def device_sign_in(request: Request) -> Response:
     if device is None:
         _wrong_codes_by_address.record(address_key(address))
         return _code_form(typed, "That code is wrong or has expired.", 400)
+    if device["status"] != "pending":
+        # Approved by whoever entered it first: if that was not this person,
+        # the terminal is signed in as someone else.
+        return _code_form(
+            "",
+            "That code was already used. If you did not approve it, run loom logout"
+            " in that terminal.",
+            400,
+        )
     if settings.oauth_login_provider == "oidc":
         return await oauth.start_oidc_login(
             "device",
@@ -179,7 +188,8 @@ async def _undecided(user_code: str) -> Device | None:
     """The undecided grant for `user_code` as it stands now, or None when it is
     gone, decided or expired. Saving a change to it raises claims.Changed if
     another request changed it first."""
-    return await oauth.store.device_by_user_code(_user_code_id(user_code))
+    d = await oauth.store.device_by_user_code(_user_code_id(user_code))
+    return d if d is not None and d["status"] == "pending" else None
 
 
 def _busy_page() -> Response:

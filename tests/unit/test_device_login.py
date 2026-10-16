@@ -69,6 +69,7 @@ def _world(monkeypatch):
         device._requests_by_address,
         device._wrong_codes_by_address,
         oauth._starts_by_address,
+        oauth._refused_tokens_by_address,
     ):
         limiter.clear()
     return {"store": store, "revoked": revoked, "expiries": expiries, "events": events}
@@ -227,6 +228,17 @@ def test_a_wrong_user_code_is_refused_and_counted() -> None:
     assert _sign_in(c, "BBBB-BBBB").status_code == 429
 
 
+def test_a_used_code_says_so_and_is_not_counted_wrong() -> None:
+    # Someone else approved the code first: the owner is told to check the
+    # terminal's account, and is not locked out for it.
+    c = _client()
+    grant = _start(c)
+    _approve(c, grant["user_code"], _sign_in(c, grant["user_code"]).text)
+    for _ in range(11):
+        r = _sign_in(c, grant["user_code"])
+        assert r.status_code == 400 and "already used" in r.text and "loom logout" in r.text
+
+
 def test_a_wrong_password_keeps_the_grant_pending() -> None:
     c = _client()
     grant = _start(c)
@@ -382,6 +394,23 @@ def test_revoking_another_token_revokes_its_jti_until_it_expires(_world) -> None
     _client().post("/oauth/revoke", data={"token": access, "client_id": "loom-cli"})
     assert _world["revoked"] == ["j1"]
     assert timedelta(0) < _world["expiries"][0] - datetime.now(UTC) <= timedelta(seconds=61)
+
+
+def test_guessing_refresh_tokens_is_cut_off_per_address() -> None:
+    c = _client()
+    for _ in range(60):
+        assert _error(_refresh(c, "guess")) == "invalid_grant"
+    r = _refresh(c, "guess")
+    assert r.status_code == 429 and _error(r) == "slow_down"
+
+
+def test_guessing_tokens_at_revoke_is_cut_off_per_address() -> None:
+    c = _client()
+    for _ in range(60):
+        assert (
+            c.post("/oauth/revoke", data={"token": "x", "client_id": "loom-cli"}).status_code == 200
+        )
+    assert c.post("/oauth/revoke", data={"token": "x", "client_id": "loom-cli"}).status_code == 429
 
 
 def test_revoking_garbage_is_a_quiet_200(_world) -> None:

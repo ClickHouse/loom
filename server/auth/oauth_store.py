@@ -1,11 +1,11 @@
 """Where OAuth state lives.
 
 What a sign-in spends or moves once is kept in Keeper (claims.py), changed only
-by compare-and-set: a code, a device grant, a single-use mark per
-identity provider callback the provider vouched for (`callback:<state>`), an MCP
+by compare-and-set: a code, a device grant, a single-use mark per identity
+provider callback the provider vouched for (`callback:<state>`), an MCP
 approval awaiting its click (`pending`), and which refresh token is each
-session's current one (`family:<id>`). Of two requests spending the same credential exactly one
-wins. The rest is in `loom.oauth_state` (ClickHouse): registered clients,
+session's current one (`family:<id>`). Of two requests spending the same
+credential exactly one wins. The rest is in `loom.oauth_state` (ClickHouse): registered clients,
 refresh tokens' grants (written before the token is handed out, read with
 sequential consistency) and owed revocations.
 
@@ -33,7 +33,7 @@ from server.core.secrets_at_rest import seal, unseal
 
 _T = "loom.oauth_state"
 UPSTREAM_PURPOSE = "oidc refresh token"
-PENDING_TTL = 600  # an in-flight IdP sign-in: time to finish it
+PENDING_TTL = 600  # an IdP sign-in's cookie, and an MCP approval: time to finish either
 
 DeviceStatus = Literal["pending", "approved", "denied"]
 
@@ -386,7 +386,7 @@ class ClickHouseStore:
         try:
             await self._put(key, value, {**record, "spent": True, "nonce": claims.nonce()})
         except claims.Changed:
-            return None  # the same callback twice: the other one finishes it
+            return None  # the approval submitted twice: the other submit answers
         data: dict[str, Any] = record["data"]
         return data
 
@@ -404,7 +404,7 @@ class ClickHouseStore:
                 {
                     "record_type": "revocation_owed",
                     "id": family,
-                    "client_name": reason,
+                    "client_name": reason,  # a revocation_owed row's reason
                     "expires_at": int(time.time()) + 30 * 86400,
                     "version": time.time_ns(),
                 }
@@ -440,10 +440,10 @@ class ClickHouseStore:
         return found[0] if found and not found[1]["spent"] else None
 
     async def device_by_user_code(self, user_code_id: str) -> Device | None:
-        """The live, undecided device grant whose user code keys to this."""
+        """The live device grant whose user code keys to this, decided or not."""
         pointer = await self._load(f"user_code:{user_code_id}")
         d = await self.device(pointer[0]["id"]) if pointer else None
-        if d is None or d["status"] != "pending" or d["exp"] < int(time.time()):
+        if d is None or d["exp"] < int(time.time()):
             return None
         return d
 
