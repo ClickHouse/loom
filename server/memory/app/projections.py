@@ -1013,8 +1013,8 @@ async def end_edges(
     changed: list[str],
 ) -> None:
     """End each edge (entity_a, entity_b, end) still valid after its `end`, as a close
-    ends a triple, unless a live row of another key than the `changed` rows' (ids)
-    still names both entities: linked to the pair (`entity_edge_memories`) and its
+    ends a triple, unless a live row other than the `changed` ones (ids) still names
+    both entities: its key linked to the pair (`entity_edge_memories`) and its
     current value naming them (`tfr.still_names_both`), as the edge is its
     co-occurrence too. No `invalid_at`: the edge walk never walks a retired edge, and
     the fact did hold until then. One read, and an UPDATE only when it finds an edge to
@@ -1039,8 +1039,8 @@ async def end_edges(
     where = f"""org = {{org:String}} AND namespace = {{ns:String}}
           AND (entity_a, entity_b) IN {{pairs:Array(Tuple(String, String))}}
           AND invalid_at IS NULL AND (valid_to IS NULL OR valid_to > {end})"""
-    # A link names a key, not the value it came from: the changed rows' own keys say
-    # nothing of what those rows name now, and another key's value is read.
+    # A link names a key, not the row or value it came from: each live row of a
+    # linked key but the changed ones is read for what its value names now.
     found = await ch.query_all(
         f"""
         SELECT e.entity_a AS entity_a, e.entity_b AS entity_b, groupArray(k.value) AS values
@@ -1056,10 +1056,7 @@ async def end_edges(
                       SELECT memory_key FROM loom.entity_edge_memories
                       WHERE org = {{org:String}} AND namespace = {{ns:String}}
                         AND (entity_a, entity_b) IN {{pairs:Array(Tuple(String, String))}})
-                  AND memory_key NOT IN (
-                      SELECT memory_key FROM loom.memory
-                      WHERE org = {{org:String}} AND namespace = {{ns:String}}
-                        AND memory_id IN {{changed:Array(UUID)}})
+                  AND memory_id NOT IN {{changed:Array(UUID)}}
                   AND {GRAPH_HOLDER_SQL}
             ) AS m ON l.memory_key = m.memory_key
             WHERE l.org = {{org:String}} AND l.namespace = {{ns:String}}

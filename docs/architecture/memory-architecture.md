@@ -337,16 +337,19 @@ the value it was written or stated for (`carried`):
   does one a retired row stated until later, or it ends when a winner dated ahead
   starts, as an open one closes (a later end the follow's close gave stays). Its edge
   ends with its triples, at their latest end, unless a live row still holds another fact
-  valid now between the same two entities, or a live row of another key linked to the
-  pair (`entity_edge_memories`: the edge is that row's co-occurrence too) whose current
-  value still names both; the edge keeps no `invalid_at`, so a walk at an earlier time
-  still finds it. The follow reads the retired rows' facts again after its plan, so a
-  replay of a follow whose close landed still ends the rest. When a revision, or a
-  retirement the follow closes, leaves a single-valued relation of the row with no
-  value valid now (a value a close ended later counts only while an open value starts
-  by that end: Paris holds until the move to Berlin it was closed for), the newest value a live row still holds and a close ended
-  is stated again from now, as an Undo states it, but labelled `row-fallback`: triple
-  and edge markers, then the interval repair, so a newer value written meanwhile wins.
+  valid now between the same two entities, or a live row other than the revised or
+  retired ones, of a key linked to the pair (`entity_edge_memories`: the edge is that
+  row's co-occurrence too), whose current value still names both; the edge keeps no
+  `invalid_at`, so a walk at an earlier time still finds it. The follow reads the
+  retired rows' facts again after its plan, so a replay of a follow whose close landed
+  still ends the rest. When a revision, or a retirement the follow closes, leaves a
+  single-valued relation of the row with no value valid now (a value a close ended later
+  counts only while an open value starts by that end: Paris holds until the move to
+  Berlin it was closed for), the newest value a live row still holds and a close ended
+  is stated again from the relation's last close, as an Undo states it and through the
+  Undo's own check of the rows holding it (a row revised meanwhile is left to its
+  revision), but labelled `row-fallback`: triple and edge markers, then the interval
+  repair, so a newer value written meanwhile wins.
   London undone over Paris and then revised or retired away leaves Paris current from
   then on, and its earlier interval stays as history. A value that ended on its own
   stays ended. A replay of a failed triple, edge or entity-vector write writes only for

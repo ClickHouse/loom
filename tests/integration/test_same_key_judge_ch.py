@@ -4146,6 +4146,22 @@ async def test_a_dropped_facts_edge_stays_open_while_another_row_names_both(ch, 
     assert await _walked(org, ["london"], labeled=False, seed="alice") == ["london"]
 
 
+async def test_a_dropped_facts_edge_stays_open_while_the_same_key_in_another_session_names_both(
+    ch, org
+) -> None:
+    # Two sessions keep one key: s1 likes London, s2 is a trip there. s1's row is
+    # revised away; s2's row still names Alice and London, so the edge stays open.
+    likes = ("alice", "like", "london")
+    london = await _stated(ch, org, "s1", "Alice likes London", likes)
+    trip = await _stated(ch, org, "s2", "Alice's trip to London", extracted=False)
+    await _mentions(ch, org, london, "alice", "london")
+    await _mentions(ch, org, trip, "alice", "london")
+    await _revise("memory.update_by_id", org, london, "Alice likes Rome")
+    await _mutations_done(ch, org)
+    await asyncio.sleep(1.1)  # the walk counts an edge ended this second as current
+    assert await _walked(org, ["london"], labeled=False, seed="alice") == ["london"]
+
+
 async def test_a_key_that_no_longer_names_both_keeps_no_edge_open(ch, org) -> None:
     # Two keys say Alice lives in Paris. The second is revised to jazz, then the first
     # to blues: the second key's old link names the pair, but its value no longer does.
