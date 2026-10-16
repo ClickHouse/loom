@@ -389,8 +389,10 @@ async def project_memory_set_entities(
     edges are readable once it returns. With `memory_id`, the edges are linked
     to that row and its value (`entity_edge_rows`). `ents`: the caller's own
     `set_entities_for_projection(input, value)`, not mined again. With
-    `content_sha256` (a projection beside the response), it writes only while the
-    row still holds that value, and ends its edges if the row changed meanwhile.
+    `content_sha256` (any projection whose edges are flushed before it returns: a
+    revision's, or a first write's beside the response), it writes only while the row
+    still holds that value, and ends its edges if the row changed meanwhile
+    (`end_overtaken_edges`).
     """
     from server.observability.otel import traced
 
@@ -421,43 +423,18 @@ async def project_memory_set_entities(
         )
     result = _BulkSetResult(memory_key=memory_key, version=0, memory_id=memory_id)
     ch = ch or get_client()
-    version = [(memory_id, content_sha256)]
-
-    async def still_held() -> bool:
-        held = await rows_holding(
-            input.org, input.namespace, version, ch=ch, holder_sql=HOLDS_VALUE_SQL
-        )
-        return bool(held)
-
     # A revision that ran first closed what it dropped already: this value is not current.
-    if content_sha256 and not await still_held():
+    if content_sha256 and not await rows_holding(
+        input.org, input.namespace, [(memory_id, content_sha256)], ch=ch, holder_sql=HOLDS_VALUE_SQL
+    ):
         return 0
     with traced("entities.write_edges", entities=len(ents)):
         await write_entity_edges(bulk_like, [result], ch=ch, wait_visible=wait_visible)
     # Revised or retired while the edges were written: its close may have run before
     # they landed, so end the ones no live row names.
     if content_sha256:
-        payload: dict[str, Any] = {"memory_id": memory_id, "content_sha256": content_sha256}
-        try:
-            if not await still_held():
-                ended_at = await value_ended_at(
-                    input.org, input.namespace, memory_id, content_sha256, ch=ch
-                )
-                # The repair ends them at the same moment.
-                payload["ended_at"] = ended_at.isoformat()
-                await _end_edges_of(input, memory_id, content_sha256, ended_at, ch=ch)
-        except Exception as e:  # noqa: BLE001 — recorded; the projection repair ends them
-            await record_projection_failure(
-                org=input.org,
-                namespace=input.namespace,
-                agent=input.agent,
-                projection=EDGES_CLOSE,
-                source_operation="memory.set",
-                memory_keys=[memory_key],
-                error=e,
-                payload=payload,
-                ch=ch,
-            )
+        version = (memory_id, memory_key, content_sha256)
+        await end_overtaken_edges(input, [version], op="memory.set", ch=ch)
     return len(ents)
 
 
@@ -502,17 +479,32 @@ async def end_overtaken_edges(
     for memory_id, memory_key, sha in versions:
         if memory_id in held:
             continue
+        ended_at = None
         try:
             ended_at = await value_ended_at(input.org, input.namespace, memory_id, sha, ch=ch)
             await _end_edges_of(input, memory_id, sha, ended_at, ch=ch)
         except Exception as e:  # noqa: BLE001 — recorded; the projection repair ends them
-            await _record_edges_close(input, memory_id, memory_key, sha, e, op=op, ch=ch)
+            await _record_edges_close(
+                input, memory_id, memory_key, sha, e, ended_at=ended_at, op=op, ch=ch
+            )
 
 
 async def _record_edges_close(
-    input: Any, memory_id: str, memory_key: str, sha: str, error: Exception, *, op: str, ch: Any
+    input: Any,
+    memory_id: str,
+    memory_key: str,
+    sha: str,
+    error: Exception,
+    *,
+    ended_at: datetime | None = None,
+    op: str,
+    ch: Any,
 ) -> None:
-    """Record a failed `end_overtaken_edges` close for the projection repair."""
+    """Record a failed `end_overtaken_edges` close for the projection repair, with
+    the value's end when it was read: the repair ends the edges at the same moment."""
+    payload: dict[str, Any] = {"memory_id": memory_id, "content_sha256": sha}
+    if ended_at is not None:
+        payload["ended_at"] = ended_at.isoformat()
     await record_projection_failure(
         org=input.org,
         namespace=input.namespace,
@@ -521,7 +513,7 @@ async def _record_edges_close(
         source_operation=op,
         memory_keys=[memory_key],
         error=error,
-        payload={"memory_id": memory_id, "content_sha256": sha},
+        payload=payload,
         ch=ch,
     )
 

@@ -76,8 +76,9 @@ STATUS_MIRROR = "memory_status_mirror"
 TRIPLES_REOPEN = "triples_reopen"
 # The facts of rows a revision or an Undo changed, not yet reconciled with them.
 TRIPLES_RECONCILE = "triples_reconcile"
-# The edges a point write's late projection wrote for a value the row no longer
-# holds, whose cleanup failed: payload memory_id and content_sha256.
+# The edges a revision or a late projection (memory.set, memory.bulk_set, the by-id
+# updates) wrote for a value the row no longer holds, whose cleanup failed: payload
+# memory_id, content_sha256 and, when it was read, ended_at.
 EDGES_CLOSE = "entity_edges_close"
 
 

@@ -853,3 +853,36 @@ async def test_a_late_edges_cleanup_replays_with_the_revisions_end(
     failure = dataclasses.replace(_graph_failure("entity_edges_close"), payload=payload)
     assert (await retry_projection_failure(failure, ch=_GraphCH())).resolved
     assert calls == [("o", "n", _ROW_ID, "a" * 64, ended_at)]
+
+
+async def test_a_failed_late_edges_cleanup_records_when_the_value_ended(monkeypatch) -> None:
+    # The end it read is recorded, so the repair ends the edges then (for memory.set,
+    # memory.bulk_set and the by-id updates alike: they share this cleanup).
+    from types import SimpleNamespace
+
+    from server.memory.app import entity_projections
+
+    ended = datetime(2026, 3, 1)
+    recorded: list[dict] = []
+
+    async def none_held(*a: Any, **k: Any) -> set[str]:
+        return set()
+
+    async def value_ended_at(*a: Any, **k: Any) -> datetime:
+        return ended
+
+    async def end_fails(*a: Any, **k: Any) -> None:
+        raise RuntimeError("boom")
+
+    async def record(**k: Any) -> None:
+        recorded.append(k["payload"])
+
+    monkeypatch.setattr(entity_projections, "rows_holding", none_held)
+    monkeypatch.setattr(entity_projections, "value_ended_at", value_ended_at)
+    monkeypatch.setattr(entity_projections, "_end_edges_of", end_fails)
+    monkeypatch.setattr(entity_projections, "record_projection_failure", record)
+    scope = SimpleNamespace(org="o", namespace="n", agent="a")
+    versions = [(_ROW_ID, "k", "a" * 64)]
+    await entity_projections.end_overtaken_edges(scope, versions, op="memory.set", ch=None)
+    payload = {"memory_id": _ROW_ID, "content_sha256": "a" * 64, "ended_at": ended.isoformat()}
+    assert recorded == [payload]

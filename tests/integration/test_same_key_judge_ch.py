@@ -2106,19 +2106,21 @@ async def test_a_projection_landing_after_a_revision_leaves_no_edge(
     assert "jazz" in walked and "london" not in walked
 
 
-# A profile row is not embedded: its write takes the plain insert path.
-@pytest.mark.parametrize("memory_type", ["semantic", "profile"])
-async def test_a_revisions_edges_landing_after_the_next_revision_end_with_it(
-    ch, org, monkeypatch, memory_type
+async def _london_ends_with_the_next_revision(
+    ch: Any,
+    org: str,
+    monkeypatch: pytest.MonkeyPatch,
+    owner: Any,
+    to_london: Callable[[], Any],
+    to_jazz: Callable[[], Any],
 ) -> None:
-    # A revises the row to London; its edges are held back while B revises it to
-    # jazz, whose close runs before London's edges exist. Once they land they end
-    # when B ended London, not when A's own cleanup ran.
-    from server.memory.api.models_crud import MemorySetInput
-    from server.memory.app import after_write, entity_projections
-    from server.memory.app.write import handle_memory_set
+    """`to_london()` revises the row to London with its edges held back (`owner`'s
+    `write_entity_edges`) while `to_jazz()` revises it again, whose close runs before
+    London's edges exist. Once they land they end when jazz ended London, not when
+    the London write's own cleanup ran."""
+    from server.memory.app import after_write
 
-    write_edges, release, held = entity_projections.write_entity_edges, asyncio.Event(), []
+    write_edges, release, held = owner.write_entity_edges, asyncio.Event(), []
 
     async def _london_held(input: Any, *args: Any, **kw: Any) -> Any:
         if "London" in str(input.entries[0].value):
@@ -2126,30 +2128,14 @@ async def test_a_revisions_edges_landing_after_the_next_revision_end_with_it(
             await release.wait()
         return await write_edges(input, *args, **kw)
 
-    def _set(value: str, relations: list[Any]) -> Any:
-        return handle_memory_set(
-            MemorySetInput(
-                org=org,
-                namespace=NS,
-                agent="bot",
-                user_id=USER,
-                memory_key="alice",
-                memory_type=memory_type,
-                value=value,
-                relations=relations,
-            )
-        )
-
-    await _set("Alice lives in Paris", [("alice", "live_in", "paris")])
-    await after_write.drain()
-    monkeypatch.setattr(entity_projections, "write_entity_edges", _london_held)
-    writer_a = asyncio.create_task(_set("Alice lives in London", [("alice", "live_in", "london")]))
+    monkeypatch.setattr(owner, "write_entity_edges", _london_held)
+    writer_a = asyncio.create_task(to_london())
     for _ in range(100):
         if held:
             break
         await asyncio.sleep(0.05)
     assert held
-    await _set("Alice likes jazz", [])
+    await to_jazz()
     revised = naive_utc_now()
     await asyncio.sleep(2.5)
     release.set()
@@ -2167,6 +2153,41 @@ async def test_a_revisions_edges_landing_after_the_next_revision_end_with_it(
     assert "jazz" in walked and "london" not in walked
 
 
+# A profile row is not embedded: its write takes the plain insert path.
+@pytest.mark.parametrize("memory_type", ["semantic", "profile"])
+async def test_a_revisions_edges_landing_after_the_next_revision_end_with_it(
+    ch, org, monkeypatch, memory_type
+) -> None:
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import after_write, entity_projections
+    from server.memory.app.write import handle_memory_set
+
+    def _set(value: str, relations: list[Any]) -> Any:
+        return handle_memory_set(
+            MemorySetInput(
+                org=org,
+                namespace=NS,
+                agent="bot",
+                user_id=USER,
+                memory_key="alice",
+                memory_type=memory_type,
+                value=value,
+                relations=relations,
+            )
+        )
+
+    await _set("Alice lives in Paris", [("alice", "live_in", "paris")])
+    await after_write.drain()
+    await _london_ends_with_the_next_revision(
+        ch,
+        org,
+        monkeypatch,
+        entity_projections,
+        lambda: _set("Alice lives in London", [("alice", "live_in", "london")]),
+        lambda: _set("Alice likes jazz", []),
+    )
+
+
 async def test_an_update_by_ids_edges_landing_after_the_next_revision_end_with_it(
     ch, org, monkeypatch
 ) -> None:
@@ -2175,14 +2196,6 @@ async def test_an_update_by_ids_edges_landing_after_the_next_revision_end_with_i
     from server.memory.app import entity_projections
     from server.memory.app.update import handle_memory_update_by_id
     from server.memory.app.write import handle_memory_set
-
-    write_edges, release, held = entity_projections.write_entity_edges, asyncio.Event(), []
-
-    async def _london_held(input: Any, *args: Any, **kw: Any) -> Any:
-        if "London" in str(input.entries[0].value):
-            held.append(True)
-            await release.wait()
-        return await write_edges(input, *args, **kw)
 
     first = await handle_memory_set(
         MemorySetInput(
@@ -2203,30 +2216,14 @@ async def test_an_update_by_ids_edges_landing_after_the_next_revision_end_with_i
             )
         )
 
-    monkeypatch.setattr(entity_projections, "write_entity_edges", _london_held)
-    writer_a = asyncio.create_task(
-        _update("Alice lives in London", [("alice", "live_in", "london")])
-    )
-    for _ in range(100):
-        if held:
-            break
-        await asyncio.sleep(0.05)
-    assert held
-    await _update("Alice likes jazz", [])
-    revised = naive_utc_now()
-    await asyncio.sleep(2.5)
-    release.set()
-    await writer_a
-    await _mutations_done(ch, org)
-    walked = await _walked(
+    await _london_ends_with_the_next_revision(
+        ch,
         org,
-        [],
-        labeled=False,
-        as_of=revised + timedelta(seconds=1.2),
-        seed="alice",
-        until=lambda w: "jazz" in w and "london" not in w,
+        monkeypatch,
+        entity_projections,
+        lambda: _update("Alice lives in London", [("alice", "live_in", "london")]),
+        lambda: _update("Alice likes jazz", []),
     )
-    assert "jazz" in walked and "london" not in walked
 
 
 async def test_a_bulk_revisions_edges_landing_after_the_next_revision_end_with_it(
@@ -2235,14 +2232,6 @@ async def test_a_bulk_revisions_edges_landing_after_the_next_revision_end_with_i
     # As above, through memory.bulk_set.
     from server.memory.api.models_bulk import MemoryBulkSetInput
     from server.memory.app import bulk_set
-
-    write_edges, release, held = bulk_set.write_entity_edges, asyncio.Event(), []
-
-    async def _london_held(input: Any, *args: Any, **kw: Any) -> Any:
-        if "London" in str(input.entries[0].value):
-            held.append(True)
-            await release.wait()
-        return await write_edges(input, *args, **kw)
 
     def _set(value: str, city: str) -> Any:
         return bulk_set.handle_memory_bulk_set(
@@ -2263,28 +2252,14 @@ async def test_a_bulk_revisions_edges_landing_after_the_next_revision_end_with_i
         )
 
     await _set("Alice likes Paris", "paris")
-    monkeypatch.setattr(bulk_set, "write_entity_edges", _london_held)
-    writer_a = asyncio.create_task(_set("Alice likes London", "london"))
-    for _ in range(100):
-        if held:
-            break
-        await asyncio.sleep(0.05)
-    assert held
-    await _set("Alice likes jazz", "jazz")
-    revised = naive_utc_now()
-    await asyncio.sleep(2.5)
-    release.set()
-    await writer_a
-    await _mutations_done(ch, org)
-    walked = await _walked(
+    await _london_ends_with_the_next_revision(
+        ch,
         org,
-        [],
-        labeled=False,
-        as_of=revised + timedelta(seconds=1.2),
-        seed="alice",
-        until=lambda w: "jazz" in w and "london" not in w,
+        monkeypatch,
+        bulk_set,
+        lambda: _set("Alice likes London", "london"),
+        lambda: _set("Alice likes jazz", "jazz"),
     )
-    assert "jazz" in walked and "london" not in walked
 
 
 async def test_a_late_projection_whose_cleanup_failed_is_closed_by_the_repair(
