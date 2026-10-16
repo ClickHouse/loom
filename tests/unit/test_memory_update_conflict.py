@@ -179,6 +179,21 @@ async def test_clear_verdict_writes_an_active_version_and_resets_the_old_mark(wi
 
 
 @pytest.mark.asyncio
+async def test_a_conflict_whose_peers_all_retired_before_the_mark_answers_clear(
+    wired, monkeypatch
+) -> None:
+    # Nothing was flagged, so there is no conflict to report.
+    wired(ConflictResult(verdict="conflict", peers=[_peer()]))
+
+    async def _no_live_peer(**_: Any) -> str:
+        return "clear"
+
+    monkeypatch.setattr(cf, "mark_peers_conflicted", _no_live_peer)
+    out = await update_mod.handle_memory_update(_input())
+    assert out.updated and (out.conflict_verdict, out.conflict_peers) == ("clear", 0)
+
+
+@pytest.mark.asyncio
 async def test_conflict_verdict_flags_both_sides_after_the_write(wired) -> None:
     ch, calls = wired(ConflictResult(verdict="conflict", peers=[_peer()]))
     out = await update_mod.handle_memory_update(_input())

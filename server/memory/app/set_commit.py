@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any
 
@@ -593,12 +593,13 @@ def _set_dry_run_answer(
     )
 
 
-async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any) -> None:
+async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any) -> Any:
     """Phase 12 of memory.set: the version row and its embedding row, then the peer links.
 
     Builds the full-column embedding row, inserts both rows concurrently,
     schedules the deferred settle, then flags `conflict` peers or applies a
-    `refines` supersession — after the insert, so the new id exists.
+    `refines` supersession — after the insert, so the new id exists. Returns the
+    verdict that landed: `clear` when no peer was left live to flag.
     """
     from server.memory.app.conflicts import mark_peers_conflicted
     from server.observability.otel import traced
@@ -697,11 +698,14 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
     # both the new row and every close-but-different peer as conflicted.
     if conflict_result.verdict == "conflict":
         with traced("conflicts.mark_peers", peers=len(conflict_result.peers)):
-            await mark_peers_conflicted(
+            landed = await mark_peers_conflicted(
                 org=input.org,
                 new_memory_id=memory_id,
                 peer_ids=[p.memory_id for p in conflict_result.peers],
             )
+        if landed == "clear":
+            # Every peer retired before the mark: nothing was flagged.
+            conflict_result = replace(conflict_result, verdict="clear", peers=[])
     elif conflict_result.verdict == "refines" and conflict_result.refined_peers:
         # A judged elaboration supersedes the rows it refines and links to them; nothing is
         # flagged, nothing is deleted.
@@ -717,6 +721,7 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
                 ch=ch,
                 relation=conflict_result.refine_relation,
             )
+    return conflict_result
 
 
 async def _set_after_write(

@@ -244,6 +244,21 @@ async def test_dry_run_on_a_non_searchable_type_inserts_nothing(monkeypatch) -> 
 
 
 @pytest.mark.asyncio
+async def test_a_conflict_whose_peers_all_retired_before_the_mark_answers_clear(
+    monkeypatch,
+) -> None:
+    # Nothing was flagged, so there is no conflict to report or resolve.
+    _wire(monkeypatch, ConflictResult(verdict="conflict", peers=[_peer()]))
+
+    async def _no_live_peer(**_: Any) -> str:
+        return "clear"
+
+    monkeypatch.setattr(cf, "mark_peers_conflicted", _no_live_peer)
+    out = await write_mod.handle_memory_set(_input())
+    assert (out.conflict_verdict, out.peers, out.next) == ("clear", [], "")
+
+
+@pytest.mark.asyncio
 async def test_a_conflict_write_carries_verdict_peers_and_the_update_hint(monkeypatch) -> None:
     ch, calls = _wire(monkeypatch, ConflictResult(verdict="conflict", peers=[_peer()]))
     out = await write_mod.handle_memory_set(_input())

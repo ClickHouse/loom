@@ -677,7 +677,9 @@ async def _memory_set_phases(input: MemorySetInput) -> MemorySetOutput:
         # happened), no write tick. The version is 0 so nothing can mistake it for one.
         return _set_dry_run_answer(w, conflict_result, peers_out, duplicate_of_id)
 
-    await _set_dual_write(w, ch, _cfg, conflict_result)
+    conflict_result = await _set_dual_write(w, ch, _cfg, conflict_result)
+    if conflict_result.verdict == "clear":
+        peers_out = []  # a conflict the mark found no live peer for: none to resolve
 
     return await _set_after_write(w, ch, _cfg, conflict_result, duplicate_of_id, peers_out)
 

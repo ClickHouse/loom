@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
@@ -511,23 +512,25 @@ def _revision_run_id(input: Any, existing: MemoryRow) -> str:
     return revision_run_id
 
 
-async def _update_post_write(
-    input: Any, existing: MemoryRow, conflict_result: Any, ch: Any
-) -> None:
+async def _update_post_write(input: Any, existing: MemoryRow, conflict_result: Any, ch: Any) -> Any:
     """Post-write, as memory.set: a conflict flags both sides (the new version
     exists, so the cross-link resolves); a judged elaboration supersedes the
-    rows it refines and links to them."""
+    rows it refines and links to them. Returns the verdict that landed: `clear`
+    when no peer was left live to flag."""
     from server.observability.otel import traced
 
     if conflict_result is not None and conflict_result.verdict == "conflict":
         from server.memory.app.conflicts import mark_peers_conflicted
 
         with traced("conflicts.mark_peers", peers=len(conflict_result.peers)):
-            await mark_peers_conflicted(
+            landed = await mark_peers_conflicted(
                 org=input.org,
                 new_memory_id=str(existing.memory_id),
                 peer_ids=[p.memory_id for p in conflict_result.peers],
             )
+        if landed == "clear":
+            # Every peer retired before the mark: nothing was flagged.
+            conflict_result = replace(conflict_result, verdict="clear", peers=[])
     elif (
         conflict_result is not None
         and conflict_result.verdict == "refines"
@@ -545,6 +548,7 @@ async def _update_post_write(
                 ch=ch,
                 relation=conflict_result.refine_relation,
             )
+    return conflict_result
 
 
 async def _update_live_row(
@@ -711,7 +715,7 @@ async def _write_revision(
             cfg=cfg,
         )
 
-    await _update_post_write(input, existing, conflict_result, ch)
+    conflict_result = await _update_post_write(input, existing, conflict_result, ch)
 
     # Same-key supersession, exactly as memory.set runs it after its insert.
     await _revision_supersession(input.org, existing, serialized_value, ch, cfg.policy)
