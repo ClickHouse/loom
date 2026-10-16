@@ -478,6 +478,14 @@ def test_a_revised_value_still_states_a_successor_only_with_both_ends() -> None:
     assert not tfr.still_states("I currently live in Berlin", lives)
 
 
+def test_an_edge_is_still_named_by_a_value_naming_both_ends() -> None:
+    assert tfr.still_names_both("Alice's trip to Paris", "alice", "paris")
+    assert not tfr.still_names_both("Alice likes jazz", "alice", "paris")
+    # The writer may sort either side of the pair.
+    assert tfr.still_names_both("I live in London", "london", tfr.SELF_SUBJECT)
+    assert not tfr.still_names_both("I live in Rome", "london", tfr.SELF_SUBJECT)
+
+
 _LIVES = ("user", "live_in", "london")
 _WAS = "I currently live in London"
 _WORKS = ("user", "work_at", "acme")

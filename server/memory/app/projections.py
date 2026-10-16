@@ -1014,9 +1014,15 @@ async def end_edges(
 ) -> None:
     """End each edge (entity_a, entity_b, end) still valid after its `end`, as a close
     ends a triple, unless a live row of another key than the `changed` rows' (ids)
-    still names both entities (`entity_edge_memories`): the edge is its co-occurrence
-    too. No `invalid_at`: the edge walk never walks a retired edge, and the fact did
-    hold until then. One read, and an UPDATE only when it finds an edge to end."""
+    still names both entities: linked to the pair (`entity_edge_memories`) and its
+    current value naming them (`tfr.still_names_both`), as the edge is its
+    co-occurrence too. No `invalid_at`: the edge walk never walks a retired edge, and
+    the fact did hold until then. One read, and an UPDATE only when it finds an edge to
+    end."""
+    from server.memory.domain import triples_follow_rows as tfr
+    from server.memory.domain.triple_provenance import carrier_text
+    from server.memory.store.rows import parse_memory_value
+
     if not ends:
         return
     params = {
@@ -1034,35 +1040,49 @@ async def end_edges(
           AND (entity_a, entity_b) IN {{pairs:Array(Tuple(String, String))}}
           AND invalid_at IS NULL AND (valid_to IS NULL OR valid_to > {end})"""
     # A link names a key, not the value it came from: the changed rows' own keys say
-    # nothing of what those rows name now.
+    # nothing of what those rows name now, and another key's value is read.
     found = await ch.query_all(
         f"""
-        SELECT DISTINCT entity_a, entity_b FROM loom.entity_edges
-        WHERE {where}
-          AND (entity_a, entity_b) NOT IN (
-              SELECT entity_a, entity_b FROM loom.entity_edge_memories
-              WHERE org = {{org:String}} AND namespace = {{ns:String}}
-                AND (entity_a, entity_b) IN {{pairs:Array(Tuple(String, String))}}
-                AND memory_key NOT IN (
-                    SELECT memory_key FROM loom.memory
-                    WHERE org = {{org:String}} AND namespace = {{ns:String}}
-                      AND memory_id IN {{changed:Array(UUID)}})
-                AND memory_key IN (
-                    SELECT memory_key FROM loom.memory FINAL
-                    WHERE org = {{org:String}} AND namespace = {{ns:String}}
-                      -- Only the keys that link a pair, not the whole namespace.
-                      AND memory_key IN (
-                          SELECT memory_key FROM loom.entity_edge_memories
-                          WHERE org = {{org:String}} AND namespace = {{ns:String}}
-                            AND (entity_a, entity_b) IN {{pairs:Array(Tuple(String, String))}})
-                      AND {GRAPH_HOLDER_SQL}))
+        SELECT e.entity_a AS entity_a, e.entity_b AS entity_b, groupArray(k.value) AS values
+        FROM (SELECT DISTINCT entity_a, entity_b FROM loom.entity_edges WHERE {where}) AS e
+        LEFT JOIN (
+            SELECT DISTINCT l.entity_a AS entity_a, l.entity_b AS entity_b, m.value AS value
+            FROM loom.entity_edge_memories AS l
+            INNER JOIN (
+                SELECT memory_key, value FROM loom.memory FINAL
+                WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                  -- Only the keys that link a pair, not the whole namespace.
+                  AND memory_key IN (
+                      SELECT memory_key FROM loom.entity_edge_memories
+                      WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                        AND (entity_a, entity_b) IN {{pairs:Array(Tuple(String, String))}})
+                  AND memory_key NOT IN (
+                      SELECT memory_key FROM loom.memory
+                      WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                        AND memory_id IN {{changed:Array(UUID)}})
+                  AND {GRAPH_HOLDER_SQL}
+            ) AS m ON l.memory_key = m.memory_key
+            WHERE l.org = {{org:String}} AND l.namespace = {{ns:String}}
+              AND (l.entity_a, l.entity_b) IN {{pairs:Array(Tuple(String, String))}}
+        ) AS k ON e.entity_a = k.entity_a AND e.entity_b = k.entity_b
+        GROUP BY e.entity_a, e.entity_b
         SETTINGS select_sequential_consistency = 1
         """,
         params=params,
     )
-    if not found:
+    # An edge with no linked row has one empty value, which names nothing.
+    ending = [
+        (str(r["entity_a"]), str(r["entity_b"]))
+        for r in found
+        if not any(
+            tfr.still_names_both(
+                carrier_text(parse_memory_value(v)), str(r["entity_a"]), str(r["entity_b"])
+            )
+            for v in r["values"]
+        )
+    ]
+    if not ending:
         return
-    ending = [(str(r["entity_a"]), str(r["entity_b"])) for r in found]
     await ch.execute(
         f"""
         ALTER TABLE loom.entity_edges

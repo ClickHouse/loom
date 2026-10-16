@@ -4076,6 +4076,23 @@ async def test_a_dropped_facts_edge_stays_open_while_another_row_names_both(ch, 
     assert await _walked(org, ["london"], labeled=False, seed="alice") == ["london"]
 
 
+async def test_a_key_that_no_longer_names_both_keeps_no_edge_open(ch, org) -> None:
+    # Two keys say Alice lives in Paris. The second is revised to jazz, then the first
+    # to blues: the second key's old link names the pair, but its value no longer does.
+    lives = ("alice", "live_in", "paris")
+    first = await _stated(ch, org, "s1", "Alice lives in Paris", lives, memory_key="k1")
+    second = await _stated(ch, org, "s2", "Alice lives in Paris", lives, memory_key="k2")
+    await _mentions(ch, org, first, "alice", "paris")
+    await _mentions(ch, org, second, "alice", "paris")
+    await _revise("memory.update_by_id", org, second, "Alice likes jazz")
+    await _mutations_done(ch, org)
+    await _revise("memory.update_by_id", org, first, "Alice likes blues")
+    await _mutations_done(ch, org)
+    await asyncio.sleep(1.1)  # the walk counts an edge ended this second as current
+    assert await _walked(org, [], labeled=True, seed="alice") == []
+    assert await _walked(org, [], labeled=False, seed="alice") == []
+
+
 async def test_a_fact_that_ended_keeps_no_edge_of_a_dropped_one_open(ch, org) -> None:
     # A live row says London was home until 2020. London's liked row is revised
     # away: the pair's only fact valid now is gone, so the edge ends.

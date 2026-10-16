@@ -310,6 +310,13 @@ def still_states(text: str, triple: Triple) -> bool:
     return _still_named(_tokens(text), triple)
 
 
+def still_names_both(text: str, entity_a: str, entity_b: str) -> bool:
+    """A row's value names both ends of an edge, as `still_states` names a triple's
+    subject and object: the writer need not be spelled."""
+    subject, obj = (entity_b, entity_a) if entity_b == SELF_SUBJECT else (entity_a, entity_b)
+    return still_states(text, (subject, "", obj))
+
+
 def _still_named(words: Sequence[str], triple: Triple) -> bool:
     subject, _, obj = triple
     return _named(words, obj) and (subject == SELF_SUBJECT or _named(words, subject))
