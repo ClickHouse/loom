@@ -1,7 +1,7 @@
 """Sign-in state that changes once, kept in ClickHouse Keeper.
 
 Whatever a sign-in spends or moves lives here, one key each, in
-loom.oauth_signin_state (KeeperMap, schemas/migrations/032_oauth_signin_state.sql): a
+loom.oauth_signin_state (KeeperMap, schemas/migrations/033_oauth_signin_state.sql): a
 code, an identity provider round trip in flight, a device grant, and the
 current refresh token of each session. Every change is a compare-and-set
 (`swap`): a strict-mode KeeperMap write that Keeper applies only while the key

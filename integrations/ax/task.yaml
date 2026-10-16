@@ -1,0 +1,65 @@
+# A Loom-backed agent on AX (https://github.com/google/ax).
+#
+# The Workspace comes first: `ax apply` creates documents in order, and a Task
+# applied before its Workspace starts with an empty one.
+#
+# Replace the <...> values, then (README.md has the steps around these):
+#   ax apply -f task.yaml
+#   kubectl ate create egress-policy fix-flaky-test -a default -f egress-policy.yaml
+#   ax resume task fix-flaky-test
+apiVersion: ax.io/v1alpha1
+kind: Workspace
+metadata:
+  name: loom-memory
+spec:
+  # Off until google/ax#482 lands: current AX clones before the sandbox has a
+  # network (README.md, known issue). Clone from the agent's command instead.
+  # git:
+  #   - repo: "https://github.com/<org>/<repo>.git"
+  #     branch: "main"
+  files:
+    # Claude Code reads this MCP config and expands ${LOOM_BASE_URL} and
+    # ${LOOM_API_KEY} from the environment.
+    - path: ".mcp.json"
+      content: |
+        {
+          "mcpServers": {
+            "loom": {
+              "type": "http",
+              "url": "${LOOM_BASE_URL}/mcp",
+              "headers": { "Authorization": "Bearer ${LOOM_API_KEY}" }
+            }
+          }
+        }
+    - path: "AGENTS.md"
+      content: |
+        # Memory
+        - Before you start, call `loom_search` for what earlier runs learned about this repository.
+        - Record a durable finding with `loom_memory_set`: one plain-text claim per key.
+        - This sandbox is thrown away when the task ends; anything not written to Loom is lost.
+---
+apiVersion: ax.io/v1alpha1
+kind: Task
+metadata:
+  name: fix-flaky-test
+spec:
+  # The image README.md builds: AX's runner, the Loom SDK and agent.py.
+  # Substrate takes an image pinned by digest only, never by tag.
+  image: "<registry>/ax-loom-task@sha256:<digest>"
+  command: ["python", "/opt/loom-agent/agent.py"]
+  env:
+    # Loom's in-cluster Service (README.md): the egress policy allows hosts by
+    # name, never by address, and injects the token on this hop.
+    - name: LOOM_BASE_URL
+      value: "http://loom.loom.svc.cluster.local"
+    # A placeholder, not the token: the egress gateway replaces the
+    # Authorization header with the token from a Kubernetes Secret
+    # (egress-policy.yaml), so the token is never in the Task or the sandbox.
+    - name: LOOM_API_KEY
+      value: "injected-by-egress-gateway"
+    - name: LOOM_ORG
+      value: "acme"
+    - name: LOOM_NAMESPACE
+      value: "ax-fix-flaky-test"
+  workspaces:
+    - name: loom-memory

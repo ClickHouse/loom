@@ -7554,6 +7554,7 @@ class CostRecordTurnsOutput(TypedDict, total=False):
     priced: Required[int]
     unpriced_models: NotRequired[list[str]]
     cost_usd: NotRequired[float]
+    turns_dated_ahead: NotRequired[int]
 
 
 class CostSummaryInput(TypedDict, total=False):
@@ -14748,6 +14749,8 @@ class RunBeginInput(TypedDict, total=False):
     consumer: NotRequired[str]
     role: NotRequired[str]
     metadata: NotRequired[dict[str, Any]]
+    budget_usd: NotRequired[float]
+    budget_seconds: NotRequired[int]
 
 
 class RunBeginBody(TypedDict, total=False):
@@ -14765,6 +14768,8 @@ class RunBeginBody(TypedDict, total=False):
     consumer: NotRequired[str]
     role: NotRequired[str]
     metadata: NotRequired[dict[str, Any]]
+    budget_usd: NotRequired[float]
+    budget_seconds: NotRequired[int]
 
 
 class RunBeginOutput(TypedDict, total=False):
@@ -14863,7 +14868,10 @@ class RunGetOutput(TypedDict, total=False):
     memories_written: NotRequired[list[str]]
     observations: NotRequired[int]
     turns: NotRequired[int]
+    unpriced_turns: NotRequired[int]
     cost_usd: NotRequired[float]
+    elapsed_seconds: NotRequired[int]
+    over_budget: NotRequired[list[Literal["cost", "time"]]]
 
 
 class RunRow(TypedDict, total=False):
@@ -14891,6 +14899,8 @@ class RunRow(TypedDict, total=False):
     memories_used: NotRequired[list[str]]
     memories_written: NotRequired[list[str]]
     metadata: NotRequired[dict[str, Any]]
+    budget_usd: NotRequired[float]
+    budget_seconds: NotRequired[int]
 
 
 class RunGradeInput(TypedDict, total=False):

@@ -645,7 +645,7 @@ def test_sign_in_without_keeper_is_reported(monkeypatch: pytest.MonkeyPatch) -> 
     assert _oauth_claim_problems(off, HealthState(oauth_signin_keeper=False)) == []
     (problem,) = _oauth_claim_problems(on, HealthState(oauth_signin_keeper=False))
     assert (
-        problem.code == "oauth_signin_needs_keeper" and "032_oauth_signin_state.sql" in problem.fix
+        problem.code == "oauth_signin_needs_keeper" and "033_oauth_signin_state.sql" in problem.fix
     )
     (full,) = _oauth_claim_problems(
         on, HealthState(oauth_signin_keeper=True, oauth_signin_state_full=True)

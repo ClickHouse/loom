@@ -176,7 +176,6 @@ ROOT_FILES = (
     "SECURITY.md",
     "CLAUDE.md",
     "AGENTS.md",
-    "CHANGELOG.md",
     "Dockerfile",
     "Makefile",
     "pyproject.toml",

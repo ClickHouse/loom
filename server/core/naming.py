@@ -40,6 +40,12 @@ def reserved_for_sso(namespace: str) -> bool:
     return settings.oidc_jit_provision and bool(_SSO_NAMESPACE_RE.fullmatch(namespace))
 
 
+
+def names_session(session_id: str) -> bool:
+    """Whether a session id names a session rather than "not given"."""
+    return session_id.strip() not in ("", SENTINEL)
+
+
 _NAMESPACE_RE = re.compile(r"[a-z0-9][a-z0-9-]*")
 
 

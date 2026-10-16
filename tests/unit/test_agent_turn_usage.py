@@ -51,6 +51,9 @@ def test_handler_prices_rows_and_reports_unpriced_models() -> None:
     class _Client:
         client = fake
 
+        async def query_all(self, sql, params=None):
+            return []
+
     inp = CostRecordTurnsInput(
         org="o",
         namespace="n",
@@ -89,6 +92,109 @@ def test_handler_prices_rows_and_reports_unpriced_models() -> None:
     assert by2["priced"] is False and by2["cost_usd"] == 0.0
 
 
+def test_a_turn_dated_in_the_future_is_stored_as_sent_and_reported() -> None:
+    # A replay must land in the same run, so the turn keeps its own time.
+    from datetime import UTC, datetime, timedelta
+
+    from server.insights.api.models_cost import CostRecordTurnsInput
+    from server.insights.app import cost as h
+
+    fake = _FakeCH()
+
+    class _Client:
+        client = fake
+
+    ahead = datetime.now(UTC) + timedelta(hours=1)
+    # A second ahead is ordinary skew and is not counted.
+    skewed = datetime.now(UTC) + timedelta(seconds=1)
+    inp = CostRecordTurnsInput(
+        org="o",
+        namespace="n",
+        session_id="s1",
+        turns=[
+            {"message_id": "m1", "model": "claude-opus-5-5", "turn_at": ahead.isoformat()},
+            {"message_id": "m2", "model": "claude-opus-5-5", "turn_at": skewed.isoformat()},
+        ],
+    )
+    with patch.object(h, "get_client", return_value=_Client()):
+        out = asyncio.run(h.handle_cost_record_turns(inp))
+    by = dict(zip(fake.cols, fake.rows[0], strict=True))
+    assert by["turn_at"] == ahead and out.turns_dated_ahead == 1
+
+
+def test_a_turn_without_a_time_keeps_the_one_it_is_recorded_with() -> None:
+    from datetime import UTC, datetime
+
+    from server.insights.api.models_cost import CostRecordTurnsInput
+    from server.insights.app import cost as h
+
+    fake = _FakeCH()
+    recorded = datetime(2026, 10, 15, 12, 0, 0, 500000)  # naive UTC, as ClickHouse reads it
+    asked: list[str] = []
+
+    class _Client:
+        client = fake
+
+        async def query_all(self, sql, params=None):
+            asked.extend(params["ids"])
+            return [{"message_id": "m1", "recorded_at": recorded}]
+
+    client = _Client()
+    inp = CostRecordTurnsInput(
+        org="o",
+        namespace="n",
+        session_id="s1",
+        turns=[
+            {"message_id": "m1", "model": "claude-opus-5-5"},
+            {"message_id": "m2", "model": "claude-opus-5-5", "turn_at": "not a time"},
+            {"message_id": "m3", "model": "claude-opus-5-5", "turn_at": "2026-10-15T13:00:00Z"},
+            # Parses, but its offset takes it before year 1.
+            {
+                "message_id": "m4",
+                "model": "claude-opus-5-5",
+                "turn_at": "0001-01-01T00:00:00+01:00",
+            },
+        ],
+    )
+    with patch.object(h, "get_client", return_value=client):
+        asyncio.run(h.handle_cost_record_turns(inp))
+    rows = [dict(zip(fake.cols, row, strict=True)) for row in fake.rows]
+    at = {r["message_id"]: r["turn_at"] for r in rows}
+    assert asked == ["m1", "m2", "m4"]  # only the turns that came without a time
+    assert at["m1"] == recorded.replace(tzinfo=UTC)
+    # Never recorded before: now.
+    assert abs((datetime.now(UTC) - at["m2"]).total_seconds()) < 60
+    assert abs((datetime.now(UTC) - at["m4"]).total_seconds()) < 60
+    assert at["m3"] == datetime(2026, 10, 15, 13, tzinfo=UTC)
+
+
+def test_a_failed_lookup_dates_an_undated_turn_now() -> None:
+    from datetime import UTC, datetime
+
+    from server.insights.api.models_cost import CostRecordTurnsInput
+    from server.insights.app import cost as h
+
+    fake = _FakeCH()
+
+    class _Client:
+        client = fake
+
+        async def query_all(self, sql, params=None):
+            raise RuntimeError("ch down")
+
+    inp = CostRecordTurnsInput(
+        org="o",
+        namespace="n",
+        session_id="s1",
+        turns=[{"message_id": "m1", "model": "claude-opus-5-5"}],
+    )
+    with patch.object(h, "get_client", return_value=_Client()):
+        out = asyncio.run(h.handle_cost_record_turns(inp))
+    by = dict(zip(fake.cols, fake.rows[0], strict=True))
+    assert out.recorded == 1
+    assert abs((datetime.now(UTC) - by["turn_at"]).total_seconds()) < 60
+
+
 def test_handler_write_failure_records_nothing() -> None:
     from server.insights.api.models_cost import CostRecordTurnsInput
     from server.insights.app import cost as h
@@ -99,6 +205,9 @@ def test_handler_write_failure_records_nothing() -> None:
 
     class _Client:
         client = _Boom()
+
+        async def query_all(self, sql, params=None):
+            return []
 
     inp = CostRecordTurnsInput(
         org="o",

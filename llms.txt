@@ -140,4 +140,3 @@ Start with docs/index.md (the map) and docs/getting-started/connect-a-coding-age
 
 - [Glossary](docs/glossary.md): Loom's terms, alphabetically, each defined once.
 - [Frequently asked questions](docs/faq.md): Short answers to the first questions people ask.
-- [Changelog](CHANGELOG.md): All notable changes to Loom (the server, its web app and its coding-agent plugins).

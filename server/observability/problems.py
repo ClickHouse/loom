@@ -657,7 +657,7 @@ def _oauth_claim_problems(settings: Any, state: HealthState) -> list[Problem]:
             "MCP connect answer 503: their codes and refresh tokens could not be spent "
             "exactly once. Tokens from `loom mint-token` and service accounts still work.",
             "Run ClickHouse with a Keeper (deploy/clickhouse-config/keeper.xml), create the "
-            "table from schemas/migrations/032_oauth_signin_state.sql (the migration skipped it) "
+            "table from schemas/migrations/033_oauth_signin_state.sql (the migration skipped it) "
             "and restart Loom.",
             source="runtime",
         )
