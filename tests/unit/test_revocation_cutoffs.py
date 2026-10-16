@@ -86,3 +86,12 @@ def test_a_later_revoke_does_not_lower_an_operator_cutoff_here(table) -> None:
     assert asyncio.run(revocation.subjects_revoked(["sa:bot"], issued_at=issued))
     asyncio.run(revocation.refresh())
     assert revocation.is_revoked("sa:bot", issued_at=issued)
+
+
+def test_the_list_shows_an_operator_cutoff_without_its_nul(capsys) -> None:
+    from server.cli.access import _print_revocations
+
+    row = {"jti": revocation.CUTOFF_PREFIX + "sa:bot", "issued_before": "2026-10-16 08:00:00"}
+    _print_revocations([row], as_json=False)
+    out = capsys.readouterr().out
+    assert "cutoff→sa:bot" in out and "\x00" not in out

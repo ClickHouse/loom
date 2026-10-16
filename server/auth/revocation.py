@@ -63,13 +63,12 @@ _revoked_jtis: frozenset[str] = frozenset()
 # Keys revoked only for tokens issued before the cutoff (unix seconds);
 # replaced together with `_revoked_jtis` on every refresh.
 _revoked_before: dict[str, int] = {}
-# A cutoff an operator action writes beside a subject's own revocation row, so
-# it can never replace an outright revoke written there (by `revoke-token`, at
-# any moment): the snapshot reads both, and the stronger one stands. The NUL
-# keeps it apart from every subject, which no command line can carry.
+# Operator cutoffs (adopt, a bot replaced or disabled) are stored under
+# CUTOFF_PREFIX + subject, beside the subject's own row, so neither replaces
+# the other. The NUL keeps the key apart from every subject: no command line
+# can pass one.
 CUTOFF_PREFIX = "\x00cutoff:"
-# Operator cutoffs (`cut_off`), apart from the subject's own row: whatever that
-# row says, a cutoff here still stands.
+# Their snapshot, read beside `_revoked_before`.
 _cut_off: dict[str, int] = {}
 # False until one refresh has succeeded in this process.
 _loaded = False
@@ -245,7 +244,9 @@ async def cut_off(subject: str, *, issued_before: datetime, reason: str, revoked
             }
         ],
     )
-    await refresh()  # as `revoke` does; then made sure of here, however the re-read went
+    # Re-read, so a refresh already in flight cannot finish after this write
+    # and leave the cutoff out; then fold it in even if the re-read missed it.
+    await refresh()
     global _cut_off
     seconds = _cutoff_seconds(cutoff) or 0
     _cut_off = {**_cut_off, subject: max(_cut_off.get(subject, 0), seconds)}

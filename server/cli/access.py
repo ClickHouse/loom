@@ -362,10 +362,15 @@ def _print_revocations(rows: list[dict[str, Any]], *, as_json: bool) -> int:
         f"{'jti / sub':<40} {'revoked_at':<20} {'expires_at':<20} "
         f"{'issued_before':<20} revoked_by  reason"
     )
+    from server.auth.revocation import CUTOFF_PREFIX
+
     for r in rows:
         before = r.get("issued_before")
+        key = str(r.get("jti", ""))
+        if key.startswith(CUTOFF_PREFIX):  # an operator cutoff, shown without its NUL
+            key = "cutoff→" + key.removeprefix(CUTOFF_PREFIX)
         print(
-            f"{str(r.get('jti', '')):<40} {str(r.get('revoked_at', ''))[:19]:<20} "
+            f"{key:<40} {str(r.get('revoked_at', ''))[:19]:<20} "
             f"{str(r.get('expires_at', ''))[:19]:<20} "
             f"{(str(before)[:19] if before else '-'):<20} {r.get('revoked_by', '')}  "
             f"{r.get('reason', '')}"
