@@ -11,6 +11,16 @@ import pytest
 
 from server.memory.store import MemoryRow
 
+
+@pytest.fixture(autouse=True)
+def _key_locks(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The Undo holds the key's write lock, a Keeper lease: here over a fake lease table.
+    from server.memory.store import key_write_lock as kl
+    from tests.unit.claims_fake import FakeLockTable
+
+    locks = kl.KeyWriteLocks(FakeLockTable(), wait_s=0.3)  # type: ignore[arg-type]
+    monkeypatch.setattr(kl, "key_write_locks", locks)
+
 # --- memory.restore on a superseded row -------------------------------------
 
 

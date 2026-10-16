@@ -342,7 +342,7 @@ async def test_a_retirement_a_later_write_overtook_is_not_reported_or_mirrored(m
     async def insert(batch, *, ch=None):
         inserted.extend(batch)
 
-    async def mirror(batch, *, ch=None):
+    async def mirror(batch, *, ch=None, **_):
         mirrored.extend(r["memory_id"] for r in batch)
 
     monkeypatch.setattr(lifecycle, "get_by_id", get_by_id)
