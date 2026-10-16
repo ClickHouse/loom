@@ -18,7 +18,7 @@ Then it writes from each build and reads from the other, and checks:
 - after the cross-boot each build that has `/v1/health/ready` answers ready;
 - with every process on `LOOM_BACKGROUND_WORKERS=auto`, exactly one of those
   that elect through ClickHouse runs the workers, and it is N+1: its tree
-  carries one no-op migration more, so N hands the lease over to it.
+  carries one no-op migration more, so the older builds hand the lease over to it.
 
 The rules these check are docs/architecture/rolling-upgrades.md. ClickHouse
 runs in a throwaway container (the CI image and config), so the gate needs
@@ -534,9 +534,10 @@ class Scenario:
         electing = {k: s for k, s in servers.items() if elects_in_clickhouse(s.tree)}
         if "N-1" not in electing:
             print("  note  N-1 elects its workers per host (a file lock), outside the lease")
-        # N takes the lease first and hands it over once N+1's beats name it. An
-        # older build learns of N+1 only at its next read of the live instances
-        # (one heartbeat), so it is settled once every other one says it stands aside.
+        # Whichever older build holds the lease hands it over once N+1's beats name
+        # it. An older build learns of N+1 only at its next read of the live
+        # instances (one heartbeat), so it is settled once every other one says it
+        # stands aside.
         deadline = time.monotonic() + SETTLE_S
         steady = 0
         holders: list[str] = []
