@@ -2023,9 +2023,10 @@ async def test_a_projection_landing_after_a_revision_leaves_no_edge(
     release.set()
     await after_write.drain()
     await _mutations_done(ch, org)
-    assert "london" not in await _walked(
-        org, [], labeled=False, seed="alice", until=lambda w: "london" not in w
+    walked = await _walked(
+        org, [], labeled=False, seed="alice", until=lambda w: "jazz" in w and "london" not in w
     )
+    assert "jazz" in walked and "london" not in walked
 
 
 async def test_a_late_projection_whose_cleanup_failed_is_closed_by_the_repair(
@@ -2086,9 +2087,10 @@ async def test_a_late_projection_whose_cleanup_failed_is_closed_by_the_repair(
     )
     await retry_projection_failures(org=org, projection="entity_edges_close", ch=ch)
     await _mutations_done(ch, org)
-    assert "london" not in await _walked(
-        org, [], labeled=False, seed="alice", until=lambda w: "london" not in w
+    walked = await _walked(
+        org, [], labeled=False, seed="alice", until=lambda w: "jazz" in w and "london" not in w
     )
+    assert "jazz" in walked and "london" not in walked
     assert not await list_projection_failures(
         org=org, projection="entity_edges_close", status="active", ch=ch
     )
@@ -2150,13 +2152,21 @@ async def test_a_late_projections_edge_ends_when_the_revision_ended_its_value(
         await retry_projection_failures(org=org, projection="entity_edges_close", ch=ch)
     await _mutations_done(ch, org)
     between = revised + timedelta(seconds=1.2)
-    for labeled in (False, True):
-        assert "london" not in await _walked(
-            org, [], labeled=labeled, as_of=between, seed="alice", until=lambda w: "london" not in w
-        )
-    assert "london" not in await _walked(
-        org, [], labeled=False, seed="alice", until=lambda w: "london" not in w
+    walked = await _walked(
+        org,
+        [],
+        labeled=False,
+        as_of=between,
+        seed="alice",
+        until=lambda w: "jazz" in w and "london" not in w,
     )
+    assert "jazz" in walked and "london" not in walked
+    # Jazz states no relation: the labeled walk reaches nothing then.
+    assert await _walked(org, [], labeled=True, as_of=between, seed="alice") == []
+    walked = await _walked(
+        org, [], labeled=False, seed="alice", until=lambda w: "jazz" in w and "london" not in w
+    )
+    assert "jazz" in walked and "london" not in walked
 
 
 async def test_a_late_cleanup_keeps_the_end_another_row_gave_the_pair(ch, org) -> None:
@@ -4903,9 +4913,10 @@ async def test_a_key_that_no_longer_names_both_keeps_no_edge_open(ch, org) -> No
     await asyncio.sleep(1.1)  # the walk counts an edge ended this second as current
     assert await _walked(org, [], labeled=True, seed="alice") == []
     # The revisions' own edges (jazz, blues) are walked; Paris is not.
-    assert "paris" not in await _walked(
-        org, [], labeled=False, seed="alice", until=lambda w: "paris" not in w
+    walked = await _walked(
+        org, [], labeled=False, seed="alice", until=lambda w: "jazz" in w and "paris" not in w
     )
+    assert "jazz" in walked and "paris" not in walked
 
 
 @pytest.mark.parametrize(
@@ -4968,12 +4979,12 @@ async def test_a_retired_rows_revision_projects_no_edges(ch, org) -> None:
         ch, org, "s1", "Alice likes London", ("alice", "like", "london"), memory_type="episodic"
     )
     paris = await _stated(ch, org, "s2", "Alice likes Paris", ("alice", "like", "paris"))
+    await _mentions(ch, org, paris, "alice", "paris")  # what the walk does reach
     await _follow_retirement(ch, org, london, paris)
     await _revise("memory.update_by_id", org, london, "Alice works at Umbrella")
     await _mutations_done(ch, org)
-    assert "umbrella" not in await _walked(
-        org, [], labeled=False, seed="alice", until=lambda w: "umbrella" not in w
-    )
+    walked = await _walked(org, [], labeled=False, seed="alice", until=lambda w: "paris" in w)
+    assert "paris" in walked and "umbrella" not in walked
 
 
 async def test_a_row_naming_the_pair_while_its_edge_ends_keeps_it_open(ch, org) -> None:
