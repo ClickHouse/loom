@@ -1,24 +1,27 @@
-"""code.grep's alternation needles never change an answer.
+"""The grep plan's guards never change an answer.
 
-`content_predicate` puts `multiSearchAnyCaseInsensitive(content, needles)` in front
-of `match()` for a case-sensitive alternation. The needles are planned in Python
-while RE2 does the matching, so this test runs both statements on a real server: the
-exact matcher alone (the statement code.grep ran before) and the guarded one, over
-a fixed corpus that carries what the two engines read differently (Unicode case
-folding, POSIX classes, escapes, empty branches). Every pattern must return the
-same rows in both modes, and enough of them must actually be guarded.
+Two guards come from a plan made in Python while RE2 does the matching:
+code.grep's `multiSearchAnyCaseInsensitive(content, needles)` in front of `match()`
+for an alternation, and code.search's `lower(content) LIKE` terms. This test runs
+each guarded statement and the exact matcher alone on a real server, as the reader
+user both ops run as, over a fixed corpus that carries what the two engines read
+differently (Unicode case folding, POSIX classes, escapes, empty branches). Every
+pattern must return the same rows both ways, and enough of them must be guarded.
 """
 
 from __future__ import annotations
 
+import os
 import uuid
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
 
 from server.code.domain.index import grep_sql
 from server.code.domain.index.grep_plan import content_predicate
-from tests.integration._resources import unique_org
+from server.code.domain.search_scope import build_scope
+from tests.integration._resources import ch_client_from_env, unique_org
 
 CORPUS = [
     'throw Exception(ErrorCodes::NOT_IMPLEMENTED, "WITH TOTALS is not supported")',
@@ -60,8 +63,18 @@ PATTERNS = [
 ]
 
 
-def _rows(ch_client: Any, sql: str, params: dict[str, Any]) -> list[tuple[Any, ...]]:
-    return [tuple(r) for r in ch_client.query(sql, parameters=params).result_rows]
+def _rows(client: Any, sql: str, params: dict[str, Any]) -> list[tuple[Any, ...]]:
+    return [tuple(r) for r in client.query(sql, parameters=params).result_rows]
+
+
+@pytest.fixture
+def reader() -> Iterator[Any]:
+    user = os.environ.get("LOOM_CH_READER_USER") or pytest.skip("needs LOOM_CH_READER_USER")
+    client = ch_client_from_env(username=user)
+    try:
+        yield client
+    finally:
+        client.close()
 
 
 @pytest.fixture
@@ -91,7 +104,7 @@ def corpus(ch_client: Any) -> tuple[str, str]:
 
 
 def test_needles_return_exactly_what_the_exact_matcher_returns(
-    ch_client: Any, corpus: tuple[str, str]
+    reader: Any, corpus: tuple[str, str]
 ) -> None:
     org, ns = corpus
     guarded = matched = 0
@@ -104,12 +117,35 @@ def test_needles_return_exactly_what_the_exact_matcher_returns(
             params.update(org=org, ns=ns, limit=100)
             guarded += new != exact
             for build in (grep_sql.grep_chunks_sql, grep_sql.grep_files_sql):
-                before = _rows(ch_client, build(exact, "", ""), params)
-                after = _rows(ch_client, build(new, "", ""), params)
+                before = _rows(reader, build(exact, "", ""), params)
+                after = _rows(reader, build(new, "", ""), params)
                 assert after == before, (pattern, case_sensitive, new)
                 matched += bool(before)
     assert guarded >= 10  # the guard ran, the comparison is not vacuous
     assert matched >= 20
+
+
+def test_search_like_guard_returns_exactly_what_the_exact_matcher_returns(
+    reader: Any, corpus: tuple[str, str]
+) -> None:
+    org, ns = corpus
+    statement = (
+        "SELECT path FROM loom.code_chunks WHERE org = {org:String} AND namespace = {ns:String} "
+        "AND {cond} ORDER BY path"
+    )
+    guarded = 0
+    for pattern in PATTERNS:
+        for case_sensitive in (True, False):
+            cond, params = build_scope(
+                pattern=pattern, regex=True, case_sensitive=case_sensitive
+            ).content_condition()
+            params.update(org=org, ns=ns)
+            exact = "match(content, {sc_pat:String})"
+            guarded += cond != exact
+            before = _rows(reader, statement.replace("{cond}", exact), params)
+            after = _rows(reader, statement.replace("{cond}", cond), params)
+            assert after == before, (pattern, case_sensitive, cond)
+    assert guarded >= 20
 
 
 def test_the_engines_differ_where_the_planner_says_they_do(ch_client: Any) -> None:

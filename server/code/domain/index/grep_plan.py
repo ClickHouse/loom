@@ -24,10 +24,12 @@ ClickHouse's ``lower`` folds only ASCII bytes — folding a non-ASCII letter
 here and not there would be a false negative.
 
 Regexes are parsed with the stdlib ``re`` parser, which agrees with RE2 (what
-``match`` runs) on the constructs this walk reads, with two exceptions that plan
-to ``SCAN``: POSIX classes (the stdlib reads ``[[:alpha:]]x`` as a set followed by
-the literal ``]x``) and case-insensitive matching (RE2 folds Unicode, so
-``(?i)k`` matches the Kelvin sign; ``lower()`` folds ASCII only). A pattern the
+``match`` runs) on the constructs this walk reads, with two exceptions. POSIX
+classes: the stdlib reads ``[[:alpha:]]x`` as a set followed by the literal ``]x``,
+so any pattern holding ``[:`` plans to ``SCAN`` (an escaped ``\\[:`` too). Case
+folding: under ``(?i)`` RE2 folds Unicode, so ``k`` and ``s`` also match the Kelvin
+sign and the long s, which ``lower()`` (ASCII only) never turns into them; there,
+those letters and every non-ASCII character break a literal run. A pattern the
 parser rejects, a top-level alternation whose branch has no literal, a class,
 an anchor, a lookaround, a backreference and an optional group all contribute
 nothing (``SCAN``) rather than guess.
@@ -38,7 +40,7 @@ from __future__ import annotations
 import importlib
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 # Python 3.11+: the stdlib regex parser lives at re._parser / re._constants —
 # private modules with no stubs, so they are loaded by name and typed as Any.
@@ -120,21 +122,24 @@ def plan_regex(pattern: str, *, ignore_case: bool = False) -> Plan:
     ``ignore_case`` is the op's own case mode; a ``(?i)`` in the pattern counts
     the same. Flags other than ``i`` don't change which literals are required.
     """
-    if ignore_case or "[:" in pattern:
+    if "[:" in pattern:
         return SCAN
     try:
         parsed = _sre_parser.parse(pattern)
     except (re.error, ValueError, OverflowError, RecursionError):
         return SCAN
-    if parsed.state.flags & re.IGNORECASE:
-        return SCAN
+    ignore_case = ignore_case or bool(parsed.state.flags & re.IGNORECASE)
     try:
-        return _simplify(_walk_seq(list(parsed)))
+        return _simplify(_walk_seq(list(parsed), ignore_case))
     except RecursionError:  # pragma: no cover - pathological nesting
         return SCAN
 
 
-def _walk_seq(items: list[Any]) -> Plan:
+# Under (?i) RE2 also matches these to a non-ASCII character (the Kelvin sign, the long s).
+_FOLDS_PAST_ASCII = frozenset("kKsS")
+
+
+def _walk_seq(items: list[Any], ignore_case: bool) -> Plan:
     """A concatenation: literal runs become required literals; every other
     node flushes the run and contributes its own sub-plan. Runs never join
     across a node boundary (``a(bc)+d`` requires ``a``, ``bc`` and ``d``, not
@@ -149,26 +154,30 @@ def _walk_seq(items: list[Any]) -> Plan:
 
     for op, av in items:
         if op is _sre.LITERAL:
-            run.append(chr(av))
-            continue
+            c = chr(av)
+            if not ignore_case or (c.isascii() and c not in _FOLDS_PAST_ASCII):
+                run.append(c)
+                continue
         flush()
         if op is _sre.SUBPATTERN:
-            # (group, add_flags, del_flags, pattern); a (?i:...) group requires nothing
-            _, add_flags, _, sub = av
-            if not add_flags & re.IGNORECASE:
-                terms.append(_walk_seq(list(sub)))
+            # (group, add_flags, del_flags, pattern)
+            _, add_flags, del_flags, sub = av
+            sub_ignore_case = (ignore_case or bool(add_flags & re.IGNORECASE)) and not (
+                del_flags & re.IGNORECASE
+            )
+            terms.append(_walk_seq(list(sub), sub_ignore_case))
         elif op is _sre.BRANCH:
             _, branches = av
-            terms.append(_simplify(Or(tuple(_walk_seq(list(b)) for b in branches))))
+            terms.append(_simplify(Or(tuple(_walk_seq(list(b), ignore_case) for b in branches))))
         elif op in (_sre.MAX_REPEAT, _sre.MIN_REPEAT) or op is getattr(
             _sre, "POSSESSIVE_REPEAT", None
         ):
             lo, _hi, sub = av
             if lo >= 1:
-                terms.append(_walk_seq(list(sub)))
+                terms.append(_walk_seq(list(sub), ignore_case))
             # lo == 0: optional → requires nothing
         elif op is getattr(_sre, "ATOMIC_GROUP", None):
-            terms.append(_walk_seq(list(av)))
+            terms.append(_walk_seq(list(av), ignore_case))
         else:
             # ANY, IN, NOT_LITERAL, AT (anchors), ASSERT / ASSERT_NOT
             # (lookarounds: deleting them widens), GROUPREF, CATEGORY, ...
@@ -237,9 +246,8 @@ def branch_needles(plan: Plan) -> list[str]:
     contains at least one. Empty for any other plan."""
     if not isinstance(plan, Or):
         return []
-    needles = [max(b.literals, key=len) for b in plan.branches if isinstance(b, And)]
-    # a branch without its needle would admit nothing it matches: no guard at all
-    return list(dict.fromkeys(needles)) if len(needles) == len(plan.branches) else []
+    # _simplify leaves every branch a non-empty And
+    return list(dict.fromkeys(max(cast(And, b).literals, key=len) for b in plan.branches))
 
 
 def _term_count(plan: Plan) -> int:
