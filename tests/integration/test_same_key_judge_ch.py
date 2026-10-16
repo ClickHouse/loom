@@ -706,6 +706,58 @@ async def test_a_bulk_write_links_its_triple_to_the_row_it_stored(ch, org) -> No
     assert links == [{**stored[0], "object": "paris"}]
 
 
+@pytest.mark.parametrize(
+    "extra",
+    [{}, {"valid_at": datetime(2019, 1, 1), "valid_to": datetime(2020, 1, 1)}],
+    ids=["open", "closed-in-the-past"],
+)
+async def test_a_replayed_bulk_edge_projection_writes_what_the_bulk_write_would(
+    ch, org, monkeypatch, extra
+) -> None:
+    # The edge insert fails once; the replay projects the entry as the write did,
+    # a fact that ended in the past included.
+    from server.core import ch as ch_mod
+    from server.memory.api.models_bulk import MemoryBulkSetInput
+    from server.memory.app.bulk_set import handle_memory_bulk_set
+    from server.memory.app.projection_failures import retry_projection_failure
+
+    client = ch_mod.get_client()
+    insert = client.insert
+
+    async def edges_fail(table: str, rows: Any, **kw: Any) -> Any:
+        if table == "loom.entity_edges":
+            raise ConnectionError("transient")
+        return await insert(table, rows, **kw)
+
+    monkeypatch.setattr(client, "insert", edges_fail)
+    await handle_memory_bulk_set(
+        MemoryBulkSetInput(
+            org=org,
+            namespace=NS,
+            agent="bot",
+            user_id=USER,
+            session_id="s1",
+            entries=[
+                {
+                    "memory_key": KEY,
+                    "value": "Alice met Bob",
+                    "entities": ["alice", "bob"],
+                    **extra,
+                }
+            ],
+        )
+    )
+    monkeypatch.setattr(client, "insert", insert)
+    failure = await _recorded_reconcile(ch, org, "entity_edges")
+    assert (await retry_projection_failure(failure, ch=ch)).resolved
+    (row,) = await ch.query_all(
+        "SELECT count() AS n FROM loom.entity_edges WHERE org = {org:String}"
+        " AND entity_a = 'alice' AND entity_b = 'bob' SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert row["n"] == 1
+
+
 async def test_the_follows_own_successor_closes_when_its_row_retires(ch, org) -> None:
     # London's and Rome's extractors stated only a food: London's city is the follow's.
     pasta = ("user", "favourite_food", "pasta")

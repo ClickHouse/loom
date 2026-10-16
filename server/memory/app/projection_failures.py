@@ -32,6 +32,7 @@ from server.memory.app.projection_errors import (
     restated_repair_payload,
 )
 from server.memory.domain.graph_quality import IntervalRepair
+from server.memory.domain.temporal_sql import HOLDS_VALUE_SQL
 
 log = logging.getLogger(__name__)
 
@@ -852,7 +853,8 @@ async def _retry_graph_projection(
         except ValueError:
             return "incomplete_read_scope"
     # A replay that writes rows writes them only for rows that still hold the value:
-    # one revised, retired or made 'high' since keeps what it holds now. A repair of
+    # one revised, retired or made 'high' since keeps what it holds now. A fact dated
+    # in the past or a proposal is projected, as the write projected it. A repair of
     # triples that already landed is dated at their write and runs as it would have,
     # and so does a result recorded before results named their row: it has no id to check.
     kept: dict[str, Any] = {}
@@ -865,6 +867,7 @@ async def _retry_graph_projection(
             failure.namespace,
             [(r.memory_id, value_sha256(e)) for e, r in pairs if r.memory_id],
             ch=ch,
+            holder_sql=HOLDS_VALUE_SQL,
         )
         pairs = [(e, r) for e, r in pairs if not r.memory_id or r.memory_id in held]
         if not pairs:
