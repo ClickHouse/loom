@@ -257,15 +257,15 @@ not erasing: to remove a person's data, use [erasure](./retention-and-erasure.md
 
 ## Settings
 
-| Setting                                         | Default                                 | Effect                                                                                                                                 |
-| ----------------------------------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `LOOM_CONFLICT_THRESHOLD`                       | 0.85                                    | Fallback conflict cosine; 1.0 disables flagging.                                                                                       |
-| `LOOM_DUPLICATE_THRESHOLD`                      | 0.97                                    | Fallback duplicate cosine.                                                                                                             |
-| `LOOM_ADAPTIVE_THRESHOLDS`                      | true                                    | Calibrate both thresholds from the live embedder.                                                                                      |
+| Setting                                         | Default | Effect                                                                                                                               |
+| ----------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `LOOM_CONFLICT_THRESHOLD`                       | 0.85    | Fallback conflict cosine; 1.0 disables flagging.                                                                                     |
+| `LOOM_DUPLICATE_THRESHOLD`                      | 0.97    | Fallback duplicate cosine.                                                                                                           |
+| `LOOM_ADAPTIVE_THRESHOLDS`                      | true    | Calibrate both thresholds from the live embedder.                                                                                    |
 | `LOOM_MEMORY_CONFLICT_JUDGE`                    | false   | LLM labelling of close peers: at most one call per write with a peer at the judge's band, inline on bulk writes; `true` turns it on. |
-| `LOOM_MEMORY_CONFLICT_JUDGE_MIN_SIMILARITY`     | 0.7                                     | Lowest cosine the judge reads.                                                                                                         |
-| `LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES`          | 200                                     | Entries per `memory.bulk_set` checked; 0 = none.                                                                                       |
-| `LOOM_BLACKLIST_VERSION_CHECK_INTERVAL_SECONDS` | 2.0                                     | Cross-replica pattern refresh bound.                                                                                                   |
+| `LOOM_MEMORY_CONFLICT_JUDGE_MIN_SIMILARITY`     | 0.7     | Lowest cosine the judge reads.                                                                                                       |
+| `LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES`          | 200     | Entries per `memory.bulk_set` checked; 0 = none.                                                                                     |
+| `LOOM_BLACKLIST_VERSION_CHECK_INTERVAL_SECONDS` | 2.0     | Cross-replica pattern refresh bound.                                                                                                 |
 
 See the [configuration reference](../../reference/configuration.md#conflict-detection).
 
