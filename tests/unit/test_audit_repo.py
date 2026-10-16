@@ -168,3 +168,5 @@ def test_a_request_id_with_a_bar_keeps_its_row_hash() -> None:
     assert _decode_page_cursor(encode_cursor(ts, "trace|1", row_hash)) == (ts, "trace|1", row_hash)
     # A cursor issued before the hash: the whole extra is the request id.
     assert _decode_page_cursor(encode_cursor(ts, "trace|1")) == (ts, "trace|1", None)
+    # A page ending on a row with no hash still names its request id alone.
+    assert _decode_page_cursor(encode_cursor(ts, "req-1", "")) == (ts, "req-1", "")

@@ -26,10 +26,11 @@ _ROW_HASH = re.compile(r"[0-9a-f]{64}")
 def _decode_page_cursor(cursor: str) -> tuple[datetime, str, str | None]:
     """A page cursor's keyset: (ts, request_id, row_hash). The request id is the
     client's (`X-Request-Id`) and may hold `|`, so the hash is the last part, and only
-    if it is one; a cursor issued before the hash was added has none."""
+    if it is one (empty for a row with no hash); a cursor issued before the hash was
+    added has none."""
     ts, extra = _decode_cursor(cursor)
-    request_id, _, row_hash = extra.rpartition("|")
-    if _ROW_HASH.fullmatch(row_hash):
+    request_id, bar, row_hash = extra.rpartition("|")
+    if bar and (row_hash == "" or _ROW_HASH.fullmatch(row_hash)):
         return ts, request_id, row_hash
     return ts, extra, None
 
