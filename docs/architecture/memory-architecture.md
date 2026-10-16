@@ -346,17 +346,20 @@ the value it was written or stated for (`carried`):
   the edge while its key is linked to the pair (`entity_edge_memories`), as before. A
   row naming the pair while the close runs lands its links before its edges, and the
   close checks again after its UPDATE and opens the pair again when one is found. The
-  edge keeps no `invalid_at`, so a walk at an earlier time still finds it.
-  `memory.update_by_id` and `memory.update` project a changed value's edges as
-  `memory.set` does, before that close (a failure is recorded for `projection_repair`
-  as `entity_edges`). The follow reads the retired rows' facts again after its plan, so
-  a replay of a follow whose close landed still ends the rest. When a revision, or a retirement the follow closes, leaves a
-  single-valued relation of the row with no value valid now (a value a close ended later
-  counts only while an open value starts by that end: Paris holds until the move to
-  Berlin it was closed for), the newest value a live row still holds and a close ended
-  is stated again from the relation's last close, as an Undo states it and through the
-  Undo's own check of the rows found holding it, newest first and at most eight (a row
-  revised or retired meanwhile is left to that change), but labelled `row-fallback`: triple and edge markers, then the
+  edge keeps no `invalid_at`, so a walk at an earlier time still finds it. A revision
+  writes its new value's edges before that close: `memory.set` waits for its entity
+  projection when it revises a row (a first write projects beside the response), and
+  `memory.update_by_id` and `memory.update` project a changed value's edges the same
+  way (a failure is recorded for `projection_repair` as `entity_edges`). The follow
+  reads the retired rows' facts again after its plan, so a replay of a follow whose
+  close landed still ends the rest. When a revision, or a retirement the follow
+  closes, leaves a single-valued relation of the row with no value valid now (a value
+  a close ended later counts only while an open value starts by that end: Paris holds
+  until the move to Berlin it was closed for), the newest value a live row still holds
+  and a close ended is stated again from the relation's last close, as an Undo states
+  it and through the Undo's own check of the rows found holding it, newest first and
+  at most eight (a row revised or retired meanwhile is left to that change), but
+  labelled `row-fallback`: triple and edge markers, then the
   interval repair, so a newer value written meanwhile wins. Its id is derived from the
   closes it answers, so a replay finds the markers. When the repair of a fallback's or
   an Undo's markers fails, the failure records their id and the closes it had made, as

@@ -97,7 +97,7 @@ def _set_input() -> Any:
     )
 
 
-async def _post_insert() -> None:
+async def _post_insert(revised: bool = False) -> None:
     await set_commit._set_post_insert(
         _set_input(),
         ch=object(),
@@ -107,7 +107,18 @@ async def _post_insert() -> None:
         source_class="asserted",
         verdict="clear",
         actor="u",
+        revised=revised,
     )
+
+
+@pytest.mark.asyncio
+async def test_a_revision_waits_for_its_entity_projection(post_insert) -> None:
+    # The close of what the revision dropped runs next: the new value's edge links must
+    # be in by then.
+    seen, gate = post_insert
+    gate.set()
+    await asyncio.wait_for(_post_insert(revised=True), timeout=1.0)
+    assert seen["scheduled"] == [] and "entities" in seen["order"]
 
 
 @pytest.mark.asyncio

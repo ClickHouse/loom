@@ -109,12 +109,12 @@ async def write_entity_edges(
     """Emit pairwise entity edges + edge-to-memory rows per entry, and the row links
     (`entity_edge_rows`) of an entry whose result names its row.
 
-        Per memory with N entities, emits C(N, 2) canonical pairs
-        (entity_a <= entity_b lexically), capped at _MAX_PAIRS_PER_MEMORY.
-        Always-on side effect of writes; read-side (search_mode=graph) is opt-in.
-        Fail-open. `wait_visible` acks only once the async-insert buffer has
-        flushed, so the rows are readable when the call returns: for a caller off
-        the response path, which pays nothing for the wait.
+    Per memory with N entities, emits C(N, 2) canonical pairs
+    (entity_a <= entity_b lexically), capped at _MAX_PAIRS_PER_MEMORY.
+    Always-on side effect of writes; read-side (search_mode=graph) is opt-in.
+    Fail-open. `wait_visible` acks only once the async-insert buffer has
+    flushed, so the rows are readable when the call returns: for a caller off
+    the response path, which pays nothing for the wait.
     """
     now = naive_utc_now()
     edges: list[dict[str, Any]] = []

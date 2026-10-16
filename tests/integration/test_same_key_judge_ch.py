@@ -4417,23 +4417,31 @@ async def test_a_revision_that_still_names_the_pair_keeps_its_edge(
     ch, org, path, monkeypatch
 ) -> None:
     # No other row names Alice and London. The revision drops the fact but its new
-    # value names both: its own edge stays open.
-    from server.memory.app import after_write, entity_projections
+    # value names both: its own edge stays open, with the weight of both mentions.
+    from server.memory.app.extract import handler
 
-    close = entity_projections.close_dropped_facts
+    project = handler.project_memory_set_entities
 
-    async def after_the_projection(input: Any, ids: list[str], *, ch: Any) -> None:
-        # memory.set projects its edges beside the response: here they land first.
-        await after_write.settle(input.org, input.namespace, timeout_s=10)
-        await close(input, ids, ch=ch)
+    async def slow_projection(*a: Any, **kw: Any) -> Any:
+        # memory.set's first-write projection runs beside the response; slowed here.
+        await asyncio.sleep(1.5)
+        return await project(*a, **kw)
 
-    monkeypatch.setattr(entity_projections, "close_dropped_facts", after_the_projection)
+    monkeypatch.setattr(handler, "project_memory_set_entities", slow_projection)
     london = await _stated(ch, org, "s1", "Alice likes London", ("alice", "like", "london"))
+    await _mentions(ch, org, london, "alice", "london")
     await _mentions(ch, org, london, "alice", "london")
     await _revise(path, org, london, "Alice took a trip to London")
     await _mutations_done(ch, org)
     await asyncio.sleep(1.1)  # the walk counts an edge ended this second as current
     assert await _walks_to(org, "london")
+    rows = await ch.query_all(
+        "SELECT co_occur, valid_to FROM loom.entity_edges WHERE org = {org:String}"
+        " AND entity_a = 'alice' AND entity_b = 'london'"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert [(r["co_occur"], r["valid_to"]) for r in rows] == [(1, None)] * 3
 
 
 async def test_a_row_naming_the_pair_while_its_edge_ends_keeps_it_open(ch, org) -> None:

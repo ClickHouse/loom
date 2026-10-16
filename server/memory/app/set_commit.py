@@ -723,6 +723,7 @@ async def _set_after_write(
         source_class=source_class,
         verdict="duplicate" if duplicate_of_id else conflict_result.verdict,
         actor=writer_actor or "-",
+        revised=had_existing_row,
     )
     await project_stated_relations(
         w.memory_row,
@@ -778,6 +779,7 @@ async def _set_post_insert(
     source_class: str,
     verdict: str,
     actor: str,
+    revised: bool = False,
 ) -> None:
     """What a committed point write does after its row is in.
 
@@ -786,7 +788,9 @@ async def _set_post_insert(
     The entity-graph projection is a fail-open side effect nothing on this path reads (the
     entity_extractor worker re-projects a row it missed): it is written beside the response
     instead of in it, because its canonical read + insert + edge inserts would be the serial
-    tail of every set (5–6 s when inserts are slow)."""
+    tail of every set (5–6 s when inserts are slow). A revision (`revised`) awaits it with
+    the tail: the close of what it dropped runs next, and keeps an edge open only for a
+    value whose edge links are in."""
     from server.memory.app import after_write
     from server.memory.app.key_supersession import supersede_same_key_rows
     from server.observability import audit as _audit_mod
@@ -820,13 +824,17 @@ async def _set_post_insert(
             log.warning("memory.set: audit emit failed (non-fatal): %s", e)
 
     tail = [_supersession(), _audit()]
-    # Nothing waits on this task but a read of the same namespace (`after_write.settle`),
-    # so its edges wait for their flush: once it is done, they are readable.
-    after_write.schedule(
-        _project_set_entities_fail_open(input, memory_id=memory_id, wait_visible=True),
-        name="loom-set-entities",
-        scope=(input.org, input.namespace),
-    )
+    if revised:
+        tail.append(_project_set_entities_fail_open(input, memory_id=memory_id))
+    else:
+        # Nothing waits on this task but a read of the same namespace
+        # (`after_write.settle`), so its edges wait for their flush: once it is done,
+        # they are readable.
+        after_write.schedule(
+            _project_set_entities_fail_open(input, memory_id=memory_id, wait_visible=True),
+            name="loom-set-entities",
+            scope=(input.org, input.namespace),
+        )
     with traced("memory.set.post_insert", concurrent=len(tail)):
         await asyncio.gather(*tail)
 
