@@ -627,8 +627,9 @@ def plan_follow(open_triples: list[dict[str, Any]], pairs: list[RowSupersession]
     closed_at = {t: at for t, at in closed_at.items() if t not in kept}
     ends: dict[Triple, Any] = {}
     for pair in pairs:
-        for t in pair.loser_triples | pair.loser_inferred:
-            ends[t] = _later(ends[t], pair.loser_valid_to) if t in ends else pair.loser_valid_to
+        for linked in pair.loser_triples | pair.loser_inferred:
+            end = pair.loser_valid_to
+            ends[linked] = _later(ends[linked], end) if linked in ends else end
     return FollowPlan(closes=closes, inserts=inserts, closed_at=closed_at, kept=kept, ends=ends)
 
 
