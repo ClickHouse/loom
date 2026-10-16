@@ -60,7 +60,7 @@
       "Bash(gh issue close*)",
       "Bash(gh api *)",
       "Bash(make bench*)",
-      "Bash(*bench/*.py*)",
+      "Bash(*python* bench/*.py*)",
       "Bash(git push --force-with-lease*)",
       "Bash(git push *--force-with-lease*)",
       "Bash(*-m bench.*)"
@@ -88,9 +88,6 @@
       "Bash(docker * loom-proxy*)",
       "Bash(docker * loom-server*)",
       "Bash(docker * loom-workers*)",
-      "Bash(*redeploy.sh)",
-      "Bash(*redeploy.sh --force*)",
-      "Bash(*redeploy.sh --rollback*)",
       "Bash(git push *refs/tags/*)",
       "Bash(git push *--follow-tags*)",
       "Bash(git push * main *)",
@@ -137,7 +134,17 @@
       "Bash(git push * -vf*)",
       "Bash(git push -fv*)",
       "Bash(git push * -fv*)",
-      "Bash(git push *:main *)"
+      "Bash(git push *:main *)",
+      "Bash(./redeploy.sh)",
+      "Bash(*/redeploy.sh)",
+      "Bash(bash *redeploy.sh)",
+      "Bash(./redeploy.sh --force*)",
+      "Bash(*/redeploy.sh --force*)",
+      "Bash(bash *redeploy.sh --force*)",
+      "Bash(./redeploy.sh --rollback*)",
+      "Bash(*/redeploy.sh --rollback*)",
+      "Bash(bash *redeploy.sh --rollback*)",
+      "Bash(sh *redeploy.sh*)"
     ]
   }
 }

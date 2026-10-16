@@ -276,6 +276,13 @@ NOT_DENIED = (
     "git push -u origin feature-flags",
     "LOOM_COLOUR=blue docker compose -f dev/docker-compose.colour.yml config -q",
     "docker rm -f ch-my-branch",
+    "git show abc:redeploy.sh",
+    "git diff origin/main...HEAD -- redeploy.sh",
+)
+# Reads of files whose execution asks first: a reviewer in the background cannot answer.
+NOT_ASKED = (
+    "git show abc:bench/locomo_qa.py",
+    "git diff origin/main...HEAD -- bench/longmemeval.py",
 )
 
 
@@ -287,6 +294,8 @@ def test_settings_deny_shared_and_production_commands() -> None:
         assert any(_matches(r, command) for r in perms["ask"]), command
     for command in NOT_DENIED:
         assert not any(_matches(r, command) for r in perms["deny"]), command
+    for command in NOT_ASKED:
+        assert not any(_matches(r, command) for r in perms["ask"]), command
     # The reviewer runs in the background, where only pre-approved commands run.
     reviewer = (ROOT / ".claude" / "agents" / "loom-reviewer.md").read_text()
     for command in re.findall(r"`(\.venv/bin/python -m pytest[^`]*)`", reviewer):

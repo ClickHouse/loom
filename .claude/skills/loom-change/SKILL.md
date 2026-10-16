@@ -14,7 +14,7 @@ Find the row for the change, read its guide before the first edit, and finish it
 | Migration | [migrations](../../../docs/development/migrations.md) | next free number on current `origin/main`; additive only; `make schema-dump` on a private ClickHouse (with none at hand, leave `schemas/schema.sql` unchanged and report the dump as pending; never hand-edit it); written values N-1 tolerates ([rolling upgrades](../../../docs/architecture/rolling-upgrades.md)), `make test-mixed-version` |
 | Setting | [extending-loom](../../../docs/development/extending-loom.md#add-a-setting) | field in `server/settings/_<area>.py` (models in `_models.py`) with a comment on what it controls and its values; `python -m scripts.codegen.settings_reference`; read as `settings.<field>` |
 | Retire a flag | — | delete the setting, its branch and any request field carrying it; the PR body's changelog entry names it |
-| Worker | [adding-a-worker](../../../docs/development/adding-a-worker.md) | registry row; `set_query_tag`; `LOOM_UPDATE_WORKER_SNAPSHOT=1` for an intended snapshot change |
+| Worker | [adding-a-worker](../../../docs/development/adding-a-worker.md) | registry row; `LOOM_UPDATE_WORKER_SNAPSHOT=1` for an intended snapshot change |
 | Provider | [extending-loom](../../../docs/development/extending-loom.md#add-a-provider) | `make bench-quick` evidence before changing a default (ask first — see `loom-bench`) |
 | Code-index language | [adding-language-support](../../../docs/development/adding-language-support.md) | stay outside the extractor stamp; backfill plan in the PR |
 | CLI command or flag | [code-generation](../../../docs/development/code-generation.md) | `LOOM_UPDATE_CLI_SNAPSHOT=1` snapshot; `python -m scripts.codegen.docs_reference` |

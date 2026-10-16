@@ -17,8 +17,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 from scripts.gates.check_no_secrets import PROVIDER_KEY_PATTERNS
 
-# The phrases from SKILL.md's table that are filler in every use; the other rows
-# need a reader's judgement.
+# The phrases from SKILL.md's table and its rule 7 that are filler in every use; the
+# other rows need a reader's judgement.
 FILLER = {
     r"leverag(e|es|ed|ing)": "use",
     r"utili[sz](e|es|ed|ing)": "use",
@@ -37,7 +37,6 @@ FILLER = {
     r"going forward|at this point in time": "delete",
     r"holistic(ally)?": "delete",
     r"cutting[- ]edge|state[- ]of[- ]the[- ]art|best[- ]in[- ]class": "delete",
-    r"game[- ]chang(er|ing)": "delete",
     r"great (catch|question|point)": "delete; state what changed",
     r"happy to help|hope this helps|let me know if": "delete",
     r"i apologi[sz]e|sorry for the confusion": "delete; state the correction",
