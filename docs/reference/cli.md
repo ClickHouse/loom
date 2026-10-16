@@ -171,10 +171,10 @@ namespace's grants. See [OKF](../features/integrations/okf.md) and
 `loom report` prints the bug form's Environment field with the `loom doctor`
 output; `--open` opens the form with the versions filled in. `loom drops`
 prints the memory ingest drop ledger for a namespace. `loom erasure-re-verify`
-re-checks failed erasure sagas. The backfill and repair commands (`integrity-repair`, `reconcile-status`,
-`repair-value-bytes`, `entity-edges-invalidate-junk`, `rechunk`,
-`lexical-stats-rebuild`, …) and when to run each are in
-[Maintenance](../operations/maintenance.md) and
+re-checks failed erasure sagas. The backfill and repair commands
+(`integrity-repair`, `reconcile-status`, `repair-value-bytes`,
+`entity-edges-invalidate-junk`, `rechunk`, `lexical-stats-rebuild`, …) and
+when to run each are in [Maintenance](../operations/maintenance.md) and
 [Troubleshooting](../operations/troubleshooting.md).
 
 ## Reading the table
