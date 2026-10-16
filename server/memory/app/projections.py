@@ -1139,15 +1139,14 @@ async def end_edges(
     ends: list[tuple[str, str, datetime]],
     open_only: bool = False,
 ) -> None:
-    """End each edge (entity_a, entity_b, end) still valid after its `end` (still open,
-    with `open_only`), as a close
-    ends a triple, unless a live row still names both entities: its current value has
-    a link to the pair (`entity_edge_rows`), the revised or retired rows included, as
-    the edge is its co-occurrence too. A row written before rows were linked to edges
-    keeps it through its key's link (`entity_edge_memories`). No `invalid_at`: the edge
-    walk never walks a retired edge, and the fact did hold until then. One read, and
-    an UPDATE only when it finds an edge to end, then a check for a row written
-    meanwhile (`reopen_held_edges`)."""
+    """End each edge (entity_a, entity_b, end) still valid after its `end`, or only the
+    still-open ones with `open_only`, as a close ends a triple, unless a live row still
+    names both entities: its current value has a link to the pair (`entity_edge_rows`),
+    the revised or retired rows included, as the edge is its co-occurrence too. A row
+    written before rows were linked to edges keeps it through its key's link
+    (`entity_edge_memories`). No `invalid_at`: the edge walk never walks a retired edge,
+    and the fact did hold until then. One read, and an UPDATE only when it finds an edge
+    to end, then a check for a row written meanwhile (`reopen_held_edges`)."""
     if not ends:
         return
     params = {

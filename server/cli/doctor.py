@@ -364,8 +364,9 @@ def _doctor_replica_consistency_check(settings: Any) -> tuple[str, str, str]:
     """The `replica_consistency` doctor line: WARN on a self-managed
     ReplicatedMergeTree cluster with more than one replica of those tables. A
     sequential read there waits only for inserts written with `insert_quorum`,
-    which Loom's async inserts cannot use, so a recount or a retire on one
-    replica can miss another's write. SharedMergeTree and one server are exact."""
+    which Loom's async inserts cannot use, so a recount, a retire, a task.create
+    retry or a ready-event check on one replica can miss another's write.
+    SharedMergeTree and one server are exact."""
     sql = (
         "SELECT table, total_replicas FROM system.replicas WHERE database = 'loom' "
         "AND table IN {tables:Array(String)} AND total_replicas > 1 AND table IN ("
