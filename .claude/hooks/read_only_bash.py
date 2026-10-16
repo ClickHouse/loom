@@ -100,7 +100,10 @@ def _segment_refusal(words: list[str], piped: bool) -> str | None:
             return "pytest runs only tests/unit paths with -q, -x, -k and similar flags"
         return None
     if any("[" in w or "]" in w for w in _without_jq(words)):
-        return "brackets are allowed only in a pytest node id or a --jq expression that starts with `.`"
+        return (
+            "brackets are allowed only in a pytest node id"
+            " or in a --jq expression that starts with `.`"
+        )
     if words[0] == "git":
         flag = next((w for w in words if w.split("=", 1)[0] in GIT_WRITE_FLAGS), None)
         if flag:
