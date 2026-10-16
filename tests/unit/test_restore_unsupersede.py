@@ -206,3 +206,49 @@ async def test_a_guarded_restore_never_undoes_a_delete(monkeypatch):
         )
     )
     assert out.restored is False and out.from_status == "" and ch.inserts == []
+
+
+@pytest.mark.parametrize(("keeper_live", "status"), [(True, "duplicate"), (False, "active")])
+async def test_undoing_a_retired_duplicate_keeps_it_a_duplicate(monkeypatch, keeper_live, status):
+    # The same-key judge can retire a duplicate row. Undone while the row it
+    # duplicates is still live, it stays hidden behind that row, on both tables.
+    from server.memory.api.models_crud import MemoryRestoreInput
+    from server.memory.app import restore as restore_mod
+
+    class _WasDuplicate(_CH):
+        async def query_all(self, sql: str, *_: Any, **__: Any) -> list[dict[str, Any]]:
+            return [{"was": "duplicate"}] if "AS was" in sql else []
+
+    ch = _WasDuplicate({"memory_id": "mid", "status": "superseded", "tombstoned_at": None})
+    existing = _superseded_row().model_copy(update={"duplicate_of": "keeper-of-the-fact"})
+    keeper = _superseded_row().model_copy(
+        update={"memory_id": "keeper-of-the-fact", "status": "active"}
+    )
+
+    async def _get_by_key(*_: Any, **__: Any) -> MemoryRow:
+        return existing
+
+    async def _get_by_id(memory_id: str, **_: Any) -> MemoryRow | None:
+        return keeper if keeper_live and memory_id == "keeper-of-the-fact" else None
+
+    unsup: list[str] = []
+
+    async def _unsupersede(*a: Any, status: str, **k: Any) -> int:
+        unsup.append(status)
+        return 1
+
+    async def _emit(*_: Any, **__: Any) -> str:
+        return "hash"
+
+    monkeypatch.setattr(restore_mod, "get_client", lambda: ch)
+    monkeypatch.setattr("server.memory.store.get_by_key", _get_by_key)
+    monkeypatch.setattr("server.memory.store.get_by_id", _get_by_id)
+    monkeypatch.setattr("server.memory.store.unsupersede_embeddings", _unsupersede)
+    monkeypatch.setattr("server.observability.audit.emit", _emit)
+    out = await restore_mod.handle_memory_restore(
+        MemoryRestoreInput(org="o", namespace="n", agent="a", session_id="s1", memory_key="k")
+    )
+    assert out.restored is True
+    table, rows = ch.inserts[0]
+    assert table == "loom.memory" and rows[0]["status"] == status
+    assert unsup == [status]

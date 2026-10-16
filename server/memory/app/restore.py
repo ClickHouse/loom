@@ -136,7 +136,8 @@ async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryResto
 
 async def _status_before_retirement(row: MemoryRow, *, ch: Any) -> str:
     """`conflicted` for a row retired while under review when a peer is still
-    conflicted and lists it back; `active` otherwise."""
+    conflicted and lists it back; `duplicate` for a retired duplicate whose
+    original is still live; `active` otherwise."""
     import server.memory.store as memory_repo
 
     found = await ch.query_all(
@@ -154,6 +155,14 @@ async def _status_before_retirement(row: MemoryRow, *, ch: Any) -> str:
         },
     )
     was = str(found[0]["was"]) if found else ""
+    if was == "duplicate" and row.duplicate_of:
+        # Still hidden behind the row it repeats, unless that one is gone.
+        original = await memory_repo.get_by_id(
+            row.duplicate_of, org=row.org, ch=ch, scope=WHOLE_NAMESPACE, fresh=True, strong=True
+        )
+        if original is not None and original.status != "superseded":
+            return "duplicate"
+        return "active"
     if was != "conflicted":
         return "active"
     # A peer deleted or resolved while this row was retired leaves nothing to review.
