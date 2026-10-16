@@ -1475,7 +1475,7 @@ CREATE TABLE IF NOT EXISTS loom.entity_triple_rows
 )
 ENGINE = ReplacingMergeTree
 ORDER BY (org, namespace, memory_id, user_id, content_sha256, subject, relation, object, inferred)
-SETTINGS index_granularity = 8192;
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
 
 -- loom.entity_triples
 CREATE TABLE IF NOT EXISTS loom.entity_triples
