@@ -10,7 +10,7 @@ Loom is a memory, knowledge, and observability data plane for AI agents, built o
 
 ## Rules by area
 
-Each `.claude/rules/<area>.md` holds the traps for the files its `paths:` frontmatter names. Claude Code loads a rule when it reads or edits a matching file. Other agents: before editing a file, read the rule whose paths match it (`grep -A8 '^paths:' .claude/rules/*.md` lists them all).
+Each `.claude/rules/<area>.md` holds the traps for the files its `paths:` frontmatter names. Claude Code loads a rule when it reads or edits a matching file. Other agents: before editing a file, read the rule whose paths match it (`awk '/^paths:/,/^---$/ {print FILENAME ": " $0}' .claude/rules/*.md` lists them all).
 
 | Rule | Covers |
 | --- | --- |

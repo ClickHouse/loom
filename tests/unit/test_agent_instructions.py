@@ -312,7 +312,11 @@ def test_settings_deny_shared_and_production_commands() -> None:
         assert not any(_matches(r, command) for r in perms["ask"]), command
     # The reviewer runs in the background; anything it runs that is not pre-approved prompts.
     reviewer = (ROOT / ".claude" / "agents" / "loom-reviewer.md").read_text()
-    for command in re.findall(r"`((?:[A-Z_]+=\S* )*\.venv/bin/python -m pytest[^`]*)`", reviewer):
+    commands = re.findall(
+        r"`((?:[A-Z_][A-Z0-9_]*=\S* )*\.venv/bin/python -m pytest[^`]*)`", reviewer
+    )
+    assert commands, "loom-reviewer.md names no pytest command"
+    for command in commands:
         assert any(_matches(r, command, strip_env=False) for r in perms["allow"]), command
     assert not any(
         _matches(r, "X=1 .venv/bin/python -m pytest tests/unit", strip_env=False)
