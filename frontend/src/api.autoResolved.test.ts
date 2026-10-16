@@ -154,6 +154,19 @@ describe("listUnsuperseded", () => {
     expect(bodies[0]).toMatchObject({ event_type: "memory.unsupersede", since: "2026-09-01T00:00:00Z" });
   });
 
+  it("keeps the later restore of one second, written with and without a fraction", async () => {
+    stubAudit([
+      {
+        rows: [
+          { ts: "2026-10-01T12:00:00.400000Z", subject: JSON.stringify({ memory_id: "m1" }) },
+          { ts: "2026-10-01T12:00:00Z", subject: JSON.stringify({ memory_id: "m1" }) },
+        ],
+      },
+    ]);
+    const out = await listUnsuperseded({ org: "o", namespace: "n" }, { since: "2026-09-01T00:00:00Z" });
+    expect(out.get("m1")).toBe("2026-10-01T12:00:00.400000Z");
+  });
+
   it("follows next_cursor, and stops after a bounded number of pages", async () => {
     const rec = (id: string, ts: string) => ({ ts, subject: JSON.stringify({ memory_id: id }) });
     let bodies = stubAudit([

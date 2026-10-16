@@ -734,7 +734,8 @@ export async function listUnsuperseded(
       const mid = String(parseAuditSubject(r.subject)["memory_id"] ?? "");
       if (!mid) continue;
       const prev = out.get(mid);
-      if (!prev || r.ts > prev) out.set(mid, r.ts);
+      // As instants: a whole second comes without a fraction, and "." sorts before "Z".
+      if (!prev || Date.parse(r.ts) > Date.parse(prev)) out.set(mid, r.ts);
     }
     if (!next_cursor) break;
     cursor = next_cursor;

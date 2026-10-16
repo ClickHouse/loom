@@ -279,6 +279,24 @@ describe("ReviewQueue", () => {
     expect(screen.getByRole("button", { name: "Undo retirement of again" })).toBeTruthy();
   });
 
+  it("orders audit times by instant, not by their text", async () => {
+    // A whole second is sent without a fraction, and "." sorts before "Z".
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    vi.mocked(listAutoResolved).mockResolvedValue(
+      page([
+        retired("later", { ts: "2026-10-01T12:00:00.500000Z" }),
+        retired("undone", { ts: "2026-10-01T12:00:00Z" }),
+      ]),
+    );
+    vi.mocked(listUnsuperseded).mockResolvedValue(new Map([["id-undone", "2026-10-01T12:00:00.400000Z"]]));
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Auto-resolved/ }, WAIT));
+    expect(await screen.findByText("Restored", {}, WAIT)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Undo retirement of undone" })).toBeNull();
+    expect(vi.mocked(listUnsuperseded).mock.calls[0][1]).toMatchObject({ since: "2026-10-01T12:00:00Z" });
+  });
+
   it("keeps each record of one memory apart", async () => {
     vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
     vi.mocked(listAutoResolved).mockResolvedValue(

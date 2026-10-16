@@ -461,12 +461,16 @@ type UndoOutcome = "restored" | "gone";
 // One retirement record: a memory retired twice shows up once per record.
 const entryKey = (r: AutoResolvedRow) => `${r.memory_id}@${r.ts}>${r.superseded_by}`;
 
+// Audit times compared as instants: a whole second comes without a fraction
+// ("…12:00:00Z"), and as text "." sorts before "Z".
+const instant = (ts: string) => Date.parse(ts);
+
 /** Newest restore per id across two reads. */
 function mergeUndone(a: Map<string, string>, b: Map<string, string>): Map<string, string> {
   const out = new Map(a);
   for (const [id, ts] of b) {
     const prev = out.get(id);
-    if (!prev || ts > prev) out.set(id, ts);
+    if (!prev || instant(ts) > instant(prev)) out.set(id, ts);
   }
   return out;
 }
@@ -493,7 +497,7 @@ function AutoResolvedPanel() {
   // The panel is keyed by namespace, so a reply that lands after it goes is dropped.
   const mounted = useRef(true);
   const loadingRef = useRef(false);
-  const oldest = (rows ?? []).reduce((m, r) => (m === "" || r.ts < m ? r.ts : m), "");
+  const oldest = (rows ?? []).reduce((m, r) => (m === "" || instant(r.ts) < instant(m) ? r.ts : m), "");
 
   useEffect(() => {
     mounted.current = true;
@@ -540,9 +544,9 @@ function AutoResolvedPanel() {
   // A row retired again after an undo is retired, so the undo must be the later event.
   const undoneBefore = (r: AutoResolvedRow) => {
     const at = undone.get(r.memory_id);
-    return at != null && at >= r.ts;
+    return at != null && instant(at) >= instant(r.ts);
   };
-  const known = (r: AutoResolvedRow) => undoneSince != null && r.ts >= undoneSince;
+  const known = (r: AutoResolvedRow) => undoneSince != null && instant(r.ts) >= instant(undoneSince);
 
   const loadMore = async () => {
     if (!cursor || loadingRef.current) return;
