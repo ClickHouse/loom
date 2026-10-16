@@ -530,12 +530,70 @@ async def close_dropped_facts(input: Any, ids: list[str], *, ch: Any) -> None:
     that holds none."""
     linked = await linked_triples(input, ids, ch=ch)
     opened = await open_triples_among(ch, org=input.org, namespace=input.namespace, triples=linked)
-    if not opened:
-        return
     held = await stated_by_live_rows(input.org, input.namespace, sorted(opened), ch=ch)
     dropped = sorted(opened - held)
     if dropped:
         await _write_follow_plan(input, tfr.FollowPlan(closes=dropped, inserts=[]), ch=ch)
+    # Checked for every value the rows no longer keep open, closed now or before: a
+    # replay finds the close landed and must still check.
+    await _keep_one_current(input, [t for t in linked if t not in held], ch=ch)
+
+
+async def _keep_one_current(input: Any, values: list[tfr.Triple], *, ch: Any) -> None:
+    """One value of a single-valued relation stays current, never neither. For each
+    relation of `values` with no current value left, the newest value a live row still
+    holds is opened again: a revision that drops the value an Undo restored gives the
+    value it beat back ("London" undone over "Paris", then revised away: Paris)."""
+    from server.identity.app.namespace_ontology import load_relation_cardinality
+    from server.memory.domain.graph_quality import is_single_valued_relation, observation_key
+
+    declared = await load_relation_cardinality(input.org, input.namespace)
+    pairs = sorted({(s, r) for s, r, _o in values if is_single_valued_relation(r, declared)})
+    if not pairs:
+        return
+    # On the fly: the closes just made are mutations that may still be pending.
+    rows = await ch.query_all(
+        """
+        SELECT subject, relation, object, valid_from, valid_to, invalid_at, seen_at
+        FROM loom.entity_triples
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND (subject, relation) IN {pairs:Array(Tuple(String, String))}
+        SETTINGS select_sequential_consistency = 1, apply_mutations_on_fly = 1
+        """,
+        params={"org": input.org, "ns": input.namespace, "pairs": pairs},
+    )
+    now = naive_utc_now()
+    current = {
+        (r["subject"], r["relation"]) for r in rows if r["valid_to"] is None or r["valid_to"] > now
+    }
+    rows = [r for r in rows if (r["subject"], r["relation"]) not in current]
+    if not rows:
+        return
+    held = await stated_by_live_rows(
+        input.org,
+        input.namespace,
+        sorted({(r["subject"], r["relation"], r["object"]) for r in rows}),
+        ch=ch,
+    )
+    # Oldest first, so each relation ends up with its newest held row.
+    newest: dict[tuple[str, str], Mapping[str, Any]] = {}
+    for r in sorted(
+        rows, key=lambda r: observation_key(r["valid_from"], r["seen_at"], r["object"])
+    ):
+        if (r["subject"], r["relation"], r["object"]) in held:
+            newest[(r["subject"], r["relation"])] = r
+    for r in newest.values():
+        # A value that ended on its own stays ended; only a supersession close stamps
+        # `invalid_at`, and that close is undone.
+        if r["invalid_at"] is None:
+            continue
+        await reopen_triples(
+            ch,
+            org=input.org,
+            namespace=input.namespace,
+            closes=[(r["subject"], r["relation"], r["object"], r["valid_to"])],
+            closed_at=r["invalid_at"],
+        )
 
 
 def _as_bulk_write(

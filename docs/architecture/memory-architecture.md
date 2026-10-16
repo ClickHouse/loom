@@ -334,7 +334,10 @@ the value it was written or stated for (`carried`):
   and an Undo of a retirement opens again those the restored row's current value holds
   by the same rule (another row's claim keeps a fact from closing, but never reopens
   one); either, when it fails, is recorded for `projection_repair` as
-  `triples_reconcile`. A replay of a failed triple, edge or entity-vector write writes
+  `triples_reconcile`. When that leaves a single-valued relation of the row with no
+  current value, the newest value a live row still holds is opened again: London
+  undone over Paris and then revised away leaves Paris current, not neither. Only a
+  supersession close is undone; a value that ended on its own stays ended. A replay of a failed triple, edge or entity-vector write writes
   only for the entries whose row still has the value the entry wrote (its id and
   `content_sha256`, the version the triple links carry) and passes this rule, so a
   revision since stays current; with none left the failure resolves with nothing to do.

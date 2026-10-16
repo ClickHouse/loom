@@ -3263,6 +3263,67 @@ async def test_an_undo_stays_newer_than_a_value_dated_before_it(ch, org) -> None
     assert await _open_cities(ch, org, {"london"}) == {"london"}
 
 
+async def _london_undone_over_paris(ch: Any, org: str, relation: str) -> dict[str, Any]:
+    """London (May) retired behind Paris (June), then undone: London is current."""
+    from server.memory.app.restore import handle_memory_restore
+
+    london = await _stated(
+        ch,
+        org,
+        "s1",
+        "I live in London",
+        ("user", relation, "london"),
+        valid_at=datetime(2026, 5, 1),
+    )
+    paris = await _stated(
+        ch, org, "s2", "I live in Paris", ("user", relation, "paris"), valid_at=datetime(2026, 6, 1)
+    )
+    await _follow_retirement(ch, org, london, paris)
+    assert (await handle_memory_restore(_undo_of(paris))).restored
+    await _mutations_done(ch, org)
+    assert await _open_cities(ch, org, {"london"}) == {"london"}
+    return london
+
+
+async def test_a_restored_row_edited_to_an_older_value_leaves_the_newer_one_current(
+    ch, org
+) -> None:
+    # The edit to Rome keeps the row's May date. Rome closes behind the Undo's London
+    # marker, then London closes: Paris (June) is current, as without the Undo.
+    from server.memory.api.models_crud import MemoryGetByIdInput, MemoryUpdateByIdInput
+    from server.memory.app.handlers import handle_memory_get_by_id
+    from server.memory.app.update import handle_memory_update_by_id
+
+    london = await _london_undone_over_paris(ch, org, "live_in")
+    got = await handle_memory_get_by_id(
+        MemoryGetByIdInput(org=org, memory_id=str(london["memory_id"]))
+    )
+    out = await handle_memory_update_by_id(
+        MemoryUpdateByIdInput(
+            org=org,
+            memory_id=str(london["memory_id"]),
+            value="I live in Rome",
+            relations=[("user", "live_in", "rome")],
+            if_match_sha256=got.content_sha256,
+        )
+    )
+    assert out.updated
+    await _mutations_done(ch, org)
+    assert await _open_cities(ch, org, {"paris"}) == {"paris"}
+
+
+async def test_a_revision_dropping_the_undone_value_makes_the_value_it_beat_current(
+    ch, org
+) -> None:
+    # The restored London row no longer says where the user lives: the Paris row
+    # still does, so Paris is current again rather than no value at all.
+    london = await _london_undone_over_paris(ch, org, "live_in")
+    await _revise("memory.update_by_id", org, london, "I like Rome", (("user", "like", "rome"),))
+    await _mutations_done(ch, org)
+    want = {("live_in", "paris"), ("like", "rome")}
+    assert await _open_facts(ch, org, want) == want
+
+
 async def test_a_batch_and_a_racing_writer_leave_one_current_value(ch, org, monkeypatch) -> None:
     # One write: London from Oct 15, then Berlin from Oct 14. Rome from Oct 14 arrives
     # later from another writer. Both repairs read all three rows before any close.
