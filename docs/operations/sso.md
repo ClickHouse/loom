@@ -135,13 +135,15 @@ with more than one admin, registered first, in one org); its tokens are for
 
 - `loom bot list` shows them; `loom bot disable --name …` refuses every later
   proof and revokes the tokens the bot holds, and `loom bot create --replace`
-  (a new key, fewer roles) revokes them too. Tokens are compared in whole
-  seconds against the server's clock: behind a load balancer whose replicas'
-  clocks drift, a first token refused right after a replace succeeds on retry. A platform admin does the same
+  (a new key, fewer roles) revokes them too. A platform admin does the same
   from anywhere with `loom call /v1/admin/bots.create --data '{…}'` (with
   `"generate_key": true` the answer carries the private key, once),
   `/v1/admin/bots.list` and `/v1/admin/bots.disable`; `/v1/admin/sso.adopt`,
   `sso.unlink` and `sso.password_link` mirror `loom sso`.
+- A revocation cuts off tokens issued before a second a few seconds ahead,
+  which a replace waits out, so replicas' clocks must agree to within those
+  seconds (NTP does): a replica running further ahead could issue a token from
+  the old bot that outlives the replace or the disable.
 
 Software that can only hold a static key gets an operator-minted token, with an
 expiry (`--ttl-days 90`, re-minted on a schedule) or without one, which lives

@@ -3,6 +3,7 @@ do on the host, for an admin signed in from anywhere (`loom call`, the SDK)."""
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -14,6 +15,7 @@ from server.identity.app import account_admin
 from server.insights.app.admin_routes import require_admin
 from server.settings import settings
 
+log = logging.getLogger(__name__)
 router = APIRouter(dependencies=[Depends(require_admin)])
 # The verified admin (None with auth off); FastAPI runs the gate once per request.
 Admin = Annotated[AuthInfo | None, Depends(require_admin)]
@@ -104,12 +106,21 @@ async def bots_create(input: BotInput, info: Admin) -> dict[str, Any]:
             audience=input.audience,
             claims=input.claims,
         )
-        await account_admin.create_bot(bot, by=_by(info), replace=input.replace)
     except ValueError as e:
         raise _invalid(e) from None
     answer: dict[str, Any] = {"client_id": input.name, "subject": machines.subject(input.name)}
     if private:
         answer["private_key_pem"] = private.decode()
+    try:
+        await account_admin.create_bot(bot, by=_by(info), replace=input.replace)
+    except ValueError as e:
+        raise _invalid(e) from None
+    except Exception as e:  # noqa: BLE001 — it may be saved: its only key must not be lost
+        log.error("bots.create %s may be half done: %s", input.name, e)
+        answer["warning"] = (
+            "the bot may be saved, its old tokens not yet revoked: send this again "
+            "with replace, or use the key it carries"
+        )
     return answer
 
 

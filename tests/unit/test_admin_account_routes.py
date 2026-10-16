@@ -151,3 +151,16 @@ def test_generating_a_key_and_giving_one_is_refused(calls) -> None:
         },
     )
     assert r.status_code == 422 and not calls
+
+
+def test_a_late_failure_still_hands_back_the_generated_key(calls, monkeypatch) -> None:
+    async def half_done(bot: Any, *, by: str, replace: bool) -> None:
+        raise RuntimeError("Keeper away after the save")
+
+    monkeypatch.setattr(account_admin, "create_bot", half_done)
+    r = _client().post(
+        "/v1/admin/bots.create",
+        json={"name": "t", "org": "acme", "namespace_roles": ["t=writer"], "generate_key": True},
+    )
+    assert r.status_code == 200 and "PRIVATE KEY" in r.json()["private_key_pem"]
+    assert "send this again" in r.json()["warning"]

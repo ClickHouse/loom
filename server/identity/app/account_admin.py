@@ -19,10 +19,19 @@ log = logging.getLogger(__name__)
 _BOT_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
 
 
+# How far another replica's clock may run ahead of this one's: a token it
+# issues as of a later second than the cutoff would outlive the revocation.
+_CLOCK_SKEW_S = 5
+
+
 def _from_now_on() -> datetime:
-    """A cutoff past every token issued so far: revocation compares whole
-    seconds, and a token from this very second would be left alive."""
-    return datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=1)
+    """A cutoff past every token issued so far, on any replica: revocation
+    compares whole seconds, and the token's `iat` is another clock's."""
+    return datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=1 + _CLOCK_SKEW_S)
+
+
+async def _wait_until(cutoff: datetime) -> None:
+    await asyncio.sleep(max(0.0, cutoff.timestamp() - time.time()))
 
 
 # ── carrying password accounts over to SSO ────────────────────────────────
@@ -202,8 +211,7 @@ async def create_bot(bot: machines.Machine, *, by: str, replace: bool) -> None:
         # The cutoff is taken after the save, so a request that read the old
         # row falls under it; returning once it has passed lets the new key's
         # first token live.
-        cutoff = await _end_tokens(name, by=by, reason="bot replaced")
-        await asyncio.sleep(max(0.0, cutoff.timestamp() - time.time()))
+        await _wait_until(await _end_tokens(name, by=by, reason="bot replaced"))
     try:
         await audit.emit(
             "auth.machine_created",
