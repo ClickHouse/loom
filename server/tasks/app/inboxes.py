@@ -58,6 +58,12 @@ async def server_version() -> int:
     return await repo.server_version()
 
 
+async def erasure_generation(org: str) -> str:
+    """A value that changes with every erasure requested in `org`, for a
+    domain's dedup token that must not match a row an erasure deleted."""
+    return await repo.erasure_generation(org)
+
+
 async def handle_inbox_register(input: InboxRegisterInput) -> InboxRegisterOutput:
     """Admin side: ``namespace`` is the owner namespace. Re-registering an
     existing inbox writes a new version (a settings edit); ``if_match_version``

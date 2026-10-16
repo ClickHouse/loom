@@ -222,7 +222,6 @@ async def test_a_new_watch_after_the_namespace_was_erased_posts_its_ready_event(
     from server.code.store import coverage_watches as wrepo
     from server.erasure.store.mutations import count_then_mutate
     from server.erasure.store.predicates import ORG_NS
-    from server.erasure.store.steps_ledgers import delete_tasks_by_namespace
 
     org, ns, sha = f"itest-rewatch-{uuid.uuid4().hex[:8]}", "code", "a" * 40
 
@@ -233,7 +232,7 @@ async def test_a_new_watch_after_the_namespace_was_erased_posts_its_ready_event(
         return emitted
 
     assert await watch_and_deliver()
-    await delete_tasks_by_namespace(org, ns)
+    await _erase_tasks(ch, org, ns)
     await count_then_mutate(
         "loom.code_coverage_watches",
         count_where=ORG_NS,
@@ -247,7 +246,7 @@ async def test_a_new_watch_after_the_namespace_was_erased_posts_its_ready_event(
     assert await watch_and_deliver()
     task_id = wrepo.event_id(org, ns, sha, "bot")
     assert await wrepo.ready_event_seq(org, "bot", task_id) is not None
-    await delete_tasks_by_namespace(org, ns)
+    await _erase_tasks(ch, org, ns)
     await count_then_mutate(
         "loom.code_coverage_watches",
         count_where=ORG_NS,

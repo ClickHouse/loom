@@ -137,6 +137,11 @@ def fake(history: tuple[str, list[str]], monkeypatch: pytest.MonkeyPatch) -> Fak
 
     monkeypatch.setattr(tasks_repo, "server_version", server_version)
 
+    async def erasure_generation(org: str) -> str:
+        return "0"
+
+    monkeypatch.setattr(tasks_repo, "erasure_generation", erasure_generation)
+
     class _State:
         async def all_state(self, org, ns):
             return f.state
@@ -241,6 +246,32 @@ async def test_two_racing_deliveries_report_one_emitted_event(
     first, _ = await svc.deliver(watch, coverage)
     second, _ = await svc.deliver(watch, coverage)
     assert (first, second) == (True, False) and len(fake.events) == 1
+
+
+@pytest.mark.asyncio
+async def test_two_racing_first_watches_post_one_event(
+    fake: Fake, history: tuple[str, list[str]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A client retry after a timeout: both calls missed the watch and the
+    # event, so each built its own watch (with its own version) and delivered.
+    _, (a, b, c) = history
+    fake.set_heads(fast=c, clang=c)
+
+    async def nothing_yet(*args: Any) -> None:
+        return None
+
+    seqs = iter([SERVER_NOW_US, SERVER_NOW_US + 1])
+
+    async def server_version(floor: int = 0) -> int:
+        return next(seqs)
+
+    monkeypatch.setattr(wrepo, "fetch_watch", nothing_yet)
+    monkeypatch.setattr(wrepo, "ready_event_exists", nothing_yet)
+    monkeypatch.setattr(svc, "server_version", server_version)
+    first = await h.handle_code_coverage_watch(_watch(b))
+    second = await h.handle_code_coverage_watch(_watch(b))
+    assert (first.emitted, second.emitted) == (True, False)
+    assert len(fake.events) == 1
 
 
 @pytest.mark.asyncio

@@ -27,7 +27,7 @@ from server.code.domain.coverage_watch import CoverageWatch
 from server.code.domain.index.state import IndexState
 from server.code.store import coverage_watches as repo
 from server.core.datetimes import naive_utc_now
-from server.tasks.app.inboxes import next_version, server_version
+from server.tasks.app.inboxes import erasure_generation, next_version, server_version
 
 log = logging.getLogger(__name__)
 
@@ -139,11 +139,12 @@ async def deliver(watch: CoverageWatch, coverage: dict[str, Any]) -> tuple[bool,
     emitted = False
     if not await repo.ready_event_exists(org, inbox, task_id):
         seq = await server_version()
-        # Two deliveries of this watch share the token, so when the other one
-        # posted first ClickHouse dropped ours: the stored seq is then not ours.
-        # The watch's version is in it because ClickHouse keeps a token after
-        # DELETE: a new watch after an erasure must not match the erased one.
-        token = f"{task_id}:{watch.version}"
+        # Racing deliveries share the token, even two racing first watches,
+        # so when the other one posted first ClickHouse dropped ours: the
+        # stored seq is then not ours. ClickHouse keeps a token after DELETE,
+        # so the org's erasure generation is in it: a new watch after an
+        # erasure must not match the erased one's event.
+        token = f"{task_id}:erased:{await erasure_generation(org)}"
         row = _event_row(watch, task_id, tier_summary(coverage), seq)
         await repo.insert_ready_event(row, token=token)
         emitted = await repo.ready_event_seq(org, inbox, task_id) == seq
