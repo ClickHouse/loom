@@ -22,7 +22,8 @@ What every top-level directory holds, where a concern lives inside `server/`, th
 | `docs/`                                                              | this documentation                                                                                                                                                                                                      |
 | `.github/`                                                           | CI (`workflows/ci.yml`), release (`workflows/release.yml`), issue and pull-request templates                                                                                                                            |
 | `Dockerfile`, `Makefile`, `redeploy.sh`, `pyproject.toml`, `uv.lock` | the image, the task runner, the blue/green deploy script, the server package and its lock file                                                                                                                          |
-| `CLAUDE.md`, `AGENTS.md`                                             | orientation for coding agents working in the repository                                                                                                                                                                 |
+| `AGENTS.md`, `CLAUDE.md`                                             | the instructions every coding agent reads; `CLAUDE.md` imports `AGENTS.md`                                                                                                                                              |
+| `.claude/`, `.agents/skills/`                                        | the agents' skills, path-scoped rules, the read-only reviewer subagent and its hook, and project permission settings; `.agents/skills/` links each skill for Codex                                                      |
 
 ## Inside server/
 

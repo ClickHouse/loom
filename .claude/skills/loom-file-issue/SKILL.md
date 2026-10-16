@@ -19,7 +19,7 @@ With the Loom plugin connected, also call its `loom_tracker_duplicate_check` too
 
 ## 2. Reproduce it
 
-- Reproduce on the latest release or `main`, on a private server (`loom-dev-setup`), before writing. If you could not reproduce it, say so: in "How this was found" where the form has it, otherwise in "Additional context".
+- Reproduce on the latest release or `main`, on a private server (`loom-dev-setup`), before writing. If you could not reproduce it, say so: in "How this was found" where the form has it, otherwise in "Additional context", or in the main field of a form with neither.
 - Shrink to the smallest sequence: the ops or SDK calls with their inputs, the non-default `LOOM_*` settings, whether auth is on, the rows it depends on and the latest applied migration (`SELECT max(filename) FROM loom._migrations`).
 - Keep the `error.code` and the `X-Request-Id` of the failing response; `loom-debug` follows that id to the cause.
 - A regression names the PR that caused it (`loom_code_bisect_candidates` ranks the merged PRs of a good/bad window when the plugin is connected): `Caused by: <full PR URL>`.
@@ -46,7 +46,7 @@ The label column is a label that exists in the repository; a form's own `labels:
 - **Title**: the wrong behaviour as a fact, under ~80 characters. "`memory.search` drops pinned rows when `limit` is below the pin count", not "Search bug" or "Issue with pinned memories".
 - **Environment**: paste `loom report` (it prints versions and `loom doctor`, never secret values).
 - **How this was found**: pick the option that is true. An agent that found the problem and has not had a person reproduce it says so; that tells a maintainer how much to trust the reproduction.
-- **Redaction**: remove tokens, keys, JWTs, passwords, customer data, host names, internal paths and namespaces from logs before pasting, then end the body with the form's required checkbox: `### Redaction` and `- [x] I removed tokens, keys, passwords and personal or customer data from everything above.`
+- **Redaction**: remove tokens, keys, JWTs, passwords, customer data, host names, internal paths and namespaces from logs before pasting, then, in a form with a Redaction field (bug, recall quality, performance, upgrade, installation), end the body with its required checkbox: `### Redaction` and `- [x] I removed tokens, keys, passwords and personal or customer data from everything above.`
 - Write in the voice of `loom-writing` and run its checker on the body file.
 
 ```bash
