@@ -251,7 +251,7 @@ export function GettingStarted({
                       {act.label}
                     </Button>
                     {act.docs && (
-                      <ExternalLink href={act.docs.href} size="xs">
+                      <ExternalLink href={act.docs.href} size="sm">
                         {act.docs.label}
                       </ExternalLink>
                     )}

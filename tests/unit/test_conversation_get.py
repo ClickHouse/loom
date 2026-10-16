@@ -468,8 +468,20 @@ async def test_any_agent_names_an_append_only_threads_latest_writer(
     async def fake_list_thread(*a, **kw):
         # Newest first, as order="desc" returns them: the latest writer is not the first row read.
         return [
-            _msg(msg_id="m1", role="user", content="hi", ts=datetime(2026, 6, 1, 9, 0), agent="planner"),
-            _msg(msg_id="m3", role="assistant", content="done", ts=datetime(2026, 6, 1, 9, 2), agent="deployer"),
+            _msg(
+                msg_id="m1",
+                role="user",
+                content="hi",
+                ts=datetime(2026, 6, 1, 9, 0),
+                agent="planner",
+            ),
+            _msg(
+                msg_id="m3",
+                role="assistant",
+                content="done",
+                ts=datetime(2026, 6, 1, 9, 2),
+                agent="deployer",
+            ),
             _msg(msg_id="m2", role="assistant", content="hello", ts=datetime(2026, 6, 1, 9, 1)),
         ]
 
@@ -529,7 +541,15 @@ async def test_list_with_any_agent_pages_the_whole_thread(
 
     async def fake_list_thread(org, namespace, agent, thread_id, **kw):
         assert agent is None
-        return [_msg(msg_id="m1", role="user", content="hi", ts=datetime(2026, 6, 1, 9, 0), agent="planner")]
+        return [
+            _msg(
+                msg_id="m1",
+                role="user",
+                content="hi",
+                ts=datetime(2026, 6, 1, 9, 0),
+                agent="planner",
+            )
+        ]
 
     monkeypatch.setattr(conversation_repo, "list_thread", fake_list_thread)
 

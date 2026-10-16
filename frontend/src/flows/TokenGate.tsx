@@ -5,6 +5,7 @@ import { Icon } from "@clickhouse/click-ui/Icon";
 import { PasswordField } from "@clickhouse/click-ui/PasswordField";
 import { Tabs } from "@clickhouse/click-ui/Tabs";
 import { TextField } from "@clickhouse/click-ui/TextField";
+import { ExternalLink } from "../components/ui/ExternalLink";
 import { Panel } from "../components/ui/Panel";
 import { TabTrigger } from "../components/ui/TabTrigger";
 import { selfSignup, setToken, loginWithPassword } from "../api";
@@ -264,13 +265,13 @@ export function TokenGate({ onLogin, reason = null }: TokenGateProps) {
           Running this yourself? Mint a token with <code>loom mint-token …</code> and open{" "}
           <code>&lt;server&gt;/#token=&lt;jwt&gt;</code>, or set <code>LOOM_AUTH_REQUIRED=false</code> for a single-user
           install. See{" "}
-          <a href={DOCS_TOKENS_URL} target="_blank" rel="noreferrer">
+          <ExternalLink href={DOCS_TOKENS_URL} size="sm">
             Tokens and grants
-          </a>{" "}
+          </ExternalLink>{" "}
           and the{" "}
-          <a href={DOCS_QUICKSTART_URL} target="_blank" rel="noreferrer">
+          <ExternalLink href={DOCS_QUICKSTART_URL} size="sm">
             Quickstart
-          </a>
+          </ExternalLink>
           .
         </p>
       </div>

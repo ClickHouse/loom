@@ -380,10 +380,9 @@ describe("Tasks page", () => {
     expect(within(panel).getByRole("heading", { name: "Task urgent" })).toBeInTheDocument();
     await within(panel).findByText("Fix it");
     expect(within(panel).getByRole("heading", { name: "Acceptance criteria" })).toBeInTheDocument();
-    expect(within(panel).getByRole("link", { name: "ClickHouse/ClickHouse#93412" })).toHaveAttribute(
-      "href",
-      "https://github.com/ClickHouse/ClickHouse/issues/93412",
-    );
+    expect(
+      within(panel).getByRole("link", { name: "ClickHouse/ClickHouse#93412 (opens in a new tab)" }),
+    ).toHaveAttribute("href", "https://github.com/ClickHouse/ClickHouse/issues/93412");
     expect(within(panel).getByText("Confidential.")).toBeInTheDocument();
     expect(within(panel).getByText(/from reporter-public/)).toBeInTheDocument();
     await within(panel).findByLabelText(/4 tasks from this poster: 2 done, 1 won't do, 0 failed, 1 open/);

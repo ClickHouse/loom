@@ -157,10 +157,9 @@ describe("TaskPanel", () => {
         "Acceptance criteria section",
       ).querySelectorAll("li"),
     ).toHaveLength(2);
-    expect(within(panel).getByRole("link", { name: "ClickHouse/ClickHouse#120507" })).toHaveAttribute(
-      "href",
-      "https://github.com/ClickHouse/ClickHouse/issues/120507",
-    );
+    expect(
+      within(panel).getByRole("link", { name: "ClickHouse/ClickHouse#120507 (opens in a new tab)" }),
+    ).toHaveAttribute("href", "https://github.com/ClickHouse/ClickHouse/issues/120507");
     expect(within(panel).getByText("src/Parsers/ASTJSONReadHelpers.cpp:87")).toHaveClass("font-mono");
     expect(within(panel).getByText("03011_json_read_expr_child_ub.sql")).toHaveClass("font-mono");
     expect(within(panel).getByRole("link", { name: /s3.example\/asan-1.txt/ })).toHaveAttribute(
@@ -284,7 +283,9 @@ describe("TaskPanel", () => {
     expect(buttons(f)).toEqual(["More actions"]);
     await screen.findByRole("heading", { name: "Outcome" });
     expect(
-      screen.getByRole("link", { name: "https://github.com/ClickHouse/example-private/issues/4121" }),
+      screen.getByRole("link", {
+        name: "https://github.com/ClickHouse/example-private/issues/4121 (opens in a new tab)",
+      }),
     ).toBeInTheDocument();
   });
 

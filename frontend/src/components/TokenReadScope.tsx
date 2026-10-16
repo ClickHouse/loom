@@ -3,6 +3,7 @@ import { Badge } from "@clickhouse/click-ui/Badge";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import type { ScopeRepo, TokenReadScope } from "../lib/tokenScope";
+import { ExternalLink } from "./ui/ExternalLink";
 import { TipTarget } from "./ui/TipTarget";
 
 /** "What this token will read and write", shown under the namespace pick
@@ -116,9 +117,9 @@ export function TokenReadScopePanel({
                 </div>
                 {docsHref ? (
                   <div>
-                    <a className="underline" href={docsHref} target="_blank" rel="noreferrer">
+                    <ExternalLink href={docsHref} size="sm">
                       How restricted access works
-                    </a>
+                    </ExternalLink>
                     .
                   </div>
                 ) : null}
@@ -138,9 +139,9 @@ export function TokenReadScopePanel({
                   {docsHref ? (
                     <>
                       {" "}
-                      <a className="underline" href={docsHref} target="_blank" rel="noreferrer">
+                      <ExternalLink href={docsHref} size="sm">
                         How to get one
-                      </a>
+                      </ExternalLink>
                       .
                     </>
                   ) : null}

@@ -1115,7 +1115,7 @@ function ProvenanceSection({
             <dt className="text-text-muted">Trigger</dt>
             <dd>
               {trig.url ? (
-                <ExternalLink href={trig.url} className="break-all">
+                <ExternalLink href={trig.url} size="sm" className="break-all">
                   {shortUrl(trig.url)}
                 </ExternalLink>
               ) : (
@@ -1129,7 +1129,7 @@ function ProvenanceSection({
             <dt className="text-text-muted">Cited source</dt>
             <dd>
               {isUrl(cited) ? (
-                <ExternalLink href={cited} className="break-all">
+                <ExternalLink href={cited} size="sm" className="break-all">
                   {shortUrl(cited)}
                 </ExternalLink>
               ) : (

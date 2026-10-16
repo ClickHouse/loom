@@ -7565,6 +7565,7 @@ class ConversationGetOutput(TypedDict, total=False):
 
 class ConversationEntry(TypedDict, total=False):
     msg_id: Required[str]
+    agent: Required[str]
     role: Required[Literal["user", "assistant", "system", "tool"]]
     content: Required[str]
     reasoning: Required[str]

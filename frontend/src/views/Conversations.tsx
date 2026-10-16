@@ -14,6 +14,7 @@ import {
   setConversationLogging,
   listMemories,
   type ConversationHit,
+  type ConversationMessage,
   type ConversationThreadSummary,
   type ConversationThreadDetail,
   type MemoryListEntry,
@@ -62,6 +63,19 @@ function linkify(text: string) {
       <span key={i}>{p}</span>
     ),
   );
+}
+
+// One turn per msg_id: a page boundary can repeat a row, and two agents logging the same
+// turn store it under the same content-hashed id.
+function uniqueTurns(messages: ConversationMessage[]): ConversationMessage[] {
+  const seen = new Set<string>();
+  const out: ConversationMessage[] = [];
+  for (const m of messages) {
+    if (seen.has(m.msg_id)) continue;
+    seen.add(m.msg_id);
+    out.push(m);
+  }
+  return out;
 }
 
 function CodeBlock({ code, lang }: { code: string; lang?: string }) {
@@ -337,7 +351,7 @@ export function Conversations() {
           if (d.found) setOpenThread((t) => t && { ...t, agent });
         }
         if (signal.aborted) return;
-        setThreadDetail(d);
+        setThreadDetail({ ...d, messages: uniqueTurns(d.messages) });
         // If the thread's reported msg_count exceeds what we loaded,
         // there are more pages to walk via conversation.list. Cursor
         // value is the last message's id — the server resolves it to
@@ -383,14 +397,11 @@ export function Conversations() {
         signal,
       });
       if (signal.aborted) return;
-      // Merge into the detail as it is now, and only if it is still this thread's:
-      // dedupe on msg_id in case the cursor boundary returns an overlap row. New rows
-      // append (server returns chronological order; we render in-place).
+      // Merge into the detail as it is now, and only if it is still this thread's. New
+      // rows append (server returns chronological order; we render in-place).
       setThreadDetail((prev) => {
         if (!prev || prev.thread_id !== thread_id) return prev;
-        const seen = new Set(prev.messages.map((m) => m.msg_id));
-        const fresh = r.rows.filter((m) => !seen.has(m.msg_id));
-        return { ...prev, messages: [...prev.messages, ...fresh] };
+        return { ...prev, messages: uniqueTurns([...prev.messages, ...r.rows]) };
       });
       setMoreCursor(r.next_cursor);
     } catch (e) {

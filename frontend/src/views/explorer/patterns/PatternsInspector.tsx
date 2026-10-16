@@ -136,17 +136,7 @@ function AreaClassList({
                     <span className="font-mono shrink-0 text-text-muted">{d.ref}</span>
                     <TextClamp text={d.title} lines={1} max={160} reach="parent" className="flex-1 min-w-0" />
                     <span className={`shrink-0 ${sevTone(d.severity)}`}>{d.severity}</span>
-                    {d.url && (
-                      <a
-                        href={d.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        aria-label={`Open ${d.ref}`}
-                        className="shrink-0 text-text-muted hover:text-text"
-                      >
-                        <Icon name="popout" size="xs" aria-hidden="true" />
-                      </a>
-                    )}
+                    {d.url && <ExternalLink href={d.url} label={`Open ${d.ref}`} />}
                   </div>
                   <div className="mt-0.5 pl-4 text-xs text-text-muted truncate tabular-nums">
                     {d.open ? "open" : "closed"}
@@ -369,7 +359,7 @@ export function PatternsInspector(p: PatternsInspectorProps) {
           )}
           <IconButton label={`Similar to #${i.number}`} onClick={() => p.onSimilar(i.title)} icon="search" size="sm" />
           {i.url && (
-            <ExternalLink href={i.url} size="xs" className="min-h-7">
+            <ExternalLink href={i.url} size="sm" className="min-h-7">
               Open on GitHub
             </ExternalLink>
           )}
@@ -407,17 +397,7 @@ export function PatternsInspector(p: PatternsInspectorProps) {
                         {h.partial ? <span className="text-text-muted"> · partial</span> : ""}
                       </span>
                       <span className={`shrink-0 ${sevTone(h.severity)}`}>{h.severity || "—"}</span>
-                      {h.url && (
-                        <a
-                          href={h.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          aria-label={`Open #${h.number} on GitHub`}
-                          className="shrink-0 text-text-muted hover:text-text"
-                        >
-                          <Icon name="popout" size="xs" aria-hidden="true" />
-                        </a>
-                      )}
+                      {h.url && <ExternalLink href={h.url} label={`Open #${h.number} on GitHub`} />}
                     </li>
                   ))}
               </ul>

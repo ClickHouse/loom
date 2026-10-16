@@ -88,7 +88,7 @@ import { branchState, branchOrder, buildCards, type CodeFacet } from "../lib/rep
 import { RepositoryCard, BranchChip, FRESH_STATE, type CodeActions, type RecordActionProps } from "./RepositoryCard";
 import { useTrackerSources, useRecordActions, TRACKER_SOURCES_ABSENT } from "./TrackerSources";
 import { TrackersPanel } from "./TrackersPanel";
-import { Chip, TabTrigger, TextClamp, Tip, TipTarget } from "../components/ui";
+import { Chip, ExternalLink, TabTrigger, TextClamp, Tip, TipTarget } from "../components/ui";
 import { isRecord } from "../lib/guards";
 import { oneOf } from "../lib/oneOf";
 
@@ -2689,15 +2689,10 @@ function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
                     {relativeTime(r.created_at.replace(" ", "T") + "Z")}
                   </span>
                 </button>
-                <a
+                <ExternalLink
                   href={`https://github.com/${repo}/pull/${r.pr_number}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  aria-label={`PR #${r.pr_number} on GitHub (opens in new tab)`}
-                  className="inline-flex items-center justify-center shrink-0 min-h-6 min-w-6 rounded hover:bg-surface-3 pointer-coarse:min-h-11 pointer-coarse:min-w-11"
-                >
-                  <Icon name="popout" size="xs" aria-hidden="true" />
-                </a>
+                  label={`PR #${r.pr_number} on GitHub`}
+                />
               </div>
               {open === r.pr_number && (
                 <div className="px-4 pb-4 bg-bg">

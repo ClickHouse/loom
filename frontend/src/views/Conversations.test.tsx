@@ -256,6 +256,26 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     expect(must(screen.getByText("plan it").closest("[id^='msg-']"), "turn p1")).toHaveTextContent("planner");
   });
 
+  it("shows a turn two agents both logged once", async () => {
+    listConversationThreads.mockResolvedValue({ threads: [summary("thread-d", "Title D")] });
+    getNamespace.mockResolvedValue({ conversation_logging_enabled: true });
+    const now = new Date().toISOString();
+    getConversationThread.mockResolvedValue({
+      ...detail("thread-d", "Title D"),
+      msg_count: 2,
+      messages: [
+        { msg_id: "same", agent: "planner", role: "user", content: "ship it", ts: now },
+        { msg_id: "same", agent: "deployer", role: "user", content: "ship it", ts: now },
+      ],
+    });
+    listMemories.mockResolvedValue(noMemories);
+
+    render(<Conversations />);
+    fireEvent.click(await screen.findByText("Title D"));
+    expect(await screen.findAllByText("ship it")).toHaveLength(1);
+    expect(document.querySelectorAll("#msg-same")).toHaveLength(1);
+  });
+
   it("ignores '/' pressed inside the thread dialog", async () => {
     listConversationThreads.mockResolvedValue({ threads: [summary("thread-a", "Title A")] });
     getNamespace.mockResolvedValue({ conversation_logging_enabled: true });

@@ -108,9 +108,9 @@ function InputValue({ v }: { v: unknown }) {
     case "issue": {
       const href = issueHref(s);
       return href ? (
-        <a href={href} target="_blank" rel="noreferrer" className="font-mono text-xs">
+        <ExternalLink href={href} size="sm">
           {s}
-        </a>
+        </ExternalLink>
       ) : (
         <span className="font-mono text-xs">{s}</span>
       );
@@ -483,9 +483,9 @@ export function TaskPanel({
                   <dt>{k.replace(/_/g, " ")}</dt>
                   <dd>
                     {typeof v === "string" && URL_RE.test(v) ? (
-                      <a href={v} target="_blank" rel="noreferrer" className="break-all">
+                      <ExternalLink href={v} className="break-all">
                         {v}
-                      </a>
+                      </ExternalLink>
                     ) : (
                       <InputValue v={v} />
                     )}

@@ -50,7 +50,9 @@ describe("TokenReadScopePanel", () => {
     expect(restricted.textContent).toContain("Not included");
     expect(restricted.textContent).toContain("org/private");
     expect(restricted.textContent).toContain("restricted repository");
-    expect(screen.getByRole("link", { name: "How to get one" }).getAttribute("href")).toBe("https://example.test/docs");
+    expect(screen.getByRole("link", { name: "How to get one (opens in a new tab)" }).getAttribute("href")).toBe(
+      "https://example.test/docs",
+    );
     expect(screen.getByText("Awaiting approval: shared", { exact: false })).toBeTruthy();
   });
 

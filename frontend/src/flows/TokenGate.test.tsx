@@ -52,8 +52,14 @@ describe("TokenGate", () => {
     expect(screen.getByText(/Running this yourself\?/)).toBeInTheDocument();
     expect(screen.getByText("loom mint-token …")).toBeInTheDocument();
     expect(screen.getByText("LOOM_AUTH_REQUIRED=false")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Tokens and grants" })).toHaveAttribute("href", DOCS_TOKENS_URL);
-    expect(screen.getByRole("link", { name: "Quickstart" })).toHaveAttribute("href", DOCS_QUICKSTART_URL);
+    expect(screen.getByRole("link", { name: "Tokens and grants (opens in a new tab)" })).toHaveAttribute(
+      "href",
+      DOCS_TOKENS_URL,
+    );
+    expect(screen.getByRole("link", { name: "Quickstart (opens in a new tab)" })).toHaveAttribute(
+      "href",
+      DOCS_QUICKSTART_URL,
+    );
     expect(DOCS_TOKENS_URL).toMatch(
       /^https:\/\/github\.com\/ClickHouse\/loom\/blob\/main\/docs\/guides\/tokens-and-grants\.md$/,
     );
