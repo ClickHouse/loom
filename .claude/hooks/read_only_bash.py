@@ -1,11 +1,11 @@
 """PreToolUse hook for the loom-reviewer subagent: run only commands on a short read-only list.
 
 Reads the hook payload on stdin. Exit 0 allows the command; exit 2 blocks it and the
-message on stderr goes back to the agent; any error blocks too. The reviewer reads
-files with its Read, Grep and Glob tools, so Bash is kept to git and gh reads, the
-prose checker and the unit tests, run from the project directory. Running the unit
-tests executes the PR's own test code, so review in Bash only a PR you would run
-locally.
+message on stderr goes back to the agent. An exception while checking blocks too, and
+the reviewer's first call (`true`) catches a hook that cannot start. The reviewer reads
+files with its Read, Grep and Glob tools, so Bash is kept to git and gh reads, the prose
+checker and the unit tests, run from the project directory. Running the unit tests
+executes the PR's own test code, so review in Bash only a PR you would run locally.
 """
 
 from __future__ import annotations
