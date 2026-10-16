@@ -48,7 +48,7 @@ Right after a push the new head has no checks yet (runs queue behind the previou
 
 ```bash
 until [ "$(gh pr view <n> --json headRefOid,statusCheckRollup --jq "(.headRefOid == \"$(git rev-parse HEAD)\") and (.statusCheckRollup | length > 0)")" = true ]; do sleep 15; done
-gh pr checks <n> --watch --fail-fast
+gh pr checks <n> --watch --fail-fast      # a CI round trip outlasts a foreground call: run it in the background
 gh pr view <n> --json statusCheckRollup --jq '.statusCheckRollup[] | "\((if (.conclusion // "") == "" then .status else .conclusion end))\t\(.name)"'
 gh pr view <n> --json statusCheckRollup --jq '.statusCheckRollup | length > 0 and all(.[];
   .status == "COMPLETED" and (.conclusion | IN("SUCCESS", "SKIPPED", "NEUTRAL")))'   # true = green
@@ -65,7 +65,7 @@ gh pr merge <n> --squash --delete-branch
 ```
 
 - Squash-merge always. Never merge another author's PR for them.
-- If another PR merged after your last green run and yours adds files the whole-tree gates scan (any `.py`, `.md`, test or doc), rebase on it (`git fetch origin main && git rebase origin/main && git push --force-with-lease`, which asks for approval) and wait for green again: two PRs green alone can be red together.
+- If another PR merged after your last green run and yours adds files the whole-tree gates scan (any `.py`, `.md`, test or doc), rebase on it (`git fetch origin main && git rebase origin/main && git push --force-with-lease`, which asks for approval; `--force`, `-f` and `+ref` are denied) and wait for green again: two PRs green alone can be red together.
 - Two open PRs that bump the plugin to the same version: the second ships nothing. Re-bump before merging.
 
 ## 7. After the merge

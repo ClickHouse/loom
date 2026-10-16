@@ -16,7 +16,14 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-SKILLS = sorted((ROOT / ".claude" / "skills").glob("loom-*/SKILL.md"))
+# Tracked skills only: `npx skills add` may install an ignored skill beside them.
+SKILLS = sorted(
+    ROOT / p
+    for p in subprocess.run(
+        ["git", "ls-files", ".claude/skills"], cwd=ROOT, capture_output=True, text=True, check=True
+    ).stdout.splitlines()
+    if p.endswith("/SKILL.md")
+)
 RULES = sorted((ROOT / ".claude" / "rules").rglob("*.md"))
 AGENTS = sorted((ROOT / ".claude" / "agents").glob("*.md"))
 NAME = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
@@ -99,7 +106,54 @@ def test_rule_paths_match_tracked_files(rule: Path) -> None:
         assert any(re.fullmatch(pattern, p) for p in tracked), f"{glob} matches no tracked file"
 
 
+def _matches(rule: str, command: str) -> bool:
+    """Claude Code's Bash rule match: `:*` is a word-boundary prefix, `*` any text."""
+    pattern = rule.removeprefix("Bash(").removesuffix(")")
+    if pattern.endswith(":*"):
+        pattern = pattern[:-2] + "*"
+        if command == pattern[:-1].rstrip():
+            return True
+        pattern = pattern[:-1] + " *"
+    return re.fullmatch(".*".join(map(re.escape, pattern.split("*"))), command) is not None
+
+
+DENIED = (
+    "git stash",
+    "git stash pop",
+    "git push --force",
+    "git push -f origin br",
+    "git push origin br --force",
+    "git push origin +br",
+    "git push origin main",
+    "git push origin HEAD:main",
+    "git push origin HEAD:refs/heads/main",
+    "git push origin v1.2.3",
+    "git push --tags",
+    "gh workflow run release.yml --ref v1.2.3",
+    "gh release create v1.2.3",
+    "./redeploy.sh",
+    "bash redeploy.sh --rollback",
+    "./redeploy.sh --force",
+    "docker compose -f dev/docker-compose.colour.yml up -d",
+    "docker rm -f loom-blue",
+    "docker stop loom-workers",
+)
+NOT_DENIED = (
+    "git push -u origin HEAD",
+    "git push --force-with-lease",
+    "git push origin br --force-with-lease",
+    "./redeploy.sh --status",
+    "docker rm -f ch-my-branch",
+)
+
+
 def test_settings_deny_shared_and_production_commands() -> None:
-    deny = set(json.loads((ROOT / ".claude" / "settings.json").read_text())["permissions"]["deny"])
-    assert {"Bash(git stash:*)", "Bash(git push --force:*)", "Bash(git push * --force*)"} <= deny
-    assert {"Bash(./redeploy.sh)", "Bash(./redeploy.sh --rollback*)"} <= deny
+    perms = json.loads((ROOT / ".claude" / "settings.json").read_text())["permissions"]
+    for command in DENIED:
+        assert any(_matches(r, command) for r in perms["deny"]), command
+    for command in NOT_DENIED:
+        assert not any(_matches(r, command) for r in perms["deny"]), command
+    assert _matches(
+        "Bash(.venv/bin/python -m pytest tests/unit/*)",
+        ".venv/bin/python -m pytest tests/unit/test_x.py",
+    )

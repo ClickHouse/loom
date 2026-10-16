@@ -35,43 +35,54 @@ The make targets use `.venv/bin/python`. Run repository scripts as modules (`.ve
 Pick free ports and a name that cannot be mistaken for a deployment's containers (`loom-blue`, `loom-green`, `loom-proxy`, `loom-server`, `loom-ch` are taken by convention):
 
 ```bash
-export LOOM_CH_CONTAINER="ch-${BRANCH//\//-}" LOOM_CH_HOST_PORT=18123 LOOM_CH_NATIVE_HOST_PORT=19000
-bash dev/ci_start_clickhouse.sh || exit 1
-docker ps --filter "name=^${LOOM_CH_CONTAINER}$" --format '{{.Names}} {{.Ports}}'   # yours, on your ports
-curl -s "http://loom:loomdev@localhost:$LOOM_CH_HOST_PORT/?query=SELECT+count()+FROM+system.tables+WHERE+database='loom'"   # 0 before the first migrate
+LOOM_CH_CONTAINER="ch-${BRANCH//\//-}" LOOM_CH_HOST_PORT=18123 LOOM_CH_NATIVE_HOST_PORT=19000 bash dev/ci_start_clickhouse.sh
+docker ps --filter "name=^ch-${BRANCH//\//-}$" --format '{{.Names}} {{.Ports}}'   # yours, on your ports
+curl -s "http://loom:loomdev@localhost:18123/?query=SELECT+count()+FROM+system.tables+WHERE+database='loom'"   # 0 before the first migrate
 ```
 
-The script refuses a port that is already taken (pick others and re-run), so a failed start cannot hand your migrations to another server. Then point Loom at it and migrate:
+The script refuses a port that is already taken (pick others and re-run), so a failed start cannot hand your migrations to another server. Remove it when done: `docker rm -f "ch-<branch>"` — check the name first; never `rm -f` a container you did not start.
+
+## 4. One `.env` for this worktree
+
+An agent's shell keeps no variables between calls, and a server started without them falls back to `localhost:8123` and migrates whatever answers there at boot. Put the worktree's values in its own `.env` (ignored; a fresh worktree has none), which the server, `make migrate` and the tests all read:
 
 ```bash
-export LOOM_CH_HOST=localhost LOOM_CH_PORT=$LOOM_CH_HOST_PORT
+test -e .env && echo ".env exists: edit it instead" || cat > .env <<ENV
+LOOM_CH_HOST=localhost
+LOOM_CH_PORT=18123
+LOOM_INSTANCE_LABEL=iso:$(basename "$PWD"):7790
+LOOM_BASE_URL=http://localhost:7790
+LOOM_BACKGROUND_WORKERS=off
+LOOM_JWT_SECRET=$(openssl rand -hex 16)
+LOOM_AUTH_REQUIRED=false
+LOOM_EMBEDDING_MODEL=fake-ngram-1024
+LOOM_LLM_PROVIDER=fake
+LOOM_LATENCY_BUDGET_MULTIPLIER=10
+ENV
 make migrate
 ```
 
-Remove it when done: `docker rm -f "$LOOM_CH_CONTAINER"` — check the name first; never `rm -f` a container you did not start.
+The last four lines are the posture of CI's main integration pass (`.github/workflows/ci.yml`). A server with auth on fails dozens of tests written for that pass: that is the posture, not a bug. CI runs `test_cross_principal_leakage.py` a second time against an auth-on server. Workers stay off: a live supervisor drains the tests' rows.
 
-## 4. Server from source
+## 5. Server from source
+
+Run it in the background (`run_in_background`, or `&`), from the worktree root:
 
 ```bash
-PORT=7790
-LOOM_INSTANCE_LABEL="iso:$(basename "$PWD"):$PORT" LOOM_BUILD_COMMIT=$(git rev-parse --short HEAD) LOOM_BACKGROUND_WORKERS=off \
-  .venv/bin/uvicorn server.main:app --app-dir "$PWD" --host 127.0.0.1 --port $PORT --loop asyncio --reload
-curl -s localhost:$PORT/v1/health | jq '{status, build_commit, schema}'
+LOOM_BUILD_COMMIT=$(git rev-parse --short HEAD) .venv/bin/uvicorn server.main:app \
+  --app-dir "$PWD" --host 127.0.0.1 --port 7790 --loop asyncio --reload
 ```
 
-`--app-dir "$PWD"` makes uvicorn serve this worktree's code; `build_commit` confirms it (a source run reports `unknown` without `LOOM_BUILD_COMMIT`). Workers stay off for the integration suite (a live supervisor drains the tests' rows).
+Check it in a separate call: `curl -s localhost:7790/v1/health | jq '{status, build_commit, schema}'`. `--app-dir "$PWD"` makes uvicorn serve this worktree's code; `build_commit` confirms it (a source run reports `unknown` without `LOOM_BUILD_COMMIT`).
 
-The server and the tests read the same `.env` ([integration tests](../../../docs/development/testing.md#integration-tests)). To match CI's main integration pass, start the server with its posture: `LOOM_AUTH_REQUIRED=false LOOM_EMBEDDING_MODEL=fake-ngram-1024 LOOM_LLM_PROVIDER=fake LOOM_LATENCY_BUDGET_MULTIPLIER=10` (`.github/workflows/ci.yml`). A server with auth on fails dozens of tests written for that pass: that is the posture, not a bug. CI runs `test_cross_principal_leakage.py` a second time against an auth-on server.
-
-## 5. Integration tests
+## 6. Integration tests
 
 ```bash
-export LOOM_BASE_URL=http://localhost:$PORT
 make test-integration
 .venv/bin/python -m pytest tests/integration -m "not slow and not destructive" -q   # quick pass
 ```
 
-Tests read `LOOM_CH_HOST` and `LOOM_BASE_URL` from the environment or from the `.env` the session loads (`LOOM_ENV_FILE=` loads none), and skip without them; never export them to a shared or production server. Tests that need self-signup skip in CI, so new tests use `mint_test_token`.
+Every call starts from the worktree root (`cd` again if the shell may have moved). Tests read `LOOM_CH_HOST` and `LOOM_BASE_URL` from the environment or from the `.env` the session loads (`LOOM_ENV_FILE=` loads none) and skip without them ([integration tests](../../../docs/development/testing.md#integration-tests)); never point them at a shared or production server. Tests that need self-signup skip in CI, so new tests use `mint_test_token`.
 
 ## Reference
 

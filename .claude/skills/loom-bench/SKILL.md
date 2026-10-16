@@ -20,7 +20,7 @@ Name the question first ("does rerank X raise recall@10 on multi-hop without los
 
 ```bash
 PYTHONPATH=$PWD .venv/bin/python bench/<harness>.py --help
-curl -s "$LOOM_BASE_URL/v1/health" | jq '{build_commit, status}'   # your build, when started with LOOM_BUILD_COMMIT (loom-dev-setup §4)
+curl -s "$LOOM_BASE_URL/v1/health" | jq '{build_commit, status}'   # your build, when started with LOOM_BUILD_COMMIT (loom-dev-setup §5)
 ```
 
 - The server is a private one started from this worktree (`loom-dev-setup`) with real providers; fake providers make every score meaningless.

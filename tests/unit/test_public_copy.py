@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -225,12 +226,21 @@ DECISION_REFERENCE_DATA = {
 
 
 def _iter_scan_files():
+    # `.claude/` also holds ignored third-party skills a contributor installed.
+    agent_files = set(
+        subprocess.run(
+            ["git", "ls-files", ".claude"], cwd=ROOT, capture_output=True, text=True, check=True
+        ).stdout.splitlines()
+    )
     for d in SCAN_DIRS:
         base = ROOT / d
         if not base.exists():
             continue
         for path in sorted(base.rglob("*")):
             if not path.is_file() or path.suffix not in SCAN_SUFFIXES:
+                continue
+            rel = path.relative_to(ROOT).as_posix()
+            if rel.startswith(".claude/") and rel not in agent_files:
                 continue
             if SKIP_DIR_PARTS.intersection(path.parts):
                 continue
