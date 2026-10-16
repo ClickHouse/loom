@@ -449,8 +449,9 @@ entity projection when it revises a row (a first write projects beside the respo
 Either way it projects only while its row still holds that value: if a revision or
 retirement lands while it runs, whose close may run before these edges exist, it ends
 the edges it wrote that no live row names, at the moment the row stopped holding that
-value (read from `loom.memory_versions`: a tombstone's or retirement's stamp, else the
-next write), not when the cleanup runs. When that cleanup fails, the row, value and that
+value (read from `loom.memory_versions`: a tombstone's stamp, else a retirement's
+`invalid_at` when it differs from the one the value was held with, back-dated or not, else
+the next write), not when the cleanup runs. When that cleanup fails, the row, value and that
 moment are recorded (`entity_edges_close`) for `projection_repair`. `memory.bulk_set`
 does the same for the rows it revised, and `memory.update_by_id` and `memory.update`
 project a changed value's edges the same way (a failure is recorded for

@@ -512,18 +512,26 @@ async def value_ended_at(
     version history. Now when the history has none."""
     row = await ch.query_one(
         f"""
+        -- holder: the last version holding the value, and its invalid_at.
+        WITH (
+            SELECT (maxOrNull(version), argMax(tuple(invalid_at), version).1)
+            FROM loom.memory_versions
+            WHERE org = {{org:String}} AND namespace = {{ns:String}}
+              AND memory_id = {{id:UUID}} AND content_sha256 = {{sha:String}}
+              AND {HOLDS_VALUE_SQL}
+        ) AS holder
         -- A tombstone or retirement can keep the row's updated_at. A tombstoned_at here is
-        -- fresh (the holders had none); an invalid_at older than the write is stale.
+        -- fresh (the holders had none); an invalid_at is fresh when the holder's differs,
+        -- and may be back-dated (a value update retires as of the newer row's valid_at).
         SELECT argMinOrNull(
-            coalesce(tombstoned_at, greatest(updated_at, ifNull(invalid_at, updated_at))),
+            coalesce(
+                tombstoned_at,
+                if(invalid_at IS DISTINCT FROM holder.2, invalid_at, NULL),
+                updated_at),
             version) AS ended
         FROM loom.memory_versions
         WHERE org = {{org:String}} AND namespace = {{ns:String}} AND memory_id = {{id:UUID}}
-          AND version > (
-              SELECT maxOrNull(version) FROM loom.memory_versions
-              WHERE org = {{org:String}} AND namespace = {{ns:String}}
-                AND memory_id = {{id:UUID}} AND content_sha256 = {{sha:String}}
-                AND {HOLDS_VALUE_SQL})
+          AND version > holder.1
         SETTINGS select_sequential_consistency = 1
         """,
         params={"org": org, "ns": namespace, "id": memory_id, "sha": content_sha256},

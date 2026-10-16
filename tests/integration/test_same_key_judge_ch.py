@@ -2525,6 +2525,22 @@ async def test_a_value_a_retirement_ended_ends_at_the_retirement(ch, org) -> Non
     assert ended == retired
 
 
+async def test_a_value_a_back_dated_value_update_ended_ends_at_its_date(ch, org) -> None:
+    # A value update retires the older row as of the newer row's valid_at, which is
+    # usually before the retirement was written: that date is the value's end.
+    from server.memory import store as M
+    from server.memory.app.entity_projections import value_ended_at
+    from server.memory.app.value_updates import _supersession_update
+
+    row = _row(org, "s1", "price is $10", datetime(2026, 1, 1))
+    await M.insert_memory_versions([row], ch=ch)
+    newer_valid_at = datetime(2026, 3, 1)
+    update = _supersession_update("newer", newer_valid_at)
+    assert await M.write_versions_by_ids(org, [str(row["memory_id"])], update, ch=ch, strong=True)
+    ended = await value_ended_at(org, NS, str(row["memory_id"]), row["content_sha256"], ch=ch)
+    assert ended == newer_valid_at
+
+
 async def test_a_value_a_by_id_tombstone_ended_ends_at_the_tombstone(ch, org) -> None:
     # A by-id tombstone (a conflict's losing side, a blacklist sweep) keeps the row's
     # updated_at and stamps only tombstoned_at.
