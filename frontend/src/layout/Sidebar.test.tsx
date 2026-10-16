@@ -27,7 +27,7 @@ vi.mock("../api", async (importOriginal) => {
     countNewAgents: vi.fn(async () => 0), // The badge asks for a number
   };
 });
-// The sidebar imports the admin API on demand.
+// The sidebar asks through sharedHasAutoResolved, which imports the admin API on demand.
 vi.mock("../api/admin", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api/admin")>()),
   hasAutoResolved: vi.fn(async () => false),

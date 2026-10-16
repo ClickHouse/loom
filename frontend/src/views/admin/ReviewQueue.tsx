@@ -29,6 +29,7 @@ import { relativeTime, formatValue, truncate, humanizeError } from "../../lib/fo
 import { useAbortableEffect } from "../../lib/hooks";
 import { useNamespaceRole } from "../../lib/namespaceRole";
 import { canCall } from "../../lib/canCall";
+import { sharedHasAutoResolved } from "../../lib/sharedReads";
 import { PageContainer } from "../../layout/PageContainer";
 
 /**
@@ -59,13 +60,14 @@ export function ReviewQueue() {
   const [probedExceptions, setProbedExceptions] = useState<AllowlistRow[] | null>(null);
   const hasLearnings = (probedLearnings?.length ?? 0) > 0;
   const hasExceptions = (probedExceptions?.length ?? 0) > 0;
-  // The probe's page, tagged with the namespace it read: the reset after a namespace
+  // The probe's yes/no, tagged with the namespace it read: the reset after a namespace
   // switch runs a tick after the first render of the new namespace, which must not show
-  // (or seed a panel with) the previous namespace's page.
+  // the previous namespace's tab.
   const scopeKey = `${identity.org}/${identity.namespace}`;
-  const [probedAuto, setProbedAuto] = useState<(AutoResolvedPage & { scope: string }) | null>(null);
-  const autoPage = probedAuto?.scope === scopeKey ? probedAuto : null;
-  const hasAuto = (autoPage?.rows.length ?? 0) > 0;
+  const [probedAuto, setProbedAuto] = useState<{ found: boolean; scope: string } | null>(null);
+  const hasAuto = probedAuto?.scope === scopeKey && probedAuto.found;
+  // The Auto-resolved panel reads its rows when the tab is first opened, then stays mounted.
+  const [autoOpened, setAutoOpened] = useState(false);
   // audit.list is asked only by a role known to reach it.
   const whoami = useStore((s) => s.whoami);
   const role = useNamespaceRole(identity.namespace);
@@ -79,6 +81,7 @@ export function ReviewQueue() {
       setProbedLearnings(null);
       setProbedExceptions(null);
       setTab("conflicts");
+      setAutoOpened(false);
       listLearnings({ org: identity.org, namespace: identity.namespace }, "pending", 50, { signal })
         .then((r) => {
           if (live()) setProbedLearnings(r.rows || []);
@@ -93,16 +96,18 @@ export function ReviewQueue() {
     [identity.org, identity.namespace],
   );
   useAbortableEffect(
-    (signal, live) => {
+    (_signal, live) => {
       setProbedAuto(null);
       if (!auditReadable) {
         // The Auto-resolved tab goes with the access: leave it for Conflicts.
         setTab((t) => (t === "auto" ? "conflicts" : t));
+        setAutoOpened(false);
         return;
       }
-      listAutoResolved({ org: identity.org, namespace: identity.namespace }, { signal })
-        .then((r) => {
-          if (live()) setProbedAuto({ rows: r.rows || [], next_cursor: r.next_cursor, scope: scopeKey });
+      // The same question the sidebar asks, so the page and the sidebar share one read.
+      sharedHasAutoResolved({ org: identity.org, namespace: identity.namespace })
+        .then((found) => {
+          if (live()) setProbedAuto({ found, scope: scopeKey });
         })
         .catch(() => {});
     },
@@ -121,7 +126,13 @@ export function ReviewQueue() {
         Memory disputes needing a human decision — your agent flip-flopped on a fact, or the extractor wants to promote
         one. Most users never see anything here; that's a feature.
       </p>
-      <Tabs.Root value={tab} onValueChange={setTab}>
+      <Tabs.Root
+        value={tab}
+        onValueChange={(t) => {
+          setTab(t);
+          if (t === "auto") setAutoOpened(true);
+        }}
+      >
         {(hasLearnings || hasExceptions || hasAuto) && (
           <Tabs.List className="flex border-b border-[var(--color-border)] mb-5">
             <TabTrigger value="conflicts" icon={AlertTriangle}>
@@ -152,12 +163,12 @@ export function ReviewQueue() {
             <LearningsPanel initialPending={probedLearnings} />
           </Tabs.Content>
         )}
-        {hasAuto && autoPage && (
-          // Kept mounted while another tab is open, so its loaded pages and Undo outcomes
-          // survive a tab switch; a namespace switch drops it with the probe.
+        {hasAuto && autoOpened && (
+          // Kept mounted once opened, so its loaded pages and Undo outcomes survive a tab
+          // switch; a namespace switch drops it with the probe.
           <Tabs.Content value="auto" forceMount className="outline-none data-[state=inactive]:hidden">
-            {/* Keyed by the namespace it read: another namespace's page is a new panel. */}
-            <AutoResolvedPanel key={autoPage.scope} initial={autoPage} />
+            {/* Keyed by namespace: another namespace's rows are a new panel. */}
+            <AutoResolvedPanel key={scopeKey} />
           </Tabs.Content>
         )}
         {hasExceptions && (
@@ -443,11 +454,6 @@ function LearningsPanel({ initialPending }: { initialPending?: LearningEntry[] |
 
 // ─── Auto-resolved panel ───────────────────────────────────────────────
 
-interface AutoResolvedPage {
-  rows: AutoResolvedRow[];
-  next_cursor: string | null;
-}
-
 /** What became of a row after the Undo: restored, or `memory.restore` found it no longer
  *  retired behind that memory (restored, deleted or retired behind another since). */
 type UndoOutcome = "restored" | "gone";
@@ -465,13 +471,13 @@ function mergeUndone(a: Map<string, string>, b: Map<string, string>): Map<string
   return out;
 }
 
-function AutoResolvedPanel({ initial }: { initial: AutoResolvedPage }) {
+function AutoResolvedPanel() {
   const identity = useIdentity();
   const whoami = useStore((s) => s.whoami);
   const role = useNamespaceRole(identity.namespace);
   const canRestore = canCall("memory.restore", role, whoami);
-  const [rows, setRows] = useState<AutoResolvedRow[]>(initial.rows);
-  const [cursor, setCursor] = useState<string | null>(initial.next_cursor);
+  const [rows, setRows] = useState<AutoResolvedRow[] | null>(null);
+  const [cursor, setCursor] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   // Restores read so far (memory_id -> newest restore), and how far back that read
   // reaches: a row older than `undoneSince` is not known yet and offers no Undo.
@@ -484,7 +490,7 @@ function AutoResolvedPanel({ initial }: { initial: AutoResolvedPage }) {
   // The panel is keyed by namespace, so a reply that lands after it goes is dropped.
   const mounted = useRef(true);
   const loadingRef = useRef(false);
-  const oldest = rows.reduce((m, r) => (m === "" || r.ts < m ? r.ts : m), "");
+  const oldest = (rows ?? []).reduce((m, r) => (m === "" || r.ts < m ? r.ts : m), "");
 
   useEffect(() => {
     mounted.current = true;
@@ -492,6 +498,21 @@ function AutoResolvedPanel({ initial }: { initial: AutoResolvedPage }) {
       mounted.current = false;
     };
   }, []);
+
+  useAbortableEffect(
+    (signal, live) => {
+      listAutoResolved({ org: identity.org, namespace: identity.namespace }, { signal })
+        .then((r) => {
+          if (!live()) return;
+          setRows(r.rows || []);
+          setCursor(r.next_cursor);
+        })
+        .catch(() => {
+          if (live()) setRows([]);
+        });
+    },
+    [identity.org, identity.namespace],
+  );
 
   useAbortableEffect(
     (signal, live) => {
@@ -526,7 +547,7 @@ function AutoResolvedPanel({ initial }: { initial: AutoResolvedPage }) {
     try {
       const page = await listAutoResolved({ org: identity.org, namespace: identity.namespace }, { cursor });
       if (!mounted.current) return;
-      setRows((rs) => [...rs, ...page.rows]);
+      setRows((rs) => [...(rs ?? []), ...page.rows]);
       setCursor(page.next_cursor);
     } catch (e) {
       if (mounted.current) toast(`Failed: ${humanizeError(e)}`, "error");
@@ -597,6 +618,7 @@ function AutoResolvedPanel({ initial }: { initial: AutoResolvedPage }) {
     );
   };
 
+  if (rows === null) return <Skeleton className="h-40 w-full" />;
   return (
     <div>
       <p className="text-sm text-[var(--color-text-muted)] mb-3 max-w-2xl">

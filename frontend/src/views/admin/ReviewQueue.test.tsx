@@ -5,6 +5,7 @@ import type { AllowlistRow, AutoResolvedRow, ConflictRow, LearningEntry, MyNames
 import { ApiError } from "../../lib/errors";
 import { resetNamespaceRoleCache } from "../../lib/namespaceRole";
 import { useStore } from "../../lib/state";
+import { invalidateShared } from "../../lib/sharedReads";
 import { axeViolations } from "../../test/axe";
 import { ReviewQueue } from "./ReviewQueue";
 
@@ -27,6 +28,12 @@ vi.mock("../../api", async (importOriginal) => {
     restoreMemory: vi.fn(),
   };
 });
+// The page's yes/no probe is shared with the sidebar and loads the admin API on demand.
+vi.mock("../../api/admin", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../api/admin")>()),
+  hasAutoResolved: vi.fn(),
+}));
+import { hasAutoResolved } from "../../api/admin";
 import {
   listAllowlist,
   listAutoResolved,
@@ -118,6 +125,8 @@ function seed(namespace: string, role?: MyNamespaceEntry["role"]) {
 }
 
 const page = (rows: AutoResolvedRow[], next_cursor: string | null = null) => ({ rows, next_cursor });
+/** The panel's own page reads, not the probe's one-record ask. */
+const panelReads = () => vi.mocked(listAutoResolved).mock.calls.filter(([, o]) => o?.limit !== 1);
 
 describe("ReviewQueue", () => {
   beforeEach(() => {
@@ -131,7 +140,12 @@ describe("ReviewQueue", () => {
     vi.mocked(restoreMemory).mockReset();
     vi.mocked(listAutoResolved).mockResolvedValue(page([]));
     resetNamespaceRoleCache();
+    invalidateShared();
     vi.mocked(listUnsuperseded).mockResolvedValue(new Map());
+    // Like the real one: the newest record of the same read.
+    vi.mocked(hasAutoResolved).mockImplementation(
+      async (id) => (await listAutoResolved(id, { limit: 1 })).rows.length > 0,
+    );
   });
   afterEach(() => {
     cleanup();
@@ -480,7 +494,22 @@ describe("ReviewQueue", () => {
     await userEvent.click(screen.getByRole("tab", { name: /Conflicts/ }));
     await userEvent.click(screen.getByRole("tab", { name: /Auto-resolved/ }));
     expect(screen.getByText("Changed since")).toBeTruthy();
+    expect(panelReads()).toHaveLength(1);
+  });
+
+  // The route budget: loading the page asks the audit log one yes/no, shared with the
+  // sidebar; the tab's rows are read when it is opened.
+  it("asks the audit log once on load and reads the rows when the tab opens", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    vi.mocked(listAutoResolved).mockResolvedValue(page([retired("user_city")]));
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    const tab = await screen.findByRole("tab", { name: /Auto-resolved/ }, WAIT);
     expect(listAutoResolved).toHaveBeenCalledTimes(1);
+    expect(panelReads()).toHaveLength(0);
+    await userEvent.click(tab);
+    expect(await screen.findByText("user_city", {}, WAIT)).toBeTruthy();
+    expect(panelReads()).toHaveLength(1);
   });
 
   it("does not read the audit log while the role is unknown", async () => {

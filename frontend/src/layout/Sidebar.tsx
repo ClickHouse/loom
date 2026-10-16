@@ -27,7 +27,7 @@ import { Tip } from "../components/ui/Tooltip";
 import { useStore, viewHref, type View } from "../lib/state";
 import { countConflicts, countNewAgents } from "../api";
 import { readSession, useAfterPaint, writeSession } from "../lib/afterPaint";
-import { sharedBudgetStatus } from "../lib/sharedReads";
+import { sharedBudgetStatus, sharedHasAutoResolved } from "../lib/sharedReads";
 
 // How long a remembered badge answer is shown before the idle refresh replaces it — one
 // poll interval.
@@ -318,9 +318,8 @@ export function Sidebar() {
       if (canCall("audit.list", roleHere, whoami)) {
         tasks.push(
           // The newest auto-resolve record: enough to know the Auto-resolved tab is not empty.
-          // Imported on demand so the admin API stays out of the index chunk.
-          import("../api/admin")
-            .then(({ hasAutoResolved }) => hasAutoResolved({ org: identity.org, namespace: identity.namespace }))
+          // Shared with the Review queue page, which asks the same question.
+          sharedHasAutoResolved({ org: identity.org, namespace: identity.namespace })
             .then((found) => {
               if (!cancelled) {
                 next.autoResolved = found;

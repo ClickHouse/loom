@@ -96,3 +96,12 @@ export function sharedBudgetStatus(id: Pick<Identity, "org" | "namespace">): Pro
     getBudgetStatus({ org: id.org, namespace: id.namespace }),
   );
 }
+
+/** Whether the namespace has auto-resolved memories, once per 25 s for every asker: the
+ *  sidebar's Review queue entry and the Review queue page ask the same yes/no. The admin
+ *  API is imported on demand so it stays out of the index chunk. */
+export function sharedHasAutoResolved(id: Pick<Identity, "org" | "namespace">): Promise<boolean> {
+  return shared(`auto_resolved:${id.org}/${id.namespace}`, 25_000, () =>
+    import("../api/admin").then((m) => m.hasAutoResolved({ org: id.org, namespace: id.namespace })),
+  );
+}
