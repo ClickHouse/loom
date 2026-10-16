@@ -8,11 +8,12 @@ import asyncio
 import logging
 import re
 import time
+from contextlib import AsyncExitStack
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from server.auth import machines, revocation, sso_links
-from server.auth.grant_claims import bot_change
+from server.auth.grant_claims import bot_change, trusts_change
 from server.core.naming import SSO_NAMESPACE_PREFIX
 from server.observability import audit
 from server.settings import settings
@@ -26,7 +27,7 @@ _SERVICE_ACCOUNT_SUFFIX = re.compile(r"-[0-9a-f]{6}")
 
 
 # Claims every token of an issuer carries: alone they tell no workload apart.
-_EVERY_TOKENS = frozenset({"iss", "aud", "exp", "iat", "nbf", "jti"})
+_STANDARD_CLAIMS = frozenset({"iss", "aud", "exp", "iat", "nbf", "jti"})
 
 # How far another replica's clock may run ahead of this one's: a token it
 # issues as of a later second than the cutoff would outlive the revocation.
@@ -214,9 +215,8 @@ def bot_from(
         # Any job on the platform can ask for a token with any audience: only
         # claims (which repository, which branch) tell this bot's job apart.
         raise ValueError("a CI trust needs an https issuer, an audience and at least one claim")
-    if trust and not any(
-        not value.endswith("*") for claim, value in wanted.items() if claim not in _EVERY_TOKENS
-    ):
+    exact = [c for c, v in wanted.items() if c not in _STANDARD_CLAIMS and not v.endswith("*")]
+    if trust and not exact:
         # What every token of the issuer carries, or a prefix of it, takes all
         # of them: every tenant's, every job's, into one org.
         raise ValueError(
@@ -261,7 +261,10 @@ async def create_bot(bot: machines.Machine, *, by: str, replace: bool) -> None:
         raise ValueError(f"no namespace {', '.join(missing)} in org {org!r}; register it first")
     if await revocation.revoked_outright(machines.subject(name)):
         raise ValueError(f"{machines.subject(name)} is revoked outright; it could never sign in")
-    async with bot_change(name):
+    async with AsyncExitStack() as held:
+        if bot["issuer"]:  # its checks against the other trusts and its save, at once
+            await held.enter_async_context(trusts_change())
+        await held.enter_async_context(bot_change(name))
         existing = await machines.get(name)
         if existing is not None and not replace:
             raise ValueError(f"bot {name!r} exists; replace it to change it")
@@ -299,13 +302,14 @@ async def _refuse_overlap(name: str) -> None:
 
 
 async def _refuse_shared_tokens(bot: machines.Machine) -> None:
-    """An exchange naming no client takes the one trust a token meets: two that
-    can meet one token, one of them telling agents apart, would leave that
-    token to neither."""
+    """An exchange naming no client takes the one trust a token meets: two of
+    one issuer that can meet one token, one of them telling agents apart, would
+    leave that token to neither."""
     for other in await machines.listed():
         if other["name"] == bot["name"] or not other["active"]:
             continue
-        same = (other["issuer"], other["audience"]) == (bot["issuer"], bot["audience"])
+        # The issuer alone: a token may name several audiences.
+        same = other["issuer"] == bot["issuer"]
         agents_either = bool(other["agent_claim"] or bot["agent_claim"])
         if same and agents_either and _could_both_take(bot["claims"], dict(other["claims"])):
             raise ValueError(f"a token this trust takes could also meet {other['name']!r}")

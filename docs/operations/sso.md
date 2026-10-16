@@ -156,8 +156,9 @@ with more than one admin, registered first, in one org); its tokens are for
   LOOM_CLIENT_ID=fleet LOOM_WORKLOAD_TOKEN_FILE=/run/agent/oidc-token python agent.py
   ```
 
-  A claim such as `tenant_id` (or `sub=tenants/acme-prod/*`) keeps one trust
-  to one tenant, so each tenant's agents land in their own org. `--jwks-uri`
+  An exact `tenant_id` keeps one trust to one tenant, so each tenant's agents
+  land in their own org (a prefix of `sub` may be added as a further
+  condition, never as the only one). `--jwks-uri`
   names where the issuer publishes its keys when its discovery document is not
   reachable from Loom. A token that lives minutes is fine: Loom's never
   outlives it, and the SDK and the coding-agent plugins renew halfway through.
@@ -175,9 +176,11 @@ sa:fleet:<agent>` ends one agent's, and `loom claim-release` frees its
   Every trust bounds what it takes: a workload token living longer than
   `--max-token-age` seconds (exp less iat, default 3600) is refused, an agent
   trust makes at most `--max-agents` agents (default 1000), and a trust needs
-  a claim beyond `iss` and `aud`, which every token its issuer signs for Loom
-  carries. The signing algorithm follows each published key's type (RS256 or
-  ES256).
+  one claim with an exact value besides `iss`, `aud`, `exp`, `iat`, `nbf` and
+  `jti`, which every token its issuer signs for Loom carries. Two trusts of one
+  issuer that a single token could meet, one of them telling agents apart, are
+  refused at registration: an exchange naming no client could take neither.
+  The signing algorithm follows each published key's type (RS256 or ES256).
 
 - `loom bot list` shows them; `loom bot disable --name …` refuses every later
   proof and revokes the tokens the bot holds, and `loom bot create --replace`

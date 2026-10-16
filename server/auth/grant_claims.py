@@ -64,6 +64,12 @@ def bot_change(name: str) -> AbstractAsyncContextManager[None]:
     return _claimed("bot:" + json.dumps(name), f"the bot {name}")
 
 
+def trusts_change() -> AbstractAsyncContextManager[None]:
+    """Hold every workload trust while one is created: its checks against the
+    others (names, tokens both could take) and its save are one step."""
+    return _claimed("trusts", "the workload trusts")
+
+
 @asynccontextmanager
 async def _claimed(name: str, what: str) -> AsyncIterator[None]:
     try:

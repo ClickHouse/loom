@@ -383,8 +383,12 @@ rewritten into another agent's name. The namespace is made on the agent's first 
 under the account's claim, tagged `machine:<trust>`, and only a namespace carrying that tag
 is ever reached: an agent claim cannot name a person's namespace, another trust's or a
 released one, and the org is the trust's. A trust takes no workload token living longer than
-its `max_token_s` (default an hour), makes at most `max_agents` agents, and must name a
-claim beyond `iss` and `aud` (alone they take every token the issuer signs for Loom). An
+its `max_token_s` (default an hour), makes at most `max_agents` agents, and must name one
+claim with an exact value beyond `iss`, `aud`, `exp`, `iat`, `nbf` and `jti` (alone, or a
+prefix, they take every token the issuer signs for Loom). Two trusts of one issuer that one
+token could meet, either telling agents apart, are refused at registration. An exchange that
+names no client takes the one trust the token meets; while a trust that could also meet it
+cannot fetch its keys, the answer is to retry, never the other trust. An
 agent's namespace carries no email, so no sign-in by email ever resolves to an agent. An
 agent's token names the trust as its parent subject, so the trust's disable cutoff ends
 every agent's. The trust's issuer is trusted for every agent name it signs, and with an

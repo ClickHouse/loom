@@ -543,7 +543,7 @@ def test_a_control_planes_per_agent_token_is_taken_as_issued(bots, monkeypatch) 
         "iat": now,
         "exp": now + 300,
     }
-    token = pyjwt.encode(claims, key, algorithm="ES256", headers={"kid": "workload-2026-10"})
+    token = pyjwt.encode(claims, key, algorithm="ES256", headers={"kid": "k1"})
     r = _exchange(TestClient(oauth_app()), token, client_id="tenant-a")
     assert r.status_code == 200, r.text
     issued = pyjwt.decode(r.json()["access_token"], options={"verify_signature": False})
@@ -658,3 +658,33 @@ def test_many_trusts_of_one_issuer_check_the_signature_once(bots, monkeypatch) -
     )
     assert exchange(_ci_token(bots, agent_id="a1", tenant_id="mine")).status_code == 200
     assert len(keys) == 1
+
+
+@pytest.mark.parametrize("aud", [{"x": 1}, [["a"]], 7])
+def test_a_crafted_audience_is_refused_not_a_server_error(bots, monkeypatch, aud: Any) -> None:
+    exchange = _client_less(bots, monkeypatch)
+    r = exchange(_ci_token(bots, aud=aud))
+    assert r.status_code == 400 and r.json()["error"] == "invalid_grant"
+
+
+def test_a_trust_whose_keys_are_away_and_would_take_the_token_makes_it_wait(
+    bots, monkeypatch
+) -> None:
+    # Its keys back, the token would meet two trusts and be refused: while they
+    # are away it must not be minted for the one that answered.
+    exchange = _client_less(bots, monkeypatch)
+    del bots["registered"]["deploy"]
+    bots["registered"]["twin"] = {
+        **bots["registered"]["fleet"],
+        "name": "twin",
+        "jwks_uri": "https://down.example/jwks.json",
+    }
+    real = oidc.signing_key
+
+    def signing_key(uri: str, token: str) -> Any:
+        if "down.example" in uri:
+            raise pyjwt.PyJWKClientConnectionError("down")
+        return real(uri, token)
+
+    monkeypatch.setattr(oidc, "signing_key", signing_key)
+    assert exchange(_ci_token(bots, agent_id="a1")).status_code == 503

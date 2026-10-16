@@ -121,3 +121,31 @@ async def test_two_new_agents_at_once_stay_within_the_trusts_limit(ch: Any) -> N
     made = [o for o in outcomes if isinstance(o, str)]
     refused = [o for o in outcomes if isinstance(o, machines.Refused)]
     assert len(made) == 1 and len(refused) == 1, outcomes
+
+
+async def test_two_overlapping_trusts_registered_at_once_save_one(ch: Any) -> None:
+    from server.identity.app import account_admin
+
+    issuer, tenant = f"https://issuer-{uuid.uuid4().hex[:6]}.example", uuid.uuid4().hex[:6]
+
+    def trust(name: str) -> machines.Machine:
+        return account_admin.bot_from(
+            name=name,
+            org=f"agents-it-{tenant}",
+            namespace_roles=[],
+            issuer=issuer,
+            audience="loom",
+            claims=[f"tenant_id={tenant}"],
+            agent_claim="agent_id",
+        )
+
+    a, b = f"tra{uuid.uuid4().hex[:6]}", f"trb{uuid.uuid4().hex[:6]}"
+    outcomes = await asyncio.gather(
+        account_admin.create_bot(trust(a), by="it", replace=False),
+        account_admin.create_bot(trust(b), by="it", replace=False),
+        return_exceptions=True,
+    )
+    refused = [o for o in outcomes if isinstance(o, ValueError)]
+    assert len(refused) == 1, outcomes
+    saved = [n for n in (a, b) if await machines.get(n) is not None]
+    assert len(saved) == 1

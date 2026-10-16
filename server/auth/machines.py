@@ -146,12 +146,13 @@ async def forget_namespace(org: str, namespace: str, by: str, *, ch: Any = None)
 
 
 async def listed() -> list[dict[str, Any]]:
-    return await get_client().query_all(
-        f"SELECT name, org, ns_roles, public_keys != '' AS has_key, issuer, audience, claims, "
-        f"agent_claim, owner_claim, jwks_uri, max_token_s, max_agents, active, updated_by, "
-        f"updated_at FROM {TABLE} FINAL "
-        "ORDER BY name"
-    )
+    with own_write_reads():  # a trust another replica saved a moment ago counts
+        return await get_client().query_all(
+            f"SELECT name, org, ns_roles, public_keys != '' AS has_key, issuer, audience, claims, "
+            f"agent_claim, owner_claim, jwks_uri, max_token_s, max_agents, active, updated_by, "
+            f"updated_at FROM {TABLE} FINAL "
+            "ORDER BY name"
+        )
 
 
 async def save(m: Machine, *, by: str, active: bool = True, ch: Any = None) -> None:
@@ -239,7 +240,8 @@ async def verify_any_workload(token: str) -> tuple[Machine, dict[str, Any]]:
     The signature is checked once per place the trusts take keys from."""
     unverified = _unverified(token)
     aud = unverified.get("aud")
-    auds = set(aud) if isinstance(aud, list) else {aud}
+    # Read before the signature is: anything but strings is no audience.
+    auds = {a for a in (aud if isinstance(aud, list) else [aud]) if isinstance(a, str)}
     with own_write_reads():
         rows = await get_client().query_all(
             f"SELECT * FROM {TABLE} FINAL WHERE issuer = {{iss:String}} AND active = 1 "
@@ -249,6 +251,7 @@ async def verify_any_workload(token: str) -> tuple[Machine, dict[str, Any]]:
     trusts = [m for m in map(_machine, rows) if m["claims"] and m["audience"] in auds]
     signed: dict[tuple[str, str], dict[str, Any] | Refused] = {}
     met: list[tuple[Machine, dict[str, Any]]] = []
+    away: list[tuple[Machine, Refused]] = []  # trusts whose keys could not be had
     refusal = Refused("invalid_grant", "no trust of this issuer takes the subject token")
     for m in trusts:
         source = (m["jwks_uri"], m["audience"])
@@ -258,21 +261,35 @@ async def verify_any_workload(token: str) -> tuple[Machine, dict[str, Any]]:
             except Refused as e:
                 signed[source] = e
         claims = signed[source]
+        if isinstance(claims, Refused):
+            if claims.error == "temporarily_unavailable":
+                away.append((m, claims))
+            refusal = claims
+            continue
         try:
-            if isinstance(claims, Refused):
-                raise claims
             _meets(m, claims)
             met.append((m, claims))
         except Refused as e:
-            # A key outage of one trust is no reason to refuse a token another takes.
-            if refusal.error != "temporarily_unavailable":
-                refusal = e
+            refusal = e
     if len(met) > 1:
         log.warning("workload token meets trusts %s", ", ".join(m["name"] for m, _ in met))
         raise Refused("invalid_request", "the subject token meets several trusts; name one")
-    if not met:
-        raise refusal
-    return met[0]
+    if met:
+        # The claims are signed now: a trust whose keys are away matters only if
+        # it would take them too, and then the answer must wait for its keys.
+        for m, outage in away:
+            if _could_meet(m, met[0][1]):
+                raise outage
+        return met[0]
+    raise away[0][1] if away else refusal
+
+
+def _could_meet(m: Machine, claims: dict[str, Any]) -> bool:
+    try:
+        _meets(m, claims)
+    except Refused:
+        return False
+    return True
 
 
 def _unverified(token: str) -> dict[str, Any]:
