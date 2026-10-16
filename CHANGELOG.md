@@ -30,7 +30,6 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   before upgrading.
 - Every Loom session on a ClickHouse older than 26.8 runs with the query condition cache
   off (the vector-read fix, ClickHouse #112086), on every target; boot used to warn only.
-
 - `CODED_WIDTH_MISMATCH` (503): a write whose vector is not the width its coded column was
   created at; `memory.set`, `bulk_set`, `update` and the `knowledge.*` writes are refused before
   any of their rows lands, and `/v1/health` reports `coded_width_mismatch` with the fix. A table
@@ -81,8 +80,11 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   `LOOM_CLICKHOUSE_IMAGE`, when given, into the install directory's `.env`, so later
   `docker compose` commands there use the same port and images; a rerun with a
   different value rewrites it, and a saved `LOOM_CLICKHOUSE_IMAGE` pins ClickHouse
-  through later upgrades until the line is deleted. Its health
-  check polls the address Loom is published on.
+  through later upgrades until the line is deleted. Its health check polls the address
+  Loom is published on.
+- The OTel exporters disable themselves when the Loom user may not write
+  `default.otel_*` (497) as well as when the tables are missing, and say so at INFO unless
+  `LOOM_OTEL_EXPORTER=ch`.
 - `031_table_settings.sql` sets `non_replicated_deduplication_window` on every MergeTree
   table and the block-number columns on `loom.memory` and `loom.memory_embeddings`;
   `deploy/clickhouse-config/merge_tree_settings.xml`, which set them server-wide, is gone.
@@ -91,7 +93,6 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   Releases before this one installed `clickhouse-config/` and `lemmagen3/` at the top of
   `~/.loom`; the installer moves them under `deploy/` and keeps an existing install on
   the bundled ClickHouse.
-
 - **Breaking:** `rerank` (`memory.search`, `memory.search_trace`, `code.search`, `code.ask`)
   and a namespace's `rerank_endpoint` take a name, not a URL: `none`, `builtin:openai[:model]`,
   `builtin:cohere[:model]`, or an endpoint the operator names in `LOOM_RERANK_ENDPOINTS_JSON`.
@@ -225,6 +226,9 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
 
 ### Fixed
 
+- `loom migrate` and `loom ch-setup` inside the released image found no migrations
+  ("migrations directory not found"): the `loom` command imported the venv's copy of
+  `server`, which ships no `schemas/`. The image now runs it from `/app` like the server.
 - **Security:** OIDC just-in-time provisioning no longer rebuilds an existing account. A
   person's next sign-in recreated a released or deleted account, or one another account
   registered under the derived name, with default settings and an admin grant, its data

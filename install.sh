@@ -151,13 +151,15 @@ dotenv_quote() {
 }
 
 # get_env KEY: KEY's value in .env, empty when the file or the key is missing;
-# one pair of quotes around it, which Compose accepts, is dropped.
+# one pair of quotes around it, or an unquoted value's trailing comment, is
+# dropped, as Compose reads it.
 get_env() {
   [ -f "$INSTALL_DIR/.env" ] || return 0
   awk -F= -v key="$1" '
     $1 == key { value = substr($0, length(key) + 2) }
     END {
       if (value ~ /^".*"$/ || value ~ /^\047.*\047$/) value = substr(value, 2, length(value) - 2)
+      else { sub(/[ \t]+#.*$/, "", value); sub(/[ \t]+$/, "", value) }
       print value
     }
   ' "$INSTALL_DIR/.env"
@@ -338,7 +340,11 @@ while [ "$attempt" -lt 90 ]; do
     printf 'Dashboard: http://%s:%s/me\n' "$host" "$port"
     printf 'Files:     %s\n' "$INSTALL_DIR"
     printf 'Logs:      docker compose --project-directory %s logs -f loom\n' "$INSTALL_DIR"
-    printf 'Stop:      docker compose --project-directory %s --profile bundled down\n' "$INSTALL_DIR"
+    case ",$(get_env COMPOSE_PROFILES)," in
+      *,bundled,*) stop="--profile bundled down" ;;
+      *) stop="down" ;;
+    esac
+    printf 'Stop:      docker compose --project-directory %s %s\n' "$INSTALL_DIR" "$stop"
     exit 0
   fi
   attempt=$((attempt + 1))

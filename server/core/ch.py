@@ -173,6 +173,7 @@ async def probe_reader_user(client: Any) -> None:
     global _reader_user_ok, _reader_user_error
     if not settings.ch_reader_user:
         return
+    tag = query_tag_var.set("ch.reader_probe")
     try:
         with caller_shaped():
             row = await client.query_one(READER_PROBE_SQL)
@@ -184,6 +185,8 @@ async def probe_reader_user(client: Any) -> None:
         log.warning("LOOM_CH_READER_USER=%s cannot read: %s", settings.ch_reader_user, e)
         _reader_user_ok = False
         _reader_user_error = str(e)
+    finally:
+        query_tag_var.reset(tag)
 
 
 def reader_user_state() -> bool | None:

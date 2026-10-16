@@ -294,6 +294,10 @@ def _ensure_reader(ch: Any, user: str, reader: str) -> bool:
     if not logged_in:
         return _refuse(f"{reader} exists but does not accept LOOM_CH_PASSWORD. {drop_hint}")
     print(f"· {reader}: {problem}; rebuilding it")
+    print(
+        "  then recreate Loom (`docker compose up -d --force-recreate loom`) so its "
+        "sessions use the new caps; caller-shaped reads fail on the bounds until then"
+    )
     return _create_reader(ch, user, reader, fresh=False)
 
 

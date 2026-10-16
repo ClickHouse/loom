@@ -813,11 +813,10 @@ def _check_server(args: argparse.Namespace) -> None:
     """The preflight for what this run does; what a passing check still warns of goes to stderr."""
     from server.core.schema import preflight
 
-    server = preflight.require_ready(
-        need="read" if args.status or args.dry_run else "server",
-        journal=Path(args.migrations_dir),
-    )
-    if warning := preflight.warnings(server):
+    need: preflight.Need = "read" if args.status or args.dry_run else "server"
+    server = preflight.require_ready(need=need, journal=Path(args.migrations_dir))
+    # A read-only run changes nothing the warnings are about.
+    if need == "server" and (warning := preflight.warnings(server)):
         print(f"  ! {warning}", file=sys.stderr)
 
 

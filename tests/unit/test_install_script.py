@@ -367,6 +367,7 @@ def test_the_health_check_polls_where_loom_is_published(
     assert result.returncode == 0, result.stderr
     assert f"http://{polled}:28977/v1/health" in seen.read_text()
     assert f"Dashboard: http://{polled}:28977/me" in result.stdout
+    assert "--profile bundled down" in result.stdout  # a default install is bundled
 
 
 def test_a_prepared_install_on_an_outside_clickhouse_names_ch_setup(install) -> None:
@@ -391,12 +392,13 @@ def test_a_user_or_host_env_cannot_keep_is_refused(install, url: str, message: s
     assert not (target / ".env").exists()
 
 
-def test_a_quoted_profile_in_env_still_reads_as_bundled(install) -> None:
+def test_a_quoted_or_commented_profile_in_env_still_reads_as_bundled(install) -> None:
     run, target = install
     assert run().returncode == 0
     env = target / ".env"
-    env.write_text(
-        env.read_text().replace("COMPOSE_PROFILES=bundled", 'COMPOSE_PROFILES="bundled"')
-    )
-    # A prepared rerun names ch-setup only for an outside ClickHouse.
-    assert "ch-setup" not in run().stdout
+    for written in ('COMPOSE_PROFILES="bundled"', "COMPOSE_PROFILES=bundled  # default"):
+        text = env.read_text()
+        start = text.index("COMPOSE_PROFILES=")
+        env.write_text(text[:start] + written + text[text.index("\n", start) :])
+        # A prepared rerun names ch-setup only for an outside ClickHouse.
+        assert "ch-setup" not in run().stdout, written
