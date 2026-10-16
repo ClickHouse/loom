@@ -76,33 +76,87 @@ def test_posix_classes_scan_because_the_stdlib_misreads_them() -> None:
     assert gp.is_scan(gp.plan_regex(r"TODO|[[:digit:]]+FIXME"))
 
 
-def test_case_insensitive_runs_break_where_re2_folds_past_ascii() -> None:
-    # (?i)k also matches the Kelvin sign and (?i)s the long s; lower() never yields either
-    assert gp.plan_regex("kelvin", ignore_case=True) == gp.And(("elvin",))
-    assert gp.plan_regex("getTotals", ignore_case=True) == gp.And(("gettotal",))
-    assert gp.plan_regex("(?i)kelvin|other") == gp.Or((gp.And(("elvin",)), gp.And(("other",))))
-    assert gp.plan_regex("(?i:kelvin)_bound") == gp.And(("elvin", "_bound"))
+K, S = "\u212a", "\u017f"  # what RE2 also matches to k and s under (?i)
+
+
+def _spellings(*words: str) -> gp.Or:
+    return gp.Or(tuple(gp.And((w,)) for w in words))
+
+
+def test_case_insensitive_runs_plan_every_spelling_of_k_and_s() -> None:
+    assert gp.plan_regex("kelvin", ignore_case=True) == _spellings("kelvin", K + "elvin")
+    assert gp.plan_regex("(?i)Ask|other") == _spellings(
+        "ask", "as" + K, "a" + S + "k", "a" + S + K, "other"
+    )
+    assert gp.plan_regex("(?i:kelvin)_bound") == gp.Or(
+        (gp.And(("_bound", "kelvin")), gp.And(("_bound", K + "elvin")))
+    )
     assert gp.plan_regex("(?-i:kelvin)", ignore_case=True) == gp.And(("kelvin",))
+    assert gp.plan_regex("TOTAL", ignore_case=True) == gp.And(("total",))
+
+
+def _unfolded(plan: gp.Plan) -> set[str]:
+    assert isinstance(plan, gp.Or)
+    return {
+        lit.replace(K, "k").replace(S, "s")
+        for b in plan.branches
+        if isinstance(b, gp.And)
+        for lit in b.literals
+    }
+
+
+def test_a_run_with_many_k_and_s_keeps_its_longest_piece_holding_four() -> None:
+    plan = gp.plan_regex("subStackSizeLimits", ignore_case=True)  # five k/s letters
+    assert isinstance(plan, gp.Or) and len(plan.branches) == 16
+    assert _unfolded(plan) == {"substacksizelimit"}
+    # these broke into pieces too short to index: each branch keeps a long piece
+    plan = gp.plan_regex("isKeySorted|sessionKeys", ignore_case=True)
+    assert _unfolded(plan) == {"iskeysorted", "sessionkey"}
+
+
+def test_spellings_past_max_terms_spell_fewer_letters_per_run() -> None:
+    words = ("first", "second", "third")
+    plan = gp.plan_regex("|".join(f"{w}Stack{w}" for w in words), ignore_case=True)
+    assert gp._term_count(plan) <= gp.MAX_TERMS
+    pieces = _unfolded(plan)
+    assert len(pieces) == 3
+    assert all(any(p in f"{w}stack{w}" for w in words) and len(p) >= 8 for p in pieces)
+
+
+def test_case_insensitive_non_ascii_letters_require_nothing() -> None:
     assert gp.plan_regex("NAÏVE_x", ignore_case=True) == gp.And(("ve_x",))
     assert gp.plan_regex("CAFÉ_BAR", ignore_case=True) == gp.And(("caf", "_bar"))
     assert gp.plan_regex("CAFÉ_BAR") == gp.And(("cafÉ_bar",))  # ASCII-only fold, like lower()
 
 
-def test_branch_needles_take_the_longest_literal_of_each_branch() -> None:
-    assert gp.branch_needles(gp.plan_regex(r"join.*not supported|totals")) == [
+def _needles(pattern: str, ignore_case: bool = False) -> list[str]:
+    plan = gp.plan_regex(pattern, ignore_case=ignore_case, spell_folds=False)
+    return gp.scan_needles(plan, ignore_case=ignore_case)
+
+
+def test_scan_needles_take_the_longest_literal_of_each_branch() -> None:
+    assert _needles(r"join.*not supported|totals") == [
         "not supported",
         "totals",
     ]
-    assert gp.branch_needles(gp.plan_regex(r"getTotals\(\)|setTotals\(")) == [
+    assert _needles(r"getTotals\(\)|setTotals\(") == [
         "gettotals()",
         "settotals(",
     ]
-    assert gp.branch_needles(gp.plan_regex(r"^TODO$|\bFIXME\b")) == ["todo", "fixme"]
-    assert gp.branch_needles(gp.plan_regex("café|naïve")) == ["café", "naïve"]
-    assert gp.branch_needles(gp.plan_regex(r"mutex.*lock")) == []  # one branch: RE2 prefilters it
-    assert gp.branch_needles(gp.plan_regex(r"TODO|.*")) == []
-    assert gp.branch_needles(gp.plan_regex(r"\b[0-9a-f]{32}\b")) == []
-    assert gp.branch_needles(gp.plan_regex("")) == []
+    assert _needles(r"^TODO$|\bFIXME\b") == ["todo", "fixme"]
+    assert _needles("café|naïve") == ["café", "naïve"]
+    assert _needles(r"mutex.*lock") == []  # one branch: RE2 prefilters it
+    assert _needles(r"TODO|.*") == []
+    assert _needles(r"\b[0-9a-f]{32}\b") == []
+    assert _needles("") == []
+
+
+def test_case_insensitive_needles_are_k_and_s_free_and_cover_one_branch_too() -> None:
+    # match() skips rows on no literal of a (?i) regex, so a single branch is guarded too
+    assert _needles(r"StorageReplicatedMergeTree::\w+Part", ignore_case=True) == [
+        "toragereplicatedmergetree::"
+    ]
+    assert _needles("isKeySorted|sessionKeys", ignore_case=True) == ["orted", "ion"]
 
 
 def test_distribution_keeps_the_shared_literal_in_every_branch() -> None:
@@ -295,7 +349,10 @@ def test_plans_and_needles_never_refuse_what_re2_matches(seed: int) -> None:
             except re2.error:
                 continue
             plan = gp.plan_regex(pat, ignore_case=not case_sensitive)
-            needles = gp.branch_needles(plan)
+            needles = gp.scan_needles(
+                gp.plan_regex(pat, ignore_case=not case_sensitive, spell_folds=False),
+                ignore_case=not case_sensitive,
+            )
             for _ in range(6):
                 text = _fold_variants(_gen_text(rng, seeds), rng)
                 if rx.search(text) is None:

@@ -28,8 +28,9 @@ Regexes are parsed with the stdlib ``re`` parser, which agrees with RE2 (what
 classes: the stdlib reads ``[[:alpha:]]x`` as a set followed by the literal ``]x``,
 so any pattern holding ``[:`` plans to ``SCAN`` (an escaped ``\\[:`` too). Case
 folding: under ``(?i)`` RE2 folds Unicode, so ``k`` and ``s`` also match the Kelvin
-sign and the long s, which ``lower()`` (ASCII only) never turns into them; there,
-those letters and every non-ASCII character break a literal run. A pattern the
+sign and the long s, which ``lower()`` (ASCII only) leaves alone; there, a run
+plans to every spelling of its ``k``/``s`` letters (of its longest piece holding a
+few of them, when it holds more), and a non-ASCII character breaks it. A pattern the
 parser rejects, a top-level alternation whose branch has no literal, a class,
 an anchor, a lookaround, a backreference and an optional group all contribute
 nothing (``SCAN``) rather than guess.
@@ -38,6 +39,7 @@ nothing (``SCAN``) rather than guess.
 from __future__ import annotations
 
 import importlib
+import itertools
 import re
 from dataclasses import dataclass
 from typing import Any, cast
@@ -116,11 +118,12 @@ def plan_literal(literal: str) -> Plan:
 # regex
 
 
-def plan_regex(pattern: str, *, ignore_case: bool = False) -> Plan:
+def plan_regex(pattern: str, *, ignore_case: bool = False, spell_folds: bool = True) -> Plan:
     """Required literals of an RE2/Python regex, or SCAN when nothing is required.
 
     ``ignore_case`` is the op's own case mode; a ``(?i)`` in the pattern counts
     the same. Flags other than ``i`` don't change which literals are required.
+    ``spell_folds=False`` keeps only pieces without k/s instead of spelling them.
     """
     if "[:" in pattern:
         return SCAN
@@ -130,16 +133,40 @@ def plan_regex(pattern: str, *, ignore_case: bool = False) -> Plan:
         return SCAN
     ignore_case = ignore_case or bool(parsed.state.flags & re.IGNORECASE)
     try:
-        return _simplify(_walk_seq(list(parsed), ignore_case))
+        # fewer k/s letters per run when the spellings outgrow MAX_TERMS
+        for max_folds in _MAX_FOLDS if spell_folds else (0,):
+            plan = _simplify(_walk_seq(list(parsed), ignore_case, max_folds))
+            if not is_scan(plan):
+                break
+        return plan
     except RecursionError:  # pragma: no cover - pathological nesting
         return SCAN
 
 
-# Under (?i) RE2 also matches these to a non-ASCII character (the Kelvin sign, the long s).
-_FOLDS_PAST_ASCII = frozenset("kKsS")
+# Under (?i) RE2 also matches k and s to these; lower() leaves both alone.
+_FOLD_PARTNERS = {"k": "\u212a", "s": "\u017f"}
+# k/s letters one case-insensitive run may spell both ways (2**n spellings), tried in order.
+_MAX_FOLDS = (4, 2, 0)
 
 
-def _walk_seq(items: list[Any], ignore_case: bool) -> Plan:
+def _fold_literal(run: str, max_folds: int) -> Plan:
+    """A case-insensitive ASCII run: a matching chunk holds one of its spellings
+    with each k/s as itself or its fold partner. Past `max_folds` such letters only
+    the longest piece holding `max_folds` of them is kept; it is required too."""
+    low = ascii_lower(run)
+    folds = [i for i, c in enumerate(low) if c in _FOLD_PARTNERS]
+    if len(folds) > max_folds:
+        edges = [-1, *folds, len(low)]
+        windows = [
+            (edges[i] + 1, edges[i + max_folds + 1]) for i in range(len(folds) - max_folds + 1)
+        ]
+        start, end = max(windows, key=lambda w: w[1] - w[0])
+        low = low[start:end]
+    options = [(c, _FOLD_PARTNERS[c]) if c in _FOLD_PARTNERS else (c,) for c in low]
+    return _simplify(Or(tuple(plan_literal("".join(v)) for v in itertools.product(*options))))
+
+
+def _walk_seq(items: list[Any], ignore_case: bool, max_folds: int) -> Plan:
     """A concatenation: literal runs become required literals; every other
     node flushes the run and contributes its own sub-plan. Runs never join
     across a node boundary (``a(bc)+d`` requires ``a``, ``bc`` and ``d``, not
@@ -149,15 +176,18 @@ def _walk_seq(items: list[Any], ignore_case: bool) -> Plan:
 
     def flush() -> None:
         if run:
-            terms.append(plan_literal("".join(run)))
+            text = "".join(run)
+            terms.append(_fold_literal(text, max_folds) if ignore_case else plan_literal(text))
             run.clear()
 
     for op, av in items:
         if op is _sre.LITERAL:
             c = chr(av)
-            if not ignore_case or (c.isascii() and c not in _FOLDS_PAST_ASCII):
+            if ignore_case and not c.isascii():
+                flush()  # its case partners are not ASCII-folded: it requires nothing
+            else:
                 run.append(c)
-                continue
+            continue
         flush()
         if op is _sre.SUBPATTERN:
             # (group, add_flags, del_flags, pattern)
@@ -165,19 +195,21 @@ def _walk_seq(items: list[Any], ignore_case: bool) -> Plan:
             sub_ignore_case = (ignore_case or bool(add_flags & re.IGNORECASE)) and not (
                 del_flags & re.IGNORECASE
             )
-            terms.append(_walk_seq(list(sub), sub_ignore_case))
+            terms.append(_walk_seq(list(sub), sub_ignore_case, max_folds))
         elif op is _sre.BRANCH:
             _, branches = av
-            terms.append(_simplify(Or(tuple(_walk_seq(list(b), ignore_case) for b in branches))))
+            terms.append(
+                _simplify(Or(tuple(_walk_seq(list(b), ignore_case, max_folds) for b in branches)))
+            )
         elif op in (_sre.MAX_REPEAT, _sre.MIN_REPEAT) or op is getattr(
             _sre, "POSSESSIVE_REPEAT", None
         ):
             lo, _hi, sub = av
             if lo >= 1:
-                terms.append(_walk_seq(list(sub), ignore_case))
+                terms.append(_walk_seq(list(sub), ignore_case, max_folds))
             # lo == 0: optional → requires nothing
         elif op is getattr(_sre, "ATOMIC_GROUP", None):
-            terms.append(_walk_seq(list(av), ignore_case))
+            terms.append(_walk_seq(list(av), ignore_case, max_folds))
         else:
             # ANY, IN, NOT_LITERAL, AT (anchors), ASSERT / ASSERT_NOT
             # (lookarounds: deleting them widens), GROUPREF, CATEGORY, ...
@@ -241,13 +273,16 @@ def _simplify(plan: Plan) -> Plan:
     return plan
 
 
-def branch_needles(plan: Plan) -> list[str]:
+def scan_needles(plan: Plan, *, ignore_case: bool) -> list[str]:
     """The longest literal of each branch of an alternation: a matching chunk
-    contains at least one. Empty for any other plan."""
-    if not isinstance(plan, Or):
-        return []
-    # _simplify leaves every branch a non-empty And
-    return list(dict.fromkeys(max(cast(And, b).literals, key=len) for b in plan.branches))
+    contains at least one. A single branch gets one only when ignoring case:
+    `match` prefilters a case-sensitive regex on its required literal itself."""
+    if isinstance(plan, Or):
+        # _simplify leaves every branch a non-empty And
+        return list(dict.fromkeys(max(cast(And, b).literals, key=len) for b in plan.branches))
+    if isinstance(plan, And) and ignore_case:
+        return [max(plan.literals, key=len)]
+    return []
 
 
 def _term_count(plan: Plan) -> int:
@@ -332,9 +367,11 @@ def content_predicate(
 
     ``index_guard=False`` is for code.grep's own statements, which scan `content`
     instead of consulting the n-gram index: no `lower(content) LIKE` terms (they
-    would only add a `lower()` over every row read). An alternation still gets a
-    `multiSearchAnyCaseInsensitive` over its branch needles in front of `match`:
-    with no single required literal, RE2 would otherwise run on every row.
+    would only add a `lower()` over every row read). A regex still gets a
+    `multiSearchAnyCaseInsensitive` over its `scan_needles` in front of `match`
+    when `match` has no literal of its own to skip rows on (an alternation, or
+    any case-insensitive regex); the needles come from k/s-free pieces, so one
+    per branch suffices.
 
     Three exact shapes:
     ``match(content, pat)`` (``(?i)`` prepended when not case-sensitive),
@@ -353,7 +390,14 @@ def content_predicate(
         params = {param: pattern}
         plan = plan_literal(pattern)
     if not index_guard:
-        needles = branch_needles(plan)
+        needles = (
+            scan_needles(
+                plan_regex(pattern, ignore_case=not case_sensitive, spell_folds=False),
+                ignore_case=not case_sensitive,
+            )
+            if regex
+            else []
+        )
         if not needles:
             return exact, params
         params[f"{prefix}_any"] = needles
