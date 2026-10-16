@@ -15,7 +15,7 @@ from types import SimpleNamespace
 from typing import Any, NamedTuple
 
 from server.core.ch import get_client
-from server.core.datetimes import naive_utc_now, parse_iso_dt
+from server.core.datetimes import naive_utc_now, parse_iso_dt, to_naive_utc
 from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry, _BulkSetResult
 from server.memory.app.projection_errors import (
     bulk_projection_payload,
@@ -436,9 +436,15 @@ async def project_memory_set_entities(
     # Revised or retired while the edges were written: its close may have run before
     # they landed, so end the ones no live row names.
     if content_sha256:
+        payload: dict[str, Any] = {"memory_id": memory_id, "content_sha256": content_sha256}
         try:
             if not await still_held():
-                await _end_edges_of(input, memory_id, content_sha256, ch=ch)
+                ended_at = await value_ended_at(
+                    input.org, input.namespace, memory_id, content_sha256, ch=ch
+                )
+                # The repair ends them at the same moment.
+                payload["ended_at"] = ended_at.isoformat()
+                await _end_edges_of(input, memory_id, content_sha256, ended_at, ch=ch)
         except Exception as e:  # noqa: BLE001 — recorded; the projection repair ends them
             await record_projection_failure(
                 org=input.org,
@@ -448,27 +454,61 @@ async def project_memory_set_entities(
                 source_operation="memory.set",
                 memory_keys=[memory_key],
                 error=e,
-                payload={"memory_id": memory_id, "content_sha256": content_sha256},
+                payload=payload,
                 ch=ch,
             )
     return len(ents)
 
 
 async def close_late_edges(
-    org: str, namespace: str, memory_id: str, content_sha256: str, *, ch: Any
+    org: str,
+    namespace: str,
+    memory_id: str,
+    content_sha256: str,
+    *,
+    ended_at: datetime | None = None,
+    ch: Any,
 ) -> None:
     """The projection repair of a late projection whose cleanup failed: end the
-    edges of that value unless the row holds it again. Safe to run twice."""
+    edges of that value at `ended_at` (when the row stopped holding it; read again
+    when not given) unless the row holds it again. Safe to run twice."""
     version = [(memory_id, content_sha256)]
     if await rows_holding(org, namespace, version, ch=ch, holder_sql=HOLDS_VALUE_SQL):
         return
+    if ended_at is None:
+        ended_at = await value_ended_at(org, namespace, memory_id, content_sha256, ch=ch)
     scope = SimpleNamespace(org=org, namespace=namespace)
-    await _end_edges_of(scope, memory_id, content_sha256, ch=ch)
+    await _end_edges_of(scope, memory_id, content_sha256, ended_at, ch=ch)
 
 
-async def _end_edges_of(input: Any, memory_id: str, content_sha256: str, *, ch: Any) -> None:
-    """End now the edges linked to the row's value `content_sha256` that no live row
-    names (`end_edges` keeps those)."""
+async def value_ended_at(
+    org: str, namespace: str, memory_id: str, content_sha256: str, *, ch: Any
+) -> datetime:
+    """When the row stopped holding the value `content_sha256`: the first later
+    version that holds another value or none (a revision, a retirement, a delete),
+    read from the version history. Now when the history has none."""
+    row = await ch.query_one(
+        f"""
+        SELECT minOrNull(updated_at) AS ended FROM loom.memory_versions
+        WHERE org = {{org:String}} AND namespace = {{ns:String}} AND memory_id = {{id:UUID}}
+          AND version > (
+              SELECT minOrNull(version) FROM loom.memory_versions
+              WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                AND memory_id = {{id:UUID}} AND content_sha256 = {{sha:String}})
+          AND NOT (content_sha256 = {{sha:String}} AND {HOLDS_VALUE_SQL})
+        SETTINGS select_sequential_consistency = 1
+        """,
+        params={"org": org, "ns": namespace, "id": memory_id, "sha": content_sha256},
+    )
+    ended = row.get("ended") if row else None
+    return to_naive_utc(ended) if isinstance(ended, datetime) else naive_utc_now()
+
+
+async def _end_edges_of(
+    input: Any, memory_id: str, content_sha256: str, ended_at: datetime, *, ch: Any
+) -> None:
+    """End at `ended_at` the edges linked to the row's value `content_sha256` that no
+    live row names (`end_edges` keeps those)."""
     pairs = await ch.query_all(
         """
         SELECT DISTINCT entity_a, entity_b FROM loom.entity_edge_rows
@@ -478,8 +518,7 @@ async def _end_edges_of(input: Any, memory_id: str, content_sha256: str, *, ch: 
         """,
         params={"org": input.org, "ns": input.namespace, "id": memory_id, "sha": content_sha256},
     )
-    now = naive_utc_now()
-    ends = [(str(p["entity_a"]), str(p["entity_b"]), now) for p in pairs]
+    ends = [(str(p["entity_a"]), str(p["entity_b"]), ended_at) for p in pairs]
     await end_edges(ch, org=input.org, namespace=input.namespace, ends=ends)
 
 

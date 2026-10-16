@@ -2087,6 +2087,69 @@ async def test_a_late_projection_whose_cleanup_failed_is_closed_by_the_repair(
     )
 
 
+@pytest.mark.parametrize("cleanup", ["beside the write", "by the repair"])
+async def test_a_late_projections_edge_ends_when_the_revision_ended_its_value(
+    ch, org, monkeypatch, cleanup
+) -> None:
+    # London's edges land two seconds after the revision to jazz. Their cleanup, or
+    # its replay, must end them at the revision, not when it runs: a walk as of a
+    # moment in between must not reach London.
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import after_write, entity_projections
+    from server.memory.app.projection_failures import retry_projection_failures
+    from server.memory.app.write import handle_memory_set
+
+    write_edges, release = entity_projections.write_entity_edges, asyncio.Event()
+    end_edges_of = entity_projections._end_edges_of
+    failures = ["once"] if cleanup == "by the repair" else []
+    calls: list[str] = []
+
+    async def _held(*args: Any, **kw: Any) -> Any:
+        calls.append("edges")
+        if len(calls) == 1:
+            await release.wait()
+        return await write_edges(*args, **kw)
+
+    async def _fails_once(*args: Any, **kw: Any) -> Any:
+        if failures:
+            failures.pop()
+            raise RuntimeError("transient")
+        return await end_edges_of(*args, **kw)
+
+    monkeypatch.setattr(entity_projections, "write_entity_edges", _held)
+    monkeypatch.setattr(entity_projections, "_end_edges_of", _fails_once)
+
+    def _set(value: str, relations: list[Any]) -> Any:
+        return handle_memory_set(
+            MemorySetInput(
+                org=org,
+                namespace=NS,
+                agent="bot",
+                user_id=USER,
+                memory_key="alice",
+                value=value,
+                relations=relations,
+            )
+        )
+
+    await _set("Alice lives in London", [("alice", "live_in", "london")])
+    await _set("Alice likes jazz", [])
+    revised = naive_utc_now()
+    await asyncio.sleep(2.5)
+    release.set()
+    await after_write.drain()
+    if cleanup == "by the repair":
+        await asyncio.sleep(1)
+        await retry_projection_failures(org=org, projection="entity_edges_close", ch=ch)
+    await _mutations_done(ch, org)
+    between = revised + timedelta(seconds=1.2)
+    assert "london" not in await _walked(
+        org, ["jazz", "lif"], labeled=False, as_of=between, seed="alice"
+    )
+    assert "london" not in await _walked(org, ["jazz"], labeled=True, as_of=between, seed="alice")
+    assert "london" not in await _walked(org, ["jazz", "lif"], labeled=False, seed="alice")
+
+
 @pytest.mark.parametrize(
     "extra",
     [

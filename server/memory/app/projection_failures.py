@@ -534,7 +534,16 @@ async def _retry_edges_close(failure: ProjectionFailureRow, *, ch: Any) -> str:
     content_sha256 = str(failure.payload.get("content_sha256") or "")
     if not memory_id or not content_sha256:
         return "malformed_payload"
-    await close_late_edges(failure.org, failure.namespace, memory_id, content_sha256, ch=ch)
+    # When the revision ended the value; a payload recorded before it was known has none.
+    ended = failure.payload.get("ended_at")
+    await close_late_edges(
+        failure.org,
+        failure.namespace,
+        memory_id,
+        content_sha256,
+        ended_at=datetime.fromisoformat(ended) if ended else None,
+        ch=ch,
+    )
     return ""
 
 

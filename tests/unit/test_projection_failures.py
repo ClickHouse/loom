@@ -1,3 +1,4 @@
+import dataclasses
 import json
 from datetime import datetime
 from typing import Any
@@ -826,3 +827,29 @@ async def test_a_failure_row_is_committed_not_left_in_a_buffer() -> None:
     assert seen == [
         ("loom.memory_projection_failures", {"async_insert": 1, "wait_for_async_insert": 1})
     ]
+
+
+@pytest.mark.parametrize(
+    ("payload_end", "ended_at"),
+    [("2026-05-16T12:00:00", datetime(2026, 5, 16, 12, 0, 0)), (None, None)],
+    ids=["recorded", "recorded-before-it-was-known"],
+)
+async def test_a_late_edges_cleanup_replays_with_the_revisions_end(
+    monkeypatch, payload_end, ended_at
+) -> None:
+    # The replay ends the edges when the revision ended the value, as the cleanup it
+    # repeats would have; without a recorded end, `close_late_edges` reads it again.
+    from server.memory.app import entity_projections
+
+    calls: list[tuple] = []
+
+    async def close_late_edges(org, namespace, memory_id, sha, *, ended_at, ch):
+        calls.append((org, namespace, memory_id, sha, ended_at))
+
+    monkeypatch.setattr(entity_projections, "close_late_edges", close_late_edges)
+    payload = {"memory_id": _ROW_ID, "content_sha256": "a" * 64}
+    if payload_end:
+        payload["ended_at"] = payload_end
+    failure = dataclasses.replace(_graph_failure("entity_edges_close"), payload=payload)
+    assert (await retry_projection_failure(failure, ch=_GraphCH())).resolved
+    assert calls == [("o", "n", _ROW_ID, "a" * 64, ended_at)]
