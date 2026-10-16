@@ -28,6 +28,8 @@ gh run list --workflow ci.yml --branch main -L 5 --json conclusion,headSha,creat
 
 | Job | Usual cause | Reproduce / fix |
 | --- | --- | --- |
+| `the ClickHouse release this run tests` (`ci.yml`, `docker-smoke.yml`) | the release lookup in `dev/clickhouse_release.sh` or the registry it reads | rerun once; if it fails again, run the script locally and read its error |
+| `Quickstart (<arch>)`, `Repository-job sandbox under the shipped profiles` (`docker-smoke.yml`, on PRs touching the server, dashboard or schema) | the image or its bundle, the quickstart stack, the AppArmor or seccomp profiles | build the image locally (`docker build .`) and follow the step that failed in the job log |
 | `ruff + mypy-gate` (lint) | a generator `--check` is stale (the plugin sync also compares executable bits); ruff; function-length or mypy ratchet | `make lint`, `make typecheck`; run the named generator without `--check` and commit its output; split the long function |
 | `pytest unit + coverage` | order dependence; a fake that drifted; a snapshot; a per-module coverage floor; `integrations/generic/test.sh` | `pytest -p randomly --randomly-seed=<seed from the log> <test>`; update a snapshot only for an intended change; the coverage-floor command in `loom-pre-push` §3; `bash integrations/generic/test.sh` |
 | `repository-job sandbox (real bubblewrap)` | a change to the repository-job sandbox or its profiles | `pytest tests/unit/test_repo_job_sandbox_hostile.py -q` on a host with bubblewrap |

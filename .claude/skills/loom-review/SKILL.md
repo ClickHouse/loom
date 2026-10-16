@@ -32,7 +32,7 @@ Do not give a verdict until each gate is addressed; a gate you could not close g
 The checklist is the files the diff touches, not a copy of them:
 
 - the **Invariants** in [AGENTS.md](../../../AGENTS.md), for every diff;
-- the rule for each area the diff touches (`grep -A8 '^paths:' .claude/rules/*.md` maps paths to rules): every bullet in it is a check;
+- the rule for each area the diff touches (the `paths:` frontmatter of `.claude/rules/*.md` maps paths to rules; inside `loom-reviewer`, search it with the Grep tool): every bullet in it is a check;
 - the "also in the same PR" column of `loom-change` for each kind of change in the diff (generated files, snapshots, manifests, docs).
 
 Read each rule in full before judging its area. Also check what no rule owns: a hot-path query that is unbounded or untagged, a hook that can throw, block or print a secret in a user's session, an example or README that does not run as written, and public text (code, docs, PR body) that names people, hosts, internal namespaces, dates or other products.

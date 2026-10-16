@@ -141,7 +141,7 @@ def _segments(command: str) -> list[tuple[str, bool]] | None:
 
 
 def refusal(command: str) -> str | None:
-    command = re.sub(r"\s(?:2>&1|2?>\s*/dev/null)(?=\s|$)", "", command)
+    command = re.sub(r"[ \t](?:2>&1|2?>[ \t]*/dev/null)(?=[ \t]|$)", "", command)
     if not SAFE.fullmatch(command):
         if "*" in command:
             return (

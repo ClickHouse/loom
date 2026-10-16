@@ -365,6 +365,8 @@ def test_reviewer_hook_allows_reads(command: str) -> None:
         '.venv/bin/python -m pytest tests/unit/test_cli_demo.py "|" grep --log-file=x',
         ".venv/bin/python -m pytest tests/unit/test_x.py '&&' gh pr view --junitxml=x",
         "git log -1 2>/dev/null.x",
+        "git status\n2>/dev/null touch x",
+        "git status\n2>&1 touch x",
         "git log || git status",
         "git log & git status",
         "gh pr view 57 --jq .x [-]w",
