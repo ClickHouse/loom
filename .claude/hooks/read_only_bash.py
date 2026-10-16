@@ -113,44 +113,52 @@ def _segment_refusal(words: list[str], piped: bool) -> str | None:
     return None
 
 
-def _quoted_separator(command: str) -> bool:
-    # shlex drops quotes, so a quoted "|" would come back as a pipe that bash never sees.
-    quote = ""
-    for char in command:
-        if quote and char == quote:
-            quote = ""
-        elif not quote and char in "'\"":
+def _segments(command: str) -> list[tuple[str, bool]] | None:
+    """Split where bash would, at an unquoted `&&` or `|`; each part says if it reads a pipe.
+
+    None when another unquoted `&` or `|` (`||`, `|&`, a lone `&`) appears.
+    """
+    segments: list[tuple[str, bool]] = []
+    start, piped, quote, i = 0, False, "", 0
+    while i < len(command):
+        char = command[i]
+        if quote:
+            quote = "" if char == quote else quote
+        elif char in "'\"":
             quote = char
-        elif quote and char in "|&":
-            return True
-    return False
+        elif char in "&|":
+            operator = command[i : i + 2] if command[i : i + 2] in {"&&", "||", "|&"} else char
+            if operator not in {"&&", "|"}:
+                return None
+            segments.append((command[start:i], piped))
+            piped = operator == "|"
+            i += len(operator)
+            start = i
+            continue
+        i += 1
+    segments.append((command[start:], piped))
+    return segments
 
 
 def refusal(command: str) -> str | None:
-    command = re.sub(r"\s2>&1\b|\s2?>\s*/dev/null\b", "", command)
+    command = re.sub(r"\s(?:2>&1|2?>\s*/dev/null)(?=\s|$)", "", command)
     if not SAFE.fullmatch(command):
         if "*" in command:
             return (
                 "`*` is refused even quoted: name a directory or file (`-- server/`),"
                 " or find files with the Glob or Grep tool"
             )
-        return "it has a character that could start a second command or a shell expansion"
-    if _quoted_separator(command):
-        return "`|` and `&` are allowed only unquoted, between commands"
-    lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
-    lexer.whitespace_split = True
-    segment: list[str] = []
-    piped = False
-    for token in [*lexer, "&&"]:
-        if token in {"&&", "|"}:
-            reason = _segment_refusal(segment, piped) if segment else f"nothing before `{token}`"
-            if reason:
-                return reason
-            segment, piped = [], token == "|"
-        elif set(token) <= set("&|;<>()"):
-            return f"`{token}` is not allowed: join commands with `&&` or `|`, and redirect nothing"
-        else:
-            segment.append(token)
+        return "it has a character that could start a second command, a redirection or an expansion"
+    segments = _segments(command)
+    if segments is None:
+        return "join commands only with `&&` or `|`"
+    for text, piped in segments:
+        words = shlex.split(text)
+        if not words:
+            return "an empty command between `&&` or `|`"
+        reason = _segment_refusal(words, piped)
+        if reason:
+            return reason
     return None
 
 
