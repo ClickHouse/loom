@@ -388,6 +388,10 @@ value the journal still serves is refused, as is a locked key.
   reads. `namespace.rollback` is planned and committed in the journal: each key
   whose claims as known at `as_of` differ from what it serves now gets one commit
   serving those claims again as they were (spans, plans, kinds), so a dated value,
-  a plan or a snapshot comes back as it was. A content scrub is one function that updates both:
+  a plan or a snapshot comes back as it was. It first journals the previous build's
+  writes since `as_of` that no sweep has yet (during a rollout), so it undoes them
+  too; a key the journal learned of late from a row older than `as_of` (an adopted
+  write, or a seed of a key created by then) is left out, since what it held at
+  `as_of` was never recorded. A content scrub is one function that updates both:
   `memory.redact` rewrites the redacted version's text in `memory_versions` and in
   every journal assertion born from it, and deletes their vectors.

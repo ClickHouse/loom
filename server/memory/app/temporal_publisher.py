@@ -1501,9 +1501,9 @@ async def serving(org: str, ns: str, keys: Sequence[Ident]) -> set[Ident]:
 async def _above_landed(b: _Batch, ch: _CHClient) -> bool:
     """Raise the batch's row versions above any loom.memory row of its keys that
     landed since the plan read its floor (a projection, which moves no sequence), so
-    the merge ranks the batch's rows as the journal orders them: after it."""
-    if not any(p.row.get("version") and not p.past_only for p in b.planned):
-        return False
+    the merge ranks the batch's rows as the journal orders them: after it. True: a
+    row another build wrote landed since, so the batch (rows or amendments only)
+    plans again and adopts it first."""
     landed = await store.landed_heads(b.org, b.ns, b.keys, ch=ch)
     committed = await store.newest_row_versions(b.org, b.ns, b.keys, ch=ch)
     # A seed or adoption of this batch journals the row itself: no reason to plan again.
@@ -1517,6 +1517,8 @@ async def _above_landed(b: _Batch, ch: _CHClient) -> bool:
         for ident, (v, j) in landed.items()
     ):
         return True
+    if not any(p.row.get("version") and not p.past_only for p in b.planned):
+        return False  # an amendment-only batch writes no row to raise
     newest = {ident: v for ident, (v, _j) in landed.items()}
     # Per key, each version this batch drew and raised: a later row of the batch can
     # carry a claim an earlier one added. Versions already committed stay as they are.

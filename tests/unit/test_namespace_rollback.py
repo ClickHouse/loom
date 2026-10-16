@@ -79,7 +79,8 @@ async def test_the_plan_names_only_changed_keys_and_never_a_redacted_value(
         return set()
 
     monkeypatch.setattr(journal, "journal_keys", _keys)
-    monkeypatch.setattr(journal, "seeded_after", _seeded)
+    monkeypatch.setattr(journal, "recorded_late", _seeded)
+    monkeypatch.setattr(rb, "_adopt_since", _seeded)
     plan = await rb.plan("o", "n", datetime(2026, 2, 1, tzinfo=UTC), memory_keys=None, limit=10)
     by_key = {c.ident[3]: c for c in plan.changes}
     assert sorted(by_key) == ["born", "secret"]

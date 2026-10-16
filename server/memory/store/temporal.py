@@ -12,7 +12,7 @@ import hashlib
 import json
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
@@ -1158,20 +1158,39 @@ async def journal_only_identities(
     ]
 
 
-async def seeded_after(
+def draw_version(at: datetime) -> int:
+    """The loom.memory version a row drawn at `at` carries: its draw time in
+    nanoseconds (microsecond-exact)."""
+    return (at - datetime(1970, 1, 1, tzinfo=UTC)) // timedelta(microseconds=1) * 1000
+
+
+async def recorded_late(
     org: str, namespace: str, keys: Sequence[str], at: datetime, *, ch: _CHClient | None = None
 ) -> set[tuple[str, str, str, str]]:
-    """Identities among `keys` whose journal began after `at` with a seed: a key
-    written before the journal existed, whose state at `at` the journal never had."""
+    """Identities among `keys` the journal learned of after `at` from a row drawn
+    before it: an adoption (another build's write, during a rollout) or a seed of a
+    key created by then (one written before the journal existed). What the key held
+    at `at` was never recorded as known then. A key created after `at` held nothing."""
     if not keys:
         return set()
     ch = ch or _default_client()
     rows = await ch.query_all(
         "SELECT DISTINCT agent, user_id, session_id, memory_key "
         f"FROM {COMMITS} WHERE org = {{org:String}} AND namespace = {{ns:String}} "
-        "AND memory_key IN {mk:Array(String)} AND operation = 'memory.journal_seed' "
-        "AND recorded_at > {at:DateTime64(6, 'UTC')}",
-        params={"org": org, "ns": namespace, "mk": list(keys), "at": at},
+        "AND memory_key IN {mk:Array(String)} AND recorded_at > {at:DateTime64(6, 'UTC')} "
+        "AND ((operation = 'memory.observed' AND row_version <= {at_ns:UInt64}) "
+        "OR (operation = 'memory.journal_seed' "
+        f"AND {_IDENT} IN (SELECT {_IDENT_COLS} FROM loom.memory "
+        "WHERE org = {org:String} AND namespace = {ns:String} "
+        "AND memory_key IN {mk:Array(String)} "
+        f"GROUP BY {_IDENT_COLS} HAVING min(created_at) <= {{at:DateTime64(6, 'UTC')}})))",
+        params={
+            "org": org,
+            "ns": namespace,
+            "mk": list(keys),
+            "at": at,
+            "at_ns": draw_version(at),
+        },
     )
     return {
         (str(r["agent"]), str(r["user_id"]), str(r["session_id"]), str(r["memory_key"]))

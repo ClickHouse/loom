@@ -1655,6 +1655,45 @@ def test_a_row_another_build_lands_before_the_lock_is_adopted_not_overwritten(
     assert ops[-1] == "memory.observed" and "B" in journal.commits[-1]["assertions"]
 
 
+def test_an_amendment_replans_over_a_row_another_build_lands_before_the_lock(
+    journal: Journal, monkeypatch
+) -> None:
+    # A rollback or amendment writes no row of its own: B landing between its plan and
+    # the lock is still adopted first, and the amendment is built over B.
+    run(pub.publish_rows([mrow('"A"')]))
+    b = mrow('"B"', journal_version=journal.commits[-1]["row_version"])
+    landed: dict[str, Any] = {}
+    real_head = journal.head
+    calls = {"n": 0}
+
+    async def head(*a, **k):
+        calls["n"] += 1
+        if calls["n"] == 2:  # under the lock
+            landed["row"] = b
+        return await real_head(*a, **k)
+
+    async def heads(*_a, **_k):
+        return [landed["row"]] if landed else []
+
+    async def versions(*_a, **_k):
+        return {("a", "-", "-", "k"): (b["version"], b["journal_version"])} if landed else {}
+
+    seen: list[list[str]] = []
+
+    def build(served: list[tm.Assertion]) -> tm.Amendment:
+        seen.append([a.value for a in served])
+        return tm.Amendment("correct", tuple(a.assertion_id for a in served), (tm.first('"X"'),))
+
+    monkeypatch.setattr(store, "head", head)
+    monkeypatch.setattr(store, "memory_heads", heads)
+    monkeypatch.setattr(store, "landed_heads", versions)
+    ident = ("a", "-", "-", "k")
+    run(pub.publish_amendments("o", "n", [(ident, "", build)], operation="memory.amend"))
+    assert seen[-1] == ['"B"']
+    ops = [x["operation"] for x in journal.commits]
+    assert ops[-2:] == ["memory.observed", "memory.amend"]
+
+
 def test_a_key_only_another_build_wrote_is_seeded_and_written_not_planned_again(
     journal: Journal, monkeypatch
 ) -> None:

@@ -15,6 +15,7 @@ from server.core.errors import PreconditionFailedError, TemporalUnavailableError
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.app import temporal_publisher as publisher
 from server.memory.app import temporal_reads as reads
+from server.memory.app.temporal_rows import ident_of
 from server.memory.domain import temporal_model as tm
 from server.memory.domain.temporal_reads import Axes
 from server.memory.store import temporal as store
@@ -83,6 +84,7 @@ async def plan(
     read would remove keys it did not see."""
     from server.memory.store import temporal as journal
 
+    await _adopt_since(org, namespace, as_of)
     now = datetime.now(UTC)
     then_cut = await reads.cutoff(org, namespace, Axes(valid=now, known=as_of))
     now_cut = await reads.cutoff(org, namespace, Axes(valid=now, known=None))
@@ -94,9 +96,10 @@ async def plan(
         then, refused = await _served(org, then_cut, page)
         current, _ = await _served(org, now_cut, page)
         _refuse_gaps(then_cut, now_cut)
-        # A key the journal first saw after as_of, seeded from a row older than it:
-        # what it held at as_of was never recorded, so it is left as it is.
-        refused |= await journal.seeded_after(org, namespace, page, as_of)
+        # A key the journal learned of after as_of from a row older than it (a seed,
+        # or another build's write adopted late): what it held at as_of was never
+        # recorded, so it is left as it is.
+        refused |= await journal.recorded_late(org, namespace, page, as_of)
         for ident in sorted(then.keys() | current.keys()):
             was, held = then.get(ident, []), current.get(ident, [])
             if _state(was) == _state(held):
@@ -113,6 +116,19 @@ async def plan(
                 )
             )
     return Plan(changes, False, now_cut.first_at)
+
+
+async def _adopt_since(org: str, namespace: str, as_of: datetime) -> None:
+    """Journal the writes another build made after `as_of` that no sweep has adopted
+    yet (during a rollout), so the plan sees them and rolls them back. An older one
+    is left to `recorded_late`: adopting it now would date it after as_of. A dry run
+    adopts too; it records what loom.memory already serves, as the sweep would."""
+    after = store.draw_version(as_of)
+    while rows := await store.foreign_rows(after, limit=_PAGE, only=(org, namespace)):
+        await publisher.adopt(org, namespace, [ident_of(r) for r in rows])
+        if len(rows) < _PAGE:
+            return
+        after = int(rows[-1]["v"])
 
 
 # Rows older than the journal: a gap that never clears. The keys it concerns are the

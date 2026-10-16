@@ -1999,3 +1999,35 @@ async def test_a_deleted_key_comes_back_by_rollback_or_amendment(
         )
         assert amended["current_value"] == "corrected"
         assert (await a.call("memory.get", {"memory_key": "m"}))["value"] == "corrected"
+
+
+async def _write_as_older_build(ns: str, key: str, new_key: str, *, removed: bool) -> None:
+    """A row the previous build writes during a rollout, from `key`'s: no commit, and
+    the journal_version it carries forward is not its own version. A new key is born
+    now."""
+    ch = await _ch()
+    await ch.execute(
+        "INSERT INTO loom.memory SELECT * REPLACE ("
+        "{nk:String} AS memory_key, toUInt64(toUnixTimestamp64Nano(now64(9))) AS version"
+        f"{', now64(3) AS tombstoned_at' if removed else ''}"
+        f"{', now64(3) AS created_at' if new_key != key else ''}) FROM (SELECT * FROM loom.memory "
+        "FINAL WHERE org = {org:String} AND namespace = {ns:String} AND memory_key = {k:String})",
+        params={"org": ORG, "ns": ns, "k": key, "nk": new_key},
+    )
+
+
+async def test_a_rollback_undoes_what_another_build_wrote_since(
+    control_plane_url, mint_test_token
+) -> None:
+    # During a rollout the previous build deletes one key and creates another after
+    # as_of, and no sweep has journaled either: the rollback undoes both.
+    a, ns = await _agent(control_plane_url, mint_test_token, "foreign-rb")
+    async with a:
+        await a.call("memory.set", {"memory_key": "k", "value": "keep me"})
+        before = await _now_after(1.1)
+        await _write_as_older_build(ns, "k", "new", removed=False)
+        await _write_as_older_build(ns, "k", "k", removed=True)
+        out = await a.call("namespace.rollback", {"as_of": before, "dry_run": False})
+        assert (out["reinstate"], out["remove"]) == (1, 1) and not out["current_rows_pending"]
+        assert (await a.call("memory.get", {"memory_key": "k"}))["value"] == "keep me"
+        assert not (await a.call("memory.get", {"memory_key": "new"}))["found"]
