@@ -1834,14 +1834,18 @@ async def test_a_fallback_marker_closed_in_the_same_second_gets_a_marker_of_its_
     stored = [paris(datetime(2026, 9, 1, 11, 0, 0))]
     restated: list[tuple[str, str]] = []
 
-    async def restate(input, held, *, ch, restore_id, restored_at, adapter_name="row-restore"):
+    async def reopen(input, ids, *, ch, restore_id, restored_at, adapter_name, **_kw):
         restated.append((restore_id, adapter_name))
 
     async def all_held(org, namespace, triples, *, ch, rows=None):
         return frozenset(triples)
 
-    monkeypatch.setattr(graph_undo, "restate_facts", restate)
+    async def one_row(org, namespace, triples, *, ch):
+        return {"m1": "sha"}
+
+    monkeypatch.setattr(graph_undo, "reopen_held_facts", reopen)
     monkeypatch.setattr(entity_projections, "stated_by_live_rows", all_held)
+    monkeypatch.setattr(entity_projections, "_rows_linking", one_row)
     inp = SimpleNamespace(org="o", namespace="ns", agent="a")
     await entity_projections._keep_one_current(inp, list(stored), ch=None)
     stored.append(paris(closed.replace(microsecond=5)))  # the marker, closed again
