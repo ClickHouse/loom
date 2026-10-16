@@ -4,14 +4,18 @@ and reassign."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import timedelta
-from functools import partial
 from typing import Any, cast
 
+from server.core import leases
 from server.core.datetimes import utc_now as _now
+from server.core.errors import PreconditionFailedError
 from server.tasks.api.models_task import (
     TaskAcceptInput,
     TaskBlockInput,
@@ -44,7 +48,6 @@ from server.tasks.app.common import (
     _drop_lease,
     _err,
     _in_scope,
-    _InsertDropped,
     _invalid,
     _is_poster,
     _load_inbox,
@@ -70,7 +73,7 @@ from server.tasks.app.trust import (
 )
 from server.tasks.domain.states import TaskStatus
 from server.tasks.store import repo as repo
-from server.tasks.store.rows import TaskRow
+from server.tasks.store.rows import InboxRow, TaskRow
 
 
 async def handle_task_create(input: TaskCreateInput) -> TaskCreateOutput:
@@ -91,13 +94,38 @@ async def handle_task_create(input: TaskCreateInput) -> TaskCreateOutput:
         )
     if input.parent_task_id and not repo.is_uuid(input.parent_task_id):
         raise _invalid("parent_task_id is not a task id")
-    if input.idempotency_key:
-        prior = await repo.fetch_task_by_idempotency_key(
-            input.org, input.inbox, input.idempotency_key
-        )
-        if prior is not None:
-            return TaskCreateOutput(task=_payload(prior), created=False, seq=int(prior["version"]))
+    async with _one_create_per_key(input):
+        if input.idempotency_key:
+            prior = await repo.fetch_task_by_idempotency_key(
+                input.org, input.inbox, input.idempotency_key
+            )
+            if prior is not None:
+                return TaskCreateOutput(
+                    task=_payload(prior), created=False, seq=int(prior["version"])
+                )
+        return await _create(input, inbox, subject)
 
+
+@asynccontextmanager
+async def _one_create_per_key(input: TaskCreateInput) -> AsyncIterator[None]:
+    """Creates with one idempotency key run one at a time across replicas, from
+    the lookup to the insert, so a retry that waited finds the task the first one
+    stored. 409 while another create keeps the key past the wait, 503 when the
+    lease store does not answer (as for a memory key's write lock)."""
+    if not input.idempotency_key:
+        yield
+        return
+    ident = "\x1f".join((input.org, input.inbox, input.idempotency_key))
+    name = "task.create/" + hashlib.sha256(ident.encode()).hexdigest()[:40]
+    async with leases.holding(name, ttl_s=60, wait_s=10) as held:
+        if not held:
+            raise PreconditionFailedError(
+                "another task.create with this idempotency_key is still running; retry"
+            )
+        yield
+
+
+async def _create(input: TaskCreateInput, inbox: InboxRow, subject: str) -> TaskCreateOutput:
     mode, policy = await _decide_mode(
         inbox, subject=subject, agent=input.agent, kind=input.kind, brief=input.brief
     )
@@ -143,49 +171,16 @@ async def handle_task_create(input: TaskCreateInput) -> TaskCreateOutput:
         "version": 0,
         "is_deleted": 0,
     }
-    actor = _actor(f"process:{input.agent}")
-    token = (
-        f"task.create:{input.org}:{input.inbox}:{input.idempotency_key}"
-        if input.idempotency_key
-        else ""
-    )
     # ``_record`` writes from a "previous" row: for a create that row has no
     # status yet, so from_status is empty and to_status is the landing state.
-    record = partial(
-        _record,
+    row, seq = await _record(
         cast(TaskRow, {**task, "status": ""}),
         event="created",
-        actor=actor,
+        actor=_actor(f"process:{input.agent}"),
         agent=input.agent,
         patch={"kind": input.kind, "mode": mode, "policy": bool(policy)},
         status=status,
     )
-
-    async def landed_before_us() -> TaskCreateOutput | None:
-        # A create with the same key landed between our lookup and our insert:
-        # answer with that task, as a later retry would.
-        prior = await repo.fetch_task_by_idempotency_key(
-            input.org, input.inbox, input.idempotency_key
-        )
-        if prior is None:
-            return None
-        return TaskCreateOutput(task=_payload(prior), created=False, seq=int(prior["version"]))
-
-    try:
-        row, seq = await record(dedup_token=token)
-    except _InsertDropped:
-        if answer := await landed_before_us():
-            return answer
-        # No task holds the key: it was erased, and ClickHouse still remembers
-        # the token. Every create after that erasure reads the same generation,
-        # so racing retries share this new token and only one of them lands.
-        generation = await repo.erasure_generation(input.org)
-        try:
-            row, seq = await record(dedup_token=f"{token}:erased:{generation}")
-        except _InsertDropped:
-            if answer := await landed_before_us():
-                return answer
-            raise
     backend = await repo.lease_backend()
     await backend.ensure_row(task_id, input.org, input.inbox, 0)
     nxt = _triage_note(inbox, input.agent, policy) if status == "triage" else ""

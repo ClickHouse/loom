@@ -341,30 +341,13 @@ async def fetch_task_by_idempotency_key(
     )
 
 
-async def erasure_generation(org: str, *, ch: _CHClient | None = None) -> str:
-    """A string that changes with every erasure requested in `org`: the number
-    of requests and the latest one's time. The saga records its request before
-    it deletes anything, so a create that follows an erasure reads the new value."""
-    ch = ch or _default_client()
-    row = await ch.query_one(
-        "SELECT count() AS n, toString(max(requested_at)) AS latest "
-        "FROM loom.erasure_requests FINAL WHERE org = {org:String} "
-        "SETTINGS select_sequential_consistency = 1",
-        params={"org": org},
-    )
-    return f"{row['n']}@{row['latest']}" if row else "0"
-
-
-async def insert_task_version(
-    row: TaskRow, *, dedup_token: str = "", ch: _CHClient | None = None
-) -> None:
+async def insert_task_version(row: TaskRow, *, ch: _CHClient | None = None) -> None:
     """One new version row. Every persisted column rides along (the RMT rule
-    in CLAUDE.md); ``dedup_token`` makes a retried create land once."""
+    in CLAUDE.md)."""
     ch = ch or _default_client()
-    settings: dict[str, Any] = {"async_insert": 0, "wait_for_async_insert": 1}
-    if dedup_token:
-        settings["insert_deduplication_token"] = dedup_token
-    await ch.insert("loom.tasks", [dict(row)], settings=settings)
+    await ch.insert(
+        "loom.tasks", [dict(row)], settings={"async_insert": 0, "wait_for_async_insert": 1}
+    )
 
 
 async def list_tasks(

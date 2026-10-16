@@ -4,6 +4,7 @@ tier covers it, over a real git history and stub ClickHouse repositories."""
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import json
 import subprocess
@@ -23,6 +24,7 @@ from server.code.store import coverage_watches as wrepo
 from server.code.workers import coverage_notify as code_coverage_notify
 from server.core.errors import AuthInsufficientError, NotFoundError, ValidationError
 from server.operations.registry import OPERATIONS_BY_NAME
+from tests.unit.claims_fake import memory_claims
 
 ORG, NS, INBOX = "acme", "code-app", "reviewer-bot"
 # The server clock task events are stamped from, far from any host clock.
@@ -55,7 +57,6 @@ class Fake:
         self.git_dir = git_dir
         self.watches: dict[tuple[str, str, str, str], CoverageWatch] = {}
         self.events: list[dict[str, Any]] = []
-        self.tokens: set[str] = set()
         self.state: dict[str, dict[str, Any]] = {}
         self.inboxes = {(ORG, INBOX): {"org": ORG, "inbox": INBOX, "owner_namespace": "bots"}}
         self.fail_watch_writes = 0
@@ -81,21 +82,13 @@ class Fake:
             self.watches[key] = row
 
     async def ready_event_exists(self, org, inbox, task_id):
+        await asyncio.sleep(0.01)  # a racing delivery runs meanwhile
         return any(
             e["org"] == org and e["inbox"] == inbox and e["task_id"] == task_id for e in self.events
         )
 
-    async def insert_ready_event(self, row, *, token):
-        # ClickHouse drops an insert whose dedup token it has seen.
-        if token not in self.tokens:
-            self.tokens.add(token)
-            self.events.append(dict(row))
-
-    async def ready_event_seq(self, org, inbox, task_id):
-        for e in self.events:
-            if e["org"] == org and e["inbox"] == inbox and e["task_id"] == task_id:
-                return e["seq"]
-        return None
+    async def insert_ready_event(self, row):
+        self.events.append(dict(row))
 
     async def fetch_inbox(self, org, inbox):
         return self.inboxes.get((org, inbox))
@@ -127,7 +120,6 @@ def fake(history: tuple[str, list[str]], monkeypatch: pytest.MonkeyPatch) -> Fak
         "insert_watch_version",
         "ready_event_exists",
         "insert_ready_event",
-        "ready_event_seq",
     ):
         monkeypatch.setattr(wrepo, name, getattr(f, name))
     monkeypatch.setattr(tasks_repo, "fetch_inbox", f.fetch_inbox)
@@ -136,11 +128,7 @@ def fake(history: tuple[str, list[str]], monkeypatch: pytest.MonkeyPatch) -> Fak
         return SERVER_NOW_US
 
     monkeypatch.setattr(tasks_repo, "server_version", server_version)
-
-    async def erasure_generation(org: str) -> str:
-        return "0"
-
-    monkeypatch.setattr(tasks_repo, "erasure_generation", erasure_generation)
+    memory_claims(monkeypatch)
 
     class _State:
         async def all_state(self, org, ns):
@@ -221,7 +209,7 @@ async def test_a_crash_between_the_event_and_the_watch_update_does_not_duplicate
 
 @pytest.mark.asyncio
 async def test_two_racing_deliveries_report_one_emitted_event(
-    fake: Fake, history: tuple[str, list[str]], monkeypatch: pytest.MonkeyPatch
+    fake: Fake, history: tuple[str, list[str]]
 ) -> None:
     from server.code.domain.index import repos
 
@@ -232,19 +220,11 @@ async def test_two_racing_deliveries_report_one_emitted_event(
     watch = fake.watches[(ORG, NS, b, INBOX)]
     coverage = await svc.coverage_for(repos.repo_for_namespace(ORG, NS), b, fake.state)
 
-    # Both deliverers checked for the event before either posted it.
-    async def no_event_yet(org: str, inbox: str, task_id: str) -> bool:
-        return False
-
-    seqs = iter([SERVER_NOW_US, SERVER_NOW_US + 1])
-
-    async def server_version(floor: int = 0) -> int:
-        return next(seqs)
-
-    monkeypatch.setattr(wrepo, "ready_event_exists", no_event_yet)
-    monkeypatch.setattr(svc, "server_version", server_version)
-    first, _ = await svc.deliver(watch, coverage)
-    second, _ = await svc.deliver(watch, coverage)
+    # The event check yields, so without the delivery's lease both deliverers
+    # would check before either posted.
+    (first, _), (second, _) = await asyncio.gather(
+        svc.deliver(watch, coverage), svc.deliver(watch, coverage)
+    )
     assert (first, second) == (True, False) and len(fake.events) == 1
 
 
@@ -260,16 +240,10 @@ async def test_two_racing_first_watches_post_one_event(
     async def nothing_yet(*args: Any) -> None:
         return None
 
-    seqs = iter([SERVER_NOW_US, SERVER_NOW_US + 1])
-
-    async def server_version(floor: int = 0) -> int:
-        return next(seqs)
-
     monkeypatch.setattr(wrepo, "fetch_watch", nothing_yet)
-    monkeypatch.setattr(wrepo, "ready_event_exists", nothing_yet)
-    monkeypatch.setattr(svc, "server_version", server_version)
-    first = await h.handle_code_coverage_watch(_watch(b))
-    second = await h.handle_code_coverage_watch(_watch(b))
+    first, second = await asyncio.gather(
+        h.handle_code_coverage_watch(_watch(b)), h.handle_code_coverage_watch(_watch(b))
+    )
     assert (first.emitted, second.emitted) == (True, False)
     assert len(fake.events) == 1
 

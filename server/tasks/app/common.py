@@ -317,11 +317,6 @@ def _new_version(task: TaskRow, version: int, **changes: Any) -> TaskRow:
     return cast(TaskRow, row)
 
 
-class _InsertDropped(Exception):
-    """The version insert carried a dedup token ClickHouse had already seen,
-    so it stored nothing: a racing create with the same idempotency key won."""
-
-
 async def _record(
     task: TaskRow,
     *,
@@ -331,7 +326,6 @@ async def _record(
     reason: str = "",
     note: str = "",
     patch: dict[str, Any] | None = None,
-    dedup_token: str = "",
     **changes: Any,
 ) -> tuple[TaskRow, int]:
     """Apply ``changes`` as a new version row and log the transition. Returns
@@ -349,11 +343,7 @@ async def _record(
         # move back to the happy path: resume, unblock, accept), so the board
         # can filter by it; a note or heartbeat leaves the row's reason alone.
         row["reason"] = reason
-    await repo.insert_task_version(row, dedup_token=dedup_token)
-    # A dropped insert must not log an event or wake anyone for a task that
-    # was never stored. Only a create passes a token, so a new row is the check.
-    if dedup_token and await repo.fetch_task(row["org"], str(row["task_id"])) is None:
-        raise _InsertDropped()
+    await repo.insert_task_version(row)
     await repo.insert_event(
         {
             "org": row["org"],

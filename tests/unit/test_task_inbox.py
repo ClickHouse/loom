@@ -12,6 +12,7 @@ task.updates. Loom stores the trust mode the owner sets and never moves it.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -25,6 +26,7 @@ from server.tasks.api import ops_task
 from server.tasks.app import common, inboxes, reads, sweep, transitions, trust
 from server.tasks.store import repo as repo
 from server.tasks.store.repo import ClaimResult, KeeperLeases, resolve_policy
+from tests.unit.claims_fake import memory_claims
 
 ORG = "acme"
 
@@ -95,7 +97,6 @@ class FakeRepo:
         self.tasks: dict[str, dict[str, Any]] = {}
         self.events: list[dict[str, Any]] = []
         self.leases = FakeLeases()
-        self.dedup_tokens: set[str] = set()
 
     # inboxes
     async def fetch_inbox_row(self, org, inbox):
@@ -139,17 +140,13 @@ class FakeRepo:
         return None if row is None or row["org"] != org or row.get("is_deleted") else dict(row)
 
     async def fetch_task_by_idempotency_key(self, org, inbox, key):
+        await asyncio.sleep(0)  # a racing create runs meanwhile
         for r in self.tasks.values():
             if r["org"] == org and r["inbox"] == inbox and r.get("idempotency_key") == key:
                 return dict(r)
         return None
 
-    async def insert_task_version(self, row, *, dedup_token=""):
-        # ClickHouse drops an insert whose token it has already seen.
-        if dedup_token in self.dedup_tokens:
-            return
-        if dedup_token:
-            self.dedup_tokens.add(dedup_token)
+    async def insert_task_version(self, row):
         self.tasks[str(row["task_id"])] = dict(row)
 
     async def list_tasks(
@@ -269,6 +266,7 @@ class FakeRepo:
 def fake(monkeypatch: pytest.MonkeyPatch) -> FakeRepo:
     fr = FakeRepo()
     patch_handlers(monkeypatch, "repo", fr)
+    memory_claims(monkeypatch)
     monkeypatch.setattr("server.tasks.domain.cursors.LAG_SECONDS", -1)  # the fake has no replicas
     return fr
 
@@ -475,27 +473,46 @@ async def test_idempotency_key_returns_the_first_task(fake: FakeRepo) -> None:
 
 @pytest.mark.asyncio
 async def test_racing_creates_with_one_key_answer_with_the_task_that_landed(
-    fake: FakeRepo, monkeypatch: pytest.MonkeyPatch
+    fake: FakeRepo,
 ) -> None:
     await _register(fake)
-    a = await _post(fake, idempotency_key="k1")
-    # The second create read before the first one landed: its own insert
-    # carries the same dedup token, so ClickHouse drops it.
-    lookup = fake.fetch_task_by_idempotency_key
-    calls = []
-
-    async def miss_first_lookup(*args: Any) -> Any:
-        calls.append(args)
-        return None if len(calls) == 1 else await lookup(*args)
-
-    monkeypatch.setattr(fake, "fetch_task_by_idempotency_key", miss_first_lookup)
-    events_before = len(fake.events)
-    b = await _post(fake, idempotency_key="k1", title="raced")
-    assert not b.created and b.task.task_id == a.task.task_id
+    # The key lookup yields, so without the key's lease both creates would
+    # miss it before either stored its task.
+    a, b = await asyncio.gather(
+        _post(fake, idempotency_key="k1"), _post(fake, idempotency_key="k1", title="raced")
+    )
+    assert a.created and not b.created and b.task.task_id == a.task.task_id
     assert len(fake.tasks) == 1
-    # no "created" event or lease row for a task that was never stored
-    assert len(fake.events) == events_before
+    assert [e["task_id"] for e in fake.events] == [a.task.task_id]
     assert list(fake.leases.rows) == [a.task.task_id]
+
+
+@pytest.mark.asyncio
+async def test_a_create_whose_key_lease_is_held_or_unavailable_stores_nothing(
+    fake: FakeRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.core import leases
+    from server.core.errors import PreconditionFailedError
+
+    await _register(fake)
+
+    async def still_held(name: str, **_: Any) -> None:
+        return None  # another create kept the key past the wait
+
+    monkeypatch.setattr(leases, "take", still_held)
+    with pytest.raises(PreconditionFailedError):
+        await _post(fake, idempotency_key="k1")
+
+    async def keeper_down(name: str, **_: Any) -> None:
+        raise leases.LeaseUnavailable("the lease store did not answer", operation=name)
+
+    monkeypatch.setattr(leases, "take", keeper_down)
+    with pytest.raises(leases.LeaseUnavailable) as e:
+        await _post(fake, idempotency_key="k1")
+    assert e.value.status_code == 503
+    assert not fake.tasks and not fake.events
+    # a create without a key takes no lease
+    assert (await _post(fake)).created
 
 
 # ------------------------------------------------------------ accept + promotion

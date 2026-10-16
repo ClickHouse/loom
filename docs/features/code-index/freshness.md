@@ -91,8 +91,9 @@ curl -fsS -X POST "$LOOM_BASE_URL/v1/code.coverage.watch" \
 - An already-covered commit answers `ready=true`, `emitted=true` and posts the event in
   the same call.
 - One event per (namespace, commit, inbox): its `task_id` is the answer's `event_id`, so
-  a retry never posts twice. When two deliveries race, only the one whose event was stored
-  answers `emitted=true`.
+  a retry never posts twice. Deliveries of one event run one at a time under a lease on
+  that id, so of two racing deliveries only the one that stored the event answers
+  `emitted=true`.
 - `code.coverage.unwatch` (same fields) drops a pending watch; `removed: false` means
   none was live.
 

@@ -143,8 +143,10 @@ async with Agent(org="acme", namespace="public", agent="public-bot", api_key=PUB
     out["task"]["status"]  # "triage", or "todo" when the poster is trusted
 ```
 
-Two creates with one `idempotency_key` store one task, even when they race: each answers with it, and only
-the one that stored it says `created=true`.
+Two creates with one `idempotency_key` store one task, even when they race: they run one at a time under a
+lease on the key, each answers with the task, and only the one that stored it says `created=true`. A create
+that waits more than 10 s for another with its key answers 409 `PRECONDITION_FAILED`, and 503 when the lease
+store (Keeper) does not answer; retry either.
 
 `namespace` is the poster's own; the first argument names the inbox. `create` also takes `priority` (default 3),
 `deadline`, `not_before`, `origin` and `parent_task_id`. A task with `not_before` is `todo` but hidden from `pull`

@@ -8,10 +8,10 @@ inbox, so `/v1/task/watch`, `task.updates` and the inbox's signed webhook
 carry it like any other task event.
 
 Exactly once: the event's `task_id` is derived from (org, namespace, commit,
-inbox), and the delivery checks for that id before inserting. A crash between
-the event insert and the watch's delivered version leaves a pending watch
-whose event already exists; the next pass writes the delivered version and
-emits nothing.
+inbox), and the delivery holds a lease on that id while it checks for the
+event and inserts it. A crash between the event insert and the watch's
+delivered version leaves a pending watch whose event already exists; the next
+pass writes the delivered version and emits nothing.
 """
 
 from __future__ import annotations
@@ -26,8 +26,10 @@ from typing import Any
 from server.code.domain.coverage_watch import CoverageWatch
 from server.code.domain.index.state import IndexState
 from server.code.store import coverage_watches as repo
+from server.core import leases
 from server.core.datetimes import naive_utc_now
-from server.tasks.app.inboxes import erasure_generation, next_version, server_version
+from server.core.errors import PreconditionFailedError
+from server.tasks.app.inboxes import next_version, server_version
 
 log = logging.getLogger(__name__)
 
@@ -137,22 +139,20 @@ async def deliver(watch: CoverageWatch, coverage: dict[str, Any]) -> tuple[bool,
     org, inbox = watch.org, watch.inbox
     task_id = repo.event_id(org, watch.namespace, watch.commit_sha, inbox)
     emitted = False
-    if not await repo.ready_event_exists(org, inbox, task_id):
-        seq = await server_version()
-        # Racing deliveries share the token, even two racing first watches,
-        # so when the other one posted first ClickHouse dropped ours: the
-        # stored seq is then not ours. ClickHouse keeps a token after DELETE,
-        # so the org's erasure generation is in it: a new watch after an
-        # erasure must not match the erased one's event.
-        token = f"{task_id}:erased:{await erasure_generation(org)}"
-        row = _event_row(watch, task_id, tier_summary(coverage), seq)
-        await repo.insert_ready_event(row, token=token)
-        emitted = await repo.ready_event_seq(org, inbox, task_id) == seq
-        if emitted:
-            task_wakeups.notify(
-                task_wakeups.inbox_key(org, inbox),
-                task_wakeups.poster_key(org, watch.created_by),
-            )
+    # Deliveries of one event run one at a time across replicas, from the
+    # check to the insert, so a racing one finds the event and posts nothing.
+    async with leases.holding(f"code.coverage.ready/{task_id}", ttl_s=60, wait_s=10) as held:
+        if not held:
+            raise PreconditionFailedError("another delivery of this ready event is still running")
+        if not await repo.ready_event_exists(org, inbox, task_id):
+            row = _event_row(watch, task_id, tier_summary(coverage), await server_version())
+            await repo.insert_ready_event(row)
+            emitted = True
+    if emitted:
+        task_wakeups.notify(
+            task_wakeups.inbox_key(org, inbox),
+            task_wakeups.poster_key(org, watch.created_by),
+        )
     delivered = next_watch_version(watch, delivered_at=naive_utc_now())
     await repo.insert_watch_version(delivered)
     return emitted, delivered
