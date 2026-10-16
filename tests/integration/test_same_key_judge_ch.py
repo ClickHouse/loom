@@ -1380,6 +1380,33 @@ async def test_a_revision_whose_links_fail_to_write_still_holds_its_successor(
     assert await _listed(org, "favourite_city", {"london", "rome"}) == {"london", "rome"}
 
 
+async def test_a_replay_inserting_the_same_graph_rows_again_lands_them_once(ch, org) -> None:
+    from server.memory.app.projections import entity_triple_row, graph_insert_settings
+
+    now = naive_utc_now()
+    row = entity_triple_row(
+        org,
+        NS,
+        "user",
+        "lives_in",
+        "paris",
+        provenance="extracted",
+        confidence=1.0,
+        adapter_name="t",
+        last_seen=now.replace(microsecond=0),
+        seen_at=now,
+    )
+    settings = graph_insert_settings("entity_triples", wait=True, dedup_token=f"replay:{org}")
+    for _ in range(2):
+        await ch.insert("loom.entity_triples", [row], settings=settings)
+    (got,) = await ch.query_all(
+        "SELECT count() AS n FROM loom.entity_triples WHERE org = {org:String}"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert got["n"] == 1
+
+
 async def test_a_replayed_insert_names_its_triples_as_the_write_resolved_them(
     ch, org, monkeypatch
 ) -> None:

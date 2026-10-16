@@ -252,6 +252,12 @@ async def test_async_batches_deduplicate_through_the_async_switch(
     assert s["insert_deduplication_token"] and "insert_deduplicate" not in s
 
 
+def test_a_token_the_caller_set_is_kept() -> None:
+    # A replay names its batch itself, so a second attempt is dropped as a repeat.
+    out = ch_writes.dedup_settings("nonce", {"insert_deduplication_token": "replay:t"})
+    assert out["insert_deduplication_token"] == "replay:t" and out["insert_deduplicate"] == 1
+
+
 def test_token_is_stable_for_a_batch_and_distinct_across_nonces() -> None:
     rows = [{"a": 1, "v": [0.1] * 1536}, {"a": 2, "v": [0.2] * 1536}]
     t1 = ch_writes.insert_dedup_token("loom.t", ["a", "v"], rows, "n1")
