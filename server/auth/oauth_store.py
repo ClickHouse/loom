@@ -169,9 +169,14 @@ def _device(r: dict[str, Any]) -> Device:
     return cast(Device, d | {"upstream_refresh": unseal(UPSTREAM_PURPOSE, r["upstream_refresh"])})
 
 
+# Not main's 'refresh': a build without sessions would find this build's
+# refresh tokens under its own type and take a spent one as live.
+_REFRESH_TYPE = "session_refresh"
+
+
 def _refresh_row(rid: str, g: Grant) -> dict[str, Any]:
     return {
-        "record_type": "refresh",
+        "record_type": _REFRESH_TYPE,
         "id": rid,
         "client_id": g["client_id"],
         "subject": g["subject"],
@@ -313,8 +318,8 @@ class ClickHouseStore:
                 f"""SELECT client_id, subject, org, namespaces, roles, expires_at, family,
                            generation, upstream_refresh
                     FROM {_T} FINAL
-                    WHERE record_type = 'refresh' AND id = {{id:String}} LIMIT 1""",
-                params={"id": rid},
+                    WHERE record_type = {{t:String}} AND id = {{id:String}} LIMIT 1""",
+                params={"t": _REFRESH_TYPE, "id": rid},
             )
         if not row:
             return None
@@ -337,8 +342,6 @@ class ClickHouseStore:
         grant = await self._refresh_grant(rid)
         if grant is None or grant["exp"] < int(time.time()) or grant["client_id"] != client_id:
             return None
-        if not grant["family"]:
-            return None  # issued before sessions had families: its owner signs in again
         key = f"family:{grant['family']}"
         generation = grant.get("generation", 0)
         spending = f"{generation}:spending:{int(time.time())}:{claims.nonce()}"

@@ -71,6 +71,37 @@ async def _all(*calls: Any) -> list[Any]:
     return await asyncio.gather(*calls, return_exceptions=True)
 
 
+async def test_refresh_tokens_are_not_shared_with_a_build_without_sessions(store: Any) -> None:
+    """The previous build reads `record_type = 'refresh'`: it never finds this
+    build's tokens (it would take a spent one as live), and this build never
+    rotates one it issued (no session could end it)."""
+    from server.core.ch import get_client
+
+    ch = get_client()
+    ours, theirs = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
+    await store.save_refresh(ours, _grant("loom-mcp"))
+    row = {k: v for k, v in _grant("loom-mcp").items() if k in ("client_id", "subject", "org")}
+    await ch.insert(
+        "loom.oauth_state",
+        [
+            {
+                "record_type": "refresh",
+                "id": token_id(theirs),
+                **row,
+                "expires_at": int(time.time()) + 600,
+                "version": time.time_ns(),
+            }
+        ],
+    )
+    previous_build_sees = await ch.query_one(
+        "SELECT count() AS n FROM loom.oauth_state FINAL "
+        "WHERE record_type = 'refresh' AND id = {id:String} AND consumed = 0",
+        params={"id": token_id(ours)},
+    )
+    assert previous_build_sees["n"] == 0
+    assert await store.take_refresh(theirs, "loom-mcp") is None
+
+
 async def test_a_refresh_token_presented_five_times_at_once_is_spent_once(store: Any) -> None:
     token = secrets.token_urlsafe(32)
     await store.save_refresh(token, _grant("loom-cli"))

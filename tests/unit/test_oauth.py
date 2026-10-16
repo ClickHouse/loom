@@ -493,26 +493,6 @@ def test_a_non_utf8_form_body_is_a_400_not_a_500(path: str) -> None:
     assert r.json()["error"] == "invalid_request"
 
 
-def test_a_refresh_token_from_before_session_families_signs_in_again() -> None:
-    """A grant written before sessions had a family could not be ended by
-    logout or a replay, so it is not rotated: its owner signs in again."""
-    rt = "legacy-refresh-token"
-    oauth.store.refresh[oauth.token_id(rt)] = {
-        "client_id": "loom-test",
-        "redirect_uri": "",
-        "code_challenge": "",
-        "subject": "alice@example.com",
-        "org": "test-org",
-        "namespaces": ["alice-ns"],
-        "roles": ["writer"],
-        "exp": int(time.time()) + 3600,
-        "family": "",
-        "upstream_refresh": "",
-    }
-    r = _refresh(_client(), rt)
-    assert r.status_code == 400 and r.json()["error"] == "invalid_grant"
-
-
 def test_a_code_spend_lost_to_an_undone_change_is_a_retry_not_a_replay(monkeypatch) -> None:
     from server.auth import claims
 
