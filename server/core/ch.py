@@ -33,6 +33,7 @@ from server.core.ch_errors import (
     REPLICA_BOUND_RETRIES,
     WIDTH_MISMATCH_CODE,
     error_code,
+    error_line,
     is_replica_bound_error,
     is_transient_network_error,
     is_unknown_quantized_setting,
@@ -505,7 +506,7 @@ async def _turn_off_unsafe_condition_cache(client: AsyncClient) -> None:
             replicas = await versions("SELECT version()")  # one server, no cluster
         oldest = min(replicas, key=version_key)
     except Exception as e:  # noqa: BLE001 — unknown replicas: assume an old one is among them
-        log.info("replica versions unknown (%s): use_query_condition_cache = 0", str(e)[:120])
+        log.info("replica versions unknown (%s): use_query_condition_cache = 0", error_line(e, 120))
         client.set_client_setting("use_query_condition_cache", 0)
         return
     if condition_cache_unsafe(oldest):

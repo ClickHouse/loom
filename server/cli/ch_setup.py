@@ -332,8 +332,9 @@ def _ensure_reader(ch: Any, user: str, reader: str) -> bool:
         return False
     if problem == PROFILE_DIFFERS:
         print(
-            f"  recreate Loom (`{RECREATE}`; `make dev` from a checkout) so its sessions "
-            "use the new caps: if a cap was lowered, caller-shaped reads fail until then"
+            f"  recreate Loom (`{RECREATE}`; `make dev` from a checkout; the installer does "
+            "that itself) so its sessions use the new caps: if a cap was lowered, "
+            "caller-shaped reads fail until then"
         )
     return True
 
