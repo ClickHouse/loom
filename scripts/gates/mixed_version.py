@@ -400,16 +400,18 @@ class Scenario:
         """`a` writes a value, `b` replaces it, then `a` changes only its tags: the
         value `b` wrote is the one both builds read (a build may keep its own record
         of the key, but never write that back over the other's newer write)."""
-        key = f"city/{a}"
-        self.call(a, "memory.set", {**self.ident, "memory_key": key, "value": "Paris"})
-        self.call(b, "memory.set", {**self.ident, "memory_key": key, "value": "Berlin"})
+        # Values of their own per direction: one direction's value would otherwise read as
+        # a restatement of the other's, under another key, and merge.
+        key, before, after = f"city/{a}", f"Paris, by {a}", f"Berlin, by {b}"
+        self.call(a, "memory.set", {**self.ident, "memory_key": key, "value": before})
+        self.call(b, "memory.set", {**self.ident, "memory_key": key, "value": after})
         mid = self.get(a, key)["memory_id"]
         self.call(
             a, "memory.update_by_id", {"org": self.ident["org"], "memory_id": mid, "tags": ["t"]}
         )
         seen = {label: self.get(label, key).get("value") for label in (a, b)}
         self.check(
-            seen == {a: "Berlin", b: "Berlin"},
+            seen == {a: after, b: after},
             f"{b}'s value survives {a}'s tags-only update ({seen})",
         )
 
@@ -560,7 +562,15 @@ class Scenario:
             holders = [k for k, s in electing.items() if s.leader()[0]]
             steady = steady + 1 if holders == ["N+1"] else 0
             time.sleep(2)
+        # A build learns of a newer one at its next read of the instance rows, which can
+        # come after N+1 took a free lease: give the older ones until the deadline.
+        older = [k for k in ("N-1", "N") if k in electing]
         reasons = {k: s.leader()[1] for k, s in electing.items()}
+        while time.monotonic() < deadline and not all(
+            "to a newer build" in reasons[k] for k in older
+        ):
+            time.sleep(2)
+            reasons = {k: s.leader()[1] for k, s in electing.items()}
         self.check(
             holders == ["N+1"],
             f"one process of the newest build runs the workers ({holders}; {reasons})",
