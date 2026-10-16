@@ -370,8 +370,7 @@ def _refresh(profile: str, refused: str, server: str | None) -> dict[str, Any]:
         "client_id": CLIENT_ID,
     }
     with _server(entry["server"]) as client:
-        marked = bool(entry.get("marked"))
-        endpoint = _endpoints(client, signed_in=marked)["token_endpoint"]
+        endpoint = _endpoints(client, signed_in=True)["token_endpoint"]
         try:
             r = client.post(endpoint, data=form, timeout=_REFRESH_TIMEOUT_S)
         except (httpx.ConnectError, httpx.ConnectTimeout):
@@ -379,6 +378,7 @@ def _refresh(profile: str, refused: str, server: str | None) -> dict[str, Any]:
             # (A lost answer cannot be asked again: the server spent the token,
             # and presenting it twice ends the session.)
             r = client.post(endpoint, data=form, timeout=_REFRESH_TIMEOUT_S)
+    marked = bool(entry.get("marked"))
     if marked and 400 <= r.status_code < 500 and _SESSIONS_HEADER not in r.headers:
         raise BackendUnavailable(
             f"{entry['server']} answered from a build that predates this session; retry"

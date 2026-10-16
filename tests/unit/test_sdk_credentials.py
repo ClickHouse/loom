@@ -499,9 +499,11 @@ def test_a_previous_build_s_refusal_keeps_the_session(server, answer: httpx.Resp
     assert credentials.access_token(refused=refused) == "a2"  # this build's answer
 
 
-def test_a_previous_build_without_sign_in_keeps_the_session(server) -> None:
+@pytest.mark.parametrize("marks", [True, False])  # a header-stripping proxy or not
+def test_a_previous_build_without_sign_in_keeps_the_session(server, marks: bool) -> None:
     from loom.errors import BackendUnavailable
 
+    server.marks = marks
     credentials.login(_SERVER, open_browser=False, echo=lambda _: None)
     server.queued["/.well-known/oauth-authorization-server"] = [
         httpx.Response(404),  # no sign-in
