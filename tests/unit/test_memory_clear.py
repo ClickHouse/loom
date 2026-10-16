@@ -21,7 +21,13 @@ def clear(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """The scope's live rows, the tombstones written and the locked count."""
     from server.memory import store as memory_repo
 
-    seen: dict[str, Any] = {"live": [], "locked": 0, "written": [], "scope": None, "skip": None}
+    from server.memory.app import temporal_publisher as publisher
+    from server.memory.store import temporal as temporal_store
+
+    seen: dict[str, Any] = {
+        "live": [], "locked": 0, "written": [], "scope": None, "skip": None,
+        "journal": [], "published": [],
+    }  # fmt: skip
 
     async def _live(**k: Any) -> list:
         seen["scope"] = (k["user_id"], k["agent"])
@@ -43,6 +49,16 @@ def clear(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(memory_repo, "memory_rows_by_identity_keys", _heads)
     monkeypatch.setattr(memory_repo, "write_versions_of_rows", _write)
     monkeypatch.setattr(memory_repo, "locked_in_scope", _locked)
+
+    async def _journal_only(*_a: Any, **_k: Any) -> list:
+        return seen["journal"]
+
+    async def _publish(org: str, ns: str, items: list, **_k: Any) -> list:
+        seen["published"].extend(items)
+        return [type("R", (), {"commit_seq": 7})() for _ in items]
+
+    monkeypatch.setattr(temporal_store, "journal_only_identities", _journal_only)
+    monkeypatch.setattr(publisher, "publish_amendments", _publish)
     return seen
 
 
@@ -57,7 +73,7 @@ async def test_clear_writes_a_versioned_tombstone_for_each_listed_row(clear) -> 
     )
     # The rows written are the rows the journal retracts: one funnel for both.
     assert clear["written"] == ["k1", "k2"] and clear["scope"] == ("alice", None)
-    affected = {"loom.memory": 2, "loom.memory_embeddings": 2}
+    affected = {"loom.memory": 2, "loom.memory_embeddings": 2, "loom.memory_temporal_commits": 0}
     assert (out.total, out.rows_affected, out.locked_skipped) == (4, affected, 1)
     # A row locked since it was listed is skipped; a lapsed lock is not a lock.
     skip = clear["skip"]
@@ -136,3 +152,22 @@ async def test_clear_zero_rows_is_well_formed(clear) -> None:
         MemoryClearInput(org="o", namespace="ns", user_id="ghost", confirm_subject="ghost")
     )
     assert out.total == 0 and clear["written"] == []
+
+
+@pytest.mark.asyncio
+async def test_clear_retracts_a_key_only_the_journal_holds_unless_a_lock_keeps_it(clear) -> None:
+    from server.memory.api.models_crud import MemoryClearInput
+    from server.memory.app.handlers import handle_memory_clear
+    from server.memory.domain import temporal_model as tm
+
+    ident = ("a", "alice", "-", "plan")
+    clear["journal"] = [(ident, "00000000-0000-0000-0000-000000000009")]
+    out = await handle_memory_clear(
+        MemoryClearInput(org="o", namespace="n", user_id="alice", confirm_subject="alice")
+    )
+    assert out.rows_affected["loom.memory_temporal_commits"] == 1
+    ((got, _mid, build),) = clear["published"]
+    plan = tm.Assertion("p1", "p1", "launch")
+    assert got == ident and build([plan]).retired == ("p1",)
+    locked = tm.Assertion("p2", "p2", "launch", lock_mode="read_only")
+    assert build([locked]).empty

@@ -811,7 +811,11 @@ async def handle_memory_clear(input: MemoryClearInput) -> MemoryClearOutput:
             list(heads.values()), _tombstone, skip=lambda row: bool(_lock.effective_mode(row))
         )
         cleared, mirrored = cleared + n, mirrored + m
-    counts = {"loom.memory": cleared, "loom.memory_embeddings": mirrored}
+    counts = {
+        "loom.memory": cleared,
+        "loom.memory_embeddings": mirrored,
+        "loom.memory_temporal_commits": await _clear_journal_only(input),
+    }
     locked_skipped = await memory_repo.locked_in_scope(
         org=input.org, namespace=input.namespace, user_id=input.user_id, agent=input.agent
     )
@@ -821,6 +825,33 @@ async def handle_memory_clear(input: MemoryClearInput) -> MemoryClearOutput:
         total=sum(counts.values()),
         locked_skipped=locked_skipped,
     )
+
+
+async def _clear_journal_only(input: MemoryClearInput) -> int:
+    """Retract the scope's keys that only the journal holds (a plan not yet due has no
+    current row to tombstone), save one a lock in force keeps. Returns the commits."""
+    from server.memory.app import temporal_publisher as publisher
+    from server.memory.domain import temporal_model as tm
+    from server.memory.store import temporal as temporal_store
+
+    def _retract(served: list[tm.Assertion]) -> tm.Amendment:
+        if publisher._locked_against(served, "delete", datetime.now(UTC)):
+            return tm.Amendment("retract")
+        return tm.retract(served)
+
+    idents = await temporal_store.journal_only_identities(
+        input.org, input.namespace, user_id=input.user_id, agent=input.agent
+    )
+    n = 0
+    for i in range(0, len(idents), _CLEAR_CHUNK):
+        receipts = await publisher.publish_amendments(
+            input.org,
+            input.namespace,
+            [(ident, memory_id, _retract) for ident, memory_id in idents[i : i + _CLEAR_CHUNK]],
+            operation="memory.clear",
+        )
+        n += sum(1 for r in receipts if r.commit_seq)
+    return n
 
 
 async def handle_memory_touch(input: MemoryTouchInput) -> MemoryTouchOutput:

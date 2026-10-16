@@ -27,6 +27,7 @@ from server.memory.app.embedder_calibration import (
     resolve_calibration,
 )
 from server.memory.app.search.payload import _apply_bodies
+from server.memory.app.search_tag_filter import stamp_row_tags
 from server.memory.domain.excerpt import build_excerpt
 from server.memory.domain.fact_quality import drop_junk_and_restatements
 from server.memory.domain.memory_types import HIDDEN_FROM_UNFILTERED_SEARCH, is_searchable_type
@@ -203,7 +204,9 @@ def _hit(
     )
     if input.include_tags:
         hit.tags = list(a.tags)
-    return hit
+    # The tags the assertion carried at the cutoff, not the row's today, for every
+    # later tag check (the ask's belt).
+    return stamp_row_tags(hit, a.tags)
 
 
 async def _shared_hits(

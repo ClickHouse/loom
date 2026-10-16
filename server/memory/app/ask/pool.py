@@ -374,9 +374,12 @@ async def _order_pool(run: _AskRun) -> None:
     from server.core import request_work as _rw
 
     _rw.mark_stage("retrieval")
-    run.ranked, run.pending_evidence_n = await _pending_evidence_stage(
-        search_input, question, run.ranked
-    )
+    # A historical ask reads only what was admitted at its cutoff: today's pending
+    # turns are not evidence of it.
+    if not search_input.temporal_requested():
+        run.ranked, run.pending_evidence_n = await _pending_evidence_stage(
+            search_input, question, run.ranked
+        )
     _rw.mark_stage("pending")
     if run.recency_weight > 0 and run.ranked:
         run.ranked = _recency_rerank(run.ranked, run.recency_weight)

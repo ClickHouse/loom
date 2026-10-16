@@ -77,3 +77,30 @@ async def test_a_scoped_tokens_historical_search_stops_at_the_first_confident_na
     except Exception:  # noqa: BLE001 — only which namespaces were read is asserted
         pass
     assert read == ["n3", "n1"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("historical", [True, False])
+async def test_a_historical_asks_pool_takes_no_pending_turns(
+    monkeypatch: pytest.MonkeyPatch, historical: bool
+) -> None:
+    from types import SimpleNamespace
+
+    from server.memory.app.ask import pool
+
+    async def _pending(search_input: Any, question: str, ranked: list) -> tuple[list, int]:
+        return [*ranked, "a turn queued after the cutoff"], 1
+
+    monkeypatch.setattr(pool, "_pending_evidence_stage", _pending)
+    asked = MemorySearchInput(
+        org="o", namespace="n", agent="*", query="q",
+        known_as_of=datetime(2026, 1, 1, tzinfo=UTC) if historical else None,
+    )  # fmt: skip
+    run = SimpleNamespace(
+        search_input=asked, question="q", settings=None, ranked=[], recency_weight=0,
+        window=8, target_k=8, retrieval=None, pending_evidence_n=0,
+    )  # fmt: skip
+    await pool._order_pool(run)
+    assert (run.ranked, run.pending_evidence_n) == (
+        ([], 0) if historical else (["a turn queued after the cutoff"], 1)
+    )

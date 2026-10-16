@@ -942,6 +942,38 @@ async def restated_claims(
     }
 
 
+async def row_versions(
+    org: str,
+    namespace: str,
+    keys: Sequence[tuple[str, str, str, str]],
+    *,
+    ch: _CHClient | None = None,
+) -> dict[tuple[str, str, str, str], int]:
+    """Each identity's highest loom.memory version, landed or not yet merged."""
+    if not keys:
+        return {}
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        "SELECT agent, user_id, session_id, memory_key, max(version) AS v FROM loom.memory "
+        "WHERE org = {org:String} AND namespace = {ns:String} "
+        "AND memory_key IN {mk:Array(String)} "
+        f"AND {_IDENT} IN {_KEYS} "
+        "GROUP BY agent, user_id, session_id, memory_key",
+        params={
+            "org": org,
+            "ns": namespace,
+            "mk": sorted({k[3] for k in keys}),
+            "keys": [tuple(k) for k in keys],
+        },
+    )
+    return {
+        (str(r["agent"]), str(r["user_id"]), str(r["session_id"]), str(r["memory_key"])): int(
+            r["v"]
+        )
+        for r in rows
+    }
+
+
 async def newest_row_versions(
     org: str,
     namespace: str,
@@ -1015,6 +1047,45 @@ async def journal_keys(org: str, namespace: str, *, ch: _CHClient | None = None)
         params={"org": org, "ns": namespace},
     )
     return [str(r["memory_key"]) for r in rows]
+
+
+async def journal_only_identities(
+    org: str,
+    namespace: str,
+    *,
+    user_id: str | None = None,
+    agent: str | None = None,
+    ch: _CHClient | None = None,
+) -> list[tuple[tuple[str, str, str, str], str]]:
+    """The (identity, memory_id) of every key of the scope the journal has a commit for
+    and loom.memory serves no live row of (a plan an amendment made, not yet due):
+    what `memory.clear` retracts in the journal itself."""
+    ch = ch or _default_client()
+    where = ["org = {org:String}", "namespace = {ns:String}"]
+    params: dict[str, Any] = {"org": org, "ns": namespace}
+    if user_id is not None:
+        where.append("user_id = {uid:String}")
+        params["uid"] = user_id
+    if agent is not None:
+        where.append("agent = {agent:String}")
+        params["agent"] = agent
+    scope = " AND ".join(where)
+    rows = await ch.query_all(
+        "SELECT agent, user_id, session_id, memory_key, "
+        "toString(argMax(memory_id, commit_seq)) AS memory_id "
+        f"FROM {COMMITS} WHERE {scope} "
+        f"AND {_IDENT} NOT IN (SELECT {_IDENT} FROM loom.memory FINAL "
+        f"WHERE {scope} AND tombstoned_at IS NULL) "
+        "GROUP BY agent, user_id, session_id, memory_key",
+        params=params,
+    )
+    return [
+        (
+            (str(r["agent"]), str(r["user_id"]), str(r["session_id"]), str(r["memory_key"])),
+            str(r["memory_id"]),
+        )
+        for r in rows
+    ]
 
 
 async def seeded_after(

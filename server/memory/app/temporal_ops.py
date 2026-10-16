@@ -454,18 +454,20 @@ _ASSERTION_IDS = tm.IDENTITY_FIELDS | {"embed_input_sha256"}
 async def handle_memory_amend(input: MemoryAmendInput) -> MemoryAmendOutput:
     """Publish one bounded change, then bring the current-state row in line with
     what now applies. The publication is the change; the row is a projection."""
-    head = await _amend_guards(input)
-    build = _amendment_builder(input, _new_assertion(input, head))
-    # One id for the journal and the current-state row, minted here for a new key.
-    memory_id = str(getattr(head, "memory_id", "") or uuid.uuid4())
-    receipt = await publisher.publish_amendment(
-        input.org,
-        input.namespace,
-        (input.agent, input.user_id, input.session_id, input.memory_key),
-        memory_id,
-        build,
-        operation="memory.amend",
-    )
+    ident = (input.agent, input.user_id, input.session_id, input.memory_key)
+    # A retry of a committed amendment is answered from its commit before the guards
+    # meant for a new one (a lock set since) refuse it.
+    receipt = await publisher.durable_replay(input.org, input.namespace, ident)
+    if receipt is not None:
+        memory_id = receipt.retried_memory_id
+    else:
+        head = await _amend_guards(input)
+        build = _amendment_builder(input, _new_assertion(input, head))
+        # One id for the journal and the current-state row, minted here for a new key.
+        memory_id = str(getattr(head, "memory_id", "") or uuid.uuid4())
+        receipt = await publisher.publish_amendment(
+            input.org, input.namespace, ident, memory_id, build, operation="memory.amend"
+        )
     out = MemoryAmendOutput(memory_key=input.memory_key)
     if receipt is None:
         return out

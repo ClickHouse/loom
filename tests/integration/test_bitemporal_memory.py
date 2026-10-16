@@ -1490,3 +1490,65 @@ async def test_an_amendment_after_late_evidence_reaches_the_current_row(
             "memory.amend", {"memory_key": "city", "change_kind": "correct", "value": "Berlin"}
         )
         assert (await a.call("memory.get", {"memory_key": "city"}))["value"] == "Berlin"
+
+
+async def test_a_durable_amend_retry_is_answered_before_a_later_lock_refuses_it(
+    control_plane_url, mint_test_token
+) -> None:
+    a, _ = await _agent(control_plane_url, mint_test_token, "amend-retry")
+    async with a:
+        await a.call("memory.set", {"memory_key": "m", "value": "A"})
+        key = f"r-{uuid.uuid4().hex}"
+        body = {"memory_key": "m", "change_kind": "correct", "value": "B"}
+        first = await a.call("memory.amend", body, idempotency_key=key)
+        await a.call("memory.lock", {"memory_key": "m", "mode": "read_only", "reason": "audit"})
+        ch = await _ch()
+        try:
+            await _delete(ch, "DELETE FROM loom.idempotency WHERE 1")  # the replay cache expired
+        finally:
+            await ch.disconnect()
+        again = await a.call("memory.amend", body, idempotency_key=key)
+        assert again["commit_seq"] == first["commit_seq"]  # its receipt, not a 423
+        got = await a.call("memory.get", {"memory_key": "m"})
+        assert (got["value"], got["lock_mode"]) == ("B", "read_only")
+
+
+async def test_clear_retracts_a_key_only_the_journal_holds(
+    control_plane_url, mint_test_token
+) -> None:
+    a, _ = await _agent(control_plane_url, mint_test_token, "clear-plan")
+    later = datetime.now(UTC) + timedelta(days=30)
+    async with a:
+        await a.call(
+            "memory.amend",
+            {"memory_key": "plan", "user_id": "u5", "change_kind": "transition",
+             "value": "launch", "effective_at": later.isoformat()},
+        )  # fmt: skip
+        due = {"memory_key": "plan", "user_id": "u5"}
+        due["valid_as_of"] = (later + timedelta(days=1)).isoformat()
+        assert (await a.call("memory.get", due))["value"] == "launch"
+        out = await a.call("memory.clear", {"user_id": "u5", "confirm_subject": "u5"})
+        assert out["rows_affected"]["loom.memory_temporal_commits"] == 1
+        assert (await a.call("memory.get", due))["found"] is False
+
+
+async def test_a_historical_ask_filters_by_the_tags_recorded_at_its_cutoff(
+    control_plane_url, mint_test_token
+) -> None:
+    a, _ = await _agent(control_plane_url, mint_test_token, "ask-tags")
+    async with a:
+        await a.call(
+            "memory.set",
+            {"memory_key": "rel", "value": "the release ships on Monday", "tags": ["past"]},
+        )
+        k = await _now_after()
+        await a.call(
+            "memory.set",
+            {"memory_key": "rel", "value": "the release ships on Monday", "tags": ["present"]},
+        )
+        out = await a.call(
+            "memory.ask",
+            {"query": "the release ships on Monday", "known_as_of": k, "tags": ["past"],
+             "allow_synthesis": False},
+        )  # fmt: skip
+        assert any(r["memory_key"] == "rel" for r in out["results"])

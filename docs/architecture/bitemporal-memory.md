@@ -128,8 +128,10 @@ the `loom.memory` row (the current-state projection) are written after it.
   longer serves is refused, never a re-assertion.
 - Nothing takes rows out of service in place: `memory.clear` and `memory.reject`
   write versioned tombstone / rejected rows through the funnel, so the journal
-  retracts exactly the rows removed. Usage counters stay operational and
-  unjournaled.
+  retracts exactly the rows removed. A key only the journal holds (a plan an
+  amendment made, not yet due, with no current row) is retracted by `memory.clear`
+  in the journal itself, unless a lock in force keeps it. Usage counters stay
+  operational and unjournaled.
 - **Allocation:** the batch's last sequence and its recording time are recorded
   durably (the `published` watermark row) before its commits are inserted; a write
   whose record fails is refused. A sequence or recording time is therefore never

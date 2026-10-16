@@ -472,6 +472,10 @@ async def publish(
                     continue
                 if seq != batch.seq and await _touched(batch, seq, ch):
                     continue
+                # A projection lands rows without a commit: one stamped above the floor a
+                # change was planned on would outrank the row this batch writes.
+                if await _floor_moved(batch, ch):
+                    continue
                 # Stamp, then fence: an erasure requested after the stamp has a later
                 # request time than every commit of the batch, so reads never serve
                 # the batch even if its withdrawal below fails.
@@ -569,6 +573,8 @@ class _Batch:
     commits: list[dict[str, Any]] = field(default_factory=list)
     projection: list[dict[str, Any]] = field(default_factory=list)
     receipts: list[Receipt] = field(default_factory=list)
+    # Per key, the newest loom.memory version the plan stamped its rows above.
+    floor: dict[Ident, int] = field(default_factory=dict)
     # Keys a past-only change re-cut the current claim of (a plan bounding it): its
     # row is not the write's, so it is reconciled once the batch is published.
     refresh: list[Ident] = field(default_factory=list)
@@ -620,6 +626,7 @@ async def _plan(
         else int(committed_v.get(ident, 0))
         for ident in keys
     }
+    b.floor = dict(floor)
     priors = await _retried_commits(b, ch)
     own = {ident: {str(c["commit_id"]) for c in cs} for ident, cs in priors.items()}
     for change in changes:
@@ -1300,6 +1307,13 @@ def _retry_past_only(
 def _no_commit(ns: str, ident: Ident, at: datetime, why: str) -> Receipt:
     log.debug("temporal: %s/%r left out (%s)", ns, ident, why)
     return Receipt(ns, ident, "", 0, at, "", left_out=why)
+
+
+async def _floor_moved(b: _Batch, ch: _CHClient) -> bool:
+    """Has a loom.memory row of one of the batch's keys landed above the version floor
+    the batch was planned on (a projection, which moves no sequence)?"""
+    now = await store.row_versions(b.org, b.ns, b.keys, ch=ch)
+    return any(v > b.floor.get(ident, 0) for ident, v in now.items())
 
 
 async def _touched(b: _Batch, head: int, ch: _CHClient) -> bool:

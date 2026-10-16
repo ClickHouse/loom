@@ -124,6 +124,9 @@ class Journal:
     async def none(self, *_a, **_k):
         return [] if not _k.get("one") else None
 
+    async def landed(self, *_a, **_k):
+        return {}
+
     async def erasures(self, *_a, **_k):
         return 0, self.erasures_late
 
@@ -170,6 +173,7 @@ def journal(monkeypatch: pytest.MonkeyPatch) -> Journal:
         "commits_for_idempotency_key": j.idem,
         "last_commits": j.parents,
         "newest_row_versions": j.row_versions,
+        "row_versions": j.landed,
         "commits_between": j.between,
         "other_commits_at": j.others,
         "withdraw_commits": j.withdraw,
@@ -402,6 +406,37 @@ def test_a_commit_to_the_same_key_between_plan_and_lock_replans(
     run(pub.publish_rows([mrow('"B"')]))
     assert calls["n"] >= 3  # planned twice
     assert [c["commit_seq"] for c in journal.commits] == [1, 2, 3]
+
+
+def test_a_projection_landing_between_plan_and_lock_replans_the_write(
+    journal: Journal, monkeypatch
+) -> None:
+    # C is drawn, then another write's projection lands a later version of k without
+    # moving the sequence: C is planned again and, drawn earlier, left out.
+    run(pub.publish_rows([mrow('"A"')]))
+    c = mrow('"C"')
+    landed: dict[str, Any] = {}
+    real_head = journal.head
+    calls = {"n": 0}
+
+    async def head(*a, **k):
+        calls["n"] += 1
+        if calls["n"] == 2:  # under the lock
+            landed.update(mrow('"B"', version=c["version"] + 5))
+        return await real_head(*a, **k)
+
+    async def heads(*_a, **_k):
+        return [dict(landed)] if landed else []
+
+    async def versions(*_a, **_k):
+        return {("a", "-", "-", "k"): landed["version"]} if landed else {}
+
+    monkeypatch.setattr(store, "head", head)
+    monkeypatch.setattr(store, "memory_heads", heads)
+    monkeypatch.setattr(store, "row_versions", versions)
+    assert run(pub.publish_rows([c])) == []  # superseded: no row, no commit
+    assert calls["n"] >= 3  # planned twice
+    assert len(journal.commits) == 1
 
 
 def test_a_write_begun_before_an_erasure_is_fenced(journal: Journal) -> None:
