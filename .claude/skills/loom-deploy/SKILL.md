@@ -25,15 +25,15 @@ LOOM_COLOUR=blue LOOM_COLOUR_PORT=7781 docker compose --env-file .env -f dev/doc
 ## 2. Swap
 
 ```bash
-./redeploy.sh            # builds and boots the idle colour, waits for status=ok and schema.pending=[], swaps the proxy, stops the old colour
+./redeploy.sh            # builds and boots the idle colour, waits for status=ok, readiness.ready and schema.pending=[], swaps the proxy, stops the old colour
 ```
 
-The script refuses to swap when the new colour is unhealthy, a provider is degraded, or the embedding width does not match; read its last `!!!` line rather than forcing.
+The script refuses to swap when the new colour is unhealthy or not ready, a provider is degraded, or the embedding width does not match; read its last `!!!` line rather than forcing. Both colours serve on the new schema for a moment, which is safe only because every change follows the [rolling-upgrade rules](../../../docs/architecture/rolling-upgrades.md). The workers lease passes between colours; if the script exits before the new colour's workers take over, it restarts the old colour's.
 
 ## 3. After the swap
 
 ```bash
-curl -s localhost:7777/v1/health | jq '{status, build_commit, schema: .schema.pending, providers_degraded}'
+curl -s localhost:7777/v1/health | jq '{status, build_commit, ready: .readiness.ready, schema: .schema.pending, providers_degraded}'
 docker logs --since 5m "loom-$(./redeploy.sh --status | awk '/\(serving\)/ {print $1}')" 2>&1 | grep -iE 'error|traceback' | tail
 ```
 

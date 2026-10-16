@@ -34,6 +34,7 @@ Check each one the diff can reach (see [AGENTS.md](../../../AGENTS.md) for the r
 - **Identity and provenance.** Every new write path sets the identity tuple, stamps `actor` and `source_class` from the token, and leaves a hash-only audit row when it creates or changes memory.
 - **ReplacingMergeTree rows.** A new version row of `loom.memory` / `loom.shared` goes through the builders in `server/memory/store/rows.py`; a new column reaches the builders, every projection feeding them, and `loom.memory_versions` with its view.
 - **Migrations.** Additive, next free number on `main`, no merged file edited, `schemas/schema.sql` regenerated (not hand-edited). A sort-key or partition change follows the rebuild procedure in `docs/development/migrations.md`.
+- **Rolling upgrade.** Build N-1 keeps serving on N's schema: a new column, enum value or wire format is written only once N-1 tolerates it, and no replica-wide state lives outside ClickHouse ([rules](../../../docs/architecture/rolling-upgrades.md#the-rules)).
 - **Erasure.** A table that can hold memory content has a saga step and a census row, or a classified exemption with its reason.
 - **No silent deletion.** No TTL, retention sweep or cleanup on durable memory (`loom.memory`, `loom.shared`, `loom.memory_versions`) that removes memory its writer did not ask to remove. A cache, queue or trace copy may expire but keeps its census row.
 - **Fail closed.** Revocation, grants, idempotency replay (scoped to the caller, after auth) and admin gates refuse when their state is unknown.

@@ -11,7 +11,7 @@ Find the row for the change, read its guide before the first edit, and finish it
 | --- | --- | --- |
 | Wire op (new, renamed, removed field) | [adding-an-operation](../../../docs/development/adding-an-operation.md) | `python -m scripts.codegen.sdk_py_gen`, `.sdk_py_client_gen`, `.sdk_ts_gen`, `.docs_reference`, `.op_reach_census`; unit test + integration test for a read or write path; MCP listing budget if it is listed by default |
 | Table or column | [adding-a-table](../../../docs/development/adding-a-table.md) | migration + `make schema-dump`; RMT row builders; `loom.memory_versions` + its view for a `loom.memory` column; erasure step + census row, or a `NO_MEMORY_CONTENT` / `STEP_ONLY_TABLES` entry with its reason |
-| Migration | [migrations](../../../docs/development/migrations.md) | next free number on current `origin/main`; additive only; `make schema-dump` |
+| Migration | [migrations](../../../docs/development/migrations.md) | next free number on current `origin/main`; additive only; `make schema-dump`; written values N-1 tolerates ([rolling upgrades](../../../docs/architecture/rolling-upgrades.md)), `make test-mixed-version` |
 | Setting | [extending-loom](../../../docs/development/extending-loom.md#add-a-setting) | field in `server/settings/_<area>.py` (models in `_models.py`) with a comment on what it controls and its values; `python -m scripts.codegen.settings_reference`; read as `settings.<field>` |
 | Retire a flag | — | delete the setting, its branch and any request field carrying it; the PR body's changelog entry names it |
 | Worker | [adding-a-worker](../../../docs/development/adding-a-worker.md) | registry row; `set_query_tag`; `LOOM_UPDATE_WORKER_SNAPSHOT=1` for an intended snapshot change |
