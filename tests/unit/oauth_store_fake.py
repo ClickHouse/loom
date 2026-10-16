@@ -52,7 +52,8 @@ class MemoryOAuthStore(ClickHouseStore):
         return self.clients.get(client_id)
 
     async def _save_refresh_grant(self, rid: str, g: Grant) -> None:
-        self.refresh[rid] = {k: v for k, v in g.items() if k != "held"}  # type: ignore[assignment]
+        # The columns the real store keeps: neither the spend held nor a takeover mark.
+        self.refresh[rid] = {k: v for k, v in g.items() if k not in ("held", "taken_over")}  # type: ignore[assignment]
 
     async def _refresh_grant(self, rid: str) -> Grant | None:
         g = self.refresh.get(rid)

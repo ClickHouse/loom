@@ -40,6 +40,7 @@ from server.auth.oauth_store import (
     Device,
     Grant,
     OAuthStore,
+    SessionRetired,
     token_id,
 )
 from server.core.errors import BackendUnavailableError, GrantBusyError
@@ -1326,6 +1327,8 @@ async def _refresh_token_grant(f: dict[str, str]) -> dict[str, Any]:
             grant = await store.take_refresh(refresh_token, client_id)  # rotates
     except CodeReplayed as e:
         raise await end_replayed_session(e, "refresh token") from None
+    except SessionRetired:
+        raise _invalid_grant("this session has ended; sign in again") from None
     except TimeoutError:  # the spend, if it landed, was undone (claims.swap)
         raise _unavailable() from None
     if grant is None:
@@ -1533,6 +1536,8 @@ async def revoke_token(request: Request) -> Response:
     reason = "logout"
     try:
         grant = spent = await store.take_refresh(token_value, client_id)
+    except SessionRetired:
+        return Response(status_code=200)  # a logout asked again: ended already
     except CodeReplayed as e:
         # Spent already: a logout retried, or an old copy. Still a logout,
         # but the audit keeps the difference.

@@ -1434,7 +1434,7 @@ def test_a_refresh_after_logout_is_refused_without_a_replay_verdict(_world) -> N
     c.post("/oauth/revoke", data={"token": tokens["refresh_token"], "client_id": "loom-cli"})
     r = _refresh(c, tokens["refresh_token"])  # a stale process still holds it
     assert _error(r) == "invalid_grant"
-    assert "other hands" not in r.json().get("error_description", "")
+    assert r.json()["error_description"] == "this session has ended; sign in again"
     reasons = [kw["subject"]["reason"] for n, kw in _world["events"] if n == "auth.session_revoked"]
     assert reasons == ["logout"]
 

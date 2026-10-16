@@ -81,6 +81,11 @@ class Device(TypedDict):
     held: NotRequired[dict[str, str]]
 
 
+class SessionRetired(Exception):
+    """A refresh token presented again after a refusal or a logout retired its
+    session: nothing replaced it, so it is no theft, only an ended session."""
+
+
 class CodeReplayed(Exception):
     """A single-use code, refresh token or device code was presented after
     it was spent."""
@@ -362,9 +367,7 @@ class ClickHouseStore:
         if now is None:
             return None  # the session's key is gone: it has expired
         if now == _current(generation + 1, "ended"):
-            # Retired by a refusal or a logout: nothing replaced it, so presenting
-            # it again (a client asking twice) is refused, not taken for a theft.
-            return None
+            raise SessionRetired  # a client asking twice is refused, not taken for a theft
         # A read may lag behind Keeper, never run ahead of it: a later
         # generation seen is one that was issued, so this token was spent.
         if _generation(now) > generation:
@@ -372,7 +375,8 @@ class ClickHouseStore:
         if _generation(now) == generation and _abandoned(now):
             # Its process died before the next token was saved, so none was
             # handed out: this token is still the session's. One presenter
-            # takes the spend over.
+            # takes the spend over. (A put-back after an IdP outage drops the
+            # mark, so a refusal after that reads as the IdP's.)
             if await self._swap(key, now, spending, grant["exp"]) == spending:
                 return {**grant, "held": {key: spending}, "taken_over": True}
         raise claims.Busy(f"{key} is being spent")  # or this read is behind: retry

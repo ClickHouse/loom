@@ -195,10 +195,10 @@ async def test_resolve_identity_rejects_accounts_of_two_owners(monkeypatch) -> N
 
     class FakeCH:
         async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
-            return [{**r, "contact_email": "carol@corp.io"} for r in rows]
+            return [{**r, "contact_email": "carol@corp.example"} for r in rows]
 
     monkeypatch.setattr(login, "get_client", lambda: FakeCH())
-    assert await login.resolve_identity_for_email("carol@corp.io") is None
+    assert await login.resolve_identity_for_email("carol@corp.example") is None
 
 
 async def test_resolve_identity_rejects_cross_org_ambiguity(monkeypatch) -> None:
