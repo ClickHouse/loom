@@ -12,5 +12,8 @@ export default defineConfig({
     exclude: ["e2e/**", "node_modules/**", "dist/**"],
     setupFiles: ["src/test/setup.ts"],
     css: false,
+    // Click UI's ESM imports its CSS; inlined, Vite transforms those imports (and `css: false`
+    // empties them) instead of Node failing on a `.css` file.
+    server: { deps: { inline: [/@clickhouse\/click-ui/] } },
   },
 });

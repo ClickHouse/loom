@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Plus, Trash2, Edit3, X, Check, Copy, Bot, User, Eye, EyeOff } from "lucide-react";
+import { Plus, Trash2, X, Copy, Bot, User, Eye, EyeOff } from "lucide-react";
 import {
   listProfile,
   setProfileSection,
@@ -706,9 +706,9 @@ const SectionRow = memo(function SectionRow({
             label={`Edit ${section.label}`}
             tooltip="Edit"
             className="hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"
-          >
-            <Edit3 className="w-4 h-4" />
-          </IconButton>
+            icon="pencil"
+            size="sm"
+          />
           <IconButton
             onClick={(e) => {
               e.stopPropagation();
@@ -717,9 +717,9 @@ const SectionRow = memo(function SectionRow({
             label={`Delete ${section.label}`}
             tooltip="Delete"
             className="hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-danger)]"
-          >
-            <Trash2 className="w-4 h-4" />
-          </IconButton>
+            icon="trash"
+            size="sm"
+          />
         </div>
       </div>
       <pre className="text-sm whitespace-pre-wrap break-words mb-2 font-sans text-[var(--color-text)]">
@@ -815,17 +815,17 @@ function SectionEditor({
             disabled={saving}
             label="Cancel"
             className="hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"
-          >
-            <X className="w-4 h-4" />
-          </IconButton>
+            icon="cross"
+            size="sm"
+          />
           <IconButton
             onClick={onSave}
             disabled={saving || over}
             label="Save"
             className="hover:bg-[var(--color-surface-2)] text-[var(--color-accent)] disabled:opacity-40"
-          >
-            <Check className="w-4 h-4" />
-          </IconButton>
+            icon="check"
+            size="sm"
+          />
         </div>
       </div>
       <textarea

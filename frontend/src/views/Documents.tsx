@@ -1,6 +1,6 @@
 import { startTransition, useEffect, useMemo, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { FileText, Trash2, Plus, Download, X as XIcon, RefreshCw, Pencil, Search, ArrowUpDown } from "lucide-react";
+import { FileText, Trash2, Plus, Download, X as XIcon, RefreshCw, Search, ArrowUpDown } from "lucide-react";
 import {
   listKnowledge,
   deleteKnowledge,
@@ -588,9 +588,9 @@ export function Documents() {
                           : "Download original file"
                         : `Download text (.md) — ${textDownloadName(r.source_uri)}`
                     }
-                  >
-                    <Download size={14} />
-                  </IconButton>
+                    icon="download"
+                    size="sm"
+                  />
                   <IconButton
                     onClick={(e) => {
                       e.stopPropagation();
@@ -599,9 +599,9 @@ export function Documents() {
                     className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                     label="Edit details"
                     tooltip="Edit details (title, description, tags — no re-upload)"
-                  >
-                    <Pencil size={14} />
-                  </IconButton>
+                    icon="pencil"
+                    size="sm"
+                  />
                   <IconButton
                     onClick={(e) => {
                       e.stopPropagation();
@@ -614,9 +614,9 @@ export function Documents() {
                         ? `Edit content — upload a new file version of ${r.title || r.original_filename || r.source_uri}`
                         : "Edit content — upload the source file to enable download and preserve the original"
                     }
-                  >
-                    <RefreshCw size={14} />
-                  </IconButton>
+                    icon="refresh"
+                    size="sm"
+                  />
                   <IconButton
                     onClick={(e) => {
                       e.stopPropagation();
@@ -624,9 +624,9 @@ export function Documents() {
                     }}
                     className="text-[var(--color-danger)] hover:bg-[var(--color-surface-2)]"
                     label="Delete document"
-                  >
-                    <Trash2 size={14} />
-                  </IconButton>
+                    icon="trash"
+                    size="sm"
+                  />
                 </>
               )}
             </div>

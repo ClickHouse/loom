@@ -1,7 +1,12 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-cui-theme="light">
   <head>
     <meta charset="UTF-8" />
+    <!-- Cascade layer order, before any stylesheet: Click UI's layer above Tailwind's reset and
+         below its utilities. Click UI's stylesheet loads first, so this cannot live in it. -->
+    <style>
+      @layer properties, theme, base, clickui, components, utilities;
+    </style>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <!-- No inline script here: the dashboard handler injects the one boot snippet
          (window.__LOOM_*) with the CSP nonce. The app reads each global with a

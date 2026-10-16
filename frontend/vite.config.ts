@@ -58,6 +58,9 @@ export default defineConfig({
           // proportion).
           vendor: ["react", "react-dom", "zustand", "@radix-ui/react-popover", "@radix-ui/react-tooltip"],
           icons: ["lucide-react"],
+          // Click UI, its icon set included: large, loaded on every page, and changed only
+          // by a version bump, so it is cached apart from the app.
+          clickui: ["@clickhouse/click-ui"],
         },
       },
     },

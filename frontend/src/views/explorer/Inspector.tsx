@@ -1,17 +1,5 @@
 import { useMemo, useRef, useState } from "react";
-import {
-  AlertTriangle,
-  BookOpen,
-  ChevronDown,
-  ChevronRight,
-  Copy,
-  Footprints,
-  Pin,
-  PinOff,
-  Plus,
-  Route,
-  X,
-} from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight } from "lucide-react";
 import { listFacts, searchMemory, type FactRow, type Identity, type SearchHit, type TaxonomyResponse } from "../../api";
 import { IconButton } from "../../components/IconButton";
 import { Chip, MetaList, MetaRow, Panel, SectionHeading, TextClamp, Tip } from "../../components/ui";
@@ -366,9 +354,13 @@ export function Inspector({
                 {edge.parent} — {c.entity}
               </div>
             </div>
-            <IconButton label="Clear selection" onClick={() => onSelect(null)} className={actionCls}>
-              <X size={14} />
-            </IconButton>
+            <IconButton
+              label="Clear selection"
+              onClick={() => onSelect(null)}
+              className={actionCls}
+              icon="cross"
+              size="sm"
+            />
           </div>
         }
       >
@@ -406,23 +398,23 @@ export function Inspector({
             label={`Select ${shorten(c.entity, 24)}`}
             onClick={() => onSelect({ kind: "node", entity: c.entity })}
             className={actionCls}
-          >
-            <ChevronRight size={14} />
-          </IconButton>
+            icon="chevron-right"
+            size="sm"
+          />
           <IconButton
             label={`Walk from ${shorten(c.entity, 24)}`}
             onClick={() => onWalk(c.entity)}
             className={actionCls}
-          >
-            <Footprints size={14} />
-          </IconButton>
+            icon="arrow-right"
+            size="sm"
+          />
           <IconButton
             label="Copy the pair"
             onClick={() => copy(`${edge.parent} ${c.via_relation ? relationLabel(c.via_relation) : "—"} ${c.entity}`)}
             className={actionCls}
-          >
-            <Copy size={14} />
-          </IconButton>
+            icon="copy"
+            size="sm"
+          />
           {copied && <span className="text-2xs text-text-muted">copied</span>}
         </div>
         <div className="mt-3">
@@ -505,9 +497,13 @@ export function Inspector({
             <SectionHeading label={isSeed ? "Seed" : "Selected"} />
             <div className="text-base font-semibold font-mono break-words">{n.entity}</div>
           </div>
-          <IconButton label="Clear selection" onClick={() => onSelect(null)} className={actionCls}>
-            <X size={14} />
-          </IconButton>
+          <IconButton
+            label="Clear selection"
+            onClick={() => onSelect(null)}
+            className={actionCls}
+            icon="cross"
+            size="sm"
+          />
         </div>
       }
     >
@@ -549,40 +545,48 @@ export function Inspector({
 
       <div className="mt-3 flex items-center gap-0.5 -mx-1 flex-wrap">
         {!isSeed && (
-          <IconButton label="Walk from here" onClick={() => onWalk(n.entity)} className={actionCls}>
-            <Footprints size={14} />
-          </IconButton>
+          <IconButton
+            label="Walk from here"
+            onClick={() => onWalk(n.entity)}
+            className={actionCls}
+            icon="arrow-right"
+            size="sm"
+          />
         )}
         {!isSeed && (
           <IconButton
             label={`Path from ${shorten(model.seed, 20)} to here`}
             onClick={() => onPath(n.entity)}
             className={actionCls}
-          >
-            <Route size={14} />
-          </IconButton>
+            icon="arrow-directions"
+            size="sm"
+          />
         )}
         <IconButton
           label={isCollapsed ? "Show hidden children" : "Expand in place (one hop of neighbours)"}
           disabled={expanding === n.entity}
           onClick={() => (isCollapsed ? onCollapse(n.entity, false) : onExpand(n.entity))}
           className={actionCls}
-        >
-          <Plus size={14} />
-        </IconButton>
+          icon="plus"
+          size="sm"
+        />
         {hasChildren(n.entity) && !isCollapsed && (
-          <IconButton label="Collapse children" onClick={() => onCollapse(n.entity, true)} className={actionCls}>
-            <ChevronDown size={14} />
-          </IconButton>
+          <IconButton
+            label="Collapse children"
+            onClick={() => onCollapse(n.entity, true)}
+            className={actionCls}
+            icon="chevron-down"
+            size="sm"
+          />
         )}
         {!isSeed && (
           <IconButton
             label={isPinned ? "Unpin" : "Pin (survives facet changes)"}
             onClick={() => onPin(n.entity)}
             className={actionCls}
-          >
-            {isPinned ? <PinOff size={14} /> : <Pin size={14} />}
-          </IconButton>
+            icon={isPinned ? "unpin" : "pin"}
+            size="sm"
+          />
         )}
         <IconButton
           label={
@@ -591,12 +595,10 @@ export function Inspector({
           disabled={!firstHit}
           onClick={() => firstHit && onOpenMemory(firstHit.memory_key)}
           className={actionCls}
-        >
-          <BookOpen size={14} />
-        </IconButton>
-        <IconButton label="Copy entity" onClick={() => copy(n.entity)} className={actionCls}>
-          <Copy size={14} />
-        </IconButton>
+          icon="book"
+          size="sm"
+        />
+        <IconButton label="Copy entity" onClick={() => copy(n.entity)} className={actionCls} icon="copy" size="sm" />
         {copied && <span className="text-2xs text-text-muted">copied</span>}
         {expanding === n.entity && <span className="text-2xs text-text-muted">expanding…</span>}
       </div>

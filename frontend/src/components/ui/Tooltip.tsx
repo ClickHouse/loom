@@ -1,19 +1,18 @@
 import type { ReactNode } from "react";
-import * as Tooltip from "@radix-ui/react-tooltip";
+import * as RadixTooltip from "@radix-ui/react-tooltip";
+import { Tooltip } from "@clickhouse/click-ui/Tooltip";
 
 /**
- * Tip — the one tooltip. Radix, 300 ms delay, the same surface everywhere: text-coloured
- * card, bg-coloured text, an arrow. The child is the trigger (`asChild`), so it must be a
- * focusable element or forward its ref; a tooltip that only opens on hover is not
- * reachable from the keyboard. Never a native `title`: it never shows on touch or to
- * keyboard focus.
+ * Tip — the one tooltip: Click UI's Tooltip with its arrow. The child is the trigger
+ * (`asChild`), so it must be a focusable element or forward its ref; a tooltip that only
+ * opens on hover is not reachable from the keyboard. Never a native `title`: it never
+ * shows on touch or to keyboard focus.
  *
- * Carries its own provider so it works anywhere; nesting inside an outer
- * `Tooltip.Provider` is fine.
+ * Carries its own provider so it works outside the app shell (tests, portals).
  */
 const TOOLTIP_DELAY_MS = 300;
-
-export const TOOLTIP_CLS = "z-[70] max-w-[320px] px-2 py-1 text-xs rounded-md bg-text text-bg shadow-lg break-words";
+/** Above dialogs (z-50/60) and toasts (z-[65]); styles.css lifts every Radix popper here. */
+export const POPOVER_LAYER = "z-[70]";
 
 export interface TipProps {
   content: ReactNode;
@@ -26,16 +25,13 @@ export interface TipProps {
 export function Tip({ content, children, side = "top", disabled = false }: TipProps) {
   if (disabled) return <>{children}</>;
   return (
-    <Tooltip.Provider delayDuration={TOOLTIP_DELAY_MS}>
-      <Tooltip.Root>
+    <RadixTooltip.Provider delayDuration={TOOLTIP_DELAY_MS}>
+      <Tooltip>
         <Tooltip.Trigger asChild>{children}</Tooltip.Trigger>
-        <Tooltip.Portal>
-          <Tooltip.Content side={side} sideOffset={6} collisionPadding={8} className={TOOLTIP_CLS}>
-            {content}
-            <Tooltip.Arrow className="fill-text" />
-          </Tooltip.Content>
-        </Tooltip.Portal>
-      </Tooltip.Root>
-    </Tooltip.Provider>
+        <Tooltip.Content side={side} collisionPadding={8} maxWidth="320px" className={POPOVER_LAYER} showArrow>
+          {content}
+        </Tooltip.Content>
+      </Tooltip>
+    </RadixTooltip.Provider>
   );
 }

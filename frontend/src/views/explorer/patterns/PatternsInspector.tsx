@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Copy, ExternalLink, Footprints, GitBranch, Lock, Search, X } from "lucide-react";
+import { ExternalLink, Lock } from "lucide-react";
 import type { TrackerItem, TrackerSection } from "../../../api";
 import { IconButton } from "../../../components/IconButton";
 import { Chip, MetaList, MetaRow, Panel, SectionHeading, TextClamp, Tip } from "../../../components/ui";
@@ -209,9 +209,13 @@ export function PatternsInspector(p: PatternsInspectorProps) {
                 <span className="font-mono">#{i.number}</span> {i.title}
               </div>
             </div>
-            <IconButton label="Back to the cell" onClick={() => p.onPickIssue(null)} className={actionCls}>
-              <X size={14} />
-            </IconButton>
+            <IconButton
+              label="Back to the cell"
+              onClick={() => p.onPickIssue(null)}
+              className={actionCls}
+              icon="cross"
+              size="sm"
+            />
           </div>
         }
       >
@@ -355,21 +359,29 @@ export function PatternsInspector(p: PatternsInspectorProps) {
           )}
         </MetaList>
         <div className="mt-3 flex items-center gap-0.5 -mx-1 flex-wrap">
-          <IconButton label="Show in the tracker graph" onClick={p.onShowGraph} className={actionCls}>
-            <GitBranch size={14} />
-          </IconButton>
+          <IconButton
+            label="Show in the tracker graph"
+            onClick={p.onShowGraph}
+            className={actionCls}
+            icon="git-merge"
+            size="sm"
+          />
           {p.isEntity(i.number) && (
             <IconButton
               label={`Walk from #${i.number} in the co-mention graph`}
               onClick={() => p.onWalk(String(i.number))}
               className={actionCls}
-            >
-              <Footprints size={14} />
-            </IconButton>
+              icon="arrow-right"
+              size="sm"
+            />
           )}
-          <IconButton label={`Similar to #${i.number}`} onClick={() => p.onSimilar(i.title)} className={actionCls}>
-            <Search size={14} />
-          </IconButton>
+          <IconButton
+            label={`Similar to #${i.number}`}
+            onClick={() => p.onSimilar(i.title)}
+            className={actionCls}
+            icon="search"
+            size="sm"
+          />
           {i.url && (
             <a
               href={i.url}
@@ -384,9 +396,9 @@ export function PatternsInspector(p: PatternsInspectorProps) {
             label="Copy the issue line"
             onClick={() => copy(`#${i.number} ${i.title}${p.item?.line ? ` ${p.item.line}` : ""}`)}
             className={actionCls}
-          >
-            <Copy size={14} />
-          </IconButton>
+            icon="copy"
+            size="sm"
+          />
           {copied && <span className="text-2xs text-text-muted">copied</span>}
         </div>
         {p.similarFor === i.title && (
@@ -492,9 +504,7 @@ export function PatternsInspector(p: PatternsInspectorProps) {
               {cell.label} <span className={`font-normal ${sevTone(cell.severity)}`}>{cell.severity}</span>
             </div>
           </div>
-          <IconButton label="Clear the cell" onClick={p.onClearCell} className={actionCls}>
-            <X size={14} />
-          </IconButton>
+          <IconButton label="Clear the cell" onClick={p.onClearCell} className={actionCls} icon="cross" size="sm" />
         </div>
       }
     >

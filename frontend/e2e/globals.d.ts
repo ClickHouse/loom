@@ -15,7 +15,7 @@ declare global {
     __scrolls: number;
     /** perf-budget: durations of the event-timing entries since the last reset. */
     __ev: number[];
-    /** graph: layout-shift entries and their summed value. */
+    /** graph, perf-budget: layout-shift entries and their summed value. */
     __ls: { entries: number; value: number };
     /** graph: MutationObserver records under the canvas. */
     __mut: number;

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
-import { AlertTriangle, X } from "lucide-react";
+import { Button } from "@clickhouse/click-ui/Button";
+import { Modal, ModalFooter } from "./ui/Modal";
 
 /**
  * Replacement for native `window.confirm()`.
@@ -9,6 +9,8 @@ import { AlertTriangle, X } from "lucide-react";
  * jarring against the rest of the product. This is the same
  * "if (confirmed) { ... }" call shape, but renders a real modal
  * matching the design system.
+ *
+ * Click UI's Modal and Buttons. Not Click UI's ConfirmationDialog: it focuses the confirm.
  *
  * Focus opens on the Cancel button, never on the confirm: a dialog that opens with Enter
  * wired to "Delete" turns a reflexive keypress into data loss. Confirming takes a click,
@@ -29,8 +31,8 @@ export interface ConfirmOptions {
   message?: string;
   confirmLabel?: string;
   cancelLabel?: string;
-  /** Renders the confirm button in danger tone + adds the warning icon
-   *  in the header. Use for destructive actions (delete, revoke, etc). */
+  /** Renders the confirm button as Click UI's danger button. Use for destructive actions
+   *  (delete, revoke, etc). */
   danger?: boolean;
 }
 
@@ -100,71 +102,32 @@ export function ConfirmViewport() {
   const cancelLabel = pending?.cancelLabel || "Cancel";
 
   return (
-    <Dialog.Root
+    <Modal
       open={open}
       onOpenChange={(v) => {
         if (!v) close(false);
       }}
+      title={pending?.title ?? ""}
+      description={pending?.message}
+      className="max-w-[440px]"
+      layer="confirm"
+      onOpenAutoFocus={(e) => {
+        e.preventDefault();
+        cancelRef.current?.focus();
+      }}
+      onCloseAutoFocus={(e) => {
+        e.preventDefault();
+        openerRef.current?.focus();
+      }}
     >
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay animate-fade-in motion-reduce:animate-none!" />
-        <Dialog.Content
-          className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-[60] w-[min(440px,92vw)] rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl animate-fade-in motion-reduce:animate-none!"
-          onEscapeKeyDown={() => close(false)}
-          onOpenAutoFocus={(e) => {
-            e.preventDefault();
-            cancelRef.current?.focus();
-          }}
-          onCloseAutoFocus={(e) => {
-            e.preventDefault();
-            openerRef.current?.focus();
-          }}
-        >
-          <div className="flex items-start gap-3 px-5 pt-5 pb-2">
-            {danger && (
-              <div className="shrink-0 w-9 h-9 rounded-full bg-danger/15 flex items-center justify-center">
-                <AlertTriangle size={18} className="text-danger" />
-              </div>
-            )}
-            <div className="flex-1 min-w-0">
-              <Dialog.Title className="text-md font-semibold tracking-tight">{pending?.title}</Dialog.Title>
-              {pending?.message && (
-                <Dialog.Description className="mt-1.5 text-sm text-[var(--color-text-muted)] leading-relaxed">
-                  {pending.message}
-                </Dialog.Description>
-              )}
-            </div>
-            <Dialog.Close
-              className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)] -mt-1 -mr-1"
-              aria-label="Cancel"
-              onClick={() => close(false)}
-            >
-              <X size={14} />
-            </Dialog.Close>
-          </div>
-          <div className="flex items-center justify-end gap-2 px-5 py-4">
-            <button
-              type="button"
-              ref={cancelRef}
-              onClick={() => close(false)}
-              className="px-3 py-1.5 text-sm font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] rounded-md"
-            >
-              {cancelLabel}
-            </button>
-            <button
-              type="button"
-              onClick={() => close(true)}
-              className={`px-4 py-1.5 text-sm font-medium rounded-md ${
-                danger
-                  ? "bg-danger text-on-accent hover:bg-danger/85"
-                  : "bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:bg-[var(--color-accent-strong)]"
-              }`}
-            >
-              {confirmLabel}
-            </button>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+      <ModalFooter>
+        <Button ref={cancelRef} type="secondary" htmlType="button" onClick={() => close(false)}>
+          {cancelLabel}
+        </Button>
+        <Button type={danger ? "danger" : "primary"} htmlType="button" onClick={() => close(true)}>
+          {confirmLabel}
+        </Button>
+      </ModalFooter>
+    </Modal>
   );
 }

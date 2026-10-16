@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { ChevronDown, ChevronRight, Footprints, Pin, PinOff, Plus, Route } from "lucide-react";
+import { ChevronDown, ChevronRight, Pin } from "lucide-react";
 import { IconButton } from "../../components/IconButton";
 import { Kbd } from "../../components/ui";
 import { relationLabel, shorten, type Selection, type VisibleTree, type WalkModel, type XNode } from "./model";
@@ -290,35 +290,35 @@ export function Outline({
                     onClick={() => (isCollapsed ? onCollapse(n.entity, false) : onExpand(n.entity))}
                     disabled={expanding === n.entity}
                     className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-                  >
-                    <Plus size={13} />
-                  </IconButton>
+                    icon="plus"
+                    size="sm"
+                  />
                   {!isSeed && (
                     <IconButton
                       label={pinned.has(n.entity) ? "Unpin" : "Pin (survives facet changes)"}
                       onClick={() => onPin(n.entity)}
                       className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-                    >
-                      {pinned.has(n.entity) ? <PinOff size={13} /> : <Pin size={13} />}
-                    </IconButton>
+                      icon={pinned.has(n.entity) ? "unpin" : "pin"}
+                      size="sm"
+                    />
                   )}
                   {!isSeed && (
                     <IconButton
                       label="Walk from here"
                       onClick={() => onWalk(n.entity)}
                       className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-                    >
-                      <Footprints size={13} />
-                    </IconButton>
+                      icon="arrow-right"
+                      size="sm"
+                    />
                   )}
                   {!isSeed && (
                     <IconButton
                       label="Path from the seed to here"
                       onClick={() => onPath(n.entity)}
                       className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-                    >
-                      <Route size={13} />
-                    </IconButton>
+                      icon="arrow-directions"
+                      size="sm"
+                    />
                   )}
                 </div>
               )}

@@ -1,5 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { ClickUIProvider } from "@clickhouse/click-ui";
 import App from "./App";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { installStaleChunkReload } from "./lib/staleChunk";
@@ -14,8 +15,10 @@ const root = document.getElementById("root");
 if (!root) throw new Error("index.html has no #root element to mount the app into");
 ReactDOM.createRoot(root).render(
   <React.StrictMode>
-    <ErrorBoundary>
-      <App />
-    </ErrorBoundary>
+    <ClickUIProvider theme="light" persistTheme={false}>
+      <ErrorBoundary>
+        <App />
+      </ErrorBoundary>
+    </ClickUIProvider>
   </React.StrictMode>,
 );
