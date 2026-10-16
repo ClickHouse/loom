@@ -24,6 +24,7 @@ from server.memory.app.projection_errors import (
 from server.memory.app.projection_failures import TRIPLES_RECONCILE, TRIPLES_REOPEN
 from server.memory.app.projections import (
     close_triples,
+    end_triples_now,
     entity_triple_row,
     open_triples_among,
     reopen_triples,
@@ -525,28 +526,32 @@ async def linked_triples(input: Any, ids: list[str], *, ch: Any) -> list[tfr.Tri
 
 
 async def close_dropped_facts(input: Any, ids: list[str], *, ch: Any) -> None:
-    """Close the open facts linked to the rows `ids` that no row holds any longer: a
+    """Close the facts linked to the rows `ids` that no row holds any longer: a
     revision that no longer states them (`tfr.carried`), or that made its row one
-    that holds none."""
+    that holds none. One still valid later ends now."""
     linked = await linked_triples(input, ids, ch=ch)
-    opened = await open_triples_among(ch, org=input.org, namespace=input.namespace, triples=linked)
-    held = await stated_by_live_rows(input.org, input.namespace, sorted(opened), ch=ch)
-    dropped = sorted(opened - held)
-    if dropped:
-        await _write_follow_plan(input, tfr.FollowPlan(closes=dropped, inserts=[]), ch=ch)
-    # Checked for every value the rows no longer keep open, closed now or before: a
-    # replay finds the close landed and must still check.
-    await _keep_one_current(input, [t for t in linked if t not in held], ch=ch)
+    held = await stated_by_live_rows(input.org, input.namespace, linked, ch=ch)
+    gone = [t for t in linked if t not in held]
+    opened = await open_triples_among(ch, org=input.org, namespace=input.namespace, triples=gone)
+    if opened:
+        await _write_follow_plan(input, tfr.FollowPlan(closes=sorted(opened), inserts=[]), ch=ch)
+    await end_triples_now(ch, org=input.org, namespace=input.namespace, triples=gone)
+    # Checked for every value the rows no longer keep, closed now or before: a replay
+    # finds the close landed and must still check.
+    await _keep_one_current(input, gone, ch=ch)
 
 
 async def _keep_one_current(input: Any, values: list[tfr.Triple], *, ch: Any) -> None:
     """One value of a single-valued relation stays current, never neither. For each
-    relation of `values` with no current value left, the newest value a live row still
-    holds is opened again: a revision that drops the value an Undo restored gives the
-    value it beat back ("London" undone over "Paris", then revised away: Paris)."""
+    relation of `values` with no value valid now, the newest value a live row still
+    holds is stated again from now, as an Undo states it, edge included: London undone
+    over Paris, then revised away, gives Paris back from then on."""
     from server.identity.app.namespace_ontology import load_relation_cardinality
+    from server.memory.app import graph_undo
     from server.memory.domain.graph_quality import is_single_valued_relation, observation_key
 
+    if not values:
+        return
     declared = await load_relation_cardinality(input.org, input.namespace)
     pairs = sorted({(s, r) for s, r, _o in values if is_single_valued_relation(r, declared)})
     if not pairs:
@@ -563,37 +568,52 @@ async def _keep_one_current(input: Any, values: list[tfr.Triple], *, ch: Any) ->
         params={"org": input.org, "ns": input.namespace, "pairs": pairs},
     )
     now = naive_utc_now()
-    current = {
-        (r["subject"], r["relation"]) for r in rows if r["valid_to"] is None or r["valid_to"] > now
-    }
-    rows = [r for r in rows if (r["subject"], r["relation"]) not in current]
-    if not rows:
+
+    def valid_now(r: Mapping[str, Any]) -> bool:
+        # A close with a future end (`invalid_at` set) is not a value that holds on.
+        started = r["valid_from"] is None or r["valid_from"] <= now
+        ends = r["valid_to"]
+        return started and (ends is None or (ends > now and r["invalid_at"] is None))
+
+    current = {(r["subject"], r["relation"]) for r in rows if valid_now(r)}
+    # A value still open starts later ("moving on Dec 1"): it is not stated again.
+    closed = [
+        r
+        for r in rows
+        if (r["subject"], r["relation"]) not in current and r["valid_to"] is not None
+    ]
+    if not closed:
         return
     held = await stated_by_live_rows(
         input.org,
         input.namespace,
-        sorted({(r["subject"], r["relation"], r["object"]) for r in rows}),
+        sorted({(r["subject"], r["relation"], r["object"]) for r in closed}),
         ch=ch,
     )
     # Oldest first, so each relation ends up with its newest held row.
     newest: dict[tuple[str, str], Mapping[str, Any]] = {}
     for r in sorted(
-        rows, key=lambda r: observation_key(r["valid_from"], r["seen_at"], r["object"])
+        closed, key=lambda r: observation_key(r["valid_from"], r["seen_at"], r["object"])
     ):
         if (r["subject"], r["relation"], r["object"]) in held:
             newest[(r["subject"], r["relation"])] = r
-    for r in newest.values():
-        # A value that ended on its own stays ended; only a supersession close stamps
-        # `invalid_at`, and that close is undone.
-        if r["invalid_at"] is None:
-            continue
-        await reopen_triples(
-            ch,
-            org=input.org,
-            namespace=input.namespace,
-            closes=[(r["subject"], r["relation"], r["object"], r["valid_to"])],
-            closed_at=r["invalid_at"],
-        )
+    # A value that ended on its own stays ended; a close stamps `invalid_at`.
+    back = sorted(
+        (r["subject"], r["relation"], r["object"], str(r["invalid_at"]))
+        for r in newest.values()
+        if r["invalid_at"] is not None
+    )
+    if not back:
+        return
+    # Named by the closes it answers, so a replay finds the markers an attempt wrote.
+    restore_id = uuid.uuid5(uuid.NAMESPACE_OID, repr(back)).hex
+    await graph_undo.restate_facts(
+        input,
+        frozenset(t[:3] for t in back),
+        ch=ch,
+        restore_id=restore_id,
+        restored_at=now,
+    )
 
 
 def _as_bulk_write(
@@ -824,6 +844,7 @@ async def follow_row_supersessions(
         plans, kept=await stated_by_live_rows(input.org, input.namespace, closing, ch=ch)
     )
     closed, inserted = await _write_follow_plan(input, plan, ch=ch)
+    await _keep_one_current(input, plan.closes, ch=ch)
     if closed or inserted:
         log.info(
             "triples follow rows: of %d pair(s), closed %d and wrote %d successor triple(s)",

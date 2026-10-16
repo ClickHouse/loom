@@ -21,6 +21,8 @@ class _CH:
         self.inserts: list[tuple[str, list[dict[str, Any]]]] = []
 
     async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[dict]:
+        if "pairs" in (params or {}):
+            return []  # the relation's stored values: none beyond the open ones here
         if "FROM loom.entity_triple_rows" in sql:
             return []  # rows written before rows were linked: matched by their text
         if "FROM loom.memory FINAL" in sql:

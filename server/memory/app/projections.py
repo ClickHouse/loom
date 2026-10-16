@@ -948,6 +948,39 @@ async def reopen_triples(
     _graph_marks().note_write(org, namespace)
 
 
+async def end_triples_now(
+    ch: Any, *, org: str, namespace: str, triples: list[tuple[str, str, str]]
+) -> None:
+    """End now the intervals of `triples` that end later ("until Dec 1"), as a close
+    does: no row states them any longer. One read, and an UPDATE only when one does."""
+    if not triples:
+        return
+    now = naive_utc_now().replace(microsecond=0)  # as the DateTime columns store it
+    params = {"org": org, "ns": namespace, "triples": triples, "now": now}
+    where = """org = {org:String} AND namespace = {ns:String}
+          AND (subject, relation, object) IN {triples:Array(Tuple(String, String, String))}
+          AND valid_to > {now:DateTime}"""
+    later = await ch.query_all(
+        f"SELECT 1 FROM loom.entity_triples WHERE {where} LIMIT 1"
+        " SETTINGS select_sequential_consistency = 1",
+        params=params,
+    )
+    if not later:
+        return
+    await ch.execute(
+        f"""
+        ALTER TABLE loom.entity_triples
+        UPDATE valid_to = greatest({{now:DateTime}}, ifNull(valid_from, {{now:DateTime}})),
+               invalid_at = {{now:DateTime}}
+        WHERE {where}
+        """,
+        params=params,
+    )
+    from server.memory.app.graph_write_marks import marks as _graph_marks
+
+    _graph_marks().note_write(org, namespace)
+
+
 async def open_triples_among(
     ch: Any, *, org: str, namespace: str, triples: list[tuple[str, str, str]]
 ) -> set[tuple[str, str, str]]:

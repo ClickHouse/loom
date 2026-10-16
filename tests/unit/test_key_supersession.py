@@ -1175,6 +1175,8 @@ class _Graph:
         return row["tombstoned_at"] is None and row["status"] in LIVE_STATUSES
 
     async def query_all(self, sql, params):
+        if "pairs" in params:
+            return []  # the relation's stored values: none beyond the open ones here
         if "WITH keyed AS" in sql:
             # Live rows with no row link, of a key a triple is linked to.
             linked = {link[0] for link in self.links}

@@ -23,8 +23,9 @@ _EXPECTED_MUTATIONS = Counter(
         # One folded UPDATE per table per write (close_triples serves
         # both the deterministic repair and the LLM judgement), and
         # reopen_triples, which undoes a follow's close for a triple a row
-        # written meanwhile holds (rare: only in that race).
-        ("server/memory/app/projections.py", "entity_triples", "UPDATE"): 2,
+        # written meanwhile holds (rare: only in that race), and end_triples_now,
+        # which ends now a dropped fact that ends later (only when one does).
+        ("server/memory/app/projections.py", "entity_triples", "UPDATE"): 3,
         ("server/memory/store/blacklist.py", "blacklist", "UPDATE"): 1,
         ("server/memory/store/conflicts.py", "conflict_allowlist", "UPDATE"): 1,
         ("server/knowledge/store/conversations.py", "conversation_embeddings", "UPDATE"): 1,

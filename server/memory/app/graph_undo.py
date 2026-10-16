@@ -82,7 +82,7 @@ async def reopen_held_facts(
             break
         ids = still
     if ids and held:
-        await _restate(input, held, ch=ch, restore_id=restore_id, restored_at=restored_at)
+        await restate_facts(input, held, ch=ch, restore_id=restore_id, restored_at=restored_at)
     if hashes and asked:
         # A row revised after the check above ran its own close before these markers
         # landed, or before an earlier attempt's did: close what it no longer holds now.
@@ -94,10 +94,12 @@ async def reopen_held_facts(
             await close_dropped_facts(input, changed, ch=ch)
 
 
-async def _restate(
+async def restate_facts(
     input: Any, held: frozenset[Any], *, ch: Any, restore_id: str, restored_at: datetime
 ) -> None:
-    """Write the Undo's markers for the facts `held` and repair them."""
+    """Write the markers for the facts `held`, stated again at `restored_at`, and repair
+    them. An Undo writes them, and so does a revision that leaves a relation with no
+    current value (`entity_projections._keep_one_current`)."""
     from server.identity.app.namespace_ontology import load_relation_cardinality
 
     now = restored_at.replace(microsecond=0)  # as the DateTime columns store it

@@ -2053,7 +2053,8 @@ async def test_an_undo_starts_a_fact_dated_ahead_on_its_date(ch, org) -> None:
     await _mutations_done(ch, org)
     markers = await ch.query_all(
         "SELECT object, valid_from, valid_to FROM loom.entity_triples WHERE org = {org:String}"
-        " AND adapter_name = 'row-restore' ORDER BY object"
+        # Paris, which Berlin's start ended, is stated again by the retirement too.
+        " AND adapter_name = 'row-restore' AND object != 'paris' ORDER BY object"
         " SETTINGS select_sequential_consistency = 1",
         params={"org": org},
     )
@@ -2112,7 +2113,8 @@ async def test_a_replayed_undo_restates_a_fact_dated_ahead_as_stored(ch, org, mo
     await _mutations_done(ch, org)
     markers = await ch.query_all(
         "SELECT object, valid_from, valid_to FROM loom.entity_triples WHERE org = {org:String}"
-        " AND adapter_name = 'row-restore' ORDER BY object"
+        # Paris, which Berlin's start ended, is stated again by the retirement too.
+        " AND adapter_name = 'row-restore' AND object != 'paris' ORDER BY object"
         " SETTINGS select_sequential_consistency = 1",
         params={"org": org},
     )
@@ -2418,7 +2420,8 @@ async def test_an_undo_dated_ahead_keeps_its_weight_past_a_row_that_ends_first(c
     await _mutations_done(ch, org)
     (start,) = await ch.query_all(
         "SELECT valid_from FROM loom.entity_triples WHERE org = {org:String}"
-        " AND adapter_name = 'row-restore' SETTINGS select_sequential_consistency = 1",
+        " AND adapter_name = 'row-restore' AND object = 'london'"
+        " SETTINGS select_sequential_consistency = 1",
         params={"org": org},
     )
     assert start["valid_from"] == december
@@ -3322,6 +3325,115 @@ async def test_a_revision_dropping_the_undone_value_makes_the_value_it_beat_curr
     await _mutations_done(ch, org)
     want = {("live_in", "paris"), ("like", "rome")}
     assert await _open_facts(ch, org, want) == want
+
+
+async def test_a_retirement_of_the_undone_value_makes_the_value_it_beat_current(ch, org) -> None:
+    # As above, but London's row is retired behind a row that only says Rome.
+    london = await _london_undone_over_paris(ch, org, "live_in")
+    rome = await _stated(ch, org, "s3", "I like Rome", ("user", "like", "rome"))
+    await _follow_retirement(ch, org, london, rome)
+    want = {("live_in", "paris"), ("like", "rome")}
+    assert await _open_facts(ch, org, want) == want
+
+
+async def test_a_value_closed_with_a_future_end_is_not_current(ch, org) -> None:
+    # London (2027) closes Paris (June) at 2027-01-01. London's row then drops it:
+    # Paris is current again, not closed at a day no value follows.
+    live = ("user", "live_in")
+    await _stated(ch, org, "s1", "I live in Paris", (*live, "paris"), valid_at=datetime(2026, 6, 1))
+    london = await _stated(
+        ch, org, "s2", "I live in London", (*live, "london"), valid_at=datetime(2027, 1, 1)
+    )
+    await _mutations_done(ch, org)
+    await _revise("memory.update_by_id", org, london, "I like Rome", (("user", "like", "rome"),))
+    await _mutations_done(ch, org)
+    want = {("live_in", "paris"), ("like", "rome")}
+    assert await _open_facts(ch, org, want) == want
+
+
+async def test_a_recovered_value_starts_at_the_revision_and_walks_on_both_planes(ch, org) -> None:
+    # London undone over Paris at T1, then revised away at T2: Paris is stated again
+    # from T2, its edge too, and a walk between T1 and T2 still reaches only London.
+    from server.memory.app.restore import handle_memory_restore
+
+    live = ("user", "live_in")
+    london = await _stated(
+        ch, org, "s1", "I live in London", (*live, "london"), valid_at=datetime(2026, 5, 1)
+    )
+    paris = await _stated(
+        ch, org, "s2", "I live in Paris", (*live, "paris"), valid_at=datetime(2026, 6, 1)
+    )
+    await _edges_like_triples(ch, org)
+    await _follow_retirement(ch, org, london, paris)
+    assert (await handle_memory_restore(_undo_of(paris))).restored
+    await _mutations_done(ch, org)
+    await asyncio.sleep(1.1)  # the DateTime columns store whole seconds
+    between = naive_utc_now()
+    await asyncio.sleep(1.1)
+    await _revise("memory.update_by_id", org, london, "I like Rome")
+    await _mutations_done(ch, org)
+    assert await _walked(org, ["paris"], labeled=True) == ["paris"]
+    assert "paris" in await _walked(org, ["paris"], labeled=False)
+    assert await _walked(org, ["london"], labeled=True, as_of=between) == ["london"]
+    assert await _walked(org, ["london"], labeled=False, as_of=between) == ["london"]
+
+
+async def test_a_revision_ends_now_a_value_still_valid_until_a_later_move(ch, org) -> None:
+    # After the Undo, a move to Berlin dated ahead ends London then. London's row is then
+    # revised away: London ends now, and Paris holds until Berlin starts.
+    london = await _london_undone_over_paris(ch, org, "live_in")
+    moving = naive_utc_now().replace(hour=0, minute=0, second=0, microsecond=0)
+    moving += timedelta(days=45)
+    await _stated(
+        ch,
+        org,
+        "s4",
+        "I am moving to Berlin",
+        ("user", "live_in", "berlin"),
+        memory_key="k4",
+        valid_at=moving,
+    )
+    await _mutations_done(ch, org)
+    await _revise("memory.update_by_id", org, london, "I like Rome")
+    await _mutations_done(ch, org)
+    soon = naive_utc_now() + timedelta(seconds=2)
+    assert await _walked(org, ["paris"], labeled=True, as_of=soon) == ["paris"]
+    after = moving + timedelta(days=1)
+    assert await _walked(org, ["berlin"], labeled=True, as_of=after) == ["berlin"]
+
+
+async def test_a_value_written_while_a_revision_restates_another_stays_current(
+    ch, org, monkeypatch
+) -> None:
+    # The revision drops London and finds no current value; a move to Berlin dated
+    # ahead lands before Paris is stated again. Paris then ends when Berlin starts.
+    from server.memory.app import graph_undo
+
+    london = await _london_undone_over_paris(ch, org, "live_in")
+    restate = graph_undo.restate_facts
+    moving = naive_utc_now().replace(hour=0, minute=0, second=0, microsecond=0)
+    moving += timedelta(days=45)
+
+    async def _berlin_first(*a: Any, **k: Any) -> Any:
+        monkeypatch.setattr(graph_undo, "restate_facts", restate)
+        await _stated(
+            ch,
+            org,
+            "s4",
+            "I am moving to Berlin",
+            ("user", "live_in", "berlin"),
+            memory_key="k4",
+            valid_at=moving,
+        )
+        return await restate(*a, **k)
+
+    monkeypatch.setattr(graph_undo, "restate_facts", _berlin_first)
+    await _revise("memory.update_by_id", org, london, "I like Rome", (("user", "like", "rome"),))
+    await _mutations_done(ch, org)
+    want = {("live_in", "berlin"), ("like", "rome")}
+    assert await _open_facts(ch, org, want) == want
+    soon = naive_utc_now() + timedelta(seconds=2)
+    assert await _walked(org, ["paris", "rome"], labeled=True, as_of=soon) == ["paris", "rome"]
 
 
 async def test_a_batch_and_a_racing_writer_leave_one_current_value(ch, org, monkeypatch) -> None:
