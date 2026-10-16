@@ -115,8 +115,10 @@ async def bots_create(input: BotInput, info: Admin) -> dict[str, Any]:
         await account_admin.create_bot(bot, by=_by(info), replace=input.replace)
     except ValueError as e:
         raise _invalid(e) from None
-    except Exception as e:  # noqa: BLE001 — it may be saved: its only key must not be lost
-        log.error("bots.create %s may be half done: %s", input.name, e)
+    except Exception:  # it may be saved: its only key must not be lost
+        if not private:
+            raise
+        log.exception("bots.create %s may be half done", input.name)
         answer["warning"] = (
             "the bot may be saved, its old tokens not yet revoked: send this again "
             "with replace, or use the key it carries"

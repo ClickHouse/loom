@@ -164,3 +164,21 @@ def test_a_late_failure_still_hands_back_the_generated_key(calls, monkeypatch) -
     )
     assert r.status_code == 200 and "PRIVATE KEY" in r.json()["private_key_pem"]
     assert "send this again" in r.json()["warning"]
+
+
+def test_a_failure_with_no_key_to_hand_back_is_an_error(calls, monkeypatch) -> None:
+    async def down(bot: Any, *, by: str, replace: bool) -> None:
+        raise RuntimeError("ClickHouse away")
+
+    monkeypatch.setattr(account_admin, "create_bot", down)
+    pem = machines.generate_key()[1].decode()
+    with pytest.raises(RuntimeError):
+        _client().post(
+            "/v1/admin/bots.create",
+            json={
+                "name": "t",
+                "org": "acme",
+                "namespace_roles": ["t=writer"],
+                "public_key_pem": pem,
+            },
+        )

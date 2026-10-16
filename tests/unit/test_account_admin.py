@@ -152,3 +152,26 @@ def test_a_cutoff_covers_a_replica_whose_clock_runs_ahead(world) -> None:
     asyncio.run(account_admin.disable_bot("triage", by="ops"))
     ahead = time.time() + account_admin._CLOCK_SKEW_S  # `since` on that replica
     assert world["cutoff"].timestamp() > ahead
+
+
+def test_a_disable_waits_out_its_cutoff(world, monkeypatch) -> None:
+    waited: list[Any] = []
+
+    async def wait(cutoff: Any) -> None:
+        waited.append(cutoff)
+
+    asyncio.run(account_admin.create_bot(_bot(["triage=writer"]), by="ops", replace=False))
+    monkeypatch.setattr(account_admin, "_wait_until", wait)
+    asyncio.run(account_admin.disable_bot("triage", by="ops"))
+    assert waited == [world["cutoff"]]
+
+
+def test_adopting_ends_a_persons_tokens_but_not_their_next_sign_in(world, monkeypatch) -> None:
+    async def link(email: str, accounts: list[tuple[str, str]], by: str) -> None:
+        return None
+
+    monkeypatch.setattr(account_admin.sso_links, "link", link)
+    plan = [{"email": "lee@acme.io", "org": "acme", "namespace": "lee", "owner": "lee", "skip": ""}]
+    asyncio.run(account_admin.adopt(plan, by="ops", keep_tokens=False))
+    # The next whole second, not the bots' margin: they sign in again at once.
+    assert world["cutoff"].timestamp() <= time.time() + 1

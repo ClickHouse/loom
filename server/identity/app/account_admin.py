@@ -30,6 +30,12 @@ def _from_now_on() -> datetime:
     return datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=1 + _CLOCK_SKEW_S)
 
 
+def _after_this_second() -> datetime:
+    """A cutoff that ends the tokens issued so far and none after: a person's,
+    whose next token comes from a new sign-in, not from a row that may race."""
+    return datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=1)
+
+
 async def _wait_until(cutoff: datetime) -> None:
     await asyncio.sleep(max(0.0, cutoff.timestamp() - time.time()))
 
@@ -85,7 +91,7 @@ async def adopt(plan: list[dict[str, Any]], *, by: str, keep_tokens: bool) -> in
         # subject back in, so that one stands.
         if not keep_tokens and not await revocation.revoked_outright(owner):
             await revocation.revoke(
-                owner, issued_before=_from_now_on(), reason="sso adopt", revoked_by=by
+                owner, issued_before=_after_this_second(), reason="sso adopt", revoked_by=by
             )
         await sso_links.link(email, [(org, a["namespace"]) for a in accounts], by)
         await audit.emit(
@@ -230,7 +236,8 @@ async def disable_bot(name: str, *, by: str) -> bool:
     if bot is None:
         return False
     await machines.save(bot, by=by, active=False)
-    await _end_tokens(name, by=by, reason="bot disabled")
+    # Waited out, as a replace's is, so a bot made again at once is not refused.
+    await _wait_until(await _end_tokens(name, by=by, reason="bot disabled"))
     await audit.emit(
         "auth.machine_disabled", org=bot["org"], namespace="-", actor=by, subject={"name": name}
     )

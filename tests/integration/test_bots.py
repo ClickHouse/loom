@@ -40,7 +40,10 @@ def base() -> Iterator[str]:
 def _admin(base: str, path: str, body: dict, *, roles: list[str]) -> httpx.Response:
     # Signed with the secret this process and the server both read.
     token = mint_token(subject="ops@example.com", org="ops", namespaces=["*"], roles=roles)
-    return httpx.post(f"{base}{path}", json=body, headers={"Authorization": f"Bearer {token}"})
+    # A replace or disable waits out its revocation cutoff before it answers.
+    return httpx.post(
+        f"{base}{path}", json=body, headers={"Authorization": f"Bearer {token}"}, timeout=30.0
+    )
 
 
 def test_a_bot_signs_in_with_its_key_and_is_cut_off_when_disabled(

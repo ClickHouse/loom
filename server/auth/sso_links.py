@@ -118,8 +118,19 @@ async def _write(
 ) -> None:
     if not accounts:
         return
-    now, version = datetime.now(UTC), time.time_ns()
-    await (ch or get_client()).insert(
+    from server.core.ch import own_write_reads
+
+    ch = ch or get_client()
+    # Past the email's newest link row, whichever replica's clock wrote it: under
+    # FINAL a later unlink with a lower version would be lost.
+    with own_write_reads():
+        rows = await ch.query_all(
+            f"SELECT max(version) AS v FROM {TABLE} WHERE email = {{email:String}}",
+            params={"email": email.strip().lower()},
+        )
+    newest = int((rows[0].get("v") if rows else 0) or 0)
+    now, version = datetime.now(UTC), max(time.time_ns(), newest + 1)
+    await ch.insert(
         TABLE,
         [
             {

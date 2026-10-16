@@ -96,6 +96,16 @@ async def listed() -> list[dict[str, Any]]:
 
 
 async def save(m: Machine, *, by: str, active: bool = True) -> None:
+    from server.core.ch import own_write_reads
+
+    # Past the newest row of the name, whichever replica's clock wrote it: under
+    # FINAL a later change with a lower version would be lost.
+    with own_write_reads():
+        newest = await get_client().query_one(
+            f"SELECT max(version) AS v FROM {TABLE} WHERE name = {{name:String}}",
+            params={"name": m["name"]},
+        )
+    version = max(time.time_ns(), int((newest or {}).get("v") or 0) + 1)
     await get_client().insert(
         TABLE,
         [
@@ -104,7 +114,7 @@ async def save(m: Machine, *, by: str, active: bool = True) -> None:
                 "active": int(active),
                 "updated_by": by,
                 "updated_at": datetime.now(UTC),
-                "version": time.time_ns(),
+                "version": version,
             }
         ],
     )

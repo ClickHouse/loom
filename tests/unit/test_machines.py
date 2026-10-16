@@ -234,6 +234,9 @@ async def test_a_saved_bot_writes_every_column(monkeypatch) -> None:
     rows: list[dict[str, Any]] = []
 
     class _CH:
+        async def query_one(self, sql: str, params: dict[str, Any]) -> dict[str, Any]:
+            return {"v": max((r["version"] for r in rows), default=0)}
+
         async def insert(self, table: str, batch: list[dict[str, Any]]) -> None:
             assert table == "loom.machine_identities"
             rows.extend(batch)
@@ -251,6 +254,7 @@ async def test_a_saved_bot_writes_every_column(monkeypatch) -> None:
     await machines.save(bot, by="cli:root")
     await machines.save(bot, by="cli:root", active=False)
     assert [sorted(r) for r in rows] == [sorted(column_names("machine_identities"))] * 2
+    assert rows[1]["version"] > rows[0]["version"]
 
 
 def test_a_bot_disabled_while_its_token_is_made_gets_a_dead_one(bots, monkeypatch) -> None:
