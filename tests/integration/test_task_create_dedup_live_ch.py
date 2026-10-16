@@ -112,8 +112,8 @@ async def test_a_second_ready_event_with_the_same_id_is_dropped(ch: Any) -> None
             "ts": datetime.now(UTC).replace(tzinfo=None),
         }
 
-    await wrepo.insert_ready_event(event(100))
-    await wrepo.insert_ready_event(event(200))
+    await wrepo.insert_ready_event(event(100), token=f"{task_id}:1")
+    await wrepo.insert_ready_event(event(200), token=f"{task_id}:1")
     assert await wrepo.ready_event_seq(org, "bot", task_id) == 100
 
 
@@ -151,3 +151,49 @@ async def test_a_create_after_its_task_was_erased_lands_a_new_task(ch: Any) -> N
         "SELECT task_id FROM loom.tasks FINAL WHERE org = {org:String}", params={"org": org}
     )
     assert [str(r["task_id"]) for r in rows] == [second.task.task_id]
+
+
+@pytest.mark.asyncio
+async def test_a_new_watch_after_the_namespace_was_erased_posts_its_ready_event(ch: Any) -> None:
+    # The ready event's id is fixed per (org, namespace, commit, inbox), and
+    # ClickHouse keeps a dedup token after DELETE: the second watch's event
+    # must not be dropped as a repeat of the erased one's.
+    from server.code.app import watches as svc
+    from server.code.store import coverage_watches as wrepo
+    from server.erasure.store.mutations import count_then_mutate
+    from server.erasure.store.predicates import ORG_NS
+    from server.erasure.store.steps_ledgers import delete_tasks_by_namespace
+
+    org, ns, sha = f"itest-rewatch-{uuid.uuid4().hex[:8]}", "code", "a" * 40
+
+    async def watch_and_deliver() -> bool:
+        watch = svc.new_watch(org, ns, sha, "bot", "poster")
+        await wrepo.insert_watch_version(watch)
+        emitted, _ = await svc.deliver(watch, {"tiers": []})
+        return emitted
+
+    assert await watch_and_deliver()
+    await delete_tasks_by_namespace(org, ns)
+    await count_then_mutate(
+        "loom.code_coverage_watches",
+        count_where=ORG_NS,
+        mutation="DELETE",
+        mutation_where=ORG_NS,
+        params={"org": org, "ns": ns},
+        final=False,
+        ch=ch,
+    )
+
+    assert await watch_and_deliver()
+    task_id = wrepo.event_id(org, ns, sha, "bot")
+    assert await wrepo.ready_event_seq(org, "bot", task_id) is not None
+    await delete_tasks_by_namespace(org, ns)
+    await count_then_mutate(
+        "loom.code_coverage_watches",
+        count_where=ORG_NS,
+        mutation="DELETE",
+        mutation_where=ORG_NS,
+        params={"org": org, "ns": ns},
+        final=False,
+        ch=ch,
+    )

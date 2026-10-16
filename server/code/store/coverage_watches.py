@@ -107,12 +107,14 @@ async def ready_event_seq(
     return int(row["seq"]) if row else None
 
 
-async def insert_ready_event(row: dict[str, Any], *, ch: _CHClient | None = None) -> None:
-    """The event row; the id doubles as the insert's dedup token, so a retried
-    insert of the same row lands once."""
+async def insert_ready_event(
+    row: dict[str, Any], *, token: str, ch: _CHClient | None = None
+) -> None:
+    """The event row under the insert's dedup token `token`, so a retried or
+    racing insert with the same token lands once."""
     ch = ch or _default_client()
     await ch.insert(
         "loom.task_events",
         [row],
-        settings={**_INSERT_SETTINGS, "insert_deduplication_token": str(row["task_id"])},
+        settings={**_INSERT_SETTINGS, "insert_deduplication_token": token},
     )

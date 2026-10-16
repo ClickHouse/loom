@@ -55,6 +55,7 @@ class Fake:
         self.git_dir = git_dir
         self.watches: dict[tuple[str, str, str, str], CoverageWatch] = {}
         self.events: list[dict[str, Any]] = []
+        self.tokens: set[str] = set()
         self.state: dict[str, dict[str, Any]] = {}
         self.inboxes = {(ORG, INBOX): {"org": ORG, "inbox": INBOX, "owner_namespace": "bots"}}
         self.fail_watch_writes = 0
@@ -84,9 +85,10 @@ class Fake:
             e["org"] == org and e["inbox"] == inbox and e["task_id"] == task_id for e in self.events
         )
 
-    async def insert_ready_event(self, row):
-        # The task id is the insert's dedup token: ClickHouse drops a repeat.
-        if not await self.ready_event_exists(row["org"], row["inbox"], row["task_id"]):
+    async def insert_ready_event(self, row, *, token):
+        # ClickHouse drops an insert whose dedup token it has seen.
+        if token not in self.tokens:
+            self.tokens.add(token)
             self.events.append(dict(row))
 
     async def ready_event_seq(self, org, inbox, task_id):
