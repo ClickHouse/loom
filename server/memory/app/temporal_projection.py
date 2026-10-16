@@ -198,6 +198,8 @@ _FOREIGN = "foreign_writes"
 # last writes still land), and when this process last saw one (boot counts: writes
 # made before it started are swept once).
 _FOREIGN_TAIL_S = 900.0
+# Whether the last sweep page was full: the sweep goes on until it is not, rollout or not.
+_foreign_backlog = False
 # How far before its first pass the sweep starts (this build's migration ran at boot).
 _FOREIGN_START_S = 300
 # How long after its draw another build's row may still be landing.
@@ -292,7 +294,8 @@ async def _adopt_foreign_writes(*, limit: int, only: tuple[str, str] | None = No
     journal's reads see them and the reconciler never takes them for drift."""
     from server.memory.app import temporal_publisher as publisher
 
-    if not _rollout():
+    global _foreign_backlog
+    if not _rollout() and not _foreign_backlog:
         return 0
     # Scoped to one namespace (`only`), the sweep keeps its own cursor there.
     org_, ns_ = only or ("", "")
@@ -304,6 +307,7 @@ async def _adopt_foreign_writes(*, limit: int, only: tuple[str, str] | None = No
         cursor = int(start.timestamp() * 1e9)  # a version is its draw time in ns
         await store.advance_watermark(org_, ns_, cursor, _FOREIGN)
     rows = await store.foreign_rows(cursor, limit=limit, only=only)
+    _foreign_backlog = len(rows) >= limit
     by_ns: dict[tuple[str, str], list[Ident]] = {}
     for r in rows:
         by_ns.setdefault((str(r["org"]), str(r["namespace"])), []).append(ident_of(r))
@@ -473,6 +477,7 @@ async def _rewrite_current(
     head = await memory_repo.get_by_key(
         identity, key, scope=WHOLE_NAMESPACE, fresh=True, strong=True, include_tombstoned=True
     )
+    read = head  # what landed since is judged against the row as read, removed or not
     if head is not None and (head.status not in _LIVE or head.tombstoned_at is not None):
         # A removed row stays removed when all that remains is ended history: the
         # key's past is read through valid_as_of, not shown as its present.
@@ -530,7 +535,7 @@ async def _rewrite_current(
     async with namespace_lock(org, ns):
         if cut_seq is not None and await _committed_since(org, ns, ident, cut_seq):
             return False
-        if await _head_moved_or_foreign(org, ns, ident, head):
+        if await _head_moved_or_foreign(org, ns, ident, read):
             return False  # the next pass decides again (and adopts a foreign write)
         stamped = await _projection_version(org, ns, ident, head)
         if stamped is None:

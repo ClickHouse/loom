@@ -1977,3 +1977,25 @@ async def test_a_bulk_retry_answers_skipped_entries_as_recorded_not_as_judged_no
         assert [(w["memory_key"], w["version"]) for w in again["written"]] == [
             (w["memory_key"], w["version"]) for w in first["written"]
         ]
+
+
+async def test_a_deleted_key_comes_back_by_rollback_or_amendment(
+    control_plane_url, mint_test_token
+) -> None:
+    # The removed row is the head the projection replaces: a revival is written over it.
+    a, _ = await _agent(control_plane_url, mint_test_token, "revive")
+    async with a:
+        await a.call("memory.set", {"memory_key": "r", "value": "keep me"})
+        before = await _now_after(1.1)
+        await a.call("memory.delete", {"memory_key": "r"})
+        out = await a.call("namespace.rollback", {"as_of": before, "dry_run": False})
+        assert out["reinstate"] == 1 and not out["current_rows_pending"]
+        assert (await a.call("memory.get", {"memory_key": "r"}))["value"] == "keep me"
+
+        await a.call("memory.set", {"memory_key": "m", "value": "first"})
+        await a.call("memory.delete", {"memory_key": "m"})
+        amended = await a.call(
+            "memory.amend", {"memory_key": "m", "change_kind": "correct", "value": "corrected"}
+        )
+        assert amended["current_value"] == "corrected"
+        assert (await a.call("memory.get", {"memory_key": "m"}))["value"] == "corrected"
