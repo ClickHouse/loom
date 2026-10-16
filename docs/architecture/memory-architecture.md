@@ -334,22 +334,23 @@ the value it was written or stated for (`carried`):
   by the same rule (another row's claim keeps a fact from closing, but never reopens
   one); either, when it fails, is recorded for `projection_repair` as
   `triples_reconcile`. A dropped fact still valid later ("until Dec 1") ends now, and so
-  does one a retired row stated until later, or it ends when a winner dated ahead starts,
-  as an open one closes (a later end the follow's close gave stays). Its edge ends with its triples, at their latest end, unless
-  a live row still holds another fact valid now between the same two entities, or a live row of
-  another key names both (`entity_edge_memories`: the edge is that row's co-occurrence
-  too); the edge keeps no `invalid_at`, so a walk at an earlier time still finds it. The follow reads the
+  does one a retired row stated until later, or it ends when a winner dated ahead
+  starts, as an open one closes (a later end the follow's close gave stays). Its edge
+  ends with its triples, at their latest end, unless a live row still holds another fact
+  valid now between the same two entities, or a live row of another key names both
+  (`entity_edge_memories`: the edge is that row's co-occurrence too); the edge keeps no
+  `invalid_at`, so a walk at an earlier time still finds it. The follow reads the
   retired rows' facts again after its plan, so a replay of a follow whose close landed
-  still ends the rest. When
-  a revision, or a retirement the follow closes, leaves a single-valued relation of the
-  row with no value valid now (a value a close ended later counts only while an open
-  value starts by that end: Paris holds until the move to Berlin it was closed for), the newest
-  value a live row still holds and a close ended is stated again from now, as an Undo
-  states it, but labelled `row-fallback`: triple and edge markers, then the interval repair, so a newer value written
-  meanwhile wins. London undone over Paris and then revised or retired away leaves Paris
-  current from then on, and its earlier interval stays as history. A value that ended on
-  its own stays ended. A replay of a failed triple, edge or entity-vector write writes
-  only for the entries whose row still has the value the entry wrote (its id and
+  still ends the rest. When a revision, or a retirement the follow closes, leaves a
+  single-valued relation of the row with no value valid now (a value a close ended later
+  counts only while an open value starts by that end: Paris holds until the move to
+  Berlin it was closed for), the newest value a live row still holds and a close ended
+  is stated again from now, as an Undo states it, but labelled `row-fallback`: triple
+  and edge markers, then the interval repair, so a newer value written meanwhile wins.
+  London undone over Paris and then revised or retired away leaves Paris current from
+  then on, and its earlier interval stays as history. A value that ended on its own
+  stays ended. A replay of a failed triple, edge or entity-vector write writes only for
+  the entries whose row still has the value the entry wrote (its id and
   `content_sha256`, the version the triple links carry) and passes this rule, so a
   revision since stays current; with none left the failure resolves with nothing to do.
   A `memory.bulk_set` entry whose row is `high` projects nothing into the graph and
@@ -403,16 +404,16 @@ the value it was written or stated for (`carried`):
   repeat it. The failure records each restored row's `content_sha256`; a replay skips a
   row revised since, whose revision reconciles its facts, so the revised value is never
   dated at the Undo. A row revised while the Undo ran may have reconciled before the
-  markers landed, so the Undo, and every replay of it, closes what such a row no
-  longer holds. A failed triple write records when it arrived: a replay of a failed
-  insert inserts the triples seen at that arrival, not at its own clock, so an older
-  value replayed after a newer one lands behind it instead of closing it. Some of its
-  triples may have landed before the insert failed, so it also records what the write
-  resolved its names to (none is recorded too), and the replay names them so. A failed
-  interval repair records the triple write for replay too; when the triples landed before the repair failed, the replay does not insert them
-  again, never repairs as of the replay's own clock, and names their entities as the
-  write resolved them (the failure records those resolutions), not as they resolve by
-  the replay. When the repair had issued
+  markers landed, so the Undo, and every replay of it, closes what such a row no longer
+  holds. A failed triple write records when it arrived: a replay of a failed insert
+  inserts the triples seen at that arrival, not at its own clock, so an older value
+  replayed after a newer one lands behind it instead of closing it. Some of its triples
+  may have landed before the insert failed, so it also records what the write resolved
+  its names to (none is recorded too), and the replay names them so. A failed interval
+  repair records the triple write for replay too; when the triples landed before the
+  repair failed, the replay does not insert them again, never repairs as of the replay's
+  own clock, and names their entities as the write resolved them (the failure records
+  those resolutions), not as they resolve by the replay. When the repair had issued
   closes before it failed, the failure records them and the replay finishes them: it
   issues again a close that never landed, closes their edges and, under `newest_wins`,
   retires the rows behind them. Each recorded close names the newest value that closed
