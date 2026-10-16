@@ -12,6 +12,7 @@ optimizer, not by CI; this test keeps their shape.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
 import subprocess
@@ -43,6 +44,9 @@ MAX_AGENTS_MD_BYTES = 9000
 MIN_TRIGGER_CASES = 3
 HOOK = ROOT / ".claude" / "hooks" / "read_only_bash.py"
 CHECK_PROSE = ROOT / ".claude" / "skills" / "loom-writing" / "scripts" / "check_prose.py"
+_spec = importlib.util.spec_from_file_location("check_prose", CHECK_PROSE)
+check_prose = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(check_prose)
 
 
 def _frontmatter(path: Path) -> tuple[dict, str]:
@@ -54,9 +58,12 @@ def _frontmatter(path: Path) -> tuple[dict, str]:
     return meta, text[m.end() :]
 
 
-def _code_spans(path: Path) -> list[str]:
-    text = re.sub(r"^(```|~~~).*?^\1", "", path.read_text(), flags=re.MULTILINE | re.DOTALL)
-    return re.findall(r"`([^`\n]+)`", text)
+def _code(path: Path) -> list[str]:
+    """Inline code spans from prose lines, and every line inside a fenced block."""
+    code = []
+    for _, line, in_code in check_prose.split_fences(path.read_text()):
+        code += [line] if in_code else re.findall(r"`([^`\n]+)`", line)
+    return code
 
 
 def test_claude_md_imports_agents_md() -> None:
@@ -166,9 +173,7 @@ def test_named_paths_exist(doc: Path) -> None:
 @pytest.mark.parametrize("doc", INSTRUCTIONS, ids=lambda p: str(p.relative_to(ROOT)))
 def test_named_make_targets_and_modules_exist(doc: Path) -> None:
     text = doc.read_text()
-    code = _code_spans(doc) + re.findall(
-        r"^(?:```|~~~).*?^(?:```|~~~)", text, re.MULTILINE | re.DOTALL
-    )
+    code = _code(doc)
     targets = set(re.findall(r"^([a-z][\w-]*):", (ROOT / "Makefile").read_text(), re.MULTILINE))
     named = {
         target
@@ -221,6 +226,9 @@ DENIED = (
     "git -P push -f origin x",
     "git clean -xdf",
     "git clean -df",
+    "git push -uf origin br",
+    "git push origin br -fu",
+    "docker-compose -f dev/docker-compose.colour.yml down",
     "git -C ../x push --force origin br",
     "git -c push.default=current push -f",
     "git diff --output=/tmp/x",
@@ -252,7 +260,6 @@ ASKED = (
     "make bench-quick",
     "git push --force-with-lease",
     "git push origin br --force-with-lease",
-    ".venv/bin/python -m pytest tests/unit/../integration",
     "PYTHONPATH=x .venv/bin/python bench/longmemeval.py --repeats 3",
 )
 NOT_DENIED = (
@@ -262,6 +269,7 @@ NOT_DENIED = (
     "./redeploy.sh --status",
     "git push -u origin validate-settings",
     "git diff origin/main...HEAD",
+    "git push -u origin feature-flags",
     "LOOM_COLOUR=blue docker compose -f dev/docker-compose.colour.yml config -q",
     "docker rm -f ch-my-branch",
 )
@@ -275,6 +283,11 @@ def test_settings_deny_shared_and_production_commands() -> None:
         assert any(_matches(r, command) for r in perms["ask"]), command
     for command in NOT_DENIED:
         assert not any(_matches(r, command) for r in perms["deny"]), command
+    # Only the whole unit suite runs without asking: a path after it could be anything.
+    assert not any(
+        _matches(r, ".venv/bin/python -m pytest tests/unit/x.py tests/integration")
+        for r in perms["allow"]
+    )
 
 
 def _hook(command: str) -> int:
@@ -290,12 +303,14 @@ def _hook(command: str) -> int:
     "command",
     [
         "git diff origin/main...HEAD",
-        "cd /x && git log --oneline -5",
+        "git log --format=%h -5 && git status",
         "git show HEAD:AGENTS.md | head -20",
         "git log -p | grep -n foo",
         "gh pr view 57 --json body --jq .body",
         ".venv/bin/python -m pytest tests/unit/test_x.py -q 2>&1 | tail -5",
-        "LOOM_ENV_FILE= .venv/bin/python -m pytest tests/unit -q -k 'a and b'",
+        ".venv/bin/python -m pytest tests/unit -q -k 'a and not b'",
+        ".venv/bin/python -m pytest 'tests/unit/test_a.py::test_b[x-1]' -q",
+        "git log | grep -F x",
         "python3 .claude/skills/loom-writing/scripts/check_prose.py AGENTS.md",
     ],
 )
@@ -318,8 +333,15 @@ def test_reviewer_hook_allows_reads(command: str) -> None:
         ".venv/bin/python -m ruff check --fix-only",
         ".venv/bin/python -m pytest tests/unit --junitxml=/root/x",
         ".venv/bin/python -m pytest tests/integration",
-        ".venv/bin/python -m pytest tests/unit/../integration",
         "LOOM_ENV_FILE=/opt/x/.env .venv/bin/python -m pytest tests/unit",
+        "git log\nrm -rf x",
+        "git log #\ntouch x",
+        "git diff {--output=/tmp/x,HEAD}",
+        "git diff $'--output=/tmp/x'",
+        "git diff ${X:---output=/tmp/x}",
+        "cd /other/checkout && .venv/bin/python -m pytest tests/unit",
+        "gh pr checks 57 --watch",
+        "git log | tail -f",
         "echo 'mutation{x}' | gh api graphql -F query=@-",
         "git diff; rm x",
         "git log | sh",
@@ -344,7 +366,10 @@ def test_check_prose_flags_filler_and_internal_details() -> None:
         "`leverage` in code\n"
         "```\n"
         "ssh ubuntu@10.1.2.3 cat /home/ubuntu/.env\n"
+        "```python\n"
+        "we leverage this inside the block\n"
         "```\n"
+        "token sk-ant-example-abcdefghijklmnopqrstuvwxyz0123, see https://example.com/home/page\n"
     )
     out = _check_prose("-", stdin=text)
     assert out.returncode == 1
@@ -355,6 +380,7 @@ def test_check_prose_flags_filler_and_internal_details() -> None:
         "-:2: it’s worth noting -> delete; state the point",
         "-:5: /home/ubuntu -> remove a home directory path",
         "-:5: 10.1.2.3 -> remove a private IP address",
+        "-:9: sk-a… -> remove the Anthropic API key",
     ]
     assert _check_prose("-", stdin="Search keeps pinned rows.\n").returncode == 0
     assert _check_prose("/nonexistent").returncode == 2

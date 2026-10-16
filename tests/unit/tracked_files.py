@@ -9,10 +9,14 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
 def tracked(*paths: str) -> list[str]:
+    if not (ROOT / ".git").exists():  # an sdist or tarball: nothing is tracked
+        pytest.skip("not a git checkout", allow_module_level=True)
     out = subprocess.run(
         ["git", "ls-files", *paths], cwd=ROOT, capture_output=True, text=True, check=True
     )

@@ -53,13 +53,16 @@ def _looks_like_a_credential(value: str) -> bool:
 # (label, regex). Each must capture the secret itself in group 1, so the shape
 # gate applies to the VALUE and not to the whole line. The OpenAI pattern
 # excludes the other `sk-` providers so one key is one finding.
-SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+PROVIDER_KEY_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("OpenAI API key", re.compile(r"\b(sk-(?!ant-|lf-)(?:proj-)?[A-Za-z0-9_-]{24,})")),
     ("Anthropic API key", re.compile(r"\b(sk-ant-[A-Za-z0-9_-]{24,})")),
     ("Langfuse secret key", re.compile(r"\b(sk-lf-[0-9a-fA-F-]{16,})")),
     ("Langfuse public key", re.compile(r"\b(pk-lf-[0-9a-fA-F-]{16,})")),
     ("AWS access key id", re.compile(r"\b(AKIA[0-9A-Z]{16})\b")),
     ("private key block", re.compile(r"(-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----)")),
+]
+SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    *PROVIDER_KEY_PATTERNS,
     (
         "loom secret assignment",
         re.compile(

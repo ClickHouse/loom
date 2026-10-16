@@ -3,20 +3,22 @@
 Usage: check_prose.py FILE... (or - for stdin). Prints path:line: phrase -> what to do.
 Exit 0 when clean, 1 on any hit, 2 when a file cannot be read. Filler is checked in
 prose only; internal details and secrets are checked everywhere, code blocks included,
-because pasted logs are where they leak.
+because pasted logs are where they leak. A secret is printed as its first four
+characters only.
 """
 
 from __future__ import annotations
 
 import re
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
-from scripts.gates.check_no_secrets import SECRET_PATTERNS  # noqa: E402 — the repo's own gate
+from scripts.gates.check_no_secrets import PROVIDER_KEY_PATTERNS  # noqa: E402 — the repo's gate
 
-# Words whose every use in Loom text is filler. Words that are only sometimes filler
-# (ensure, key, critical, handles) are left to the reader; SKILL.md lists them.
+# The phrases from SKILL.md's table that are filler in every use; the other rows
+# need a reader's judgement.
 FILLER = {
     r"leverag(e|es|ed|ing)": "use",
     r"utili[sz](e|es|ed|ing)": "use",
@@ -41,51 +43,60 @@ FILLER = {
     r"i apologi[sz]e|sorry for the confusion": "delete; state the correction",
 }
 
-# Details that never belong in public text.
+# Details that never belong in public text. A path counts only where it starts one,
+# not inside a URL.
 INTERNAL = {
-    r"/(home|Users)/[\w.-]+|/root/": "a home directory path",
-    r"/opt/[\w.-]+": "a host path",
+    r"(?<![\w.:/])/(home|Users)/[\w.-]+|(?<![\w.:/])/root/": "a home directory path",
+    r"(?<![\w.:/])/opt/[\w.-]+": "a host path",
     r"\b(10\.\d+|192\.168|172\.(1[6-9]|2\d|3[01]))\.\d+\.\d+\b": "a private IP address",
     r"\b[\w.-]+\.(internal|corp|lan)\b": "an internal host name",
-    r"\beyJ[\w-]{10,}\.[\w-]{10,}": "a JWT",
-    r"\b(ghp|gho|ghs|ghu)_\w{20,}|\bgithub_pat_\w{20,}": "a GitHub token",
 }
+SECRETS = [
+    ("JWT", re.compile(r"\beyJ[\w-]{10,}\.[\w-]{10,}")),
+    ("GitHub token", re.compile(r"\b(?:gh[posu]_\w{20,}|github_pat_\w{20,})")),
+    *PROVIDER_KEY_PATTERNS,
+]
 
 _FILLER = [
     (re.compile(rf"\b(?:{pattern})(?!\w)", re.IGNORECASE), f"-> {fix}")
     for pattern, fix in FILLER.items()
 ]
 _INTERNAL = [(re.compile(pattern), f"-> remove {what}") for pattern, what in INTERNAL.items()]
-# Provider-prefixed key shapes only: the gate's `KEY=value` pattern needs its shape check.
-_INTERNAL += [
-    (pattern, f"-> remove the {label}")
-    for label, pattern in SECRET_PATTERNS
-    if label != "loom secret assignment"
-]
 _INLINE_CODE = re.compile(r"`[^`]*`")
 _FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
 
 
-def check(text: str) -> list[tuple[int, str, str]]:
-    hits = []
-    fence = ""  # the opening run of the fence we are inside, if any
+def split_fences(text: str) -> Iterator[tuple[int, str, bool]]:
+    """Each line with its number and whether it sits inside a fenced code block.
+
+    A fence closes on a bare run of the same character at least as long as the
+    one that opened it, so a ``` inside a ```` block, or a ```python line, does not.
+    """
+    fence = ""
     for number, line in enumerate(text.splitlines(), start=1):
         marker = _FENCE.match(line)
-        if marker:
-            run = marker.group(1)
-            if not fence:
-                fence = run
-                continue
-            if run[0] == fence[0] and len(run) >= len(fence):
-                fence = ""
-                continue
-        checks = [(pattern, advice, line) for pattern, advice in _INTERNAL]
-        if not fence:
+        if marker and not fence:
+            fence = marker.group(1)
+        elif marker and line.strip() == marker.group(1) and marker.group(1).startswith(fence):
+            fence = ""
+        else:
+            yield number, line, bool(fence)
+
+
+def check(text: str) -> list[tuple[int, str, str]]:
+    hits = []
+    for number, line, in_code in split_fences(text):
+        for pattern, advice in _INTERNAL:
+            hits += [(number, m.group(0), advice) for m in pattern.finditer(line)]
+        for label, pattern in SECRETS:
+            hits += [
+                (number, m.group(0)[:4] + "…", f"-> remove the {label}")
+                for m in pattern.finditer(line)
+            ]
+        if not in_code:
             prose = _INLINE_CODE.sub("", line)
-            checks += [(pattern, advice, prose) for pattern, advice in _FILLER]
-        for pattern, advice, target in checks:
-            for match in pattern.finditer(target):
-                hits.append((number, match.group(0), advice))
+            for pattern, advice in _FILLER:
+                hits += [(number, m.group(0), advice) for m in pattern.finditer(prose)]
     return sorted(hits)
 
 

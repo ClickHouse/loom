@@ -3,8 +3,9 @@
 Reads the hook payload on stdin. Exit 0 allows the command; exit 2 blocks it and the
 message on stderr goes back to the agent; any error blocks too. The reviewer reads
 files with its Read, Grep and Glob tools, so Bash is kept to git and gh reads, the
-prose checker and the unit tests. Running the unit tests executes the PR's own test
-code, so review in Bash only a PR you would run locally.
+prose checker and the unit tests, run from the project directory. Running the unit
+tests executes the PR's own test code, so review in Bash only a PR you would run
+locally.
 """
 
 from __future__ import annotations
@@ -31,11 +32,15 @@ COMMANDS = (
     ("gh", "issue", "view"),
     ("gh", "issue", "list"),
     ("python3", ".claude/skills/loom-writing/scripts/check_prose.py"),
-    ("cd",),
 )
 # Allowed only after a pipe, reading the previous command's output.
 FILTERS = {"head", "tail", "wc", "grep"}
 GIT_WRITE_FLAGS = ("--output", "--ext-diff", "--textconv")
+TAIL_FOLLOW = {"-f", "-F", "--follow"}
+# Everything a listed command needs. Leaving out newline, #, ;, $, braces, parentheses,
+# backslash and backticks rules out a second command and every shell expansion that
+# could hide a flag.
+SAFE = re.compile(r"[\w .,/:=@+^~%*'\"|&\[\]-]*")
 PYTEST = (".venv/bin/python", "-m", "pytest")
 PYTEST_FLAG = re.compile(
     r"-q|-qq|-v|-x|-rA|--tb=\w+|-p|no:randomly|--randomly-seed=\d+|--no-header"
@@ -56,10 +61,10 @@ def _pytest_ok(args: list[str]) -> bool:
 
 
 def _segment_ok(words: list[str], piped: bool) -> bool:
+    if "--watch" in words or (words[0] == "tail" and TAIL_FOLLOW & set(words)):
+        return False  # it never exits
     if piped:
         return words[0] in FILTERS
-    if words[0] == "LOOM_ENV_FILE=":  # the empty value: load no .env
-        words = words[1:]
     if tuple(words[:3]) == PYTEST:
         return _pytest_ok(words[3:])
     if words[0] == "git" and any(w.startswith(GIT_WRITE_FLAGS) for w in words):
@@ -68,9 +73,9 @@ def _segment_ok(words: list[str], piped: bool) -> bool:
 
 
 def refusal(command: str) -> str | None:
-    if "`" in command or re.search(r"[$<>]\(", command):
-        return "command and process substitution can run anything"
     command = re.sub(r"\s2>&1\b|\s2?>\s*/dev/null\b", "", command)
+    if not SAFE.fullmatch(command):
+        return "it has a character that could start a second command or a shell expansion"
     lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
     lexer.whitespace_split = True
     segment: list[str] = []

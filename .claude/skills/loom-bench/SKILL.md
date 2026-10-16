@@ -8,7 +8,7 @@ argument-hint: "<question to answer>"
 
 ## 0. Ask first
 
-A benchmark run spends provider money and hours of wall clock. Offline harnesses and `--help` are free; anything that ingests or judges is not. "Keep the bench numbers" means the existing numbers.
+A benchmark run spends provider money and hours of wall clock. Offline harnesses and `--help` are free; anything that ingests or judges is not. In Claude Code every `bench/*.py` and `make bench*` command asks first, `--help` included. "Keep the bench numbers" means the existing numbers.
 
 Before a paid run, even one the requester asked for, reply with the question, the harness and arms, the item count and repeats, the provider and judge, and whether the treatment can change anything on that dataset (read the code path first: a setting that scores every row of the dataset alike cannot move the result). Start only after a yes to that plan. Use the provider keys the requester's environment already has; never copy a key from another checkout's `.env`. A run never outlives the session that started it: stop its server, its ClickHouse and the harness before you report.
 

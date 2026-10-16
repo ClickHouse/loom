@@ -22,24 +22,24 @@ HITS = [
         "source_uri": "file:///r/AGENTS.md",
         "chunk_idx": 4,
         "content": "Identity tuple on every row: "
-        "(org, namespace, agent, user_id, session_id) — first three required, rest default to '-'.",
-        "section": "Conventions that aren't obvious",
+        "(org, namespace, agent, user_id, session_id), the last two defaulting to '-'.",
+        "section": "Invariants",
         "score": 0.912,
         "similarity": 0.81,
     },
     {
         "source_uri": "file:///r/AGENTS.md",
         "chunk_idx": 9,
-        "content": "Two more columns are stamped "
-        "by the server, never read from the body: actor and source_class.",
+        "content": "The server sets actor from the token "
+        "and source_class from the op and its source_trace.",
         "section": "",
         "score": 0.4,
     },
     {
         "source_uri": "file:///r/AGENTS.md",
         "chunk_idx": 1,
-        "content": "Repo orientation …",
-        "section": "Repo orientation",
+        "content": "server/ — FastAPI control plane …",
+        "section": "Rules by area and layout",
         "score": 0.0,
         "similarity": 0.33,
     },
@@ -146,8 +146,9 @@ def test_demo_fake_llm_ingests_then_prints_hits_and_hint(repo: Path, serve, caps
     assert fake.posts[0][2] == ""  # tokenless single-user call
     assert "ingested AGENTS.md → doc_id=doc-1 chunks=12" in out
     assert "Top 3 knowledge hits" in out
-    assert "0.912" in out and "AGENTS.md#4 (Conventions th…" in out  # source column is 28 wide
+    assert "0.912" in out and "AGENTS.md#4 (Invariants)" in out
     assert "0.330" in out  # falls back to similarity when score is 0
+    assert "AGENTS.md#1 (Rules by area …" in out  # the source column is 28 wide
     assert "synthesis needs a real LLM: set LOOM_LLM_PROVIDER=openai and OPENAI_API_KEY" in out
 
 
