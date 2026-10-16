@@ -1069,6 +1069,11 @@ _EDGE_CLOSED_VALID_TO = f"greatest({_EDGE_END}, ifNull(valid_from, {_EDGE_END}))
 _OPEN_EDGES_WHERE = f"""org = {{org:String}} AND namespace = {{ns:String}}
           AND (entity_a, entity_b) IN {{pairs:Array(Tuple(String, String))}}
           AND invalid_at IS NULL AND (valid_to IS NULL OR valid_to > {_EDGE_END})"""
+# The same, open edges only: a late cleanup ends at a past moment, and must not move
+# back the end another row gave an edge row of the pair since.
+_STILL_OPEN_EDGES_WHERE = """org = {org:String} AND namespace = {ns:String}
+          AND (entity_a, entity_b) IN {pairs:Array(Tuple(String, String))}
+          AND invalid_at IS NULL AND valid_to IS NULL"""
 
 
 # The migration that started linking rows to edges: a value first written before it
@@ -1132,8 +1137,10 @@ async def end_edges(
     org: str,
     namespace: str,
     ends: list[tuple[str, str, datetime]],
+    open_only: bool = False,
 ) -> None:
-    """End each edge (entity_a, entity_b, end) still valid after its `end`, as a close
+    """End each edge (entity_a, entity_b, end) still valid after its `end` (still open,
+    with `open_only`), as a close
     ends a triple, unless a live row still names both entities: its current value has
     a link to the pair (`entity_edge_rows`), the revised or retired rows included, as
     the edge is its co-occurrence too. A row written before rows were linked to edges
@@ -1150,11 +1157,12 @@ async def end_edges(
         "ends": [end.replace(microsecond=0) for _a, _b, end in ends],
         "edge_links": _EDGE_ROW_LINKS_MIGRATION,
     }
+    where = _STILL_OPEN_EDGES_WHERE if open_only else _OPEN_EDGES_WHERE
     found = await ch.query_all(
         f"""
         WITH {_HELD_PAIRS_CTES}
         SELECT DISTINCT entity_a, entity_b FROM loom.entity_edges
-        WHERE {_OPEN_EDGES_WHERE}
+        WHERE {where}
           AND (entity_a, entity_b) NOT IN (SELECT entity_a, entity_b FROM held)
         SETTINGS select_sequential_consistency = 1
         """,
@@ -1167,7 +1175,7 @@ async def end_edges(
         f"""
         ALTER TABLE loom.entity_edges
         UPDATE valid_to = {_EDGE_CLOSED_VALID_TO}
-        WHERE {_OPEN_EDGES_WHERE}
+        WHERE {where}
           AND (entity_a, entity_b) IN {{ending:Array(Tuple(String, String))}}
         """,
         params={**params, "ending": ending},

@@ -507,8 +507,9 @@ async def value_ended_at(
 async def _end_edges_of(
     input: Any, memory_id: str, content_sha256: str, ended_at: datetime, *, ch: Any
 ) -> None:
-    """End at `ended_at` the edges linked to the row's value `content_sha256` that no
-    live row names (`end_edges` keeps those)."""
+    """End at `ended_at` the open edges linked to the row's value `content_sha256` that
+    no live row names (`end_edges` keeps those). An edge row another row closed since
+    keeps its end."""
     pairs = await ch.query_all(
         """
         SELECT DISTINCT entity_a, entity_b FROM loom.entity_edge_rows
@@ -519,7 +520,7 @@ async def _end_edges_of(
         params={"org": input.org, "ns": input.namespace, "id": memory_id, "sha": content_sha256},
     )
     ends = [(str(p["entity_a"]), str(p["entity_b"]), ended_at) for p in pairs]
-    await end_edges(ch, org=input.org, namespace=input.namespace, ends=ends)
+    await end_edges(ch, org=input.org, namespace=input.namespace, ends=ends, open_only=True)
 
 
 async def project_revised_edges(row: Mapping[str, Any], value: Any, *, op: str, ch: Any) -> None:

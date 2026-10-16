@@ -2159,6 +2159,42 @@ async def test_a_late_projections_edge_ends_when_the_revision_ended_its_value(
     )
 
 
+async def test_a_late_cleanup_keeps_the_end_another_row_gave_the_pair(ch, org) -> None:
+    # Alice and London have two edge rows: one another row closed ten minutes after
+    # the revision, and the late projection's own open one. The late cleanup ends
+    # the open one at the revision and leaves the closed one's end alone.
+    from server.memory.app.entity_projections import close_late_edges
+    from server.memory.app.projections import entity_edge_row
+
+    revised = naive_utc_now().replace(microsecond=0) - timedelta(hours=1)
+    started = revised - timedelta(hours=1)
+    other_end = revised + timedelta(minutes=10)
+    closed = entity_edge_row(
+        org, NS, "alice", "london", last_seen=started, valid_from=started, valid_to=other_end
+    )
+    late = entity_edge_row(org, NS, "alice", "london", last_seen=started, valid_from=started)
+    await ch.insert("loom.entity_edges", [closed, late], settings={"wait_for_async_insert": 1})
+    memory_id, sha = str(uuid.uuid4()), "a" * 64
+    link = {
+        "org": org,
+        "namespace": NS,
+        "memory_id": memory_id,
+        "user_id": USER,
+        "content_sha256": sha,
+        "entity_a": "alice",
+        "entity_b": "london",
+    }
+    await ch.insert("loom.entity_edge_rows", [link], settings={"wait_for_async_insert": 1})
+    await close_late_edges(org, NS, memory_id, sha, ended_at=revised, ch=ch)
+    await _mutations_done(ch, org)
+    rows = await ch.query_all(
+        "SELECT valid_to FROM loom.entity_edges WHERE org = {org:String}"
+        " ORDER BY valid_to SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert [r["valid_to"] for r in rows] == [revised, other_end]
+
+
 @pytest.mark.parametrize(
     "extra",
     [
