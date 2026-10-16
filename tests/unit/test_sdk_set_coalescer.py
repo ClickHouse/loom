@@ -11,7 +11,7 @@ import loom.memory
 import pytest
 from loom import Agent
 from loom.errors import RateLimited
-from loom.memory import COALESCE_MAX_BATCH, _bulk_verdict
+from loom.memory import COALESCE_MAX_BATCH
 
 
 class _FakeTransport:
@@ -22,6 +22,8 @@ class _FakeTransport:
         self.row_verdicts: dict[str, str] = {}
         # A verdict for one entry by its value, when one key comes twice.
         self.value_verdicts: dict[str, str] = {}
+        # Values the server skips as already stored (version 0).
+        self.unchanged_values: set[str] = set()
 
     async def post(
         self, op_path: str, payload: dict[str, Any], idempotency_key=None, *, timeout_s=None
@@ -43,6 +45,7 @@ class _FakeTransport:
                         "memory_key": e["memory_key"],
                         "version": 0
                         if e["memory_key"] in self.bulk_extra.get("merged", [])
+                        or str(e["value"]) in self.unchanged_values
                         else 100 + i,
                         "conflict_verdict": self.value_verdicts.get(
                             str(e["value"]), self.row_verdicts.get(e["memory_key"], "")
@@ -77,6 +80,7 @@ async def test_two_sets_go_out_as_two_point_writes(agent: Agent) -> None:
 
 async def test_third_set_inside_the_window_starts_a_bulk(agent: Agent) -> None:
     t: Any = agent.transport
+    t.row_verdicts = {"d": "merge", "e": "conflict"}
     t.bulk_extra = {"merged": ["d"], "conflicted": ["e"]}
     results = await asyncio.gather(*[agent.memory.set(k, {"v": k}) for k in "abcde"])
     assert sorted(t.paths()) == ["/v1/memory.bulk_set", "/v1/memory.set", "/v1/memory.set"]
@@ -100,8 +104,8 @@ async def test_a_coalesced_set_keeps_the_rows_own_verdict(agent: Agent) -> None:
     t.bulk_extra = {"conflicted": ["d", "e"]}
     results = await asyncio.gather(*[agent.memory.set(k, {"v": k}) for k in "abcde"])
     by_key = {r["memory_key"]: r["conflict_verdict"] for r in results if r.get("coalesced")}
-    # c and d carry their own verdict; e has none, so the lists supply it.
-    assert by_key == {"c": "refines", "d": "conflict", "e": "conflict"}
+    # c and d carry their own verdict; e has none, so it is clear whatever the lists say.
+    assert by_key == {"c": "refines", "d": "conflict", "e": "clear"}
 
 
 async def test_a_coalesced_set_of_a_blacklisted_value_raises_as_alone(agent: Agent) -> None:
@@ -175,6 +179,27 @@ async def test_a_restatement_of_a_pinned_key_in_a_burst_with_a_change_resolves(
         return_exceptions=True,
     )
     assert same["memory_key"] == "k" and same["coalesced"] is True
+    assert isinstance(changed, PreconditionFailed) and changed.code == "PINNED_CONFLICT"
+
+
+async def test_a_restatement_does_not_take_a_rejected_siblings_verdict(agent: Agent) -> None:
+    # k is set to its stored value V, then to W, which is close to a pinned row
+    # under another key. The server skips V with no verdict and rejects W, and
+    # rejected_pinned names k; only W raises, as each set alone would.
+    from loom.errors import PreconditionFailed
+
+    t: Any = agent.transport
+    t.value_verdicts = {"V": "", "W": "rejected"}
+    t.unchanged_values = {"V"}
+    t.bulk_extra = {"rejected_pinned": ["k"]}
+    a, b, same, changed = await asyncio.gather(
+        agent.memory.set("a", 1),
+        agent.memory.set("b", 2),
+        agent.memory.set("k", "V"),
+        agent.memory.set("k", "W"),
+        return_exceptions=True,
+    )
+    assert isinstance(same, dict) and same["conflict_verdict"] == "clear" and same["noop"] is True
     assert isinstance(changed, PreconditionFailed) and changed.code == "PINNED_CONFLICT"
 
 
@@ -267,17 +292,6 @@ async def test_a_batch_is_capped_at_the_verdict_cap(agent: Agent, monkeypatch: A
     assert max(len(b["entries"]) for b in bulks) == COALESCE_MAX_BATCH
     assert sum(len(b["entries"]) for b in bulks) + t.paths().count("/v1/memory.set") == n
     assert len(results) == n
-
-
-def test_bulk_verdict_spelling_matches_the_point_path() -> None:
-    res = {"merged": ["a"], "rejected_pinned": ["b"], "duplicates": ["c"], "conflicted": ["d"]}
-    assert [_bulk_verdict(k, res) for k in "abcde"] == [
-        "merge",
-        "rejected",
-        "duplicate",
-        "conflict",
-        "clear",
-    ]
 
 
 def test_agent_and_datapack_default_to_coalescing() -> None:

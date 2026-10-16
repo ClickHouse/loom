@@ -74,20 +74,6 @@ _BULK_ENTRY_KEYS = frozenset(
 _IDENTITY_KEYS = ("org", "namespace", "agent", "user_id", "session_id", "run_id")
 
 
-def _bulk_verdict(memory_key: str, bulk: dict[str, Any]) -> str:
-    """The point-path spelling of a bulk verdict for one key, from the
-    aggregate lists (for a row that carries no verdict of its own)."""
-    for verdict, field_name in (
-        ("merge", "merged"),
-        ("rejected", "rejected_pinned"),
-        ("duplicate", "duplicates"),
-        ("conflict", "conflicted"),
-    ):
-        if memory_key in (bulk.get(field_name) or ()):
-            return verdict
-    return "clear"
-
-
 class _CoalesceWindow:
     __slots__ = ("t0", "count", "pending", "timer", "identity")
 
@@ -188,11 +174,10 @@ class _SetCoalescer:
             )
             row.setdefault("memory_key", entry["memory_key"])
             row["coalesced"] = True
-            # The server stamps each row's own verdict (`refines` is on no list);
-            # the lists are the fallback for a row it left unchecked.
-            row["conflict_verdict"] = row.get("conflict_verdict") or _bulk_verdict(
-                str(row["memory_key"]), res
-            )
+            # Only the verdict the server stamped on this row counts. The key
+            # lists can name a key for another entry of the same key, so an
+            # unstamped row (unchecked, or a restatement skipped) is clear.
+            row["conflict_verdict"] = row.get("conflict_verdict") or "clear"
             row["noop"] = int(row.get("version") or 0) == 0
             # A change to a pinned or read_only key is skipped: raise the 409 / 423
             # the same set alone would have. The row says so, not the key's list,
