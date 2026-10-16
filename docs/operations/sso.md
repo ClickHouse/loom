@@ -55,14 +55,23 @@ Group claims are not mapped. Namespace access comes from Loom's own grants.
 ## Accounts
 
 The verified email matches an SSO account (one with no password) by its
-contact email. An account created with a password is never matched: self-signup
-takes any email without verifying it, so matching would hand that account to
-whoever owns the address at the provider. To carry such an account over, an
-org admin grants the person's SSO account on it once they have signed in
-(`loom whoami` shows its subject):
-`loom call grants.create namespace=<ns> subject=<sso subject> role=admin`.
-With SSO the only way in, the admin's own token can come from the break-glass
-path below. For a person with no account:
+contact email. A password account is matched only once it is linked to the
+email: self-signup took any email without verifying it, so an email match
+alone would hand the account to whoever typed the address first. A linked
+account keeps its subject, grants, namespaces and data; no new one is made.
+
+- **Before turning SSO on**, link your people's accounts in one go:
+  `loom sso adopt --domain example.com` lists the password accounts at that
+  domain, and `--apply` links them. It vouches that the domain's addresses are
+  the provider's people, so read the list: an address someone else registered
+  is linked too. An email with accounts in several orgs signs in to none.
+- **Anyone not adopted** is asked, at their first SSO sign-in, for their
+  account's Loom password once; it then links. Wrong passwords count against
+  the usual sign-in limits.
+- `loom sso unlink --email <email> --apply` takes a link back. Sessions already
+  open are not ended; revoke them with `loom revoke-token --subject`.
+
+For a person with no account:
 
 - `LOOM_OIDC_JIT_PROVISION=true` creates one on their first sign-in: a
   personal namespace in `LOOM_OIDC_JIT_ORG`, role `writer`.
@@ -71,13 +80,28 @@ path below. For a person with no account:
   stops with an error.
 - With JIT off, only existing accounts can sign in.
 - A JIT account's namespace is `u-<name>-<8 hex>`, named from the email.
-  With JIT on, nobody else can create one, but a name made before JIT was
-  turned on stays someone else's, and that person is refused (an
-  `auth.signin_denied` row says "jit namespace taken"). Look for `u-`
-  namespaces before you turn JIT on.
+  With JIT on, nobody else can create one. A name someone made before JIT
+  was turned on stays theirs, and the person gets the next free one
+  (`-2`, `-3`, then a random suffix).
 
 Platform admins are the verified emails listed in `LOOM_PLATFORM_ADMINS`.
 The provider can never grant admin.
+
+## Bots and CI
+
+A bot never signs in at the provider. Give it a service-account token scoped
+to the namespace its data belongs in, usually a team namespace with more than
+one admin, and set it as `LOOM_API_KEY`:
+
+```bash
+loom mint-token --subject sa:triage-bot --org <org> --service-account \
+  --namespace-role triage=writer --ttl-days 90
+```
+
+Its writes land in that namespace, stamped `actor=process:sa:triage-bot`. SSO
+does not affect these tokens; revoke one with `loom revoke-token --subject`.
+A person can also create one from their session (`/v1/me/service_accounts`),
+but it lasts at most 30 days, so long-running bots use an operator's token.
 
 ## Sessions and logout
 
@@ -100,13 +124,14 @@ The provider can never grant admin.
   ended session writes an `auth.*` row to the audit log:
   `auth.sso_signin`, `auth.signin_denied`, `auth.device_approved`,
   `auth.device_denied`, `auth.connect_approved`, `auth.connect_denied`,
-  `auth.jit_provisioned`, `auth.session_revoked`.
+  `auth.jit_provisioned`, `auth.sso_linked`, `auth.sso_unlinked`,
+  `auth.session_revoked`.
 
 ## Behind a proxy
 
-The sign-in limits (10 wrong device codes, 30 new device sign-ins and 30
-identity-provider round trips per 15 minutes) count per client address, an
-IPv6 /64 as one. Set `LOOM_TRUSTED_PROXIES` to your proxy's
+The sign-in limits per 15 minutes (10 wrong device codes, 30 new device
+sign-ins, 300 identity-provider sign-in starts and 30 failed callbacks) count
+per client address, an IPv6 /64 as one. Set `LOOM_TRUSTED_PROXIES` to your proxy's
 addresses so that address is the user's own, not the proxy's for everyone.
 
 ## ClickHouse Keeper

@@ -28,7 +28,7 @@ import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
-from server.auth import claims
+from server.auth import claims, sso_links
 from server.auth.attempts import Attempts, address_key, client_address
 from server.auth.delegation import SESSION_TTL
 from server.auth.jwt import AuthInfo, mint_token, new_jti
@@ -612,6 +612,10 @@ class _StartAgain(Exception):
     """The IdP refused the code: a stale one, so the person starts again."""
 
 
+class _Spent(Exception):
+    """The IdP's code was exchanged but the sign-in could not finish."""
+
+
 # States whose code is being exchanged in this process: an IdP code is spent
 # once, so a second callback of the same sign-in waits for nothing.
 _exchanging: set[str] = set()
@@ -622,7 +626,8 @@ async def _exchange_at_idp(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """The IdP's tokens and verified id_token claims for `code`. A code it
     refuses raises _StartAgain and counts against `address`; a fault on its
-    side (its outage, a rejected client secret) answers 502 and counts not."""
+    side (its outage, a rejected client secret) answers 502 and counts not.
+    Its keys away once the code is spent raise _Spent: a reload cannot finish."""
     import jwt
 
     from server.auth import oidc
@@ -635,7 +640,6 @@ async def _exchange_at_idp(
             redirect_uri=_oidc_callback_url(),
             code_verifier=pending["code_verifier"],
         )
-        id_claims = await oidc.verify_id_token(tokens.get("id_token", ""), nonce=pending["nonce"])
     except OAuthError:
         _failed_callbacks_by_address.record(address)
         raise
@@ -646,9 +650,19 @@ async def _exchange_at_idp(
             _failed_callbacks_by_address.record(address)
             raise _StartAgain from e  # a stale or made-up code
         raise OAuthError("temporarily_unavailable", 502) from e
-    except (httpx.TransportError, jwt.PyJWKClientConnectionError) as e:  # the IdP is away
+    except httpx.TransportError as e:  # the IdP is away
         log.warning("oidc callback: identity provider exchange failed: %s", type(e).__name__)
         raise OAuthError("temporarily_unavailable", 502) from e
+    except Exception as e:  # any other exchange failure refuses the login (re-raised)
+        _failed_callbacks_by_address.record(address)
+        log.warning("oidc callback: identity provider exchange refused: %s", type(e).__name__)
+        raise OAuthError("oidc_error") from e
+    try:
+        id_claims = await oidc.verify_id_token(tokens.get("id_token", ""), nonce=pending["nonce"])
+    except jwt.PyJWKClientConnectionError as e:
+        log.warning("oidc callback: the identity provider's keys are away: %s", e)
+        await oidc.revoke(str(tokens.get("refresh_token") or ""))
+        raise _Spent from e
     except Exception as e:  # any other verify failure refuses the login (re-raised)
         _failed_callbacks_by_address.record(address)
         log.warning("oidc callback: id_token refused: %s", type(e).__name__)
@@ -658,8 +672,6 @@ async def _exchange_at_idp(
 
 async def _finish_oidc_login(request: Request) -> Response:
     from server.auth import device, oidc
-    from server.auth.jit import finish_unfinished_account, jit_provision_for_email
-    from server.auth.login import SignInUnavailable, resolve_identity_for_email
 
     state = request.query_params.get("state", "")
     if not state:
@@ -693,6 +705,8 @@ async def _finish_oidc_login(request: Request) -> Response:
         tokens, id_claims = await _exchange_at_idp(request, code, pending, address)
     except _StartAgain:
         return _expired_sign_in()
+    except _Spent:
+        return _sign_in_unavailable(_restart_url(pending))
     finally:
         _exchanging.discard(state)
     upstream = str(tokens.get("refresh_token") or "")
@@ -707,18 +721,9 @@ async def _finish_oidc_login(request: Request) -> Response:
         await oidc.revoke(upstream)
         return _expired_sign_in()
     email = oidc.verified_email(id_claims)
-    resolved = None
-    if email:
-        try:
-            await finish_unfinished_account(email)
-            # No account — auto-provision one if JIT is on (else stay fail-closed).
-            resolved = await resolve_identity_for_email(email) or await jit_provision_for_email(
-                email
-            )
-        except SignInUnavailable as e:
-            log.warning("oidc callback: the account could not be read: %s", e)
-            await oidc.revoke(upstream)
-            return _sign_in_unavailable(_restart_url(pending))
+    resolved = await _account_for(email, pending, upstream) if email else None
+    if isinstance(resolved, Response):
+        return resolved
     if resolved is None:
         reason = "no loom account for this email" if email else "verified email required"
         await _signin_denied(str(id_claims.get("email") or ""), reason)
@@ -726,11 +731,167 @@ async def _finish_oidc_login(request: Request) -> Response:
         if kind == "device":
             await device.deny(user_code)
         return _denied_page(f"{reason}; ask your Loom operator for access")
-    if kind == "device":
-        return await device.signed_in(user_code, resolved, upstream)
-    if kind == "dashboard":
-        return await _dashboard_signed_in(resolved)
-    return await _connect_consent(pending, resolved, upstream)
+    return await _signed_in_as(pending, resolved, upstream)
+
+
+async def _account_for(
+    email: str, pending: dict[str, Any], upstream: str
+) -> tuple[str, str, list[str], list[str]] | Response | None:
+    """The account a verified `email` signs in to, a page to answer instead
+    (link a password account, or try again later), or None: no account."""
+    from server.auth import oidc
+    from server.auth.jit import finish_unfinished_account, jit_provision_for_email
+    from server.auth.login import SignInUnavailable, resolve_identity_for_email
+
+    try:
+        await finish_unfinished_account(email)
+        resolved = await resolve_identity_for_email(email)
+        if resolved is None and await sso_links.unlinked_accounts(email):
+            # Their password account: proving it links it, no new one is made.
+            return await _offer_link(pending, email, upstream)
+        # No account — auto-provision one if JIT is on (else stay fail-closed).
+        return resolved or await jit_provision_for_email(email)
+    except SignInUnavailable as e:
+        log.warning("oidc callback: the account could not be read: %s", e)
+        await oidc.revoke(upstream)
+        return _sign_in_unavailable(_restart_url(pending))
+
+
+async def _signed_in_as(
+    pending: dict[str, Any],
+    identity: tuple[str, str, list[str], list[str]],
+    upstream: str,
+) -> Response:
+    """Carry on the sign-in `pending` began, as `identity`."""
+    from server.auth import device
+
+    if pending["kind"] == "device":
+        return await device.signed_in(pending["user_code"], identity, upstream)
+    if pending["kind"] == "dashboard":
+        return await _dashboard_signed_in(identity)
+    return await _connect_consent(pending, identity, upstream)
+
+
+async def _offer_link(pending: dict[str, Any], email: str, upstream: str) -> Response:
+    ticket = secrets.token_urlsafe(32)
+    try:
+        await store.save_pending(
+            token_id(ticket),
+            {
+                "kind": "link",
+                "email": email,
+                "sign_in": pending,
+                "upstream_refresh": seal(UPSTREAM_PURPOSE, upstream),
+            },
+        )
+    except claims.Busy:
+        from server.auth import oidc
+
+        await oidc.revoke(upstream)
+        return _sign_in_unavailable(_restart_url(pending))
+    return _link_page(ticket, email)
+
+
+def _link_page(ticket: str, email: str, error: str = "", status_code: int = 200) -> Response:
+    message = f'<p class="error">{html.escape(error)}</p>' if error else ""
+    return html_page(
+        "Sign in to Loom",
+        f"""<h2>Link your Loom account</h2>
+<p>A Loom account with a password already uses <b>{html.escape(email)}</b>.
+Enter that password once, and single sign-on opens this account from now on,
+with all of its namespaces and data.</p>{message}
+<form method="post" action="/oauth/link">
+<input type="hidden" name="ticket" value="{ticket}">
+<input name="password" type="password" placeholder="Loom password"
+       autocomplete="current-password" required>
+<button type="submit">Link and continue</button>
+<button type="submit" name="decision" value="not_mine" class="secondary" formnovalidate>
+That isn't my account</button>
+</form>
+<p>No longer know it? Your Loom operator can link it for you.</p>""",
+        status_code,
+    )
+
+
+async def _without_the_password_account(held: dict[str, Any]) -> Response:
+    """Someone else registered the address with a password: the person goes on
+    to an account of their own (JIT), as if that one did not exist."""
+    from server.auth import device, oidc
+    from server.auth.jit import jit_provision_for_email
+    from server.auth.login import SignInUnavailable
+
+    email, sign_in = held["email"], held["sign_in"]
+    upstream = unseal(UPSTREAM_PURPOSE, held["upstream_refresh"])
+    try:
+        identity = await jit_provision_for_email(email)
+    except SignInUnavailable:
+        await oidc.revoke(upstream)
+        return _sign_in_unavailable(_restart_url(sign_in))
+    if identity is None:
+        await _signin_denied(email, "no loom account for this email")
+        await oidc.revoke(upstream)
+        if sign_in["kind"] == "device":
+            await device.deny(sign_in["user_code"])
+        return _denied_page("no loom account for this email; ask your Loom operator for access")
+    return await _signed_in_as(sign_in, identity, upstream)
+
+
+@router.post("/oauth/link")
+async def link_account(request: Request) -> Response:
+    """The person the IdP vouched for proves the password of the account that
+    names their email; that account is then theirs under SSO."""
+    from server.auth.login import (
+        LoginThrottled,
+        resolve_identity_for_email,
+        resolve_user_credentials,
+    )
+    from server.core.ch import own_write_reads
+
+    f = await form_body(request)
+    ticket = f.get("ticket", "")
+    held = await store.pending(token_id(ticket))
+    if held is None or held.get("kind") != "link":
+        return _expired_sign_in()
+    email, sign_in = held["email"], held["sign_in"]
+    if f.get("decision") == "not_mine":
+        if await store.take_pending(token_id(ticket)) is None:
+            return _expired_sign_in()
+        return await _without_the_password_account(held)
+    try:
+        proven = await resolve_user_credentials(
+            email, f.get("password", ""), address=address_key(client_address(request))
+        )
+    except LoginThrottled:
+        return _link_page(ticket, email, "Too many failed attempts. Try again later.", 429)
+    if proven is None:
+        return _link_page(ticket, email, "That is not the account's password.", 401)
+    if await store.take_pending(token_id(ticket)) is None:
+        return _expired_sign_in()  # the form sent twice: the other one carries on
+    subject, org, namespaces, _ = proven
+    # The password proves the accounts behind it, not every one naming the email.
+    accounts = [
+        (a["org"], a["namespace"])
+        for a in await sso_links.unlinked_accounts(email)
+        if a["org"] == org and a["namespace"] in namespaces
+    ]
+    await sso_links.link(email, accounts, "self")
+    await audit.emit(
+        "auth.sso_linked",
+        org=org,
+        namespace="-",
+        actor=subject,
+        subject={"email": email, "by": "self", "namespaces": [ns for _, ns in accounts]},
+    )
+    with own_write_reads():
+        resolved = await resolve_identity_for_email(email)
+    upstream = unseal(UPSTREAM_PURPOSE, held["upstream_refresh"])
+    if resolved is None:  # another org shares the email: the cross-org guard holds
+        await _signin_denied(email, "linked account does not resolve")
+        from server.auth import oidc
+
+        await oidc.revoke(upstream)
+        return _denied_page("this email names accounts in several orgs; ask your Loom operator")
+    return await _signed_in_as(sign_in, resolved, upstream)
 
 
 async def _connect_consent(
@@ -1064,6 +1225,14 @@ async def _ask_identity_provider(grant: Grant, refresh_token: str) -> str:
         raise OAuthError("temporarily_unavailable", 503, headers={"Retry-After": "5"}) from e
 
 
+# A refresh runs, its spend included, for at most _REFRESH_DEADLINE_S, and a
+# failed one's put-back for _PUT_BACK_S more: together (and with a cancelled
+# spend's undo, claims.UNDO_S) well before another request may call the spend
+# abandoned (oauth_store._ABANDONED_S), and inside the SDK's 60-second wait.
+_REFRESH_DEADLINE_S: float = 45
+_PUT_BACK_S = 20
+
+
 async def _refresh_token_grant(f: dict[str, str]) -> dict[str, Any]:
     # A public client identifies itself on refresh (RFC 6749 §6), and the
     # token refreshes only for the client it was issued to; a mismatch is
@@ -1072,14 +1241,19 @@ async def _refresh_token_grant(f: dict[str, str]) -> dict[str, Any]:
     if not client_id:
         raise OAuthError("invalid_request", description="client_id required")
     refresh_token = f.get("refresh_token", "")
+    deadline = asyncio.get_running_loop().time() + _REFRESH_DEADLINE_S
     try:
-        grant = await store.take_refresh(refresh_token, client_id)  # rotates
+        async with asyncio.timeout_at(deadline):
+            grant = await store.take_refresh(refresh_token, client_id)  # rotates
     except CodeReplayed as e:
         raise await end_replayed_session(e, "refresh token") from None
+    except TimeoutError:  # the spend, if it landed, was undone (claims.swap)
+        raise _unavailable() from None
     if grant is None:
         raise _invalid_grant()
     try:
-        return await _refresh_session(grant, refresh_token)
+        async with asyncio.timeout_at(deadline):
+            return await _refresh_session(grant, refresh_token)
     except OAuthError as e:
         if e.status_code != 503:  # refused for good: no token replaces this one
             await store.retire_refresh(grant)
@@ -1087,9 +1261,15 @@ async def _refresh_token_grant(f: dict[str, str]) -> dict[str, Any]:
     except asyncio.CancelledError:  # cancelled at shutdown: the token is the client's again
         await put_back(store.save_refresh(refresh_token, grant))
         raise
-    except Exception as e:  # Loom's own failure: unspend the token so the retry is no replay
-        log.warning("oauth: refreshing a session failed: %s", e)
-        await store.save_refresh(refresh_token, grant)  # with the IdP token it may have rotated
+    except Exception as e:  # Loom's own failure (or too slow): unspend the token for the retry
+        log.warning("oauth: refreshing a session failed: %r", e)
+        try:
+            async with asyncio.timeout(_PUT_BACK_S):
+                await store.save_refresh(
+                    refresh_token, grant
+                )  # with the IdP token it may have rotated
+        except TimeoutError:
+            log.warning("oauth: putting back session %s's refresh token timed out", grant["family"])
         raise _unavailable() from e
 
 

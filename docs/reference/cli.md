@@ -262,6 +262,9 @@ python scripts/codegen/docs_reference.py
 | `loom claim-release` | Release a self-signup claim: revoke its grants, clear the owner, deactivate it. | `--org`, `--namespace`, `-y` |
 | `loom mint-token` | Mint a JWT locally (requires LOOM_JWT_SECRET). | `--subject`, `--org`, `--namespaces`, `--roles`, `--namespace-role`, `--ttl-days`, `--save`, `--read-scope`, `--read-user-id`, `--traffic-class`, `--consumer`, `--service-account`, `--user-token`, `--json` |
 | `loom revoke-token` | Revoke one token by jti or subject (writes loom.revoked_tokens through the revocation module; needs the configured ClickHouse). | `--jti`, `--subject`, `--list`, `--issued-before`, `--reason`, `--expires-at`, `--json` |
+| `loom sso` | Carry password accounts over to single sign-on. |  |
+| `loom sso adopt` | Let SSO sign-ins reach the password accounts whose email is at --domain: each person then signs in with the identity provider to their own account, its namespaces and data. | `--domain`, `--org`, `--apply`, `--dry-run` |
+| `loom sso unlink` | Undo the links of one email. | `--email`, `--apply`, `--dry-run` |
 | `loom doctor` | Diagnose pre-boot misconfig (Python version, settings, JWT, CH reachability) and print the problem list /v1/health carries, each with its fix. | `--json`, `--client`, `--server-url`, `--token` |
 | `loom report` | Print a GitHub-Issue-ready bug report with auto-attached `loom doctor` diagnostic. | `--open` |
 | `loom drops` | Print the memory ingest drop ledger (loom.memory_drops) for a namespace, by stage/reason — what the pipeline discarded, truncated or gave up on. | `--namespace`, `--org`, `--hours` |

@@ -268,6 +268,12 @@ def _add_version_install_demo_init_parsers(sub: Any) -> None:
     register_init_cli(sub)
 
 
+def _add_sso_parsers(sub: Any) -> None:
+    from server.cli.sso import register_sso_cli
+
+    register_sso_cli(sub)
+
+
 # Every subcommand `main` registers, in `loom --help` order (the order the
 # parsers are added is the order argparse lists them).
 _SUBCOMMAND_BUILDERS: tuple[Any, ...] = (
@@ -284,6 +290,7 @@ _SUBCOMMAND_BUILDERS: tuple[Any, ...] = (
     _add_claim_release_parser,
     _add_mint_token_parser,
     _add_revoke_token_parser,
+    _add_sso_parsers,
     _add_doctor_report_parsers,
     _add_namespace_hygiene_parsers,
     *_TRACKER_REGISTRARS,

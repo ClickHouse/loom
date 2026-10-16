@@ -227,6 +227,14 @@ emails and nonce-bound id_tokens, sends PKCE to the provider, and refuses a call
 is the only way in: password sign-in and self-signup are refused, since a local password
 would bypass the provider's MFA and outlive a deactivation there.
 
+A verified email reaches a password account only once the account is linked to it
+(`loom.sso_links`, `server/auth/sso_links.py`). Self-signup never verified the email it was
+given, so linking on an email match alone would hand the account to whoever registered the
+address first. The owner links it by proving the account's password once from the SSO
+sign-in, under the password sign-in limits; an operator can vouch for a whole domain with
+`loom sso adopt`, which lists the accounts before `--apply`. A linked account keeps its
+subject, grants and data, and JIT never makes a second account beside one.
+
 Loom stays the authorization server for every client (the dashboard, `loom login`, MCP
 clients); the provider only authenticates the person. The OAuth server:
 

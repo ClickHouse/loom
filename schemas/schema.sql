@@ -16,12 +16,12 @@
 -- Do NOT hand-edit. Edit schemas/migrations/*.sql and re-dump.
 -- CI verifies this file matches what migrations would produce.
 --
--- Counts: 142 tables + 17 materialized views.
+-- Counts: 143 tables + 17 materialized views.
 
 CREATE DATABASE IF NOT EXISTS `loom`;
 
 -- ======================================================================
--- Tables (142)
+-- Tables (143)
 -- ======================================================================
 
 -- loom.agent_cost_rollup_daily
@@ -3134,6 +3134,21 @@ CREATE TABLE IF NOT EXISTS loom.shared
 ENGINE = ReplacingMergeTree(version)
 PARTITION BY (org, namespace)
 ORDER BY (org, namespace, memory_key)
+SETTINGS index_granularity = 8192;
+
+-- loom.sso_links
+CREATE TABLE IF NOT EXISTS loom.sso_links
+(
+    `email` String,
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `linked` UInt8,
+    `linked_by` String,
+    `linked_at` DateTime64(3, 'UTC'),
+    `version` UInt64
+)
+ENGINE = ReplacingMergeTree(version)
+ORDER BY (email, org, namespace)
 SETTINGS index_granularity = 8192;
 
 -- loom.subject_last_seen

@@ -7191,6 +7191,304 @@
       }
      ]
     },
+    "sso": {
+     "prog": "loom sso",
+     "usage": null,
+     "description": null,
+     "epilog": null,
+     "formatter_class": "argparse:HelpFormatter",
+     "add_help": true,
+     "allow_abbrev": true,
+     "defaults": {},
+     "groups": [
+      {
+       "title": "positional arguments",
+       "description": null,
+       "dests": [
+        "subcommand"
+       ]
+      },
+      {
+       "title": "options",
+       "description": null,
+       "dests": [
+        "help"
+       ]
+      }
+     ],
+     "mutually_exclusive": [],
+     "arguments": [
+      {
+       "option_strings": [
+        "-h",
+        "--help"
+       ],
+       "dest": "help",
+       "action": "_HelpAction",
+       "default": "==SUPPRESS==",
+       "const": null,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "show this help message and exit",
+       "metavar": null
+      },
+      {
+       "option_strings": [],
+       "dest": "subcommand",
+       "action": "_SubParsersAction",
+       "default": null,
+       "const": null,
+       "choices": null,
+       "nargs": "A...",
+       "type": null,
+       "required": true,
+       "help": null,
+       "metavar": null,
+       "subcommands": {
+        "adopt": {
+         "prog": "loom sso adopt",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "dry_run": true,
+          "apply_gated": true,
+          "func": "server.cli.sso:_cmd_adopt"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "domain",
+            "org",
+            "dry_run",
+            "dry_run"
+           ]
+          }
+         ],
+         "mutually_exclusive": [
+          {
+           "required": false,
+           "dests": [
+            "dry_run",
+            "dry_run"
+           ]
+          }
+         ],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--domain"
+           ],
+           "dest": "domain",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "Email domain, e.g. example.com",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--org"
+           ],
+           "dest": "org",
+           "action": "_StoreAction",
+           "default": "",
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "Only accounts in this org",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--apply"
+           ],
+           "dest": "dry_run",
+           "action": "_StoreFalseAction",
+           "default": true,
+           "const": false,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "link the accounts (default: dry run)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--dry-run"
+           ],
+           "dest": "dry_run",
+           "action": "_StoreTrueAction",
+           "default": true,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "report what --apply would write, write nothing (the default)",
+           "metavar": null
+          }
+         ]
+        },
+        "unlink": {
+         "prog": "loom sso unlink",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "dry_run": true,
+          "apply_gated": true,
+          "func": "server.cli.sso:_cmd_unlink"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "email",
+            "dry_run",
+            "dry_run"
+           ]
+          }
+         ],
+         "mutually_exclusive": [
+          {
+           "required": false,
+           "dests": [
+            "dry_run",
+            "dry_run"
+           ]
+          }
+         ],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--email"
+           ],
+           "dest": "email",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--apply"
+           ],
+           "dest": "dry_run",
+           "action": "_StoreFalseAction",
+           "default": true,
+           "const": false,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "remove the links (default: dry run)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--dry-run"
+           ],
+           "dest": "dry_run",
+           "action": "_StoreTrueAction",
+           "default": true,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "report what --apply would write, write nothing (the default)",
+           "metavar": null
+          }
+         ]
+        }
+       },
+       "aliases_of": {
+        "adopt": "loom sso adopt",
+        "unlink": "loom sso unlink"
+       },
+       "choices_help": [
+        {
+         "dest": "adopt",
+         "help": "Let SSO sign-ins reach the password accounts whose email is at --domain: each person then signs in with the identity provider to their own account, its namespaces and data. Vouches that the domain's addresses are the provider's people. Dry run unless --apply.",
+         "metavar": "adopt"
+        },
+        {
+         "dest": "unlink",
+         "help": "Undo the links of one email.",
+         "metavar": "unlink"
+        }
+       ]
+      }
+     ]
+    },
     "doctor": {
      "prog": "loom doctor",
      "usage": null,
@@ -10343,6 +10641,7 @@
     "claim-release": "loom claim-release",
     "mint-token": "loom mint-token",
     "revoke-token": "loom revoke-token",
+    "sso": "loom sso",
     "doctor": "loom doctor",
     "report": "loom report",
     "drops": "loom drops",
@@ -10500,6 +10799,11 @@
      "dest": "revoke-token",
      "help": "Revoke one token by jti or subject (writes loom.revoked_tokens through the revocation module; needs the configured ClickHouse).",
      "metavar": "revoke-token"
+    },
+    {
+     "dest": "sso",
+     "help": "Carry password accounts over to single sign-on.",
+     "metavar": "sso"
     },
     {
      "dest": "doctor",

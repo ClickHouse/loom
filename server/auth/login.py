@@ -267,10 +267,11 @@ async def resolve_identity_for_email(
 ) -> Identity | None:
     """Map an externally-verified email (e.g. an OIDC id_token's) to a loom
     identity. No password — the IdP already authenticated the user. Matches
-    active SSO-only accounts (no password) by contact_email. An account made
-    with a password is never matched: self-signup takes any typed email
-    unverified, so matching it would hand a stranger's namespace to whoever
-    owns the address at the IdP. None when nothing matches.
+    active SSO-only accounts (no password) by contact_email, and password
+    accounts linked to the email (`sso_links`). An unlinked password account
+    is never matched: self-signup takes any typed email unverified, so
+    matching it would hand a stranger's namespace to whoever owns the address
+    at the IdP. None when nothing matches.
     """
     ch = get_client()
     ident = email.strip().lower()
@@ -278,7 +279,11 @@ async def resolve_identity_for_email(
         """
         SELECT namespace, owner_email, org, password_hash, contact_email
         FROM loom.namespaces FINAL
-        WHERE contact_email = {ident:String} AND active = 1 AND password_hash = ''
+        WHERE contact_email = {ident:String} AND active = 1
+          AND (password_hash = '' OR (org, namespace) IN (
+              SELECT org, namespace FROM loom.sso_links FINAL
+              WHERE email = {ident:String} AND linked = 1
+          ))
         ORDER BY org, namespace
         """,
         params={"ident": ident},

@@ -3,6 +3,7 @@ SSO-only paths: every grant and every refusal, against the in-memory store."""
 
 from __future__ import annotations
 
+import asyncio
 import re
 import time
 from datetime import UTC, datetime, timedelta
@@ -13,7 +14,7 @@ import jwt as pyjwt
 import pytest
 from fastapi.testclient import TestClient
 
-from server.auth import device, jit, login, oauth, oidc, revocation
+from server.auth import device, jit, login, oauth, oidc, revocation, sso_links
 from server.auth.jwt import mint_token
 from tests.unit.oauth_store_fake import MemoryOAuthStore, oauth_app
 
@@ -53,6 +54,11 @@ def _world(monkeypatch):
         return ""
 
     monkeypatch.setattr(oauth.audit, "emit", emit)
+
+    async def no_password_accounts(email: str) -> list[dict[str, Any]]:
+        return []
+
+    monkeypatch.setattr(sso_links, "unlinked_accounts", no_password_accounts)
     monkeypatch.setattr(device.audit, "emit", emit)
 
     async def credentials(identifier: str, password: str, *, address: str = "") -> Any:
@@ -348,6 +354,30 @@ def test_a_replayed_refresh_token_revokes_the_whole_family(_world, monkeypatch) 
     assert reasons == ["refresh token replayed"]
 
 
+def test_a_refresh_past_its_deadline_answers_busy_and_keeps_the_token(monkeypatch) -> None:
+    c = _client()
+    token = _signed_in_tokens(c)["refresh_token"]
+
+    async def stuck(subject: str, org: str, roles: list[str]) -> list[str]:
+        await asyncio.sleep(5)
+        return roles
+
+    quick = login.refreshed_roles
+    monkeypatch.setattr(oauth, "_REFRESH_DEADLINE_S", 0.2)
+    monkeypatch.setattr(login, "refreshed_roles", stuck)
+    r = _refresh(c, token)
+    assert r.status_code == 503 and _error(r) == "temporarily_unavailable"
+    monkeypatch.setattr(login, "refreshed_roles", quick)
+    assert _refresh(c, token).status_code == 200
+
+
+def test_a_refresh_ends_well_before_a_spend_counts_as_abandoned() -> None:
+    from server.auth import claims, oauth_store
+
+    budget = oauth._REFRESH_DEADLINE_S + oauth._PUT_BACK_S + claims.UNDO_S
+    assert budget < oauth_store._ABANDONED_S
+
+
 def test_refresh_needs_the_client_it_was_issued_to() -> None:
     c = _client()
     tokens = _signed_in_tokens(c)
@@ -488,6 +518,90 @@ def test_a_code_approved_while_its_owner_was_at_the_idp_says_so(sso) -> None:
     _approve(other, grant["user_code"], _sso_round_trip(other, grant["user_code"]).text)
     page = owner.get("/oauth/callback", params={"code": "c", "state": state})
     assert page.status_code == 400 and "already used" in page.text
+
+
+@pytest.fixture
+def bobs_password_account(sso, monkeypatch):
+    """Bob signs in at the IdP; Loom has his account from before SSO, made with
+    a password and not linked yet."""
+    sso["email"] = "bob@example.com"
+    bob = ("bob@example.com", "acme", ["bob"], ["writer"])
+    links: list[tuple[str, list[tuple[str, str]], str]] = []
+
+    async def by_email(email: str) -> Any:
+        return bob if links else None
+
+    async def unlinked(email: str) -> list[dict[str, Any]]:
+        return [] if links else [{"org": "acme", "namespace": "bob"}]
+
+    async def link(email: str, accounts: list[tuple[str, str]], by: str) -> None:
+        links.append((email, accounts, by))
+
+    async def credentials(identifier: str, password: str, *, address: str = "") -> Any:
+        return bob if (identifier, password) == ("bob@example.com", "bobpw") else None
+
+    async def no_jit(email: str) -> None:
+        raise AssertionError("JIT must not make a second account")
+
+    monkeypatch.setattr(login, "resolve_identity_for_email", by_email)
+    monkeypatch.setattr(login, "resolve_user_credentials", credentials)
+    monkeypatch.setattr(sso_links, "unlinked_accounts", unlinked)
+    monkeypatch.setattr(sso_links, "link", link)
+    monkeypatch.setattr(jit, "jit_provision_for_email", no_jit)
+    return links
+
+
+def _link(c: TestClient, page: str, password: str) -> httpx.Response:
+    return c.post("/oauth/link", data={"ticket": _ticket(page), "password": password})
+
+
+def test_sso_reaches_a_password_account_once_its_password_is_proven(
+    bobs_password_account, _world
+) -> None:
+    c = _client()
+    grant = _start(c)
+    page = _sso_round_trip(c, grant["user_code"])
+    assert page.status_code == 200 and "Link your Loom account" in page.text
+    wrong = _link(c, page.text, "guess")
+    assert wrong.status_code == 401 and not bobs_password_account
+    confirm = _link(c, wrong.text, "bobpw")
+    assert confirm.status_code == 200 and "bob@example.com" in confirm.text
+    assert bobs_password_account == [("bob@example.com", [("acme", "bob")], "self")]
+    _approve(c, grant["user_code"], confirm.text)
+    tokens = _poll(c, grant["device_code"]).json()
+    claims = pyjwt.decode(tokens["access_token"], options={"verify_signature": False})
+    assert claims["sub"] == "bob@example.com" and claims["namespaces"] == ["bob"]
+    assert "auth.sso_linked" in [n for n, _ in _world["events"]]
+
+
+def test_someone_elses_password_account_does_not_lock_the_owner_out(
+    bobs_password_account, monkeypatch
+) -> None:
+    # Whoever registered bob's address with a password is not bob: he can go
+    # on without it, to an account of his own.
+    own = ("u-bob-1a2b3c4d", "acme", ["u-bob-1a2b3c4d"], ["writer"])
+
+    async def jit_account(email: str) -> Any:
+        return own
+
+    monkeypatch.setattr(jit, "jit_provision_for_email", jit_account)
+    c = _client()
+    page = _sso_round_trip(c, _start(c)["user_code"])
+    r = c.post("/oauth/link", data={"ticket": _ticket(page.text), "decision": "not_mine"})
+    assert r.status_code == 200 and "u-bob-1a2b3c4d" in r.text
+    assert not bobs_password_account  # nothing linked
+
+
+def test_a_link_ticket_is_spent_once(bobs_password_account) -> None:
+    c = _client()
+    page = _sso_round_trip(c, _start(c)["user_code"])
+    assert _link(c, page.text, "bobpw").status_code == 200
+    assert _link(c, page.text, "bobpw").status_code == 400
+
+
+def test_a_made_up_link_ticket_is_refused(bobs_password_account) -> None:
+    r = _client().post("/oauth/link", data={"ticket": "forged", "password": "bobpw"})
+    assert r.status_code == 400 and not bobs_password_account
 
 
 def test_sso_page_offers_no_password_form(sso) -> None:

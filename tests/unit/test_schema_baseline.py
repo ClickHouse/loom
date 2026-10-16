@@ -91,6 +91,7 @@ def test_the_journal_files() -> None:
         "031_agent_run_budgets.sql",
         "032_oauth_sessions.sql",
         "033_oauth_signin_state.sql",
+        "034_sso_links.sql",
     ]
 
 

@@ -11,13 +11,24 @@ import json
 from typing import Any
 
 import httpx
+import jwt
 import pytest
 
-from server.auth import login, oauth, oidc
+from server.auth import login, oauth, oidc, sso_links
 from server.settings import settings
 from tests.unit.oauth_store_fake import MemoryOAuthStore
 
 _ISS = "https://idp.example.com"
+
+
+@pytest.fixture(autouse=True)
+def _no_password_accounts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No password account names the signed-in email unless a test says so."""
+
+    async def none(email: str) -> list[dict[str, Any]]:
+        return []
+
+    monkeypatch.setattr(sso_links, "unlinked_accounts", none)
 
 
 @pytest.fixture(autouse=True)
@@ -362,6 +373,15 @@ async def test_only_a_callback_refused_before_the_idp_exchange_keeps_its_cookie(
     page = await oauth.oidc_callback(_Req())  # type: ignore[arg-type]
     # The IdP code is spent: a reload could not finish it, so the page starts
     # a fresh sign-in where this one began.
+    assert page.status_code == 503 and "Max-Age=0" in page.headers["set-cookie"]
+    assert b'href="/oauth/authorize?' in page.body
+
+    async def keys_away(token: str, *, nonce: str) -> dict[str, Any]:
+        raise jwt.PyJWKClientConnectionError("jwks down")
+
+    monkeypatch.setattr(oidc, "verify_id_token", keys_away)
+    page = await oauth.oidc_callback(_Req())  # type: ignore[arg-type]
+    # Past the exchange too: the IdP's keys being away is no reason to reload.
     assert page.status_code == 503 and "Max-Age=0" in page.headers["set-cookie"]
     assert b'href="/oauth/authorize?' in page.body
 

@@ -29,6 +29,7 @@ import secrets
 import time
 from typing import Any
 
+from server.core import keeper_claims
 from server.core.schema.migrate_lease import is_keeper_table, key_exists
 
 log = logging.getLogger(__name__)
@@ -39,6 +40,10 @@ TABLE_SQL = (
 )
 SWEEP_INTERVAL_SECONDS = 300
 _FULL_FOR_S = 900  # how long hitting the key limit stays a health problem
+UNDO_S = 10  # an undo Keeper does not finish by then is left to the key's expiry
+# A write the server gives up on rather than lands late, after a request that
+# timed out has put its credential back or another has called it abandoned.
+_BOUNDED = "max_execution_time = 10"
 
 # Whether loom.oauth_signin_state exists here: None until the boot probe or the
 # first sign-in asks.
@@ -117,12 +122,30 @@ async def swap(ch: Any, key: str, old: str | None, new: str, expires_at: int) ->
     except Busy:
         # The write may have landed before Keeper failed: undo it, so the
         # request told to retry finds the key as it read it.
-        with contextlib.suppress(Busy):
-            if old is None:
-                await _drop(ch, key, new)
-            else:
-                await _swap(ch, key, new, old, expires_at)
+        with contextlib.suppress(Busy, TimeoutError):
+            await _undo(ch, key, old, new, expires_at)
         raise
+    except asyncio.CancelledError:
+        # Cancelled after the write may have landed: the same undo, held to
+        # its end, before whoever cancelled puts the credential back.
+        await keeper_claims.shielded(_undo_quietly(ch, key, old, new, expires_at), name="undo")
+        raise
+
+
+async def _undo(ch: Any, key: str, old: str | None, new: str, expires_at: int) -> None:
+    """Put `key` back to `old` if it holds `new` (unique: a nonce in it)."""
+    async with asyncio.timeout(UNDO_S):
+        if old is None:
+            await _drop(ch, key, new)
+        else:
+            await _swap(ch, key, new, old, expires_at)
+
+
+async def _undo_quietly(ch: Any, key: str, old: str | None, new: str, expires_at: int) -> None:
+    try:
+        await _undo(ch, key, old, new, expires_at)
+    except (Busy, TimeoutError) as e:  # left as it is; a spend then waits out its abandonment
+        log.warning("oauth claims: could not undo a cancelled change of %s: %s", key, e)
 
 
 async def _swap(ch: Any, key: str, old: str | None, new: str, expires_at: int) -> str | None:
@@ -132,7 +155,7 @@ async def _swap(ch: Any, key: str, old: str | None, new: str, expires_at: int) -
             if old is None:
                 await ch.execute(
                     f"INSERT INTO {_TABLE} (claim_key, value, expires_at) "
-                    "SETTINGS keeper_map_strict_mode = 1 "
+                    f"SETTINGS keeper_map_strict_mode = 1, {_BOUNDED} "
                     "VALUES ({k:String}, {v:String}, {e:UInt32})",
                     params=params,
                 )
@@ -140,7 +163,7 @@ async def _swap(ch: Any, key: str, old: str | None, new: str, expires_at: int) -
                 await ch.execute(
                     f"ALTER TABLE {_TABLE} UPDATE value = {{v:String}}, expires_at = {{e:UInt32}} "
                     "WHERE claim_key = {k:String} AND value = {old:String} "
-                    "SETTINGS keeper_map_strict_mode = 1",
+                    f"SETTINGS keeper_map_strict_mode = 1, {_BOUNDED}",
                     params=params,
                 )
         except Exception as e:  # a lost race is an answer; Keeper failing is a retry
@@ -167,7 +190,7 @@ async def _drop(ch: Any, key: str, value: str) -> None:
     try:
         await ch.execute(
             f"ALTER TABLE {_TABLE} DELETE WHERE claim_key = {{k:String}} AND value = {{v:String}} "
-            "SETTINGS keeper_map_strict_mode = 1",
+            f"SETTINGS keeper_map_strict_mode = 1, {_BOUNDED}",
             params={"k": key, "v": value},
         )
     except Exception as e:  # someone else changed it since: theirs stands

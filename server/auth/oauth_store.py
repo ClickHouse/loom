@@ -193,7 +193,7 @@ def _generation(value: str) -> int:
     return int(value.split(":", 1)[0])
 
 
-_ABANDONED_S = 120  # longer than any refresh takes, put-back included
+_ABANDONED_S = 120  # past a refresh's deadline and put-back (oauth._REFRESH_DEADLINE_S)
 
 
 def _abandoned(value: str) -> bool:
