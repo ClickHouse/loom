@@ -216,6 +216,8 @@ _PAST = datetime(2026, 1, 1)
     [
         ({"status": "active"}, "duplicate"),
         ({"status": "conflicted"}, "duplicate"),
+        # Marked high since: still served to those who may read it, so the copy stays hidden.
+        ({"status": "active", "sensitivity": "high"}, "duplicate"),
         (None, "active"),
         # Reads serve none of these, so the restored row must not hide behind them.
         ({"status": "proposed"}, "active"),

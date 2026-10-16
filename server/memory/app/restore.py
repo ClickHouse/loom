@@ -14,7 +14,6 @@ from server.memory.api.models_crud import (
     MemoryRestoreInput,
     MemoryRestoreOutput,
 )
-from server.memory.app.entity_projections import holds_graph_facts
 from server.memory.app.provenance import writer_actor
 from server.memory.domain.excerpt import build_excerpt
 from server.memory.domain.temporal_sql import SERVED_STATUSES
@@ -136,6 +135,14 @@ async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryResto
     )
 
 
+def _served_now(row: Any) -> bool:
+    """Whether reads serve `row` now: not deleted, a served status, not ended."""
+    if row.tombstoned_at is not None or row.status not in SERVED_STATUSES:
+        return False
+    now = naive_utc_now()
+    return all(end is None or end > now for end in (row.expires_at, row.valid_to))
+
+
 async def _status_before_retirement(row: MemoryRow, *, ch: Any) -> str:
     """`conflicted` for a row retired while under review when a peer is still
     conflicted and lists it back; `duplicate` for a retired duplicate whose
@@ -163,13 +170,7 @@ async def _status_before_retirement(row: MemoryRow, *, ch: Any) -> str:
             row.duplicate_of, org=row.org, ch=ch, scope=WHOLE_NAMESPACE, fresh=True, strong=True
         )
         # Reads only stand the original in for it while it is served and not ended.
-        if (
-            original is not None
-            and original.status in SERVED_STATUSES
-            and holds_graph_facts(original.model_dump())
-        ):
-            return "duplicate"
-        return "active"
+        return "duplicate" if original is not None and _served_now(original) else "active"
     if was != "conflicted":
         return "active"
     # A peer deleted or resolved while this row was retired leaves nothing to review.

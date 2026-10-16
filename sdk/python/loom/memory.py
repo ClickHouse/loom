@@ -90,9 +90,10 @@ class _SetCoalescer:
 
     `submit()` returns the set's own result: the bulk row's `memory_key` and
     `version` plus `coalesced: true`, `conflict_verdict` (the row's own
-    verdict, as the point path spells it) and `noop` (version 0: a merge
-    or a pinned rejection wrote nothing). A failed bulk request fails every
-    set it carried with the same exception."""
+    verdict, as the point path spells it) and `noop` (version 0: a merge, or
+    a restatement the server skipped, wrote nothing). A set the server refused
+    raises the error the same set alone would have raised, and a failed bulk
+    request fails every set it carried with the same exception."""
 
     def __init__(self, transport: Any) -> None:
         self._transport = transport
