@@ -143,6 +143,42 @@ async def test_a_revision_waits_for_its_entity_projection(post_insert) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("revised", [True, False])
+async def test_a_plain_revision_waits_for_its_edges_to_flush(monkeypatch, revised) -> None:
+    # A type that is not embedded writes through the plain insert. A revision closes
+    # what it dropped right after, and answers: its new edges must be readable by then.
+    import server.memory.store as memory_repo
+    from server.memory.api.models_crud import MemorySetInput
+
+    seen: dict[str, Any] = {}
+
+    async def _project(inp: Any, **kw: Any) -> None:
+        seen.update(kw)
+
+    async def _nothing(*_: Any, **__: Any) -> None:
+        return None
+
+    monkeypatch.setattr(set_commit, "_project_set_entities_fail_open", _project)
+    monkeypatch.setattr(set_commit, "insert_memory_versions", _nothing)
+    monkeypatch.setattr(set_commit, "project_stated_relations", _nothing)
+    monkeypatch.setattr(memory_repo, "tombstone_vectors_of", _nothing)
+    w = set_commit._SetWrite(
+        input=MemorySetInput(
+            org="o", namespace="n", agent="a", memory_key="k", value="Alice works with Bob"
+        ),
+        version=2,
+        retyped_from="",
+        existing=None,
+        expires_at=None,
+        memory_row={"version": 2},
+        memory_id="m1",
+        had_existing_row=revised,
+    )
+    await set_commit._set_plain_insert(w, object())
+    assert seen["wait_visible"] is revised
+
+
+@pytest.mark.asyncio
 async def test_set_returns_before_its_entity_projection_lands(post_insert) -> None:
     seen, gate = post_insert
     await asyncio.wait_for(_post_insert(), timeout=1.0)  # the projection is still blocked
