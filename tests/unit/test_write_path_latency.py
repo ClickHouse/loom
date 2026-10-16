@@ -189,7 +189,9 @@ async def test_set_returns_before_its_entity_projection_lands(post_insert) -> No
 
     ents = set_entities_for_projection(_set_input(), _set_input().value)
     assert seen["scope"] == ("o", "n")
-    assert seen["project_kw"] == {"memory_id": "m1", "wait_visible": True, "ents": ents}
+    # With its value's hash, so one landing after a revision of the row leaves no edge.
+    want = {"memory_id": "m1", "wait_visible": True, "ents": ents, "content_sha256": "sha"}
+    assert seen["project_kw"] == want
     assert "entities" not in seen["order"]
     assert {"supersede", "audit"} <= set(seen["order"])
     # The audit row is the write's receipt: hashes, never the value.
@@ -402,3 +404,29 @@ async def test_the_projection_does_not_mine_entities_it_was_handed(monkeypatch) 
         _set_input(), memory_key="k", value="v", ch=object(), ents=["alice", "bob"]
     )
     assert n == 2 and written == [["alice", "bob"]]
+
+
+@pytest.mark.asyncio
+async def test_a_projection_of_a_value_revised_away_writes_nothing(monkeypatch) -> None:
+    from server.memory.app import entity_projections
+
+    written: list[Any] = []
+
+    async def _edges(bulk: Any, results: Any, **_: Any) -> None:
+        written.append(bulk.entries[0].entities)
+
+    async def _revised(*_: Any, **__: Any) -> set[str]:
+        return set()  # the row holds another value now
+
+    monkeypatch.setattr(entity_projections, "write_entity_edges", _edges)
+    monkeypatch.setattr(entity_projections, "rows_holding", _revised)
+    n = await entity_projections.project_memory_set_entities(
+        _set_input(),
+        memory_key="k",
+        value="v",
+        ch=object(),
+        ents=["alice", "bob"],
+        memory_id="m",
+        content_sha256="old",
+    )
+    assert n == 0 and written == []

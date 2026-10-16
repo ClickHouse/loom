@@ -160,6 +160,7 @@ async def _project_set_entities_fail_open(
     memory_id: str,
     wait_visible: bool = False,
     ents: list[str] | None = None,
+    content_sha256: str = "",
 ) -> None:
     """Deterministic LLM-free entity-graph projection for a committed
     `memory.set`. A point write carries no `entities` column, so without
@@ -167,7 +168,8 @@ async def _project_set_entities_fail_open(
     entity_extractor worker re-extracts it. Fail-open: any error logs a
     warning and the write still succeeds. `wait_visible` (the projection
     beside the response) returns only once its edges are readable. `ents`: the
-    entities the caller already extracted.
+    entities the caller already extracted. `content_sha256`: the value projected, for
+    a projection that may land after a revision of the row.
     """
     try:
         from server.memory.app.extract.handler import project_memory_set_entities
@@ -179,6 +181,7 @@ async def _project_set_entities_fail_open(
             wait_visible=wait_visible,
             memory_id=memory_id,
             ents=ents,
+            content_sha256=content_sha256,
         )
     except Exception as e:  # noqa: BLE001 — a projection; the write stands
         log.warning("memory.set entity projection failed (non-fatal): %s", e)
@@ -864,7 +867,11 @@ async def _set_post_insert(
         # so its edges wait for their flush: once it is done, they are readable.
         task = after_write.schedule(
             _project_set_entities_fail_open(
-                input, memory_id=memory_id, wait_visible=True, ents=ents
+                input,
+                memory_id=memory_id,
+                wait_visible=True,
+                ents=ents,
+                content_sha256=content_sha256,
             ),
             name="loom-set-entities",
             scope=(input.org, input.namespace),

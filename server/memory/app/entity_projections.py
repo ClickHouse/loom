@@ -372,6 +372,7 @@ async def project_memory_set_entities(
     wait_visible: bool = False,
     memory_id: str = "",
     ents: list[str] | None = None,
+    content_sha256: str = "",
 ) -> int:
     """Fail-open entity projection for a single `memory.set`.
 
@@ -381,7 +382,9 @@ async def project_memory_set_entities(
     `wait_visible` is for the projection that runs beside the response: its
     edges are readable once it returns. With `memory_id`, the edges are linked
     to that row and its value (`entity_edge_rows`). `ents`: the caller's own
-    `set_entities_for_projection(input, value)`, not mined again.
+    `set_entities_for_projection(input, value)`, not mined again. With
+    `content_sha256` (a projection beside the response), it writes only while the
+    row still holds that value, and ends its edges if the row changed meanwhile.
     """
     from server.observability.otel import traced
 
@@ -411,11 +414,35 @@ async def project_memory_set_entities(
             ],
         )
     result = _BulkSetResult(memory_key=memory_key, version=0, memory_id=memory_id)
+    ch = ch or get_client()
+    version = [(memory_id, content_sha256)]
+    # A revision that ran first closed what it dropped already: this value is not current.
+    if content_sha256 and not await rows_holding(input.org, input.namespace, version, ch=ch):
+        return 0
     with traced("entities.write_edges", entities=len(ents)):
-        await write_entity_edges(
-            bulk_like, [result], ch=ch or get_client(), wait_visible=wait_visible
-        )
+        await write_entity_edges(bulk_like, [result], ch=ch, wait_visible=wait_visible)
+    # Revised or retired while the edges were written: its close may have run before
+    # they landed, so end the ones no live row names.
+    if content_sha256 and not await rows_holding(input.org, input.namespace, version, ch=ch):
+        await _end_edges_of(input, memory_id, content_sha256, ch=ch)
     return len(ents)
+
+
+async def _end_edges_of(input: Any, memory_id: str, content_sha256: str, *, ch: Any) -> None:
+    """End now the edges linked to the row's value `content_sha256` that no live row
+    names (`end_edges` keeps those)."""
+    pairs = await ch.query_all(
+        """
+        SELECT DISTINCT entity_a, entity_b FROM loom.entity_edge_rows
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND memory_id = {id:UUID} AND content_sha256 = {sha:String}
+        SETTINGS select_sequential_consistency = 1
+        """,
+        params={"org": input.org, "ns": input.namespace, "id": memory_id, "sha": content_sha256},
+    )
+    now = naive_utc_now()
+    ends = [(str(p["entity_a"]), str(p["entity_b"]), now) for p in pairs]
+    await end_edges(ch, org=input.org, namespace=input.namespace, ends=ends)
 
 
 async def project_revised_edges(row: Mapping[str, Any], value: Any, *, op: str, ch: Any) -> None:

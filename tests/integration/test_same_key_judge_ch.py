@@ -1928,6 +1928,51 @@ async def _walked(
     return walked
 
 
+@pytest.mark.parametrize("late", [True, False])
+async def test_a_projection_landing_after_a_revision_leaves_no_edge(
+    ch, org, monkeypatch, late
+) -> None:
+    # The first write's edges are written beside its response; held back past the
+    # revision (`late`), they must not walk once they land.
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import after_write, entity_projections
+    from server.memory.app.write import handle_memory_set
+
+    write_edges, release = entity_projections.write_entity_edges, asyncio.Event()
+    calls: list[str] = []
+
+    async def _first_held(*args: Any, **kw: Any) -> Any:
+        calls.append("edges")
+        if late and len(calls) == 1:
+            await release.wait()
+        return await write_edges(*args, **kw)
+
+    monkeypatch.setattr(entity_projections, "write_entity_edges", _first_held)
+
+    def _set(value: str, relations: list[Any]) -> Any:
+        return handle_memory_set(
+            MemorySetInput(
+                org=org,
+                namespace=NS,
+                agent="bot",
+                user_id=USER,
+                memory_key="alice",
+                value=value,
+                relations=relations,
+            )
+        )
+
+    await _set("Alice lives in London", [("alice", "live_in", "london")])
+    if not late:
+        await after_write.drain()
+    await _set("Alice likes jazz", [])
+    release.set()
+    await after_write.drain()
+    await _mutations_done(ch, org)
+    # `lif` (the mined "lives") names no triple, so the revision leaves its edge.
+    assert "london" not in await _walked(org, ["jazz", "lif"], labeled=False, seed="alice")
+
+
 async def test_an_undo_keeps_its_edge_open_past_another_relations_end(ch, org) -> None:
     # The pair's latest edge is a bounded work fact; the restored London is open-ended,
     # and so is its edge: past the work fact's end both walks still reach London.
