@@ -478,6 +478,9 @@ function AutoResolvedPanel() {
   const canRestore = canCall("memory.restore", role, whoami);
   const [rows, setRows] = useState<AutoResolvedRow[] | null>(null);
   const [cursor, setCursor] = useState<string | null>(null);
+  // The tab showed because a row exists, so a failed read must not look like an empty list.
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reload, setReload] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
   // Restores read so far (memory_id -> newest restore), and how far back that read
   // reaches: a row older than `undoneSince` is not known yet and offers no Undo.
@@ -501,6 +504,8 @@ function AutoResolvedPanel() {
 
   useAbortableEffect(
     (signal, live) => {
+      setRows(null);
+      setLoadError(null);
       listAutoResolved({ org: identity.org, namespace: identity.namespace }, { signal })
         .then((r) => {
           if (!live()) return;
@@ -508,13 +513,10 @@ function AutoResolvedPanel() {
           setCursor(r.next_cursor);
         })
         .catch((e) => {
-          if (!live()) return;
-          setRows([]);
-          // The tab showed because a row exists, so an empty list here would mislead.
-          toast(`Failed: ${humanizeError(e)}`, "error");
+          if (live()) setLoadError(humanizeError(e));
         });
     },
-    [identity.org, identity.namespace],
+    [identity.org, identity.namespace, reload],
   );
 
   useAbortableEffect(
@@ -621,6 +623,16 @@ function AutoResolvedPanel() {
     );
   };
 
+  if (loadError != null) {
+    return (
+      <p className="text-sm text-[var(--color-text-muted)]">
+        Couldn't load retired memories: {loadError}{" "}
+        <button onClick={() => setReload((n) => n + 1)} className="font-medium text-[var(--color-text)] underline">
+          Retry
+        </button>
+      </p>
+    );
+  }
   if (rows === null) return <Skeleton className="h-40 w-full" />;
   return (
     <div>

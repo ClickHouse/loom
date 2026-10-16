@@ -34,8 +34,6 @@ vi.mock("../../api/audit", async (importOriginal) => ({
   hasAutoResolved: vi.fn(),
 }));
 import { hasAutoResolved } from "../../api/audit";
-vi.mock("../../components/Toast", () => ({ toast: vi.fn(), toastError: vi.fn(), ToastViewport: () => null }));
-import { toast } from "../../components/Toast";
 import {
   listAllowlist,
   listAutoResolved,
@@ -574,17 +572,22 @@ describe("ReviewQueue", () => {
     expect(live()?.textContent).not.toBe(once);
   });
 
-  it("says so when the Auto-resolved tab's own read fails", async () => {
+  it("offers a retry, not an empty list, when the Auto-resolved tab's own read fails", async () => {
     vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    let fail = true;
     vi.mocked(listAutoResolved).mockImplementation(async (_id, o) => {
-      if (o?.limit === 1) return page([retired("user_city")]);
-      throw new Error("boom");
+      if (o?.limit !== 1 && fail) throw new Error("boom");
+      return page([retired("user_city")]);
     });
-    vi.mocked(toast).mockClear();
     seed("ns-a", "writer");
     render(<ReviewQueue />);
     await userEvent.click(await screen.findByRole("tab", { name: /Auto-resolved/ }, WAIT));
-    await waitFor(() => expect(toast).toHaveBeenCalledWith("Failed: boom", "error"), WAIT);
+    const retry = await screen.findByRole("button", { name: "Retry" }, WAIT);
+    expect(screen.getByText(/Couldn't load retired memories: boom/)).toBeTruthy();
+    expect(screen.queryByText("Nothing older within 30 days.")).toBeNull();
+    fail = false;
+    await userEvent.click(retry);
+    expect(await screen.findByText("user_city", {}, WAIT)).toBeTruthy();
   });
 
   it("falls back to Conflicts when the audit log stops being readable on the Auto-resolved tab", async () => {
