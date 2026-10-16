@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from contextvars import ContextVar
 from typing import Any, cast
 
 from server.core.errors import PreconditionFailedError
@@ -19,6 +20,25 @@ log = logging.getLogger(__name__)
 # journals the change first, and leaves out a retry's row its key has moved past.
 Rows = Sequence[Mapping[str, Any]]
 _BEFORE_INSERT: list[Callable[..., Awaitable[Rows]]] = []
+
+
+class Handoff:
+    """Work a before-insert hook hands back to run alongside the insert rather than
+    ahead of it (the journal's projection, which readers never need ahead of the
+    row). Open only while the hooks run: a task they spawned that hands work over
+    later is told to run it itself."""
+
+    def __init__(self) -> None:
+        self.work: list[Awaitable[Any]] = []
+        self.open = True
+
+    def take(self, work: Awaitable[Any]) -> bool:
+        if self.open:
+            self.work.append(work)
+        return self.open
+
+
+alongside_insert: ContextVar[Handoff | None] = ContextVar("alongside_insert", default=None)
 
 
 # Runs on every loom.memory batch once its insert returned, even with an error (it
@@ -130,15 +150,26 @@ _FENCING: set[asyncio.Future[int]] = set()
 async def _publish_insert_fence(
     rows: Rows, ch: _CHClient, alongside: Sequence[Callable[[Rows], Awaitable[Any]]]
 ) -> int:
-    for hook in _BEFORE_INSERT:
-        rows = await hook(rows, ch=ch)
+    handoff = Handoff()
+    token = alongside_insert.set(handoff)
+    try:
+        for hook in _BEFORE_INSERT:
+            rows = await hook(rows, ch=ch)
+    except BaseException:
+        await asyncio.gather(*handoff.work, return_exceptions=True)  # never left unawaited
+        raise
+    finally:
+        handoff.open = False
+        alongside_insert.reset(token)
+    handed = handoff.work
     if not rows:
+        await asyncio.gather(*handed)
         return 0
     # Each row names the version this build wrote it at, once the journal has stamped
     # it: a build that does not journal carries the column forward unchanged.
     for r in rows:
         cast(dict[str, Any], r)["journal_version"] = int(r.get("version") or 0)
-    await _insert_then_fence(rows, ch, alongside)
+    await _insert_then_fence(rows, ch, alongside, handed)
     return len(rows)
 
 
@@ -163,7 +194,10 @@ async def drain(timeout_s: float) -> None:
 
 
 async def _insert_then_fence(
-    rows: Rows, ch: _CHClient, alongside: Sequence[Callable[[Rows], Awaitable[Any]]]
+    rows: Rows,
+    ch: _CHClient,
+    alongside: Sequence[Callable[[Rows], Awaitable[Any]]],
+    handed: Sequence[Awaitable[Any]] = (),
 ) -> None:
     outcomes = await asyncio.gather(
         ch.insert(
@@ -172,6 +206,7 @@ async def _insert_then_fence(
             settings={"async_insert": 0, "wait_for_async_insert": 1},
         ),
         *(f(rows) for f in alongside),
+        *handed,
         return_exceptions=True,
     )
     # Whatever failed, the rows may be in: the hooks' fence holds for them first.

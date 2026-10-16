@@ -287,13 +287,29 @@ async def head(org: str, namespace: str, *, ch: _CHClient | None = None) -> tupl
     """(highest sequence allocated, the latest recording time stamped, the lowest
     sequence holding two payloads or 0). An allocation whose commit was erased,
     expired or never landed still counts: neither its sequence nor its recording
-    time is ever handed out again, so both keep rising together."""
+    time is ever handed out again, so both keep rising together. Every write reads
+    it twice, so it reads the newest commit in key order and the break window above
+    it, never the whole journal. With a break at the top, either payload's time is
+    returned: the publisher repairs before it stamps from it."""
     ch = ch or _default_client()
     row = await ch.query_one(
-        f"SELECT greatest(max(commit_seq), {_PUBLISHED}) AS seq, "
-        f"greatest(max(recorded_at), ifNull({_PUBLISHED_AT}, toDateTime64(0, 6, 'UTC'))) AS at, "
-        f"{_BROKEN_AT} AS broken FROM {COMMITS} "
-        "WHERE org = {org:String} AND namespace = {ns:String}",
+        f"""
+        WITH (SELECT (commit_seq, recorded_at) FROM {COMMITS}
+              WHERE org = {{org:String}} AND namespace = {{ns:String}}
+              ORDER BY commit_seq DESC LIMIT 1) AS top,
+             (SELECT (max(applied_seq), argMax(recorded_at, applied_seq)) FROM {WATERMARKS}
+              WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                AND projection = 'published') AS pub
+        SELECT greatest(ifNull(top.1, 0), pub.1) AS seq,
+            greatest(ifNull(top.2, toDateTime64(0, 6, 'UTC')),
+                     ifNull(pub.2, toDateTime64(0, 6, 'UTC'))) AS at,
+            (SELECT min(commit_seq) FROM (
+                SELECT commit_seq FROM {COMMITS}
+                WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                  AND commit_seq > toInt64(ifNull(top.1, 0)) - {_BREAK_WINDOW}
+                GROUP BY commit_seq HAVING uniqExact(payload_sha256) > 1
+            )) AS broken
+        """,
         params={"org": org, "ns": namespace},
     )
     row = row or {}

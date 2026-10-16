@@ -358,7 +358,8 @@ jobs:
     name: pytest integration (ClickHouse service)
     needs: clickhouse
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # ~1,200 tests take ~28 min on a hosted runner; the bound leaves headroom, not slack.
+    timeout-minutes: 35
     env:
       LOOM_CLICKHOUSE_IMAGE: ${{ needs.clickhouse.outputs.image }}
       LOOM_CH_HOST: localhost

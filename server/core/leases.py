@@ -5,7 +5,7 @@ A lease is one key of the KeeperMap table `loom._migration_lock` under
 `keeper_map_strict_mode = 1`: of two INSERTs of a key one lands, and an UPDATE
 checks the znode version, so of two takers of an expired key one wins. A contender
 reads the key first and inserts only when there is none (`expect_free`: inserts
-first, for a name almost never held). Loom requires a Keeper
+first, for a name almost never held; once found held, it reads first). Loom requires a Keeper
 (`server.core.schema.migrate_lease.KeeperRequired`): ClickHouse offers no atomic
 arbitration without one.
 
@@ -176,9 +176,11 @@ class Lease:
         self._renewer = asyncio.create_task(self._renew_loop(on_lost), name=f"lease {self.name}")
 
     @asynccontextmanager
-    async def renewed(self) -> AsyncIterator[Lease]:
+    async def renewed(self, *, then: Callable[[], Any] | None = None) -> AsyncIterator[Lease]:
         """Run the block with the lease renewed, and release it after. Once the lease
-        is lost the block is cancelled and LeaseLost raised."""
+        is lost the block is cancelled and LeaseLost raised. With `then`, the block's
+        caller does not wait for the release: the renewal stops as the block ends, the
+        release runs in the background, and `then()` is called once it has."""
         body = asyncio.current_task()
         self.keep_renewed(on_lost=body.cancel if body is not None else None)
         try:
@@ -188,7 +190,18 @@ class Lease:
                 raise LeaseLost(self.name) from None
             raise
         finally:
+            if then is None:
+                await self.release()
+            else:
+                if self._renewer is not None:
+                    self._renewer.cancel()  # a loss found after the block cancels nothing
+                _releases.spawn(self._release_then(then), name=f"lease {self.name} release")
+
+    async def _release_then(self, then: Callable[[], Any]) -> None:
+        try:
             await self.release()
+        finally:
+            then()
 
     async def _renew_loop(self, on_lost: Callable[[], Any] | None) -> None:
         pause = self.ttl_s / 6
@@ -295,6 +308,7 @@ async def take(
             if time.monotonic() >= until:
                 break
             poll_s = min(poll_s * 1.5, poll_max_s)
+            lease.expect_free = False  # it was held: read before inserting from now on
             won = await lease.attempt()
     except BaseException as e:
         if lease is not None:
@@ -311,14 +325,17 @@ async def take(
 
 
 @asynccontextmanager
-async def cluster_lease(name: str, *, ttl_s: float, **options: Any) -> AsyncIterator[Lease]:
+async def cluster_lease(
+    name: str, *, ttl_s: float, then: Callable[[], Any] | None = None, **options: Any
+) -> AsyncIterator[Lease]:
     """Hold `name` for the block, renewed (`options` as for `take`). LeaseBusy when
     another holder keeps it past `wait_s`, LeaseUnavailable when the store cannot
-    answer; once the lease is lost the block is cancelled and LeaseLost raised."""
+    answer; once the lease is lost the block is cancelled and LeaseLost raised.
+    `then`: release in the background and call it after (`Lease.renewed`)."""
     lease = await take(name, ttl_s=ttl_s, **options)
     if lease is None:
         raise LeaseBusy(name)
-    async with lease.renewed():
+    async with lease.renewed(then=then):
         yield lease
 
 

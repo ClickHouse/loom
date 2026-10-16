@@ -62,6 +62,7 @@ from server.memory.domain.temporal_capture import (
     write_intent,
 )
 from server.memory.store import temporal as store
+from server.memory.store.inserts import alongside_insert
 from server.memory.store.key_write_lock import KeyWriteLocks
 from server.observability import degradations
 from server.settings import settings
@@ -509,7 +510,11 @@ async def publish(
                 await asyncio.sleep(random.uniform(0, 0.02 * attempt))
             batch = await _plan(org, ns, changes, intent, operation, scope, ch)
             async with namespace_lock(org, ns) as still_held:
-                seq, last_at, broken = await store.head(org, ns, ch=ch)
+                # One round: what landed and the clock are read alongside the head
+                # (nothing commits meanwhile; the lock is held).
+                (seq, last_at, broken), clock, landed = await asyncio.gather(
+                    store.head(org, ns, ch=ch), store.server_now(ch=ch), _landed(batch, ch)
+                )
                 if broken:
                     # Under the lock nobody else publishes: repair, then plan again
                     # (a retry's earlier commit may be the one deleted).
@@ -526,15 +531,15 @@ async def publish(
                 # A projection lands rows without a commit, so the sequence holds still:
                 # the plan is current, but its rows go above the versions that landed. A
                 # row another build wrote is a write the plan has not seen: plan again.
-                if await _above_landed(batch, ch):
+                if _above_landed(batch, *landed):
                     continue
                 if recheck is not None:
                     await recheck()
+                    clock = await store.server_now(ch=ch)
                 # Stamp, then fence: an erasure requested after the stamp has a later
                 # request time than every commit of the batch, so reads never serve
                 # the batch even if its withdrawal below fails.
                 # One clock for every time the journal compares: ClickHouse's.
-                clock = await store.server_now(ch=ch)
                 last_at = tm.utc(last_at) or _EPOCH
                 # Stamping past the clock would date the batch after an erasure
                 # requested once the fence below passed, and reads would serve it. A
@@ -564,17 +569,21 @@ async def publish(
                         org, ns, last["commit_seq"], last["recorded_at"], ch=ch
                     )
                     await _insert_commits(org, ns, batch.commits, ch)
-                    await _refence(org, ns, changes, batch, ch)
+                    await _refence(org, ns, changes, batch, ch, clock)
             if batch.commits:
-                first = batch.commits[0]["commit_seq"]
-                await _project(
+                projected = _project(
                     org,
                     ns,
                     batch.projection,
                     batch.commits[-1]["commit_seq"],
-                    first_seq=first,
+                    first_seq=batch.commits[0]["commit_seq"],
                     ch=ch,
                 )
+                # Inside the insert funnel it runs alongside the row insert: a reader
+                # whose watermark lags reduces the journal's tail meanwhile.
+                handoff = alongside_insert.get()
+                if handoff is None or not handoff.take(projected):
+                    await projected
             if batch.refresh:
                 await _refresh_current(org, ns, batch.refresh)
             bag = _bag()
@@ -647,10 +656,9 @@ async def _plan(
 ) -> _Batch:
     """Every amendment of the batch, against what its keys serve at a head
     snapshot. No lock: `publish` re-validates the head before it stamps."""
-    seq, _, _ = await store.head(org, ns, ch=ch)
+    (seq, _, _), gone = await asyncio.gather(store.head(org, ns, ch=ch), erased(org, ns))
     planned_at = datetime.now(UTC)
     keys = list(dict.fromkeys(c.ident for c in changes))
-    gone = await erased(org, ns)
     served, heads, parents, committed_v = await asyncio.gather(
         _served(org, ns, keys, seq, gone, ch),
         store.memory_heads(org, ns, keys, ch=ch),
@@ -1498,14 +1506,26 @@ async def serving(org: str, ns: str, keys: Sequence[Ident]) -> set[Ident]:
     return {ident for ident, claims in served.items() if claims}
 
 
-async def _above_landed(b: _Batch, ch: _CHClient) -> bool:
+async def _landed(
+    b: _Batch, ch: _CHClient
+) -> tuple[dict[Ident, tuple[int, int]], dict[Ident, int]]:
+    """Each key's newest loom.memory version (and its journal_version), and the newest
+    row version its journal names: what `_above_landed` judges the plan by."""
+    landed, committed = await asyncio.gather(
+        store.landed_heads(b.org, b.ns, b.keys, ch=ch),
+        store.newest_row_versions(b.org, b.ns, b.keys, ch=ch),
+    )
+    return landed, committed
+
+
+def _above_landed(
+    b: _Batch, landed: dict[Ident, tuple[int, int]], committed: dict[Ident, int]
+) -> bool:
     """Raise the batch's row versions above any loom.memory row of its keys that
     landed since the plan read its floor (a projection, which moves no sequence), so
     the merge ranks the batch's rows as the journal orders them: after it. True: a
     row another build wrote landed since, so the batch (rows or amendments only)
     plans again and adopts it first."""
-    landed = await store.landed_heads(b.org, b.ns, b.keys, ch=ch)
-    committed = await store.newest_row_versions(b.org, b.ns, b.keys, ch=ch)
     # A seed or adoption of this batch journals the row itself: no reason to plan again.
     adopting = {(p.ident, int(p.row.get("version") or 0)) for p in b.planned if p.seed}
     # Only a foreign row that landed after the plan read the key: one the plan saw was
@@ -1623,13 +1643,20 @@ async def namespace_lock(org: str, ns: str) -> AsyncIterator[Callable[[], Awaita
     land between a check and its change (a redaction)."""
     name = f"memory_temporal/{org}\x1f{ns}"
     # Writers in this process queue here rather than poll Keeper against each other.
+    # The lease's release runs after the section, off the caller's path; the queue
+    # opens once it has landed, so the next writer here never finds its own key.
     local = _local_locks.setdefault(name, asyncio.Lock())
+    await local.acquire()
+    entered = False
     try:
-        async with local, AsyncExitStack() as stack:
+        async with AsyncExitStack() as stack:
             # Only taking the lease maps to "busy": a refusal from inside the section
             # (an erasure fence, a stale revision) keeps its own error.
             try:
-                lease = await stack.enter_async_context(_locks.lease(name))
+                lease = await stack.enter_async_context(
+                    _locks.lease(name, then=local.release, expect_free=True)
+                )
+                entered = True
             except LeaseBusy as e:
                 raise TemporalUnavailableError(
                     f"namespace {ns!r} publisher is busy; retry", retry_after_s=1
@@ -1645,6 +1672,9 @@ async def namespace_lock(org: str, ns: str) -> AsyncIterator[Callable[[], Awaita
             yield still_held
     except LeaseLost as e:  # raised as the lease's block exits
         raise TemporalUnavailableError(f"namespace {ns!r} publisher lease lost; retry") from e
+    finally:
+        if not entered:
+            local.release()
 
 
 async def _served(
@@ -1655,6 +1685,7 @@ async def _served(
     out: dict[Ident, dict[str, Served]] = {}
     if not keys or head_seq == 0:
         return out
+    # The watermark first: rows read after it hold at least what it names.
     if await store.watermark(org, ns, ch=ch) >= head_seq:
         for r in await store.served_for_keys(org, ns, keys, erased=gone, ch=ch):
             ident = ident_of(r)
@@ -1737,13 +1768,15 @@ async def _insert_commits(org: str, ns: str, commits: list[dict[str, Any]], ch: 
     else:
         raise TemporalUnavailableError(f"temporal journal insert failed: {err}")
     seqs = [c["commit_seq"] for c in commits]
-    others = await store.other_commits_at(org, ns, seqs, ids, ch=ch)
+    others, late = await asyncio.gather(
+        store.other_commits_at(org, ns, seqs, ids, ch=ch), store.landed_late(org, ns, ids, ch=ch)
+    )
     if others:
         await _withdraw(org, ns, ids, ch)
         raise TemporalUnavailableError(
             f"namespace {ns!r}: another publisher wrote sequence {min(others)}; retry"
         )
-    if await store.landed_late(org, ns, ids, ch=ch):
+    if late:
         # Not part of the journal (`store.SETTLE_S`), whether or not this delete
         # succeeds; the caller is told so.
         await _withdraw(org, ns, ids, ch)
@@ -1751,14 +1784,20 @@ async def _insert_commits(org: str, ns: str, commits: list[dict[str, Any]], ch: 
 
 
 async def _refence(
-    org: str, ns: str, changes: Sequence[_RowChange], batch: _Batch, ch: _CHClient
+    org: str,
+    ns: str,
+    changes: Sequence[_RowChange],
+    batch: _Batch,
+    ch: _CHClient,
+    clock: datetime,
 ) -> None:
     """The fence again, once the commits are in: an erasure requested while they
     were being inserted may already have run. The batch withdraws; should that
     delete fail, reads still never serve it (it was recorded before the erasure
-    was requested, `store.Erased`)."""
+    was requested, `store.Erased`). `clock` is the stamp's: a write without a work
+    bag is fenced from then, which covers every erasure requested since."""
     try:
-        await _erasure_fence(org, ns, changes, ch)
+        await _erasure_fence(org, ns, changes, ch, clock)
     except PreconditionFailedError:
         await _withdraw(org, ns, [c["commit_id"] for c in batch.commits], ch)
         raise

@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any
 
@@ -71,13 +71,23 @@ class KeyWriteLocks:
             finally:
                 await lease.release()
 
-    def lease(self, name: str, *, wait_s: float | None = None) -> AbstractAsyncContextManager[Any]:
+    def lease(
+        self,
+        name: str,
+        *,
+        wait_s: float | None = None,
+        then: Callable[[], Any] | None = None,
+        expect_free: bool = False,
+    ) -> AbstractAsyncContextManager[Any]:
         """Hold `name` across hosts while the body runs (`leases.cluster_lease`), waiting
         `wait_s` (the instance's wait by default). LeaseBusy when another holder keeps it,
-        LeaseLost from the body once it is lost."""
+        LeaseLost from the body once it is lost. `then`: release in the background and
+        call it after. `expect_free`: the first attempt inserts without a read."""
         return leases.cluster_lease(
             name,
             ttl_s=self._ttl_s,
+            then=then,
+            expect_free=expect_free,
             wait_s=self._wait_s if wait_s is None else wait_s,
             poll_s=self._poll_s,
             poll_max_s=0.5,

@@ -207,8 +207,12 @@ def journal(monkeypatch: pytest.MonkeyPatch) -> Journal:
     monkeypatch.setattr(store, "server_now", clock)
 
     @contextlib.asynccontextmanager
-    async def held_lease(name: str, **_k: Any) -> Any:
-        yield types.SimpleNamespace(held=True)
+    async def held_lease(name: str, *, then: Any = None, **_k: Any) -> Any:
+        try:
+            yield types.SimpleNamespace(held=True)
+        finally:
+            if then is not None:
+                then()  # the real lease calls it once its background release lands
 
     monkeypatch.setattr(pub._locks, "lease", held_lease)
     return j
@@ -1569,9 +1573,13 @@ def test_a_lease_lost_while_publishing_is_a_temporal_503(journal: Journal, monke
     from server.core.leases import LeaseLost
 
     @contextlib.asynccontextmanager
-    async def lost(name: str, **_k: Any) -> Any:
-        yield types.SimpleNamespace(held=True)
-        raise LeaseLost(name)  # as Lease.renewed raises it once the block exits
+    async def lost(name: str, *, then: Any = None, **_k: Any) -> Any:
+        try:
+            yield types.SimpleNamespace(held=True)
+            raise LeaseLost(name)  # as Lease.renewed raises it once the block exits
+        finally:
+            if then is not None:
+                then()
 
     monkeypatch.setattr(pub._locks, "lease", lost)
     with pytest.raises(TemporalUnavailableError, match="lease lost"):

@@ -135,6 +135,18 @@ async def test_a_lease_is_renewed_while_its_block_runs() -> None:
     assert ch.keys == {}
 
 
+async def test_a_lease_released_in_the_background_calls_then_once_released() -> None:
+    # The block's caller goes on at once; the key is deleted after, then `then` runs.
+    ch = FakeLockTable()
+    done: list[bool] = []
+    async with leases.cluster_lease("job", ttl_s=60, ch=ch, then=lambda: done.append(True)):
+        pass
+    assert "job" in ch.keys and not done
+    for _ in range(20):
+        await asyncio.sleep(0)
+    assert ch.keys == {} and done == [True]
+
+
 async def test_a_lease_taken_over_cancels_its_block() -> None:
     ch = FakeLockTable()
     ran_on = False
