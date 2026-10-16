@@ -1829,6 +1829,8 @@ async def test_a_fallback_marker_closed_in_the_same_second_gets_a_marker_of_its_
             "valid_to": closed,
             "invalid_at": closed,
             "seen_at": seen,
+            "adapter_name": "itest",
+            "restore_id": "",
         }
 
     stored = [paris(datetime(2026, 9, 1, 11, 0, 0))]

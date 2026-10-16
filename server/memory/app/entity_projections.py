@@ -566,7 +566,8 @@ async def _after_the_close(
     # On the fly: the closes just made are mutations that may still be pending.
     rows = await ch.query_all(
         """
-        SELECT subject, relation, object, valid_from, valid_to, invalid_at, seen_at
+        SELECT subject, relation, object, valid_from, valid_to, invalid_at, seen_at,
+               adapter_name, restore_id
         FROM loom.entity_triples
         WHERE org = {org:String} AND namespace = {ns:String}
           AND ((subject IN {names:Array(String)} AND object IN {names:Array(String)})
@@ -615,6 +616,7 @@ async def _keep_one_current(input: Any, rows: list[Mapping[str, Any]], *, ch: An
     from server.memory.app import graph_undo
     from server.memory.domain.graph_quality import observation_key
 
+    await _finish_fallback_repairs(input, rows, ch=ch)
     now = naive_utc_now()
 
     # When each relation's open values start ("moving to Berlin on Dec 1").
@@ -689,6 +691,42 @@ async def _keep_one_current(input: Any, rows: list[Mapping[str, Any]], *, ch: An
         facts=facts,
         adapter_name="row-fallback",
     )
+
+
+async def _finish_fallback_repairs(input: Any, rows: list[Mapping[str, Any]], *, ch: Any) -> None:
+    """Run again each fallback of `rows` whose interval repair did not finish. Its
+    markers land before the repair, which may then fail, and a replay would find the
+    relation current and stop there. A marker still open beside another open value of
+    its relation ("moving to Berlin on Dec 1") was never repaired: its fallback runs
+    again by the marker's id, finds its markers, adds none and repairs."""
+    from server.memory.app import graph_undo
+
+    open_values: dict[tuple[str, str], set[str]] = {}
+    for r in rows:
+        if r["valid_to"] is None:
+            open_values.setdefault((r["subject"], r["relation"]), set()).add(r["object"])
+    unrepaired: dict[str, list[Mapping[str, Any]]] = {}
+    for r in rows:
+        if (
+            r["adapter_name"] == "row-fallback"
+            and r["valid_to"] is None
+            and len(open_values[(r["subject"], r["relation"])]) > 1
+        ):
+            unrepaired.setdefault(r["restore_id"], []).append(r)
+    for restore_id, markers in sorted(unrepaired.items()):
+        facts = frozenset((m["subject"], m["relation"], m["object"]) for m in markers)
+        hashes = await _rows_linking(input.org, input.namespace, sorted(facts), ch=ch)
+        await graph_undo.reopen_held_facts(
+            input,
+            sorted(hashes),
+            ch=ch,
+            restore_id=restore_id,
+            # The repair is dated by the second, which the first marker is seen in.
+            restored_at=min(m["seen_at"] for m in markers),
+            hashes=hashes,
+            facts=facts,
+            adapter_name="row-fallback",
+        )
 
 
 async def _rows_linking(

@@ -3565,6 +3565,40 @@ async def test_a_replayed_fallback_dates_its_triple_as_its_edge(ch, org, monkeyp
     assert len({r["valid_from"] for r in starts}) == 1
 
 
+async def test_a_replayed_fallback_finishes_the_repair_its_markers_missed(
+    ch, org, monkeypatch
+) -> None:
+    # The move to Berlin is ahead. London's row is revised away and Paris is stated
+    # again; both its markers land but its interval repair fails. The replay finds the
+    # markers and must still repair: Paris ends when Berlin starts.
+    from server.memory.app import graph_undo
+    from server.memory.app.projection_failures import retry_projection_failure
+
+    live = ("user", "live_in")
+    london = await _london_undone_over_paris(ch, org, "live_in")
+    ahead = naive_utc_now().replace(microsecond=0) + timedelta(days=45)
+    await _stated(
+        ch, org, "s3", "I am moving to Berlin", (*live, "berlin"), memory_key="move", valid_at=ahead
+    )
+    await _edges_like_triples(ch, org)
+    repair = graph_undo.repair_intervals
+
+    async def _repair_fails(*a: Any, **k: Any) -> Any:
+        raise ConnectionError("transient")
+
+    monkeypatch.setattr(graph_undo, "repair_intervals", _repair_fails)
+    await _revise("memory.update_by_id", org, london, "I like Rome", (("user", "like", "rome"),))
+    monkeypatch.setattr(graph_undo, "repair_intervals", repair)
+    failure = await _recorded_reconcile(ch, org)
+    assert (await retry_projection_failure(failure, ch=ch)).resolved
+    await _mutations_done(ch, org)
+    after = ahead + timedelta(days=1)
+    want = ["berlin", "rome"]
+    assert await _walked(org, want, labeled=True, as_of=after) == want
+    # Rome came after the edges were copied: it has no edge.
+    assert await _walked(org, ["berlin"], labeled=False, as_of=after) == ["berlin"]
+
+
 async def test_a_retired_rows_edge_ends_with_its_triple(ch, org) -> None:
     # London's row retires behind Paris's: both walks reach Paris only. A favourite
     # city may have many values, so Paris's own write does not close London.
