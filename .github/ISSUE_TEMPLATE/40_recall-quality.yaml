@@ -1,0 +1,92 @@
+name: Recall or answer quality
+description: Search, ask or a context pack returned the wrong memories, missed one, or answered when it should have abstained.
+labels: ["recall quality"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > (you don't have to strictly follow this form)
+        > An error or crash is a bug report. This form is for a result that came back but was wrong.
+        > **Never paste tokens, API keys, JWTs, passwords or customer data.** `loom report` output is safe to paste: it records only whether each secret is set.
+        > A security issue goes to security@clickhouse.com, not here ([SECURITY.md](https://github.com/ClickHouse/loom/blob/main/SECURITY.md)).
+  - type: textarea
+    attributes:
+      label: Company or project name
+      description: Optional. Put your company name or project description here.
+    validations:
+      required: false
+  - type: textarea
+    id: query
+    attributes:
+      label: What was asked
+      description: The op (`memory.search`, `memory.ask`, `context.pack`, an MCP tool) with its inputs, including the query text, namespace or scope, `top_k` and mode.
+    validations:
+      required: true
+  - type: textarea
+    id: returned
+    attributes:
+      label: What came back
+      description: The keys and scores returned, and `abstain`, `abstain_code`, `retrieval_confidence`, `namespaces_searched` and `namespaces_skipped` if present. `memory.search_trace_log` shows past searches of a namespace.
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should have come back
+      description: The memory keys you expected (or that it should have abstained), and how they were written (`memory.set`, extraction from a conversation, a document import) and when, relative to the search.
+    validations:
+      required: true
+  - type: dropdown
+    id: fresh-namespace
+    attributes:
+      label: Does it reproduce in a fresh namespace?
+      description: Write only the memories involved into a new namespace and search again.
+      options:
+        - "Yes"
+        - "No"
+        - "Not checked"
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Paste `loom report` (or `loom report --open`, which fills this in). Otherwise give the Loom version (`loom --version`), ClickHouse version (`SELECT version()`) and where it runs (bundled, self-managed or ClickHouse Cloud), the SDK or plugin version and agent host, and the LLM and embedding providers.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: related
+    attributes:
+      label: Related issues and pull requests
+      description: |
+        Full GitHub URLs, one relationship per line.
+        * If a pull request caused this (a regression): `Caused by: <full pull request URL>`
+        * For any related issue or pull request: `Related: <full URL>`
+    validations:
+      required: false
+  - type: dropdown
+    id: ai-assistance
+    attributes:
+      label: How this was found
+      description: This asks how the problem was found and confirmed, not how the text was written; drafting with AI is fine. It tells us how much to trust the reproduction, and does not count against the report.
+      options:
+        - I found and reproduced it myself
+        - An AI tool helped find it, and I reproduced it myself
+        - An AI tool found it, and I have not reproduced it myself
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Additional context
+      description: Anything else about the problem.
+    validations:
+      required: false
+  - type: checkboxes
+    id: redacted
+    attributes:
+      label: Redaction
+      options:
+        - label: I removed tokens, keys, passwords and personal or customer data from everything above.
+          required: true

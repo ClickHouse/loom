@@ -96,8 +96,8 @@ exit code is 1 when any line is `FAIL`. `--json` prints `{ok, checks, problems}`
 `--client` also checks this machine as a coding-agent client: the server URL and token
 the hooks would use (`--server-url`, `--token` override them), whether the token is
 accepted and can write its namespace, the Claude Code or Codex wiring, and capture jobs
-that never reached the server. `loom report` wraps the doctor output in a bug-report
-body ([filing a bug](../../CONTRIBUTING.md#filing-a-bug)).
+that never reached the server. `loom report` prints the doctor output for a bug
+report's Environment field ([filing an issue](../../CONTRIBUTING.md#filing-an-issue)).
 
 ### ops.health
 

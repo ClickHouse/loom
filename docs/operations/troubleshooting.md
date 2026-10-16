@@ -309,6 +309,6 @@ each field means is in [monitoring](./monitoring.md#health-checks).
 
 ## Filing a bug
 
-`loom report` prints a GitHub-issue-ready body with the `loom doctor` diagnostic attached
-(presence booleans only, never secret values); `--open` opens the new-issue page
-([filing a bug](../../CONTRIBUTING.md#filing-a-bug)).
+`loom report` prints the bug form's Environment field with the `loom doctor` diagnostic
+(presence booleans only, never secret values); `--open` opens the bug form with the
+versions filled in ([filing an issue](../../CONTRIBUTING.md#filing-an-issue)).

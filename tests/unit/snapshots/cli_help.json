@@ -230,7 +230,7 @@
  ],
  "loom report": [
   "usage: loom report [-h] [--open]",
-  "options: -h, --help show this help message and exit --open Also open github.com/ClickHouse/loom/issues/new in the default browser with a short header pre-filled."
+  "options: -h, --help show this help message and exit --open Also open the bug form in the default browser with the versions pre-filled."
  ],
  "loom drops": [
   "usage: loom drops [-h] --namespace NAMESPACE [--org ORG] [--hours HOURS]",

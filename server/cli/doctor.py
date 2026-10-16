@@ -495,9 +495,13 @@ def _cmd_doctor(_args: argparse.Namespace) -> int:
     return 0
 
 
+# The issue form `loom report --open` fills (.github/ISSUE_TEMPLATE/).
+BUG_FORM = "30_bug-report.yaml"
+
+
 def _build_report_body(*, header_only: bool = False) -> str:
-    """Compose a GitHub-Issue-ready markdown body: bug-report fields,
-    environment block, and auto-attached doctor output.
+    """The bug form's Environment field, plain text: versions, platform and the
+    `loom doctor` checks (`header_only`: the versions, short enough for a URL).
 
     No secrets — doctor reports presence booleans + the CH host only.
     """
@@ -507,52 +511,23 @@ def _build_report_body(*, header_only: bool = False) -> str:
     py_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
     platform_str = _platform.platform()
 
+    header = f"Loom version: {loom_version}\nPython: {py_version}\nPlatform: {platform_str}\n"
     if header_only:
-        # --open uses just the header so the URL fits in a browser bar; the
-        # operator pastes the fuller `loom report` output into the issue body.
-        return (
-            "**Environment**\n"
-            f"- Loom version: `{loom_version}`\n"
-            f"- Python: `{py_version}`\n"
-            f"- Platform: `{platform_str}`\n\n"
-            "**What you were trying to do**\n_describe here_\n\n"
-            "**What you expected**\n_describe here_\n\n"
-            "**What actually happened**\n_describe here_\n\n"
-            "**Error messages**\n```\npaste here\n```\n\n"
-            "<!-- Run `loom report` locally and paste its full output "
-            "below for the diagnostic attachment. -->\n"
-        )
+        return header
 
     checks = _run_doctor_checks()
     width = max(len(name) for name, _, _ in checks)
-    doctor_block_lines = []
-    for name, grade, detail in checks:
-        doctor_block_lines.append(f"  [{grade}]  {name:<{width}}  {detail}")
-    doctor_block = "\n".join(doctor_block_lines)
-
-    return (
-        "**What you were trying to do**\n_describe here_\n\n"
-        "**What you expected to happen**\n_describe here_\n\n"
-        "**What actually happened**\n_describe here_\n\n"
-        "**Error messages**\n```\npaste here\n```\n\n"
-        "---\n\n"
-        "**Environment**\n"
-        f"- Loom version: `{loom_version}`\n"
-        f"- Python: `{py_version}`\n"
-        f"- Platform: `{platform_str}`\n\n"
-        "**Diagnostic (`loom doctor`)**\n"
-        "```\n"
-        f"{doctor_block}\n"
-        "```\n"
+    doctor_block = "\n".join(
+        f"  [{grade}]  {name:<{width}}  {detail}" for name, grade, detail in checks
     )
+    return f"{header}\nloom doctor:\n{doctor_block}\n"
 
 
 def _cmd_report(args: argparse.Namespace) -> int:
-    """Produce a GitHub-Issue-ready bug report with auto-attached diagnostic.
+    """Print the bug form's Environment field with the doctor diagnostic.
 
-    Default: print the markdown body to stdout. `--open` opens the new-issue
-    page in the browser with a short header pre-filled (the full diagnostic
-    stays on stdout — long URLs get truncated by some browsers).
+    `--open` also opens the bug form with the versions pre-filled; the full
+    diagnostic stays on stdout, since browsers truncate long URLs.
     """
     import urllib.parse
     import webbrowser
@@ -563,19 +538,19 @@ def _cmd_report(args: argparse.Namespace) -> int:
     if args.open:
         header = _build_report_body(header_only=True)
         url = "https://github.com/ClickHouse/loom/issues/new?" + urllib.parse.urlencode(
-            {"body": header}
+            {"template": BUG_FORM, "environment": header}
         )
         opened = webbrowser.open(url)
         if opened:
             print(
-                "\nOpened the new-issue page in your browser. "
-                "Paste the full output above into the body.",
+                "\nOpened the bug form in your browser. "
+                "Paste the diagnostic above into its Environment field.",
             )
         else:
             print(
                 "\nCould not open a browser. Visit:\n  "
-                "https://github.com/ClickHouse/loom/issues/new\n"
-                "and paste the output above into the body.",
+                f"https://github.com/ClickHouse/loom/issues/new?template={BUG_FORM}\n"
+                "and paste the output above into its Environment field.",
             )
     return 0
 
