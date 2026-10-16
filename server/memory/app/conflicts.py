@@ -1033,7 +1033,8 @@ async def mark_peers_conflicted(
     `expected_sha256` (a deferred verdict), only the judged write is flagged
     (`judged_write`). False, and no peer touched, when the new row was not
     flagged: a newer write replaced it, or it was retired since. With no live
-    peer that is checked for a deferred verdict only; an inline one answers True."""
+    peer, a deferred verdict reads the row and answers whether it would have been
+    flagged; an inline one answers True."""
     import server.memory.store as memory_repo
 
     def _merged(existing: list[str], additions: list[str]) -> list[str]:
@@ -1062,19 +1063,23 @@ async def mark_peers_conflicted(
         for p, row in zip(peer_ids, peers, strict=True)
         if row is not None and row.status in _MARKABLE
     ]
+    # Strong: the row was just written (or revised under its own id), and a stale
+    # read would rebuild the version before it at a higher one. A row retired since
+    # (a late verdict, the deferred judge's) is left retired, and so are its peers.
+    judged_skip, version = judged_write(expected_sha256)
+
+    def _skip_new(row: Any) -> bool:
+        return row.status not in _MARKABLE or (judged_skip is not None and judged_skip(row))
+
     if not live:
-        if not expected_sha256:
-            return True  # nothing left to flag: the verdict stands
-        # A deferred verdict still says whether it would have flagged the row, as the
-        # write below does: a revision since owes its own judge, so this one is moved.
+        if judged_skip is None:
+            return True  # an inline verdict: nothing left to flag
+        # A deferred one says whether it would have flagged the row, by the write's
+        # own rule: a revision since owes its own judge, so this one is moved.
         row = await memory_repo.get_by_id(
             new_memory_id, org=org, scope=WHOLE_NAMESPACE, fresh=True, strong=True
         )
-        return (
-            row is not None
-            and row.status in _MARKABLE
-            and str(row.content_sha256 or "") == expected_sha256
-        )
+        return row is not None and not _skip_new(row)
 
     # A proposal (a fact on trial) keeps its status and only
     # records the contradiction; it is surfaced when the proposal is accepted
@@ -1089,14 +1094,6 @@ async def mark_peers_conflicted(
             "status": "proposed" if new_is_proposal else "conflicted",
             "conflict_with": _merged(row.conflict_with, live),
         }
-
-    # Strong: the row was just written (or revised under its own id), and a stale
-    # read would rebuild the version before it at a higher one. A row retired since
-    # (a late verdict, the deferred judge's) is left retired, and so are its peers.
-    judged_skip, version = judged_write(expected_sha256)
-
-    def _skip_new(row: Any) -> bool:
-        return row.status not in _MARKABLE or (judged_skip is not None and judged_skip(row))
 
     marked = await memory_repo.write_versions_by_ids(
         org,
