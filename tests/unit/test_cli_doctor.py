@@ -73,6 +73,7 @@ def test_doctor_exit_code_0_when_all_pass(
 
     rc = _cmd_doctor(argparse.Namespace())
     out = capsys.readouterr().out
+    assert "[PASS]  clickhouse_preflight" in out
     assert rc == 0
     assert re.search(r"All \d+ checks passed\.", out), out
 

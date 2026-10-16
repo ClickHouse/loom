@@ -27,7 +27,7 @@ class _CH:
     ],
 )
 def test_a_missing_ledger_is_a_fresh_cluster(error: str) -> None:
-    assert _migrate._applied(_CH(error)) == {}
+    assert _migrate.applied_migrations(_CH(error)) == {}
 
 
 @pytest.mark.parametrize(
@@ -40,4 +40,4 @@ def test_a_missing_ledger_is_a_fresh_cluster(error: str) -> None:
 )
 def test_any_other_ledger_failure_stops_the_run(error: str) -> None:
     with pytest.raises(RuntimeError):
-        _migrate._applied(_CH(error))
+        _migrate.applied_migrations(_CH(error))

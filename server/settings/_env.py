@@ -69,6 +69,8 @@ NON_SETTINGS_ENV = frozenset(
         "LOOM_GRACEFUL_SHUTDOWN_S",
         "LOOM_HOOK_EXIT_MS",
         "LOOM_HOOK_TIMEOUT_MS",
+        # Compose-only, from an install's .env: the image and the published port.
+        "LOOM_IMAGE_REPOSITORY",
         "LOOM_INIT",
         "LOOM_INSTANCE_LABEL",
         "LOOM_LISTEN_HOST",
@@ -78,6 +80,7 @@ NON_SETTINGS_ENV = frozenset(
         "LOOM_ORG",
         "LOOM_OUTPUT_DIR",
         "LOOM_OWNED",
+        "LOOM_PORT",
         "LOOM_PREFLIGHT_HEALTH_URL",
         "LOOM_PREFLIGHT_MIGRATE",
         "LOOM_PREFLIGHT_PORT",
@@ -90,6 +93,7 @@ NON_SETTINGS_ENV = frozenset(
         "LOOM_SEARCH_RECIPES",
         "LOOM_SEARCH_TOOL_NAME",
         "LOOM_SHUNT_READ_CAP",
+        "LOOM_VERSION",
     }
 )
 

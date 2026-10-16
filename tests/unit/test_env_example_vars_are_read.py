@@ -44,8 +44,12 @@ def test_env_example_names_variables() -> None:
     assert len(example_vars()) > 10
 
 
+# Read by Docker Compose itself, not by Loom.
+COMPOSE_VARS = {"COMPOSE_PROFILES"}
+
+
 def test_every_env_example_variable_is_read() -> None:
-    dead = example_vars() - settings_env_names() - env_name_literals()
+    dead = example_vars() - settings_env_names() - env_name_literals() - COMPOSE_VARS
     assert not dead, f".env.example names variables nothing reads: {sorted(dead)}"
 
 

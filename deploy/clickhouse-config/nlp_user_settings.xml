@@ -17,10 +17,6 @@
 <clickhouse>
     <profiles>
         <default>
-            <!-- The pinned OSS server predates the vector-read condition-cache
-                 fix (ClickHouse #112086). Keep it off so cached conditions do
-                 not suppress matching rows. This does not disable the file cache. -->
-            <use_query_condition_cache>0</use_query_condition_cache>
             <allow_experimental_nlp_functions>1</allow_experimental_nlp_functions>
             <allow_experimental_ai_functions>1</allow_experimental_ai_functions>
             <constraints>

@@ -548,13 +548,11 @@ def test_the_boot_probe_reads_the_tables_the_boot_migrations_created(monkeypatch
     """`connect()` probes before a fresh install's tables exist; the capability
     probe after the migrations must still learn their widths."""
     from server import boot
-    from server.core.vectors import vector_floor
 
     async def _nothing(ch: Any) -> None:
         return None
 
     monkeypatch.setattr(patch_parts, "probe_patch_parts", _nothing)
-    monkeypatch.setattr(vector_floor, "warn_below_vector_floor", _nothing)
     vector_codes_state.reset()
     ch = _FakeCH([], {})
     asyncio.run(vector_codes_state.probe(ch))  # connect(), before the migrations

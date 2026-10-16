@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import subprocess
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
@@ -72,10 +71,3 @@ def test_release_gate_installs_browser_dependencies_before_running_provider_flow
     assert steps[browser]["working-directory"] == "frontend"
     assert "npm ci" in steps[browser]["run"]
     assert job["timeout-minutes"] >= 30
-
-
-def test_pinned_stack_disables_unsafe_vector_condition_cache():
-    root = Path(__file__).resolve().parents[2]
-    profile = ET.parse(root / "deploy/clickhouse-config/nlp_user_settings.xml")
-    setting = profile.find("profiles/default/use_query_condition_cache")
-    assert setting is not None and setting.text == "0"

@@ -33,7 +33,7 @@ x-loom-common: &loom-common
     context: ..
     dockerfile: Dockerfile
     args:
-      LOOM_EMBEDDING_MODEL: "${LOOM_EMBEDDING_MODEL:-text-embedding-3-small}"
+      LOOM_EMBEDDING_MODEL: "${LOOM_EMBEDDING_MODEL:-}"
       LOOM_BUILD_COMMIT: "${LOOM_BUILD_COMMIT:-unknown}"
   restart: unless-stopped
   # Uvicorn waits up to LOOM_GRACEFUL_SHUTDOWN_S (10 s) for

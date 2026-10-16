@@ -32,7 +32,7 @@ x-colour-common: &colour-common
     context: ..
     dockerfile: Dockerfile
     args:
-      LOOM_EMBEDDING_MODEL: "${LOOM_EMBEDDING_MODEL:-text-embedding-3-small}"
+      LOOM_EMBEDDING_MODEL: "${LOOM_EMBEDDING_MODEL:-}"
       LOOM_BUILD_COMMIT: "${LOOM_BUILD_COMMIT:-unknown}"
   image: "loom:${LOOM_COLOUR:?set LOOM_COLOUR=blue|green}"
   restart: unless-stopped

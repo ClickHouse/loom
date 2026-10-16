@@ -26,7 +26,7 @@ configuration in either mode.
 
 ### Fast path: released image, no clone
 
-Prerequisite: Docker Desktop or Docker Engine with Compose v2.
+Prerequisite: Docker Desktop or Docker Engine with Compose 2.20 or later.
 
 ```bash
 curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.sh | sh
@@ -40,6 +40,17 @@ the built React dashboard at `/me`; no Python or Node installation is needed. Py
 TypeScript and Go compiler indexers are included and enabled. A repository indexed
 with the TypeScript indexer gets its dependencies installed automatically.
 The image supports Linux `amd64` and `arm64`, including Docker Desktop on Apple Silicon.
+
+The stack runs its own ClickHouse container. To use a ClickHouse you already run, a
+self-managed server or a ClickHouse Cloud service (26.4 or later), pass its URL; the
+installer asks for the password when the URL has none, creates the `loom` database and a
+read-only reader user, or prints the SQL an admin has to run
+([choosing the ClickHouse](../operations/deployment.md#choosing-the-clickhouse)):
+
+```bash
+curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.sh \
+  | sh -s -- --clickhouse https://loom@abc123.us-east-1.aws.clickhouse.cloud:8443
+```
 
 Pin a release or inspect everything before starting:
 
@@ -56,8 +67,17 @@ LOOM_INSTALL_BUNDLE="$PWD/loom-stack.tar.gz" \
   LOOM_INSTALL_CHECKSUM="$PWD/loom-stack.tar.gz.sha256" sh install.sh
 ```
 
+`LOOM_PORT`, `LOOM_BIND_HOST`, `LOOM_IMAGE_REPOSITORY` and `LOOM_CLICKHOUSE_IMAGE` given
+to the installer are written to the install directory's `.env`, so later `docker compose`
+commands there and later installer runs use the same port and images. An install made by an earlier release
+kept only the template's port in `.env`: pass `LOOM_PORT` once more on its upgrade. A
+`LOOM_BIND_HOST` other than loopback publishes Loom beyond this host, and the server
+refuses to start that way without `LOOM_PUBLIC_BASE_URL` and sign-in: install with
+`LOOM_SKIP_START=1`, set them in `.env` (below), then run the installer again.
+
 Each release runs the ClickHouse release that was latest when it was built, so rerunning
-the same Loom version keeps its ClickHouse; installing a newer Loom version moves it.
+the same Loom version keeps its ClickHouse; installing a newer Loom version moves it,
+unless `.env` pins `LOOM_CLICKHOUSE_IMAGE` (delete that line to follow the releases again).
 Rerunning the installer updates the managed Compose/configuration files and reconciles
 the containers. It preserves `~/.loom/.env` and the named Docker volumes. To stop without
 deleting data:
@@ -88,10 +108,11 @@ LOOM_SELF_SIGNUP=open
 ```
 
 Keep the generated `COMPOSE_PROJECT_NAME` and `LOOM_JWT_SECRET`. Then pull and start
-the stack:
+the stack (with your own ClickHouse, run `ch-setup` first, as the installer said):
 
 ```bash
 docker compose --project-directory "$HOME/.loom" pull
+docker compose --project-directory "$HOME/.loom" run --rm loom loom ch-setup  # your own ClickHouse only
 docker compose --project-directory "$HOME/.loom" up -d
 ```
 
@@ -146,14 +167,14 @@ Re-running `loom up` on a running stack only re-checks health. `make dev` does t
 without the CLI and runs:
 
 ```bash
-docker compose --env-file .env -f dev/docker-compose.dev.yml up -d --build
+docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml --profile bundled up -d --build
 ```
 
-`--env-file .env` is required. Without it compose reads `dev/.env`, not the repository
-root, and falls back to the compose file's defaults (auth on, an OpenAI provider with no
-key). `loom down` stops the stack and preserves its volumes. `loom down --delete-data`
-permanently deletes this installation's named volumes only after you type the generated
-Compose project name; `--yes` is the non-interactive confirmation. The Makefile targets
+With `compose.yaml` first, Compose reads the repository root's `.env` for the
+`${VAR:-default}` substitutions; `--env-file .env` only says so explicitly. `loom down`
+stops the stack and preserves its volumes. `loom down --delete-data` permanently
+deletes this installation's named volumes only after you type the generated Compose
+project name; `--yes` is the non-interactive confirmation. The Makefile targets
 do the same: `make down` preserves data and `make down-all` deletes it.
 
 ### What the stock `.env` boots
@@ -207,7 +228,7 @@ docker compose --project-directory "$HOME/.loom" exec loom loom doctor
   error. `fake_embedding`, `fake_llm` and `providers_degraded` say which mode you are in;
   `problems` lists each issue with its fix; `schema.pending` lists unapplied migrations.
 - `loom doctor` prints one line per server-side check. `--json` gives JSON. From a source
-  checkout stack, run `docker compose --env-file .env -f dev/docker-compose.dev.yml exec loom loom doctor`.
+  checkout stack, run `docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml exec loom loom doctor`.
 
 ## 2. Open the dashboard
 
@@ -235,7 +256,7 @@ selected: that mode keeps authentication off. Keep the installer's generated
 # Released stack:
 docker compose --project-directory "$HOME/.loom" up -d --force-recreate loom
 # Checkout stack (run from the repository root):
-docker compose --env-file .env -f dev/docker-compose.dev.yml up -d --force-recreate loom
+docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml --profile bundled up -d --force-recreate loom
 ```
 
 `/me` then opens on **Sign up**, and every SDK and MCP call needs a token. The identity
@@ -462,7 +483,7 @@ the answer and the chunks it cited. With the fake LLM it prints the top
 | `/me` returns 503                                      | The server runs from source (`make server`) without a built frontend. Run `make frontend-build`.                                                                                   |
 | Released stack does not become healthy                 | Run `docker compose --project-directory "$HOME/.loom" logs --tail 100 loom clickhouse`. See [Troubleshooting](../operations/troubleshooting.md).                                   |
 | Adding a repository answers `SANDBOX_UNAVAILABLE`      | The stack runs without the repository-job sandbox. Index the repository through `LOOM_CODE_REPOS_JSON` ([Index a repository](#optional-index-a-repository-on-the-released-stack)). |
-| Port `8123`, `9000` or `7777` is taken                 | Remap the ClickHouse host ports ([local stack](../operations/deployment.md#local-stack)).                                                                                          |
+| Port `8123`, `9000` or `7777` is taken                 | Remap the ClickHouse host ports ([local stack](../operations/deployment.md#local-stack-from-a-clone)).                                                                             |
 
 ## Next
 

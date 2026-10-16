@@ -66,12 +66,13 @@ def ch_target() -> dict[str, Any]:
 
 
 def ch_client_from_env(**kwargs: Any) -> Any:
-    """A ClickHouse client on the store the server under test writes to. The
-    only place the suite builds one; the unit gate
-    test_integration_suite_targets holds every other module to that."""
+    """A ClickHouse client on the store the server under test writes to;
+    `kwargs` add to or replace its arguments (another user, say). The only
+    place the suite builds one; the unit gate test_integration_suite_targets
+    holds every other module to that."""
     import clickhouse_connect
 
-    return clickhouse_connect.get_client(**ch_target(), **kwargs)
+    return clickhouse_connect.get_client(**{**ch_target(), **kwargs})
 
 
 _REFRESH_TARGET = r"\bREFRESH\b[^(]*?\bTO\s+`?\w+`?\.`?(\w+)"
