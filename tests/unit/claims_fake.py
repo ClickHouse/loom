@@ -1,6 +1,7 @@
 """Deployment-wide claims and leases held in process memory, for tests whose
 ClickHouse fake has no lock table: `memory_claims(monkeypatch)` for claims
-(`server.core.leases.holding`), `held_leases(monkeypatch)` for `server.core.leases.take`."""
+(`server.core.leases.holding`), `held_leases(monkeypatch)` for `server.core.leases.take`,
+`fake_key_locks(monkeypatch)` for the memory keys' write locks."""
 
 from __future__ import annotations
 
@@ -169,3 +170,12 @@ class FakeLockTable:
             pass
         else:
             raise AssertionError(sql)
+
+
+def fake_key_locks(monkeypatch: Any) -> None:
+    """The keys' write locks (Keeper leases) over a `FakeLockTable`, for a test that
+    takes one, as an Undo does."""
+    from server.memory.store import key_write_lock as kl
+
+    locks = kl.KeyWriteLocks(FakeLockTable(), wait_s=0.3)  # type: ignore[arg-type]
+    monkeypatch.setattr(kl, "key_write_locks", locks)

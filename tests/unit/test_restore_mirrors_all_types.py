@@ -24,6 +24,7 @@ from server.memory.app import restore as restore_mod
 from server.memory.app import stack as _stack_mod
 from server.memory.domain.memory_types import is_searchable_type
 from server.memory.store import EMBEDDING_PERSISTED_COLS, MemoryRow
+from tests.unit.claims_fake import fake_key_locks
 
 _NOW = datetime.now(UTC).replace(tzinfo=None)
 _TYPES = ("episodic", "profile", "semantic")
@@ -32,11 +33,7 @@ _TYPES = ("episodic", "profile", "semantic")
 @pytest.fixture(autouse=True)
 def _key_locks(monkeypatch: pytest.MonkeyPatch) -> None:
     # The Undo holds the key's write lock, a Keeper lease: here over a fake lease table.
-    from server.memory.store import key_write_lock as kl
-    from tests.unit.claims_fake import FakeLockTable
-
-    locks = kl.KeyWriteLocks(FakeLockTable(), wait_s=0.3)  # type: ignore[arg-type]
-    monkeypatch.setattr(kl, "key_write_locks", locks)
+    fake_key_locks(monkeypatch)
 
 
 def _row(memory_type: str, **over: Any) -> MemoryRow:
