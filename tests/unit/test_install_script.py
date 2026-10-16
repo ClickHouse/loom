@@ -389,3 +389,14 @@ def test_a_user_or_host_env_cannot_keep_is_refused(install, url: str, message: s
     result = run("--clickhouse", url, LOOM_CH_PASSWORD="pw")
     assert result.returncode == 1 and message in result.stderr
     assert not (target / ".env").exists()
+
+
+def test_a_quoted_profile_in_env_still_reads_as_bundled(install) -> None:
+    run, target = install
+    assert run().returncode == 0
+    env = target / ".env"
+    env.write_text(
+        env.read_text().replace("COMPOSE_PROFILES=bundled", 'COMPOSE_PROFILES="bundled"')
+    )
+    # A prepared rerun names ch-setup only for an outside ClickHouse.
+    assert "ch-setup" not in run().stdout

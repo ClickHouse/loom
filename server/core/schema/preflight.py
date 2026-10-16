@@ -226,7 +226,9 @@ def oldest_version(
                 )
             else:
                 reason = str(e).splitlines()[0].split(" (for url")[0][:200]
-                refusal = PreflightError(f"cannot read every replica's version: {reason}")
+                refusal = PreflightError(
+                    f"cannot read every replica's version: {reason}; retry once every replica is up"
+                )
             if strict:
                 raise refusal from None
             if gaps is not None:

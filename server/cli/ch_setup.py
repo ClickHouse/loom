@@ -129,7 +129,9 @@ def reader_status(reader: str) -> tuple[bool | None, str]:
     profile = _profile()
     try:
         ch = clickhouse_connect.get_client(
-            **{**connection_kwargs(database=""), "username": reader}, connect_timeout=10
+            **{**connection_kwargs(database=""), "username": reader},
+            connect_timeout=10,
+            settings={"log_comment": "ch.setup_reader_probe"},
         )
         try:
             name = ch.command("SELECT currentUser()")
