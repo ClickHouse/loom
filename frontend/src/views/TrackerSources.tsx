@@ -222,6 +222,7 @@ export function RecordSourceDetails({
 }) {
   const status = trackerStatus(s);
   return (
+    // biome-ignore lint/a11y/useSemanticElements: a labelled block of read-only facts, not form fields
     <div role="group" aria-label={`Tracker ${s.name}`}>
       <MetaList>
         <MetaRow label="tracker" mono>

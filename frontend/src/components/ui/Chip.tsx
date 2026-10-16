@@ -82,11 +82,26 @@ export function Chip({
   );
   const tone = selected ? ON : `${OFF} ${onClick ? INTERACTIVE_OFF : ""}`;
   const wrap = (el: ReactNode) => (tip ? <Tip content={tip}>{el}</Tip> : el);
+  // A span has no role that takes a name, so a static chip's spoken name is sr-only text
+  // and the visible text is hidden from assistive technology.
+  const spoken = ariaLabel ? (
+    <>
+      <span className="sr-only">{ariaLabel}</span>
+      <span aria-hidden="true" className="contents">
+        {inner}
+      </span>
+    </>
+  ) : (
+    inner
+  );
+  // A disabled chip with a tip says why it is disabled; a native `disabled` button takes no
+  // hover or focus, so the reason would be unreachable. It stays focusable, aria-disabled.
+  const softDisabled = disabled && tip !== undefined;
 
   if (!onClick && !onRemove) {
     return wrap(
-      <span className={`${BASE} ${tone} ${className}`} aria-label={ariaLabel} tabIndex={tip ? 0 : undefined}>
-        {inner}
+      <span className={`${BASE} ${tone} ${className}`} tabIndex={tip ? 0 : undefined}>
+        {spoken}
       </span>,
     );
   }
@@ -95,16 +110,15 @@ export function Chip({
       type="button"
       aria-pressed={selected}
       aria-label={name}
-      disabled={disabled}
-      onClick={onClick}
-      className={`${BASE} ${tone} ${onRemove ? "rounded-r-none border-r-0" : ""} disabled:opacity-50 ${className}`}
+      disabled={disabled && !softDisabled}
+      aria-disabled={disabled || undefined}
+      onClick={softDisabled ? undefined : onClick}
+      className={`${BASE} ${tone} ${onRemove ? "rounded-r-none border-r-0" : ""} disabled:opacity-50 aria-disabled:opacity-50 aria-disabled:cursor-not-allowed ${className}`}
     >
       {inner}
     </button>
   ) : (
-    <span className={`${BASE} ${tone} rounded-r-none border-r-0 ${className}`} aria-label={ariaLabel}>
-      {inner}
-    </span>
+    <span className={`${BASE} ${tone} rounded-r-none border-r-0 ${className}`}>{spoken}</span>
   );
   if (!onRemove) return wrap(main);
   return (
@@ -114,6 +128,7 @@ export function Chip({
         type="button"
         aria-label={`Remove ${label}`}
         disabled={disabled}
+        aria-disabled={disabled || undefined}
         onClick={onRemove}
         className={`inline-flex items-center justify-center min-h-7 min-w-7 rounded-r-full border ${selected ? ON : `${OFF} ${INTERACTIVE_OFF}`} disabled:opacity-50 pointer-coarse:min-h-11 pointer-coarse:min-w-11`}
       >

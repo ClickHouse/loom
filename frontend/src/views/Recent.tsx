@@ -643,7 +643,7 @@ export function Recent() {
   if (entries === null) {
     return (
       <PageContainer className="space-y-3">
-        <h1 className="text-3xl font-semibold tracking-tight mb-3">Memories</h1>
+        <h1 className="text-2xl font-semibold tracking-tight mb-3">Memories</h1>
         <MemoryTabs active="memories" />
         <SkeletonCard />
         <SkeletonCard />
@@ -655,7 +655,7 @@ export function Recent() {
   if (entries.length === 0 && loadError) {
     return (
       <PageContainer>
-        <h1 className="text-[30px] font-semibold tracking-tight">Memories</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Memories</h1>
         <div className="mt-1 mb-3">
           <ScopeBadge kind="namespace" value={identity.namespace} />
         </div>
@@ -680,7 +680,7 @@ export function Recent() {
   if (entries.length === 0) {
     return (
       <PageContainer>
-        <h1 className="text-3xl font-semibold tracking-tight">Memories</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Memories</h1>
         <div className="mt-1 mb-3">
           <ScopeBadge kind="namespace" value={identity.namespace} />
         </div>
@@ -756,7 +756,7 @@ export function Recent() {
       {/* Wraps below the title on a phone: at 390 px a non-wrapping row
           clips "Add memory" off-screen. */}
       <div className="mb-1 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-2">
-        <h1 className="text-3xl font-semibold tracking-tight">Memories</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Memories</h1>
         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           <span className="text-sm text-[var(--color-text-muted)] tabular whitespace-nowrap">
             {searchActive
@@ -766,6 +766,7 @@ export function Recent() {
                 : `Showing ${rangeStart.toLocaleString()}–${rangeEnd.toLocaleString()} of ${(total || entries.length).toLocaleString()}`}
           </span>
           <button
+            type="button"
             onClick={() => setShowDeleted((v) => !v)}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] transition-colors"
             title="Show memories deleted in the last 14 days; restore from this view"
@@ -773,21 +774,22 @@ export function Recent() {
             {showDeleted ? "Back to live" : "Recently deleted"}
           </button>
           {readOnly ? (
-            <Tip content={READ_ONLY_TIP}>
-              <span
-                tabIndex={0}
-                className="inline-flex rounded-md outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
-                aria-label={`Add memory: ${READ_ONLY_TIP}`}
-              >
+            <>
+              {/* aria-disabled, not disabled: the button stays focusable so the tip can say why. */}
+              <Tip content={READ_ONLY_TIP}>
                 <button
                   type="button"
-                  disabled
+                  aria-disabled="true"
+                  aria-describedby="recent-add-readonly"
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md opacity-50 cursor-not-allowed"
                 >
                   <Plus size={13} aria-hidden="true" /> Add memory
                 </button>
+              </Tip>
+              <span id="recent-add-readonly" className="sr-only">
+                {READ_ONLY_TIP}
               </span>
-            </Tip>
+            </>
           ) : (
             <button
               type="button"
@@ -850,6 +852,7 @@ export function Recent() {
         />
         {query && (
           <button
+            type="button"
             onClick={() => setQuery("")}
             className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)] rounded"
             aria-label="Clear search"
@@ -882,6 +885,7 @@ export function Recent() {
           <span className="text-[var(--color-text-subtle)]">Filtering:</span>
           {queryAgent && (
             <button
+              type="button"
               onClick={() =>
                 setQuery((q) =>
                   q
@@ -898,6 +902,7 @@ export function Recent() {
           )}
           {queryTags.map((t) => (
             <button
+              type="button"
               key={t}
               onClick={() =>
                 setQuery((q) =>
@@ -922,6 +927,7 @@ export function Recent() {
             <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md bg-[var(--color-accent-soft)] text-[var(--color-accent)]">
               tag: <span className="font-mono">{memoryTagFilter}</span>
               <button
+                type="button"
                 onClick={() => setMemoryTagFilter(null)}
                 className="ml-1 opacity-70 hover:opacity-100"
                 aria-label="Clear tag filter"
@@ -932,6 +938,7 @@ export function Recent() {
           )}
           {entries.some((e) => e.pinned) && !showDeleted && (
             <button
+              type="button"
               onClick={() => setPinnedOnly((v) => !v)}
               className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
                 pinnedOnly
@@ -947,6 +954,7 @@ export function Recent() {
             <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md bg-[var(--color-warn)]/15 text-[var(--color-warn)]">
               Recently deleted · 14-day grace
               <button
+                type="button"
                 onClick={() => setShowDeleted(false)}
                 className="ml-1 opacity-70 hover:opacity-100"
                 aria-label="Show live memories"
@@ -962,6 +970,7 @@ export function Recent() {
               const active = agentFilter === agent;
               return (
                 <button
+                  type="button"
                   key={`a-${agent}`}
                   onClick={() => setAgentFilter(active ? null : agent)}
                   className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
@@ -984,6 +993,7 @@ export function Recent() {
           <span className="text-sm font-medium text-[var(--color-accent)] tabular">{selected.size} selected</span>
           <div className="flex-1" />
           <button
+            type="button"
             onClick={bulkPin}
             disabled={busy}
             className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] border border-[var(--color-border)] disabled:opacity-50"
@@ -991,6 +1001,7 @@ export function Recent() {
             <Star size={11} /> Pin all
           </button>
           <button
+            type="button"
             onClick={bulkDelete}
             disabled={busy}
             className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md text-danger bg-danger/15 hover:bg-danger/25 disabled:opacity-50"
@@ -998,6 +1009,7 @@ export function Recent() {
             <Trash2 size={11} /> Delete all
           </button>
           <button
+            type="button"
             onClick={() => setSelected(new Set())}
             className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
           >
@@ -1020,6 +1032,7 @@ export function Recent() {
               Deleted memories stay here for 14 days so you can restore them — nothing has been deleted recently.
             </p>
             <button
+              type="button"
               onClick={() => setShowDeleted(false)}
               className="mt-4 inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] transition-colors"
             >
@@ -1037,6 +1050,7 @@ export function Recent() {
               in this namespace, but none pass the active filters.
             </p>
             <button
+              type="button"
               onClick={() => {
                 setQuery("");
                 setPinnedOnly(false);
@@ -1133,6 +1147,7 @@ export function Recent() {
                             })()}
                           </span>
                           <button
+                            type="button"
                             onClick={async (ev) => {
                               ev.stopPropagation();
                               // Identity carries only (org, namespace, agent);
@@ -1168,6 +1183,7 @@ export function Recent() {
       {!searchActive && pageCount > 1 && (
         <nav className="mt-8 flex items-center justify-center gap-1.5" aria-label="Pagination">
           <button
+            type="button"
             onClick={() => setPage((p) => Math.max(0, p - 1))}
             disabled={page === 0}
             className="px-3 py-1.5 text-sm font-medium rounded-md border border-[var(--color-border)] enabled:hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
@@ -1181,6 +1197,7 @@ export function Recent() {
               </span>
             ) : (
               <button
+                type="button"
                 key={p}
                 onClick={() => setPage(p)}
                 aria-current={p === page ? "page" : undefined}
@@ -1195,6 +1212,7 @@ export function Recent() {
             ),
           )}
           <button
+            type="button"
             onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
             disabled={page >= pageCount - 1}
             className="px-3 py-1.5 text-sm font-medium rounded-md border border-[var(--color-border)] enabled:hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"

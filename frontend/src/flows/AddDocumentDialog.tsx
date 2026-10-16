@@ -237,6 +237,7 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
                 onChange={(e) => onPickFile(e.target.files?.[0] || null)}
               />
               <button
+                type="button"
                 onClick={() => fileRef.current?.click()}
                 className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg border border-dashed border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] w-full justify-center"
               >
@@ -379,6 +380,7 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
               Cancel
             </Dialog.Close>
             <button
+              type="button"
               onClick={onSubmit}
               disabled={!canSubmit}
               className="inline-flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md hover:bg-[var(--color-accent-strong)] disabled:opacity-40 disabled:cursor-not-allowed"

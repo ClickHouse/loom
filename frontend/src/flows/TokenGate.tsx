@@ -183,6 +183,7 @@ export function TokenGate({ onLogin, reason = null }: TokenGateProps) {
                 className="w-full px-3 py-2.5 text-base rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] outline-none focus:border-[var(--color-accent)]"
               />
               <button
+                type="button"
                 onClick={doSignin}
                 disabled={busy || !signinIdent.trim() || !signinPassword}
                 className="mt-4 w-full px-4 py-2.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-lg hover:bg-[var(--color-accent-strong)] disabled:opacity-50"
@@ -239,6 +240,7 @@ export function TokenGate({ onLogin, reason = null }: TokenGateProps) {
                 </div>
               )}
               <button
+                type="button"
                 onClick={doSignup}
                 disabled={busy || !name.trim() || !signupEmail.trim() || signupPassword.length < 8}
                 className="mt-4 w-full px-4 py-2.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-lg hover:bg-[var(--color-accent-strong)] disabled:opacity-50"

@@ -222,7 +222,7 @@ function RunRowTr({ r, onOpen }: { r: RunRow; onOpen: (r: RunRow) => void }) {
           </button>
           {inferred && (
             <span
-              className="text-2xs px-1.5 py-px rounded border border-[var(--color-border)] text-[var(--color-text-subtle)] uppercase tracking-wide"
+              className="text-xs px-1.5 py-px rounded border border-[var(--color-border)] text-[var(--color-text-subtle)]"
               title="loom inferred this run from a connection; the agent did not declare it with run.begin"
             >
               auto
@@ -251,7 +251,7 @@ function RunTable({ rows, onOpen, head = true }: { rows: RunRow[]; onOpen: (r: R
   return (
     <table className="w-full text-sm">
       {head && (
-        <thead className="bg-[var(--color-surface-2)] text-2xs uppercase tracking-wide text-[var(--color-text-muted)]">
+        <thead className="bg-[var(--color-surface-2)] text-xs text-[var(--color-text-muted)]">
           <tr>
             <th className="text-left px-3 py-2 font-medium">Goal</th>
             <th className="text-left px-3 py-2 font-medium">Agent</th>
@@ -362,7 +362,7 @@ export function Runs() {
   return (
     <PageContainer>
       <div className="flex items-baseline gap-3 mb-2">
-        <h1 className="text-3xl font-semibold tracking-tight inline-flex items-center gap-2">
+        <h1 className="text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
           <ListChecks size={20} /> Runs
         </h1>
         <ScopeBadge kind="namespace" value={identity.namespace} />

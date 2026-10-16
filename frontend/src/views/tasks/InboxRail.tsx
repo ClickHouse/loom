@@ -140,6 +140,7 @@ export function InboxRail({ inboxes, counts, picked, onPick, kinds, filters, onF
           <h2 id="tq-rail-kind" className="section-label mb-1.5 ml-2">
             Kind
           </h2>
+          {/* biome-ignore lint/a11y/useSemanticElements: a labelled cluster of toggle chips, not form fields */}
           <div className="flex flex-wrap gap-1.5 px-2" id="tq-kind-chips" role="group" aria-label="Kind">
             {kinds.map((k) => (
               <button
@@ -159,6 +160,7 @@ export function InboxRail({ inboxes, counts, picked, onPick, kinds, filters, onF
         <h2 id="tq-rail-poster" className="section-label mb-1.5 ml-2">
           Posted by
         </h2>
+        {/* biome-ignore lint/a11y/useSemanticElements: a labelled cluster of toggle chips, not form fields */}
         <div className="flex flex-wrap gap-1.5 px-2" role="group" aria-label="Posted by">
           {POSTER_OPTIONS.map(([k, l]) => (
             <button

@@ -109,7 +109,7 @@ export function ProblemsBanner() {
           <ul className="mt-1.5 space-y-1.5">
             {problems.map((p) => (
               <li key={p.code} className="text-xs leading-relaxed" data-severity={p.severity}>
-                <span className="font-mono text-2xs uppercase mr-1.5" style={{ color: tone }}>
+                <span className="font-mono text-xs mr-1.5" style={{ color: tone }}>
                   {p.severity}
                 </span>
                 <span className="text-[var(--color-text)]">{p.message}</span>{" "}
@@ -122,6 +122,7 @@ export function ProblemsBanner() {
           </ul>
         </div>
         <button
+          type="button"
           onClick={dismiss}
           aria-label="Dismiss for this session"
           title="Dismiss for this session"

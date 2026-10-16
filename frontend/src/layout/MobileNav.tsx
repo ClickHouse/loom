@@ -125,9 +125,7 @@ export function MobileNav() {
             </div>
             {groups.map((g) => (
               <nav key={g.group} aria-label={g.group} className="mb-4">
-                <div className="text-2xs uppercase tracking-wider text-[var(--color-text-muted)] mb-1.5 px-1">
-                  {g.group}
-                </div>
+                <div className="text-xs text-[var(--color-text-muted)] mb-1.5 px-1">{g.group}</div>
                 <div className="grid grid-cols-3 gap-2">
                   {g.items.map((m) => {
                     const Icon = m.icon;

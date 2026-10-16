@@ -89,7 +89,7 @@ export function SourcePicker({
   return (
     <section
       aria-labelledby="patterns-picker-title"
-      className="flex-1 min-h-0 overflow-auto rounded-xl border border-border bg-surface-1 p-5 max-w-2xl"
+      className="flex-1 min-h-0 overflow-auto rounded-xl border border-border bg-surface p-5 max-w-2xl"
     >
       <h2 id="patterns-picker-title" className="text-base font-semibold text-text">
         Which tracker source?

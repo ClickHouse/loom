@@ -185,6 +185,7 @@ export function EditDocumentMetadataDialog({ open, onOpenChange, identity, entry
               Cancel
             </Dialog.Close>
             <button
+              type="button"
               onClick={onSave}
               disabled={busy}
               className="px-4 py-1.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md hover:bg-[var(--color-accent-strong)] disabled:opacity-40"

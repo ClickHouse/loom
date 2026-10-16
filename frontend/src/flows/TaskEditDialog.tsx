@@ -288,7 +288,8 @@ export function TaskEditDialog({ open, onOpenChange, identity, mode, onSaved }: 
       )}
       {error && <ErrorNote>{error}</ErrorNote>}
       {conflict && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs" aria-label="Conflict comparison">
+        // biome-ignore lint/a11y/useSemanticElements: a read-only side-by-side comparison, not form controls
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs" role="group" aria-label="Conflict comparison">
           <div className="rounded-lg border border-[var(--color-border)] p-3 space-y-1.5">
             <div className="section-label">Your edit</div>
             <div className="font-medium break-words">{title}</div>

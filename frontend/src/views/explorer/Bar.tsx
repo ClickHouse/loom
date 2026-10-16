@@ -120,6 +120,7 @@ export function Bar({
           <Waypoints size={18} /> Graph
         </h1>
         <ScopeBadge kind="namespace" value={identity.namespace} />
+        {/* biome-ignore lint/a11y/useSemanticElements: the box submits, so it stays a <form>; role="search" makes it the search landmark */}
         <form
           className="flex items-center gap-2 flex-1 min-w-[280px]"
           role="search"
@@ -161,40 +162,47 @@ export function Bar({
               className="w-full pl-7 pr-2 py-1.5 text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] font-mono"
             />
             {open && (suggestions.length > 0 || (typing.length >= 3 && entities !== null)) && (
-              <ul
-                id="graph-omnibox-list"
-                role="listbox"
-                className="absolute z-30 left-0 right-0 mt-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl overflow-hidden text-xs"
-              >
-                {suggestions.map((s, i) => (
-                  <li
-                    key={s.value}
-                    id={`graph-omnibox-${i}`}
-                    role="option"
-                    aria-selected={i === hi}
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      submit(s);
-                    }}
-                    onMouseEnter={() => setHi(i)}
-                    className={`flex items-center gap-2 px-2.5 py-1.5 cursor-pointer ${i === hi ? "bg-[var(--color-surface-2)]" : ""}`}
-                  >
-                    <span className="font-mono truncate flex-1">{s.value}</span>
-                    <span className="text-2xs text-[var(--color-text-subtle)]">{s.how}</span>
-                    <span className="tabular-nums text-[var(--color-text-muted)] w-14 text-right">{s.count}</span>
-                  </li>
-                ))}
+              <div className="absolute z-30 left-0 right-0 mt-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl overflow-hidden text-xs">
+                {/* The listbox holds options only; the messages below it are not choices. */}
+                <ul
+                  id="graph-omnibox-list"
+                  // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: APG combobox with a listbox popup — focus stays on the input, aria-activedescendant names the option
+                  role="listbox"
+                  aria-label="Matching entities"
+                  hidden={suggestions.length === 0}
+                >
+                  {suggestions.map((s, i) => (
+                    // biome-ignore lint/a11y/useFocusableInteractive: APG combobox option — never focused itself, the input points at it with aria-activedescendant
+                    <li
+                      key={s.value}
+                      id={`graph-omnibox-${i}`}
+                      // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: APG combobox option inside the listbox above
+                      role="option"
+                      aria-selected={i === hi}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        submit(s);
+                      }}
+                      onMouseEnter={() => setHi(i)}
+                      className={`flex items-center gap-2 px-2.5 py-1.5 cursor-pointer ${i === hi ? "bg-[var(--color-surface-2)]" : ""}`}
+                    >
+                      <span className="font-mono truncate flex-1">{s.value}</span>
+                      <span className="text-2xs text-[var(--color-text-subtle)]">{s.how}</span>
+                      <span className="tabular-nums text-[var(--color-text-muted)] w-14 text-right">{s.count}</span>
+                    </li>
+                  ))}
+                </ul>
                 {suggestions.length === 0 && (
-                  <li className="px-2.5 py-1.5 text-[var(--color-text-subtle)]">
+                  <p role="status" className="px-2.5 py-1.5 text-[var(--color-text-subtle)]">
                     No entity matches “{typing}”; Walk tries it as typed (the server canonicalises).
-                  </li>
+                  </p>
                 )}
                 {suggestions.length > 0 && pathQuery && (
-                  <li className="px-2.5 py-1 text-2xs text-[var(--color-text-subtle)] border-t border-[var(--color-border)]">
+                  <p className="px-2.5 py-1 text-2xs text-[var(--color-text-subtle)] border-t border-[var(--color-border)]">
                     ↵ finds the path from <span className="font-mono">{pathQuery.a}</span> to the highlighted entity
-                  </li>
+                  </p>
                 )}
-              </ul>
+              </div>
             )}
           </div>
           <button
@@ -250,10 +258,7 @@ export function Bar({
         </span>
       </div>
       {trail.length > 0 && (
-        <div
-          className="text-xs text-[var(--color-text-muted)] flex items-center gap-1 flex-wrap"
-          aria-label="Seeds walked this session"
-        >
+        <div className="text-xs text-[var(--color-text-muted)] flex items-center gap-1 flex-wrap">
           <span>walked:</span>
           {trail.map((t, i) => (
             <span key={`${t}-${i}`} className="inline-flex items-center gap-1">

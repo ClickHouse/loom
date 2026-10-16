@@ -149,6 +149,8 @@ function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: (id: numbe
   }, [resume, pause]);
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: hover and focus pause the dismiss timer (WCAG 2.2.1); the toast's own controls are buttons
+    // biome-ignore lint/a11y/noNoninteractiveElementInteractions: as above, an alert toast pauses while it is hovered or focused
     <div
       role={item.kind === "error" ? "alert" : undefined}
       data-toast-kind={item.kind}

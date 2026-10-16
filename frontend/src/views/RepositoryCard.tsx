@@ -243,6 +243,7 @@ function RecordChip({
 
 function FacetRow({ icon: Icon, label, children }: { icon: LucideIcon; label: string; children: ReactNode }) {
   return (
+    // biome-ignore lint/a11y/useSemanticElements: a named group of read-only details of the card, not form controls
     <div
       className="grid grid-cols-1 gap-x-4 gap-y-1 border-t border-border pt-3 sm:grid-cols-[6.5rem_minmax(0,1fr)]"
       role="group"
@@ -438,7 +439,8 @@ function RecordFacetRow({
             </span>
             {f.last_refresh_at && (
               <Tip content={`Last refresh ${absoluteTime(f.last_refresh_at)}`}>
-                <span tabIndex={0} className="underline decoration-dotted rounded outline-none">
+                {/* biome-ignore lint/a11y/noNoninteractiveTabindex: focusable so keyboard users reach the tooltip; it is not an action, so not a button */}
+                <span tabIndex={0} className="underline decoration-dotted rounded">
                   · refreshed {relativeTime(f.last_refresh_at)}
                 </span>
               </Tip>
@@ -502,6 +504,7 @@ function Details({ card, adminOpsPresent }: { card: CardModel; adminOpsPresent: 
       </summary>
       <div className="mt-2 space-y-3">
         {card.code && (
+          // biome-ignore lint/a11y/useSemanticElements: a named group of read-only details of the card, not form controls
           <div role="group" aria-label="Code details">
             <MetaList>
               {card.code.branches.map((b) => (
@@ -768,7 +771,7 @@ function RepoAccessPanel({
       aria-label={`Maintain ${card.repo}`}
       className="rounded-lg border border-border bg-surface-2/40 p-3 space-y-3"
     >
-      <div className="text-xs font-medium uppercase tracking-wide text-text-muted">Maintain · access and tracker</div>
+      <div className="text-xs font-medium text-text-muted">Maintain · access and tracker</div>
       {actions.onSetAccess && (
         <div className="flex flex-wrap items-end gap-2">
           <label className="flex flex-col gap-1 text-xs text-text-muted">
@@ -870,6 +873,7 @@ function TrackerLinkRow({
   const primaryLabel = records.find((r) => r.namespace === linked[0])?.label ?? linked[0];
 
   return (
+    // biome-ignore lint/a11y/useSemanticElements: a named group of read-only details of the card, not form controls and their link actions
     <div className="space-y-2 border-t border-border pt-3" role="group" aria-label="Tracker link">
       <div className="text-xs text-text-muted font-medium">{many ? `Trackers · ${linked.length}` : "Tracker"}</div>
       {linked.length === 0 ? (

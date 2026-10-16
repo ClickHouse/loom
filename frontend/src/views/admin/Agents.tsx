@@ -42,7 +42,7 @@ export function Agents() {
   return (
     <PageContainer>
       <div className="flex items-baseline gap-3 mb-2">
-        <h1 className="text-3xl font-semibold tracking-tight inline-flex items-center gap-2">
+        <h1 className="text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
           <Plug size={20} /> Agents
         </h1>
       </div>
@@ -59,6 +59,7 @@ export function Agents() {
         <div className="inline-flex rounded-md border border-[var(--color-border)] overflow-hidden">
           {[1, 24, 168, 720].map((h) => (
             <button
+              type="button"
               key={h}
               onClick={() => setWindowHours(h)}
               className={`px-3 py-1.5 text-xs font-medium border-r border-[var(--color-border)] last:border-r-0 ${
@@ -72,6 +73,7 @@ export function Agents() {
           ))}
         </div>
         <button
+          type="button"
           onClick={() => load()}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-[var(--color-border)] rounded-md hover:bg-[var(--color-surface-2)]"
         >
@@ -102,7 +104,7 @@ export function Agents() {
         <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-[var(--color-surface-2)]">
-              <tr className="text-left text-2xs uppercase tracking-wider text-[var(--color-text-muted)]">
+              <tr className="text-left text-xs text-[var(--color-text-muted)]">
                 <th className="px-4 py-2.5">Client</th>
                 <th className="px-4 py-2.5 text-right">Ops</th>
                 <th className="px-4 py-2.5 text-right">Namespaces</th>

@@ -3,7 +3,7 @@ import { Info } from "lucide-react";
 import { Tip } from "./Tooltip";
 
 /**
- * SectionHeading — one line of uppercase label, an optional count, an
+ * SectionHeading — one line of section label, an optional count, an
  * optional visible caption, and an optional hint that opens as a tooltip
  * from a small (i) button. Nothing here truncates: the label is `whitespace-nowrap`, the
  * row wraps its caption to a second line when the pane is narrow, and the hint lives in a
@@ -42,8 +42,9 @@ export function SectionHeading({
     <div className={`flex flex-wrap items-center gap-x-inline gap-y-0.5 min-w-0 mb-1.5 ${className}`}>
       {createElement(`h${level}`, { id, className: "section-label whitespace-nowrap text-text-muted" }, label)}
       {count !== undefined && (
-        <span className="section-label tabular-nums text-text-subtle" aria-label={`${count} ${label.toLowerCase()}`}>
-          {count}
+        <span className="section-label tabular-nums text-text-subtle">
+          <span aria-hidden="true">{count}</span>
+          <span className="sr-only">{`${count} ${label.toLowerCase()}`}</span>
         </span>
       )}
       {caption && <span className="caption whitespace-nowrap">{caption}</span>}

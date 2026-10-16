@@ -170,6 +170,7 @@ function RoleCard({
                 to the item it names.
               </p>
             )}
+          {/* biome-ignore lint/a11y/useSemanticElements: a labelled grid of field rows; <fieldset> does not lay out as a CSS grid in every browser */}
           <div
             className="grid grid-cols-1 sm:grid-cols-[10rem_minmax(0,1fr)] gap-x-3 gap-y-1.5 items-center"
             role="group"

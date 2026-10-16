@@ -315,7 +315,7 @@ export function Documents() {
   return (
     <PageContainer>
       <div className="flex items-baseline justify-between mb-1">
-        <h1 className="text-3xl font-semibold tracking-tight">Library</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Library</h1>
         <div className="flex items-center gap-3">
           <span className="text-sm text-[var(--color-text-muted)] tabular">
             {rows
@@ -325,6 +325,7 @@ export function Documents() {
               : ""}
           </span>
           <button
+            type="button"
             onClick={() => setAddOpen(true)}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md hover:bg-[var(--color-accent-strong)] transition-colors"
           >
@@ -357,6 +358,7 @@ export function Documents() {
             />
             {query && (
               <button
+                type="button"
                 onClick={() => setQuery("")}
                 className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)] rounded"
                 aria-label="Clear search"
@@ -396,6 +398,7 @@ export function Documents() {
           <span className="text-sm font-medium text-[var(--color-accent)] tabular">{selected.size} selected</span>
           <div className="flex-1" />
           <button
+            type="button"
             onClick={onBulkDelete}
             disabled={bulkBusy}
             className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md text-danger bg-danger/15 hover:bg-danger/25 disabled:opacity-50"
@@ -403,6 +406,7 @@ export function Documents() {
             <Trash2 size={11} /> Delete all
           </button>
           <button
+            type="button"
             onClick={clearSelection}
             className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
           >
@@ -476,6 +480,7 @@ export function Documents() {
             {rows.length} loaded from this namespace, but none pass the active filters.
           </p>
           <button
+            type="button"
             onClick={() => setQuery("")}
             className="mt-4 inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] transition-colors"
           >
@@ -487,6 +492,8 @@ export function Documents() {
       {rows !== null && rows.length > 0 && visibleRows && visibleRows.length > 0 && (
         <div className="space-y-2">
           {(firstScreenOnly ? visibleRows.slice(0, FIRST_SCREEN_ROWS) : visibleRows).map((r) => (
+            // biome-ignore lint/a11y/noStaticElementInteractions: tracks the row under the pointer or holding focus for the row actions; nothing happens on these events alone
+            // biome-ignore lint/a11y/noNoninteractiveElementInteractions: as above
             <div
               key={r.source_uri}
               onMouseEnter={() => setHotRow(r.source_uri)}
@@ -508,6 +515,7 @@ export function Documents() {
               />
               <FileText size={16} className="text-[var(--color-text-muted)] shrink-0 mt-0.5" aria-hidden="true" />
               <button
+                type="button"
                 onClick={() => onOpen(r)}
                 className="min-w-0 flex-1 text-left bg-transparent border-0 p-0 cursor-pointer"
                 aria-label={`Preview ${r.title || r.original_filename || r.source_uri}`}
@@ -541,6 +549,7 @@ export function Documents() {
                     <span className="flex items-center gap-1 ml-2">
                       {r.tags.slice(0, 3).map((t) => (
                         <button
+                          type="button"
                           key={t}
                           onClick={(e) => {
                             e.stopPropagation();
@@ -647,6 +656,7 @@ export function Documents() {
           )}
           {nextCursor && (
             <button
+              type="button"
               onClick={loadMore}
               disabled={loadingMore}
               className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium border border-[var(--color-border)] rounded-md hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)] transition-colors disabled:opacity-50"
@@ -697,6 +707,7 @@ export function Documents() {
               <div className="flex items-center gap-2 shrink-0">
                 {previewEntry && (
                   <button
+                    type="button"
                     onClick={() => {
                       const r = previewEntry;
                       closePreview();
@@ -710,6 +721,7 @@ export function Documents() {
                 )}
                 {previewEntry && (
                   <button
+                    type="button"
                     onClick={() => onDownload(previewEntry)}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:bg-[var(--color-accent-strong)]"
                     title={hasOriginalFile(previewEntry) ? "Download original file" : "Download text (.md)"}
@@ -773,6 +785,7 @@ export function Documents() {
                     </div>
                     {previewEntry && (
                       <button
+                        type="button"
                         onClick={() => {
                           const r = previewEntry;
                           closePreview();
@@ -801,6 +814,7 @@ export function Documents() {
             </div>
             <div className="border-t border-[var(--color-border)] shrink-0 max-h-[40%] overflow-y-auto">
               <button
+                type="button"
                 onClick={() => setShowText((v) => !v)}
                 className="w-full flex items-center justify-between px-6 py-2.5 text-2xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
               >

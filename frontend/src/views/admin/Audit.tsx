@@ -227,7 +227,7 @@ export function Audit() {
     <PageContainer>
       <div className="mb-6">
         <div className="flex items-baseline gap-3 mb-1">
-          <h1 className="text-3xl font-semibold tracking-tight inline-flex items-center gap-2">
+          <h1 className="text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
             <History size={20} /> Activity
           </h1>
           <ScopeBadge kind="namespace" value={identity.namespace} />
@@ -376,7 +376,7 @@ function ErasuresPanel({ org }: { org: string }) {
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
       <table className="w-full text-sm">
         <thead className="bg-[var(--color-surface-2)]">
-          <tr className="text-left text-2xs uppercase tracking-wider text-[var(--color-text-muted)]">
+          <tr className="text-left text-xs text-[var(--color-text-muted)]">
             <th className="px-4 py-2.5">Scope</th>
             <th className="px-4 py-2.5">Requester</th>
             <th className="px-4 py-2.5">Status</th>
@@ -466,6 +466,7 @@ function AuditRow({ row }: { row: AuditEntry }) {
             </span>
             {hasDetails && (
               <button
+                type="button"
                 onClick={() => setExpanded((v) => !v)}
                 className="ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)] transition-colors"
                 aria-expanded={expanded}

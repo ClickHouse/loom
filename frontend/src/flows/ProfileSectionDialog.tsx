@@ -90,6 +90,7 @@ export function ProfileSectionDialog() {
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <button
+                type="button"
                 onClick={editOnProfile}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)]"
                 title="Edit this section on the Profile page"

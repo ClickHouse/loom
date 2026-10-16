@@ -395,6 +395,7 @@ export function Sidebar() {
         </a>
         {!collapsed && (
           <button
+            type="button"
             onClick={toggleSidebar}
             className="p-1 text-[var(--color-text-subtle)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded transition-colors"
             aria-label="Collapse sidebar"
@@ -405,6 +406,7 @@ export function Sidebar() {
       </div>
       {collapsed && (
         <button
+          type="button"
           onClick={toggleSidebar}
           className="mx-3 mb-2 p-1.5 text-[var(--color-text-subtle)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded transition-colors"
           aria-label="Expand sidebar"
@@ -440,12 +442,13 @@ export function Sidebar() {
         {!collapsed && visibleAdmin.length > 0 && (
           <div className="pt-4">
             <button
+              type="button"
               onClick={() => setAdminOpen((v) => !v)}
-              className="w-full flex items-center justify-between px-3 py-2 text-md rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)] transition-colors"
+              className="w-full flex items-center justify-between px-3 py-1.5 text-sm rounded-lg text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
               aria-expanded={adminOpen}
             >
-              <span className="flex items-center gap-2.5">
-                <Shield size={15} /> Admin
+              <span className="flex items-center gap-3">
+                <Shield size={16} className="text-[var(--color-text-subtle)]" aria-hidden="true" /> Admin
               </span>
               <ChevronDown size={14} className={`transition-transform ${adminOpen ? "rotate-180" : ""}`} />
             </button>
@@ -504,11 +507,7 @@ export function Sidebar() {
 
 function GroupLabel({ children }: { children: string | null }) {
   if (!children) return null;
-  return (
-    <div className="px-3 pb-1 text-2xs font-semibold uppercase tracking-wider text-[var(--color-text-subtle)] select-none">
-      {children}
-    </div>
-  );
+  return <div className="px-3 pb-1 text-xs font-medium text-[var(--color-text-subtle)] select-none">{children}</div>;
 }
 
 /** The scope read-out for an item's tooltip / title. */
@@ -541,17 +540,20 @@ function NavBtn({
         e.preventDefault();
         onActivate();
       }}
-      className={`w-full flex items-center ${collapsed ? "justify-center" : "justify-between"} gap-2 ${collapsed ? "px-2 py-2" : "px-3 py-2"} text-md rounded-lg transition-colors relative no-underline ${
-        active
-          ? "bg-[var(--color-surface-2)] text-[var(--color-text)] font-medium"
-          : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]"
+      className={`w-full flex items-center ${collapsed ? "justify-center" : "justify-between"} gap-2 ${collapsed ? "px-2 py-2" : "px-3 py-1.5"} text-sm rounded-lg transition-colors relative no-underline hover:no-underline text-[var(--color-text)] hover:text-[var(--color-text)] ${
+        active ? "bg-[var(--color-surface-3)] font-medium" : "hover:bg-[var(--color-surface-2)]"
       }`}
       aria-label={collapsed ? item.label : undefined}
       aria-current={active ? "page" : undefined}
       title={!collapsed && hint ? `${item.label} — ${hint}` : undefined}
     >
-      <span className="flex items-center gap-2.5 min-w-0">
-        <Icon size={15} className="shrink-0" />
+      <span className="flex items-center gap-3 min-w-0">
+        {/* Click UI nav item: a muted 16 px icon beside dark text. */}
+        <Icon
+          size={16}
+          className={`shrink-0 ${active ? "text-[var(--color-text)]" : "text-[var(--color-text-subtle)]"}`}
+          aria-hidden="true"
+        />
         {!collapsed && <span className="truncate">{item.label}</span>}
       </span>
       {item.badge != null &&
@@ -568,6 +570,7 @@ function NavBtn({
           if (isDot) {
             return (
               <span
+                role="img"
                 aria-label="Attention required"
                 title="Attention required"
                 className={`shrink-0 w-2 h-2 rounded-full ${colorCls.split(" ")[0]} ${

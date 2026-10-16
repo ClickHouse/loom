@@ -50,8 +50,9 @@ describe("Header", () => {
     useStore.setState({ whoami: { authenticated: true, subject: "v@example.com", org: "dev", roles: ["VIEWER"] } });
     render(<Header />);
     // The live button is replaced by the disabled one once list_mine resolves.
-    await waitFor(() => expect(screen.getByRole("button", { name: "New" })).toBeDisabled());
-    expect(screen.getByLabelText(/New: You have read-only access here/)).toBeInTheDocument();
+    // aria-disabled, not disabled: the trigger stays focusable so its tooltip can say why.
+    await waitFor(() => expect(screen.getByRole("button", { name: "New" })).toHaveAttribute("aria-disabled", "true"));
+    expect(screen.getByRole("button", { name: "New" })).toHaveAccessibleDescription(/You have read-only access here/);
   });
 
   it("keeps New live for a writer token on the same namespace", async () => {
@@ -68,7 +69,7 @@ describe("Header", () => {
       myNamespaces: jwtOnly,
     });
     render(<Header />);
-    await waitFor(() => expect(screen.getByRole("button", { name: "New" })).toBeDisabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: "New" })).toHaveAttribute("aria-disabled", "true"));
     // PendingApprovalsBell reads list_mine on its own; the role hook must not add a call.
     expect(listMine.mock.calls.length).toBeLessThanOrEqual(1);
   });

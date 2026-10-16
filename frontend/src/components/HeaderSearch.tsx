@@ -491,6 +491,7 @@ export function HeaderSearch({
                 const isActive = idx === activeIdx;
                 return (
                   <button
+                    type="button"
                     key={s.label}
                     onClick={() => openProfileSection(s.label)}
                     onMouseEnter={() => setActiveIdx(idx)}
@@ -526,6 +527,7 @@ export function HeaderSearch({
                 const isActive = idx === activeIdx;
                 return (
                   <button
+                    type="button"
                     key={`${e.agent || ""}::${e.memory_key}`}
                     onClick={() => openMemory({ memory_key: e.memory_key, agent: e.agent || "" })}
                     onMouseEnter={() => setActiveIdx(idx)}
@@ -551,6 +553,7 @@ export function HeaderSearch({
                 );
               })}
               <button
+                type="button"
                 onClick={() => {
                   setView("memories");
                   setOpen(false);
@@ -571,6 +574,7 @@ export function HeaderSearch({
                 const label = d.title || d.original_filename || d.source_uri;
                 return (
                   <button
+                    type="button"
                     key={d.source_uri}
                     onClick={() => openDocument(d)}
                     onMouseEnter={() => setActiveIdx(idx)}
@@ -615,7 +619,7 @@ export function HeaderSearch({
 
 function GroupHeader({ icon: Icon, label }: { icon: typeof Folder; label: string }) {
   return (
-    <div className="px-4 py-1 text-2xs uppercase tracking-wider text-[var(--color-text-subtle)] font-semibold flex items-center gap-1">
+    <div className="px-4 py-1 text-xs text-[var(--color-text-subtle)] font-medium flex items-center gap-1">
       <Icon size={10} /> {label}
     </div>
   );
@@ -628,11 +632,7 @@ function TypeChip({ label }: { label: "namespace" | "profile" | "memory" | "libr
     memory: "bg-info/15 text-info",
     library: "bg-warn/15 text-warn",
   }[label];
-  return (
-    <span className={`text-2xs uppercase tracking-wider font-semibold px-1.5 py-0.5 rounded shrink-0 ${color}`}>
-      {label}
-    </span>
-  );
+  return <span className={`text-xs font-medium px-1.5 py-0.5 rounded shrink-0 ${color}`}>{label}</span>;
 }
 
 function MoreLink({
@@ -653,6 +653,7 @@ function MoreLink({
   const word = extra === 1 ? label : pluralLabel || `${label}s`;
   return (
     <button
+      type="button"
       onClick={onClick}
       className="block w-full px-4 py-1.5 text-2xs text-[var(--color-text-muted)] hover:text-[var(--color-accent)] text-left"
     >
@@ -683,6 +684,7 @@ function EmptyState({
           <GroupHeader icon={FileText} label="Recent memories" />
           {recentMemories.map((e) => (
             <button
+              type="button"
               key={`${e.agent}::${e.memory_key}`}
               onClick={() => onMemory(e)}
               className="w-full text-left block px-4 py-1.5 cursor-pointer hover:bg-[var(--color-surface-2)]"
@@ -700,6 +702,7 @@ function EmptyState({
           <GroupHeader icon={UserIcon} label="Your profile" />
           {profileLabels.map((s) => (
             <button
+              type="button"
               key={s.label}
               onClick={() => onProfile(s.label)}
               className="w-full text-left block px-4 py-1.5 cursor-pointer hover:bg-[var(--color-surface-2)]"
@@ -712,7 +715,7 @@ function EmptyState({
           ))}
         </div>
       )}
-      <div className="px-4 pt-2 pb-1 text-2xs uppercase tracking-wider text-[var(--color-text-subtle)] font-semibold border-t border-[var(--color-border)] mt-2">
+      <div className="px-4 pt-2 pb-1 text-xs text-[var(--color-text-subtle)] font-medium border-t border-[var(--color-border)] mt-2">
         Syntax
       </div>
       <div className="px-4 pb-2 space-y-1 text-xs text-[var(--color-text-muted)]">

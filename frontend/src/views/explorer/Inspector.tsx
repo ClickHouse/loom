@@ -705,9 +705,7 @@ export function Inspector({
                     <div className="mt-0.5 flex items-center gap-1.5 min-w-0 text-2xs text-text-subtle">
                       <span className="px-1 rounded border border-border shrink-0">{h.memory_type}</span>
                       {h.created_at && <span className="tabular-nums shrink-0">{h.created_at.slice(0, 10)}</span>}
-                      <span className="font-mono truncate flex-1" aria-label={h.memory_key}>
-                        {h.memory_key}
-                      </span>
+                      <span className="font-mono truncate flex-1">{h.memory_key}</span>
                       {h.namespace && h.namespace !== identity.namespace && (
                         <Chip label={h.namespace} mono className="shrink-0 min-h-5" />
                       )}

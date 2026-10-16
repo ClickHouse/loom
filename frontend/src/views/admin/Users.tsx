@@ -69,7 +69,7 @@ export function Users() {
   return (
     <PageContainer>
       <div className="mb-6">
-        <h1 className="text-3xl font-semibold tracking-tight inline-flex items-center gap-2">
+        <h1 className="text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
           <UsersIcon size={20} /> Users
         </h1>
         <div className="mt-1">
@@ -113,6 +113,7 @@ export function Users() {
             Include service accounts
           </label>
           <button
+            type="button"
             onClick={() => load()}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-[var(--color-border)] rounded-md hover:bg-[var(--color-surface-2)]"
           >
@@ -239,6 +240,7 @@ function ClaimReleaseSection() {
           className="w-full px-3 py-2 text-base rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] outline-none focus:border-[var(--color-accent)] mb-3"
         />
         <button
+          type="button"
           onClick={run}
           disabled={busy || !ns.trim()}
           className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium border border-[var(--color-danger)]/60 text-[var(--color-danger)] hover:bg-[var(--color-surface-2)] rounded-md disabled:opacity-50"
@@ -277,6 +279,7 @@ function FilterChip({
       : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:bg-[var(--color-surface-2)]";
   return (
     <button
+      type="button"
       onClick={onClick}
       className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md border transition-colors ${toneCls}`}
     >
@@ -315,7 +318,7 @@ function UserListTable({ data, filter }: { data: AdminUsersResult; filter: Filte
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
       <table className="w-full text-sm">
         <thead className="bg-[var(--color-surface-2)]">
-          <tr className="text-left text-2xs uppercase tracking-wider text-[var(--color-text-muted)]">
+          <tr className="text-left text-xs text-[var(--color-text-muted)]">
             <th className="px-4 py-2.5">Subject</th>
             <th className="px-4 py-2.5">Namespaces</th>
             <th className="px-4 py-2.5">Auth</th>

@@ -478,6 +478,7 @@ export function Tasks() {
           <ScopeBadge kind="namespace" value={identity.namespace} />
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          {/* biome-ignore lint/a11y/useSemanticElements: a labelled segmented control of two buttons, not form fields */}
           <div role="group" aria-label="View" className="tq-seg">
             <button type="button" aria-pressed={mode === "list"} onClick={() => setModeAndRemember("list")}>
               <ListIcon size={13} aria-hidden="true" /> List
@@ -579,10 +580,7 @@ export function Tasks() {
                   Showing the first 200 tasks per inbox.
                 </div>
               )}
-              <div
-                className="flex gap-3.5 flex-wrap text-xs text-[var(--color-text-subtle)] px-1 py-3"
-                aria-label="Keyboard"
-              >
+              <div className="flex gap-3.5 flex-wrap text-xs text-[var(--color-text-subtle)] px-1 py-3">
                 <span>
                   <Kbd>j</Kbd> <Kbd>k</Kbd> move
                 </span>

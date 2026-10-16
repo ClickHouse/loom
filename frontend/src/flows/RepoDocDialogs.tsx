@@ -158,6 +158,8 @@ export function RepoDocAddDialog({
         ))}
       </div>
       {mode === "file" ? (
+        // biome-ignore lint/a11y/noStaticElementInteractions: a drop target for dragged files; the "Choose a file" button inside is the keyboard path
+        // biome-ignore lint/a11y/noNoninteractiveElementInteractions: as above
         <div
           onDragOver={(e) => {
             e.preventDefault();

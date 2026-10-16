@@ -2,11 +2,11 @@ import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
-// The two fonts every page renders with (Inter and JetBrains Mono, latin subset) are
+// The two fonts every page renders with (Inter and Inconsolata, latin subset) are
 // discovered only after the CSS has been downloaded and parsed, one round trip after the
 // HTML. A preload link in the HTML starts them with the script. The other subsets stay
 // lazy — `unicode-range` fetches them only for text that needs them.
-const PRELOADED_FONTS = [/^inter-latin-wght-normal-/, /^jetbrains-mono-latin-wght-normal-/];
+const PRELOADED_FONTS = [/^inter-latin-wght-normal-/, /^inconsolata-latin-wght-normal-/];
 
 function fontPreload(): Plugin {
   return {

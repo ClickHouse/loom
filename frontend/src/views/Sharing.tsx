@@ -23,7 +23,7 @@ export function Sharing() {
   // it reads from.
   const heading = (
     <>
-      <h1 className="text-[30px] font-semibold tracking-tight mb-1">Flow</h1>
+      <h1 className="text-2xl font-semibold tracking-tight mb-1">Flow</h1>
       <div className="mb-3">
         <ScopeBadge kind="namespace" value={identity.namespace} />
       </div>
@@ -88,7 +88,7 @@ export function Sharing() {
     return (
       <PageContainer>
         {heading}
-        <p className="text-[14px] text-[var(--color-text-muted)] mb-6">Couldn't load activity: {error}</p>
+        <p className="text-base text-[var(--color-text-muted)] mb-6">Couldn't load activity: {error}</p>
       </PageContainer>
     );
   }
@@ -97,7 +97,7 @@ export function Sharing() {
     return (
       <PageContainer>
         {heading}
-        <p className="text-[14px] text-[var(--color-text-muted)] mb-6">Loading activity…</p>
+        <p className="text-base text-[var(--color-text-muted)] mb-6">Loading activity…</p>
         <div className="space-y-3">
           <Skeleton className="h-20 w-full" />
           <Skeleton className="h-40 w-full" />
@@ -119,7 +119,7 @@ export function Sharing() {
     return (
       <PageContainer>
         {heading}
-        <p className="text-[14px] text-[var(--color-text-muted)] mb-6">
+        <p className="text-base text-[var(--color-text-muted)] mb-6">
           Where your memories flow — which tools wrote, which read, and which namespaces you share with.
         </p>
         <EmptyState
@@ -134,21 +134,19 @@ export function Sharing() {
   return (
     <PageContainer>
       {heading}
-      <p className="text-[14px] text-[var(--color-text-muted)] mb-6">
+      <p className="text-base text-[var(--color-text-muted)] mb-6">
         Where your memories flow — which tools wrote, which read, and which namespaces you share with.
       </p>
 
       <section className="mb-8">
-        <h2 className="text-[12px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-3">
-          Last {window_days} days
-        </h2>
+        <h2 className="text-xs font-medium text-[var(--color-text-muted)] mb-3">Last {window_days} days</h2>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <StatCard label="Writes" value={totals.writes} />
           <StatCard label="Recalls" value={totals.recalls} />
           <StatCard label="Cross-namespace recalls" value={totals.cross_namespace_recalls} accent />
           <StatCard label="Active namespaces" value={totals.namespaces} />
         </div>
-        <p className="mt-2 text-[11px] text-[var(--color-text-muted)] leading-relaxed">
+        <p className="mt-2 text-xs text-[var(--color-text-muted)] leading-relaxed">
           Totals span the {totals.namespaces} namespace{totals.namespaces === 1 ? "" : "s"} you hold a grant on. A write
           is any operation that puts knowledge into a namespace — a memory, a captured observation, a seeded
           conversation, a typed record. A recall is a <code className="font-mono">memory.search</code> or a code read. A
@@ -161,11 +159,9 @@ export function Sharing() {
           and your 7-day activity. Rows ordered by recent activity
           (heat) so high-traffic spaces float to the top. */}
       <section className="mb-8">
-        <h2 className="text-[12px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-3">
-          What you're sharing
-        </h2>
+        <h2 className="text-xs font-medium text-[var(--color-text-muted)] mb-3">What you're sharing</h2>
         {namespaces.length === 0 ? (
-          <div className="text-[13px] text-[var(--color-text-muted)] py-3">No namespace memberships yet.</div>
+          <div className="text-sm text-[var(--color-text-muted)] py-3">No namespace memberships yet.</div>
         ) : (
           <div className="space-y-2">
             {[...namespaces]
@@ -182,11 +178,11 @@ export function Sharing() {
                   )}
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="font-mono text-[13px] text-[var(--color-text)] truncate">{n.namespace}</span>
+                      <span className="font-mono text-sm text-[var(--color-text)] truncate">{n.namespace}</span>
                       <RoleBadge role={n.role} />
-                      <span className="text-[11px] text-[var(--color-text-muted)]">{n.visibility}</span>
+                      <span className="text-xs text-[var(--color-text-muted)]">{n.visibility}</span>
                     </div>
-                    <div className="mt-1 text-[11px] text-[var(--color-text-muted)] tabular flex items-center gap-3">
+                    <div className="mt-1 text-xs text-[var(--color-text-muted)] tabular flex items-center gap-3">
                       <span className="inline-flex items-center gap-1">
                         <Users size={10} />
                         {n.member_count} member{n.member_count === 1 ? "" : "s"}
@@ -208,9 +204,7 @@ export function Sharing() {
 
       {repos.length > 0 && (
         <section className="mb-8">
-          <h2 className="text-[12px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-3">
-            Repositories you read
-          </h2>
+          <h2 className="text-xs font-medium text-[var(--color-text-muted)] mb-3">Repositories you read</h2>
           {/* One row per repository; the branches you read beneath it. */}
           <div className="space-y-2">
             {Array.from(
@@ -236,28 +230,28 @@ export function Sharing() {
                   <Code size={14} className="text-[var(--color-text-muted)] shrink-0 mt-0.5" />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-[13px] font-medium text-[var(--color-text)] truncate">{grp.repo}</span>
+                      <span className="text-sm font-medium text-[var(--color-text)] truncate">{grp.repo}</span>
                       {grp.rule && (
                         <span
-                          className={`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded ${grp.rule === "open" ? "bg-[var(--color-ok)]/15 text-[var(--color-ok)]" : "bg-[var(--color-warn)]/15 text-[var(--color-warn)]"}`}
+                          className={`text-xs font-medium px-1.5 py-0.5 rounded ${grp.rule === "open" ? "bg-[var(--color-success)]/15 text-[var(--color-success)]" : "bg-[var(--color-warn)]/15 text-[var(--color-warn)]"}`}
                         >
                           {grp.rule === "open" ? "open" : grp.rule === "closed" ? "closed" : "restricted"}
                         </span>
                       )}
-                      <span className="text-[11px] text-[var(--color-text-muted)]">read-only</span>
+                      <span className="text-xs text-[var(--color-text-muted)]">read-only</span>
                     </div>
                     <div className="mt-1 flex items-center gap-1.5 flex-wrap">
                       {grp.rows.map((n) => (
                         <span
                           key={n.namespace}
-                          className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"
+                          className="font-mono text-xs px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"
                           title={n.namespace}
                         >
                           {repoInfo.get(n.namespace)?.branch ?? n.namespace}
                         </span>
                       ))}
                     </div>
-                    <div className="mt-1 text-[11px] text-[var(--color-text-muted)] tabular">
+                    <div className="mt-1 text-xs text-[var(--color-text-muted)] tabular">
                       {grp.rows.length} branch{grp.rows.length === 1 ? "" : "es"} you read · {readers.toLocaleString()}{" "}
                       reader{readers === 1 ? "" : "s"} incl. agents · {reads.toLocaleString()} read
                       {reads === 1 ? "" : "s"} in {window_days} days
@@ -266,7 +260,7 @@ export function Sharing() {
                   <button
                     type="button"
                     onClick={() => setView("code")}
-                    className="text-[12px] text-[var(--color-accent)] hover:underline shrink-0"
+                    className="text-xs text-[var(--color-accent)] hover:underline shrink-0"
                   >
                     Open in Repositories
                   </button>
@@ -289,13 +283,13 @@ export function Sharing() {
         return (
           <section className="mb-8">
             <div className="flex items-baseline justify-between gap-3 mb-3 flex-wrap">
-              <h2 className="text-[12px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+              <h2 className="text-xs font-medium text-[var(--color-text-muted)]">
                 Tool activity
                 {scope.kind === "namespace" && (
-                  <span className="ml-2 normal-case tracking-normal font-mono text-[11px]">in {scope.namespace}</span>
+                  <span className="ml-2 normal-case tracking-normal font-mono text-xs">in {scope.namespace}</span>
                 )}
                 {withNamespace && (
-                  <span className="ml-2 normal-case tracking-normal font-normal text-[11px]">
+                  <span className="ml-2 normal-case tracking-normal font-normal text-xs">
                     across {scope.namespaces} namespace{scope.namespaces === 1 ? "" : "s"} you can read
                   </span>
                 )}
@@ -304,7 +298,7 @@ export function Sharing() {
                 <button
                   type="button"
                   onClick={() => setShowAllNamespaces(true)}
-                  className="text-[12px] text-[var(--color-accent)] hover:underline"
+                  className="text-xs text-[var(--color-accent)] hover:underline"
                 >
                   Show {scope.others} other namespace{scope.others === 1 ? "" : "s"}
                 </button>
@@ -313,29 +307,29 @@ export function Sharing() {
                 <button
                   type="button"
                   onClick={() => setShowAllNamespaces(false)}
-                  className="text-[12px] text-[var(--color-accent)] hover:underline"
+                  className="text-xs text-[var(--color-accent)] hover:underline"
                 >
                   Only {identity.namespace}
                 </button>
               )}
             </div>
             {scope.kind === "outside" && (
-              <p className="text-[12px] text-[var(--color-text-muted)] mb-3 leading-relaxed">
+              <p className="text-xs text-[var(--color-text-muted)] mb-3 leading-relaxed">
                 <span className="font-mono">{scope.namespace}</span> is not among the namespaces you hold a grant on, so
                 this page has no activity for it. Showing every namespace the summary covers instead.
               </p>
             )}
             {rows.length === 0 ? (
-              <div className="text-[13px] text-[var(--color-text-muted)] py-3">
+              <div className="text-sm text-[var(--color-text-muted)] py-3">
                 {scope.kind === "namespace"
                   ? `No tool activity in ${scope.namespace} in the last ${window_days} days.`
                   : "No agent activity yet."}
               </div>
             ) : (
               <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-x-auto">
-                <table className="w-full text-[13px]">
+                <table className="w-full text-sm">
                   <thead>
-                    <tr className="text-left text-[10px] uppercase tracking-wider text-[var(--color-text-muted)] border-b border-[var(--color-border)]">
+                    <tr className="text-left text-xs text-[var(--color-text-muted)] border-b border-[var(--color-border)]">
                       <th className="px-3.5 py-2 font-semibold">Agent</th>
                       {withNamespace && <th className="px-3.5 py-2 font-semibold">Namespace</th>}
                       <th className="px-3.5 py-2 font-semibold text-right">Writes</th>
@@ -365,7 +359,7 @@ export function Sharing() {
                             {label}
                           </td>
                           {withNamespace && (
-                            <td className="px-3.5 py-2.5 font-mono text-[12px] text-[var(--color-text-muted)] truncate">
+                            <td className="px-3.5 py-2.5 font-mono text-xs text-[var(--color-text-muted)] truncate">
                               {ns}
                             </td>
                           )}
@@ -374,7 +368,7 @@ export function Sharing() {
                           <td className="px-3.5 py-2.5 text-right tabular">
                             {a.cross_namespace_recalls.toLocaleString()}
                           </td>
-                          <td className="px-3.5 py-2.5 text-[11px] text-[var(--color-text-muted)]">
+                          <td className="px-3.5 py-2.5 text-2xs text-[var(--color-text-muted)]">
                             {isSentinel ? "—" : agentPattern(a)}
                           </td>
                         </tr>
@@ -415,9 +409,9 @@ function StatCard({ label, value, accent }: { label: string; value: number; acce
           : "border-[var(--color-border)] bg-[var(--color-surface)]"
       }`}
     >
-      <div className="text-[11px] uppercase tracking-wider text-[var(--color-text-muted)]">{label}</div>
+      <div className="text-xs text-[var(--color-text-muted)]">{label}</div>
       <div
-        className={`mt-1 text-[24px] font-semibold tabular ${accent ? "text-[var(--color-accent)]" : "text-[var(--color-text)]"}`}
+        className={`mt-1 text-2xl font-semibold tabular ${accent ? "text-[var(--color-accent)]" : "text-[var(--color-text)]"}`}
       >
         {value.toLocaleString()}
       </div>
@@ -432,5 +426,5 @@ function RoleBadge({ role }: { role: string }) {
       : role === "writer"
         ? "bg-[var(--color-success)]/15 text-[var(--color-success)]"
         : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]";
-  return <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${tone}`}>{role}</span>;
+  return <span className={`text-2xs px-1.5 py-0.5 rounded font-medium ${tone}`}>{role}</span>;
 }

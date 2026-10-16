@@ -43,7 +43,8 @@ describe("SectionHeading", () => {
       />,
     );
     expect(screen.getByRole("heading", { level: 3, name: "Memory types" })).toBeInTheDocument();
-    expect(screen.getByText("3")).toHaveAttribute("aria-label", "3 memory types");
+    expect(screen.getByText("3")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByText("3 memory types")).toHaveClass("sr-only");
     expect(screen.getByText("in namespace")).toBeInTheDocument();
     const about = screen.getByRole("button", { name: "About Memory types" });
     await user.tab();

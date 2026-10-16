@@ -97,6 +97,7 @@ export function TaskInboxBell() {
   return (
     <div className="relative">
       <button
+        type="button"
         ref={triggerRef}
         onClick={() => setOpen((v) => !v)}
         className="h-8 w-8 inline-flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-md transition-colors relative"
@@ -118,7 +119,7 @@ export function TaskInboxBell() {
           ref={dropdownRef}
           className="absolute right-0 top-full mt-1 z-50 w-[min(400px,92vw)] max-h-[480px] overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl py-1"
         >
-          <div className="px-4 py-2.5 border-b border-[var(--color-border)] text-2xs uppercase tracking-wider text-[var(--color-text-subtle)] font-semibold">
+          <div className="px-4 py-2.5 border-b border-[var(--color-border)] text-xs text-[var(--color-text-subtle)] font-medium">
             Tasks waiting · {total}
           </div>
           {inboxes.length === 0 && (
@@ -129,6 +130,7 @@ export function TaskInboxBell() {
                 up here.
               </div>
               <button
+                type="button"
                 onClick={() => {
                   setOpen(false);
                   useStore.getState().setView("tasks");
@@ -141,6 +143,7 @@ export function TaskInboxBell() {
           )}
           {inboxes.map((a) => (
             <button
+              type="button"
               key={a.inbox}
               onClick={() => openInbox(a.inbox)}
               className="w-full text-left px-4 py-2.5 hover:bg-[var(--color-surface-2)] flex items-start gap-3 transition-colors"

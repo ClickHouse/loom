@@ -599,7 +599,7 @@ function TrustTable({ identity, inbox, open }: { identity: Caller; inbox: string
       {rows && rows.length > 0 && (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="bg-[var(--color-surface-2)] text-2xs uppercase tracking-wide text-[var(--color-text-muted)]">
+            <thead className="bg-[var(--color-surface-2)] text-xs text-[var(--color-text-muted)]">
               <tr>
                 <th className="text-left px-2 py-1.5 font-medium">Poster</th>
                 <th className="text-left px-2 py-1.5 font-medium">Kind</th>

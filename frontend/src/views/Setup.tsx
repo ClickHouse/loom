@@ -238,7 +238,7 @@ export function Setup() {
   return (
     <PageContainer>
       <div className="mb-5 flex flex-wrap items-center gap-x-4 gap-y-2">
-        <h1 className="text-3xl font-semibold tracking-tight inline-flex items-center gap-2">
+        <h1 className="text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
           <Settings size={18} aria-hidden="true" /> Settings
         </h1>
         {tab === "models" ? (
@@ -758,7 +758,7 @@ function TokensSection({
         </div>
 
         {formVisible && (
-          <div
+          <section
             className="mb-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-4"
             aria-label="New token"
           >
@@ -766,6 +766,7 @@ function TokensSection({
               <div className="inline-flex p-0.5 bg-[var(--color-surface-2)] rounded-md gap-0.5">
                 {(["agent", "script"] as const).map((t) => (
                   <button
+                    type="button"
                     key={t}
                     onClick={() => setTab(t)}
                     className={`px-3 py-1.5 text-sm font-medium rounded-[5px] ${
@@ -836,23 +837,26 @@ function TokensSection({
                   }
                 />
                 <div className="flex justify-end">
+                  {/* Read-only: aria-disabled, not disabled, so the button stays focusable and the
+                      tip can say why. */}
                   <Tip content={READ_ONLY_TIP} disabled={!mcpReadOnly}>
-                    <span
-                      tabIndex={mcpReadOnly ? 0 : undefined}
-                      className="inline-flex rounded-md outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
-                      aria-label={mcpReadOnly ? `Generate token: ${READ_ONLY_TIP}` : undefined}
+                    <button
+                      id="setup-generate-token"
+                      type="button"
+                      onClick={mcpReadOnly ? undefined : onGenerateMcp}
+                      disabled={mcpBusy}
+                      aria-disabled={mcpBusy || mcpReadOnly || undefined}
+                      aria-describedby={mcpReadOnly ? "setup-generate-readonly" : undefined}
+                      className="inline-flex items-center gap-1 px-3 py-2 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md hover:bg-[var(--color-accent-strong)] disabled:opacity-50 disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:cursor-not-allowed aria-disabled:hover:bg-[var(--color-accent)]"
                     >
-                      <button
-                        id="setup-generate-token"
-                        type="button"
-                        onClick={onGenerateMcp}
-                        disabled={mcpBusy || mcpReadOnly}
-                        className="inline-flex items-center gap-1 px-3 py-2 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md hover:bg-[var(--color-accent-strong)] disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        <Plus size={12} aria-hidden="true" /> {mcpBusy ? "Generating…" : "Generate token"}
-                      </button>
-                    </span>
+                      <Plus size={12} aria-hidden="true" /> {mcpBusy ? "Generating…" : "Generate token"}
+                    </button>
                   </Tip>
+                  {mcpReadOnly && (
+                    <span id="setup-generate-readonly" className="sr-only">
+                      {READ_ONLY_TIP}
+                    </span>
+                  )}
                 </div>
               </div>
             ) : noAdminNs ? (
@@ -1008,6 +1012,7 @@ function TokensSection({
                         className="flex-1 px-3 py-2 text-sm rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] outline-none focus:border-[var(--color-accent)]"
                       />
                       <button
+                        type="button"
                         onClick={onCreateNamespace}
                         disabled={!newNs.trim() || addingNs}
                         className="inline-flex items-center gap-1 px-3 py-2 text-sm font-medium rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface)] disabled:opacity-50 whitespace-nowrap"
@@ -1041,6 +1046,7 @@ function TokensSection({
                     />
                   </details>
                   <button
+                    type="button"
                     onClick={onCreate}
                     disabled={!name.trim() || selectedNs.length === 0}
                     className="inline-flex items-center gap-1 px-3 py-2 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md hover:bg-[var(--color-accent-strong)] disabled:opacity-50"
@@ -1050,7 +1056,7 @@ function TokensSection({
                 </div>
               </div>
             )}
-          </div>
+          </section>
         )}
 
         <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-2">
@@ -1102,6 +1108,7 @@ function TokensSection({
                     </div>
                     {!s.revoked_at && (
                       <button
+                        type="button"
                         onClick={() => onRevoke(s.name)}
                         className="p-1.5 text-danger hover:bg-danger/15 rounded-md"
                         aria-label={`Revoke ${s.name}`}
@@ -1334,7 +1341,7 @@ function TokensSection({
                 </div>
               </div>
               <div className="relative">
-                <div className="text-2xs uppercase tracking-wider text-[var(--color-text-muted)] mb-1.5">Token</div>
+                <div className="text-xs text-[var(--color-text-muted)] mb-1.5">Token</div>
                 <pre className="text-2xs font-mono bg-[var(--color-surface-2)] rounded-lg p-3 max-h-32 overflow-auto break-all whitespace-pre-wrap">
                   {mintedToken?.token ?? ""}
                 </pre>
@@ -1343,9 +1350,7 @@ function TokensSection({
 
               {mintedToken && (
                 <div className="relative">
-                  <div className="text-2xs uppercase tracking-wider text-[var(--color-text-muted)] mb-1.5">
-                    Connect your bot — Python
-                  </div>
+                  <div className="text-xs text-[var(--color-text-muted)] mb-1.5">Connect your bot — Python</div>
                   <pre className="text-2xs font-mono bg-[var(--color-surface-2)] rounded-lg p-3 max-h-72 overflow-auto whitespace-pre">
                     {botSnippet(mintedToken)}
                   </pre>
@@ -1499,13 +1504,13 @@ function KindChip({ kind, client }: { kind?: string; client?: string }) {
   if (kind === "mcp") {
     const label = CLIENTS.find((c) => c.id === client)?.label || "MCP";
     return (
-      <span className="text-2xs px-1.5 py-0.5 rounded bg-[var(--color-accent-soft)] text-[var(--color-accent)] font-medium uppercase tracking-wider">
+      <span className="text-xs px-1.5 py-0.5 rounded bg-[var(--color-accent-soft)] text-[var(--color-accent)] font-medium">
         {label}
       </span>
     );
   }
   return (
-    <span className="text-2xs px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)] font-medium uppercase tracking-wider">
+    <span className="text-xs px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)] font-medium">
       Script
     </span>
   );
@@ -1513,8 +1518,9 @@ function KindChip({ kind, client }: { kind?: string; client?: string }) {
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
+    // biome-ignore lint/a11y/noLabelWithoutControl: the control is the `children`this label wraps, which the rule cannot see
     <label className="block">
-      <div className="text-2xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-1">{label}</div>
+      <div className="text-xs font-medium text-[var(--color-text-muted)] mb-1">{label}</div>
       {children}
       {hint && <div className="text-2xs text-[var(--color-text-subtle)] mt-1">{hint}</div>}
     </label>
@@ -1567,6 +1573,7 @@ function ImportCuratedPanel() {
           className="px-3 py-1.5 text-sm font-mono bg-[var(--color-bg)] border border-[var(--color-border)] rounded-md"
         />
         <button
+          type="button"
           onClick={run}
           disabled={submitting}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md disabled:opacity-50"
@@ -1583,7 +1590,7 @@ function ImportCuratedPanel() {
       />
       {result && (
         <div className="border-t border-[var(--color-border)] pt-3">
-          <div className="text-2xs uppercase tracking-wider text-[var(--color-text-muted)] mb-2">
+          <div className="text-xs text-[var(--color-text-muted)] mb-2">
             Result · {result.rows.length} section{result.rows.length === 1 ? "" : "s"}
           </div>
           <div className="space-y-1.5 max-h-56 overflow-y-auto">

@@ -182,6 +182,7 @@ function NamespacePickerMenu() {
     <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Trigger asChild>
         <button
+          type="button"
           className="inline-flex items-center gap-1.5 max-w-full min-w-0 px-2 sm:px-3 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors text-base text-[var(--color-text)]"
           aria-label={`Namespace: ${current}`}
         >
@@ -214,6 +215,7 @@ function NamespacePickerMenu() {
             />
             {query && (
               <button
+                type="button"
                 onClick={() => setQuery("")}
                 className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
                 aria-label="Clear"
@@ -253,6 +255,7 @@ function NamespacePickerMenu() {
             />
             {known != null && joined.length === 0 && transient.length === 0 && !query && (
               <button
+                type="button"
                 onClick={() => {
                   setOpen(false);
                   useStore.getState().setView("browse");
@@ -267,6 +270,7 @@ function NamespacePickerMenu() {
 
           {systemHiddenCount > 0 && (
             <button
+              type="button"
               onClick={() => setShowSystem(true)}
               className="border-t border-[var(--color-border)] p-2 text-2xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-center"
             >
@@ -275,6 +279,7 @@ function NamespacePickerMenu() {
           )}
           {showSystem && (
             <button
+              type="button"
               onClick={() => setShowSystem(false)}
               className="border-t border-[var(--color-border)] p-2 text-2xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-center"
             >
@@ -287,6 +292,7 @@ function NamespacePickerMenu() {
               call to action: the empty list above already carries it. */}
           {known != null && (joined.length > 0 || transient.length > 0 || !!query) && (
             <button
+              type="button"
               onClick={() => {
                 setOpen(false);
                 setView("browse");
@@ -297,6 +303,7 @@ function NamespacePickerMenu() {
             </button>
           )}
           <button
+            type="button"
             onClick={() => {
               setOpen(false);
               setCreateOpen(true);
@@ -350,7 +357,7 @@ function Section({
   if (rows.length === 0) return null;
   return (
     <div className="mb-2 last:mb-0">
-      <div className="px-2 pt-1 pb-0.5 text-2xs font-semibold uppercase tracking-wider text-[var(--color-text-subtle)]">
+      <div className="px-2 pt-1 pb-0.5 text-xs font-medium text-[var(--color-text-subtle)]">
         {title} <span className="opacity-60 tabular">({rows.length})</span>
       </div>
       {rows.map((r) => {
@@ -364,6 +371,7 @@ function Section({
             }`}
           >
             <button
+              type="button"
               onClick={() => onPick(r.namespace)}
               className={`flex-1 text-left flex items-center gap-2 px-2 py-1.5 rounded-md ${
                 active ? "text-[var(--color-accent)]" : "text-[var(--color-text)]"
@@ -385,6 +393,7 @@ function Section({
               </span>
               {pendingRole && (
                 <button
+                  type="button"
                   onClick={(e) => {
                     e.stopPropagation();
                     e.preventDefault();

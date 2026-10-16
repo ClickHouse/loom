@@ -675,6 +675,7 @@ export function Canvas({
         </div>
       )}
       {showPicture && (
+        // biome-ignore lint/a11y/useKeyWithMouseEvents: hover only lights the picture, which is aria-hidden; keyboard users walk the same nodes in the outline tree
         <svg
           ref={svgRef}
           viewBox={`0 0 ${W} ${H}`}

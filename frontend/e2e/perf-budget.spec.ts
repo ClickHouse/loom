@@ -51,8 +51,8 @@ test("boot on /memories: LCP within budget at 4x CPU, fonts preloaded, boot read
     "Inter latin is preloaded",
   ).toBe(true);
   expect(
-    preloads.some((l) => /jetbrains-mono-latin-wght-normal/.test(l)),
-    "JetBrains Mono latin is preloaded",
+    preloads.some((l) => /inconsolata-latin-wght-normal/.test(l)),
+    "Inconsolata latin is preloaded",
   ).toBe(true);
 
   // The membership read is not chained behind whoami — with the token's claims decoded

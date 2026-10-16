@@ -76,7 +76,7 @@ export function ReviewQueue() {
   return (
     <PageContainer>
       <div className="flex items-baseline gap-3 mb-2">
-        <h1 className="text-3xl font-semibold tracking-tight inline-flex items-center gap-2">
+        <h1 className="text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
           <AlertTriangle size={20} className="text-[var(--color-warn)]" /> Review queue
         </h1>
         <ScopeBadge kind="namespace" value={identity.namespace} />
@@ -232,6 +232,7 @@ function ConflictsPanel() {
         />
         <div className="mt-4 flex items-center gap-2 flex-wrap">
           <button
+            type="button"
             onClick={() => decide("revise")}
             disabled={busy}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md hover:bg-[var(--color-accent-strong)] disabled:opacity-50"
@@ -239,6 +240,7 @@ function ConflictsPanel() {
             <Check size={13} /> Keep A
           </button>
           <button
+            type="button"
             onClick={() => decide("contract")}
             disabled={busy}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border border-[var(--color-border-strong)] rounded-md hover:bg-[var(--color-surface-2)] disabled:opacity-50"
@@ -246,6 +248,7 @@ function ConflictsPanel() {
             <X size={13} /> Drop A
           </button>
           <button
+            type="button"
             onClick={() => decide("allow")}
             disabled={busy}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border border-[var(--color-border-strong)] rounded-md hover:bg-[var(--color-surface-2)] disabled:opacity-50"
@@ -254,6 +257,7 @@ function ConflictsPanel() {
           </button>
           <div className="flex-1" />
           <button
+            type="button"
             onClick={() => setIndex((i) => Math.min(rows.length - 1, i + 1))}
             disabled={busy || index >= rows.length - 1}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] rounded-md disabled:opacity-30"
@@ -312,6 +316,7 @@ function LearningsPanel({ initialPending }: { initialPending?: LearningEntry[] |
       <div className="inline-flex gap-1 mb-4 p-1 bg-[var(--color-surface-2)] rounded-lg">
         {LEARNING_STATUSES.map((s) => (
           <button
+            type="button"
             key={s}
             onClick={() => setStatus(s)}
             className={`px-3 py-1 text-sm rounded-md capitalize transition-colors ${
@@ -362,12 +367,14 @@ function LearningsPanel({ initialPending }: { initialPending?: LearningEntry[] |
                   />
                   <div className="mt-2 flex items-center gap-2">
                     <button
+                      type="button"
                       onClick={() => decide(r.candidate_id, "promote")}
                       className="inline-flex items-center gap-1 px-3 py-1.5 text-sm font-medium bg-[var(--color-success)] text-[var(--color-on-accent)] rounded-md hover:opacity-90"
                     >
                       <Check size={12} /> Promote
                     </button>
                     <button
+                      type="button"
                       onClick={() => decide(r.candidate_id, "reject")}
                       className="inline-flex items-center gap-1 px-3 py-1.5 text-sm font-medium border border-[var(--color-border-strong)] text-[var(--color-text)] rounded-md hover:bg-[var(--color-surface-2)]"
                     >
@@ -467,6 +474,7 @@ function AllowlistPanel({ initial }: { initial?: AllowlistRow[] | null }) {
             </div>
           </div>
           <button
+            type="button"
             onClick={() => remove(r.memory_key_a, r.memory_key_b)}
             aria-label={`Remove exception ${r.memory_key_a} ↔ ${r.memory_key_b}`}
             className="p-1.5 text-[var(--color-danger)] hover:bg-[var(--color-surface-2)] rounded-md transition-colors"
@@ -498,7 +506,7 @@ function Side({
 }) {
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3">
-      <div className="text-2xs uppercase tracking-wider text-[var(--color-text-muted)] mb-1.5">{label}</div>
+      <div className="text-xs text-[var(--color-text-muted)] mb-1.5">{label}</div>
       <div className="font-mono text-xs text-[var(--color-text)] mb-2 truncate">{memKey}</div>
       <div className="text-base text-[var(--color-text)] mb-2 leading-snug min-h-[40px]">
         {value == null ? (

@@ -99,15 +99,11 @@ const BTN =
 function SeverityBadge({ severity }: { severity: MentorSeverity }) {
   const tone =
     severity === "critical"
-      ? "bg-[var(--color-danger-soft)] text-[var(--color-danger)]"
+      ? "bg-[var(--color-danger)]/15 text-[var(--color-danger)]"
       : severity === "warning"
-        ? "bg-[var(--color-warning-soft)] text-[var(--color-warning)]"
+        ? "bg-[var(--color-warn)]/15 text-[var(--color-warn)]"
         : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]";
-  return (
-    <span className={`inline-block rounded px-1.5 py-0.5 text-2xs uppercase tracking-wider font-semibold ${tone}`}>
-      {severity}
-    </span>
-  );
+  return <span className={`inline-block rounded px-1.5 py-0.5 text-xs font-medium ${tone}`}>{severity}</span>;
 }
 
 export function MentorPanel({ identity }: { identity: Identity }) {
@@ -168,8 +164,7 @@ export function MentorPanel({ identity }: { identity: Identity }) {
         hint="Reads one agent's calls in this namespace and names the planes it never used — the code index, the tracker source, documents, records, offload, the entity graph — with the counts behind each hint, and whether past hints were followed. Read-only; the agent acts, the mentor advises."
         actions={
           <span className="inline-flex flex-wrap items-center gap-2 text-sm">
-            <label className="inline-flex items-center gap-1.5 text-[var(--color-text-muted)]">
-              <span className="sr-only">Agent</span>
+            <span className="inline-flex items-center gap-1.5 text-[var(--color-text-muted)]">
               {result && result.agents.length > 0 ? (
                 <select
                   aria-label="Agent"
@@ -194,7 +189,7 @@ export function MentorPanel({ identity }: { identity: Identity }) {
                   className="min-h-9 w-52 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 text-sm text-[var(--color-text)] pointer-coarse:min-h-11"
                 />
               )}
-            </label>
+            </span>
             <label className="inline-flex items-center gap-1.5 text-[var(--color-text-muted)]">
               <span className="sr-only">Mentor window</span>
               <select
@@ -249,7 +244,7 @@ export function MentorPanel({ identity }: { identity: Identity }) {
         <div className="space-y-3" aria-busy={running}>
           <p className="text-sm text-[var(--color-text)] leading-relaxed" data-testid="mentor-summary">
             <span
-              className={`font-semibold ${result.healthy ? "text-[var(--color-success)]" : "text-[var(--color-warning)]"}`}
+              className={`font-semibold ${result.healthy ? "text-[var(--color-success)]" : "text-[var(--color-warn)]"}`}
             >
               {result.healthy ? "Using the planes it has" : "Has planes it never uses"}
             </span>
@@ -299,7 +294,7 @@ export function MentorPanel({ identity }: { identity: Identity }) {
             <div className="overflow-x-auto -mx-1 px-1">
               <table className="text-sm border-collapse" aria-label="Hint adoption" data-testid="mentor-adoption">
                 <thead>
-                  <tr className="text-left text-2xs uppercase tracking-wider text-[var(--color-text-muted)]">
+                  <tr className="text-left text-xs text-[var(--color-text-muted)]">
                     <th scope="col" className="py-1.5 pr-4">
                       Hint
                     </th>

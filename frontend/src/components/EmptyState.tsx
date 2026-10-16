@@ -32,6 +32,7 @@ export function EmptyState({ icon: Icon, title, description, action, details }: 
       )}
       {action && (
         <button
+          type="button"
           onClick={action.onClick}
           className="mt-6 inline-flex items-center gap-2 rounded-lg bg-[var(--color-accent)] px-4 py-2 text-base font-medium text-[var(--color-on-accent)] hover:bg-[var(--color-accent-strong)] transition-colors"
         >

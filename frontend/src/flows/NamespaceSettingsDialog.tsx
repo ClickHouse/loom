@@ -193,6 +193,7 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
                     />
                     {canManage && descDirty && (
                       <button
+                        type="button"
                         onClick={() => save({ description: descDraft })}
                         disabled={saving}
                         className="px-3 py-1.5 text-xs font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md hover:bg-[var(--color-accent-strong)] disabled:opacity-50"
@@ -206,13 +207,14 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
                 {!isRepo && (
                   <>
                     {/* Visibility */}
-                    <div>
-                      <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">
+                    <fieldset className="m-0 min-w-0 border-0 p-0">
+                      <legend className="block p-0 text-xs font-medium text-[var(--color-text-muted)] mb-1.5">
                         Visibility
-                      </label>
+                      </legend>
                       <div className="inline-flex rounded-md border border-[var(--color-border)] overflow-hidden">
                         {(["private", "public"] as const).map((v) => (
                           <button
+                            type="button"
                             key={v}
                             onClick={() => save({ visibility: v })}
                             disabled={!canManage || saving || (ns.visibility || "private") === v}
@@ -231,7 +233,7 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
                           ? "Only members you grant. Doesn't appear in Spaces."
                           : "Anyone in the org can find + join this namespace via Spaces."}
                       </div>
-                    </div>
+                    </fieldset>
 
                     {/* Daily cost ceiling */}
                     <div>
@@ -273,10 +275,10 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
                 )}
 
                 {/* Join policy */}
-                <div>
-                  <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">
+                <fieldset className="m-0 min-w-0 border-0 p-0">
+                  <legend className="block p-0 text-xs font-medium text-[var(--color-text-muted)] mb-1.5">
                     How people join
-                  </label>
+                  </legend>
                   <div className="flex gap-1 flex-wrap">
                     {(isRepo
                       ? ([
@@ -333,7 +335,7 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
                       </>
                     )}
                   </div>
-                </div>
+                </fieldset>
 
                 {!isRepo && (
                   <>
@@ -387,13 +389,14 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
                 {/* Danger zone */}
                 {canDelete && (
                   <div className="pt-4 mt-2 border-t border-[var(--color-border)]">
-                    <div className="text-2xs uppercase tracking-wider text-danger font-semibold mb-2">Danger zone</div>
+                    <div className="text-xs text-danger font-medium mb-2">Danger zone</div>
                     <div className="flex items-start justify-between gap-3">
                       <div className="text-2xs text-[var(--color-text-muted)]">
                         Delete deactivates the namespace. Existing data stays queryable for forensics. For full erasure
                         run an erasure.request separately.
                       </div>
                       <button
+                        type="button"
                         onClick={onDelete}
                         disabled={saving}
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-danger/40 text-danger hover:bg-danger/15 rounded-md disabled:opacity-50 shrink-0"

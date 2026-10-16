@@ -210,6 +210,7 @@ export function CreateNamespaceDialog({ open, onOpenChange, onCreated }: Props) 
               Cancel
             </Dialog.Close>
             <button
+              type="button"
               onClick={onSubmit}
               disabled={!canSubmit}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md hover:bg-[var(--color-accent-strong)] disabled:opacity-50"

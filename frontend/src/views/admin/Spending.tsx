@@ -180,7 +180,7 @@ export function Spending() {
   return (
     <PageContainer>
       <div className="flex items-baseline gap-3 mb-6">
-        <h1 className="text-3xl font-semibold tracking-tight inline-flex items-center gap-2">
+        <h1 className="text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
           <DollarSign size={20} /> Usage
         </h1>
         <ScopeBadge kind="namespace" value={identity.namespace} />
@@ -189,9 +189,7 @@ export function Spending() {
       {orgBudget && orgBudget.spent_24h_usd > 0 && (
         <div className="mb-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 flex items-baseline justify-between gap-3">
           <div>
-            <div className="text-2xs uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
-              Org-wide 24h LLM spend
-            </div>
+            <div className="text-xs text-[var(--color-text-muted)] mb-1">Org-wide 24h LLM spend</div>
             <div className="text-xl font-semibold tabular">${orgBudget.spent_24h_usd.toFixed(4)}</div>
           </div>
           <div className="text-right text-xs text-[var(--color-text-muted)]">
@@ -299,9 +297,7 @@ export function Spending() {
               groups), skip the empty chart entirely. */}
           {days.some(([d]) => d !== "—") && (
             <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 mb-6">
-              <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-4">
-                Cost by day
-              </h2>
+              <h2 className="text-sm font-medium text-[var(--color-text-muted)] mb-4">Cost by day</h2>
               <div className="flex items-end gap-2 h-[140px]">
                 {days.map(([day, cost]) => (
                   <div key={day} className="flex-1 flex flex-col items-center gap-1.5">
@@ -321,9 +317,7 @@ export function Spending() {
 
           <div className="flex items-center justify-between mb-2">
             <div className="inline-flex items-center gap-2">
-              <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
-                Break down by
-              </h2>
+              <h2 className="text-sm font-medium text-[var(--color-text-muted)]">Break down by</h2>
               <select
                 value={breakdown}
                 onChange={(e) => {
@@ -422,7 +416,7 @@ export function Spending() {
 function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
     <div className="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
-      <div className="text-2xs uppercase tracking-wider text-[var(--color-text-muted)] mb-1">{label}</div>
+      <div className="text-xs text-[var(--color-text-muted)] mb-1">{label}</div>
       <div className="text-xl font-semibold tabular tracking-tight">{value}</div>
       {hint && <div className="text-2xs text-[var(--color-text-subtle)] mt-1">{hint}</div>}
     </div>
@@ -458,6 +452,7 @@ function BudgetCapEditor({
   if (!editing) {
     return (
       <button
+        type="button"
         onClick={() => {
           setDraft(String(currentCap || 0));
           setEditing(true);
@@ -518,6 +513,7 @@ function BudgetCapEditor({
         className="w-24 px-2 py-1 text-xs tabular bg-[var(--color-bg)] border border-[var(--color-border)] rounded-md disabled:opacity-50"
       />
       <button
+        type="button"
         onClick={save}
         disabled={busy}
         className="p-1 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-success)] disabled:opacity-50"
@@ -526,6 +522,7 @@ function BudgetCapEditor({
         <Check size={13} />
       </button>
       <button
+        type="button"
         onClick={() => setEditing(false)}
         disabled={busy}
         className="p-1 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"

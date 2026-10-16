@@ -212,6 +212,7 @@ export function Facets({
               {commCopy.absolute ? (
                 <Tip content={`Computed ${commCopy.absolute}`}>
                   <span
+                    // biome-ignore lint/a11y/noNoninteractiveTabindex: a tooltip trigger, focusable so keyboard users can reach the tooltip
                     tabIndex={0}
                     className="underline decoration-dotted rounded outline-none focus-visible:ring-2 focus-visible:ring-focus"
                   >

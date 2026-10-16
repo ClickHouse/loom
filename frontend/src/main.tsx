@@ -3,11 +3,7 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { installStaleChunkReload } from "./lib/staleChunk";
-import { applyTheme, storedTheme } from "./lib/theme";
 import "./styles.css";
-
-// Before the first render, so a light-theme reader never sees a dark frame of the app.
-applyTheme(storedTheme());
 
 // A tab older than the running build reloads once on a missing view chunk.
 installStaleChunkReload();

@@ -225,6 +225,7 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
             <div className="flex items-center gap-2 shrink-0">
               {canManage && !adding && (
                 <button
+                  type="button"
                   onClick={() => setAdding(true)}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md hover:bg-[var(--color-accent-strong)]"
                 >
@@ -249,9 +250,7 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
             )}
             {pendingRows.length > 0 && (
               <div className="mb-4">
-                <div className="text-2xs uppercase tracking-wider text-warn mb-2 font-semibold">
-                  Pending requests ({pendingRows.length})
-                </div>
+                <div className="text-xs text-warn mb-2 font-medium">Pending requests ({pendingRows.length})</div>
                 <div className="space-y-1">
                   {pendingRows.map((r) => {
                     const sinceDate = r.pending_since || r.granted_at;
@@ -287,6 +286,7 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
                         {canManage ? (
                           <>
                             <button
+                              type="button"
                               onClick={() => onApprove(r.subject, "approve")}
                               disabled={busy === r.subject}
                               title={
@@ -301,6 +301,7 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
                               {targetsFor(r.subject).length > 1 && <> on {targetsFor(r.subject).length} branches</>}
                             </button>
                             <button
+                              type="button"
                               onClick={() => onApprove(r.subject, "reject")}
                               disabled={busy === r.subject}
                               className="px-2.5 py-1 text-xs text-[var(--color-text-muted)] hover:text-danger rounded-md disabled:opacity-50"
@@ -310,6 +311,7 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
                           </>
                         ) : r.subject === me ? (
                           <button
+                            type="button"
                             onClick={async () => {
                               if (
                                 !(await confirmAction({
@@ -347,7 +349,7 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
             {activeRows.length > 0 && (
               <div className="space-y-1">
                 {pendingRows.length > 0 && (
-                  <div className="text-2xs uppercase tracking-wider text-[var(--color-text-subtle)] mb-1 font-semibold">
+                  <div className="text-xs text-[var(--color-text-subtle)] mb-1 font-medium">
                     Members ({activeRows.length})
                   </div>
                 )}
@@ -387,6 +389,7 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
                           ))}
                         </select>
                         <button
+                          type="button"
                           onClick={() => onRemove(r.subject)}
                           disabled={busy === r.subject}
                           className="p-1.5 text-danger hover:bg-danger/15 rounded-md transition-colors disabled:opacity-50"
@@ -409,6 +412,7 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
             <div className="px-6 py-3.5 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] rounded-b-2xl shrink-0">
               {!adding ? (
                 <button
+                  type="button"
                   onClick={() => setAdding(true)}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md hover:bg-[var(--color-accent-strong)]"
                 >
@@ -453,6 +457,7 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
                   )}
                   <div className="flex items-center justify-end gap-2">
                     <button
+                      type="button"
                       onClick={() => {
                         setAdding(false);
                         setNewSubject("");
@@ -463,6 +468,7 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
                       Cancel
                     </button>
                     <button
+                      type="button"
                       onClick={onAdd}
                       disabled={!newSubject.trim() || busy === "__add__"}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md hover:bg-[var(--color-accent-strong)] disabled:opacity-50"

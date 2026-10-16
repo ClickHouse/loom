@@ -268,11 +268,11 @@ describe("Setup's new-namespace button", () => {
       </>,
     );
     await userEvent.click(await screen.findByRole("button", { name: "For a bot that sees only these" }, WAIT));
-    expect(screen.queryByLabelText("Your role here: admin")).not.toBeInTheDocument();
+    expect(screen.queryByText("Your role here: admin")).not.toBeInTheDocument();
     await userEvent.type(screen.getByLabelText("Namespace to add to the token"), "robot-ns");
     await userEvent.click(screen.getByRole("button", { name: /New namespace/ }));
     await waitFor(() => expect(registerNamespace).toHaveBeenCalledTimes(1), WAIT);
-    expect(await screen.findByLabelText("Your role here: admin", undefined, WAIT)).toBeInTheDocument();
+    expect(await screen.findByText("Your role here: admin", undefined, WAIT)).toBeInTheDocument();
     expect(useStore.getState().myNamespaces).toEqual([home, created]);
   });
 });

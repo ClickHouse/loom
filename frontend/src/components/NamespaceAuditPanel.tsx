@@ -247,7 +247,7 @@ export function NamespaceAuditPanel({ identity }: { identity: Identity }) {
             <div className="overflow-x-auto -mx-1 px-1">
               <table className="w-full text-sm border-collapse" aria-label="Audit findings">
                 <thead>
-                  <tr className="text-left text-2xs uppercase tracking-wider text-[var(--color-text-muted)]">
+                  <tr className="text-left text-xs text-[var(--color-text-muted)]">
                     <th scope="col" className="py-1.5 pr-2 w-9">
                       <span className="sr-only">Details</span>
                     </th>
@@ -405,9 +405,7 @@ function FindingRows({
             )}
             {f.samples.length > 0 && (
               <div className="mt-2">
-                <div className="text-2xs uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
-                  Samples · {f.samples.length}
-                </div>
+                <div className="text-xs text-[var(--color-text-muted)] mb-1">Samples · {f.samples.length}</div>
                 <ul className="space-y-0.5">
                   {f.samples.map((sample, i) => {
                     const key = sampleKey(sample);

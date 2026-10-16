@@ -399,6 +399,7 @@ export function TrackerGraph({ graph, loading, error, hint, selected, onSelect, 
         </div>
       )}
       {show && (
+        // biome-ignore lint/a11y/useKeyWithMouseEvents: hover only lights the picture, which is aria-hidden; keyboard users read and open the same links in the inspector beside it
         <svg
           ref={svgRef}
           viewBox={`0 0 ${W} ${H}`}

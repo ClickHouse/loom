@@ -26,11 +26,12 @@ function Card({ r, ctx, drag }: { r: TaskListRow; ctx: RowContext; drag: HTMLAtt
   };
   // A div, not a button: Firefox never starts a drag on a <button>.
   return (
+    // biome-ignore lint/a11y/useSemanticElements: a draggable card; Firefox never starts a drag on a <button>
     <div
       role="button"
       tabIndex={0}
       className="tq-card"
-      aria-selected={ctx.selectedId === r.task_id}
+      aria-current={ctx.selectedId === r.task_id ? "true" : undefined}
       data-task-id={r.task_id}
       onClick={() => ctx.onOpen(r)}
       onKeyDown={onKey}
@@ -85,7 +86,7 @@ export function TaskBoard({
 }) {
   const drag = useTaskDrag(ctx.canWrite, ctx.onDrop);
   return (
-    <div className="tq-board" aria-label="Tasks board">
+    <section className="tq-board" aria-label="Tasks board">
       {GROUPS.map((g) => {
         const rows = groups[g];
         const meta = GROUP_META[g];
@@ -101,12 +102,7 @@ export function TaskBoard({
                 aria-hidden="true"
               />
               {meta.label}
-              <span
-                className="ml-auto text-xs font-medium text-[var(--color-text-subtle)] tabular"
-                aria-label={`${rows.length} in ${meta.label}`}
-              >
-                {rows.length}
-              </span>
+              <span className="ml-auto text-xs font-medium text-[var(--color-text-subtle)] tabular">{rows.length}</span>
             </h3>
             <div className="p-2 flex flex-col gap-2">
               {rows.length === 0 ? (
@@ -120,6 +116,6 @@ export function TaskBoard({
           </section>
         );
       })}
-    </div>
+    </section>
   );
 }

@@ -399,7 +399,9 @@ describe("RepositoryCard", () => {
 
   it("busy disables every verb and chip", () => {
     mount([branch()], [source()], "code-clickhouse");
-    for (const b of verbs()) expect(b).toBeDisabled();
+    // A chip with a tip is aria-disabled rather than disabled, so its tip stays reachable.
+    for (const b of verbs())
+      expect(b.hasAttribute("disabled") || b.getAttribute("aria-disabled") === "true", b.outerHTML).toBe(true);
     // The disclosure itself stays usable: folding is not a write.
     expect(screen.getByRole("button", { name: "ClickHouse/ClickHouse" })).toBeEnabled();
   });

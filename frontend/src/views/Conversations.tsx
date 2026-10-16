@@ -61,11 +61,7 @@ function linkify(text: string) {
 function CodeBlock({ code, lang }: { code: string; lang?: string }) {
   return (
     <div className="relative group my-2">
-      {lang && (
-        <span className="absolute left-2 top-1 text-2xs uppercase tracking-wide text-[var(--color-text-subtle)]">
-          {lang}
-        </span>
-      )}
+      {lang && <span className="absolute left-2 top-1 text-xs text-[var(--color-text-subtle)]">{lang}</span>}
       <CopyButton
         text={code}
         label="Copy"
@@ -117,6 +113,7 @@ function ReasoningDisclosure({ text }: { text: string }) {
   return (
     <div className="mb-1">
       <button
+        type="button"
         onClick={() => setOpen((o) => !o)}
         className="text-2xs text-[var(--color-text-subtle)] hover:text-[var(--color-text-muted)]"
       >
@@ -412,6 +409,7 @@ export function Conversations() {
         <SectionHeading label={label} count={visibleThreads.length} />
         {visibleThreads.map((t) => (
           <button
+            type="button"
             key={t.thread_id}
             onClick={() => openThreadDialog(t.thread_id, t.agent)}
             className="w-full text-left p-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-border-strong)] flex items-start gap-3"
@@ -431,9 +429,7 @@ export function Conversations() {
               <div
                 className={`text-sm truncate ${t.title ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"}`}
               >
-                <span className="uppercase text-2xs font-semibold text-[var(--color-text-subtle)] mr-1.5">
-                  {t.last_role}
-                </span>
+                <span className="text-xs font-medium text-[var(--color-text-subtle)] mr-1.5">{t.last_role}</span>
                 {truncate(t.last_content_excerpt, 140)}
               </div>
             </div>
@@ -449,7 +445,7 @@ export function Conversations() {
   return (
     <PageContainer>
       <div className="mb-6">
-        <h1 className="text-3xl font-semibold tracking-tight mb-1">Conversations</h1>
+        <h1 className="text-2xl font-semibold tracking-tight mb-1">Conversations</h1>
         <div className="mb-2">
           <ScopeBadge kind="namespace" value={identity.namespace} />
         </div>
@@ -472,6 +468,7 @@ export function Conversations() {
         />
         {q && (
           <button
+            type="button"
             onClick={() => {
               setQ("");
               setHits(null);
@@ -505,6 +502,7 @@ export function Conversations() {
           )}
           {canSetLogging && loggingEnabled !== null && (
             <button
+              type="button"
               onClick={toggleLogging}
               className="ml-auto flex items-center gap-2 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
               title="When off, new conversation turns are not stored for this namespace"
@@ -590,6 +588,7 @@ export function Conversations() {
               className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden"
             >
               <button
+                type="button"
                 onClick={() => openThreadDialog(g.thread_id, g.agent)}
                 className="w-full text-left px-3.5 py-2.5 flex items-center gap-2 text-2xs tabular hover:bg-[var(--color-surface-2)] border-b border-[var(--color-border)]"
                 title="Open this thread"
@@ -604,13 +603,14 @@ export function Conversations() {
               <div className="divide-y divide-[var(--color-border)]">
                 {g.hits.map((h, i) => (
                   <button
+                    type="button"
                     key={`${h.msg_id}-${i}`}
                     onClick={() => openThreadDialog(g.thread_id, g.agent, h.msg_id)}
                     className="w-full text-left px-3.5 py-2.5 hover:bg-[var(--color-surface-2)]"
                     title="Open thread at this message"
                   >
                     <div className="flex items-center gap-2 mb-1 text-2xs tabular">
-                      <span className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] uppercase font-semibold text-[var(--color-text-muted)]">
+                      <span className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] font-medium text-[var(--color-text-muted)]">
                         {h.role}
                       </span>
                       <span className="text-[var(--color-text-subtle)] ml-auto">{relativeTime(h.ts)}</span>
@@ -719,9 +719,7 @@ export function Conversations() {
                         className={`rounded-lg px-3 py-2 ${meta.rail} ${meta.card} ${highlighted ? "ring-2 ring-[var(--color-accent)]" : ""}`}
                       >
                         <div className="flex items-center gap-2 mb-1">
-                          <span className="text-2xs uppercase font-semibold tracking-wide text-[var(--color-text-muted)]">
-                            {label}
-                          </span>
+                          <span className="text-xs font-medium text-[var(--color-text-muted)]">{label}</span>
                           {typeof m.tokens === "number" && m.tokens > 0 && (
                             <span className="text-2xs text-[var(--color-text-subtle)]">· {m.tokens} tok</span>
                           )}
@@ -737,6 +735,7 @@ export function Conversations() {
                   {moreCursor && (
                     <div className="pt-3 flex justify-center">
                       <button
+                        type="button"
                         onClick={loadMoreMessages}
                         disabled={loadingMore}
                         className="px-3 py-1.5 text-sm font-medium rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"

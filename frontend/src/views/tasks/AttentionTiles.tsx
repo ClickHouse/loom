@@ -15,6 +15,7 @@ export function AttentionTiles({
   onToggle: (k: Attention) => void;
 }) {
   return (
+    // biome-ignore lint/a11y/useSemanticElements: a labelled cluster of toggle tiles, not form fields
     <div className="tq-attn" role="group" aria-label="Needs you">
       {ATTENTIONS.map((k) => {
         const n = counts[k];

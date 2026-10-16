@@ -147,7 +147,7 @@ const GRAMMAR_HELP =
 const INPUT_CLS =
   "w-full px-3 py-2 text-sm rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] outline-none focus:border-[var(--color-accent)]";
 const TEXTAREA_CLS = `${INPUT_CLS} font-mono text-xs resize-y`;
-const LABEL_CLS = "block text-2xs uppercase tracking-wide text-[var(--color-text-muted)] mb-1";
+const LABEL_CLS = "block text-xs text-[var(--color-text-muted)] mb-1";
 const PRIMARY_BTN =
   "inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md hover:bg-[var(--color-accent-strong)] disabled:opacity-50";
 const SECONDARY_BTN =
@@ -158,7 +158,7 @@ function Card({ title, children, action }: { title: string; children: React.Reac
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
       <div className="flex items-center justify-between gap-2 mb-3">
-        <div className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">{title}</div>
+        <div className="text-xs font-medium text-[var(--color-text-muted)]">{title}</div>
         {action}
       </div>
       {children}
@@ -229,7 +229,7 @@ export function Policies() {
   return (
     <PageContainer>
       <div className="flex items-baseline gap-3 mb-2 flex-wrap">
-        <h1 className="text-3xl font-semibold tracking-tight inline-flex items-center gap-2">
+        <h1 className="text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
           <Gavel size={20} /> Policies
         </h1>
         <ScopeBadge kind="namespace" value={identity.namespace} />
@@ -245,7 +245,7 @@ export function Policies() {
         <Card
           title="Rules"
           action={
-            <button onClick={() => setAddOpen(true)} className={PRIMARY_BTN}>
+            <button type="button" onClick={() => setAddOpen(true)} className={PRIMARY_BTN}>
               <Plus size={12} /> Add rule
             </button>
           }
@@ -262,7 +262,7 @@ export function Policies() {
           {rules !== null && rules.length > 0 && (
             <div className="rounded-lg border border-[var(--color-border)] overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="bg-[var(--color-surface-2)] text-2xs uppercase tracking-wide text-[var(--color-text-muted)]">
+                <thead className="bg-[var(--color-surface-2)] text-xs text-[var(--color-text-muted)]">
                   <tr>
                     <th className={TH_CLS}>Policy</th>
                     <th className={TH_CLS}>Effect</th>
@@ -310,6 +310,7 @@ export function Policies() {
                       </td>
                       <td className="px-3 py-2 text-right whitespace-nowrap">
                         <button
+                          type="button"
                           onClick={() => remove(r)}
                           className="p-1 text-[var(--color-danger)] hover:bg-[var(--color-surface-2)] rounded"
                           aria-label={`Delete ${r.policy_id}`}
@@ -514,6 +515,7 @@ function AddRuleDialog({ open, onClose, onSaved }: { open: boolean; onClose: () 
           </div>
           <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-[var(--color-border)] shrink-0">
             <button
+              type="button"
               onClick={() => {
                 onClose();
                 setErr(null);
@@ -522,7 +524,7 @@ function AddRuleDialog({ open, onClose, onSaved }: { open: boolean; onClose: () 
             >
               Cancel
             </button>
-            <button onClick={submit} disabled={busy} className={PRIMARY_BTN}>
+            <button type="button" onClick={submit} disabled={busy} className={PRIMARY_BTN}>
               <Plus size={12} /> {busy ? "Saving…" : "Save rule"}
             </button>
           </div>
@@ -617,7 +619,7 @@ function DryRunPanel({ onRan }: { onRan: () => void }) {
         </div>
       </div>
       <div className="mt-3 flex items-center gap-3 flex-wrap">
-        <button onClick={run} disabled={busy} className={SECONDARY_BTN}>
+        <button type="button" onClick={run} disabled={busy} className={SECONDARY_BTN}>
           <Play size={13} /> {busy ? "Checking…" : "Check"}
         </button>
         {err && <span className="text-xs text-danger break-words">{err}</span>}
@@ -665,7 +667,7 @@ function DryRunPanel({ onRan }: { onRan: () => void }) {
           {result.rules.length > 0 && (
             <div className="rounded-lg border border-[var(--color-border)] overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="bg-[var(--color-surface-2)] text-2xs uppercase tracking-wide text-[var(--color-text-muted)]">
+                <thead className="bg-[var(--color-surface-2)] text-xs text-[var(--color-text-muted)]">
                   <tr>
                     <th className={TH_CLS}>Rule</th>
                     <th className={TH_CLS}>Effect</th>
@@ -786,6 +788,7 @@ function DecisionsPanel({ version }: { version: number }) {
         <div className="flex items-center gap-1.5">
           {DECISION_FILTERS.map((f) => (
             <button
+              type="button"
               key={f || "all"}
               onClick={() => setFilter(f)}
               className={`text-xs px-2.5 py-1 rounded-full border ${filter === f ? "bg-[var(--color-text)] text-[var(--color-bg)] border-transparent" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
@@ -815,7 +818,7 @@ function DecisionsPanel({ version }: { version: number }) {
       {rows !== null && rows.length > 0 && (
         <div className="rounded-lg border border-[var(--color-border)] overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="bg-[var(--color-surface-2)] text-2xs uppercase tracking-wide text-[var(--color-text-muted)]">
+            <thead className="bg-[var(--color-surface-2)] text-xs text-[var(--color-text-muted)]">
               <tr>
                 <th className={TH_CLS}>When</th>
                 <th className={TH_CLS}>Agent</th>

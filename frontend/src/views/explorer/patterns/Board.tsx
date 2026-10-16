@@ -69,6 +69,7 @@ function RowHeader({ row }: { row: BoardRow }) {
       : `${row.label}: ${row.open} open · ${row.untested} without a linked test. No risk snapshot names this component.`;
   return (
     <Tip content={tip}>
+      {/* biome-ignore lint/a11y/useSemanticElements: the row header of the div data grid in Board */}
       <div
         role="rowheader"
         tabIndex={0}
@@ -295,6 +296,8 @@ export function Board({
   return (
     <div className={frame}>
       <div className="overflow-auto overscroll-contain flex-1 min-h-0">
+        {/* biome-ignore-start lint/a11y/useSemanticElements: APG data grid with a roving tabindex over the count cells; a <table> cannot hold the sticky CSS-grid layout */}
+        {/* biome-ignore-start lint/a11y/useFocusableInteractive: APG data grid — only the count cells take the roving focus; headers and empty cells are read, not visited */}
         <div
           ref={gridRef}
           role="grid"
@@ -364,6 +367,8 @@ export function Board({
             </div>
           ))}
         </div>
+        {/* biome-ignore-end lint/a11y/useFocusableInteractive: the grid ends */}
+        {/* biome-ignore-end lint/a11y/useSemanticElements: the grid ends */}
       </div>
       <div className="px-3 py-1.5 border-t border-border text-2xs text-text-muted flex items-center gap-3 flex-wrap">
         <span>

@@ -144,6 +144,7 @@ export function ConfirmViewport() {
           </div>
           <div className="flex items-center justify-end gap-2 px-5 py-4">
             <button
+              type="button"
               ref={cancelRef}
               onClick={() => close(false)}
               className="px-3 py-1.5 text-sm font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] rounded-md"
@@ -151,6 +152,7 @@ export function ConfirmViewport() {
               {cancelLabel}
             </button>
             <button
+              type="button"
               onClick={() => close(true)}
               className={`px-4 py-1.5 text-sm font-medium rounded-md ${
                 danger

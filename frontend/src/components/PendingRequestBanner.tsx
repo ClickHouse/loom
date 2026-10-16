@@ -97,6 +97,7 @@ export function PendingRequestBanner() {
           )}
         </div>
         <button
+          type="button"
           onClick={onCancel}
           disabled={cancelling}
           className="text-xs px-2.5 py-1 rounded-md border border-warn/60 text-warn hover:bg-warn/15 disabled:opacity-50 whitespace-nowrap"
@@ -104,6 +105,7 @@ export function PendingRequestBanner() {
           {cancelling ? "Cancelling…" : "Withdraw request"}
         </button>
         <button
+          type="button"
           onClick={() => setDismissed(true)}
           aria-label="Dismiss"
           className="p-1 text-warn hover:bg-warn/15 rounded"

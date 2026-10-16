@@ -89,6 +89,7 @@ export function MemoryCard({
 
   return (
     <button
+      type="button"
       data-memory-key={entry.memory_key}
       onClick={() => onSelect(entry.memory_key)}
       className={
@@ -122,7 +123,7 @@ export function MemoryCard({
             {encoded && (
               <span
                 title="Agent-encoded (base64) value — preview shows the decoded text"
-                className="inline-flex shrink-0 text-2xs font-medium uppercase tracking-wide text-[var(--color-warn)] border border-[var(--color-warn)] rounded px-1 leading-4"
+                className="inline-flex shrink-0 text-xs font-medium text-[var(--color-warn)] border border-[var(--color-warn)] rounded px-1 leading-4"
               >
                 b64
               </span>
@@ -145,6 +146,7 @@ export function MemoryCard({
               entry.tags.slice(0, 4).map((t) =>
                 onTagClick ? (
                   <button
+                    type="button"
                     key={t}
                     onClick={(e) => {
                       e.stopPropagation();

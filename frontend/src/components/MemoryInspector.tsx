@@ -92,7 +92,7 @@ function Disclosure({
         onClick={() => onToggle(id)}
         aria-expanded={open}
         aria-controls={`loom-inspector-${id}`}
-        className="w-full flex items-center gap-1.5 text-2xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors mb-2"
+        className="w-full flex items-center gap-1.5 text-xs font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors mb-2"
       >
         {open ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
         {icon} {title}
@@ -607,6 +607,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
             </div>
             <div className="flex items-center gap-3 shrink-0">
               <button
+                type="button"
                 onClick={() => setExpanded((v) => !v)}
                 className="p-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-md transition-colors"
                 aria-label={expanded ? "Collapse inspector" : "Expand inspector"}
@@ -615,6 +616,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                 {expanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
               </button>
               <button
+                type="button"
                 onClick={onClose}
                 className="p-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-md transition-colors"
                 aria-label="Close inspector"
@@ -657,18 +659,20 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                         className="w-full text-base font-mono p-3 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-accent)] outline-none resize-y leading-relaxed"
                         autoFocus
                       />
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center justify-end gap-2">
                         <button
-                          onClick={onSaveEdit}
-                          className="inline-flex items-center gap-1 px-3 py-1.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md hover:bg-[var(--color-accent-strong)]"
-                        >
-                          <Save size={12} /> Save new version
-                        </button>
-                        <button
+                          type="button"
                           onClick={() => setEditing(false)}
                           className="px-3 py-1.5 text-sm font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] rounded-md"
                         >
                           Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={onSaveEdit}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md hover:bg-[var(--color-accent-strong)]"
+                        >
+                          <Save size={12} /> Save new version
                         </button>
                       </div>
                     </div>
@@ -678,9 +682,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                 </section>
 
                 <section>
-                  <h4 className="text-2xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-3">
-                    Metadata
-                  </h4>
+                  <h4 className="text-xs font-medium text-[var(--color-text-muted)] mb-3">Metadata</h4>
                   <dl className="grid grid-cols-[110px_1fr] gap-y-2 text-sm">
                     <Row label="Type" value={detail.memory_type || "—"} mono />
                     {detail.char_limit != null && (
@@ -735,9 +737,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                 </section>
 
                 <section>
-                  <h4 className="text-2xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-2">
-                    Tags
-                  </h4>
+                  <h4 className="text-xs font-medium text-[var(--color-text-muted)] mb-2">Tags</h4>
                   <div className="flex flex-wrap gap-1.5 items-center">
                     {(detail.tags || []).map((t) => (
                       <span
@@ -745,6 +745,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                         className="inline-flex items-center gap-1 text-xs pl-2 pr-1 py-0.5 rounded-md bg-[var(--color-surface-2)] text-[var(--color-text)]"
                       >
                         <button
+                          type="button"
                           onClick={() => searchByTag(t)}
                           className="hover:text-[var(--color-accent)] transition-colors cursor-pointer"
                           title={`Show all memories tagged ${t}`}
@@ -753,6 +754,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                           {t}
                         </button>
                         <button
+                          type="button"
                           onClick={() => onRemoveTag(t)}
                           className="p-0.5 text-[var(--color-text-subtle)] hover:text-danger hover:bg-[var(--color-surface-3)] rounded transition-colors"
                           aria-label={`Remove tag ${t}`}
@@ -807,9 +809,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                 memory opens the Explorer walked from it — not from the rail. */}
                 {(detail.entities || []).length > 0 && (
                   <section>
-                    <h4 className="text-2xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-2">
-                      Entities
-                    </h4>
+                    <h4 className="text-xs font-medium text-[var(--color-text-muted)] mb-2">Entities</h4>
                     <div className="flex flex-wrap gap-1.5 items-center">
                       {(detail.entities || []).map((en) => (
                         <EntityChip key={en} entity={en} />
@@ -859,6 +859,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                           className="px-2 py-1.5 rounded-md hover:bg-[var(--color-surface-2)] transition-colors group"
                         >
                           <button
+                            type="button"
                             onClick={() => inspect(r.memory_key)}
                             className="w-full text-left font-mono text-xs text-[var(--color-text)] truncate group-hover:text-[var(--color-accent)]"
                           >
@@ -902,6 +903,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                         return (
                           <div key={h.version} className="rounded-md bg-[var(--color-surface-2)] overflow-hidden">
                             <button
+                              type="button"
                               onClick={() => (isCurrent ? undefined : setDiffVersion(isOpen ? null : h.version))}
                               disabled={isCurrent}
                               className={`w-full px-2 py-1.5 text-left transition-colors ${
@@ -985,6 +987,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
             <footer className="absolute bottom-0 left-0 right-0 px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface)]/95 backdrop-blur flex flex-wrap items-center gap-1.5 shrink-0">
               {!editing && (
                 <button
+                  type="button"
                   onClick={onStartEdit}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text)] transition-colors"
                 >
@@ -993,6 +996,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
               )}
               {canTogglePin && (
                 <button
+                  type="button"
                   onClick={onPin}
                   className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
                     detail.pinned
@@ -1005,6 +1009,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                 </button>
               )}
               <button
+                type="button"
                 onClick={onVerify}
                 title={
                   detail.verification === "stale"
@@ -1029,6 +1034,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                     : "Verify"}
               </button>
               <button
+                type="button"
                 onClick={() => setCopyOpen(true)}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text)] transition-colors"
                 title="Copy to another namespace"
@@ -1052,6 +1058,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                 </button>
               )}
               <button
+                type="button"
                 onClick={onCopyAll}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text)] transition-colors"
                 title="Copy the whole memory — key, value, metadata and tags — to the clipboard"
@@ -1060,6 +1067,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
               </button>
               <div className="flex-1" />
               <button
+                type="button"
                 onClick={onDelete}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md text-danger hover:bg-danger/15 transition-colors"
               >
@@ -1132,7 +1140,7 @@ function ProvenanceSection({
   return (
     <section>
       {!embedded && (
-        <h4 className="text-2xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-2 flex items-center gap-1.5">
+        <h4 className="text-xs font-medium text-[var(--color-text-muted)] mb-2 flex items-center gap-1.5">
           <GitBranch size={11} /> Provenance
         </h4>
       )}
@@ -1143,6 +1151,7 @@ function ProvenanceSection({
             <dd>
               {p.source_kind === "conversation" && p.thread_exists ? (
                 <button
+                  type="button"
                   onClick={() => onOpenThread(p.thread_id)}
                   className={link}
                   title="Open the conversation that produced this memory"
@@ -1192,6 +1201,7 @@ function ProvenanceSection({
         <div className="space-y-1">
           {links.map((lk, i) => (
             <button
+              type="button"
               key={`${lk.memory_key}-${i}`}
               onClick={() => onInspect(lk.memory_key)}
               className="w-full text-left px-2 py-1.5 rounded-md hover:bg-[var(--color-surface-2)] transition-colors group"
@@ -1395,6 +1405,7 @@ function ExpiryEditor({
       <span className={isExpired ? "text-danger" : "text-[var(--color-text)]"}>{isExpired ? "Expired" : current}</span>
       <div className="relative">
         <button
+          type="button"
           onClick={() => setOpen((v) => !v)}
           className="text-2xs px-1.5 py-0.5 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"
           aria-haspopup="true"
@@ -1409,6 +1420,7 @@ function ExpiryEditor({
             <div className="absolute right-0 top-full mt-1 z-50 min-w-[150px] rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl py-1">
               {EXPIRY_PRESETS.map((opt) => (
                 <button
+                  type="button"
                   key={opt.label}
                   onClick={() => {
                     setOpen(false);
@@ -1491,10 +1503,7 @@ function RenameForm({
       className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/50 p-4 space-y-3"
       data-testid="rename-form"
     >
-      <h4
-        id="rename-heading"
-        className="text-2xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-1.5"
-      >
+      <h4 id="rename-heading" className="text-xs font-medium text-[var(--color-text-muted)] flex items-center gap-1.5">
         <ArrowRightLeft size={11} aria-hidden="true" /> Rename (keep redirect)
       </h4>
       <label className="block text-sm">
@@ -1577,7 +1586,15 @@ function RenameForm({
           )}
         </div>
       )}
-      <div className="flex flex-wrap items-center gap-2">
+      {/* Click UI order: secondary actions first, the primary last, right-aligned. */}
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <button
+          type="button"
+          onClick={onCancel}
+          className={`${btn} text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]`}
+        >
+          Cancel
+        </button>
         <button
           type="button"
           onClick={() => void call(true)}
@@ -1593,13 +1610,6 @@ function RenameForm({
           className={`${btn} bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:bg-[var(--color-accent-strong)]`}
         >
           {busy === "rename" ? "Renaming…" : "Rename"}
-        </button>
-        <button
-          type="button"
-          onClick={onCancel}
-          className={`${btn} text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]`}
-        >
-          Cancel
         </button>
       </div>
     </section>

@@ -31,7 +31,7 @@ export function Blacklist() {
   const namespace = useStore((s) => s.identity?.namespace ?? "");
   return (
     <PageContainer>
-      <h1 className="text-3xl font-semibold tracking-tight inline-flex items-center gap-2 mb-1">
+      <h1 className="text-2xl font-semibold tracking-tight inline-flex items-center gap-2 mb-1">
         <Ban size={20} /> Guardrails
       </h1>
       <div className="mb-6">
@@ -141,11 +141,7 @@ export function PrivacyFilters({
             compact ? "mb-3" : "rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 mb-4"
           }
         >
-          {!compact && (
-            <div className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-2">
-              Add pattern
-            </div>
-          )}
+          {!compact && <div className="text-xs font-medium text-[var(--color-text-muted)] mb-2">Add pattern</div>}
           {!compact && (
             <div className="text-xs text-[var(--color-text-muted)] mb-3">
               Values matching any pattern below will be silently dropped before they're written. Use it for secrets,
@@ -176,6 +172,7 @@ export function PrivacyFilters({
               ))}
             </select>
             <button
+              type="button"
               onClick={add}
               className="inline-flex items-center gap-1 px-3 py-2 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md hover:bg-[var(--color-accent-strong)]"
             >
@@ -270,6 +267,7 @@ export function PrivacyFilters({
                 </div>
                 {canRemove && (
                   <button
+                    type="button"
                     onClick={() => remove(r.pattern_id)}
                     aria-label={`Remove pattern ${r.pattern}`}
                     className="p-1 text-[var(--color-danger)] hover:bg-[var(--color-surface-2)] rounded"

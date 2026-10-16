@@ -196,6 +196,7 @@ export function CopyToNamespaceDialog({ open, onOpenChange, source, memoryKey, o
               Cancel
             </Dialog.Close>
             <button
+              type="button"
               onClick={onSubmit}
               disabled={!canSubmit}
               className="inline-flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md hover:bg-[var(--color-accent-strong)] disabled:opacity-40 disabled:cursor-not-allowed"

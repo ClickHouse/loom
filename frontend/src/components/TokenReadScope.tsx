@@ -21,13 +21,15 @@ export function TokenReadScopePanel({
   const includedRepos = scope.excludedRestricted.filter((r) => included?.has(r.repo));
   const stillExcluded = scope.excludedRestricted.filter((r) => !included?.has(r.repo));
   const chip =
-    "inline-flex items-center px-1.5 py-0.5 rounded font-mono text-[11px] bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)] max-w-[16rem] truncate";
+    "inline-flex items-center px-1.5 py-0.5 rounded font-mono text-2xs bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)] max-w-[16rem] truncate";
   const repoCount = scope.repositories.length;
   const nsCount = scope.namespaces.length;
   return (
+    // biome-ignore lint/a11y/useSemanticElements: a read-only summary, not form controls, so a named group and not a fieldset
     <div
       className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2.5 text-xs space-y-2"
       data-testid="token-read-scope"
+      role="group"
       aria-label="What this token can read and write"
     >
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">

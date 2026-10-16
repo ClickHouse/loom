@@ -130,7 +130,7 @@ function Pill({ tone, children, title }: { tone: Fresh["tone"]; children: React.
   return (
     <span
       title={title}
-      className={`inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] font-medium rounded-md border tabular ${TONE[tone]}`}
+      className={`inline-flex items-center gap-1.5 px-2 py-0.5 text-2xs font-medium rounded-md border tabular ${TONE[tone]}`}
     >
       <span className="w-1.5 h-1.5 rounded-full bg-current" />
       {children}
@@ -140,7 +140,7 @@ function Pill({ tone, children, title }: { tone: Fresh["tone"]; children: React.
 
 function Mono({ children, className = "", title }: { children: React.ReactNode; className?: string; title?: string }) {
   return (
-    <span title={title} className={`font-mono text-[12px] ${className}`}>
+    <span title={title} className={`font-mono text-xs ${className}`}>
       {children}
     </span>
   );
@@ -150,8 +150,8 @@ function Stat({ label, value, hint }: { label: string; value: React.ReactNode; h
   return (
     <div className="p-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
       <div className="section-label">{label}</div>
-      <div className="text-[22px] font-semibold tabular mt-1">{value}</div>
-      {hint && <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">{hint}</div>}
+      <div className="text-2xl font-semibold tabular mt-1">{value}</div>
+      {hint && <div className="text-2xs text-[var(--color-text-muted)] mt-0.5">{hint}</div>}
     </div>
   );
 }
@@ -556,7 +556,7 @@ function RepositoriesHome({
     <PageContainer>
       <div className="mb-5 flex items-start justify-between gap-4 flex-wrap">
         <div className="min-w-0">
-          <h1 className="text-3xl font-semibold tracking-tight inline-flex items-center gap-2">
+          <h1 className="text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
             <Code size={20} aria-hidden="true" /> Repositories
           </h1>
           <p className="text-sm text-text-muted mt-1 max-w-2xl">
@@ -823,18 +823,18 @@ function JoinDialog({
         <Dialog.Content className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[min(92vw,500px)] rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl outline-none">
           {repo && (
             <>
-              <Dialog.Title className="text-[17px] font-semibold tracking-tight flex items-center gap-2">
+              <Dialog.Title className="text-lg font-semibold tracking-tight flex items-center gap-2">
                 {restricted ? (
                   <Lock size={16} className="text-[var(--color-warn)]" />
                 ) : (
                   <UserPlus size={16} className="text-[var(--color-accent)]" />
                 )}
                 Join {repo.repo}{" "}
-                <Mono className="text-[13px] px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
+                <Mono className="text-sm px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
                   {repo.branch}
                 </Mono>
               </Dialog.Title>
-              <Dialog.Description className="text-[13px] text-[var(--color-text-muted)] mt-2 leading-relaxed">
+              <Dialog.Description className="text-sm text-[var(--color-text-muted)] mt-2 leading-relaxed">
                 {restricted ? (
                   <>
                     This repository is <b>restricted</b>. Your request goes to its maintainers; you read nothing until
@@ -850,9 +850,7 @@ function JoinDialog({
               </Dialog.Description>
 
               <fieldset className="mt-4 space-y-2" aria-label="Role">
-                <legend className="text-[11px] uppercase tracking-wide text-[var(--color-text-subtle)] mb-1">
-                  Join as
-                </legend>
+                <legend className="text-xs text-[var(--color-text-subtle)] mb-1">Join as</legend>
                 {(
                   [
                     ["viewer", "Reader", "Search, ask, grep and explore the index."],
@@ -876,14 +874,14 @@ function JoinDialog({
                       className="mt-1"
                     />
                     <span className="min-w-0">
-                      <span className="block text-[13px] font-medium">{label}</span>
-                      <span className="block text-[12px] text-[var(--color-text-muted)]">{desc}</span>
+                      <span className="block text-sm font-medium">{label}</span>
+                      <span className="block text-xs text-[var(--color-text-muted)]">{desc}</span>
                     </span>
                   </label>
                 ))}
               </fieldset>
 
-              <ul className="mt-3 text-[12px] text-[var(--color-text-muted)] space-y-1 list-disc pl-5">
+              <ul className="mt-3 text-xs text-[var(--color-text-muted)] space-y-1 list-disc pl-5">
                 <li>Nothing is shared about you beyond your sign-in identity.</li>
                 <li>
                   One approval covers you as a person: every token minted for you, and the service accounts you create,
@@ -892,11 +890,15 @@ function JoinDialog({
               </ul>
               <div className="mt-5 flex items-center justify-end gap-2">
                 <Dialog.Close asChild>
-                  <button className="px-3 py-1.5 text-[13px] rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">
+                  <button
+                    type="button"
+                    className="px-3 py-1.5 text-sm rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
+                  >
                     Not now
                   </button>
                 </Dialog.Close>
                 <button
+                  type="button"
                   onClick={async () => {
                     setBusy(true);
                     try {
@@ -906,7 +908,7 @@ function JoinDialog({
                     }
                   }}
                   disabled={busy}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-[13px] font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:bg-[var(--color-accent-strong)] rounded-md disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:bg-[var(--color-accent-strong)] rounded-md disabled:opacity-50"
                 >
                   {instant ? <UserPlus size={13} /> : <Clock size={13} />} {verb}
                 </button>
@@ -973,17 +975,17 @@ function BranchesDialog({
         <Dialog.Overlay className="fixed inset-0 bg-[var(--color-overlay)] z-40" />
         <Dialog.Content className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[min(92vw,520px)] max-h-[90vh] flex flex-col rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl outline-none">
           <div className="p-6 pb-3">
-            <Dialog.Title className="text-[17px] font-semibold tracking-tight flex items-center gap-2">
+            <Dialog.Title className="text-lg font-semibold tracking-tight flex items-center gap-2">
               <GitBranch size={16} /> Branches of {group.repo}
             </Dialog.Title>
-            <Dialog.Description className="text-[13px] text-[var(--color-text-muted)] mt-1.5">
+            <Dialog.Description className="text-sm text-[var(--color-text-muted)] mt-1.5">
               Tick the branches you want to read. Everything is read-only;{" "}
               {group.restricted
                 ? "this repository is restricted, so new branches go to a maintainer for approval"
                 : "open branches join instantly"}
               .
             </Dialog.Description>
-            <div className="mt-3 flex items-center gap-3 text-[12px]">
+            <div className="mt-3 flex items-center gap-3 text-xs">
               <button type="button" onClick={() => setAll(true)} className="text-[var(--color-accent)] hover:underline">
                 All {selectable.length}
               </button>
@@ -1000,6 +1002,7 @@ function BranchesDialog({
               </span>
             </div>
           </div>
+          {/* biome-ignore lint/a11y/useSemanticElements: the scrolling list of branch rows, named for assistive technology; its checkboxes carry their own labels */}
           <div className="flex-1 overflow-y-auto px-6" role="group" aria-label="Branches">
             <div className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
               {rows.map((b) => {
@@ -1011,7 +1014,7 @@ function BranchesDialog({
                 return (
                   <label
                     key={b.namespace}
-                    className={`flex items-center gap-3 px-3 py-2 text-[13px] ${disabled ? "opacity-50" : "cursor-pointer hover:bg-[var(--color-surface-2)]"}`}
+                    className={`flex items-center gap-3 px-3 py-2 text-sm ${disabled ? "opacity-50" : "cursor-pointer hover:bg-[var(--color-surface-2)]"}`}
                   >
                     <input
                       type="checkbox"
@@ -1031,7 +1034,7 @@ function BranchesDialog({
                     <span className="font-mono flex-1 truncate">{b.branch}</span>
                     {st === "approval" && <Lock size={11} className="text-[var(--color-warn)]" />}
                     <span
-                      className={`text-[11px] tabular ${changed ? "font-medium text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}
+                      className={`text-2xs tabular ${changed ? "font-medium text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}
                     >
                       {rowWord(b)}
                     </span>
@@ -1041,7 +1044,7 @@ function BranchesDialog({
             </div>
           </div>
           <div className="p-6 pt-4 flex items-center justify-between gap-3 flex-wrap">
-            <span className="text-[12px] text-[var(--color-text-muted)] tabular">
+            <span className="text-xs text-[var(--color-text-muted)] tabular">
               {changes === 0
                 ? "No changes"
                 : [
@@ -1057,7 +1060,7 @@ function BranchesDialog({
               <Dialog.Close asChild>
                 <button
                   type="button"
-                  className="px-3 py-1.5 text-[13px] rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
+                  className="px-3 py-1.5 text-sm rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
                 >
                   Cancel
                 </button>
@@ -1073,7 +1076,7 @@ function BranchesDialog({
                     setBusy(false);
                   }
                 }}
-                className={`inline-flex items-center gap-1.5 px-3.5 py-2 text-[13px] font-medium rounded-md disabled:opacity-50 ${plan.leave.length > 0 && plan.join.length === 0 ? "bg-[var(--color-danger)] text-[var(--color-on-accent)] hover:opacity-90" : "bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:bg-[var(--color-accent-strong)]"}`}
+                className={`inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium rounded-md disabled:opacity-50 ${plan.leave.length > 0 && plan.join.length === 0 ? "bg-[var(--color-danger)] text-[var(--color-on-accent)] hover:opacity-90" : "bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:bg-[var(--color-accent-strong)]"}`}
               >
                 {busy ? <RefreshCw size={13} className="animate-spin" /> : <Check size={13} />} Apply
                 {changes ? ` ${changes} change${changes === 1 ? "" : "s"}` : ""}
@@ -1091,8 +1094,8 @@ function BranchesDialog({
 // ---------------------------------------------------------------------------
 
 const FIELD =
-  "w-full px-3 py-2 text-[13px] rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] outline-none focus:border-[var(--color-accent)]";
-const LABEL = "block text-[12px] font-medium text-[var(--color-text-muted)] mb-1";
+  "w-full px-3 py-2 text-sm rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] outline-none focus:border-[var(--color-accent)]";
+const LABEL = "block text-xs font-medium text-[var(--color-text-muted)] mb-1";
 
 type Producer = "" | "go" | "typescript" | "clang" | "python";
 const PRODUCERS: ReadonlyArray<{ value: Producer; label: string }> = [
@@ -1278,10 +1281,10 @@ export function AddRepositoryDialog({
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-[var(--color-overlay)] z-40" />
         <Dialog.Content className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[min(92vw,540px)] max-h-[90vh] overflow-y-auto rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl outline-none">
-          <Dialog.Title className="text-[17px] font-semibold tracking-tight flex items-center gap-2">
+          <Dialog.Title className="text-lg font-semibold tracking-tight flex items-center gap-2">
             <GitBranch size={16} /> Add a repository
           </Dialog.Title>
-          <Dialog.Description className="text-[13px] text-[var(--color-text-muted)] mt-1.5">
+          <Dialog.Description className="text-sm text-[var(--color-text-muted)] mt-1.5">
             One branch of a Git repository becomes a read-only index in <Mono>{org}</Mono>. You become its maintainer.
             Two separate questions below: whether the Git host lets Loom fetch the source, and who may read the index.
           </Dialog.Description>
@@ -1314,7 +1317,7 @@ export function AddRepositoryDialog({
                     autoFocus
                     className={`${FIELD} font-mono`}
                   />
-                  <div className="text-[11px] text-[var(--color-text-subtle)] mt-1">
+                  <div className="text-2xs text-[var(--color-text-subtle)] mt-1">
                     owner/name, or paste an HTTPS/SSH Git URL
                   </div>
                 </div>
@@ -1322,7 +1325,7 @@ export function AddRepositoryDialog({
                   type="button"
                   onClick={() => void lookup()}
                   disabled={!repoValid || looking}
-                  className="inline-flex items-center gap-1.5 px-3 py-2 text-[13px] font-medium rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 whitespace-nowrap"
+                  className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 whitespace-nowrap"
                 >
                   {looking ? <RefreshCw size={13} className="animate-spin" /> : <GitBranch size={13} />}{" "}
                   {looking ? "Asking remote…" : remote ? "Refresh branches" : "Find branches"}
@@ -1332,11 +1335,11 @@ export function AddRepositoryDialog({
                 <fieldset>
                   <legend className={LABEL}>Branches to index</legend>
                   {remote.warnings.map((warning) => (
-                    <div key={warning} className="mb-2 text-[12px] text-[var(--color-warn)]">
+                    <div key={warning} className="mb-2 text-xs text-[var(--color-warn)]">
                       {warning}
                     </div>
                   ))}
-                  <div className="text-[11px] text-[var(--color-text-subtle)] mb-1.5">
+                  <div className="text-2xs text-[var(--color-text-subtle)] mb-1.5">
                     Each branch is its own index sharing one mirror.{" "}
                     {remote.default_branch && (
                       <>
@@ -1365,7 +1368,7 @@ export function AddRepositoryDialog({
                         placeholder={`Search ${fmtInt(remote.total)} branches…`}
                         className={`${FIELD} font-mono flex-1`}
                       />
-                      <span className="text-[11px] text-[var(--color-text-subtle)] whitespace-nowrap tabular">
+                      <span className="text-2xs text-[var(--color-text-subtle)] whitespace-nowrap tabular">
                         showing {shownBranches.length} of {fmtInt(remote.total)}
                         {remote.truncated && q && !shownBranches.some((b) => b.name.toLowerCase().includes(q))
                           ? " — press Enter to search the remote's full list"
@@ -1381,7 +1384,7 @@ export function AddRepositoryDialog({
                       return (
                         <li key={b.name}>
                           <label
-                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[12px] font-mono cursor-pointer select-none ${taken ? "opacity-60 cursor-default border-[var(--color-border)]" : on ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]" : "border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}
+                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs font-mono cursor-pointer select-none ${taken ? "opacity-60 cursor-default border-[var(--color-border)]" : on ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]" : "border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}
                             title={
                               taken
                                 ? `already indexed here as ${remote.indexed.find((x) => x.branch === b.name)?.namespace}`
@@ -1400,12 +1403,8 @@ export function AddRepositoryDialog({
                               className="sr-only"
                             />
                             {taken ? <Check size={11} /> : on ? <Check size={11} /> : <Plus size={11} />} {b.name}
-                            {taken && (
-                              <span className="font-sans text-[10px] uppercase tracking-wide opacity-70">indexed</span>
-                            )}
-                            {!taken && release && (
-                              <span className="font-sans text-[10px] uppercase tracking-wide opacity-70">release</span>
-                            )}
+                            {taken && <span className="font-sans text-xs opacity-70">indexed</span>}
+                            {!taken && release && <span className="font-sans text-xs opacity-70">release</span>}
                           </label>
                         </li>
                       );
@@ -1419,7 +1418,7 @@ export function AddRepositoryDialog({
                         <button
                           type="button"
                           onClick={() => setPicked((prev) => new Set([...prev, ...take]))}
-                          className="mt-2 text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] underline"
+                          className="mt-2 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] underline"
                         >
                           Select the {take.length} newest release branch{take.length === 1 ? "" : "es"} shown
                           {take.length < visibleSuggested.length
@@ -1429,7 +1428,7 @@ export function AddRepositoryDialog({
                       ) : null;
                     })()}
                   {overCap && (
-                    <div role="alert" className="mt-2 text-[12px] text-[var(--color-danger)]">
+                    <div role="alert" className="mt-2 text-xs text-[var(--color-danger)]">
                       {chosen.length} chosen, but only {Math.max(0, remote.cap)} more index
                       {remote.cap === 1 ? "" : "es"} may be added in this org.
                     </div>
@@ -1446,7 +1445,7 @@ export function AddRepositoryDialog({
                     onChange={(e) => setBranch(e.target.value)}
                     className={`${FIELD} font-mono w-48`}
                   />
-                  <div className="text-[11px] text-[var(--color-text-subtle)] mt-1">
+                  <div className="text-2xs text-[var(--color-text-subtle)] mt-1">
                     Or press Find branches to choose from what the remote shows.
                   </div>
                 </div>
@@ -1457,7 +1456,7 @@ export function AddRepositoryDialog({
                     Access token
                   </label>
                   {tokenNeeded === "refused" && (
-                    <div className="text-[12px] text-[var(--color-text)] mb-1.5">
+                    <div className="text-xs text-[var(--color-text)] mb-1.5">
                       The remote will not show <Mono>{cleanRepo}</Mono> without a token.
                     </div>
                   )}
@@ -1471,13 +1470,13 @@ export function AddRepositoryDialog({
                     autoFocus={tokenNeeded === "refused"}
                     className={`${FIELD} font-mono`}
                   />
-                  <div className="text-[11px] text-[var(--color-text-subtle)] mt-1">
+                  <div className="text-2xs text-[var(--color-text-subtle)] mt-1">
                     A fine-grained token with read access to Contents on this repository is enough. Stored encrypted,
                     used only to fetch, never shown again.
                   </div>
                 </div>
               ) : (
-                <div className="text-[11px] text-[var(--color-text-subtle)]">
+                <div className="text-2xs text-[var(--color-text-subtle)]">
                   A public repository needs no token; Loom asks the remote first and only asks you for one if it
                   refuses.{" "}
                   <button
@@ -1518,10 +1517,10 @@ export function AddRepositoryDialog({
                       className="mt-1"
                     />
                     <span className="min-w-0">
-                      <span className="flex items-center gap-1.5 text-[13px] font-medium">
+                      <span className="flex items-center gap-1.5 text-sm font-medium">
                         <Icon size={12} /> {label}
                       </span>
-                      <span className="block text-[12px] text-[var(--color-text-muted)]">{desc}</span>
+                      <span className="block text-xs text-[var(--color-text-muted)]">{desc}</span>
                     </span>
                   </label>
                 ))}
@@ -1531,7 +1530,7 @@ export function AddRepositoryDialog({
             <button
               type="button"
               onClick={() => setAdvanced((v) => !v)}
-              className="text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] inline-flex items-center gap-1"
+              className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] inline-flex items-center gap-1"
             >
               {advanced ? <ChevronDown size={12} /> : <ChevronRight size={12} />} Advanced
             </button>
@@ -1548,7 +1547,7 @@ export function AddRepositoryDialog({
                     placeholder="src/, include/"
                     className={`${FIELD} font-mono`}
                   />
-                  <div className="text-[11px] text-[var(--color-text-subtle)] mt-1">
+                  <div className="text-2xs text-[var(--color-text-subtle)] mt-1">
                     Comma-separated prefixes. Empty = the whole tree.
                   </div>
                 </div>
@@ -1563,12 +1562,12 @@ export function AddRepositoryDialog({
                     placeholder="**/generated/**, third_party/**"
                     className={`${FIELD} font-mono`}
                   />
-                  <div className="text-[11px] text-[var(--color-text-subtle)] mt-1">
+                  <div className="text-2xs text-[var(--color-text-subtle)] mt-1">
                     Globs, comma-separated. Vendored and generated code usually.
                   </div>
                 </div>
                 <div>
-                  <label className="flex items-start gap-2 text-[13px] text-[var(--color-text)] cursor-pointer">
+                  <label className="flex items-start gap-2 text-sm text-[var(--color-text)] cursor-pointer">
                     <input
                       id="add-skip-generated"
                       type="checkbox"
@@ -1578,7 +1577,7 @@ export function AddRepositoryDialog({
                     />
                     <span>
                       Skip generated files
-                      <span className="block text-[11px] text-[var(--color-text-subtle)]">
+                      <span className="block text-2xs text-[var(--color-text-subtle)]">
                         Files that say so in their header (
                         <span className="font-mono">Code generated … DO NOT EDIT</span>,{" "}
                         <span className="font-mono">@generated</span>) and the repository's own{" "}
@@ -1609,7 +1608,7 @@ export function AddRepositoryDialog({
                       </option>
                     ))}
                   </select>
-                  <div className="text-[11px] text-[var(--color-text-subtle)] mt-1">
+                  <div className="text-2xs text-[var(--color-text-subtle)] mt-1">
                     Exact cross-file calls on top of the parser tier; detected from go.mod, tsconfig, CMakeLists or
                     pyproject when left to the tree.
                   </div>
@@ -1620,21 +1619,21 @@ export function AddRepositoryDialog({
             {error && (
               <div
                 role="alert"
-                className="p-3 rounded-lg border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 text-[12px] text-[var(--color-text)]"
+                className="p-3 rounded-lg border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 text-xs text-[var(--color-text)]"
               >
                 {error}
               </div>
             )}
 
             <div className="flex items-center justify-between gap-2 pt-1">
-              <span className="text-[11px] text-[var(--color-text-subtle)]">
+              <span className="text-2xs text-[var(--color-text-subtle)]">
                 The remote is asked first; nothing is written if it refuses.
               </span>
               <div className="flex items-center gap-2">
                 <Dialog.Close asChild>
                   <button
                     type="button"
-                    className="px-3 py-1.5 text-[13px] rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
+                    className="px-3 py-1.5 text-sm rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
                   >
                     Cancel
                   </button>
@@ -1642,7 +1641,7 @@ export function AddRepositoryDialog({
                 <button
                   type="submit"
                   disabled={!valid || busy}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-[13px] font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:bg-[var(--color-accent-strong)] rounded-md disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:bg-[var(--color-accent-strong)] rounded-md disabled:opacity-50"
                 >
                   {busy ? <RefreshCw size={13} className="animate-spin" /> : <Plus size={13} />}{" "}
                   {busy
@@ -1709,10 +1708,10 @@ function AddBranchDialog({
         <Dialog.Content className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[min(92vw,440px)] rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl outline-none">
           {group && src && (
             <form onSubmit={submit}>
-              <Dialog.Title className="text-[17px] font-semibold tracking-tight flex items-center gap-2">
+              <Dialog.Title className="text-lg font-semibold tracking-tight flex items-center gap-2">
                 <GitBranch size={16} /> Add a branch of {group.repo}
               </Dialog.Title>
-              <Dialog.Description className="text-[13px] text-[var(--color-text-muted)] mt-1.5">
+              <Dialog.Description className="text-sm text-[var(--color-text-muted)] mt-1.5">
                 Same repository, another branch, its own index. It inherits the join rule (
                 <b>{group.restricted ? "restricted" : "open"}</b>), the paths and the token; you maintain it.
               </Dialog.Description>
@@ -1728,12 +1727,12 @@ function AddBranchDialog({
                   autoFocus
                   className={`${FIELD} font-mono`}
                 />
-                <div className="text-[11px] text-[var(--color-text-subtle)] mt-1">
+                <div className="text-xs text-[var(--color-text-subtle)] mt-1">
                   Already indexed: {group.branches.map((b) => b.branch).join(", ")}
                 </div>
               </div>
               {error && (
-                <div className="mt-3 p-3 rounded-lg border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 text-[12px]">
+                <div className="mt-3 p-3 rounded-lg border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 text-xs">
                   {error}
                 </div>
               )}
@@ -1741,7 +1740,7 @@ function AddBranchDialog({
                 <Dialog.Close asChild>
                   <button
                     type="button"
-                    className="px-3 py-1.5 text-[13px] rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
+                    className="px-3 py-1.5 text-sm rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
                   >
                     Cancel
                   </button>
@@ -1749,7 +1748,7 @@ function AddBranchDialog({
                 <button
                   type="submit"
                   disabled={!valid || busy}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-[13px] font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:bg-[var(--color-accent-strong)] rounded-md disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:bg-[var(--color-accent-strong)] rounded-md disabled:opacity-50"
                 >
                   {busy ? <RefreshCw size={13} className="animate-spin" /> : <Plus size={13} />}{" "}
                   {busy ? "Asking remote…" : "Add branch"}
@@ -1788,28 +1787,29 @@ function RepoDetail({
   return (
     <PageContainer>
       <button
+        type="button"
         onClick={onBack}
-        className="inline-flex items-center gap-1 text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] mb-3"
+        className="inline-flex items-center gap-1 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] mb-3"
       >
         <ChevronLeft size={14} /> Repositories
       </button>
       <div className="mb-5">
-        <h1 className="text-[30px] font-semibold tracking-tight inline-flex items-center gap-3 flex-wrap">
+        <h1 className="text-2xl font-semibold tracking-tight inline-flex items-center gap-3 flex-wrap">
           <GitBranch size={22} /> {repo.repo}
-          <Mono className="text-[14px] px-2 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
+          <Mono className="text-base px-2 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
             {repo.branch}
           </Mono>
           <Pill tone={f.tone} title={f.detail}>
             {f.label}
           </Pill>
-          <span className="text-[12px] font-normal text-[var(--color-text-muted)]">read-only</span>
+          <span className="text-xs font-normal text-[var(--color-text-muted)]">read-only</span>
         </h1>
-        <p className="text-[13px] text-[var(--color-text-muted)] mt-1">
+        <p className="text-sm text-[var(--color-text-muted)] mt-1">
           namespace <Mono>{repo.namespace}</Mono> · answers are as of <Mono>{short(repo.git_head) || "—"}</Mono>
         </p>
         {others.length > 0 && (
-          <div className="mt-3 flex items-center gap-2 flex-wrap" aria-label="Other branches of this repository">
-            <span className="text-[11px] uppercase tracking-wide text-[var(--color-text-subtle)]">Branches</span>
+          <div className="mt-3 flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-[var(--color-text-subtle)]">Branches</span>
             {others.map((b) => (
               <BranchChip
                 key={b.namespace}
@@ -1879,7 +1879,7 @@ function TabTrigger({ value, icon: Icon, children }: { value: string; icon: Luci
   return (
     <Tabs.Trigger
       value={value}
-      className="inline-flex items-center gap-2 px-4 py-2.5 text-[14px] font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] data-[state=active]:text-[var(--color-text)] data-[state=active]:border-b-2 data-[state=active]:border-[var(--color-accent)] -mb-px outline-none transition-colors"
+      className="inline-flex items-center gap-2 px-4 py-2.5 text-base font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] data-[state=active]:text-[var(--color-text)] data-[state=active]:border-b-2 data-[state=active]:border-[var(--color-accent)] -mb-px outline-none transition-colors"
     >
       <Icon size={14} /> {children}
     </Tabs.Trigger>
@@ -1951,18 +1951,18 @@ function StageCard({
   return (
     <div className="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
       <div className="flex items-center justify-between gap-2">
-        <div className="inline-flex items-center gap-2 text-[13px] font-medium">
+        <div className="inline-flex items-center gap-2 text-sm font-medium">
           <Icon size={14} /> {title}
         </div>
         <Pill tone={l.tone}>{l.text}</Pill>
       </div>
-      <div className="mt-2 text-[12px] text-[var(--color-text-muted)]">
+      <div className="mt-2 text-xs text-[var(--color-text-muted)]">
         watermark <Mono className="text-[var(--color-text)]">{watermarkText(watermark) || "—"}</Mono>
         {updatedAt && <> · advanced {relativeTime(updatedAt.replace(" ", "T") + "Z")}</>}
       </div>
       {note && (
         <div
-          className={`mt-1 text-[11px] ${tone === "warn" ? "text-[var(--color-warn)]" : "text-[var(--color-text-subtle)]"}`}
+          className={`mt-1 text-2xs ${tone === "warn" ? "text-[var(--color-warn)]" : "text-[var(--color-text-subtle)]"}`}
         >
           {note}
         </div>
@@ -1970,8 +1970,8 @@ function StageCard({
       {workers.length > 0 && (
         <div className="mt-3 space-y-1">
           {workers.map(([name, w]) => (
-            <div key={name} className="flex items-center justify-between text-[11px] tabular">
-              <Mono className="text-[11px] text-[var(--color-text-muted)]">{name}</Mono>
+            <div key={name} className="flex items-center justify-between text-2xs tabular">
+              <Mono className="text-2xs text-[var(--color-text-muted)]">{name}</Mono>
               {!w ? (
                 <span className="text-[var(--color-text-subtle)]">not on this replica</span>
               ) : !w.enabled ? (
@@ -2183,7 +2183,7 @@ function HealthTab({ id }: { id: CodeId }) {
           <Skeleton className="h-24 w-full" />
         ) : (
           <div className="overflow-x-auto rounded-xl border border-[var(--color-border)]">
-            <table className="w-full text-[12px] tabular">
+            <table className="w-full text-xs tabular">
               <thead className="text-left text-[var(--color-text-muted)] bg-[var(--color-surface-2)]">
                 <tr>
                   <th className="px-3 py-2">language</th>
@@ -2252,7 +2252,7 @@ function HealthTab({ id }: { id: CodeId }) {
                   })}
               </tbody>
             </table>
-            <div className="px-3 py-2 text-[11px] text-[var(--color-text-subtle)] border-t border-[var(--color-border)]">
+            <div className="px-3 py-2 text-2xs text-[var(--color-text-subtle)] border-t border-[var(--color-border)]">
               Symbols agents can trust for exact callers/callees are the compiler (scip) column; languages with only
               tree-sitter symbols answer search and definitions but their call graph is heuristic.
               {cov.tiers.map((t) => (
@@ -2268,26 +2268,26 @@ function HealthTab({ id }: { id: CodeId }) {
 
       <div className="grid md:grid-cols-2 gap-3">
         <div className="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
-          <div className="inline-flex items-center gap-2 text-[13px] font-medium mb-2">
+          <div className="inline-flex items-center gap-2 text-sm font-medium mb-2">
             <History size={14} /> Recently ingested commits
           </div>
           {recent === null ? (
             <Skeleton className="h-20 w-full" />
           ) : recent.length === 0 ? (
-            <div className="text-[12px] text-[var(--color-text-subtle)]">No commits recorded yet.</div>
+            <div className="text-xs text-[var(--color-text-subtle)]">No commits recorded yet.</div>
           ) : (
             <div className="space-y-1.5">
               {recent.map((c) => (
-                <div key={c.commit} className="flex items-start gap-2 text-[12px]">
+                <div key={c.commit} className="flex items-start gap-2 text-xs">
                   <Mono className="text-[var(--color-text-muted)] shrink-0">{short(c.commit).slice(0, 8)}</Mono>
                   <span className="truncate flex-1" title={c.subject}>
                     {c.subject || <span className="text-[var(--color-text-subtle)]">(subject unavailable)</span>}
                   </span>
                   {c.pr_number > 0 && (
-                    <span className="text-[11px] text-[var(--color-text-subtle)] tabular shrink-0">#{c.pr_number}</span>
+                    <span className="text-2xs text-[var(--color-text-subtle)] tabular shrink-0">#{c.pr_number}</span>
                   )}
                   <span
-                    className="text-[11px] text-[var(--color-text-subtle)] tabular shrink-0"
+                    className="text-2xs text-[var(--color-text-subtle)] tabular shrink-0"
                     title={`${c.files} files · committed ${c.committed_at}`}
                   >
                     {c.files}f · {c.ingested_at ? relativeTime(c.ingested_at.replace(" ", "T") + "Z") : "—"}
@@ -2299,8 +2299,9 @@ function HealthTab({ id }: { id: CodeId }) {
         </div>
         <div className="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
           <button
+            type="button"
             onClick={() => setShowErrs((v) => !v)}
-            className="inline-flex items-center gap-2 text-[13px] font-medium w-full text-left"
+            className="inline-flex items-center gap-2 text-sm font-medium w-full text-left"
           >
             <AlertTriangle size={14} className={errs && errs.total > 0 ? "text-[var(--color-warn)]" : ""} />
             Files with index errors{" "}
@@ -2311,20 +2312,20 @@ function HealthTab({ id }: { id: CodeId }) {
           </button>
           {errs === null && <Skeleton className="h-6 w-full mt-2" />}
           {errs && errs.total === 0 && (
-            <div className="mt-2 text-[12px] text-[var(--color-text-subtle)]">
+            <div className="mt-2 text-xs text-[var(--color-text-subtle)]">
               Every file under the indexed prefixes parsed and chunked.
             </div>
           )}
           {errs && errs.total > 0 && !showErrs && (
-            <div className="mt-2 text-[12px] text-[var(--color-text-muted)]">
+            <div className="mt-2 text-xs text-[var(--color-text-muted)]">
               Search still works for these files' neighbours; the files themselves have no chunks or symbols.
             </div>
           )}
           {errs && showErrs && errs.rows.length > 0 && (
             <div className="mt-2 max-h-64 overflow-auto space-y-1">
               {errs.rows.map((r) => (
-                <div key={r.path} className="text-[11px] flex gap-2">
-                  <Mono className="text-[11px] truncate flex-1" title={r.path}>
+                <div key={r.path} className="text-2xs flex gap-2">
+                  <Mono className="text-2xs truncate flex-1" title={r.path}>
                     {r.path}
                   </Mono>
                   <span className="text-[var(--color-warn)] truncate max-w-[45%]" title={r.error}>
@@ -2333,7 +2334,7 @@ function HealthTab({ id }: { id: CodeId }) {
                 </div>
               ))}
               {errs.total > errs.rows.length && (
-                <div className="text-[11px] text-[var(--color-text-subtle)]">+{errs.total - errs.rows.length} more</div>
+                <div className="text-2xs text-[var(--color-text-subtle)]">+{errs.total - errs.rows.length} more</div>
               )}
             </div>
           )}
@@ -2342,10 +2343,10 @@ function HealthTab({ id }: { id: CodeId }) {
 
       <div className="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] flex items-start justify-between gap-4">
         <div>
-          <div className="inline-flex items-center gap-2 text-[13px] font-medium">
+          <div className="inline-flex items-center gap-2 text-sm font-medium">
             <GitCommitHorizontal size={14} /> CI merge hook
           </div>
-          <div className="mt-1 text-[12px] text-[var(--color-text-muted)]">
+          <div className="mt-1 text-xs text-[var(--color-text-muted)]">
             {st.last_refresh_at ? (
               <>
                 Last <Mono>code.refresh</Mono> received {relativeTime(st.last_refresh_at)}
@@ -2366,9 +2367,10 @@ function HealthTab({ id }: { id: CodeId }) {
           </div>
         </div>
         <button
+          type="button"
           onClick={onRefresh}
           disabled={refreshing}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:bg-[var(--color-accent-strong)] rounded-md disabled:opacity-50 shadow-sm whitespace-nowrap"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:bg-[var(--color-accent-strong)] rounded-md disabled:opacity-50 shadow-sm whitespace-nowrap"
         >
           <RefreshCw size={13} className={refreshing ? "animate-spin motion-reduce:animate-none!" : ""} /> Refresh now
         </button>
@@ -2376,15 +2378,16 @@ function HealthTab({ id }: { id: CodeId }) {
 
       <div>
         <button
+          type="button"
           onClick={() => setShowState((v) => !v)}
-          className="inline-flex items-center gap-1 text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+          className="inline-flex items-center gap-1 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
         >
           {showState ? <ChevronDown size={14} /> : <ChevronRight size={14} />} Raw watermark table (
           {Object.keys(st.state).length} keys)
         </button>
         {showState && (
           <div className="mt-2 overflow-x-auto rounded-xl border border-[var(--color-border)]">
-            <table className="w-full text-[12px]">
+            <table className="w-full text-xs">
               <thead className="text-left text-[var(--color-text-muted)] bg-[var(--color-surface-2)]">
                 <tr>
                   <th className="px-3 py-2">key</th>
@@ -2470,26 +2473,27 @@ function UnitCard({ u, onOpen }: { u: CodeUnit; onOpen: (symbol: string) => void
           <div className="flex items-center gap-2 flex-wrap">
             {u.symbol ? (
               <button
+                type="button"
                 onClick={() => onOpen(u.symbol)}
-                className="font-mono text-[13px] text-[var(--color-accent)] hover:underline text-left break-all"
+                className="font-mono text-sm text-[var(--color-accent)] hover:underline text-left break-all"
               >
                 {u.symbol}
               </button>
             ) : (
-              <span className="font-mono text-[13px]">{u.path.split("/").pop()}</span>
+              <span className="font-mono text-sm">{u.path.split("/").pop()}</span>
             )}
-            <span className="text-[11px] px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
+            <span className="text-2xs px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
               {u.kind || "unit"}
             </span>
-            {u.tier && <span className="text-[11px] text-[var(--color-text-subtle)]">{u.tier}</span>}
+            {u.tier && <span className="text-2xs text-[var(--color-text-subtle)]">{u.tier}</span>}
           </div>
-          <div className="mt-0.5 text-[11px] text-[var(--color-text-muted)] font-mono break-all">
+          <div className="mt-0.5 text-2xs text-[var(--color-text-muted)] font-mono break-all">
             {u.path}
             {u.start_line ? `:${u.start_line}-${u.end_line}` : ""}
           </div>
-          {u.description && <div className="mt-1.5 text-[12px] text-[var(--color-text-muted)]">{u.description}</div>}
+          {u.description && <div className="mt-1.5 text-xs text-[var(--color-text-muted)]">{u.description}</div>}
         </div>
-        <div className="text-right shrink-0 text-[11px] text-[var(--color-text-subtle)] tabular">
+        <div className="text-right shrink-0 text-2xs text-[var(--color-text-subtle)] tabular">
           {u.score > 0 && <div>score {u.score.toFixed(3)}</div>}
           {(u.churn > 0 || u.amp > 0) && (
             <div>
@@ -2500,21 +2504,22 @@ function UnitCard({ u, onOpen }: { u: CodeUnit; onOpen: (symbol: string) => void
         </div>
       </div>
       {u.signature && (
-        <pre className="mt-2 text-[11px] font-mono text-[var(--color-text-muted)] whitespace-pre-wrap break-all">
+        <pre className="mt-2 text-2xs font-mono text-[var(--color-text-muted)] whitespace-pre-wrap break-all">
           {u.signature}
         </pre>
       )}
       {u.body && (
         <>
           <button
+            type="button"
             onClick={() => setOpen((v) => !v)}
-            className="mt-2 inline-flex items-center gap-1 text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+            className="mt-2 inline-flex items-center gap-1 text-2xs text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
           >
             {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />} {open ? "hide" : "show"} body
             {u.elided ? " (elided)" : ""}
           </button>
           {open && (
-            <pre className="mt-2 p-3 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] text-[11px] font-mono overflow-x-auto max-h-96">
+            <pre className="mt-2 p-3 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] text-2xs font-mono overflow-x-auto max-h-96">
               {u.body}
             </pre>
           )}
@@ -2542,20 +2547,21 @@ function EdgeList({
         {title} <span className="tabular">({names.length})</span>
       </div>
       {names.length === 0 ? (
-        <div className="text-[12px] text-[var(--color-text-subtle)]">none in the graph</div>
+        <div className="text-xs text-[var(--color-text-subtle)]">none in the graph</div>
       ) : (
         <div className="flex flex-wrap gap-1.5">
           {names.slice(0, 60).map((n) => (
             <button
+              type="button"
               key={n}
               onClick={() => onOpen(n)}
-              className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-3)] break-all text-left"
+              className="font-mono text-2xs px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-3)] break-all text-left"
             >
               {n}
             </button>
           ))}
           {names.length > 60 && (
-            <span className="text-[11px] text-[var(--color-text-subtle)]">+{names.length - 60} more</span>
+            <span className="text-2xs text-[var(--color-text-subtle)]">+{names.length - 60} more</span>
           )}
         </div>
       )}
@@ -2643,34 +2649,35 @@ function ExploreTab({ id }: { id: CodeId }) {
         <button
           type="submit"
           disabled={busy || !q.trim()}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:bg-[var(--color-accent-strong)] rounded-md disabled:opacity-50 shadow-sm"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:bg-[var(--color-accent-strong)] rounded-md disabled:opacity-50 shadow-sm"
         >
           <Search size={13} /> Search
         </button>
       </form>
-      <p className="text-[11px] text-[var(--color-text-subtle)]">
+      <p className="text-2xs text-[var(--color-text-subtle)]">
         Runs the same <span className="font-mono">code.search</span> / <span className="font-mono">code.symbol</span> /{" "}
         <span className="font-mono">code.callers</span> ops agents call. Click a symbol to see its definition and graph.
       </p>
 
-      {error && <div className="text-[13px] text-[var(--color-danger)]">{error}</div>}
+      {error && <div className="text-sm text-[var(--color-danger)]">{error}</div>}
 
       {sym && (
         <div className="p-4 rounded-xl border border-[var(--color-accent)]/40 bg-[var(--color-surface)] space-y-4">
           <div className="flex items-center justify-between gap-3">
-            <div className="font-mono text-[14px] break-all">
+            <div className="font-mono text-base break-all">
               {sym.name}
-              {sym.ambiguous && <span className="ml-2 text-[11px] text-[var(--color-warn)]">ambiguous</span>}
+              {sym.ambiguous && <span className="ml-2 text-2xs text-[var(--color-warn)]">ambiguous</span>}
             </div>
             <button
+              type="button"
               onClick={() => setSym(null)}
-              className="text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+              className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
             >
               close
             </button>
           </div>
           {sym.defs.length === 0 && (
-            <div className="text-[12px] text-[var(--color-text-muted)]">No definition resolved.</div>
+            <div className="text-xs text-[var(--color-text-muted)]">No definition resolved.</div>
           )}
           <div className="space-y-2">
             {sym.defs.map((u) => (
@@ -2694,7 +2701,7 @@ function ExploreTab({ id }: { id: CodeId }) {
 
       {res && !busy && (
         <div className="space-y-2">
-          <div className="flex items-center gap-3 text-[11px] text-[var(--color-text-muted)] tabular flex-wrap">
+          <div className="flex items-center gap-3 text-2xs text-[var(--color-text-muted)] tabular flex-wrap">
             <span>
               route <Mono>{res.route}</Mono>
             </span>
@@ -2725,20 +2732,20 @@ function ExploreTab({ id }: { id: CodeId }) {
           </div>
           {res.note && (
             <div
-              className="text-[12px] text-[var(--color-warn)]"
+              className="text-xs text-[var(--color-warn)]"
               title="The vector leg covers less than the ready share of this repository's chunks; results come from the lexical leg alone until it does."
             >
               {res.note}
             </div>
           )}
           {res.abstain && res.abstain_code === "not_covered" && (
-            <div className="p-3 rounded-lg border border-[var(--color-danger)]/30 bg-[var(--color-danger)]/10 text-[12px]">
+            <div className="p-3 rounded-lg border border-[var(--color-danger)]/30 bg-[var(--color-danger)]/10 text-xs">
               <b>Not covered.</b> {res.abstain_reason} An agent receives <Mono>abstain_code = not_covered</Mono> here,
               distinct from a genuine miss.
             </div>
           )}
           {res.abstain && res.abstain_code !== "not_covered" && (
-            <div className="p-3 rounded-lg border border-[var(--color-warn)]/30 bg-[var(--color-warn)]/10 text-[12px]">
+            <div className="p-3 rounded-lg border border-[var(--color-warn)]/30 bg-[var(--color-warn)]/10 text-xs">
               Abstained: {res.abstain_reason || "no confident match"}. Results below are best-effort.
             </div>
           )}
@@ -2758,19 +2765,20 @@ function ExploreTab({ id }: { id: CodeId }) {
       {!res && !busy && !sym && (
         <div className="p-4 rounded-xl border border-dashed border-[var(--color-border)]">
           <div className="flex items-center justify-between gap-3">
-            <div className="text-[13px] text-[var(--color-text-muted)]">
+            <div className="text-sm text-[var(--color-text-muted)]">
               Not sure where to start? Load the repo orientation map agents get from{" "}
               <span className="font-mono">code.map</span>.
             </div>
             <button
+              type="button"
               onClick={loadMap}
-              className="px-2.5 py-1.5 text-[12px] text-[var(--color-text-muted)] bg-[var(--color-surface-2)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text)] rounded-md whitespace-nowrap"
+              className="px-2.5 py-1.5 text-xs text-[var(--color-text-muted)] bg-[var(--color-surface-2)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text)] rounded-md whitespace-nowrap"
             >
               Show map
             </button>
           </div>
           {map && (
-            <pre className="mt-3 text-[11px] font-mono whitespace-pre-wrap text-[var(--color-text-muted)] max-h-[32rem] overflow-auto">
+            <pre className="mt-3 text-2xs font-mono whitespace-pre-wrap text-[var(--color-text-muted)] max-h-[32rem] overflow-auto">
               {map}
             </pre>
           )}
@@ -2840,7 +2848,7 @@ function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-[12px] text-[var(--color-text-muted)] max-w-2xl">
+        <p className="text-xs text-[var(--color-text-muted)] max-w-2xl">
           One precomputed briefing per merged PR, built by the fast tier as the merge lands. A review bot fetches it
           with <span className="font-mono">code.context_pack</span> at analysis start instead of exploring cold.
         </p>
@@ -2881,6 +2889,7 @@ function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
           {rows.map((r) => (
             <div key={r.pr_number} className="border-b border-[var(--color-border)] last:border-b-0">
               <button
+                type="button"
                 onClick={() => void toggle(r.pr_number)}
                 className="w-full text-left flex items-center gap-3 px-3 py-2.5 hover:bg-[var(--color-surface-2)]"
               >
@@ -2894,20 +2903,20 @@ function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
                   target="_blank"
                   rel="noreferrer"
                   onClick={(e) => e.stopPropagation()}
-                  className="font-mono text-[12px] text-[var(--color-accent)] hover:underline shrink-0 tabular"
+                  className="font-mono text-xs text-[var(--color-accent)] hover:underline shrink-0 tabular"
                 >
                   #{r.pr_number}
                 </a>
-                <span className="text-[13px] truncate flex-1">
+                <span className="text-sm truncate flex-1">
                   {r.title || <span className="text-[var(--color-text-subtle)]">(title not in history yet)</span>}
                 </span>
-                <span className="text-[11px] text-[var(--color-text-muted)] tabular shrink-0 hidden md:inline">
+                <span className="text-2xs text-[var(--color-text-muted)] tabular shrink-0 hidden md:inline">
                   {r.author}
                 </span>
-                <span className="text-[11px] text-[var(--color-text-muted)] tabular shrink-0">
+                <span className="text-2xs text-[var(--color-text-muted)] tabular shrink-0">
                   {fmtInt(r.pack_tokens)} tok
                 </span>
-                <span className="text-[11px] text-[var(--color-text-muted)] tabular shrink-0">
+                <span className="text-2xs text-[var(--color-text-muted)] tabular shrink-0">
                   {relativeTime(r.created_at.replace(" ", "T") + "Z")}
                 </span>
               </button>
@@ -2917,10 +2926,10 @@ function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
                     <Skeleton className="h-16 w-full" />
                   ) : (
                     <>
-                      <div className="text-[11px] text-[var(--color-text-muted)] py-2 tabular">
+                      <div className="text-2xs text-[var(--color-text-muted)] py-2 tabular">
                         {pack.source} · {fmtInt(pack.tokens)} tokens · merge <Mono>{short(r.merge_commit_sha)}</Mono>
                       </div>
-                      <pre className="text-[11px] font-mono whitespace-pre-wrap text-[var(--color-text-muted)] max-h-[32rem] overflow-auto">
+                      <pre className="text-2xs font-mono whitespace-pre-wrap text-[var(--color-text-muted)] max-h-[32rem] overflow-auto">
                         {pack.text}
                       </pre>
                     </>
@@ -2933,12 +2942,13 @@ function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
       )}
 
       {total > PAGE && (
-        <div className="flex items-center justify-between text-[12px] text-[var(--color-text-muted)] tabular">
+        <div className="flex items-center justify-between text-xs text-[var(--color-text-muted)] tabular">
           <span>
             {offset + 1}–{Math.min(offset + PAGE, total)} of {fmtInt(total)}
           </span>
           <div className="flex gap-2">
             <button
+              type="button"
               disabled={offset === 0}
               onClick={() => setOffset(Math.max(0, offset - PAGE))}
               className="px-2.5 py-1 bg-[var(--color-surface-2)] rounded-md disabled:opacity-40"
@@ -2946,6 +2956,7 @@ function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
               Newer
             </button>
             <button
+              type="button"
               disabled={offset + PAGE >= total}
               onClick={() => setOffset(offset + PAGE)}
               className="px-2.5 py-1 bg-[var(--color-surface-2)] rounded-md disabled:opacity-40"
@@ -3241,7 +3252,7 @@ function AccessTab({
       >
         {ns === undefined && <Skeleton className="h-16 w-full" />}
         {ns === null && (
-          <div className="text-[12px] text-[var(--color-warn)] flex items-start gap-2">
+          <div className="text-xs text-[var(--color-warn)] flex items-start gap-2">
             <AlertTriangle size={14} className="shrink-0 mt-0.5" />
             No directory row yet — the indexer registers one on its next pass, or you lack access to read it.
           </div>
@@ -3250,15 +3261,13 @@ function AccessTab({
           <>
             <div className="flex items-start justify-between gap-4 flex-wrap">
               <div className="min-w-0">
-                <div className="text-[11px] uppercase tracking-wide text-[var(--color-text-subtle)]">
-                  How people join
-                </div>
-                <div className="mt-1 text-[15px] font-medium inline-flex items-center gap-2">
+                <div className="text-xs text-[var(--color-text-subtle)]">How people join</div>
+                <div className="mt-1 text-md font-medium inline-flex items-center gap-2">
                   <RuleIcon
                     size={15}
                     className={
                       rule === "open"
-                        ? "text-[var(--color-ok)]"
+                        ? "text-[var(--color-success)]"
                         : rule === "approval"
                           ? "text-[var(--color-warn)]"
                           : "text-[var(--color-text-muted)]"
@@ -3266,15 +3275,16 @@ function AccessTab({
                   />
                   {RULE_META[rule].headline(id.org)}
                   <Pill tone={RULE_META[rule].tone}>{RULE_META[rule].label.toLowerCase()}</Pill>
-                  <span className="text-[12px] font-normal text-[var(--color-text-muted)]">read-only</span>
+                  <span className="text-xs font-normal text-[var(--color-text-muted)]">read-only</span>
                 </div>
-                <p className="mt-1.5 text-[12px] text-[var(--color-text-muted)] max-w-2xl">{RULE_META[rule].detail}</p>
+                <p className="mt-1.5 text-xs text-[var(--color-text-muted)] max-w-2xl">{RULE_META[rule].detail}</p>
               </div>
               {canManage && (
                 <div className="flex flex-col items-end gap-2">
-                  <div
-                    className="inline-flex rounded-md border border-[var(--color-border)] overflow-hidden"
-                    role="radiogroup"
+                  {/* Each rule applies on click, so these are toggle buttons in a group, not a
+                      radio group: the current rule is pressed and disabled. */}
+                  <fieldset
+                    className="m-0 min-w-0 p-0 inline-flex rounded-md border border-[var(--color-border)] overflow-hidden"
                     aria-label="Join rule"
                   >
                     {JOIN_RULES.map((r) => {
@@ -3284,21 +3294,21 @@ function AccessTab({
                         <button
                           key={r}
                           type="button"
-                          role="radio"
-                          aria-checked={on}
+                          aria-pressed={on}
                           title={RULE_META[r].headline(id.org)}
                           onClick={() => void setRule(r)}
                           disabled={busy !== null || on}
-                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium border-r border-[var(--color-border)] last:border-r-0 disabled:cursor-default ${on ? "bg-[var(--color-accent-soft)] text-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]"}`}
+                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border-r border-[var(--color-border)] last:border-r-0 disabled:cursor-default ${on ? "bg-[var(--color-accent-soft)] text-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]"}`}
                         >
-                          <Icon size={12} /> {RULE_META[r].label}
+                          <Icon size={12} aria-hidden="true" /> {RULE_META[r].label}
                         </button>
                       );
                     })}
-                  </div>
+                  </fieldset>
                   <button
+                    type="button"
                     onClick={() => setSettingsOpen(true)}
-                    className="text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline inline-flex items-center gap-1"
+                    className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline inline-flex items-center gap-1"
                   >
                     <Settings size={12} /> Description & more
                   </button>
@@ -3306,7 +3316,7 @@ function AccessTab({
               )}
             </div>
             {orgReadable && (
-              <div className="mt-3 p-2.5 rounded-lg border border-[var(--color-warn)]/30 bg-[var(--color-warn)]/10 text-[12px] flex items-start gap-2">
+              <div className="mt-3 p-2.5 rounded-lg border border-[var(--color-warn)]/30 bg-[var(--color-warn)]/10 text-xs flex items-start gap-2">
                 <AlertTriangle size={13} className="text-[var(--color-warn)] shrink-0 mt-0.5" />
                 <span>
                   This deployment still lets every principal read every repository (<Mono>LOOM_CODE_ORG_READABLE</Mono>
@@ -3335,15 +3345,16 @@ function AccessTab({
           aria-label="Waiting for approval"
         >
           <div className="flex items-center justify-between gap-3 px-3.5 py-2.5 border-b border-[var(--color-warn)]/30">
-            <div className="text-[13px] font-medium inline-flex items-center gap-2">
+            <div className="text-sm font-medium inline-flex items-center gap-2">
               <Clock size={14} className="text-[var(--color-warn)]" /> Waiting for a maintainer{" "}
               <span className="tabular text-[var(--color-text-muted)]">({waiting.length})</span>
             </div>
             {canManage && waiting.length > 1 && (
               <button
+                type="button"
                 onClick={() => void approveAll()}
                 disabled={busy !== null}
-                className="text-[12px] font-medium text-[var(--color-accent)] hover:underline disabled:opacity-50"
+                className="text-xs font-medium text-[var(--color-accent)] hover:underline disabled:opacity-50"
               >
                 Approve all
               </button>
@@ -3354,7 +3365,7 @@ function AccessTab({
             return (
               <div
                 key={g.subject}
-                className="flex items-center gap-3 px-3.5 py-2.5 border-b border-[var(--color-border)] last:border-b-0 text-[12px] flex-wrap"
+                className="flex items-center gap-3 px-3.5 py-2.5 border-b border-[var(--color-border)] last:border-b-0 text-xs flex-wrap"
               >
                 <span className="font-mono flex-1 min-w-[12rem] truncate">{g.subject}</span>
                 <span className="text-[var(--color-text-muted)]">
@@ -3367,6 +3378,7 @@ function AccessTab({
                 {canManage ? (
                   <>
                     <button
+                      type="button"
                       onClick={() => void decide(g, "approve")}
                       disabled={busy !== null}
                       className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:bg-[var(--color-accent-strong)] font-medium disabled:opacity-50"
@@ -3375,6 +3387,7 @@ function AccessTab({
                     </button>
                     {(siblingWaiting[g.subject]?.length ?? 0) > 0 && (
                       <button
+                        type="button"
                         onClick={() => void approveEverywhere(g)}
                         disabled={busy !== null}
                         title={`Also waiting on ${siblingWaiting[g.subject].map((b) => b.branch).join(", ")}`}
@@ -3385,6 +3398,7 @@ function AccessTab({
                     )}
                     {asked === "admin" && (
                       <button
+                        type="button"
                         onClick={() => void decide(g, "approve", "viewer")}
                         disabled={busy !== null}
                         title="Admit as a reader instead of a maintainer"
@@ -3394,6 +3408,7 @@ function AccessTab({
                       </button>
                     )}
                     <button
+                      type="button"
                       onClick={() => void decide(g, "reject")}
                       disabled={busy !== null}
                       className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-danger)] hover:border-[var(--color-danger)]/50 disabled:opacity-50"
@@ -3419,13 +3434,13 @@ function AccessTab({
             </div>
           </div>
           {!hasAdmin && (
-            <div className="p-3 rounded-lg border border-[var(--color-warn)]/30 bg-[var(--color-warn)]/10 text-[12px]">
+            <div className="p-3 rounded-lg border border-[var(--color-warn)]/30 bg-[var(--color-warn)]/10 text-xs">
               Registered by the indexer, no maintainer recorded yet. An operator grants the first maintainer; after that
               the maintainer sets the rule above and approves readers.
             </div>
           )}
           {active.length === 0 ? (
-            <div className="text-[12px] text-[var(--color-text-subtle)]">
+            <div className="text-xs text-[var(--color-text-subtle)]">
               Nobody reads this repository yet.{" "}
               {rule === "open"
                 ? "People join from the Repositories page."
@@ -3438,7 +3453,7 @@ function AccessTab({
               {active.map((g) => (
                 <div
                   key={g.subject}
-                  className="flex items-center gap-3 px-3 py-2 border-b border-[var(--color-border)] last:border-b-0 text-[12px]"
+                  className="flex items-center gap-3 px-3 py-2 border-b border-[var(--color-border)] last:border-b-0 text-xs"
                 >
                   {g.role === "admin" ? (
                     <ShieldCheck size={12} className="text-[var(--color-accent)] shrink-0" />
@@ -3461,6 +3476,7 @@ function AccessTab({
                   </span>
                   {canManage && g.subject !== me && (
                     <button
+                      type="button"
                       onClick={() => void onRevoke(g)}
                       title="Remove reader"
                       aria-label={`Remove ${g.subject}`}
@@ -3481,7 +3497,7 @@ function AccessTab({
                 onChange={(e) => setSubject(e.target.value)}
                 placeholder="email or service-account subject"
                 aria-label="Subject to add"
-                className="flex-1 min-w-[16rem] px-3 py-2 text-[13px] rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] outline-none focus:border-[var(--color-accent)] font-mono"
+                className="flex-1 min-w-[16rem] px-3 py-2 text-sm rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] outline-none focus:border-[var(--color-accent)] font-mono"
               />
               <select
                 value={role}
@@ -3493,7 +3509,7 @@ function AccessTab({
                   if (v !== null) setRole(v);
                 }}
                 aria-label="Role"
-                className="px-2 py-2 text-[13px] rounded-md border border-[var(--color-border)] bg-[var(--color-surface)]"
+                className="px-2 py-2 text-sm rounded-md border border-[var(--color-border)] bg-[var(--color-surface)]"
               >
                 {REPO_ROLES.map((o) => (
                   <option key={o.value} value={o.value}>
@@ -3504,11 +3520,11 @@ function AccessTab({
               <button
                 type="submit"
                 disabled={busy !== null || !subject.trim()}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:bg-[var(--color-accent-strong)] rounded-md disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:bg-[var(--color-accent-strong)] rounded-md disabled:opacity-50"
               >
                 <Plus size={13} /> Add
               </button>
-              <span className="text-[11px] text-[var(--color-text-subtle)] basis-full">
+              <span className="text-2xs text-[var(--color-text-subtle)] basis-full">
                 Adding someone by name works under every rule. Agents read with a token that names this repository.
               </span>
             </form>
@@ -3525,8 +3541,8 @@ function AccessTab({
           aria-label="Retire"
         >
           <div className="min-w-0">
-            <div className="text-[13px] font-medium">Retire this index</div>
-            <p className="mt-1 text-[12px] text-[var(--color-text-muted)] max-w-xl">
+            <div className="text-sm font-medium">Retire this index</div>
+            <p className="mt-1 text-xs text-[var(--color-text-muted)] max-w-xl">
               {repoRow.source === "registry" ? (
                 <>
                   Removes the index of{" "}
@@ -3546,6 +3562,7 @@ function AccessTab({
             </p>
           </div>
           <button
+            type="button"
             disabled={repoRow.source !== "registry" || busy !== null}
             onClick={async () => {
               if (
@@ -3571,7 +3588,7 @@ function AccessTab({
                 setBusy(null);
               }
             }}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium rounded-md border border-[var(--color-danger)]/50 text-[var(--color-danger)] hover:bg-[var(--color-danger)]/10 disabled:opacity-50 whitespace-nowrap"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md border border-[var(--color-danger)]/50 text-[var(--color-danger)] hover:bg-[var(--color-danger)]/10 disabled:opacity-50 whitespace-nowrap"
             title={
               repoRow.source === "registry"
                 ? "Irreversible; a confirmation follows"

@@ -382,7 +382,7 @@ export function RecallLab() {
   return (
     <PageContainer>
       <div className="mb-4">
-        <h1 className="text-3xl font-semibold tracking-tight">Memories</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Memories</h1>
         <div className="mt-1 mb-3">
           <ScopeBadge kind="namespace" value={identity.namespace} />
         </div>
@@ -408,6 +408,7 @@ export function RecallLab() {
           ] as const
         ).map(([id, label, Icon]) => (
           <button
+            type="button"
             key={id}
             onClick={() => setTab(id)}
             className={`inline-flex items-center gap-1.5 px-3 py-2 text-sm -mb-px border-b-2 transition-colors ${
@@ -460,6 +461,7 @@ export function RecallLab() {
                 <>
                   {" "}
                   <button
+                    type="button"
                     onClick={() => setShowWeak(true)}
                     className="underline underline-offset-2 hover:text-[var(--color-text)] transition-colors"
                   >

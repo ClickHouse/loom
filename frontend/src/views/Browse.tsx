@@ -173,7 +173,7 @@ export function Browse() {
   return (
     <PageContainer>
       <div className="flex items-baseline justify-between mb-2">
-        <h1 className="text-3xl font-semibold tracking-tight inline-flex items-center gap-2">
+        <h1 className="text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
           <Globe size={22} /> Spaces
         </h1>
       </div>
@@ -229,6 +229,7 @@ export function Browse() {
                   </div>
                 </div>
                 <button
+                  type="button"
                   onClick={() => setManageNs(r.namespace)}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:bg-[var(--color-accent-strong)] rounded-md shrink-0"
                   title={`Invite people to ${r.namespace}`}
@@ -236,6 +237,7 @@ export function Browse() {
                   <UserPlus size={13} /> Invite
                 </button>
                 <button
+                  type="button"
                   onClick={() => setSettingsNs(r.namespace)}
                   className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-sm rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] shrink-0"
                   title={`Namespace settings for ${r.namespace}`}
@@ -258,6 +260,7 @@ export function Browse() {
             {rows ? `${filtered.length} ${filtered.length === 1 ? "namespace" : "namespaces"}` : ""}
           </span>
           <button
+            type="button"
             onClick={() => setCreateOpen(true)}
             className="inline-flex items-center gap-1 px-2.5 py-1 font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:bg-[var(--color-accent-strong)] rounded-md whitespace-nowrap"
           >
@@ -323,7 +326,7 @@ export function Browse() {
                   <div className="text-base font-mono text-[var(--color-text)] flex items-center gap-2">
                     {r.namespace}
                     {isSystemKind(r.kind) && (
-                      <span className="font-sans text-2xs font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-subtle)]">
+                      <span className="font-sans text-xs font-medium px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-subtle)]">
                         {r.kind}
                       </span>
                     )}
@@ -346,6 +349,7 @@ export function Browse() {
                 </div>
                 {isMember && pending.has(r.namespace) ? (
                   <button
+                    type="button"
                     onClick={async () => {
                       if (
                         !(await confirmAction({
@@ -382,6 +386,7 @@ export function Browse() {
                     // Viewer / writer / jwt: offer to request a higher role.
                     return (
                       <button
+                        type="button"
                         onClick={() => setJoinDialog({ ns: r.namespace, row: r })}
                         title={`You're a ${role} — request writer or admin`}
                         className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs text-[var(--color-text-muted)] bg-[var(--color-surface-2)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text)] rounded-md whitespace-nowrap"
@@ -392,6 +397,7 @@ export function Browse() {
                   })()
                 ) : (
                   <button
+                    type="button"
                     onClick={() => setJoinDialog({ ns: r.namespace, row: r })}
                     disabled={joining === r.namespace}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:bg-[var(--color-accent-strong)] rounded-md disabled:opacity-50 shadow-sm whitespace-nowrap"
@@ -535,6 +541,7 @@ function JoinDialog({
               const pend = willPend(opt.value);
               return (
                 <button
+                  type="button"
                   key={opt.value}
                   onClick={() => setRole(opt.value)}
                   className={`w-full text-left flex items-start gap-3 px-3 py-3 rounded-lg border transition-colors ${
@@ -580,12 +587,14 @@ function JoinDialog({
           </div>
           <div className="px-6 py-3.5 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] rounded-b-2xl flex items-center justify-end gap-2">
             <button
+              type="button"
               onClick={onCancel}
               className="px-3 py-1.5 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
             >
               Cancel
             </button>
             <button
+              type="button"
               onClick={() => onConfirm(role)}
               disabled={busy === target.ns}
               className="inline-flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md hover:bg-[var(--color-accent-strong)] disabled:opacity-50"
@@ -689,6 +698,7 @@ function RequestAccessCard({
               </select>
             </label>
             <button
+              type="button"
               onClick={submit}
               disabled={busy || alreadyHasIt}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:bg-[var(--color-accent-strong)] rounded-md disabled:opacity-50"

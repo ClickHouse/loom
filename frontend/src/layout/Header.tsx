@@ -1,16 +1,6 @@
-import { Suspense, lazy, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { Suspense, lazy, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import * as Popover from "@radix-ui/react-popover";
-import {
-  LogOut,
-  Plus,
-  FileText,
-  Sparkles,
-  HelpCircle,
-  Search,
-  Settings as SettingsIcon,
-  Sun,
-  Moon,
-} from "lucide-react";
+import { LogOut, Plus, FileText, Sparkles, HelpCircle, Search, Settings as SettingsIcon } from "lucide-react";
 import { useStore } from "../lib/state";
 import { clearToken, isProxyMode } from "../api";
 import { toast } from "../components/Toast";
@@ -30,7 +20,6 @@ import { PendingApprovalsBell } from "../components/PendingApprovalsBell";
 import { TaskInboxBell } from "../components/TaskInboxBell";
 import { Tip } from "../components/ui";
 import { READ_ONLY_TIP, canWrite, useNamespaceRole } from "../lib/namespaceRole";
-import { setTheme, storedTheme, type Theme } from "../lib/theme";
 
 /**
  * Header — top chrome of every page.
@@ -104,7 +93,7 @@ export function Header() {
             label="New"
             disabled={readOnly}
             disabledTip={READ_ONLY_TIP}
-            triggerClassName="inline-flex items-center gap-1.5 h-8 px-2.5 sm:px-3 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md hover:bg-[var(--color-accent-strong)] data-[state=open]:bg-[var(--color-accent-strong)] transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+            triggerClassName="inline-flex items-center gap-1.5 h-8 px-2.5 sm:px-3 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md hover:bg-[var(--color-accent-strong)] data-[state=open]:bg-[var(--color-accent-strong)] transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:cursor-not-allowed aria-disabled:hover:bg-[var(--color-accent)]"
             trigger={
               <>
                 <Plus size={13} aria-hidden="true" /> <span className="hidden sm:inline">New</span>
@@ -115,6 +104,7 @@ export function Header() {
             {(close) => (
               <>
                 <button
+                  type="button"
                   role="menuitem"
                   onClick={() => {
                     close();
@@ -125,6 +115,7 @@ export function Header() {
                   <Sparkles size={13} /> Memory
                 </button>
                 <button
+                  type="button"
                   role="menuitem"
                   onClick={() => {
                     close();
@@ -170,11 +161,10 @@ export function Header() {
             this namespace's inboxes. One task.counts call per two minutes. */}
         <TaskInboxBell />
 
-        <ThemeToggle />
-
         {/* Keyboard shortcut + general help. Opens HelpDialog mounted
             in App.tsx (state lives in the store). */}
         <button
+          type="button"
           onClick={() => openHelp(true)}
           title="Keyboard shortcuts (press ?)"
           aria-label="Keyboard shortcuts"
@@ -212,8 +202,9 @@ export function Header() {
                   <div className="text-sm font-medium text-[var(--color-text)] truncate">{whoami.subject}</div>
                   <div className="text-xs text-[var(--color-text-muted)] mt-0.5 truncate">{whoami.org}</div>
                 </div>
-                <div className="h-px bg-[var(--color-border)] my-1" role="separator" />
+                <hr className="h-px border-0 bg-[var(--color-border)] my-1" />
                 <button
+                  type="button"
                   role="menuitem"
                   onClick={() => {
                     close();
@@ -225,6 +216,7 @@ export function Header() {
                 </button>
                 {!isProxyMode() && (
                   <button
+                    type="button"
                     role="menuitem"
                     onClick={() => {
                       close();
@@ -273,31 +265,38 @@ function MenuPopover({
   children: (close: () => void) => ReactNode;
   align?: "start" | "end";
   /** Render the trigger disabled; `disabledTip` explains why on hover and
-   *  focus (a disabled button fires no pointer events, so the tooltip hangs
-   *  off a focusable wrapper). */
+   *  focus. With a tip the trigger stays focusable and is `aria-disabled`
+   *  (a natively disabled button takes no hover or focus, so the reason
+   *  would be unreachable); the reason is also its accessible description. */
   disabled?: boolean;
   disabledTip?: string;
 }) {
   const [open, setOpen] = useState(false);
   const close = () => setOpen(false);
+  const reasonId = useId();
 
   if (disabled) {
     const btn = (
-      <button type="button" aria-haspopup="menu" aria-label={label} disabled className={triggerClassName}>
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-label={label}
+        aria-disabled="true"
+        disabled={!disabledTip}
+        aria-describedby={disabledTip ? reasonId : undefined}
+        className={triggerClassName}
+      >
         {trigger}
       </button>
     );
     if (!disabledTip) return btn;
     return (
-      <Tip content={disabledTip}>
-        <span
-          tabIndex={0}
-          className="inline-flex rounded-md outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
-          aria-label={`${label}: ${disabledTip}`}
-        >
-          {btn}
+      <>
+        <Tip content={disabledTip}>{btn}</Tip>
+        <span id={reasonId} className="sr-only">
+          {disabledTip}
         </span>
-      </Tip>
+      </>
     );
   }
 
@@ -451,25 +450,5 @@ function DeferredHeaderSearch({ autoFocus }: { autoFocus: boolean }) {
     <Suspense fallback={placeholder}>
       <HeaderSearch autoFocus={autoFocus || wantFocus} initialQuery={draft} />
     </Suspense>
-  );
-}
-
-/** Switches between Click UI's dark and light themes; the choice is remembered per browser. */
-function ThemeToggle() {
-  const [theme, setThemeState] = useState<Theme>(storedTheme);
-  const next: Theme = theme === "dark" ? "light" : "dark";
-  return (
-    <button
-      type="button"
-      onClick={() => {
-        setTheme(next);
-        setThemeState(next);
-      }}
-      title={`Switch to ${next} theme`}
-      aria-label={`Switch to ${next} theme`}
-      className="h-8 w-8 inline-flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-md transition-colors"
-    >
-      {theme === "dark" ? <Sun size={15} aria-hidden="true" /> : <Moon size={15} aria-hidden="true" />}
-    </button>
   );
 }

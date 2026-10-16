@@ -132,8 +132,10 @@ function Track({
       {record === undefined && <div className="text-xs text-[var(--color-text-subtle)]">counting…</div>}
       {record === null && <div className="text-xs text-[var(--color-text-subtle)]">not readable</div>}
       {record && (
+        // biome-ignore lint/a11y/useSemanticElements: a labelled cluster of counts, not form fields
         <div
           className="tq-track"
+          role="group"
           aria-label={`${record.total}${record.truncated ? "+" : ""} tasks from this poster: ${record.done} done, ${record.wont_do} won't do, ${record.failed} failed, ${record.open} open`}
         >
           {(
@@ -206,6 +208,7 @@ function Timeline({ events, now }: { events: TaskEvent[] | null; now: number }) 
               className="ic"
               data-kind={kind}
               title={kind === "human" ? "a person" : kind === "sweeper" ? "the lease sweeper" : "an agent"}
+              role="img"
               aria-label={kind}
             >
               {kind === "human" ? "h" : kind === "sweeper" ? "s" : "b"}
@@ -529,8 +532,10 @@ export function TaskPanel({
         </Section>
       </div>
 
+      {/* biome-ignore lint/a11y/useSemanticElements: a labelled cluster of action buttons, not form fields */}
       <div
         className="border-t border-[var(--color-border)] px-3.5 py-2.5 flex gap-2 items-center flex-wrap"
+        role="group"
         aria-label="Actions"
       >
         {allowed.has("accept") && (

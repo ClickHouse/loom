@@ -157,7 +157,7 @@ export function Health() {
   return (
     <PageContainer>
       <div className="mb-6">
-        <h1 className="text-3xl font-semibold tracking-tight inline-flex items-center gap-2">
+        <h1 className="text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
           <ActivityIcon size={20} /> Health
         </h1>
         <p className="text-sm text-[var(--color-text-muted)] mt-1 max-w-2xl">
@@ -367,6 +367,7 @@ export function WorkersPanel() {
           )}
         </div>
         <button
+          type="button"
           onClick={() => setRefreshKey((k) => k + 1)}
           className="inline-flex items-center gap-1.5 px-2.5 py-1 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] rounded-md hover:bg-[var(--color-surface-2)]"
         >
@@ -495,6 +496,7 @@ export function WorkersPanel() {
           })}
           {hiddenByConfig > 0 && !showAll && (
             <button
+              type="button"
               onClick={() => setShowAll(true)}
               className="w-full text-2xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] py-2 hover:bg-[var(--color-surface-2)] rounded-md"
             >
@@ -503,6 +505,7 @@ export function WorkersPanel() {
           )}
           {showAll && hiddenByConfig === 0 && (
             <button
+              type="button"
               onClick={() => setShowAll(false)}
               className="w-full text-2xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] py-2 hover:bg-[var(--color-surface-2)] rounded-md"
             >
@@ -630,6 +633,7 @@ export function OpMixPanel() {
           </span>
         )}
         <button
+          type="button"
           onClick={() => setScope(scope === "namespace" ? "org" : "namespace")}
           className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] underline-offset-2 hover:underline"
         >
@@ -883,6 +887,7 @@ function ExtractionQualityPanel() {
       <div className="flex items-center justify-between">
         <div className="text-xs text-[var(--color-text-muted)]">By namespace, org={identity.org}</div>
         <button
+          type="button"
           onClick={() => setRefreshKey((k) => k + 1)}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-[var(--color-border)] rounded-md hover:bg-[var(--color-surface-2)]"
         >
@@ -891,7 +896,7 @@ function ExtractionQualityPanel() {
       </div>
       <table className="w-full text-sm border-separate border-spacing-0">
         <thead>
-          <tr className="text-left text-2xs uppercase tracking-wider text-[var(--color-text-muted)]">
+          <tr className="text-left text-xs text-[var(--color-text-muted)]">
             <th className="px-3 py-2 border-b border-[var(--color-border)]">Namespace</th>
             <th className="px-3 py-2 border-b border-[var(--color-border)] text-right">Pending</th>
             <th className="px-3 py-2 border-b border-[var(--color-border)] text-right">Promoted</th>
@@ -937,7 +942,7 @@ function Stat({
 }) {
   return (
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-3">
-      <div className="text-2xs uppercase tracking-wider text-[var(--color-text-muted)]">{label}</div>
+      <div className="text-xs text-[var(--color-text-muted)]">{label}</div>
       <div className={`text-xl font-semibold tabular mt-0.5 ${tone === "warn" ? "text-[var(--color-warn)]" : ""}`}>
         {value}
       </div>

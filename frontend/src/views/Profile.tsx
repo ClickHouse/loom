@@ -132,6 +132,12 @@ export function Profile() {
   const refreshRef = useRef(refresh);
   refreshRef.current = refresh;
   const editSection = useCallback((label: string) => setEditing(label), []);
+  // Clicking a section opens it, or toggles it while a selection is being made.
+  const selecting = selected.size > 0;
+  const openOrSelect = useCallback(
+    (label: string) => (selecting ? toggleSelect(label) : useStore.getState().inspectProfile(label)),
+    [selecting],
+  );
   const deleteSection = useCallback(
     (label: string) => {
       void onDelete(identity, label, () => refreshRef.current());
@@ -253,11 +259,12 @@ export function Profile() {
                 }}
               />
             ) : (
+              // biome-ignore lint/a11y/noStaticElementInteractions: a pointer shortcut over the whole card; the section name (a button) and the checkbox are the keyboard paths
+              // biome-ignore lint/a11y/useKeyWithClickEvents: as above
+              // biome-ignore lint/a11y/noNoninteractiveElementInteractions: as above
               <div
                 key={b.label}
-                onClick={
-                  selected.size > 0 ? () => toggleSelect(b.label) : () => useStore.getState().inspectProfile(b.label)
-                }
+                onClick={() => openOrSelect(b.label)}
                 className={
                   "p-4 rounded-lg border bg-[var(--color-surface)] flex items-start gap-3 transition-colors cursor-pointer " +
                   (selected.has(b.label)
@@ -274,7 +281,13 @@ export function Profile() {
                   className="mt-1 shrink-0 cursor-pointer"
                 />
                 <div className="flex-1 min-w-0">
-                  <SectionRow embedded section={b} onEdit={editSection} onDelete={deleteSection} />
+                  <SectionRow
+                    embedded
+                    section={b}
+                    onOpen={openOrSelect}
+                    onEdit={editSection}
+                    onDelete={deleteSection}
+                  />
                 </div>
               </div>
             ),
@@ -295,7 +308,7 @@ function Header({ onNew, entries, empty }: { onNew: () => void; entries: Profile
     <>
       <div className="flex items-start justify-between gap-3 mb-1">
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight">Your AI profile</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Your AI profile</h1>
           <div className="mt-1">
             <ScopeBadge kind="namespace" value={namespace} />
           </div>
@@ -538,7 +551,7 @@ function ReachSection() {
       </div>
       <div className="px-4 py-3 space-y-4 text-sm text-[var(--color-text)] leading-relaxed">
         <div>
-          <div className="font-medium text-xs uppercase tracking-wide text-[var(--color-text-muted)] mb-1">
+          <div className="font-medium text-xs text-[var(--color-text-muted)] mb-1">
             Claude Code · Codex — with the Loom plugin
           </div>
           <div className="mb-2">Delivered when a session starts, with your relevant memories. Nothing to type.</div>
@@ -552,7 +565,7 @@ function ReachSection() {
           </details>
         </div>
         <div>
-          <div className="font-medium text-xs uppercase tracking-wide text-[var(--color-text-muted)] mb-1">
+          <div className="font-medium text-xs text-[var(--color-text-muted)] mb-1">
             Claude Desktop · Cursor · any MCP client
           </div>
           <div className="mb-1">Delivered when the client connects, as Loom&apos;s session instructions.</div>
@@ -565,7 +578,7 @@ function ReachSection() {
           </div>
         </div>
         <details className="group">
-          <summary className="cursor-pointer font-medium text-xs uppercase tracking-wide text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+          <summary className="cursor-pointer font-medium text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
             Your own bot
           </summary>
           <div className="mt-2 space-y-3">
@@ -637,11 +650,14 @@ function EmptyState({ onPickTemplate }: { onPickTemplate: (t: (typeof TEMPLATES)
 
 const SectionRow = memo(function SectionRow({
   section,
+  onOpen,
   onEdit,
   onDelete,
   embedded = false,
 }: {
   section: ProfileEntry;
+  /** Makes the section name a button: what clicking the card does, for the keyboard. */
+  onOpen?: (label: string) => void;
   onEdit: (label: string) => void;
   onDelete: (label: string) => void;
   /** When true, the row drops its own border + padding so a parent
@@ -663,7 +679,20 @@ const SectionRow = memo(function SectionRow({
     <div className={embedded ? "" : "rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4"}>
       <div className="flex items-start justify-between mb-2 gap-3">
         <div className="flex items-baseline gap-2 min-w-0 flex-1">
-          <div className="font-mono text-base font-semibold truncate">{section.label}</div>
+          {onOpen ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpen(section.label);
+              }}
+              className="font-mono text-base font-semibold truncate text-left hover:underline"
+            >
+              {section.label}
+            </button>
+          ) : (
+            <div className="font-mono text-base font-semibold truncate">{section.label}</div>
+          )}
           <div className="text-2xs font-mono tabular-nums text-[var(--color-text-muted)] whitespace-nowrap">
             {fmtInt(valueLen)} / {fmtInt(cap)}
           </div>

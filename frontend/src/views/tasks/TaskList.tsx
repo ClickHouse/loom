@@ -114,6 +114,7 @@ function TaskRowView({ r, ctx, drag }: { r: TaskListRow; ctx: RowContext; drag: 
     }
   };
   return (
+    // biome-ignore lint/a11y/useSemanticElements: a draggable grid row; table elements would fight the drag targets and the group layout
     <div
       role="row"
       tabIndex={0}
@@ -126,6 +127,7 @@ function TaskRowView({ r, ctx, drag }: { r: TaskListRow; ctx: RowContext; drag: 
       {...drag}
     >
       <PriorityBar priority={r.priority} />
+      {/* biome-ignore lint/a11y/useSemanticElements: a cell of the div grid row above */}
       <span className="min-w-0" role="cell">
         <span className="t">
           <KindTag kind={r.kind} />
@@ -135,6 +137,7 @@ function TaskRowView({ r, ctx, drag }: { r: TaskListRow; ctx: RowContext; drag: 
         </span>
         <SublineView s={sublineOf(r, ctx.now, ctx.progressNotes.get(r.task_id))} />
       </span>
+      {/* biome-ignore lint/a11y/useSemanticElements: a cell of the div grid row above */}
       <span role="cell">
         <Meta r={r} ctx={ctx} />
       </span>
@@ -160,6 +163,7 @@ export function TaskList({ groups, ctx, forceOpen, showClosed }: ListProps) {
   });
   const drag = useTaskDrag(ctx.canWrite, ctx.onDrop);
   return (
+    // biome-ignore lint/a11y/useSemanticElements: rows are draggable and grouped into collapsible sections, which a <table> cannot hold
     <div role="grid" aria-label="Tasks by what happens next" className="min-w-0">
       {GROUPS.map((g) => {
         const rows = groups[g];
@@ -191,16 +195,12 @@ export function TaskList({ groups, ctx, forceOpen, showClosed }: ListProps) {
               <h3 id={`tq-group-${g}`} className="text-sm font-semibold m-0">
                 {meta.label}
               </h3>
-              <span
-                className="text-xs text-[var(--color-text-subtle)] tabular"
-                aria-label={`${rows.length} in ${meta.label}`}
-              >
-                {rows.length}
-              </span>
+              <span className="text-xs text-[var(--color-text-subtle)] tabular">{rows.length}</span>
               <span className="ml-auto text-xs text-[var(--color-text-subtle)] hidden sm:inline">{meta.hint}</span>
               <ChevronDown size={14} className="car" aria-hidden="true" />
             </button>
             {!isCollapsed && (
+              // biome-ignore lint/a11y/useSemanticElements: the row group of the div grid above
               <div id={`tq-rows-${g}`} className="tq-rows" role="rowgroup">
                 {rows.length === 0 ? (
                   <div className="px-3.5 py-3.5 text-sm text-[var(--color-text-subtle)]">

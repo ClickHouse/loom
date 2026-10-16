@@ -77,7 +77,7 @@ export function HelpDialog({ open, onOpenChange }: { open: boolean; onOpenChange
 function Section({ title, rows }: { title: string; rows: Shortcut[] }) {
   return (
     <div>
-      <h4 className="text-2xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-2">{title}</h4>
+      <h4 className="text-xs font-medium text-[var(--color-text-muted)] mb-2">{title}</h4>
       <div className="space-y-1">
         {rows.map((r) => (
           <div key={r.key} className="flex items-center justify-between text-sm">
