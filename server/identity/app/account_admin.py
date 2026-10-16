@@ -13,6 +13,7 @@ from typing import Any
 
 from server.auth import machines, revocation, sso_links
 from server.auth.grant_claims import bot_change
+from server.core.naming import SSO_NAMESPACE_PREFIX
 from server.observability import audit
 from server.settings import settings
 
@@ -215,6 +216,8 @@ def bot_from(
         raise ValueError("a jwks_uri is the https address of a CI trust's issuer keys")
     if agent_claim and (public_key_pem or not trust):
         raise ValueError("an agent claim needs a workload trust and no key: a key is one bot")
+    if agent_claim and f"{name}-".startswith(SSO_NAMESPACE_PREFIX):
+        raise ValueError(f"name: its agents' namespaces would take SSO's {SSO_NAMESPACE_PREFIX}")
     return {
         "name": name,
         "org": org,
@@ -244,6 +247,8 @@ async def create_bot(bot: machines.Machine, *, by: str, replace: bool) -> None:
         existing = await machines.get(name)
         if existing is not None and not replace:
             raise ValueError(f"bot {name!r} exists; replace it to change it")
+        if bot["agent_claim"]:
+            await _refuse_overlap(name)
         await machines.save(bot, by=by)
     if existing is not None:
         # Tokens from its old key or wider roles end now, not within the hour.
@@ -261,6 +266,16 @@ async def create_bot(bot: machines.Machine, *, by: str, replace: bool) -> None:
         )
     except Exception as e:  # noqa: BLE001 — the bot is saved; its caller must keep the key
         log.warning("bot %s saved, but its audit row was not: %s", name, e)
+
+
+async def _refuse_overlap(name: str) -> None:
+    """Trusts `fleet` and `fleet-a` would both name their agents' namespaces
+    `fleet-a-b` (agent `a-b` of one, `b` of the other)."""
+    for other in await machines.listed():
+        theirs = str(other["name"])
+        if theirs != name and other["agent_claim"] and other["active"]:
+            if f"{name}-".startswith(f"{theirs}-") or f"{theirs}-".startswith(f"{name}-"):
+                raise ValueError(f"name: its agents' namespaces could be those of trust {theirs!r}")
 
 
 async def disable_bot(name: str, *, by: str) -> bool:

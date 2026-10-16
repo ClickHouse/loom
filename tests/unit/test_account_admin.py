@@ -291,3 +291,26 @@ def test_a_replace_running_meanwhile_cannot_undo_a_disable(world, monkeypatch) -
 
     asyncio.run(both())
     assert steps == ["read", "write", "read", "write"]  # one after the other, never interleaved
+
+
+def test_agent_trusts_whose_namespaces_could_meet_are_refused(world, monkeypatch) -> None:
+    trust = {"issuer": "https://ci.example", "audience": "loom", "claims": ["aud=loom"]}
+
+    def fleet(name: str) -> machines.Machine:
+        return account_admin.bot_from(
+            name=name, org="acme", namespace_roles=[], agent_claim="agent_id", **trust
+        )
+
+    async def listed() -> list[dict[str, Any]]:
+        return [{"name": "fleet", "agent_claim": "agent_id", "active": 1}]
+
+    monkeypatch.setattr(machines, "listed", listed)
+    for name in ("fleet-a", "fle"):  # fleet-a + "b" == fleet + "a-b"; "fle" is safe
+        make = account_admin.create_bot(fleet(name), by="ops", replace=False)
+        if name == "fle":
+            asyncio.run(make)
+        else:
+            with pytest.raises(ValueError, match="trust 'fleet'"):
+                asyncio.run(make)
+    with pytest.raises(ValueError, match="SSO"):
+        fleet("u")  # its agents' namespaces would be u-<agent>

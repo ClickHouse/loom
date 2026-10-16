@@ -124,9 +124,13 @@ def registry_row(
     # (one tag; a re-registration replaces it); a bench class with no explicit kind registers
     # the namespace as bench, so the namespace gc worker retires it by idleness.
     # Lazy: the auto-register module imports the operation registry, which imports this one.
+    from server.auth.agents import TAG_PREFIX as MACHINE_TAG
     from server.identity.app.namespace_autoregister import classify_kind
 
-    tags = list(input.tags)
+    # A workload trust's mark is the trust's to give: dropped from the form,
+    # carried forward from the row.
+    stored = [str(t) for t in (existing or {}).get("tags") or [] if str(t).startswith(MACHINE_TAG)]
+    tags = [t for t in input.tags if not str(t).startswith(MACHINE_TAG)] + stored
     kind = input.kind
     if input.traffic_class:
         from server.observability.traffic_class import TAG_PREFIX

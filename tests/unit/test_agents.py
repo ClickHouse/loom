@@ -4,6 +4,7 @@ not make, and its owner's when the trust vouches for one with an account."""
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from typing import Any
 
 import pytest
@@ -11,6 +12,7 @@ import pytest
 from server.auth import agents, login, machines, self_signup
 from server.observability import audit
 
+_NOW = datetime(2026, 10, 16, 12, 0, 0)
 _TRUST: machines.Machine = {
     "name": "fleet",
     "org": "acme",
@@ -35,7 +37,11 @@ def world(monkeypatch) -> dict[str, Any]:
 
     async def provision(**kw: Any) -> None:
         state["made"].append(kw)
-        state["rows"][kw["namespace"]] = {"active": True, "tags": kw["tags"]}
+        state["rows"][kw["namespace"]] = {
+            "active": True,
+            "tags": kw["tags"],
+            "owner_email": kw["subject"],
+        }
 
     async def grant(org: str, ns: str, subject: str) -> None:
         state["granted"].append((org, ns, subject))
@@ -62,17 +68,26 @@ def test_the_first_exchange_makes_the_agents_namespace_once(world) -> None:
     assert _ensure() == _ensure() == "fleet-a1"
     [made] = world["made"]
     assert made["subject"] == "sa:fleet:a1" and made["tags"] == ["machine:fleet"]
+    assert made["contact_email"] == ""  # a sign-in by email never resolves to an agent
 
 
 def test_a_name_the_trust_did_not_make_is_refused(world) -> None:
-    world["rows"]["fleet-a1"] = {"active": True, "tags": []}  # someone's own namespace
-    with pytest.raises(machines.Refused, match="not this trust's"):
-        _ensure()
+    for row in (
+        {"active": True, "tags": [], "owner_email": "lee"},  # someone's own namespace
+        {"active": True, "tags": ["machine:fleet"], "owner_email": "mallory"},  # a forged tag
+    ):
+        world["rows"]["fleet-a1"] = row
+        with pytest.raises(machines.Refused, match="not this trust's"):
+            _ensure()
     assert world["made"] == []
 
 
 def test_a_released_agent_namespace_is_not_made_again(world) -> None:
-    world["rows"]["fleet-a1"] = {"active": False, "tags": ["machine:fleet"]}
+    world["rows"]["fleet-a1"] = {
+        "active": False,
+        "tags": ["machine:fleet"],
+        "owner_email": "sa:fleet:a1",
+    }
     with pytest.raises(machines.Refused, match="released"):
         _ensure()
 
@@ -96,3 +111,16 @@ def test_the_agent_claim_is_taken_as_given_or_refused(value: str, ok: bool) -> N
     else:
         with pytest.raises(machines.Refused):
             agents.agent_of(_TRUST, {"agent_id": value})
+
+
+def test_a_caller_cannot_give_a_namespace_a_trusts_mark() -> None:
+    from server.identity.api.models import NamespaceRegisterInput
+    from server.identity.app.namespace import registry_row
+
+    inp = NamespaceRegisterInput(
+        org="acme", namespace="fleet-victim", owner_email="mallory", tags=["machine:fleet", "x"]
+    )
+    assert registry_row(inp, None, _NOW)["tags"] == ["x"]
+    stored = {**registry_row(inp, None, _NOW), "tags": ["machine:fleet"]}
+    kept = registry_row(inp, stored, _NOW)
+    assert kept["tags"] == ["x", "machine:fleet"]  # the trust's own mark stays

@@ -1,16 +1,15 @@
 #!/usr/bin/env node
-// Exchange the agent's workload token for an hour-long Loom token (RFC 8693)
-// and save it, 0600, where resolveToken reads it (lib/loom-client.mjs, agent
-// mode). resolveToken runs this when the saved token is about to run out.
+// Exchange the agent's workload token for a Loom token (RFC 8693; it never
+// outlives the workload token) and save it, 0600, where resolveToken reads it
+// (lib/loom-client.mjs, agent mode). resolveToken runs this when it is due.
 // Exits 1 when the exchange did not happen; writes nothing else.
-import { readFileSync } from "node:fs";
-
-import { agentTokenPath, resolveServerUrl, writePrivateFile } from "../lib/loom-client.mjs";
+import { agentTokenPath, resolveServerUrl, workloadToken, writePrivateFile } from "../lib/loom-client.mjs";
 
 const TOKEN_EXCHANGE = "urn:ietf:params:oauth:grant-type:token-exchange";
 
 export async function exchange({ env = process.env, fetchImpl = fetch, now = Date.now() / 1000 } = {}) {
-  const workload = (env.LOOM_WORKLOAD_TOKEN || readFileSync(env.LOOM_WORKLOAD_TOKEN_FILE, "utf8")).trim();
+  const workload = workloadToken(env);
+  if (!workload) return false;
   const server = resolveServerUrl();
   const r = await fetchImpl(`${server}/oauth/token`, {
     method: "POST",

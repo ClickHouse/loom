@@ -19,7 +19,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from server.auth import machines, sso_links
+from server.auth import agents, machines, sso_links
 from server.auth.authz import Role
 from server.auth.jwt import AuthInfo
 from server.core import grant_cache
@@ -192,8 +192,11 @@ async def _forget_machines(
 
     forgotten = await machines.forget_namespace(org, namespace, by, ch=ch)
     ended = [machines.subject(name) for name in forgotten]
-    if any(str(t).startswith("machine:") for t in row.get("tags") or []):
-        ended.append(str(row.get("owner_email") or ""))
+    owner = str(row.get("owner_email") or "")
+    for t in row.get("tags") or []:
+        trust = str(t).removeprefix(agents.TAG_PREFIX)
+        if trust != str(t) and owner.startswith(agents.subject(trust, "")):
+            ended.append(owner)  # the agent's own namespace: its owner is the agent
     for subject in filter(None, ended):
         await account_admin.end_tokens(subject, by=by, reason="namespace released")
 

@@ -154,43 +154,69 @@ export function resolveToken() {
 // LOOM_CLIENT_ID names a workload trust (`loom bot create --agent-claim`), and
 // LOOM_WORKLOAD_TOKEN or LOOM_WORKLOAD_TOKEN_FILE holds the OIDC token the
 // agent's control plane issued it. bin/loom-agent-token.mjs exchanges that for
-// an hour-long Loom token (RFC 8693) and saves it here, so nothing long-lived
-// sits on the agent's machine.
-
-export function agentTokenPath(env = process.env) {
-  return join(env.HOME || homedir(), ".loom", "agent-token.json");
-}
+// a Loom token (RFC 8693; it never outlives the workload token) and saves it
+// here, so nothing long-lived sits on the agent's machine.
 
 export function agentMode(env = process.env) {
   return Boolean(env.LOOM_CLIENT_ID && (env.LOOM_WORKLOAD_TOKEN || env.LOOM_WORKLOAD_TOKEN_FILE));
 }
 
-// Renewed halfway through its life (at most five minutes before it runs out,
-// as a workload token may live only minutes); used to its last half-minute if
-// Loom is away.
+/** The workload token as the agent holds it now; "" when unreadable. */
+export function workloadToken(env = process.env) {
+  try {
+    return (env.LOOM_WORKLOAD_TOKEN || readFileSync(env.LOOM_WORKLOAD_TOKEN_FILE, "utf8")).trim();
+  } catch {
+    return "";
+  }
+}
+
+/** One saved token per agent: keyed by the workload token's issuer and subject
+ *  (which name the agent and survive its rotation), so agents sharing a home
+ *  never read each other's. */
+export function agentTokenPath(env = process.env) {
+  const claims = decodeTokenClaims(workloadToken(env));
+  const who = claims.iss && claims.sub ? `${claims.iss}|${claims.sub}` : workloadToken(env);
+  const key = createHash("sha256").update(`${env.LOOM_CLIENT_ID}|${who}`).digest("hex").slice(0, 16);
+  return join(env.HOME || homedir(), ".loom", `agent-token-${key}.json`);
+}
+
+// Renewed halfway through its life, at most five minutes before it runs out
+// (a workload token may live only minutes), and used to its last half-minute
+// while Loom is away; a failed renewal is not tried again for half a minute.
 const AGENT_RENEW_S = 300;
 const AGENT_LAST_S = 30;
+const AGENT_RETRY_S = 30;
 
-/** The saved token for this trust and server with more than `minLeft(ttl)`
- *  seconds left, else "". */
-export function savedAgentToken(minLeft, { env = process.env, now = Date.now() / 1000 } = {}) {
-  const saved = readConfigFile(agentTokenPath(env));
+function usable(saved, env, now, minLeft) {
   const ours = saved.client_id === env.LOOM_CLIENT_ID && saved.server === resolveServerUrl();
-  const left = Number(saved.exp) - now;
-  return ours && left > minLeft(Number(saved.ttl) || 0) ? String(saved.token || "") : "";
+  return ours && Number(saved.exp) - now > minLeft && Boolean(saved.token);
+}
+
+function renewDue(saved) {
+  return Math.min(AGENT_RENEW_S, Number(saved.ttl) / 2 || AGENT_RENEW_S);
 }
 
 /** In agent mode, the saved token, renewed first when it is due. */
-export function agentToken({ env = process.env, renew = renewAgentToken } = {}) {
+export function agentToken({ env = process.env, renew = renewAgentToken, now = Date.now() / 1000 } = {}) {
   if (!agentMode(env)) return "";
-  const fresh = savedAgentToken((ttl) => Math.min(AGENT_RENEW_S, ttl / 2 || AGENT_RENEW_S), { env });
-  if (fresh) return fresh;
-  renew(env);
-  return savedAgentToken(() => AGENT_LAST_S, { env });
+  const path = agentTokenPath(env);
+  let saved = readConfigFile(path);
+  if (usable(saved, env, now, renewDue(saved))) return String(saved.token);
+  if (!(Number(saved.retry_at) > now)) {
+    renew(env);
+    saved = readConfigFile(path);
+    if (usable(saved, env, now, renewDue(saved))) return String(saved.token);
+    try {
+      writePrivateFile(path, JSON.stringify({ ...saved, retry_at: now + AGENT_RETRY_S }));
+    } catch {
+      // nowhere to note it: the next call tries again
+    }
+  }
+  return usable(saved, env, now, AGENT_LAST_S) ? String(saved.token) : "";
 }
 
 function renewAgentToken(env) {
-  // A child, so every caller stays synchronous; at most once an hour.
+  // A child, so every caller stays synchronous; once per half-life of the token.
   const script = new URL("../bin/loom-agent-token.mjs", import.meta.url);
   try {
     execFileSync(process.execPath, [script.pathname], { env, timeout: 3000, stdio: "ignore" });

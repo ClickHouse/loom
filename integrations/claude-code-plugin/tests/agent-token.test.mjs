@@ -12,10 +12,16 @@ const { exchange } = await import("../bin/loom-agent-token.mjs");
 
 const SERVER = "https://loom.example";
 
+function jwt(claims) {
+  const part = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
+  return `${part({ alg: "ES256" })}.${part(claims)}.sig`;
+}
+const A1 = jwt({ iss: "https://issuer.example", sub: "tenants/t/agents/a1" });
+
 function agentEnv() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "loom-agent-"));
   process.env.LOOM_BASE_URL = SERVER;
-  return { HOME: home, LOOM_CLIENT_ID: "fleet", LOOM_WORKLOAD_TOKEN: "oidc-of-a1" };
+  return { HOME: home, LOOM_CLIENT_ID: "fleet", LOOM_WORKLOAD_TOKEN: A1 };
 }
 
 function save(env, saved) {
@@ -78,7 +84,7 @@ test("the exchange sends the workload token and saves the answer 0600", async ()
   assert.equal(sent.url, `${SERVER}/oauth/token`);
   assert.equal(sent.form.grant_type, "urn:ietf:params:oauth:grant-type:token-exchange");
   assert.equal(sent.form.client_id, "fleet");
-  assert.equal(sent.form.subject_token, "oidc-of-a1");
+  assert.equal(sent.form.subject_token, A1);
   const saved = JSON.parse(fs.readFileSync(agentTokenPath(env), "utf8"));
   assert.deepEqual(saved, { server: SERVER, client_id: "fleet", token: "t1", exp: 4600, ttl: 3600 });
   assert.equal(fs.statSync(agentTokenPath(env)).mode & 0o777, 0o600);
@@ -89,4 +95,29 @@ test("a refused exchange saves nothing", async () => {
   const fetchImpl = async () => new Response(JSON.stringify({ error: "invalid_grant" }), { status: 400 });
   assert.equal(await exchange({ env, fetchImpl }), false);
   assert.equal(fs.existsSync(agentTokenPath(env)), false);
+});
+
+test("two agents sharing a home never read each other's token", () => {
+  const env = agentEnv();
+  save(env, { server: SERVER, client_id: "fleet", token: "of-a1", exp: Date.now() / 1000 + 3000 });
+  const b = { ...env, LOOM_WORKLOAD_TOKEN: jwt({ iss: "https://issuer.example", sub: "tenants/t/agents/b" }) };
+  assert.equal(agentToken({ env: b, renew: () => {} }), "");
+  // A rotated token of the same agent still finds its saved one.
+  const a1Again = {
+    ...env,
+    LOOM_WORKLOAD_TOKEN: jwt({ iss: "https://issuer.example", sub: "tenants/t/agents/a1", jti: "2" }),
+  };
+  assert.equal(agentToken({ env: a1Again, renew: assert.fail }), "of-a1");
+});
+
+test("a failed renewal is not tried again on every call", () => {
+  const env = agentEnv();
+  const now = Date.now() / 1000;
+  save(env, { server: SERVER, client_id: "fleet", token: "t1", exp: now + 20 });
+  let tries = 0;
+  const renew = () => tries++;
+  for (let i = 0; i < 5; i++) agentToken({ env, renew, now });
+  assert.equal(tries, 1);
+  agentToken({ env, renew, now: now + 31 });
+  assert.equal(tries, 2);
 });

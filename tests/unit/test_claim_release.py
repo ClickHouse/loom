@@ -164,3 +164,7 @@ def test_a_release_ends_the_tokens_of_the_bots_and_agent_it_reached(monkeypatch)
     row = {"tags": ["machine:fleet"], "owner_email": "sa:fleet:a1"}
     asyncio.run(cr._forget_machines("acme", "fleet-a1", row, "root", ch=None))
     assert ended == ["sa:triage", "sa:fleet:a1"]
+    ended.clear()
+    forged = {"tags": ["machine:fleet"], "owner_email": "lee"}  # a person's, marked by hand
+    asyncio.run(cr._forget_machines("acme", "lee", forged, "root", ch=None))
+    assert ended == ["sa:triage"]  # never the person's own sessions

@@ -162,7 +162,10 @@ with more than one admin, registered first, in one org); its tokens are for
   reachable from Loom. A token that lives minutes is fine: Loom's never
   outlives it, and the SDK and the coding-agent plugins renew halfway through.
   Instead of the agent holding its token, a proxy in front of it can make the
-  same exchange and add the `Authorization` header itself.
+  same exchange and add the `Authorization` header itself. An exchange may
+  leave out `client_id` (RFC 8693 does not require it): Loom then takes the one
+  active trust of the token's issuer whose audience and claims it meets, and
+  refuses a token that meets none or several.
 
   Disabling the trust ends every agent's token; `loom revoke-token --subject
 sa:fleet:<agent>` ends one agent's, and `loom claim-release` frees its

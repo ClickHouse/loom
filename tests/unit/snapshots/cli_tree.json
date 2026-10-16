@@ -8891,7 +8891,7 @@
            "nargs": null,
            "type": null,
            "required": false,
-           "help": "CI trust: the claim naming the agent (e.g. sub); each agent gets its own subject and namespace, made on its first sign-in",
+           "help": "CI trust: the claim naming the agent (e.g. agent_id); each agent gets its own subject and namespace, made on its first sign-in",
            "metavar": "CLAIM"
           },
           {

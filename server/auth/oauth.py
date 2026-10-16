@@ -1412,7 +1412,11 @@ async def _token_exchange_grant(f: dict[str, str]) -> dict[str, Any]:
     since = int(time.time())  # before the bot is read: see _machine_tokens
     agent = own = ""
     try:
-        m, proof = await machines.verify_workload(token, f.get("client_id", ""))
+        client_id = f.get("client_id", "")
+        if client_id:
+            m, proof = await machines.verify_workload(token, client_id)
+        else:
+            m, proof = await machines.verify_any_workload(token)
         if m["agent_claim"]:
             agent = agents.agent_of(m, proof)
             owner = str(proof.get(m["owner_claim"], "")) if m["owner_claim"] else ""

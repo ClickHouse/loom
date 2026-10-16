@@ -121,13 +121,16 @@ async def forget_namespace(org: str, namespace: str, by: str, *, ch: Any = None)
             "AND arrayExists(r -> r.1 = {ns:String}, ns_roles)",
             params={"org": org, "ns": namespace},
         )
+    from server.auth.grant_claims import bot_change
+
     changed = []
     for r in rows:
-        m = await get(r["name"], ch=ch)
-        if m is not None:
-            m["ns_roles"] = [(ns, role) for ns, role in m["ns_roles"] if ns != namespace]
-            await save(m, by=by, ch=ch)
-            changed.append(m["name"])
+        async with bot_change(r["name"]):  # read again under it: a disable or replace may land
+            m = await get(r["name"], ch=ch)
+            if m is not None:
+                m["ns_roles"] = [(ns, role) for ns, role in m["ns_roles"] if ns != namespace]
+                await save(m, by=by, ch=ch)
+                changed.append(m["name"])
     return changed
 
 
@@ -238,6 +241,39 @@ async def verify_workload(token: str, name: str) -> tuple[Machine, dict[str, Any
         if not matches(str(claims.get(claim, "")), want):
             raise Refused("invalid_grant", f"claim {claim!r} does not match the trust")
     return m, claims
+
+
+async def verify_any_workload(token: str) -> tuple[Machine, dict[str, Any]]:
+    """`verify_workload` for an exchange that names no client: the one active
+    trust of the token's issuer whose audience and claims it meets (RFC 8693
+    makes client_id optional; trusts of one issuer differ by their claims)."""
+    try:
+        iss = str(jwt.decode(token, options={"verify_signature": False}).get("iss", ""))
+    except jwt.PyJWTError:
+        raise Refused("invalid_grant", "the subject token is not a JWT") from None
+    with own_write_reads():
+        rows = await get_client().query_all(
+            f"SELECT name FROM {TABLE} FINAL WHERE issuer = {{iss:String}} AND active = 1 "
+            "ORDER BY name",
+            params={"iss": iss},
+        )
+    met: list[tuple[Machine, dict[str, Any]]] = []
+    refusal = Refused("invalid_grant", "no trust of this issuer takes the subject token")
+    for r in rows:
+        try:
+            met.append(await verify_workload(token, r["name"]))
+        except Refused as e:
+            if e.error == "temporarily_unavailable":
+                raise
+            refusal = e
+    if len(met) > 1:
+        names = ", ".join(m["name"] for m, _ in met)
+        raise Refused(
+            "invalid_request", f"the subject token meets several trusts ({names}); name one"
+        )
+    if not met:
+        raise refusal
+    return met[0]
 
 
 def matches(value: str, want: str) -> bool:

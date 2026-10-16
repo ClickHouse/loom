@@ -463,3 +463,121 @@ def test_a_trust_with_its_keys_address_skips_discovery(bots, monkeypatch) -> Non
     monkeypatch.setattr(oidc, "signing_key", signing_key)
     r = _exchange(TestClient(oauth_app()), _ci_token(bots, agent_id="a1"), client_id="fleet")
     assert r.status_code == 200 and fetched == ["https://keys.example/jwks.json"]
+
+
+def test_a_release_rewrites_each_bot_under_its_claim(monkeypatch) -> None:
+    # A disable or replace landing between the read and the save must not be
+    # written back over (a disabled bot saved active again).
+    from contextlib import asynccontextmanager
+
+    from server.auth import grant_claims
+
+    steps: list[str] = []
+    bot = {"name": "triage", "ns_roles": [("team-a", "writer"), ("team-b", "viewer")]}
+
+    class _CH:
+        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+            return [{"name": "triage"}]
+
+    @asynccontextmanager
+    async def held(name: str) -> Any:
+        steps.append(f"hold {name}")
+        yield
+        steps.append(f"release {name}")
+
+    async def get(name: str, **kw: Any) -> Any:
+        steps.append("read")
+        return dict(bot)
+
+    async def save(m: Any, **kw: Any) -> None:
+        steps.append(f"write {m['ns_roles']}")
+
+    monkeypatch.setattr(grant_claims, "bot_change", held)
+    monkeypatch.setattr(machines, "get", get)
+    monkeypatch.setattr(machines, "save", save)
+    names = asyncio.run(machines.forget_namespace("acme", "team-a", "root", ch=_CH()))
+    assert names == ["triage"]
+    assert steps == ["hold triage", "read", "write [('team-b', 'viewer')]", "release triage"]
+
+
+def test_a_control_planes_per_agent_token_is_taken_as_issued(bots, monkeypatch) -> None:
+    # The shape a control plane signs per agent: ES256, sub naming tenant and
+    # agent, UUID claims, a budget object Loom ignores, five minutes of life,
+    # and keys published at their own address.
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    issuer, tenant, agent = (
+        "https://cp.example/workload-identity",
+        str(uuid.uuid4()),
+        str(uuid.uuid4()),
+    )
+    key = ec.generate_private_key(ec.SECP256R1())
+    bots["registered"]["tenant-a"] = {
+        "name": "tenant-a",
+        "org": "acme",
+        "ns_roles": [],
+        "public_keys": "",
+        "issuer": issuer,
+        "audience": "loom-dev",
+        "claims": {"tenant_id": tenant},
+        "agent_claim": "agent_id",
+        "owner_claim": "",
+        "jwks_uri": "https://keys.example/jwks.json",
+    }
+    monkeypatch.setattr(oidc, "signing_key", lambda uri, token: key.public_key())
+    now = int(time.time())
+    claims = {
+        "iss": issuer,
+        "sub": f"tenants/{tenant}/agents/{agent}",
+        "aud": "loom-dev",
+        "tenant_id": tenant,
+        "agent_id": agent,
+        "budgets": {"agent": "1000000000000"},
+        "jti": uuid.uuid4().hex,
+        "iat": now,
+        "exp": now + 300,
+    }
+    token = pyjwt.encode(claims, key, algorithm="ES256", headers={"kid": "workload-2026-10"})
+    r = _exchange(TestClient(oauth_app()), token, client_id="tenant-a")
+    assert r.status_code == 200, r.text
+    issued = pyjwt.decode(r.json()["access_token"], options={"verify_signature": False})
+    assert issued["sub"] == f"sa:tenant-a:{agent}"
+    assert issued["ns_roles"] == {f"tenant-a-{agent}": "writer"}
+    assert 240 <= r.json()["expires_in"] <= 300  # never past the workload token
+    other = pyjwt.encode({**claims, "tenant_id": str(uuid.uuid4())}, key, algorithm="ES256")
+    assert _exchange(TestClient(oauth_app()), other, client_id="tenant-a").status_code == 400
+
+
+def test_an_exchange_naming_no_client_finds_its_trust_by_issuer_and_claims(
+    bots, monkeypatch
+) -> None:
+    # A client that sends only the grant, the subject token and its type.
+    async def names_of(sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+        return [{"name": n} for n, m in bots["registered"].items() if m["issuer"] == params["iss"]]
+
+    class _CH:
+        query_all = staticmethod(names_of)
+
+    monkeypatch.setattr(machines, "get_client", lambda: _CH())
+    c = TestClient(oauth_app())
+
+    def exchange(token: str) -> Any:
+        return c.post(
+            "/oauth/token",
+            data={
+                "grant_type": machines.TOKEN_EXCHANGE,
+                "subject_token": token,
+                "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+                "scope": "anything",  # what a generic exchanger may add; ignored
+            },
+        )
+
+    # Both CI trusts are on one issuer; only `fleet` takes a token with agent_id.
+    del bots["registered"]["deploy"]
+    r = exchange(_ci_token(bots, agent_id="a1"))
+    assert r.status_code == 200, r.text
+    claims = pyjwt.decode(r.json()["access_token"], options={"verify_signature": False})
+    assert claims["sub"] == "sa:fleet:a1"
+    bots["registered"]["fleet2"] = {**bots["registered"]["fleet"], "name": "fleet2"}
+    r = exchange(_ci_token(bots, agent_id="a1"))
+    assert r.status_code == 400 and "several trusts" in r.json()["error_description"]

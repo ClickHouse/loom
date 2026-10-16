@@ -71,7 +71,7 @@ def register_bot_cli(sub: Any) -> None:
         "--agent-claim",
         default="",
         metavar="CLAIM",
-        help="CI trust: the claim naming the agent (e.g. sub); each agent gets its own "
+        help="CI trust: the claim naming the agent (e.g. agent_id); each agent gets its own "
         "subject and namespace, made on its first sign-in",
     )
     p_create.add_argument(

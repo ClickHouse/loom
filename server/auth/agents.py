@@ -32,9 +32,13 @@ def namespace(trust: str, agent: str) -> str:
     return f"{trust}-{agent}"
 
 
+TAG_PREFIX = "machine:"
+
+
 def tag(trust: str) -> str:
-    """Marks a namespace this trust made: the only kind its agents reach."""
-    return f"machine:{trust}"
+    """Marks a namespace this trust made: the only kind its agents reach. Only
+    the trust sets it; `namespace.register` keeps a caller from giving it."""
+    return TAG_PREFIX + trust
 
 
 def agent_of(m: machines.Machine, claims: dict[str, Any]) -> str:
@@ -50,32 +54,37 @@ def agent_of(m: machines.Machine, claims: dict[str, Any]) -> str:
 
 async def ensure_namespace(m: machines.Machine, agent: str, owner_email: str) -> str:
     """The agent's namespace, made on its first exchange. Held as a release
-    holds it, so two first exchanges make one, and one released since is not
-    made again under the agent."""
-    from server.auth.self_signup import provision_account
+    holds it (its reads are sequential under the claim), so two first
+    exchanges make one, and one released since is not made again."""
+    from server.auth.self_signup import insert_owner_grant, provision_account
 
-    org, ns = m["org"], namespace(m["name"], agent)
+    org, ns, who = m["org"], namespace(m["name"], agent), subject(m["name"], agent)
+    owner = await _owner(org, owner_email)  # before the row: it names no email
     async with account_change(org, ns):
         row = await get_client().query_one(
-            "SELECT active, tags FROM loom.namespaces FINAL "
+            "SELECT active, tags, owner_email FROM loom.namespaces FINAL "
             "WHERE org = {org:String} AND namespace = {ns:String}",
             params={"org": org, "ns": ns},
         )
         if row is not None:
-            if tag(m["name"]) not in row["tags"]:
+            # Only the trust provisions its tag (a caller's is dropped at
+            # register), and only for the agent it names.
+            if tag(m["name"]) not in row["tags"] or row["owner_email"] != who:
                 raise machines.Refused("invalid_grant", f"{org}/{ns} is not this trust's")
             if not row["active"]:
                 raise machines.Refused("invalid_grant", f"{org}/{ns} was released")
             return ns
+        # No contact email: a sign-in by email must never resolve to an agent.
         await provision_account(
             org=org,
             namespace=ns,
-            subject=subject(m["name"], agent),
-            contact_email=owner_email,
+            subject=who,
+            contact_email="",
             description=f"Agent {agent} of {m['name']}.",
             tags=[tag(m["name"])],
         )
-        await _grant_owner(org, ns, owner_email)
+        if owner:
+            await insert_owner_grant(org, ns, owner)
     from server.observability import audit
 
     await audit.emit(
@@ -88,14 +97,12 @@ async def ensure_namespace(m: machines.Machine, agent: str, owner_email: str) ->
     return ns
 
 
-async def _grant_owner(org: str, ns: str, owner_email: str) -> None:
-    """The owner the trust vouches for reads and runs their agent's memory, when
-    they have an account in the org."""
+async def _owner(org: str, owner_email: str) -> str:
+    """The subject of the owner the trust vouches for, when they have an account
+    in the org: they get admin on their agent's namespace. '' otherwise."""
     from server.auth.login import resolve_identity_for_email
-    from server.auth.self_signup import insert_owner_grant
 
     if not owner_email:
-        return
+        return ""
     person = await resolve_identity_for_email(owner_email)
-    if person is not None and person[1] == org:
-        await insert_owner_grant(org, ns, person[0])
+    return person[0] if person is not None and person[1] == org else ""

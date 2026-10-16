@@ -253,9 +253,12 @@ reach the hooks as `CLAUDE_PLUGIN_OPTION_<KEY>`: `server_url` and `token`
 An agent with no Loom token of its own sets `LOOM_CLIENT_ID` (a workload trust,
 `loom bot create --agent-claim`) and `LOOM_WORKLOAD_TOKEN` or
 `LOOM_WORKLOAD_TOKEN_FILE` (the OIDC token its control plane issued it). Right
-after `LOOM_API_KEY`, the hooks and the MCP headers helper then use the hour-long
-token `bin/loom-agent-token.mjs` exchanges it for (RFC 8693), saved 0600 in
-~/.loom/agent-token.json and renewed five minutes before it runs out.
+after `LOOM_API_KEY`, the hooks and the MCP headers helper then use the token
+`bin/loom-agent-token.mjs` exchanges it for (RFC 8693), which never outlives the
+workload token: saved 0600 in ~/.loom/agent-token-<agent>.json, one per agent,
+renewed halfway through its life, and not retried for 30 s after a failed
+renewal. Use the file form for a workload token that lives minutes and is
+rotated: one in `LOOM_WORKLOAD_TOKEN` serves only until it expires.
 
 Switches read on/true/1/yes and off/false/0/no. Defaults in parentheses.
 
