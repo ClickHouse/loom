@@ -273,7 +273,7 @@ export function Sidebar() {
   // backend op just leaves its badge hidden. Only for a known admin of this
   // namespace: otherwise a viewer-only token draws AUTH_INSUFFICIENT 403s on every page
   // load, and a token-only principal through the fail-open gate. Each call also passes
-  // `canCall` so the rule lives in one place. The three reads leave AFTER the page's
+  // `canCall` so the rule lives in one place. The reads leave AFTER the page's
   // first paint, on idle — a badge number is not what the person is waiting for — and the
   // last answer is remembered for the session, so a full reload shows the badges at once
   // from it and refreshes them behind.

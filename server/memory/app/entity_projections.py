@@ -631,8 +631,7 @@ async def _after_the_close(
     # On the fly: the closes just made are mutations that may still be pending.
     rows = await ch.query_all(
         """
-        SELECT subject, relation, object, valid_from, valid_to, invalid_at, seen_at,
-               adapter_name, restore_id
+        SELECT subject, relation, object, valid_from, valid_to, invalid_at, seen_at
         FROM loom.entity_triples
         WHERE org = {org:String} AND namespace = {ns:String}
           AND ((subject IN {names:Array(String)} AND object IN {names:Array(String)})

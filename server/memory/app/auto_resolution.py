@@ -13,9 +13,6 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 from server.memory.app.projection_failures import queue_status_mirror
-
-# The statuses a retirement may move to `superseded` (the live ones); any other row is
-# already retired (or tombstoned, rejected, proposed) and is left as it is.
 from server.memory.domain.temporal_sql import LIVE_STATUSES
 
 if TYPE_CHECKING:
@@ -80,6 +77,8 @@ class RetirementTracker:
         self.unconfirmed_ids: set[str] = set()
 
     def skip(self, row: MemoryRow) -> bool:
+        # Only a live row moves to `superseded`; any other is already retired (or
+        # tombstoned, rejected, proposed) and is left as it is.
         if row.status not in LIVE_STATUSES:
             return True
         # A pin is a write-time invariant: nothing automatic retires a pinned row.
