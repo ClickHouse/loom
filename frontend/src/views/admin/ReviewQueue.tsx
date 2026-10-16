@@ -507,8 +507,11 @@ function AutoResolvedPanel() {
           setRows(r.rows || []);
           setCursor(r.next_cursor);
         })
-        .catch(() => {
-          if (live()) setRows([]);
+        .catch((e) => {
+          if (!live()) return;
+          setRows([]);
+          // The tab showed because a row exists, so an empty list here would mislead.
+          toast(`Failed: ${humanizeError(e)}`, "error");
         });
     },
     [identity.org, identity.namespace],
