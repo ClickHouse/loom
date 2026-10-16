@@ -21,7 +21,6 @@ import time
 import uuid
 from collections.abc import AsyncGenerator, Generator
 from pathlib import Path
-from typing import Any
 
 import httpx
 
@@ -73,9 +72,10 @@ class MachineLogin(httpx.Auth):
                     # a short-lived CI proof capped.
                     life = self._expires_at - time.time()
                     self._renew_at = self._expires_at - min(_RENEW_BEFORE_S, life / 2)
-                except (AuthInvalid, httpx.HTTPError, OSError):
-                    # The CI token ran out or Loom is unreachable: the token in
-                    # hand is good until it runs out, and the next try waits a bit.
+                except (AuthInvalid, httpx.HTTPError, OSError, ValueError):
+                    # The CI token ran out, Loom is unreachable, a key file is
+                    # mid-rotation: the token in hand is good until it runs out,
+                    # and the next try waits a bit.
                     if self._token == refused or time.time() >= self._expires_at:
                         raise
                     self._renew_at = min(self._expires_at, time.time() + 30)
@@ -98,10 +98,13 @@ class MachineLogin(httpx.Auth):
                 "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
             }
         r = httpx.post(endpoint, data=form, timeout=30.0)
-        body: dict[str, Any] = (
-            r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
-        )
-        if r.status_code != 200:
+        try:
+            body = r.json()
+        except ValueError:
+            body = {}  # a proxy's page, not Loom's answer
+        if not isinstance(body, dict):
+            body = {}
+        if r.status_code != 200 or "access_token" not in body:
             raise AuthInvalid(
                 f"bot {self.profile!r}: {body.get('error', r.status_code)} "
                 f"{body.get('error_description', '')}".strip()

@@ -94,22 +94,19 @@ def _cmd_create(args: argparse.Namespace) -> int:
 
     async def _run(ch: Any) -> int:
         if args.generate_key:
-            # Never over an existing file, and gone again if the bot is not saved.
+            # Never over an existing file, and gone again if the bot is refused.
             try:
                 fd = os.open(args.generate_key, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             except OSError as e:
                 return _fail(str(e))
             with os.fdopen(fd, "wb") as f:
                 f.write(private)
-        saved = False
         try:
             await account_admin.create_bot(bot, by=f"cli:{getpass.getuser()}", replace=args.replace)
-            saved = True
-        except ValueError as e:
-            return _fail(str(e))
-        finally:
-            if args.generate_key and not saved:
+        except ValueError as e:  # refused before anything was saved
+            if args.generate_key:
                 os.remove(args.generate_key)
+            return _fail(str(e))
         print(f"bot {args.name}: tokens for {machines.subject(args.name)} in {args.org}")
         if bot["public_keys"]:
             key_file = args.generate_key or "<its private key>"

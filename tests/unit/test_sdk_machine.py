@@ -170,3 +170,18 @@ def test_a_renewal_lost_to_the_network_keeps_the_token_and_waits(monkeypatch) ->
     login._renew_at = 0  # due for renewal, with the token still good
     assert [login.token() for _ in range(5)] == ["t1"] * 5
     assert len(calls) == 2  # one failed renewal, then it waits
+
+
+def test_a_page_that_is_not_loom_keeps_the_token_in_hand(monkeypatch) -> None:
+    answers = [
+        httpx.Response(200, json={"access_token": "t1", "expires_in": 3600}),
+        httpx.Response(200, text="<html>maintenance</html>"),
+        httpx.Response(502, text="{not json", headers={"content-type": "application/json"}),
+    ]
+    monkeypatch.setattr(machine.httpx, "post", lambda *a, **k: answers.pop(0))
+    monkeypatch.setenv("LOOM_WORKLOAD_TOKEN", "ci")
+    login = machine.MachineLogin("https://loom.example", "deploy")
+    login.token()
+    for _ in range(2):
+        login._renew_at = 0
+        assert login.token() == "t1"

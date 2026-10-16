@@ -4,13 +4,17 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import re
+import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from server.auth import machines, revocation, sso_links
-from server.core.naming import validate_namespace_name
 from server.observability import audit
+
+log = logging.getLogger(__name__)
 
 _BOT_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
 
@@ -145,14 +149,11 @@ def bot_from(
     for item in namespace_roles:
         ns, sep, role = item.partition("=")
         ns, role = ns.strip(), role.strip().lower()
-        try:
-            ns = validate_namespace_name(ns)  # a name, never the `*` of every namespace
-        except ValueError:
-            sep = ""
         if not sep or role not in GRANT_ROLES:
-            raise ValueError(
-                f"a namespace role is NS=viewer|writer|admin on one namespace, got {item!r}"
-            )
+            raise ValueError(f"a namespace role is NS=viewer|writer|admin, got {item!r}")
+        # One namespace, never the `*` of all of them; create_bot checks it exists.
+        if not ns or "*" in ns or "," in ns or any(c.isspace() for c in ns):
+            raise ValueError(f"a namespace role names one namespace, got {item!r}")
         ns_roles[ns] = role
     if not ns_roles:
         raise ValueError("a bot needs at least one namespace role")
@@ -195,17 +196,23 @@ async def create_bot(bot: machines.Machine, *, by: str, replace: bool) -> None:
     existing = await machines.get(name)
     if existing is not None and not replace:
         raise ValueError(f"bot {name!r} exists; replace it to change it")
-    await machines.save(bot, by=by)
     if existing is not None:
-        # Tokens from its old key or wider roles end now, not within the hour.
-        await _end_tokens(name, by=by, reason="bot replaced")
-    await audit.emit(
-        "auth.machine_created",
-        org=bot["org"],
-        namespace="-",
-        actor=by,
-        subject={"name": bot["name"], "key": bool(bot["public_keys"]), "issuer": bot["issuer"]},
-    )
+        # Tokens from its old key or wider roles end now, not within the hour;
+        # saved once that cutoff has passed, so the new key's first token lives.
+        cutoff = await _end_tokens(name, by=by, reason="bot replaced")
+        await asyncio.sleep(max(0.0, cutoff.timestamp() - time.time()))
+    # The last step that may fail: once it lands, the bot (and its key) stands.
+    await machines.save(bot, by=by)
+    try:
+        await audit.emit(
+            "auth.machine_created",
+            org=org,
+            namespace="-",
+            actor=by,
+            subject={"name": name, "key": bool(bot["public_keys"]), "issuer": bot["issuer"]},
+        )
+    except Exception as e:  # noqa: BLE001 — the bot is saved; its caller must keep the key
+        log.warning("bot %s saved, but its audit row was not: %s", name, e)
 
 
 async def disable_bot(name: str, *, by: str) -> bool:
@@ -221,9 +228,10 @@ async def disable_bot(name: str, *, by: str) -> bool:
     return True
 
 
-async def _end_tokens(name: str, *, by: str, reason: str) -> None:
+async def _end_tokens(name: str, *, by: str, reason: str) -> datetime:
     """Its tokens live an hour; revoked now, not when they run out (unless
-    revoked outright already, which a cutoff must not weaken)."""
-    subject = machines.subject(name)
+    revoked outright already, which a cutoff must not weaken). Returns the cutoff."""
+    subject, cutoff = machines.subject(name), _from_now_on()
     if not await revocation.revoked_outright(subject):
-        await revocation.revoke(subject, issued_before=_from_now_on(), reason=reason, revoked_by=by)
+        await revocation.revoke(subject, issued_before=cutoff, reason=reason, revoked_by=by)
+    return cutoff

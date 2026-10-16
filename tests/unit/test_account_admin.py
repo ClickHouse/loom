@@ -29,6 +29,14 @@ def test_a_bot_is_one_orgs_on_named_namespaces(org: str, roles: list[str]) -> No
         account_admin.bot_from(name="b", org=org, namespace_roles=roles, public_key_pem=_KEY)
 
 
+@pytest.mark.parametrize("ns", ["acme.prod", "Team_A", "u-lee-1a2b3c4d"])
+def test_any_registered_namespace_name_will_do(ns: str) -> None:
+    bot = account_admin.bot_from(
+        name="b", org="acme", namespace_roles=[f"{ns}=writer"], public_key_pem=_KEY
+    )
+    assert bot["ns_roles"] == [(ns, "writer")]
+
+
 def test_a_trust_issuer_is_kept_as_given_slash_and_all() -> None:
     # Some issuers' `iss` ends in a slash, and a token's `iss` is compared exactly.
     bot = account_admin.bot_from(
