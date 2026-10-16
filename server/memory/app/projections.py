@@ -981,6 +981,37 @@ async def end_triples_now(
     _graph_marks().note_write(org, namespace)
 
 
+async def end_edges_now(ch: Any, *, org: str, namespace: str, pairs: list[tuple[str, str]]) -> None:
+    """End now the edges of `pairs` still valid now or later, as `end_triples_now`
+    ends their triples. No `invalid_at`: the edge walk never walks a retired edge, and
+    the fact did hold until now. One read, and an UPDATE only when one is found."""
+    if not pairs:
+        return
+    now = naive_utc_now().replace(microsecond=0)
+    params = {"org": org, "ns": namespace, "pairs": pairs, "now": now}
+    where = """org = {org:String} AND namespace = {ns:String}
+          AND (entity_a, entity_b) IN {pairs:Array(Tuple(String, String))}
+          AND invalid_at IS NULL AND (valid_to IS NULL OR valid_to > {now:DateTime})"""
+    found = await ch.query_all(
+        f"SELECT 1 FROM loom.entity_edges WHERE {where} LIMIT 1"
+        " SETTINGS select_sequential_consistency = 1",
+        params=params,
+    )
+    if not found:
+        return
+    await ch.execute(
+        f"""
+        ALTER TABLE loom.entity_edges
+        UPDATE valid_to = greatest({{now:DateTime}}, ifNull(valid_from, {{now:DateTime}}))
+        WHERE {where}
+        """,
+        params=params,
+    )
+    from server.memory.app.graph_write_marks import marks as _graph_marks
+
+    _graph_marks().note_write(org, namespace)
+
+
 async def open_triples_among(
     ch: Any, *, org: str, namespace: str, triples: list[tuple[str, str, str]]
 ) -> set[tuple[str, str, str]]:

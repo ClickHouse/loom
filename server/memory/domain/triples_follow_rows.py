@@ -32,7 +32,11 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, NamedTuple
 
-from server.memory.domain.graph_quality import SELF_SUBJECT, is_single_valued_relation
+from server.memory.domain.graph_quality import (
+    SELF_SUBJECT,
+    canonical_edge_pair,
+    is_single_valued_relation,
+)
 from server.memory.domain.triple_provenance import FACET
 
 Triple = tuple[str, str, str]
@@ -646,3 +650,10 @@ def merge_plans(plans: list[FollowPlan], kept: frozenset[Triple] = frozenset()) 
                 written.add((ins.triple, ins.memory_key, ins.memory_id))
                 inserts.append(ins)
     return FollowPlan(closes=closes, inserts=inserts, closed_at=closed_at, kept=all_kept)
+
+
+def edges_no_row_holds(gone: list[Triple], held: frozenset[Triple]) -> list[tuple[str, str]]:
+    """The edges of the `gone` triples that no `held` triple keeps. An edge is just a
+    pair of entities, so "works in London" keeps the edge "lives in London" dropped."""
+    kept = {canonical_edge_pair(s, o) for s, _r, o in held}
+    return sorted({canonical_edge_pair(s, o) for s, _r, o in gone} - kept)

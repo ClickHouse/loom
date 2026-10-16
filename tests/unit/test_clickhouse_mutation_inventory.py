@@ -19,7 +19,9 @@ _MUTATION_RE = re.compile(
 # the inventory honest without trying to parse Python string concatenation.
 _EXPECTED_MUTATIONS = Counter(
     {
-        ("server/memory/app/projections.py", "entity_edges", "UPDATE"): 1,
+        # The contradiction repair's edge close, and end_edges_now, which ends a
+        # dropped fact's edge with its triple (only when no live row keeps the pair).
+        ("server/memory/app/projections.py", "entity_edges", "UPDATE"): 2,
         # One folded UPDATE per table per write (close_triples serves
         # both the deterministic repair and the LLM judgement), and
         # reopen_triples, which undoes a follow's close for a triple a row

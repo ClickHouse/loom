@@ -788,3 +788,11 @@ def test_a_name_with_a_comma_or_a_dot_is_one_clause(text, triple) -> None:
     assert tfr._says_in_one_clause(text, triple)
     assert tfr.restates(text, text, triple)
     assert tfr._still_says(tfr.RowSupersession(loser_text=text, winner_text=text), triple)
+
+
+def test_a_dropped_fact_closes_its_edge_unless_another_fact_of_the_pair_is_held() -> None:
+    gone = [("user", "live_in", "london"), ("user", "live_in", "rome")]
+    held = frozenset({("user", "work_in", "london"), ("user", "live_in", "paris")})
+    assert tfr.edges_no_row_holds(gone, held) == [("rome", "user")]
+    assert tfr.edges_no_row_holds(gone, frozenset()) == [("london", "user"), ("rome", "user")]
+    assert tfr.edges_no_row_holds([], held) == []

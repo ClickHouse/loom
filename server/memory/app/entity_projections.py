@@ -24,6 +24,7 @@ from server.memory.app.projection_errors import (
 from server.memory.app.projection_failures import TRIPLES_RECONCILE, TRIPLES_REOPEN
 from server.memory.app.projections import (
     close_triples,
+    end_edges_now,
     end_triples_now,
     entity_triple_row,
     open_triples_among,
@@ -536,9 +537,32 @@ async def close_dropped_facts(input: Any, ids: list[str], *, ch: Any) -> None:
     if opened:
         await _write_follow_plan(input, tfr.FollowPlan(closes=sorted(opened), inserts=[]), ch=ch)
     await end_triples_now(ch, org=input.org, namespace=input.namespace, triples=gone)
+    await _close_dropped_edges(input, gone, ch=ch)
     # Checked for every value the rows no longer keep, closed now or before: a replay
     # finds the close landed and must still check.
     await _keep_one_current(input, gone, ch=ch)
+
+
+async def _close_dropped_edges(input: Any, gone: list[tfr.Triple], *, ch: Any) -> None:
+    """End the edges of the `gone` facts too, unless a live row still holds another
+    fact between the same two entities."""
+    if not gone:
+        return
+    names = sorted({e for s, _r, o in gone for e in (s, o)})
+    rows = await ch.query_all(
+        """
+        SELECT DISTINCT subject, relation, object
+        FROM loom.entity_triples
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND subject IN {names:Array(String)} AND object IN {names:Array(String)}
+        SETTINGS select_sequential_consistency = 1
+        """,
+        params={"org": input.org, "ns": input.namespace, "names": names},
+    )
+    same_pairs = [(str(r["subject"]), str(r["relation"]), str(r["object"])) for r in rows]
+    held = await stated_by_live_rows(input.org, input.namespace, same_pairs, ch=ch)
+    pairs = tfr.edges_no_row_holds(gone, held)
+    await end_edges_now(ch, org=input.org, namespace=input.namespace, pairs=pairs)
 
 
 async def _keep_one_current(input: Any, values: list[tfr.Triple], *, ch: Any) -> None:

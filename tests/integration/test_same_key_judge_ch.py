@@ -3373,7 +3373,8 @@ async def test_a_recovered_value_starts_at_the_revision_and_walks_on_both_planes
     await _revise("memory.update_by_id", org, london, "I like Rome")
     await _mutations_done(ch, org)
     assert await _walked(org, ["paris"], labeled=True) == ["paris"]
-    assert "paris" in await _walked(org, ["paris"], labeled=False)
+    # London's edge ends with its triple: no live row states it.
+    assert await _walked(org, ["paris"], labeled=False) == ["paris"]
     assert await _walked(org, ["london"], labeled=True, as_of=between) == ["london"]
     assert await _walked(org, ["london"], labeled=False, as_of=between) == ["london"]
 

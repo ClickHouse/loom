@@ -333,7 +333,9 @@ the value it was written or stated for (`carried`):
   and an Undo of a retirement opens again those the restored row's current value holds
   by the same rule (another row's claim keeps a fact from closing, but never reopens
   one); either, when it fails, is recorded for `projection_repair` as
-  `triples_reconcile`. A dropped fact still valid later ("until Dec 1") ends now. When
+  `triples_reconcile`. A dropped fact still valid later ("until Dec 1") ends now. Its
+  edge ends with it, unless a live row still holds another fact between the same two
+  entities; the edge keeps no `invalid_at`, so a walk at an earlier time still finds it. When
   a revision, or a retirement the follow closes, leaves a single-valued relation of the
   row with no value valid now (a value a close ended later does not count), the newest
   value a live row still holds and a close ended is stated again from now, as an Undo
