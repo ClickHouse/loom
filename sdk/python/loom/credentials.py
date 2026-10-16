@@ -352,6 +352,11 @@ def _refresh(profile: str, refused: str, server: str | None) -> dict[str, Any]:
             # (A lost answer cannot be asked again: the server spent the token,
             # and presenting it twice ends the session.)
             r = client.post(endpoint, data=form, timeout=_REFRESH_TIMEOUT_S)
+        if r.status_code == 400 and _oauth_error(r) == "invalid_grant":
+            # Once more before giving the session up: during a rolling upgrade
+            # the answer may be a previous build's, which knows no session. A
+            # session that did end answers the same again.
+            r = client.post(endpoint, data=form, timeout=_REFRESH_TIMEOUT_S)
     if r.status_code == 400 and _oauth_error(r) == "invalid_grant":
         _drop(profile)
         why = _oauth_description(r)

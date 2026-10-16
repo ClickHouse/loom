@@ -151,12 +151,14 @@ class OpenAILLMClient:
         # single attempt would under-report latency by up to 4x.
         from server.observability.genai import generation_span
         from server.observability.provider_health import recording
+        from server.settings import settings
 
         with generation_span(provider=self.provider, model=self.model) as _gen:
             # A failure after the retries (or a non-retryable one, or an
             # unreadable answer) marks the provider failing for /v1/health.
             with recording("openai:chat"):
-                bearer = await gateway.bearer(self._api_key)  # a gateway outage is the provider's
+                url = f"{settings.openai_base_url.rstrip('/')}/chat/completions"
+                bearer = await gateway.bearer(self._api_key, url)  # an outage is the provider's
                 headers = {"Authorization": f"Bearer {bearer}", "Content-Type": "application/json"}
                 async for attempt in retrying():
                     with attempt:

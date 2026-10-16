@@ -19,7 +19,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
-from server.auth import claims, oauth, oidc
+from server.auth import attempts, claims, oauth, oidc
 from server.auth.attempts import Attempts, address_key, client_address
 from server.auth.jwt import new_jti
 from server.auth.oauth_store import CodeReplayed, Device, token_id
@@ -44,6 +44,31 @@ _wrong_codes_by_address = Attempts("device.wrong_code", 10, 900)
 # poll gets `slow_down`. Pacing, not a limit, so it is kept per process.
 _last_polls: OrderedDict[str, float] = OrderedDict()
 _LAST_POLLS_KEPT = 10_000
+
+
+class _TooManyWrong(Exception):
+    pass
+
+
+async def _look_up_counted(code_id: str, key: str) -> Device | None:
+    """The device a typed code names, each lookup counted as a wrong code until
+    it finds one: recorded before the lookup and recounted, so guesses sent at
+    once cannot all pass the first count (as a password check is admitted)."""
+    try:
+        async with attempts.slot():
+            admitted = await attempts.admit([(_wrong_codes_by_address, key)])
+            if admitted is None:
+                raise _TooManyWrong
+            try:
+                device = await oauth.store.device_by_user_code(code_id)
+            except BaseException:
+                await attempts.release(admitted)  # a lookup that failed judged nothing
+                raise
+            if device is not None:
+                await attempts.release(admitted)
+            return device
+    except attempts.Busy as e:
+        raise _TooManyWrong from e
 
 
 def _polled_too_soon(device_id: str) -> bool:
@@ -157,12 +182,12 @@ async def device_sign_in(request: Request) -> Response:
     f = await oauth.form_body(request)
     typed = f.get("user_code", "")
     address = client_address(request)
-    if await _wrong_codes_by_address.blocked(address_key(address)):
-        return _code_form(typed, "Too many wrong codes. Try again later.", 429)
     user_code = normalize_user_code(typed)
-    device = await oauth.store.device_by_user_code(_user_code_id(user_code))
+    try:
+        device = await _look_up_counted(_user_code_id(user_code), address_key(address))
+    except _TooManyWrong:
+        return _code_form(typed, "Too many wrong codes. Try again later.", 429)
     if device is None:
-        await _wrong_codes_by_address.record(address_key(address))
         return _code_form(typed, "That code is wrong or has expired.", 400)
     if device["status"] != "pending":
         return _decided_page(device)

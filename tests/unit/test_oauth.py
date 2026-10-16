@@ -620,7 +620,7 @@ def test_a_read_behind_keeper_is_a_retry_and_a_later_generation_a_replay(monkeyp
     assert key in store.keeper
 
 
-def test_a_spend_abandoned_long_ago_counts_as_spent(monkeypatch) -> None:
+def test_a_spend_abandoned_long_ago_is_taken_over(monkeypatch) -> None:
     from server.auth import claims
 
     rt = _refresh_token_for_alice(_client())
@@ -632,12 +632,9 @@ def test_a_spend_abandoned_long_ago_counts_as_spent(monkeypatch) -> None:
     with pytest.raises(claims.Busy):  # still in time to finish
         asyncio.run(store.take_refresh(rt, "loom-test"))
     monkeypatch.setattr(time, "time", lambda: started + 600)
-    with pytest.raises(oauth.CodeReplayed) as replayed:  # never will: sign in again
-        asyncio.run(store.take_refresh(rt, "loom-test"))
-    assert replayed.value.abandoned  # Loom's loss, not a copy in other hands
+    # It never saved a next token, so none was handed out: the session goes on.
     r = _refresh(_client(), rt)
-    assert r.json()["error"] == "invalid_grant"
-    assert "did not finish" in r.json()["error_description"]
+    assert r.status_code == 200 and r.json()["refresh_token"] != rt
 
 
 def test_an_older_generations_abandoned_spend_seen_by_a_read_behind_is_a_retry(

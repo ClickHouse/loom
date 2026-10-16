@@ -166,6 +166,7 @@ class AnthropicLLMClient:
         payload = _payload(self.model, system, user, max_tokens, temperature)
         from server.observability.genai import generation_span
         from server.observability.provider_health import recording
+        from server.settings import settings
 
         # Span covers the WHOLE retry loop: tenacity retries up to 4
         # attempts and only the last one's usage is returned, so timing a
@@ -175,7 +176,8 @@ class AnthropicLLMClient:
             # Retries exhausted or non-retryable: health reports a
             # configured-but-failing provider. Cancellation is not recorded.
             with recording("anthropic:messages"):
-                key = await gateway.bearer(self._api_key)  # a gateway outage is the provider's
+                root = settings.anthropic_base_url.rstrip("/")
+                key = await gateway.bearer(self._api_key, root)  # an outage is the provider's
                 async for attempt in retrying():
                     with attempt:
                         _gen.note_attempt()

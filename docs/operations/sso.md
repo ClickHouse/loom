@@ -258,6 +258,13 @@ cutoffs: an access token whose session ended still works there for its hour,
 and so do the tokens a bot disable or an adopt cut off. Finish the rollout
 before adopting accounts or relying on a logout or a bot disable.
 
+A sign-in whose steps land on both builds (a code exchanged, an identity
+provider's callback, a device poll) fails and is started again, and a
+refresh the previous build answers is refused: the SDK and `loom login` ask
+once more before giving the session up, which a new build then answers. Roll
+the upgrade quickly so few sign-ins span it: with the Helm chart, a surge of
+the whole replica count at once.
+
 ## Turning SSO off
 
 Set `LOOM_OAUTH_LOGIN_PROVIDER=password` (or remove it) and restart. Password

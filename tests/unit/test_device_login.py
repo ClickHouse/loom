@@ -1470,3 +1470,23 @@ def test_an_approval_whose_code_could_not_be_saved_can_be_submitted_again(
     assert first.status_code == 503 and "submit your choice again" in first.text
     again = c.post("/oauth/authorize/approve", data=approve, follow_redirects=False)
     assert again.status_code == 302 and "code=" in again.headers["location"]
+
+
+def test_wrong_codes_sent_at_once_are_held_to_the_limit(_world, monkeypatch) -> None:
+    # Each guess is counted before its lookup: a burst cannot all pass the
+    # first count and only then be recorded.
+    looked: list[str] = []
+
+    async def lookup(code_id: str) -> None:
+        looked.append(code_id)
+        await asyncio.sleep(0.01)
+
+    monkeypatch.setattr(_world["store"], "device_by_user_code", lookup)
+
+    async def burst() -> list[Any]:
+        guesses = [device._look_up_counted(f"g{i}", "203.0.113.9") for i in range(20)]
+        return await asyncio.gather(*guesses, return_exceptions=True)
+
+    outcomes = asyncio.run(burst())
+    assert len(looked) <= 10
+    assert sum(isinstance(o, device._TooManyWrong) for o in outcomes) >= 10

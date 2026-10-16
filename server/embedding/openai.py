@@ -89,9 +89,10 @@ class OpenAIEmbedder:
     async def _post(self, payload: dict[str, object]) -> dict[str, Any]:
         from server.settings import settings
 
-        bearer = await gateway.bearer(self._api_key)
+        url = f"{settings.openai_base_url.rstrip('/')}/embeddings"
+        bearer = await gateway.bearer(self._api_key, url)
         resp = await _http_client().post(
-            f"{settings.openai_base_url.rstrip('/')}/embeddings",
+            url,
             json=payload,
             headers={"Authorization": f"Bearer {bearer}"},
         )

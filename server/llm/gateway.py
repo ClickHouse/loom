@@ -13,16 +13,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx
 
 from server.settings import settings
+from server.settings._providers import PROVIDER_API_HOSTS
 
 log = logging.getLogger(__name__)
 
 TOKEN_EXCHANGE = "urn:ietf:params:oauth:grant-type:token-exchange"
+_MAX_LIFE_S = 86400
 # Renewed halfway through its life or this long before it runs out, whichever
 # is sooner; on a failed renewal the token in hand serves until it runs out,
 # and the next try waits this long (with no token in hand too).
@@ -44,11 +48,16 @@ def exchanging() -> bool:
     return bool(settings.inference_token_url)
 
 
-async def bearer(provider_key: str) -> str:
-    """What a model call presents: the gateway's token when Loom exchanges
-    its workload's, else the provider key."""
+async def bearer(provider_key: str, url: str) -> str:
+    """What a model call to `url` presents: the gateway's token when Loom
+    exchanges its workload's, else the provider key. A call any path (a model
+    named per request, the dashboard's check) sends to a provider's own API
+    gets no gateway token."""
     if not exchanging():
         return provider_key
+    host = urlsplit(url).hostname
+    if host in PROVIDER_API_HOSTS:
+        raise GatewayUnavailable(f"{host} is not the gateway: point its base URL at the gateway")
     if time.time() < _renew_at and _token:
         return _token
     async with _lock:
@@ -73,11 +82,13 @@ async def _renew() -> None:
         if settings.inference_token_scope:
             form["scope"] = settings.inference_token_scope
         r = await http().post(settings.inference_token_url, data=form, timeout=10.0)
-        body = r.json() if r.content else {}
         if r.status_code != 200:
-            raise ValueError(f"{r.status_code} {body.get('error', '')}".strip())
-        token, life = str(body["access_token"]), float(body.get("expires_in", 900))
-        if life <= 0:
+            raise ValueError(f"{r.status_code} {_error_code(r)}".strip())
+        body = r.json()
+        token, life = body["access_token"], float(body.get("expires_in", 900))
+        if not isinstance(token, str) or not token:
+            raise ValueError("no access_token")
+        if not math.isfinite(life) or not 0 < life <= _MAX_LIFE_S:
             raise ValueError(f"expires_in {life}")
     except (OSError, httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError) as e:
         # The gateway's status and error code, never a token.
@@ -87,6 +98,15 @@ async def _renew() -> None:
     now = time.time()
     _token, _expires_at = token, now + life
     _renew_at = _expires_at - min(_RENEW_BEFORE_S, life / 2)
+
+
+def _error_code(r: httpx.Response) -> str:
+    """The OAuth error code of a refusal; '' for a page that is not one."""
+    try:
+        code = r.json().get("error", "")
+    except (ValueError, AttributeError):
+        return ""
+    return code if isinstance(code, str) else ""
 
 
 def _reset_for_tests() -> None:

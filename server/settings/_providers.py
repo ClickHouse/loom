@@ -15,6 +15,9 @@ from server.settings._models import (
     ModelSettings,
 )
 
+# The providers' own APIs: a gateway's token never goes there (server/llm/gateway.py).
+PROVIDER_API_HOSTS = frozenset({"api.openai.com", "api.anthropic.com"})
+
 # A configured rerank endpoint's name: what a request or a namespace sends instead of a URL.
 RERANK_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 
@@ -218,22 +221,17 @@ class ProviderSettings(ModelSettings):
 
     @model_validator(mode="after")
     def _check_gateway_is_in_front(self) -> ProviderSettings:
-        """The gateway's token is for the gateway: a provider whose calls still
-        go to its own API would be handed it."""
-        from server.core.embedding_space import inferred_provider
-
+        """The gateway's token is for the gateway: any model a request or the
+        dashboard names may be either provider's, so both API roots must point
+        away from the providers' own hosts (the senders refuse them too)."""
         if not self.inference_token_url:
             return self
-        embedder = self.embedding_provider or inferred_provider(self.embedding_model)
-        to_openai = self.openai_base_url == "https://api.openai.com/v1" and (
-            self.llm_provider == "openai" or embedder == "openai"
-        )
-        to_anthropic = self.anthropic_base_url == "https://api.anthropic.com" and (
-            self.llm_provider == "anthropic"
-        )
-        if to_openai or to_anthropic:
-            name = "LOOM_OPENAI_BASE_URL" if to_openai else "LOOM_ANTHROPIC_BASE_URL"
-            raise ValueError(f"LOOM_INFERENCE_TOKEN_URL needs {name} at the gateway")
+        for name, url in (
+            ("LOOM_OPENAI_BASE_URL", self.openai_base_url),
+            ("LOOM_ANTHROPIC_BASE_URL", self.anthropic_base_url),
+        ):
+            if urlsplit(url).hostname in PROVIDER_API_HOSTS:
+                raise ValueError(f"LOOM_INFERENCE_TOKEN_URL needs {name} at the gateway")
         return self
 
     @model_validator(mode="after")

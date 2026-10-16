@@ -311,7 +311,8 @@ token swaps its session's key from that token's generation and id. Of two reques
 presenting it one wins; the other is told to retry, and its retry finds a later generation,
 which proves the token spent: a Keeper read may lag behind but never runs ahead, so nothing
 short of a later generation is taken for a replay. A spend left unfinished for two minutes
-(its process died) counts as spent, at the cost of one sign-in. The guarantee is Keeper's,
+(its process died before saving the next token, so none was handed out) is taken over by
+the next presenter of that token, one of them by compare-and-set. The guarantee is Keeper's,
 not a lease's: no timing or replica lag can let two requests through. Codes and device
 grants are the Keeper value itself; a refresh token's grant is a `loom.oauth_state` row
 written before the token is handed out and read with sequential consistency. Each key

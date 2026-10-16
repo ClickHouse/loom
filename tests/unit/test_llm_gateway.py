@@ -13,6 +13,8 @@ import pytest
 from server.llm import gateway
 from server.settings import Settings, settings
 
+_GW = "https://gateway.example/v1/chat/completions"
+
 
 class _Gateway:
     """The gateway's token endpoint: answers with tokens it numbers, or fails."""
@@ -45,12 +47,12 @@ def gw(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _Gateway:
 
 
 def test_without_an_exchange_the_provider_key_is_the_bearer() -> None:
-    assert asyncio.run(gateway.bearer("sk-provider")) == "sk-provider"
+    assert asyncio.run(gateway.bearer("sk-provider", _GW)) == "sk-provider"
 
 
 def test_the_workload_token_is_exchanged_once_and_reused(gw: _Gateway) -> None:
-    assert asyncio.run(gateway.bearer("")) == "gw-1"
-    assert asyncio.run(gateway.bearer("")) == "gw-1"
+    assert asyncio.run(gateway.bearer("", _GW)) == "gw-1"
+    assert asyncio.run(gateway.bearer("", _GW)) == "gw-1"
     assert gw.sent == [
         {
             "grant_type": gateway.TOKEN_EXCHANGE,
@@ -66,19 +68,21 @@ def test_it_is_renewed_halfway_and_the_old_one_serves_while_the_gateway_is_away(
 ) -> None:
     now = [1000.0]
     monkeypatch.setattr(gateway.time, "time", lambda: now[0])
-    assert asyncio.run(gateway.bearer("")) == "gw-1"  # lives 900 s, renewed 300 s before its end
+    assert (
+        asyncio.run(gateway.bearer("", _GW)) == "gw-1"
+    )  # lives 900 s, renewed 300 s before its end
     now[0] += 601
     gw.down = True
-    assert asyncio.run(gateway.bearer("")) == "gw-1"  # still good: kept, retried later
-    assert asyncio.run(gateway.bearer("")) == "gw-1"
+    assert asyncio.run(gateway.bearer("", _GW)) == "gw-1"  # still good: kept, retried later
+    assert asyncio.run(gateway.bearer("", _GW)) == "gw-1"
     assert len(gw.sent) == 2  # one failed renewal, then it waits
     now[0] += 31
     gw.down = False
-    assert asyncio.run(gateway.bearer("")) == "gw-3"
+    assert asyncio.run(gateway.bearer("", _GW)) == "gw-3"
     now[0] += 900  # gw-3 long gone, and the gateway away again
     gw.down = True
     with pytest.raises(gateway.GatewayUnavailable):
-        asyncio.run(gateway.bearer(""))
+        asyncio.run(gateway.bearer("", _GW))
 
 
 def test_an_unreadable_workload_token_is_an_outage_not_a_crash(
@@ -86,7 +90,7 @@ def test_an_unreadable_workload_token_is_an_outage_not_a_crash(
 ) -> None:
     monkeypatch.setattr(settings, "inference_workload_token_file", "/nonexistent/token")
     with pytest.raises(gateway.GatewayUnavailable):
-        asyncio.run(gateway.bearer(""))
+        asyncio.run(gateway.bearer("", _GW))
     assert gw.sent == []
 
 
@@ -201,17 +205,17 @@ def test_a_gateway_that_refuses_is_asked_again_only_after_a_pause(
     gw.down = True
     for _ in range(3):
         with pytest.raises(gateway.GatewayUnavailable):
-            asyncio.run(gateway.bearer(""))
+            asyncio.run(gateway.bearer("", _GW))
     assert len(gw.sent) == 1
     now[0] += 31
     gw.down = False
-    assert asyncio.run(gateway.bearer("")) == "gw-2"
+    assert asyncio.run(gateway.bearer("", _GW)) == "gw-2"
 
 
 def test_a_token_that_is_already_spent_counts_as_no_token(gw: _Gateway) -> None:
     gw.life = 0
     with pytest.raises(gateway.GatewayUnavailable):
-        asyncio.run(gateway.bearer(""))
+        asyncio.run(gateway.bearer("", _GW))
 
 
 @pytest.mark.parametrize(
@@ -245,3 +249,82 @@ def test_health_does_not_call_an_exchanging_deployment_keyless(gw: _Gateway, mon
     monkeypatch.setattr(settings, "embedding_model", "text-embedding-3-large")
     codes = {p.code for p in collect_problems(settings, HealthState(env={}))}
     assert "llm_key_missing" not in codes and "embedder_key_missing" not in codes
+
+
+@pytest.mark.parametrize(
+    "url", ["https://api.anthropic.com/v1/messages", "https://API.openai.com/v1/embeddings"]
+)
+def test_the_gateway_token_never_goes_to_a_providers_own_api(gw: _Gateway, url: str) -> None:
+    # Whatever path picked the provider: a model named per request, the dashboard's check.
+    with pytest.raises(gateway.GatewayUnavailable, match="not the gateway"):
+        asyncio.run(gateway.bearer("", url))
+    assert gw.sent == []
+
+
+def test_a_claude_model_named_per_request_does_not_take_the_token_to_anthropic(
+    gw: _Gateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.llm import anthropic as anthropic_mod
+
+    recorder = _Recorder({})
+    monkeypatch.setattr(anthropic_mod, "_http_client", lambda: recorder)
+    client = anthropic_mod.AnthropicLLMClient(model="claude-haiku-4-5", api_key="")
+    with pytest.raises(gateway.GatewayUnavailable):
+        asyncio.run(client.complete("s", "u"))
+    assert recorder.calls == []
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        {"LOOM_OPENAI_BASE_URL": "https://gateway.example/v1"},  # Anthropic still its own
+        {
+            "LOOM_OPENAI_BASE_URL": "https://API.openai.com/v1/",
+            "LOOM_ANTHROPIC_BASE_URL": "https://gateway.example",
+        },
+        {
+            "LOOM_OPENAI_BASE_URL": "https://gateway.example/v1",
+            "LOOM_ANTHROPIC_BASE_URL": "https://api.anthropic.com/",
+        },
+    ],
+)
+def test_an_exchange_needs_both_roots_at_the_gateway(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, env: dict[str, str]
+) -> None:
+    token = tmp_path / "token"
+    token.write_text("t")
+    base = {
+        "LOOM_INFERENCE_TOKEN_URL": "https://gateway.example/oauth/token",
+        "LOOM_INFERENCE_WORKLOAD_TOKEN_FILE": str(token),
+    }
+    for name, value in {**base, **env}.items():
+        monkeypatch.setenv(name, value)
+    with pytest.raises(ValueError, match="at the gateway"):
+        Settings(_env_file=None)  # type: ignore[call-arg]
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        httpx.Response(200, content=b'{"access_token": "t", "expires_in": NaN}'),
+        httpx.Response(200, json={"access_token": "t", "expires_in": "Infinity"}),
+        httpx.Response(200, json={"access_token": None, "expires_in": 900}),
+    ],
+)
+def test_a_malformed_token_answer_is_no_token(gw: _Gateway, monkeypatch, answer) -> None:
+    async def post(url: str, **_: Any) -> httpx.Response:
+        return answer
+
+    monkeypatch.setattr(gw, "post", post)
+    with pytest.raises(gateway.GatewayUnavailable):
+        asyncio.run(gateway.bearer("", _GW))
+
+
+def test_a_gateway_error_page_is_logged_with_its_status(gw: _Gateway, monkeypatch, caplog) -> None:
+    async def post(url: str, **_: Any) -> httpx.Response:
+        return httpx.Response(502, text="<html>bad gateway</html>")
+
+    monkeypatch.setattr(gw, "post", post)
+    with pytest.raises(gateway.GatewayUnavailable):
+        asyncio.run(gateway.bearer("", _GW))
+    assert "502" in caplog.text

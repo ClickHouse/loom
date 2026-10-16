@@ -83,11 +83,9 @@ class CodeReplayed(Exception):
     """A single-use code, refresh token or device code was presented after
     it was spent."""
 
-    def __init__(self, grant: Grant | Device, *, abandoned: bool = False) -> None:
+    def __init__(self, grant: Grant | Device) -> None:
         super().__init__("spent credential presented again")
         self.grant = grant
-        # Spent by a refresh that never finished (Loom's failure, not a copy).
-        self.abandoned = abandoned
 
 
 def token_id(token: str) -> str:
@@ -362,12 +360,15 @@ class ClickHouseStore:
         if now is None:
             return None  # the session's key is gone: it has expired
         # A read may lag behind Keeper, never run ahead of it: a later
-        # generation seen is one that was issued, so this token was spent. So
-        # was one whose spend was abandoned: that costs its owner a sign-in.
+        # generation seen is one that was issued, so this token was spent.
         if _generation(now) > generation:
             raise CodeReplayed(grant)
         if _generation(now) == generation and _abandoned(now):
-            raise CodeReplayed(grant, abandoned=True)
+            # Its process died before the next token was saved, so none was
+            # handed out: this token is still the session's. One presenter
+            # takes the spend over.
+            if await self._swap(key, now, spending, grant["exp"]) == spending:
+                return {**grant, "held": {key: spending}}
         raise claims.Busy(f"{key} is being spent")  # or this read is behind: retry
 
     async def retire_refresh(self, g: Grant) -> None:

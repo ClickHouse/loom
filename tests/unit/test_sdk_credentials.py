@@ -465,3 +465,24 @@ def test_signing_in_elsewhere_ends_the_session_it_replaces(server, monkeypatch) 
     credentials._save("default", "https://old.example", old, session="s0")
     credentials.login(_SERVER, open_browser=False, echo=lambda _: None)
     assert ended == [("https://old.example", _SERVER)]  # not left running there for 30 days
+
+
+def test_a_refresh_refused_once_by_a_previous_build_is_asked_again(server) -> None:
+    # A rolling upgrade: the first answer comes from a build that knows no
+    # sessions, the retry from one that does. The session survives.
+    credentials.login(_SERVER, open_browser=False, echo=lambda _: None)
+    server.queued["/oauth/token"] = [
+        httpx.Response(400, json={"detail": {"error": "invalid_grant"}})
+    ]
+    token = credentials.access_token(
+        refused=credentials._read()["profiles"]["default"]["access_token"]
+    )
+    assert token and credentials.stored_login(_SERVER) is not None
+
+
+def test_a_session_that_did_end_is_still_given_up(server) -> None:
+    credentials.login(_SERVER, open_browser=False, echo=lambda _: None)
+    server.refresh_ok = False
+    with pytest.raises(AuthInvalid, match="run `loom login`"):
+        credentials.access_token(refused=credentials._read()["profiles"]["default"]["access_token"])
+    assert credentials.stored_login(_SERVER) is None
