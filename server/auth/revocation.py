@@ -162,6 +162,7 @@ async def refresh() -> None:
             else:
                 before[key] = cutoff
         # Writes made here lately, which the read (in flight, or behind) may lack.
+        _forget_old()
         for kind, key, cutoff, _ in _recent:
             if kind == "cut_off":
                 operator[key] = max(operator.get(key, 0), cutoff or 0)
@@ -279,7 +280,8 @@ def _apply_locally(key: str, cutoff: int | None) -> None:
     re-read in `revoke` can fail, or land on a replica the insert has not
     reached; either way the old snapshot would keep admitting the token
     here until the next refresh. The written row is the newest for its key,
-    so it replaces any earlier state of that key. `loaded()` is left as it
+    so here it replaces any earlier state of that key (a refresh lays it back
+    only to tighten, for `_RECENT_S`). `loaded()` is left as it
     is: one known row is not a snapshot."""
     global _revoked_jtis, _revoked_before
     before = {k: v for k, v in _revoked_before.items() if k != key}
@@ -293,9 +295,13 @@ def _apply_locally(key: str, cutoff: int | None) -> None:
 
 
 def _remember(kind: str, key: str, cutoff: int | None) -> None:
+    _forget_old()
+    _recent.append((kind, key, cutoff, time.monotonic()))
+
+
+def _forget_old() -> None:
     now = time.monotonic()
     _recent[:] = [w for w in _recent if now - w[3] < _RECENT_S]
-    _recent.append((kind, key, cutoff, now))
 
 
 async def subjects_revoked(subjects: list[str], *, issued_at: int) -> bool:

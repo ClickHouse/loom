@@ -23,7 +23,7 @@ from fastapi.responses import Response
 from server.auth import oauth, sso_links
 from server.auth.grant_claims import account_change
 from server.auth.oauth_store import token_id
-from server.core.ch import get_client, own_write_reads
+from server.core.ch import get_client
 from server.identity.store import namespaces
 from server.observability import audit
 from server.settings import settings
@@ -133,21 +133,23 @@ async def set_password(request: Request) -> Response:
         # Each account held from its read to its write, as a release holds it.
         for ns in sorted(held["namespaces"]):
             await claimed.enter_async_context(account_change(org, ns))
-        rows = []
-        with own_write_reads():
-            for ns in held["namespaces"]:
-                row = await namespaces.fetch_row(org, ns)
-                # Still that email's SSO account, with no password yet: one
-                # changed since the link was made is left alone, and so is one
-                # this link set already (a retry after a write that landed).
-                if row and row["active"] and not row["password_hash"]:
-                    if row["contact_email"] == email:
-                        rows.append(row)
+        rows = []  # the claim reads as of every write that landed
+        for ns in held["namespaces"]:
+            row = await namespaces.fetch_row(org, ns)
+            # Still that email's SSO account, with no password yet: one changed
+            # since the link was made is left alone, and so is one this link set
+            # already (a retry after a write that landed).
+            if row and row["active"] and not row["password_hash"] and row["contact_email"] == email:
+                rows.append(row)
         if not rows:
             return _closed()
+        accounts = [(org, r["namespace"]) for r in rows]
+        # All inside the claim, so a release after it finds them: the SSO link
+        # first (kept if the rest fails), then the password, its audit row, and
+        # last the spend, so a failed write leaves the link to retry.
+        await sso_links.link(email, accounts, "password-link")
         now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
-        # Insert-as-replace carrying every other column forward. Written before
-        # the link is spent, so a write that failed leaves the link to retry.
+        # Insert-as-replace carrying every other column forward.
         await get_client().insert(
             "loom.namespaces",
             [
@@ -155,16 +157,14 @@ async def set_password(request: Request) -> Response:
                 for r in rows
             ],
         )
+        await audit.emit(
+            "auth.password_set",
+            org=org,
+            namespace="-",
+            actor=email,
+            subject={"namespaces": [ns for _, ns in accounts], "link_by": held.get("by", "")},
+        )
         await oauth.store.take_pending(token_id(code))
-    accounts = [(org, r["namespace"]) for r in rows]
-    await sso_links.link(email, accounts, "password-link")
-    await audit.emit(
-        "auth.password_set",
-        org=org,
-        namespace="-",
-        actor=email,
-        subject={"namespaces": [ns for _, ns in accounts], "link_by": held.get("by", "")},
-    )
     return oauth.html_page(
         "Set your Loom password",
         f"<h2>Password set</h2><p>Sign in as <b>{html.escape(email)}</b>.</p>",

@@ -200,3 +200,13 @@ def test_a_full_revoke_read_from_elsewhere_stands_over_a_cutoff_made_here(table)
     table.rows["sub1"] = {"jti": "sub1", "issued_before": None}  # another replica, later
     asyncio.run(revocation.refresh())
     assert revocation.is_revoked("sub1", issued_at=int(time.time()) + 3600)
+
+
+def test_a_write_older_than_the_while_is_no_longer_laid_back(monkeypatch) -> None:
+    from server.core import ch
+
+    monkeypatch.setattr(ch, "get_client", lambda: _LaggingTable())
+    old = time.monotonic() - revocation._RECENT_S - 1
+    revocation._recent.append(("revoke", "t-old", None, old))
+    asyncio.run(revocation.refresh())
+    assert not revocation.is_revoked("t-old", issued_at=int(time.time())) and not revocation._recent

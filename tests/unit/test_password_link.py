@@ -154,3 +154,17 @@ def test_a_release_that_lands_first_is_not_undone(world, monkeypatch) -> None:
     monkeypatch.setattr(password_link, "account_change", released_meanwhile)
     r = _set(TestClient(oauth_app()), _code(), "correct horse")
     assert r.status_code == 400 and not world["rows"]
+
+
+def test_a_spend_that_fails_after_the_write_keeps_the_link_and_its_audit(
+    world, monkeypatch
+) -> None:
+    c, code = TestClient(oauth_app(), raise_server_exceptions=False), _code()
+
+    async def spend_fails(state: str) -> None:
+        raise RuntimeError("Keeper away after the write")
+
+    monkeypatch.setattr(oauth.store, "take_pending", spend_fails)
+    assert _set(c, code, "correct horse").status_code == 500
+    assert len(world["rows"]) == 1 and world["links"]
+    assert [e for e, _ in world["events"]].count("auth.password_set") == 1
