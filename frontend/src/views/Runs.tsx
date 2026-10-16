@@ -118,8 +118,32 @@ export const EMPTY_WHY = {
   noSession:
     "run.begin carried no top-level session_id, so model turns and cost cannot be joined (a session_id inside metadata is not read)",
   sessionCost:
-    "joined by the run's session_id from the usage the Stop hook posts (cost.record_turns); every run in the same session shows the session's total",
+    "the turns the run's session made while the run was open, from the usage the Stop hook posts (cost.record_turns)",
+  budget: "set by run.begin(budget_usd, budget_seconds); a signal for the agent, never a stop",
+  unpriced: "turns from a model the price table does not know: they cost 0, so they never count toward budget_usd",
 } as const;
+
+/** Dollars to the 6 places cost and budgets are kept to, so a spend just past its budget
+ * never reads as at it: "$2.50", "$1.000004". */
+function usd(amount: number): string {
+  const text = amount.toLocaleString("en-US", { minimumFractionDigits: 6, maximumFractionDigits: 6 });
+  return `$${text.replace(/0{1,4}$/, "")}`;
+}
+
+/** The budget run.begin set and the time used against it, e.g. "$1.00 · 30m 0s · 42s
+ * elapsed"; "—" when it set none. Read off run.get: run.list rows are projected and do
+ * not carry it. */
+function budgetText(detail: RunGetResponse): string {
+  const run = detail.run;
+  const parts: string[] = [];
+  if (run?.budget_usd) parts.push(usd(run.budget_usd));
+  if (run?.budget_seconds) {
+    parts.push(fmtDuration(run.budget_seconds * 1000));
+    const elapsed = detail.elapsed_seconds ?? 0;
+    parts.push(`${elapsed > 0 ? fmtDuration(elapsed * 1000) : "0s"} elapsed`);
+  }
+  return parts.length > 0 ? parts.join(" · ") : "—";
+}
 
 function KeyChipButtons({ keys, empty }: { keys: string[]; empty: string }) {
   const inspect = useStore((s) => s.inspect);
@@ -540,9 +564,12 @@ export function Runs() {
                   detail &&
                   open &&
                   (() => {
-                    const hasSession = Boolean(open.session_id && open.session_id !== "-");
+                    // The server's names_session: blank or "-" is no session.
+                    const session = (open.session_id ?? "").trim();
+                    const hasSession = session !== "" && session !== "-";
+                    const over = detail.over_budget ?? [];
                     return (
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+                      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm">
                         <div>
                           <div className="text-2xs text-[var(--color-text-muted)]">recalled</div>
                           <div className="tabular-nums">
@@ -564,20 +591,28 @@ export function Runs() {
                           </div>
                         </div>
                         <div>
-                          <div className="text-2xs text-[var(--color-text-muted)]">session turns</div>
+                          <div className="text-2xs text-[var(--color-text-muted)]">turns</div>
                           <div
                             className="tabular-nums"
                             title={hasSession ? EMPTY_WHY.sessionCost : EMPTY_WHY.noSession}
                           >
                             {hasSession ? (
-                              detail.turns
+                              <>
+                                {detail.turns}
+                                {(detail.unpriced_turns ?? 0) > 0 && (
+                                  <span className="text-[var(--color-text-subtle)]" title={EMPTY_WHY.unpriced}>
+                                    {" "}
+                                    ({detail.unpriced_turns} unpriced)
+                                  </span>
+                                )}
+                              </>
                             ) : (
                               <span className="text-[var(--color-text-subtle)]">no session</span>
                             )}
                           </div>
                         </div>
                         <div>
-                          <div className="text-2xs text-[var(--color-text-muted)]">session cost</div>
+                          <div className="text-2xs text-[var(--color-text-muted)]">cost</div>
                           <div
                             className="tabular-nums"
                             title={hasSession ? EMPTY_WHY.sessionCost : EMPTY_WHY.noSession}
@@ -585,9 +620,18 @@ export function Runs() {
                             {!hasSession ? (
                               <span className="text-[var(--color-text-subtle)]">no session</span>
                             ) : detail.cost_usd > 0 ? (
-                              `$${detail.cost_usd.toFixed(4)}`
+                              usd(detail.cost_usd)
                             ) : (
                               "—"
+                            )}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-2xs text-[var(--color-text-muted)]">budget</div>
+                          <div className="tabular-nums" title={EMPTY_WHY.budget}>
+                            {budgetText(detail)}
+                            {over.length > 0 && (
+                              <span className="text-[var(--color-danger)]"> · over {over.join(" and ")}</span>
                             )}
                           </div>
                         </div>

@@ -26,6 +26,7 @@ from typing import Any
 from server.core.ch import get_client, sequential_reads
 from server.core.datetimes import naive_utc_now as _now
 from server.core.errors import AuthInsufficientError, IdentityIncompleteError, NotFoundError
+from server.core.naming import SENTINEL, names_session
 from server.identity.app.request_scope import request_narrowed, request_scope
 from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters, row_in_read_scope
 from server.memory.app import run_feedback, run_retention
@@ -44,6 +45,7 @@ from server.tasks.api.models_run import (
     RunListOutput,
     RunRow,
 )
+from server.tasks.domain.budgets import budgets_exceeded
 from server.tasks.domain.session_runs import is_session_run_id
 from server.tasks.store import runs as runs_store
 from server.tasks.store.rows import RunLedgerRow
@@ -101,6 +103,11 @@ def _parse_metadata(raw: Any) -> dict[str, Any]:
         return {}
 
 
+def _claim_session(input: RunBeginInput) -> str:
+    """The session a run-id claim is held under: the one named, or the sentinel."""
+    return input.session_id if names_session(input.session_id) else SENTINEL
+
+
 def _grade_columns(existing: RunLedgerRow | None) -> RunLedgerRow:
     """The grade columns of an existing run row, or their defaults."""
     e = existing or {}
@@ -139,6 +146,8 @@ def _row_to_model(r: RunLedgerRow) -> RunRow:
         memories_used=[str(k) for k in (r.get("memories_used") or [])],
         memories_written=[str(k) for k in (r.get("memories_written") or [])],
         metadata=_parse_metadata(r.get("metadata")),
+        budget_usd=float(r.get("budget_usd") or 0.0),
+        budget_seconds=int(r.get("budget_seconds") or 0),
     )
 
 
@@ -226,7 +235,7 @@ def _own_run_id(input: RunBeginInput, requested: str) -> str:
     derived from (org, namespace, user, session, requested), so a retry of a begin
     whose answer was lost lands on the same run, and no other user or session can."""
     seed = json.dumps(
-        [input.org, input.namespace, _user_of(input), input.session_id or "-", requested]
+        [input.org, input.namespace, _user_of(input), _claim_session(input), requested]
     )
     return "r" + hashlib.sha256(seed.encode()).hexdigest()[:31]
 
@@ -374,7 +383,7 @@ async def handle_run_begin(input: RunBeginInput) -> RunBeginOutput:
         run_id, existing = await _own_run(ch, input, supplied)
         return await _open_run(ch, input, run_id, existing)
     claim = await runs_store.claim_run(
-        ch, input.org, input.namespace, supplied, _user_of(input), input.session_id or "-"
+        ch, input.org, input.namespace, supplied, _user_of(input), _claim_session(input)
     )
     run_id, existing = await _target_run(ch, input, supplied, claim)
     opened = await _open_run(ch, input, run_id, existing)
@@ -394,6 +403,16 @@ async def _open_run(
 ) -> RunBeginOutput:
     """Write the run's active row and answer with its id. A new row starts at
     `started_at` (default: now); `version` replaces the server's (a session run's first begin)."""
+    # A re-sent begin that names no session or budget keeps the run's. A cost
+    # budget belongs to its session, so it is kept only while the session is.
+    prior = existing or {}
+    prior_session = str(prior.get("session_id") or SENTINEL)
+    session_id = input.session_id if names_session(input.session_id) else prior_session
+    prior_usd = float(prior.get("budget_usd") or 0.0)
+    kept_usd = prior_usd if session_id == prior_session else 0.0
+    budget_usd = input.budget_usd or kept_usd
+    dropped_usd = prior_usd > 0 and budget_usd == 0
+    budget_seconds = input.budget_seconds or int(prior.get("budget_seconds") or 0)
     # The begin row in the ledger carries the run it opened, so begin and complete join
     # on `run_id` (the body names none; the transport's fallback is the header run, empty
     # for a bare client).
@@ -410,7 +429,7 @@ async def _open_run(
         "namespace": input.namespace,
         "agent": input.agent,
         "user_id": input.user_id or "-",
-        "session_id": input.session_id or "-",
+        "session_id": session_id,
         "run_id": run_id,
         "goal": input.goal,
         "user_request": input.user_request,
@@ -433,21 +452,24 @@ async def _open_run(
             if input.role.strip()
             else input.metadata
         ),
+        "budget_usd": budget_usd,
+        "budget_seconds": budget_seconds,
     }
     if version is not None:
         row["version"] = version
     await runs_store.insert_runs(ch, [row])
-    return RunBeginOutput(
-        run_id=run_id,
-        status="active",
-        started_at=_iso(started),
-        next=(
-            f"run_id={run_id}. Pass it as run_id on memory.set, memory.ask, "
-            "memory.search and observe.record so the run's writes and recalls "
-            "join this ledger. When done, call run.complete with the memory_keys "
-            "you actually relied on in memories_used."
-        ),
+    next_step = (
+        f"run_id={run_id}. Pass it as run_id on memory.set, memory.ask, "
+        "memory.search and observe.record so the run's writes and recalls "
+        "join this ledger. When done, call run.complete with the memory_keys "
+        "you actually relied on in memories_used."
     )
+    if dropped_usd:
+        next_step += (
+            " The run moved to another session, so its budget_usd was dropped;"
+            f" re-send budget_usd with session_id={session_id} to set one."
+        )
+    return RunBeginOutput(run_id=run_id, status="active", started_at=_iso(started), next=next_step)
 
 
 @dataclass(frozen=True, slots=True)
@@ -609,8 +631,8 @@ async def _complete(
     # The client said how the run ended: that label belongs to the session too, where the
     # contrast pass pairs on it and where it outranks anything a judge would later read
     # into the summary. Best effort; `none` says nothing and writes nothing.
-    session_id = str(existing.get("session_id") or "-")
-    if outcome in ("positive", "negative") and session_id != "-":
+    session_id = str(existing.get("session_id") or SENTINEL)
+    if outcome in ("positive", "negative") and names_session(session_id):
         await _label_session(ch, existing, input, outcome, session_id)
 
     if scope is None:
@@ -941,11 +963,13 @@ async def handle_run_get(input: RunGetInput) -> RunGetOutput:
     stashed = run.metadata.get("recalled_keys") if isinstance(run.metadata, dict) else None
     if stashed:
         recalled = _merge_recalled(recalled, stashed)
-    turns, cost = (
-        await runs_store.session_cost(ch, input.org, input.namespace, run.session_id)
-        if run.session_id != "-"
-        else (0, 0.0)
-    )
+    since, until = _run_window(existing)
+    elapsed = max(0, int((until - since).total_seconds()))
+    turns, unpriced, cost = 0, 0, 0.0
+    if names_session(run.session_id):
+        turns, unpriced, cost = await runs_store.run_cost(
+            ch, input.org, input.namespace, run.session_id, since, until
+        )
     return RunGetOutput(
         found=True,
         run=run,
@@ -954,8 +978,21 @@ async def handle_run_get(input: RunGetInput) -> RunGetOutput:
         memories_written=written,
         observations=observations,
         turns=turns,
+        unpriced_turns=unpriced,
         cost_usd=cost,
+        elapsed_seconds=elapsed,
+        over_budget=budgets_exceeded(
+            budget_usd=run.budget_usd,
+            budget_seconds=run.budget_seconds,
+            cost_usd=cost,
+            elapsed_seconds=elapsed,
+        ),
     )
+
+
+def _run_window(row: RunLedgerRow) -> tuple[datetime, datetime]:
+    """When the run was open, on the server's clock: from its start to its close, or to now."""
+    return row["started_at"], row.get("completed_at") or _now()
 
 
 async def handle_run_list(input: RunListInput) -> RunListOutput:

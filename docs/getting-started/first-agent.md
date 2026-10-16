@@ -175,12 +175,13 @@ async def handle_task(a: Agent) -> None:
     print(run.completed)  # the run.complete response
 ```
 
-`run_scope` calls `run.begin` on entry and `run.complete` on exit, with status
-`completed`, or `failed` when the block raises (the exception still propagates after the
-ledger row is written). Writes inside the block carry the run's `run_id`, and the keys a
-grounded `memory.ask` answer cites inside it (not an abstention) are added to
-`memories_used` automatically. A write under a run is scoped to it: restating a fact that another run
-wrote is stored as a `duplicate`, not merged.
+`run_scope` calls `run.begin` on entry and `run.complete` on exit, with status `completed`
+(or the `run.status` the block set), `failed` when the block raises, or `cancelled` when
+it is cancelled (either still propagates after the ledger row is written). Writes inside
+the block carry the run's `run_id`, and the keys a grounded `memory.ask` answer cites
+inside it (not an abstention) are added to `memories_used` automatically. A write under a
+run is scoped to it: restating a fact that another run wrote is stored as a `duplicate`,
+not merged.
 
 The same two calls are available directly as `a.run.begin(goal=...)` and
 `a.run.complete(run_id, status=..., memories_used=[...], final_response=...)`;

@@ -126,7 +126,7 @@ The target keeps the table's columns (so the swap is additive), and its sort key
 the old key's columns, reordered: that key is also what a `ReplacingMergeTree` merges on.
 A key with other columns merges other rows and is listed with its reason in
 `tests/unit/test_migrations_additive.py`. Name the rebuild in the release notes as an
-operator step ([release process](./release-process.md#changelogs)).
+operator step ([release process](./release-process.md#release-notes)).
 
 ## Schema dump and check
 

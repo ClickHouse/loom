@@ -36,7 +36,6 @@ dependencies = ["httpx[http2]>=0.27"]
 Homepage = "https://github.com/ClickHouse/loom"
 Repository = "https://github.com/ClickHouse/loom"
 Issues = "https://github.com/ClickHouse/loom/issues"
-Changelog = "https://github.com/ClickHouse/loom/blob/main/sdk/python/CHANGELOG.md"
 
 [build-system]
 requires = ["hatchling>=1.27"]
@@ -51,7 +50,6 @@ include = [
   "/loom",
   "/examples",
   "/README.md",
-  "/CHANGELOG.md",
   "/LICENSE",
   "/pyproject.toml",
 ]

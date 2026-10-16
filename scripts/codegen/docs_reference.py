@@ -359,7 +359,7 @@ def render_llms_txt() -> str:
             out.append(f"- [{title}]({rel})" + (f": {outcome}" if outcome else ""))
         out.append("")
     out.append("## Optional\n")
-    for p in (docs / "glossary.md", docs / "faq.md", ROOT / "CHANGELOG.md"):
+    for p in (docs / "glossary.md", docs / "faq.md"):
         if p.exists():
             title, outcome = _page_summary(p)
             out.append(

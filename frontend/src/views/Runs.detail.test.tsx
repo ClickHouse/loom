@@ -162,6 +162,64 @@ describe("Runs page", () => {
     expect(useStore.getState().recallRunFilter).toBe("r-full");
   });
 
+  it("shows the run's budget and which part of it the run went past", async () => {
+    const budgeted = { ...full, budget_usd: 1, budget_seconds: 1800 };
+    listRuns.mockResolvedValue([budgeted]);
+    getRun.mockResolvedValue(detail({ run: budgeted, cost_usd: 1.25, elapsed_seconds: 42, over_budget: ["cost"] }));
+    render(<Runs />);
+    fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
+    const dialog = await screen.findByRole("dialog");
+    const budget = await within(dialog).findByTitle(EMPTY_WHY.budget);
+    expect(budget).toHaveTextContent("$1.00 · 30m 0s · 42s elapsed · over cost");
+  });
+
+  it("shows a spend just past its budget to the place it went over", async () => {
+    const budgeted = { ...full, budget_usd: 1 };
+    listRuns.mockResolvedValue([budgeted]);
+    getRun.mockResolvedValue(detail({ run: budgeted, cost_usd: 1.000004, over_budget: ["cost"] }));
+    render(<Runs />);
+    fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText("$1.000004")).toBeInTheDocument();
+    expect(await within(dialog).findByTitle(EMPTY_WHY.budget)).toHaveTextContent("$1.00 · over cost");
+  });
+
+  it("spells a large spend with thousands separators, as the hint does", async () => {
+    listRuns.mockResolvedValue([full]);
+    getRun.mockResolvedValue(detail({ cost_usd: 12345 }));
+    render(<Runs />);
+    fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText("$12,345.00")).toBeInTheDocument();
+  });
+
+  it("a run with a time budget that has just begun shows 0s elapsed", async () => {
+    const budgeted = { ...full, budget_seconds: 60 };
+    listRuns.mockResolvedValue([budgeted]);
+    getRun.mockResolvedValue(detail({ run: budgeted, elapsed_seconds: 0 }));
+    render(<Runs />);
+    fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByTitle(EMPTY_WHY.budget)).toHaveTextContent("60s · 0s elapsed");
+  });
+
+  it("names the turns it could not price", async () => {
+    listRuns.mockResolvedValue([full]);
+    getRun.mockResolvedValue(detail({ turns: 3, unpriced_turns: 2 }));
+    render(<Runs />);
+    fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByTitle(EMPTY_WHY.unpriced)).toHaveTextContent("(2 unpriced)");
+  });
+
+  it("a run without a budget shows a dash", async () => {
+    listRuns.mockResolvedValue([full]);
+    render(<Runs />);
+    fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByTitle(EMPTY_WHY.budget)).toHaveTextContent("—");
+  });
+
   it("drops a run.list answer that lands after the status filter changed", async () => {
     let answerAll: (v: RunRow[]) => void = () => {};
     listRuns

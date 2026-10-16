@@ -6,7 +6,7 @@ ledger (`agent_turn_usage`). The handlers decide scope and fold the rows."""
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
@@ -257,6 +257,26 @@ async def insert_turn_usage(rows: list[list[Any]], *, ch: Any = None) -> None:
         column_names=list(TURN_USAGE_COLUMNS),
         settings={"async_insert": 1, "wait_for_async_insert": 0},
     )
+
+
+async def recorded_turn_times(
+    org: str, namespace: str, session_id: str, message_ids: list[str], *, ch: Any = None
+) -> dict[str, datetime]:
+    """The time each of the session's `message_ids` is recorded with: its
+    newest version's, the one a FINAL read sees, whatever has merged."""
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        """
+        SELECT message_id, argMax(turn_at, version) AS recorded_at
+        FROM loom.agent_turn_usage
+        WHERE org = {org:String} AND namespace = {ns:String} AND session_id = {sid:String}
+          AND message_id IN {ids:Array(String)}
+        GROUP BY message_id
+        """,
+        params={"org": org, "ns": namespace, "sid": session_id, "ids": message_ids},
+    )
+    # ClickHouse hands back naive UTC.
+    return {r["message_id"]: r["recorded_at"].replace(tzinfo=UTC) for r in rows}
 
 
 async def agent_summary_rows(
