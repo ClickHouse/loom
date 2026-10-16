@@ -142,6 +142,21 @@ test("the exchange sends the workload token and saves the answer 0600", async ()
   assert.equal(fs.statSync(agentTokenPath(env)).mode & 0o777, 0o600);
 });
 
+test("the saved token names the proof sent, though the file rotated meanwhile", async () => {
+  const env = agentEnv();
+  const file = path.join(env.HOME, "workload");
+  fs.writeFileSync(file, A1);
+  const fileEnv = { HOME: env.HOME, LOOM_CLIENT_ID: "fleet", LOOM_WORKLOAD_TOKEN_FILE: file };
+  const B = jwt({ iss: "https://issuer.example", sub: "tenants/t/agents/b" });
+  const fetchImpl = async () => {
+    fs.writeFileSync(file, B); // rotated while the exchange was in flight
+    return new Response(JSON.stringify({ access_token: "of-a1", expires_in: 3600 }), { status: 200 });
+  };
+  assert.equal(await exchange({ env: fileEnv, fetchImpl }), true);
+  const saved = JSON.parse(fs.readFileSync(agentTokenPath(fileEnv), "utf8"));
+  assert.equal(saved.proof, proofHash(fileEnv, A1));
+});
+
 test("a refused exchange saves nothing", async () => {
   const env = agentEnv();
   const fetchImpl = async () => new Response(JSON.stringify({ error: "invalid_grant" }), { status: 400 });

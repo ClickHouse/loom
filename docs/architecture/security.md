@@ -392,9 +392,11 @@ names no client takes the one trust the token meets; while a trust that could al
 cannot fetch its keys, the answer is to retry, never the other trust. An
 agent's namespace carries no email, so no sign-in by email ever resolves to an agent. An
 agent's token names the trust as its parent subject, so the trust's disable cutoff ends
-every agent's. The trust's issuer is trusted for every agent name it signs, and with an
-owner claim for the owner's email too: that person gets admin on the agent's namespace
-(never the reverse), so register an owner claim only for an issuer that asserts it.
+every agent's. The trust's issuer is trusted for every agent name it signs. An agent's
+namespace is provisioned as an account is: its row names its one owner, the agent, and that
+owner's grant follows; a later exchange writes the grant only if it was never written, under
+the grant's claim, so one revoked since stays revoked. A person reaches an agent's memory
+only as any namespace's: granted by its admin, or by joining.
 
 **Unauthenticated routes.** Sign-up and password sign-in are rate-limited
 (`server/auth/attempts.py`) per client address (the connection's peer, which uvicorn

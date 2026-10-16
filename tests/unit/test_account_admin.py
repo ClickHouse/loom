@@ -259,7 +259,6 @@ def test_an_agent_trust_needs_a_workload_trust_and_may_share_nothing() -> None:
     assert fleet["agent_claim"] == "sub" and fleet["ns_roles"] == []
     for wrong in (
         {"public_key_pem": _KEY, "agent_claim": "sub"},  # a key is one bot
-        {"owner_claim": "email", **trust},  # an owner of no agents
         {"public_key_pem": _KEY},  # a plain bot still names a namespace
         {"jwks_uri": "http://keys.example/jwks.json", "agent_claim": "sub", **trust},
     ):

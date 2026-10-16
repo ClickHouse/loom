@@ -210,14 +210,16 @@ from, name the provider and the models:
 LOOM_INFERENCE_TOKEN_URL=https://gateway.example/oauth/token         # https
 LOOM_INFERENCE_WORKLOAD_TOKEN_FILE=/var/run/secrets/tokens/gateway   # rotated by the platform
 LOOM_INFERENCE_TOKEN_SCOPE="chat embeddings"                         # if the gateway asks for one
-LOOM_OPENAI_BASE_URL=https://gateway.example/v1                      # required: the token is the gateway's
+LOOM_OPENAI_BASE_URL=https://gateway.example/v1                      # both roots required:
+LOOM_ANTHROPIC_BASE_URL=https://gateway.example                      # the token is the gateway's
 LOOM_LLM_PROVIDER=openai
 LOOM_LLM_MODEL=gpt-6-luna
 LOOM_EMBEDDING_MODEL=text-embedding-3-large
 ```
 
-Loom refuses to start when a provider it calls still points at the provider's
-own API, since the gateway's token would go there. In the dashboard, model
+Loom refuses to start while either provider's root still points at that
+provider's own API: a model named per request may be either provider's, and the
+gateway's token would go there. In the dashboard, model
 changes for OpenAI and Anthropic are checked through the gateway too.
 
 On Kubernetes the token file is a projected service-account token with the

@@ -55,7 +55,6 @@ def calls(monkeypatch) -> list[tuple[str, Any]]:
                 "audience": "",
                 "claims": {},
                 "agent_claim": "",
-                "owner_claim": "",
                 "jwks_uri": "",
                 "max_token_s": 3600,
                 "max_agents": 1000,

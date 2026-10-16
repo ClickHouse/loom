@@ -531,6 +531,39 @@ class Scenario:
                 refused or (label == "N-1" and got.status_code == 404),
                 f"{label} refuses an unknown refresh as invalid_grant ({got.status_code})",
             )
+            if label == "N-1" and "Loom-Sessions" in got.headers:
+                print("  note  N-1 keeps sessions; a refresh it answers is not checked")
+                return
+        self.check("Loom-Sessions" not in answer.headers, "N-1's answers say they are N-1's")
+        self.refresh_across(old.url, kept=True)
+        self.refresh_across(new.url, kept=False)
+
+    def refresh_across(self, url: str, *, kept: bool) -> None:
+        """The SDK refreshing a session against `url`: N-1's refusal leaves it
+        to ask again, N's ends it."""
+        sys.path.insert(0, str(ROOT / "sdk" / "python"))
+        from loom import credentials
+        from loom.errors import AuthInvalid, BackendUnavailable
+
+        real = credentials.CREDENTIALS_FILE
+        with tempfile.TemporaryDirectory() as tmp:
+            credentials.CREDENTIALS_FILE = Path(tmp) / "credentials"
+            spent = {"access_token": "x", "refresh_token": "not-a-token", "expires_in": 0}
+            credentials._save("gate", url, spent, session="s")
+            failed: Exception | None = None
+            try:
+                credentials.access_token("gate", refused="x")
+            except (AuthInvalid, BackendUnavailable) as e:
+                failed = e
+            finally:
+                stored = credentials.stored_login(url, "gate") is not None
+                credentials.CREDENTIALS_FILE = real
+        want = BackendUnavailable if kept else AuthInvalid
+        label = "N-1" if kept else "N"
+        self.check(
+            isinstance(failed, want) and stored == kept,
+            f"the SDK {'keeps' if kept else 'ends'} a session {label} refuses ({failed!r})",
+        )
 
     def dashboard_loads_across(self) -> None:
         """A page served by one build asks any replica for its assets."""

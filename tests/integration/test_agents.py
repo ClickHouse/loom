@@ -34,7 +34,6 @@ def _trust() -> machines.Machine:
         "audience": "loom",
         "claims": {"tenant_id": "t1"},
         "agent_claim": "agent_id",
-        "owner_claim": "",
         "jwks_uri": "",
         "max_token_s": 3600,
         "max_agents": 1000,
@@ -43,7 +42,7 @@ def _trust() -> machines.Machine:
 
 async def test_two_first_exchanges_make_one_namespace(ch: Any) -> None:
     m = _trust()
-    made = await asyncio.gather(*(agents.ensure_namespace(m, "a1", "") for _ in range(3)))
+    made = await asyncio.gather(*(agents.ensure_namespace(m, "a1") for _ in range(3)))
     assert set(made) == {f"{m['name']}-a1"}
     with own_write_reads():
         rows = await ch.query_all(
@@ -64,7 +63,7 @@ async def test_a_namespace_someone_else_made_is_not_reached(ch: Any) -> None:
         org=m["org"], namespace=f"{m['name']}-a1", subject="lee", contact_email="lee@acme.io"
     )
     with pytest.raises(machines.Refused, match="not this trust's"):
-        await agents.ensure_namespace(m, "a1", "")
+        await agents.ensure_namespace(m, "a1")
 
 
 async def test_a_released_namespace_is_dropped_from_the_bots_naming_it(ch: Any) -> None:
@@ -83,39 +82,27 @@ async def test_a_released_namespace_is_dropped_from_the_bots_naming_it(ch: Any) 
     assert kept["issuer"] == bot["issuer"]  # every other column carried forward
 
 
-async def test_an_agent_is_never_a_sign_in_and_its_owner_gets_admin(ch: Any) -> None:
+async def test_an_agent_is_never_a_sign_in_and_owns_its_namespace(ch: Any) -> None:
     from server.auth.login import resolve_identity_for_email
-    from server.auth.self_signup import provision_account
 
-    m = {**_trust(), "owner_claim": "owner"}
-    alice, nobody = f"alice-{uuid.uuid4().hex[:6]}@x.io", f"bob-{uuid.uuid4().hex[:6]}@x.io"
-    await provision_account(
-        org=m["org"], namespace=f"alice{uuid.uuid4().hex[:6]}", subject="alice", contact_email=alice
-    )
-    ns = await agents.ensure_namespace(m, "a1", alice)
-    other = await agents.ensure_namespace(m, "a2", nobody)
+    m = _trust()
+    ns = await agents.ensure_namespace(m, "a1")
     with own_write_reads():
-        person = await resolve_identity_for_email(alice)
-        stranger = await resolve_identity_for_email(nobody)
         grants = await ch.query_all(
             "SELECT subject, role FROM loom.namespace_grants FINAL WHERE org = {org:String} "
             "AND namespace = {ns:String} AND revoked_at IS NULL ORDER BY subject",
             params={"org": m["org"], "ns": ns},
         )
-    assert person is not None and person[0] == "alice"  # still signs in to their own
-    assert stranger is None  # an email the trust named is not the agent's sign-in
-    assert [(g["subject"], g["role"]) for g in grants] == [
-        ("alice", "admin"),
-        (f"sa:{m['name']}:a1", "admin"),
-    ]
-    assert other == f"{m['name']}-a2"
+        nobody = await resolve_identity_for_email("")
+    assert [(g["subject"], g["role"]) for g in grants] == [(f"sa:{m['name']}:a1", "admin")]
+    assert nobody is None  # its row names no email to sign in with
 
 
 async def test_two_new_agents_at_once_stay_within_the_trusts_limit(ch: Any) -> None:
     m = {**_trust(), "max_agents": 1}
     outcomes = await asyncio.gather(
-        agents.ensure_namespace(m, "a1", ""),
-        agents.ensure_namespace(m, "a2", ""),
+        agents.ensure_namespace(m, "a1"),
+        agents.ensure_namespace(m, "a2"),
         return_exceptions=True,
     )
     made = [o for o in outcomes if isinstance(o, str)]

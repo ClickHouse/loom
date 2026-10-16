@@ -171,7 +171,6 @@ def bot_from(
     audience: str = "",
     claims: list[str] | None = None,
     agent_claim: str = "",
-    owner_claim: str = "",
     jwks_uri: str = "",
     max_token_s: int = 3600,
     max_agents: int = 1000,
@@ -198,11 +197,9 @@ def bot_from(
         if not ns or "*" in ns or "," in ns or any(c.isspace() for c in ns):
             raise ValueError(f"a namespace role names one namespace, got {item!r}")
         ns_roles[ns] = role
-    agent_claim, owner_claim = agent_claim.strip(), owner_claim.strip()
+    agent_claim = agent_claim.strip()
     if not ns_roles and not agent_claim:
         raise ValueError("a bot needs at least one namespace role")
-    if owner_claim and not agent_claim:
-        raise ValueError("an owner claim belongs to a trust that tells agents apart")
     wanted: dict[str, str] = {}
     for item in claims or []:
         claim, sep, value = item.partition("=")
@@ -243,7 +240,6 @@ def bot_from(
         "audience": audience,
         "claims": wanted,
         "agent_claim": agent_claim,
-        "owner_claim": owner_claim,
         "jwks_uri": jwks_uri,
         "max_token_s": max_token_s,
         "max_agents": max_agents,

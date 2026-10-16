@@ -91,7 +91,6 @@ class BotInput(BaseModel):
     audience: str = ""
     claims: list[str] = []
     agent_claim: str = ""
-    owner_claim: str = ""
     jwks_uri: str = ""
     max_token_s: int = 3600
     max_agents: int = 1000
@@ -115,7 +114,6 @@ async def bots_create(input: BotInput, info: Admin) -> dict[str, Any]:
             audience=input.audience,
             claims=input.claims,
             agent_claim=input.agent_claim,
-            owner_claim=input.owner_claim,
             jwks_uri=input.jwks_uri,
             max_token_s=input.max_token_s,
             max_agents=input.max_agents,
@@ -157,7 +155,6 @@ async def bots_list() -> dict[str, Any]:
                 "audience": r["audience"],
                 "claims": dict(r["claims"]),
                 "agent_claim": r["agent_claim"],
-                "owner_claim": r["owner_claim"],
                 "jwks_uri": r["jwks_uri"],
                 "max_token_s": int(r["max_token_s"]),
                 "max_agents": int(r["max_agents"]),

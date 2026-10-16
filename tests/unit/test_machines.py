@@ -56,19 +56,17 @@ def bots(monkeypatch) -> dict[str, Any]:
             "audience": "loom",
             "claims": {"repository": "acme/app"},
             "agent_claim": "agent_id",
-            "owner_claim": "owner",
         },
     }
     for m in registered.values():
         m.setdefault("agent_claim", "")
-        m.setdefault("owner_claim", "")
         m.setdefault("jwks_uri", "")
         m.setdefault("max_token_s", 3600)
         m.setdefault("max_agents", 1000)
     made: list[tuple[str, str, str]] = []
 
-    async def ensure_namespace(m: machines.Machine, agent: str, owner: str) -> str:
-        made.append((m["name"], agent, owner))
+    async def ensure_namespace(m: machines.Machine, agent: str) -> str:
+        made.append((m["name"], agent))
         return f"{m['name']}-{agent}"
 
     async def get(name: str) -> machines.Machine | None:
@@ -297,7 +295,6 @@ async def test_a_saved_bot_writes_every_column(monkeypatch) -> None:
         "audience": "",
         "claims": {},
         "agent_claim": "",
-        "owner_claim": "",
         "jwks_uri": "",
         "max_token_s": 3600,
         "max_agents": 1000,
@@ -420,14 +417,14 @@ def test_a_slow_revocation_lookup_does_not_stretch_a_token_past_its_proof(
 
 def test_each_agent_gets_its_own_subject_and_namespace(bots) -> None:
     c = TestClient(oauth_app())
-    token = _ci_token(bots, agent_id="a1", owner="Lee@Acme.io")
+    token = _ci_token(bots, agent_id="a1")
     r = _exchange(c, token, client_id="fleet")
     assert r.status_code == 200
     claims = pyjwt.decode(r.json()["access_token"], options={"verify_signature": False})
     assert claims["sub"] == "sa:fleet:a1"
     assert claims["ns_roles"] == {"fleet-a1": "writer", "docs": "viewer"}  # its own, then shared
     assert claims["parent_subjects"] == ["sa:fleet"]  # disabling the trust ends it
-    assert bots["made"] == [("fleet", "a1", "lee@acme.io")]
+    assert bots["made"] == [("fleet", "a1")]
 
 
 @pytest.mark.parametrize("agent", [None, "", "A1", "a/b", "-a", "a" * 64])
@@ -525,7 +522,6 @@ def test_a_control_planes_per_agent_token_is_taken_as_issued(bots, monkeypatch) 
         "audience": "loom-dev",
         "claims": {"tenant_id": tenant},
         "agent_claim": "agent_id",
-        "owner_claim": "",
         "jwks_uri": "https://keys.example/jwks.json",
         "max_token_s": 3600,
         "max_agents": 1000,

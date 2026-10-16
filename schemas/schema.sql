@@ -1782,7 +1782,6 @@ CREATE TABLE IF NOT EXISTS loom.machine_identities
     `updated_at` DateTime64(3, 'UTC'),
     `version` UInt64,
     `agent_claim` String DEFAULT '',
-    `owner_claim` String DEFAULT '',
     `jwks_uri` String DEFAULT '',
     `max_token_s` UInt32 DEFAULT 3600,
     `max_agents` UInt32 DEFAULT 1000

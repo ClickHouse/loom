@@ -43,6 +43,9 @@ CREDENTIALS_FILE = Path("~/.loom/credentials")
 DEFAULT_SERVER = "http://localhost:7777"
 CLIENT_ID = "loom-cli"
 _DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
+# Sent by every build that keeps sessions; an answer without it came from a
+# previous build during a rolling upgrade, which cannot know this session.
+_SESSIONS_HEADER = "Loom-Sessions"
 # Refresh this long before the access token expires, so a call never leaves
 # with a token that dies in flight.
 _REFRESH_MARGIN_S = 60
@@ -176,10 +179,13 @@ def same_server(a: str, b: str) -> bool:
     return _origin(a) == _origin(b) and urlsplit(a).path.rstrip("/") == urlsplit(b).path.rstrip("/")
 
 
-def _endpoints(client: httpx.Client) -> dict[str, str]:
+def _endpoints(client: httpx.Client, *, signed_in: bool = False) -> dict[str, str]:
     """The server's sign-in endpoints, each checked to be on the server itself,
     so a code or token only ever goes where the user chose to sign in."""
     r = client.get("/.well-known/oauth-authorization-server")
+    if r.status_code == 404 and signed_in:
+        # It signed this session in, so a previous build answered: ask again later.
+        raise BackendUnavailable(f"{client.base_url} answered from a build without sign-in; retry")
     if r.status_code == 404:
         raise LoomError(
             f"{client.base_url} has no sign-in: it runs without auth (no login needed) "
@@ -306,6 +312,8 @@ def _poll(client: httpx.Client, token_endpoint: str, grant: dict[str, Any]) -> d
             continue
         if r.status_code == 200:
             return _json(r)
+        if _SESSIONS_HEADER not in r.headers:
+            continue  # a previous build's: the grant lives on the one that started it
         error = _oauth_error(r)
         if error == "authorization_pending":
             continue
@@ -344,7 +352,7 @@ def _refresh(profile: str, refused: str, server: str | None) -> dict[str, Any]:
         "client_id": CLIENT_ID,
     }
     with _server(entry["server"]) as client:
-        endpoint = _endpoints(client)["token_endpoint"]
+        endpoint = _endpoints(client, signed_in=True)["token_endpoint"]
         try:
             r = client.post(endpoint, data=form, timeout=_REFRESH_TIMEOUT_S)
         except (httpx.ConnectError, httpx.ConnectTimeout):
@@ -352,17 +360,13 @@ def _refresh(profile: str, refused: str, server: str | None) -> dict[str, Any]:
             # (A lost answer cannot be asked again: the server spent the token,
             # and presenting it twice ends the session.)
             r = client.post(endpoint, data=form, timeout=_REFRESH_TIMEOUT_S)
-        first = r
-        if r.status_code == 400 and _oauth_error(r) == "invalid_grant":
-            # Once more before giving the session up: during a rolling upgrade
-            # the answer may be a previous build's, which knows no session. A
-            # session that did end answers the same again.
-            r = client.post(endpoint, data=form, timeout=_REFRESH_TIMEOUT_S)
+    if r.status_code != 200 and _SESSIONS_HEADER not in r.headers and r.status_code < 500:
+        raise BackendUnavailable(
+            f"{entry['server']} answered from a build that predates this session; retry"
+        )
     if r.status_code == 400 and _oauth_error(r) == "invalid_grant":
         _drop(profile)
-        # The first answer's reason (a replay's, say) wins: the second only says
-        # the session has ended. A previous build's first answer gives none.
-        why = _oauth_description(first) or _oauth_description(r)
+        why = _oauth_description(r)
         if "presented again" in why:
             # Maybe a stolen copy: what it could have minted is the owner's to check.
             why += "; if you did not just lose a refresh, check `loom call /v1/me/service_accounts`"

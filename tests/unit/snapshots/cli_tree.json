@@ -2179,7 +2179,7 @@
            "choices": null,
            "nargs": "...",
            "type": null,
-           "required": false,
+           "required": true,
            "help": "-- <command> [args…]",
            "metavar": null
           }
@@ -8715,7 +8715,6 @@
             "max_token_age",
             "max_agents",
             "agent_claim",
-            "owner_claim",
             "replace"
            ]
           }
@@ -8924,21 +8923,6 @@
            "type": null,
            "required": false,
            "help": "CI trust: the claim naming the agent (e.g. agent_id); each agent gets its own subject and namespace, made on its first sign-in",
-           "metavar": "CLAIM"
-          },
-          {
-           "option_strings": [
-            "--owner-claim"
-           ],
-           "dest": "owner_claim",
-           "action": "_StoreAction",
-           "default": "",
-           "const": null,
-           "choices": null,
-           "nargs": null,
-           "type": null,
-           "required": false,
-           "help": "With --agent-claim: the claim naming the agent's owner's email; that person, when they have an account in the org, gets admin on the agent's namespace",
            "metavar": "CLAIM"
           },
           {

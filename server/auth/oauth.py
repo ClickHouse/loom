@@ -77,12 +77,18 @@ class OAuthError(Exception):
         self.headers = headers or {}
 
 
+# On every sign-in answer of a build that keeps sessions: a client told
+# invalid_grant without it heard a previous build mid-upgrade, which knows
+# none, and keeps its session to ask again.
+SESSIONS_HEADER = "Loom-Sessions"
+
+
 def oauth_error_response(request: Request, exc: Exception) -> JSONResponse:
     assert isinstance(exc, OAuthError)
     body = {"error": exc.error}
     if exc.description:
         body["error_description"] = exc.description
-    headers = {"Cache-Control": "no-store", **exc.headers}
+    headers = {"Cache-Control": "no-store", SESSIONS_HEADER: "1", **exc.headers}
     return JSONResponse(body, status_code=exc.status_code, headers=headers)
 
 
@@ -1428,8 +1434,7 @@ async def _token_exchange_grant(f: dict[str, str]) -> dict[str, Any]:
             m, proof = await machines.verify_any_workload(token)
         if m["agent_claim"]:
             agent = agents.agent_of(m, proof)
-            owner = str(proof.get(m["owner_claim"], "")) if m["owner_claim"] else ""
-            own = await agents.ensure_namespace(m, agent, owner.strip().lower())
+            own = await agents.ensure_namespace(m, agent)
     except machines.Refused as e:
         raise _refused(e) from None
     except (GrantBusyError, BackendUnavailableError):  # its first exchange, made elsewhere now
@@ -1510,7 +1515,7 @@ async def token(request: Request) -> JSONResponse:
     if grant_type not in grants:
         raise OAuthError("unsupported_grant_type")
     body = await grants[grant_type](f)  # Keeper not answering is _busy_response's
-    return JSONResponse(body, headers={"Cache-Control": "no-store"})
+    return JSONResponse(body, headers={"Cache-Control": "no-store", SESSIONS_HEADER: "1"})
 
 
 def _revocation_end(info: AuthInfo) -> datetime | None:

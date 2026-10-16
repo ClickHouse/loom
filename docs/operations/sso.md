@@ -144,9 +144,7 @@ with more than one admin, registered first, in one org); its tokens are for
   `<trust>-<agent>` in the trust's org, made on its first exchange. The
   `--namespace-role`s are what every agent shares besides its own. The trust
   never reaches a namespace it did not make, and a claim never picks the org.
-  `--owner-claim` names the claim carrying the agent's owner's email: that
-  person, when they have an account in the org, gets admin on the agent's
-  namespace.
+  People reach an agent's memory as any namespace's: an admin grants it.
 
   ```bash
   loom bot create --name fleet --org acme --issuer https://issuer.example \
@@ -258,10 +256,11 @@ cutoffs: an access token whose session ended still works there for its hour,
 and so do the tokens a bot disable or an adopt cut off. Finish the rollout
 before adopting accounts or relying on a logout or a bot disable.
 
-A sign-in whose steps land on both builds (a code exchanged, an identity
-provider's callback, a device poll) fails and is started again, and a
-refresh the previous build answers is refused: the SDK and `loom login` ask
-once more before giving the session up, which a new build then answers. Roll
+A browser sign-in whose steps land on both builds (a code exchanged, an
+identity provider's callback) fails and is started again. The SDK and `loom
+login` ride it out: this build marks its token answers with a `Loom-Sessions`
+header, so a refusal without it is the previous build's, and they keep the
+session (a refresh says retry) or keep polling (a device sign-in). Roll
 the upgrade quickly so few sign-ins span it: with the Helm chart, a surge of
 the whole replica count at once.
 

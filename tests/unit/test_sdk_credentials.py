@@ -49,6 +49,12 @@ class _Server:
         return {"access_token": f"a{self.n}", "refresh_token": f"r{self.n}", "expires_in": 3600}
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
+        r = self.answer(request)
+        if request.url.path == "/oauth/token" and not r.extensions.get("previous_build"):
+            r.headers["Loom-Sessions"] = "1"  # as this build signs its answers
+        return r
+
+    def answer(self, request: httpx.Request) -> httpx.Response:
         form = dict(httpx.QueryParams(request.content.decode()))
         self.sent.append((request.url.path, form))
         path = request.url.path
@@ -100,6 +106,11 @@ def server(monkeypatch):
 
     monkeypatch.setattr(credentials.httpx, "Client", client)
     return fake
+
+
+def _previous_build(status: int, **kw: Any) -> httpx.Response:
+    """An answer from a build that predates sessions, mid rolling upgrade."""
+    return httpx.Response(status, extensions={"previous_build": True}, **kw)
 
 
 def _stored() -> dict[str, Any]:
@@ -467,17 +478,43 @@ def test_signing_in_elsewhere_ends_the_session_it_replaces(server, monkeypatch) 
     assert ended == [("https://old.example", _SERVER)]  # not left running there for 30 days
 
 
-def test_a_refresh_refused_once_by_a_previous_build_is_asked_again(server) -> None:
-    # A rolling upgrade: the first answer comes from a build that knows no
-    # sessions, the retry from one that does. The session survives.
+@pytest.mark.parametrize(
+    "answer",
+    [
+        _previous_build(400, json={"detail": {"error": "invalid_grant"}}),  # sign-in, no sessions
+        _previous_build(404),  # no sign-in at all
+    ],
+)
+def test_a_previous_build_s_refusal_keeps_the_session(server, answer: httpx.Response) -> None:
+    from loom.errors import BackendUnavailable
+
     credentials.login(_SERVER, open_browser=False, echo=lambda _: None)
+    refused = credentials._read()["profiles"]["default"]["access_token"]
+    for _ in range(2):  # however often the upgrade routes it there
+        server.queued["/oauth/token"] = [answer]
+        with pytest.raises(BackendUnavailable, match="predates"):
+            credentials.access_token(refused=refused)
+    assert credentials.access_token(refused=refused) == "a2"  # this build's answer
+
+
+def test_a_previous_build_without_sign_in_keeps_the_session(server) -> None:
+    from loom.errors import BackendUnavailable
+
+    credentials.login(_SERVER, open_browser=False, echo=lambda _: None)
+    server.queued["/.well-known/oauth-authorization-server"] = [httpx.Response(404)]
+    with pytest.raises(BackendUnavailable, match="without sign-in"):
+        credentials.access_token(refused="a1")
+    assert credentials.access_token(refused="a1") == "a2"
+
+
+def test_login_keeps_polling_through_a_previous_build_s_answers(server, monkeypatch) -> None:
+    monkeypatch.setattr(credentials.time, "sleep", lambda _: None)
     server.queued["/oauth/token"] = [
-        httpx.Response(400, json={"detail": {"error": "invalid_grant"}})
+        _previous_build(404),
+        _previous_build(400, json={"detail": {"error": "unsupported_grant_type"}}),
     ]
-    token = credentials.access_token(
-        refused=credentials._read()["profiles"]["default"]["access_token"]
-    )
-    assert token and credentials.stored_login(_SERVER) is not None
+    credentials.login(_SERVER, open_browser=False, echo=lambda _: None)
+    assert _stored()["profiles"]["default"]["access_token"]
 
 
 def test_a_session_that_did_end_is_still_given_up(server) -> None:
@@ -488,14 +525,11 @@ def test_a_session_that_did_end_is_still_given_up(server) -> None:
     assert credentials.stored_login(_SERVER) is None
 
 
-def test_a_replay_s_warning_survives_the_second_ask(server) -> None:
+def test_a_replay_s_warning_is_kept(server) -> None:
     credentials.login(_SERVER, open_browser=False, echo=lambda _: None)
     replayed = "this session was ended because a spent refresh token was presented again"
     server.queued["/oauth/token"] = [
         httpx.Response(400, json={"error": "invalid_grant", "error_description": replayed}),
-        httpx.Response(
-            400, json={"error": "invalid_grant", "error_description": "this session has ended"}
-        ),
     ]
     with pytest.raises(AuthInvalid, match="service_accounts"):
         credentials.access_token(refused=credentials._read()["profiles"]["default"]["access_token"])

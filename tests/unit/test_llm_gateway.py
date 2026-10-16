@@ -342,3 +342,47 @@ def test_a_long_lived_gateway_token_is_kept_a_day_at_most(gw: _Gateway, monkeypa
     monkeypatch.setattr(gateway.time, "time", lambda: now[0])
     assert asyncio.run(gateway.bearer("", _GW)) == "gw-1"
     assert gateway._expires_at == 1000.0 + 86400
+
+
+def test_the_workload_token_follows_no_redirect(gw: _Gateway, monkeypatch) -> None:
+    sent: list[dict[str, Any]] = []
+
+    async def post(url: str, **kw: Any) -> httpx.Response:
+        sent.append(kw)
+        return httpx.Response(307, headers={"location": "http://elsewhere.example/oauth/token"})
+
+    monkeypatch.setattr(gw, "post", post)
+    with pytest.raises(gateway.GatewayUnavailable):
+        asyncio.run(gateway.bearer("", _GW))
+    assert sent and sent[0]["follow_redirects"] is False
+
+
+def test_a_retry_pause_never_keeps_an_expired_token_in_use(gw: _Gateway, monkeypatch) -> None:
+    now = [1000.0]
+    monkeypatch.setattr(gateway.time, "time", lambda: now[0])
+    assert asyncio.run(gateway.bearer("", _GW)) == "gw-1"  # lives 900 s
+    now[0] = 1000 + 895  # five seconds before its end, the gateway away
+    gw.down = True
+    assert asyncio.run(gateway.bearer("", _GW)) == "gw-1"
+    now[0] = 1000 + 901  # past its end, inside the 30 s retry pause
+    with pytest.raises(gateway.GatewayUnavailable):
+        asyncio.run(gateway.bearer("", _GW))
+
+
+def test_the_documented_gateway_block_starts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # docs/getting-started/models-and-keys.md, "Through an inference gateway".
+    doc = (Path(__file__).parents[2] / "docs/getting-started/models-and-keys.md").read_text()
+    block = doc.split("LOOM_INFERENCE_TOKEN_URL=https://gateway.example/oauth/token", 1)[1]
+    block = (
+        "LOOM_INFERENCE_TOKEN_URL=https://gateway.example/oauth/token" + block.split("```", 1)[0]
+    )
+    token = tmp_path / "token"
+    token.write_text("t")
+    for line in block.splitlines():
+        name, _, value = line.split("#", 1)[0].strip().partition("=")
+        if name:
+            monkeypatch.setenv(name, value.strip().strip('"'))
+    monkeypatch.setenv("LOOM_INFERENCE_WORKLOAD_TOKEN_FILE", str(token))
+    Settings(_env_file=None)  # type: ignore[call-arg]

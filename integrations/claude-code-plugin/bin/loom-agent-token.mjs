@@ -28,7 +28,7 @@ export async function exchange({ env = process.env, fetchImpl = fetch, now = Dat
   const saved = {
     server,
     client_id: env.LOOM_CLIENT_ID,
-    proof: proofHash(env),
+    proof: proofHash(env, workload), // the proof sent, not the file as it is now
     token: body.access_token,
     exp: now + ttl,
     ttl,

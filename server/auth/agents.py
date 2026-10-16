@@ -52,15 +52,17 @@ def agent_of(m: machines.Machine, claims: dict[str, Any]) -> str:
     return agent
 
 
-async def ensure_namespace(m: machines.Machine, agent: str, owner_email: str) -> str:
-    """The agent's namespace, made on its first exchange. Held as a release
-    holds it (its reads are sequential under the claim), so two first
-    exchanges make one, and one released since is not made again."""
+async def ensure_namespace(m: machines.Machine, agent: str) -> str:
+    """The agent's namespace, made on its first exchange, as an account is:
+    the row names its one owner, the agent, and then its owner grant follows.
+    A later exchange writes that grant only if it was never written (the first
+    one cut off after the row); one revoked since leaves a row, so it stays
+    revoked. Held as a release holds it (its reads are sequential under the
+    claim), so two first exchanges make one, and one released is not made again."""
     from server.auth.grant_claims import bot_change
-    from server.auth.self_signup import insert_owner_grant, provision_account
+    from server.auth.self_signup import provision_account
 
     org, ns, who = m["org"], namespace(m["name"], agent), subject(m["name"], agent)
-    owner = await _owner(org, owner_email)  # before the row: it names no email
     made = False
     async with account_change(org, ns):
         row = await get_client().query_one(
@@ -75,6 +77,7 @@ async def ensure_namespace(m: machines.Machine, agent: str, owner_email: str) ->
                 raise machines.Refused("invalid_grant", f"{org}/{ns} is not this trust's")
             if not row["active"]:
                 raise machines.Refused("invalid_grant", f"{org}/{ns} was released")
+            await _finish_grant(org, ns, who)
         else:
             # The trust's own claim: two new agents at once must not both see room.
             async with bot_change(m["name"]):
@@ -83,10 +86,6 @@ async def ensure_namespace(m: machines.Machine, agent: str, owner_email: str) ->
                     raise machines.Refused(
                         "invalid_grant", f"trust {m['name']} has made its agents"
                     )
-                # The owner is the one the trust names now, and only now: granted
-                # before the row, so a write that fails leaves nothing to retry past.
-                if owner:
-                    await insert_owner_grant(org, ns, owner)
                 # No contact email: a sign-in by email must never resolve to an agent.
                 await provision_account(
                     org=org,
@@ -97,7 +96,6 @@ async def ensure_namespace(m: machines.Machine, agent: str, owner_email: str) ->
                     tags=[tag(m["name"])],
                 )
             made = True
-        await _finish_grants(org, ns, who)
     if made:
         from server.observability import audit
 
@@ -106,23 +104,25 @@ async def ensure_namespace(m: machines.Machine, agent: str, owner_email: str) ->
             org=org,
             namespace=ns,
             actor=machines.subject(m["name"]),
-            subject={"agent": agent, "owner": owner_email},
+            subject={"agent": agent},
         )
     return ns
 
 
-async def _finish_grants(org: str, ns: str, who: str) -> None:
-    """The agent's own grant, if never written (a first exchange cut off after
-    the namespace row). One revoked since leaves a row, so it stays revoked."""
+async def _finish_grant(org: str, ns: str, who: str) -> None:
+    """The agent's owner grant, if never written, held as a grant change is
+    held from its read to its write, so a revocation is never written over."""
+    from server.auth.grant_claims import grant_change
     from server.auth.self_signup import insert_owner_grant
 
-    row = await get_client().query_one(
-        "SELECT 1 AS x FROM loom.namespace_grants WHERE org = {org:String} "
-        "AND namespace = {ns:String} AND subject = {who:String} LIMIT 1",
-        params={"org": org, "ns": ns, "who": who},
-    )
-    if row is None:
-        await insert_owner_grant(org, ns, who)
+    async with grant_change(org, ns, who):
+        row = await get_client().query_one(
+            "SELECT 1 AS x FROM loom.namespace_grants WHERE org = {org:String} "
+            "AND namespace = {ns:String} AND subject = {who:String} LIMIT 1",
+            params={"org": org, "ns": ns, "who": who},
+        )
+        if row is None:
+            await insert_owner_grant(org, ns, who)
 
 
 async def _made(org: str, trust: str) -> int:
@@ -133,14 +133,3 @@ async def _made(org: str, trust: str) -> int:
         params={"org": org, "tag": tag(trust)},
     )
     return int((row or {}).get("n") or 0)
-
-
-async def _owner(org: str, owner_email: str) -> str:
-    """The subject of the owner the trust vouches for, when they have an account
-    in the org: they get admin on their agent's namespace. '' otherwise."""
-    from server.auth.login import resolve_identity_for_email
-
-    if not owner_email:
-        return ""
-    person = await resolve_identity_for_email(owner_email)
-    return person[0] if person is not None and person[1] == org else ""

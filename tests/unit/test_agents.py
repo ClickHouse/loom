@@ -1,5 +1,6 @@
-"""An agent's namespace: made on its first exchange, never one the trust did
-not make, and its owner's when the trust vouches for one with an account."""
+"""An agent's namespace: made on its first exchange as an account is (its row
+names its one owner, the agent, and that owner's grant follows), never one
+the trust did not make, and finished by a later exchange when cut off."""
 
 from __future__ import annotations
 
@@ -9,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from server.auth import agents, login, machines, self_signup
+from server.auth import agents, machines, self_signup
 from server.observability import audit
 
 _NOW = datetime(2026, 10, 16, 12, 0, 0)
@@ -22,7 +23,6 @@ _TRUST: machines.Machine = {
     "audience": "loom",
     "claims": {"tenant_id": "t1"},
     "agent_claim": "agent_id",
-    "owner_claim": "owner",
     "jwks_uri": "",
     "max_token_s": 3600,
     "max_agents": 1000,
@@ -31,13 +31,7 @@ _TRUST: machines.Machine = {
 
 @pytest.fixture
 def world(monkeypatch) -> dict[str, Any]:
-    state: dict[str, Any] = {
-        "rows": {},
-        "made": [],
-        "granted": [],
-        "people": {},
-        "grant_rows": set(),
-    }
+    state: dict[str, Any] = {"rows": {}, "made": [], "granted": [], "grant_rows": set()}
 
     class _CH:
         async def query_one(self, sql: str, params: dict[str, Any]) -> Any:
@@ -47,21 +41,19 @@ def world(monkeypatch) -> dict[str, Any]:
                 return {"x": 1} if (params["ns"], params["who"]) in state["grant_rows"] else None
             return state["rows"].get(params["ns"])
 
+    async def grant(org: str, ns: str, subject: str) -> None:
+        state["granted"].append((org, ns, subject))
+        state["grant_rows"].add((ns, subject))
+
     async def provision(**kw: Any) -> None:
+        # As provision_account does: the row, then its owner's grant.
         state["made"].append(kw)
-        state["grant_rows"].add((kw["namespace"], kw["subject"]))
         state["rows"][kw["namespace"]] = {
             "active": True,
             "tags": kw["tags"],
             "owner_email": kw["subject"],
         }
-
-    async def grant(org: str, ns: str, subject: str) -> None:
-        state["granted"].append((org, ns, subject))
-        state["grant_rows"].add((ns, subject))
-
-    async def person(email: str) -> Any:
-        return state["people"].get(email)
+        await self_signup.insert_owner_grant(kw["org"], kw["namespace"], kw["subject"])
 
     async def emit(*a: Any, **k: Any) -> str:
         return ""
@@ -69,13 +61,12 @@ def world(monkeypatch) -> dict[str, Any]:
     monkeypatch.setattr(agents, "get_client", lambda: _CH())
     monkeypatch.setattr(self_signup, "provision_account", provision)
     monkeypatch.setattr(self_signup, "insert_owner_grant", grant)
-    monkeypatch.setattr(login, "resolve_identity_for_email", person)
     monkeypatch.setattr(audit, "emit", emit)
     return state
 
 
-def _ensure(owner: str = "") -> str:
-    return asyncio.run(agents.ensure_namespace(_TRUST, "a1", owner))
+def _ensure(trust: machines.Machine = _TRUST, agent: str = "a1") -> str:
+    return asyncio.run(agents.ensure_namespace(trust, agent))
 
 
 def test_the_first_exchange_makes_the_agents_namespace_once(world) -> None:
@@ -83,6 +74,7 @@ def test_the_first_exchange_makes_the_agents_namespace_once(world) -> None:
     [made] = world["made"]
     assert made["subject"] == "sa:fleet:a1" and made["tags"] == ["machine:fleet"]
     assert made["contact_email"] == ""  # a sign-in by email never resolves to an agent
+    assert world["granted"] == [("acme", "fleet-a1", "sa:fleet:a1")]  # its one owner
 
 
 def test_a_name_the_trust_did_not_make_is_refused(world) -> None:
@@ -104,18 +96,6 @@ def test_a_released_agent_namespace_is_not_made_again(world) -> None:
     }
     with pytest.raises(machines.Refused, match="released"):
         _ensure()
-
-
-def test_the_owner_gets_admin_only_in_the_trusts_org(world) -> None:
-    world["people"] = {
-        "lee@acme.io": ("lee", "acme", ["lee"], ["writer"]),
-        "kim@other.io": ("kim", "other", ["kim"], ["writer"]),
-    }
-    _ensure("lee@acme.io")
-    assert world["granted"] == [("acme", "fleet-a1", "lee")]
-    world["rows"].clear()
-    _ensure("kim@other.io")
-    assert world["granted"] == [("acme", "fleet-a1", "lee")]  # nothing outside acme
 
 
 @pytest.mark.parametrize(("value", "ok"), [("a1", True), ("agent-7", True), ("A1", False)])
@@ -147,18 +127,16 @@ def test_a_caller_cannot_give_a_namespace_a_trusts_mark() -> None:
 
 def test_a_trust_makes_no_more_agents_than_its_limit(world) -> None:
     trust = {**_TRUST, "max_agents": 1}
-    assert asyncio.run(agents.ensure_namespace(trust, "a1", "")) == "fleet-a1"
-    assert asyncio.run(agents.ensure_namespace(trust, "a1", "")) == "fleet-a1"  # still its own
+    assert _ensure(trust) == _ensure(trust) == "fleet-a1"  # still its own
     with pytest.raises(machines.Refused, match="made its agents"):
-        asyncio.run(agents.ensure_namespace(trust, "a2", ""))
+        _ensure(trust, "a2")
 
 
-def test_a_first_exchange_cut_off_before_its_grants_is_finished_by_the_next(
+def test_a_first_exchange_cut_off_before_its_grant_is_finished_by_the_next(
     world, monkeypatch
 ) -> None:
-    world["people"] = {"lee@acme.io": ("lee", "acme", ["lee"], ["writer"])}
-    calls = {"n": 0}
     real = self_signup.insert_owner_grant
+    calls = {"n": 0}
 
     async def fails_once(org: str, ns: str, subject: str) -> None:
         calls["n"] += 1
@@ -168,26 +146,38 @@ def test_a_first_exchange_cut_off_before_its_grants_is_finished_by_the_next(
 
     monkeypatch.setattr(self_signup, "insert_owner_grant", fails_once)
     with pytest.raises(RuntimeError):
-        _ensure("lee@acme.io")
-    _ensure("lee@acme.io")  # the retry finds the namespace and finishes it
-    assert ("acme", "fleet-a1", "lee") in world["granted"]
+        _ensure()  # the row landed, its grant did not
+    _ensure()  # the next exchange finishes it
+    assert world["granted"] == [("acme", "fleet-a1", "sa:fleet:a1")]
 
 
 def test_a_grant_revoked_since_stays_revoked(world) -> None:
-    world["people"] = {"lee@acme.io": ("lee", "acme", ["lee"], ["writer"])}
-    _ensure("lee@acme.io")
-    world["granted"].clear()  # its row (revoked or not) stays in grant_rows
-    _ensure("lee@acme.io")
+    _ensure()
+    world["granted"].clear()  # its row, revoked or not, stays in grant_rows
+    _ensure()
     assert world["granted"] == []
 
 
-def test_a_later_token_naming_another_owner_grants_nothing(world) -> None:
-    # The owner is the one named when the agent was made; a token naming
-    # someone else later (a reassignment, a wrong claim) adds no admin.
-    world["people"] = {
-        "lee@acme.io": ("lee", "acme", ["lee"], ["writer"]),
-        "bob@acme.io": ("bob", "acme", ["bob"], ["writer"]),
+def test_the_repair_holds_the_grants_claim(world, monkeypatch) -> None:
+    # A revocation of that grant runs under its claim: the repair's read and
+    # write must not straddle one.
+    from contextlib import asynccontextmanager
+
+    from server.auth import grant_claims
+
+    held: list[tuple[str, str, str]] = []
+
+    @asynccontextmanager
+    async def claimed(org: str, ns: str, subject: str) -> Any:
+        held.append((org, ns, subject))
+        yield
+
+    monkeypatch.setattr(grant_claims, "grant_change", claimed)
+    world["rows"]["fleet-a1"] = {
+        "active": True,
+        "tags": ["machine:fleet"],
+        "owner_email": "sa:fleet:a1",
     }
-    _ensure("lee@acme.io")
-    _ensure("bob@acme.io")
-    assert world["granted"] == [("acme", "fleet-a1", "lee")]
+    _ensure()
+    assert held == [("acme", "fleet-a1", "sa:fleet:a1")]
+    assert world["granted"] == [("acme", "fleet-a1", "sa:fleet:a1")]

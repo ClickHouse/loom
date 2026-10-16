@@ -58,7 +58,8 @@ async def bearer(provider_key: str, url: str) -> str:
     if is_provider_api(url):
         host = urlsplit(url).hostname
         raise GatewayUnavailable(f"{host} is not the gateway: point its base URL at the gateway")
-    if time.time() < _renew_at and _token:
+    now = time.time()
+    if now < _renew_at and _token and now < _expires_at:  # a retry pause never outlasts it
         return _token
     async with _lock:
         if time.time() >= _renew_at:  # 0 at first: the first call renews
@@ -81,7 +82,10 @@ async def _renew() -> None:
         }
         if settings.inference_token_scope:
             form["scope"] = settings.inference_token_scope
-        r = await http().post(settings.inference_token_url, data=form, timeout=10.0)
+        # Never followed: a redirect would carry the workload's token elsewhere.
+        r = await http().post(
+            settings.inference_token_url, data=form, timeout=10.0, follow_redirects=False
+        )
         if r.status_code != 200:
             raise ValueError(f"{r.status_code} {_error_code(r)}".strip())
         body = r.json()

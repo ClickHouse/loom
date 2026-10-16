@@ -56,7 +56,6 @@ class Machine(TypedDict):
     claims: dict[str, str]
     # A trust that tells agents apart (server/auth/agents.py); '' for one bot.
     agent_claim: str
-    owner_claim: str
     # Where the issuer publishes its keys; '' = its OIDC discovery says.
     jwks_uri: str
     # The longest a workload token may live to be taken, and how many agents
@@ -100,7 +99,6 @@ def _machine(row: dict[str, Any]) -> Machine:
         "audience": row["audience"],
         "claims": dict(row["claims"]),
         "agent_claim": row["agent_claim"],
-        "owner_claim": row["owner_claim"],
         "jwks_uri": row["jwks_uri"],
         "max_token_s": int(row["max_token_s"]),
         "max_agents": int(row["max_agents"]),
@@ -149,7 +147,7 @@ async def listed() -> list[dict[str, Any]]:
     with own_write_reads():  # a trust another replica saved a moment ago counts
         return await get_client().query_all(
             f"SELECT name, org, ns_roles, public_keys != '' AS has_key, issuer, audience, claims, "
-            f"agent_claim, owner_claim, jwks_uri, max_token_s, max_agents, active, updated_by, "
+            f"agent_claim, jwks_uri, max_token_s, max_agents, active, updated_by, "
             f"updated_at FROM {TABLE} FINAL "
             "ORDER BY name"
         )

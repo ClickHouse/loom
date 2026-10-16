@@ -87,13 +87,6 @@ def register_bot_cli(sub: Any) -> None:
         help="CI trust: the claim naming the agent (e.g. agent_id); each agent gets its own "
         "subject and namespace, made on its first sign-in",
     )
-    p_create.add_argument(
-        "--owner-claim",
-        default="",
-        metavar="CLAIM",
-        help="With --agent-claim: the claim naming the agent's owner's email; that person, "
-        "when they have an account in the org, gets admin on the agent's namespace",
-    )
     p_create.add_argument("--replace", action="store_true", help="Replace a bot of the same name")
     p_create.set_defaults(func=_cmd_create)
     p_list = bot.add_parser("list", help="Every bot, active or disabled.")
@@ -125,7 +118,6 @@ def _cmd_create(args: argparse.Namespace) -> int:
             audience=args.audience,
             claims=args.claim,
             agent_claim=args.agent_claim,
-            owner_claim=args.owner_claim,
             jwks_uri=args.jwks_uri,
             max_token_s=args.max_token_age,
             max_agents=args.max_agents,

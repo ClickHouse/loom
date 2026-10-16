@@ -179,8 +179,8 @@ export function agentTokenPath(env = process.env) {
  *  serves only the agent holding that proof: one sharing this home, or one
  *  handed another agent's token, never gets it. A new proof is a new exchange
  *  (the Loom token never outlives the proof anyway). */
-export function proofHash(env = process.env) {
-  return createHash("sha256").update(workloadToken(env)).digest("hex");
+export function proofHash(env = process.env, token = workloadToken(env)) {
+  return createHash("sha256").update(token).digest("hex");
 }
 
 // Renewed halfway through its life, at most five minutes before it runs out
