@@ -194,6 +194,16 @@ class _SetCoalescer:
                 str(row["memory_key"]), res
             )
             row["noop"] = int(row.get("version") or 0) == 0
+            # A pinned or read_only key is skipped with no verdict, only named
+            # in a list: raise the 409 / 423 the same set alone would have.
+            if row["memory_key"] in (res.get("skipped_pinned") or ()):
+                detail = {"code": "PINNED_CONFLICT", "message": "the key is pinned"}
+                fut.set_exception(from_response({"detail": detail}, 409))
+                continue
+            if row["memory_key"] in (res.get("skipped_locked") or ()):
+                detail = {"code": "LOCKED", "message": "the key is locked read_only"}
+                fut.set_exception(from_response({"detail": detail}, 423))
+                continue
             if row["conflict_verdict"] == "blacklisted":
                 # Refused, as the same set alone is: the 422 it would have raised.
                 detail = {"code": "BLACKLISTED", "message": "value matches a blacklist pattern"}

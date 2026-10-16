@@ -128,6 +128,27 @@ async def test_a_coalesced_set_against_a_pinned_row_raises_as_alone(agent: Agent
     assert refused.status == 409
 
 
+@pytest.mark.parametrize(
+    ("skipped", "code", "status"),
+    [("skipped_pinned", "PINNED_CONFLICT", 409), ("skipped_locked", "LOCKED", 423)],
+)
+async def test_a_coalesced_set_to_a_pinned_or_locked_key_raises_as_alone(
+    agent: Agent, skipped: str, code: str, status: int
+) -> None:
+    # Alone, a set to a pinned key answers 409 and to a read_only key 423; the
+    # batch skips the entry with no verdict and names it in its skipped list.
+    from loom.errors import LoomError
+
+    t: Any = agent.transport
+    t.bulk_extra = {"merged": ["d"], skipped: ["d"]}
+    results = await asyncio.gather(
+        *[agent.memory.set(k, {"v": k}) for k in "abcde"], return_exceptions=True
+    )
+    (refused,) = [r for r in results if isinstance(r, BaseException)]
+    assert isinstance(refused, LoomError) and refused.code == code
+    assert refused.status == status
+
+
 async def test_a_set_with_point_only_fields_is_never_coalesced(agent: Agent) -> None:
     t: Any = agent.transport
     await asyncio.gather(
