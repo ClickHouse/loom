@@ -3694,6 +3694,54 @@ async def test_a_replayed_fallback_closes_the_edge_its_repair_missed(ch, org, mo
     assert await _walked(org, ["berlin"], labeled=False, as_of=after) == ["berlin"]
 
 
+async def test_a_second_replay_closes_the_edge_the_first_replays_repair_missed(
+    ch, org, monkeypatch
+) -> None:
+    # The revision's reconcile fails before its fallback runs, so the failure records no
+    # markers. Its first replay states Paris again and fails to close Paris's edge: the
+    # closes it made must ride the failure, or the second replay finds the markers,
+    # finds Paris's triple already closed, repairs nothing and leaves the edge open.
+    from server.core import ch as ch_mod
+    from server.memory.app import entity_projections
+    from server.memory.app.projection_failures import retry_projection_failure
+
+    live = ("user", "live_in")
+    london = await _london_undone_over_paris(ch, org, "live_in")
+    ahead = naive_utc_now().replace(microsecond=0) + timedelta(days=45)
+    await _stated(
+        ch, org, "s3", "I am moving to Berlin", (*live, "berlin"), memory_key="move", valid_at=ahead
+    )
+    await _edges_like_triples(ch, org)
+
+    async def _fallback_fails(*a: Any, **k: Any) -> None:
+        raise ConnectionError("transient")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(entity_projections, "_keep_one_current", _fallback_fails)
+        await _revise(
+            "memory.update_by_id", org, london, "I like Rome", (("user", "like", "rome"),)
+        )
+    client = ch_mod.get_client()
+    execute, failed = client.execute, []
+
+    async def _edge_close_fails(sql: str, *a: Any, **kw: Any) -> Any:
+        # The repair's edge close names each edge by its key (char 31 joins its parts).
+        if not failed and "ALTER TABLE loom.entity_edges" in sql and "char(31)" in sql:
+            failed.append(sql)
+            raise ConnectionError("transient")
+        return await execute(sql, *a, **kw)
+
+    with monkeypatch.context() as patched:
+        patched.setattr(client, "execute", _edge_close_fails)
+        first = await retry_projection_failure(await _recorded_reconcile(ch, org), ch=ch)
+    assert failed and not first.resolved
+    second = await retry_projection_failure(await _recorded_reconcile(ch, org), ch=ch)
+    assert second.resolved
+    await _mutations_done(ch, org)
+    after = ahead + timedelta(days=1)
+    assert await _walked(org, ["berlin"], labeled=False, as_of=after) == ["berlin"]
+
+
 async def test_a_retired_rows_edge_ends_with_its_triple(ch, org) -> None:
     # London's row retires behind Paris's: both walks reach Paris only. A favourite
     # city may have many values, so Paris's own write does not close London.

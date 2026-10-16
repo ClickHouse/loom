@@ -731,6 +731,41 @@ async def test_a_follow_replay_first_finishes_a_fallbacks_recorded_repair(monkey
     assert calls == [("finish", "r1", at, [paris]), ("follow", [("a", "b")])]
 
 
+async def test_a_follow_replay_whose_fallback_fails_records_its_repair(monkeypatch) -> None:
+    # The follow's failure was recorded with no markers; its replay's fallback states
+    # Paris again and fails to close the edge. The next replay must finish that repair.
+    from server.memory.app import entity_projections
+    from server.memory.app.projection_errors import TRIPLES_RESTORE_ID, TriplesRepairFailed
+    from server.memory.app.projection_failures import _recorded_repairs
+    from server.memory.domain.graph_quality import IntervalRepair
+
+    at = datetime(2026, 10, 16, 12, 0, 0)
+    paris = IntervalRepair("user", "live_in", "paris", "berlin", valid_to=datetime(2026, 12, 1))
+
+    async def follow(input, pairs, *, ch, hops):
+        failed = TriplesRepairFailed(at, ConnectionError("edge close"), [paris])
+        failed.restore_id = "r1"
+        raise failed
+
+    monkeypatch.setattr(entity_projections, "follow_row_supersessions", follow)
+    failure = ProjectionFailureRow(
+        failure_id="f1",
+        org="o",
+        namespace="n",
+        agent="a",
+        projection="triples_follow_rows",
+        source_operation="memory.bulk_set",
+        source_resource_id="",
+        memory_keys=[],
+        error_type="RuntimeError",
+        error_message="boom",
+        payload={"pairs": [["a", "b"]]},
+    )
+    assert not (await retry_projection_failure(failure, ch=_FailureRowCH(failure))).resolved
+    assert failure.payload[TRIPLES_RESTORE_ID] == "r1"
+    assert _recorded_repairs(failure.payload) == [paris]
+
+
 async def test_a_failure_row_is_committed_not_left_in_a_buffer() -> None:
     """The ledger row is the only record of a lost projection: the insert
     waits for the async-insert flush."""

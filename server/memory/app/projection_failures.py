@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -27,6 +29,7 @@ from server.memory.app.projection_errors import (
     TRIPLES_RESTORE_ID,
     TriplesRepairFailed,
     repair_failure_payload,
+    restated_repair_payload,
 )
 from server.memory.domain.graph_quality import IntervalRepair
 
@@ -477,8 +480,9 @@ async def _retry_follow_rows(failure: ProjectionFailureRow, *, ch: Any) -> str:
     if not pairs:
         raise ValueError("triples_follow_rows retry has no pairs")
     scope = SimpleNamespace(org=failure.org, namespace=failure.namespace, agent=failure.agent)
-    await _finish_restated_repair(failure, scope, ch=ch)
-    outcome = await follow_row_supersessions(scope, pairs, ch=ch, hops=REPAIR_CHAIN_HOPS)
+    async with _recording_restated_repair(failure, ch=ch):
+        await _finish_restated_repair(failure, scope, ch=ch)
+        outcome = await follow_row_supersessions(scope, pairs, ch=ch, hops=REPAIR_CHAIN_HOPS)
     if not outcome.unfollowed:
         return ""
     log.warning(
@@ -543,6 +547,24 @@ def _recorded_entity_map(payload: dict[str, Any]) -> dict[str, str] | None:
     return {str(k): str(v) for k, v in names.items()}
 
 
+@asynccontextmanager
+async def _recording_restated_repair(
+    failure: ProjectionFailureRow, *, ch: Any
+) -> AsyncIterator[None]:
+    """A replay whose repair of an Undo's or a fallback's markers fails records them and
+    the closes it made, as the write did, so the next replay finishes that repair. Without
+    them it would find the markers stated and the relation looking settled, and repair
+    nothing."""
+    try:
+        yield
+    except TriplesRepairFailed as e:
+        # Stored as JSON: compare it as the next retry reads it.
+        changes = json.loads(json.dumps(restated_repair_payload(e)))
+        if any(changes[k] != failure.payload.get(k) for k in changes):
+            await _update_payload(failure, changes, ch=ch)
+        raise
+
+
 async def _finish_restated_repair(failure: ProjectionFailureRow, scope: Any, *, ch: Any) -> None:
     """First finish the repair of an Undo's or a fallback's markers that the failure
     recorded, with the closes it had made: the relation may look settled since, and the
@@ -573,21 +595,22 @@ async def _retry_triples_reconcile(failure: ProjectionFailureRow, *, ch: Any) ->
     if not ids:
         return "malformed_payload"
     scope = SimpleNamespace(org=failure.org, namespace=failure.namespace, agent=failure.agent)
-    await _finish_restated_repair(failure, scope, ch=ch)
-    if failure.payload.get("reopen"):
-        # As of the Undo, by its id: a value stated since stays the newer one, and '' is
-        # every other row's id.
-        restored_at = parse_iso_dt(failure.payload.get("restored_at") or "")
-        restore_id = str(failure.payload.get("restore_id") or "")
-        if restored_at is None or not restore_id:
-            return "malformed_payload"
-        # A row revised since the Undo is its revision's to reconcile, not the Undo's.
-        hashes = failure.payload.get("content_sha256") or {}
-        await reopen_held_facts(
-            scope, ids, ch=ch, restored_at=restored_at, restore_id=restore_id, hashes=hashes
-        )
-    else:
-        await close_dropped_facts(scope, ids, ch=ch)
+    async with _recording_restated_repair(failure, ch=ch):
+        await _finish_restated_repair(failure, scope, ch=ch)
+        if failure.payload.get("reopen"):
+            # As of the Undo, by its id: a value stated since stays the newer one, and ''
+            # is every other row's id.
+            restored_at = parse_iso_dt(failure.payload.get("restored_at") or "")
+            restore_id = str(failure.payload.get("restore_id") or "")
+            if restored_at is None or not restore_id:
+                return "malformed_payload"
+            # A row revised since the Undo is its revision's to reconcile, not the Undo's.
+            hashes = failure.payload.get("content_sha256") or {}
+            await reopen_held_facts(
+                scope, ids, ch=ch, restored_at=restored_at, restore_id=restore_id, hashes=hashes
+            )
+        else:
+            await close_dropped_facts(scope, ids, ch=ch)
     return ""
 
 
