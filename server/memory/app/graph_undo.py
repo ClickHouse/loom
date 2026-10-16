@@ -11,6 +11,7 @@ from server.memory.app.entity_projections import (
     close_dropped_facts,
     held_by_unlinked_rows,
     linked_triples,
+    rows_holding,
     stated_by_live_rows,
 )
 from server.memory.app.projections import entity_edge_row, entity_triple_row, repair_intervals
@@ -24,18 +25,10 @@ from server.memory.domain.graph_quality import (
 async def rows_still_holding(
     org: str, namespace: str, hashes: Mapping[str, str], *, ch: Any
 ) -> list[str]:
-    """The rows of `hashes` (id to `content_sha256`) whose value is still that one: a row
-    revised since an Undo is its revision's to reconcile, not the Undo's."""
-    rows = await ch.query_all(
-        """
-        SELECT toString(memory_id) AS id, toString(content_sha256) AS sha
-        FROM loom.memory FINAL
-        WHERE org = {org:String} AND namespace = {ns:String} AND memory_id IN {ids:Array(UUID)}
-        SETTINGS select_sequential_consistency = 1
-        """,
-        params={"org": org, "ns": namespace, "ids": sorted(hashes)},
-    )
-    return sorted(str(r["id"]) for r in rows if hashes.get(str(r["id"])) == str(r["sha"]))
+    """The rows of `hashes` (id to `content_sha256`) whose value is still that one and
+    that may still hold graph facts: a row revised or retired since an Undo is its
+    revision's or retirement's to reconcile, not the Undo's."""
+    return sorted(await rows_holding(org, namespace, list(hashes.items()), ch=ch))
 
 
 async def _held_now(input: Any, ids: list[str], *, ch: Any) -> frozenset[Any]:
@@ -66,9 +59,9 @@ async def reopen_held_facts(
     observation starting then, repaired like any other value; no row retires.
     `restore_id` names this Undo's markers, so a replay with the same id and
     `restored_at` finds and restates them. With `hashes` (id to the `content_sha256`
-    restored), only the rows still holding that value are read. With `facts`, only
-    those are opened: a fallback (`entity_projections._keep_one_current`) opens one
-    value, labelled `row-fallback` by `adapter_name`."""
+    restored), only the rows still holding that value, and still live, are read. With
+    `facts`, only those are opened: a fallback (`entity_projections._keep_one_current`)
+    opens one value, labelled `row-fallback` by `adapter_name`."""
     if hashes:
         ids = sorted(i for i in ids if i in hashes)
     asked = ids
@@ -79,8 +72,8 @@ async def reopen_held_facts(
             held &= facts
         if not hashes:
             break
-        # Checked after the read: a row revised since the restore, even while this
-        # read ran, is its revision's to reconcile, so it is dropped and the rest read again.
+        # Checked after the read: a row revised or retired since the restore, even while
+        # this read ran, is left to that change, so it is dropped and the rest read again.
         still = await rows_still_holding(
             input.org, input.namespace, {i: hashes[i] for i in ids}, ch=ch
         )
@@ -97,8 +90,9 @@ async def reopen_held_facts(
             adapter_name=adapter_name,
         )
     if hashes and asked:
-        # A row revised after the check above ran its own close before these markers
-        # landed, or before an earlier attempt's did: close what it no longer holds now.
+        # A row revised or retired after the check above ran its own close before these
+        # markers landed, or before an earlier attempt's did: close what it no longer
+        # holds now.
         still = await rows_still_holding(
             input.org, input.namespace, {i: hashes[i] for i in asked}, ch=ch
         )

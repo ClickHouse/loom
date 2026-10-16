@@ -347,9 +347,9 @@ the value it was written or stated for (`carried`):
   counts only while an open value starts by that end: Paris holds until the move to
   Berlin it was closed for), the newest value a live row still holds and a close ended
   is stated again from the relation's last close, as an Undo states it and through the
-  Undo's own check of the rows holding it (a row revised meanwhile is left to its
-  revision), but labelled `row-fallback`: triple and edge markers, then the interval
-  repair, so a newer value written meanwhile wins.
+  Undo's own check of the rows holding it (a row revised or retired meanwhile is left
+  to that change), but labelled `row-fallback`: triple and edge markers, then the
+  interval repair, so a newer value written meanwhile wins.
   London undone over Paris and then revised or retired away leaves Paris current from
   then on, and its earlier interval stays as history. A value that ended on its own
   stays ended. A replay of a failed triple, edge or entity-vector write writes only for
@@ -406,9 +406,11 @@ the value it was written or stated for (`carried`):
   marker, so a replay after a failed triple insert finds the edge by the id and does not
   repeat it. The failure records each restored row's `content_sha256`; a replay skips a
   row revised since, whose revision reconciles its facts, so the revised value is never
-  dated at the Undo. A row revised while the Undo ran may have reconciled before the
-  markers landed, so the Undo, and every replay of it, closes what such a row no longer
-  holds. A failed triple write records when it arrived: a replay of a failed insert
+  dated at the Undo. A row counts as holding only while it has that hash and may still
+  hold graph facts (live, not deleted, not ended, not `high`): a retirement keeps the
+  hash, and is left to its own close too. A row revised or retired while the Undo ran
+  may have reconciled before the markers landed, so the Undo, and every replay of it,
+  closes what such a row no longer holds. A failed triple write records when it arrived: a replay of a failed insert
   inserts the triples seen at that arrival, not at its own clock, so an older value
   replayed after a newer one lands behind it instead of closing it. Some of its triples
   may have landed before the insert failed, so it also records what the write resolved

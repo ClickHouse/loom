@@ -1701,6 +1701,42 @@ async def test_an_undo_closes_its_markers_for_a_revision_made_after_its_hash_che
     assert await _open_facts(ch, org, want) == want
 
 
+async def test_an_undo_closes_its_markers_for_a_retirement_made_after_its_hash_check(
+    ch, org, monkeypatch
+) -> None:
+    # As above, but the restored London row is retired behind a Rome row: it keeps its
+    # value, so only its status says it no longer holds London.
+    from server.identity.app import namespace_ontology
+    from server.memory.app import graph_undo
+    from server.memory.app.restore import handle_memory_restore
+
+    london = await _stated(ch, org, "s1", "I like London", ("user", "like", "london"))
+    paris = await _stated(ch, org, "s2", "I like Paris", ("user", "like", "paris"))
+    await _follow_retirement(ch, org, london, paris)
+    checked, retired = graph_undo.rows_still_holding, []
+    cardinality = namespace_ontology.load_relation_cardinality
+
+    async def check(*args: Any, **kwargs: Any) -> Any:
+        retired.append(False)
+        return await checked(*args, **kwargs)
+
+    async def retired_after_the_check(*args: Any, **kwargs: Any) -> Any:
+        if retired == [False]:
+            retired.append(True)
+            rome = await _stated(
+                ch, org, "s3", "I like Rome", ("user", "like", "rome"), memory_key="k3"
+            )
+            await _follow_retirement(ch, org, london, rome)
+        return await cardinality(*args, **kwargs)
+
+    monkeypatch.setattr(graph_undo, "rows_still_holding", check)
+    monkeypatch.setattr(namespace_ontology, "load_relation_cardinality", retired_after_the_check)
+    assert (await handle_memory_restore(_undo_of(paris))).restored and True in retired
+    await _mutations_done(ch, org)
+    want = {("like", "rome"), ("like", "paris")}
+    assert await _open_facts(ch, org, want) == want
+
+
 async def test_a_replayed_undo_closes_its_markers_for_a_revision_made_during_it(
     ch, org, monkeypatch
 ) -> None:
@@ -3452,6 +3488,43 @@ async def test_a_fallback_leaves_out_a_row_revised_before_its_markers_land(
     await _mutations_done(ch, org)
     want = {("like", "rome"), ("like", "jazz")}
     assert await _open_facts(ch, org, want) == want
+
+
+async def test_a_fallback_leaves_out_a_row_retired_before_its_markers_land(
+    ch, org, judge, monkeypatch
+) -> None:
+    # As above, but a bulk write of Berlin retires the Paris row (and the Rome one)
+    # before the markers land. The row keeps its value, so only its status says it no
+    # longer holds Paris: Berlin is current, not Paris.
+    from server.memory.api.models_bulk import MemoryBulkSetInput
+    from server.memory.app import graph_undo
+    from server.memory.app.bulk_set import handle_memory_bulk_set
+
+    london = await _london_undone_over_paris(ch, org, "live_in")
+    restate, retired = graph_undo.restate_facts, []
+
+    async def _paris_retired_first(*a: Any, **k: Any) -> Any:
+        monkeypatch.setattr(graph_undo, "restate_facts", restate)
+        entry = {
+            "memory_key": KEY,
+            "value": "I live in Berlin",
+            "relations": [("user", "live_in", "berlin")],
+            "valid_at": datetime(2026, 7, 1),
+        }
+        out = await handle_memory_bulk_set(
+            MemoryBulkSetInput(
+                org=org, namespace=NS, agent="bot", user_id=USER, session_id="s3", entries=[entry]
+            )
+        )
+        retired.extend(out.written)
+        await _mutations_done(ch, org)
+        return await restate(*a, **k)
+
+    monkeypatch.setattr(graph_undo, "restate_facts", _paris_retired_first)
+    await _revise("memory.update_by_id", org, london, "I like Rome", (("user", "like", "rome"),))
+    await _mutations_done(ch, org)
+    assert retired
+    assert await _open_facts(ch, org, {("live_in", "berlin")}) == {("live_in", "berlin")}
 
 
 async def test_a_replayed_fallback_dates_its_triple_as_its_edge(ch, org, monkeypatch) -> None:
