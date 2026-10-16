@@ -548,12 +548,13 @@ async def _after_the_close(
     *,
     ch: Any,
 ) -> None:
-    """What follows a close of the `gone` facts, which no live row holds once the rows
-    `changed` (ids) were revised or retired (`held`: what the caller found a live row
-    holds): their edges end with them, and one value of each single-valued relation
-    stays current. Checked for every value the rows no longer keep, closed now or
-    before: a replay finds the close landed and must still check. One read of the
-    triples serves both."""
+    """End the edges of the `gone` facts and keep one value current for each
+    single-valued relation they touch, from one read of the triples.
+
+    changed: ids of the rows revised or retired.
+    gone: the facts those rows no longer keep, closed now or before (a replay
+        finds the close already landed and still checks).
+    held: the facts the caller found a live row still holds."""
     from server.identity.app.namespace_ontology import load_relation_cardinality
     from server.memory.domain.graph_quality import is_single_valued_relation
 
