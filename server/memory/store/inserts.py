@@ -15,9 +15,8 @@ def check_memory_rows(rows: Sequence[Mapping[str, Any]]) -> None:
 
     `ch.insert` derives the column list from the first row and ClickHouse
     fills the rest with DDL defaults, which FINAL then serves over the prior
-    version's real values, and the omitted column reads as its default for
-    everyone. An unknown key is refused too: a typo'd column name is a bug, not
-    a dropped value."""
+    version's real values. An unknown key is refused too: a typo'd column name
+    is a bug, not a dropped value."""
     wanted = set(MEMORY_PERSISTED_COLS)
     for i, row in enumerate(rows):
         keys = set(row)

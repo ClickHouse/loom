@@ -35,7 +35,7 @@ COMMANDS = (
 )
 # Allowed only after a pipe, reading the previous command's output.
 FILTERS = {"head", "tail", "wc", "grep"}
-GIT_WRITE_FLAGS = ("--output", "--ext-diff", "--textconv")
+GIT_WRITE_FLAGS = {"--output", "--ext-diff", "--textconv"}
 # tail and head read the pipe: a line count, nothing to follow.
 LINE_COUNT = re.compile(r"(-n ?\d+|-\d+|-q)( (-n ?\d+|-\d+|-q))*")
 # Everything a listed command needs. Leaving out newline, #, ;, $, *, braces,
@@ -92,16 +92,19 @@ def _segment_refusal(words: list[str], piped: bool) -> str | None:
             return f"{name}: after a pipe, head and tail take only a line count"
         return None
     if piped:
-        return None if words[0] in FILTERS else f"{name} cannot read a pipe here"
+        if words[0] not in FILTERS:
+            return f"{name} cannot read a pipe here"
+        return None
     if tuple(words[:3]) == PYTEST:
         if not _pytest_ok(words[3:]):
             return "pytest runs only tests/unit paths with -q, -x, -k and similar flags"
         return None
     if any("[" in w or "]" in w for w in _without_jq(words)):
-        return "brackets are allowed only in a pytest node id or a --jq expression"
-    flags = [w for w in words if w.startswith(GIT_WRITE_FLAGS)] if words[0] == "git" else []
-    if flags:
-        return f"`{flags[0]}` makes git write a file or run a program"
+        return "brackets are allowed only in a pytest node id or a --jq expression that starts with `.`"
+    if words[0] == "git":
+        flag = next((w for w in words if w.split("=", 1)[0] in GIT_WRITE_FLAGS), None)
+        if flag:
+            return f"`{flag}` makes git write a file or run a program"
     if not any(tuple(words[: len(c)]) == c for c in COMMANDS):
         return f"{name} is not on the reviewer's read-only list"
     return None
