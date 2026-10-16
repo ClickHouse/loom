@@ -559,7 +559,7 @@ def test_an_exchange_naming_no_client_finds_its_trust_by_issuer_and_claims(
 ) -> None:
     # A client that sends only the grant, the subject token and its type.
     async def names_of(sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
-        return [{"name": n} for n, m in bots["registered"].items() if m["issuer"] == params["iss"]]
+        return [dict(m) for m in bots["registered"].values() if m["issuer"] == params["iss"]]
 
     class _CH:
         query_all = staticmethod(names_of)
@@ -594,3 +594,67 @@ def test_a_workload_token_living_longer_than_the_trust_allows_is_refused(bots) -
     long_lived = _ci_token(bots, iat=now, exp=now + 7200)  # the trust takes an hour at most
     r = _exchange(TestClient(oauth_app()), long_lived)
     assert r.status_code == 400 and "at most 3600" in r.json()["error_description"]
+
+
+def _client_less(bots: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> Any:
+    """The trusts as one issuer query sees them, and an exchange naming no client."""
+
+    class _CH:
+        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+            return [dict(m) for m in bots["registered"].values() if m["issuer"] == params["iss"]]
+
+    monkeypatch.setattr(machines, "get_client", lambda: _CH())
+    c = TestClient(oauth_app())
+
+    def exchange(token: str) -> Any:
+        return c.post(
+            "/oauth/token",
+            data={
+                "grant_type": machines.TOKEN_EXCHANGE,
+                "subject_token": token,
+                "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+            },
+        )
+
+    return exchange
+
+
+def test_a_trust_whose_keys_are_away_does_not_refuse_one_that_takes_the_token(
+    bots, monkeypatch
+) -> None:
+    exchange = _client_less(bots, monkeypatch)
+    del bots["registered"]["deploy"]
+    bots["registered"]["broken"] = {
+        **bots["registered"]["fleet"],
+        "name": "broken",
+        "claims": {"repository": "acme/other"},
+        "jwks_uri": "https://down.example/jwks.json",
+    }
+    real = oidc.signing_key
+
+    def signing_key(uri: str, token: str) -> Any:
+        if "down.example" in uri:
+            raise pyjwt.PyJWKClientConnectionError("down")
+        return real(uri, token)
+
+    monkeypatch.setattr(oidc, "signing_key", signing_key)
+    assert exchange(_ci_token(bots, agent_id="a1")).status_code == 200
+
+
+def test_many_trusts_of_one_issuer_check_the_signature_once(bots, monkeypatch) -> None:
+    exchange = _client_less(bots, monkeypatch)
+    del bots["registered"]["deploy"]
+    for i in range(200):  # one per tenant
+        bots["registered"][f"t{i}"] = {
+            **bots["registered"]["fleet"],
+            "name": f"t{i}",
+            "claims": {"tenant_id": f"t{i}"},
+        }
+    bots["registered"]["fleet"]["claims"] = {"tenant_id": "mine"}
+    keys: list[str] = []
+    real = oidc.signing_key
+    monkeypatch.setattr(
+        oidc, "signing_key", lambda uri, token: keys.append(uri) or real(uri, token)
+    )
+    assert exchange(_ci_token(bots, agent_id="a1", tenant_id="mine")).status_code == 200
+    assert len(keys) == 1

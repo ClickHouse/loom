@@ -302,7 +302,16 @@ def test_agent_trusts_whose_namespaces_could_meet_are_refused(world, monkeypatch
         )
 
     async def listed() -> list[dict[str, Any]]:
-        return [{"name": "fleet", "agent_claim": "agent_id", "active": 1}]
+        return [
+            {
+                "name": "fleet",
+                "agent_claim": "agent_id",
+                "active": 1,
+                "issuer": "https://other.example",
+                "audience": "loom",
+                "claims": {"tenant_id": "x"},
+            }
+        ]
 
     monkeypatch.setattr(machines, "listed", listed)
     for name in ("fleet-a", "fle"):  # fleet-a + "b" == fleet + "a-b"; "fle" is safe
@@ -316,10 +325,13 @@ def test_agent_trusts_whose_namespaces_could_meet_are_refused(world, monkeypatch
         fleet("u")  # its agents' namespaces would be u-<agent>
 
 
-@pytest.mark.parametrize("claims", [["aud=loom"], ["iss=https://ci.example", "aud=loom"]])
-def test_a_trust_that_only_restates_issuer_and_audience_is_refused(claims: list[str]) -> None:
+@pytest.mark.parametrize(
+    "claims",
+    [["aud=loom"], ["iss=https://ci.example", "aud=loom"], ["iat=1*"], ["sub=tenants/*"]],
+)
+def test_a_trust_that_tells_no_workload_apart_is_refused(claims: list[str]) -> None:
     # It would take every token the issuer signs for Loom: every tenant, every job.
-    with pytest.raises(ValueError, match="beyond iss and aud"):
+    with pytest.raises(ValueError, match="exact value"):
         account_admin.bot_from(
             name="fleet",
             org="acme",
@@ -328,3 +340,48 @@ def test_a_trust_that_only_restates_issuer_and_audience_is_refused(claims: list[
             audience="loom",
             claims=claims,
         )
+
+
+@pytest.mark.parametrize("claims", [["sub=repo:acme/app:ref:refs/heads/main"], ["tenant_id=t1"]])
+def test_one_exact_claim_that_names_a_workload_will_do(claims: list[str]) -> None:
+    account_admin.bot_from(
+        name="deploy",
+        org="acme",
+        namespace_roles=["a=writer"],
+        issuer="https://ci.example",
+        audience="loom",
+        claims=claims,
+    )
+
+
+def test_an_agent_trust_no_token_could_tell_from_another_is_refused(world, monkeypatch) -> None:
+    trust = {"issuer": "https://ci.example", "audience": "loom"}
+    rows = [
+        {
+            "name": "tenant-a",
+            "active": 1,
+            "agent_claim": "agent_id",
+            "claims": {"tenant_id": "a"},
+            **trust,
+        }
+    ]
+
+    async def listed() -> list[dict[str, Any]]:
+        return rows
+
+    monkeypatch.setattr(machines, "listed", listed)
+
+    def create(name: str, claims: list[str]) -> None:
+        bot = account_admin.bot_from(
+            name=name,
+            org="acme",
+            namespace_roles=[],
+            agent_claim="agent_id",
+            claims=claims,
+            **trust,
+        )
+        asyncio.run(account_admin.create_bot(bot, by="ops", replace=False))
+
+    create("tenant-b", ["tenant_id=b"])  # another tenant: no token meets both
+    with pytest.raises(ValueError, match="could also meet 'tenant-a'"):
+        create("team-x", ["repository=x"])  # tenant-a's tokens would meet it too

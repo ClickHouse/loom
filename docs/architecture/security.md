@@ -382,14 +382,14 @@ the claim's value is used as given (lower-case letters, digits, `-`) or refused,
 rewritten into another agent's name. The namespace is made on the agent's first exchange
 under the account's claim, tagged `machine:<trust>`, and only a namespace carrying that tag
 is ever reached: an agent claim cannot name a person's namespace, another trust's or a
-released one, and the org is the trust's. A trust takes no workload token living longer
-than its `max_token_s` (default an hour), makes at most `max_agents` agents, and must name a
+released one, and the org is the trust's. A trust takes no workload token living longer than
+its `max_token_s` (default an hour), makes at most `max_agents` agents, and must name a
 claim beyond `iss` and `aud` (alone they take every token the issuer signs for Loom). An
-agent's namespace carries no email, so no sign-in by email ever resolves to an agent. An agent's token names the trust as its parent
-subject, so the trust's disable cutoff ends every agent's. The trust's issuer is trusted
-for every agent name it signs, and with an owner claim for the owner's email too: that
-person gets admin on the agent's namespace (never the reverse), so register an owner claim
-only for an issuer that asserts it.
+agent's namespace carries no email, so no sign-in by email ever resolves to an agent. An
+agent's token names the trust as its parent subject, so the trust's disable cutoff ends
+every agent's. The trust's issuer is trusted for every agent name it signs, and with an
+owner claim for the owner's email too: that person gets admin on the agent's namespace
+(never the reverse), so register an owner claim only for an issuer that asserts it.
 
 **Unauthenticated routes.** Sign-up and password sign-in are rate-limited
 (`server/auth/attempts.py`) per client address (the connection's peer, which uvicorn

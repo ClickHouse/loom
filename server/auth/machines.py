@@ -21,6 +21,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import logging
 import time
 from datetime import UTC, datetime
 from typing import Any, TypedDict
@@ -29,6 +30,8 @@ import httpx
 import jwt
 
 from server.core.ch import get_client, own_write_reads
+
+log = logging.getLogger(__name__)
 
 TABLE = "loom.machine_identities"
 TOKEN_TTL = 3600
@@ -84,8 +87,10 @@ async def get(name: str, *, active_only: bool = True, ch: Any = None) -> Machine
             f"SELECT * FROM {TABLE} FINAL WHERE name = {{name:String}}{active}",
             params={"name": name},
         )
-    if row is None:
-        return None
+    return _machine(row) if row is not None else None
+
+
+def _machine(row: dict[str, Any]) -> Machine:
     return {
         "name": row["name"],
         "org": row["org"],
@@ -220,12 +225,66 @@ async def verify_workload(token: str, name: str) -> tuple[Machine, dict[str, Any
     m = await get(name)
     if m is None or not m["issuer"] or not m["claims"]:
         raise Refused("invalid_client")
+    if _unverified(token).get("iss") != m["issuer"]:
+        raise Refused("invalid_grant", "the subject token is from another issuer")
+    claims = await _signed(token, m)
+    _meets(m, claims)
+    return m, claims
+
+
+async def verify_any_workload(token: str) -> tuple[Machine, dict[str, Any]]:
+    """`verify_workload` for an exchange that names no client: the one active
+    trust of the token's issuer whose audience and claims it meets (RFC 8693
+    makes client_id optional; trusts of one issuer differ by their claims).
+    The signature is checked once per place the trusts take keys from."""
+    unverified = _unverified(token)
+    aud = unverified.get("aud")
+    auds = set(aud) if isinstance(aud, list) else {aud}
+    with own_write_reads():
+        rows = await get_client().query_all(
+            f"SELECT * FROM {TABLE} FINAL WHERE issuer = {{iss:String}} AND active = 1 "
+            "ORDER BY name",
+            params={"iss": str(unverified.get("iss", ""))},
+        )
+    trusts = [m for m in map(_machine, rows) if m["claims"] and m["audience"] in auds]
+    signed: dict[tuple[str, str], dict[str, Any] | Refused] = {}
+    met: list[tuple[Machine, dict[str, Any]]] = []
+    refusal = Refused("invalid_grant", "no trust of this issuer takes the subject token")
+    for m in trusts:
+        source = (m["jwks_uri"], m["audience"])
+        if source not in signed:
+            try:
+                signed[source] = await _signed(token, m)
+            except Refused as e:
+                signed[source] = e
+        claims = signed[source]
+        try:
+            if isinstance(claims, Refused):
+                raise claims
+            _meets(m, claims)
+            met.append((m, claims))
+        except Refused as e:
+            # A key outage of one trust is no reason to refuse a token another takes.
+            if refusal.error != "temporarily_unavailable":
+                refusal = e
+    if len(met) > 1:
+        log.warning("workload token meets trusts %s", ", ".join(m["name"] for m, _ in met))
+        raise Refused("invalid_request", "the subject token meets several trusts; name one")
+    if not met:
+        raise refusal
+    return met[0]
+
+
+def _unverified(token: str) -> dict[str, Any]:
     try:
-        iss = jwt.decode(token, options={"verify_signature": False}).get("iss")
+        claims: dict[str, Any] = jwt.decode(token, options={"verify_signature": False})
     except jwt.PyJWTError:
         raise Refused("invalid_grant", "the subject token is not a JWT") from None
-    if iss != m["issuer"]:
-        raise Refused("invalid_grant", "the subject token is from another issuer")
+    return claims
+
+
+async def _signed(token: str, m: Machine) -> dict[str, Any]:
+    """The token's claims, its signature checked with the keys `m` takes."""
     from server.auth import oidc
 
     try:
@@ -244,6 +303,11 @@ async def verify_workload(token: str, name: str) -> tuple[Machine, dict[str, Any
         raise Refused("temporarily_unavailable", f"the issuer's keys: {e}") from e
     except (jwt.PyJWTError, ValueError, KeyError) as e:
         raise Refused("invalid_grant", f"subject token refused: {e}") from None
+    return claims
+
+
+def _meets(m: Machine, claims: dict[str, Any]) -> None:
+    """Refused unless the verified claims meet the trust."""
     # A long-lived token is a credential to replay: the platform should not
     # issue one for this, and Loom does not take it.
     if int(claims["exp"]) - int(claims["iat"]) > m["max_token_s"]:
@@ -251,40 +315,6 @@ async def verify_workload(token: str, name: str) -> tuple[Machine, dict[str, Any
     for claim, want in m["claims"].items():
         if not matches(str(claims.get(claim, "")), want):
             raise Refused("invalid_grant", f"claim {claim!r} does not match the trust")
-    return m, claims
-
-
-async def verify_any_workload(token: str) -> tuple[Machine, dict[str, Any]]:
-    """`verify_workload` for an exchange that names no client: the one active
-    trust of the token's issuer whose audience and claims it meets (RFC 8693
-    makes client_id optional; trusts of one issuer differ by their claims)."""
-    try:
-        iss = str(jwt.decode(token, options={"verify_signature": False}).get("iss", ""))
-    except jwt.PyJWTError:
-        raise Refused("invalid_grant", "the subject token is not a JWT") from None
-    with own_write_reads():
-        rows = await get_client().query_all(
-            f"SELECT name FROM {TABLE} FINAL WHERE issuer = {{iss:String}} AND active = 1 "
-            "ORDER BY name",
-            params={"iss": iss},
-        )
-    met: list[tuple[Machine, dict[str, Any]]] = []
-    refusal = Refused("invalid_grant", "no trust of this issuer takes the subject token")
-    for r in rows:
-        try:
-            met.append(await verify_workload(token, r["name"]))
-        except Refused as e:
-            if e.error == "temporarily_unavailable":
-                raise
-            refusal = e
-    if len(met) > 1:
-        names = ", ".join(m["name"] for m, _ in met)
-        raise Refused(
-            "invalid_request", f"the subject token meets several trusts ({names}); name one"
-        )
-    if not met:
-        raise refusal
-    return met[0]
 
 
 def matches(value: str, want: str) -> bool:

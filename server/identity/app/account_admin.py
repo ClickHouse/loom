@@ -25,6 +25,9 @@ _BOT_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
 _SERVICE_ACCOUNT_SUFFIX = re.compile(r"-[0-9a-f]{6}")
 
 
+# Claims every token of an issuer carries: alone they tell no workload apart.
+_EVERY_TOKENS = frozenset({"iss", "aud", "exp", "iat", "nbf", "jti"})
+
 # How far another replica's clock may run ahead of this one's: a token it
 # issues as of a later second than the cutoff would outlive the revocation.
 _CLOCK_SKEW_S = 5
@@ -211,10 +214,15 @@ def bot_from(
         # Any job on the platform can ask for a token with any audience: only
         # claims (which repository, which branch) tell this bot's job apart.
         raise ValueError("a CI trust needs an https issuer, an audience and at least one claim")
-    if trust and set(wanted) <= {"iss", "aud"}:
-        # They restate what every token of the issuer for Loom carries: the
-        # trust would take all of them, every tenant's into one org.
-        raise ValueError("a CI trust needs a claim beyond iss and aud (a repository, a tenant)")
+    if trust and not any(
+        not value.endswith("*") for claim, value in wanted.items() if claim not in _EVERY_TOKENS
+    ):
+        # What every token of the issuer carries, or a prefix of it, takes all
+        # of them: every tenant's, every job's, into one org.
+        raise ValueError(
+            "a CI trust needs one claim beyond the standard ones with an exact value "
+            "(a repository, a tenant)"
+        )
     if not 60 <= max_token_s <= 86400 or max_agents < 1:
         raise ValueError("max_token_s is 60 to 86400 seconds, max_agents at least 1")
     if not (trust or public_key_pem):
@@ -259,6 +267,8 @@ async def create_bot(bot: machines.Machine, *, by: str, replace: bool) -> None:
             raise ValueError(f"bot {name!r} exists; replace it to change it")
         if bot["agent_claim"]:
             await _refuse_overlap(name)
+        if bot["issuer"]:
+            await _refuse_shared_tokens(bot)
         await machines.save(bot, by=by)
     if existing is not None:
         # Tokens from its old key or wider roles end now, not within the hour.
@@ -286,6 +296,36 @@ async def _refuse_overlap(name: str) -> None:
         if theirs != name and other["agent_claim"] and other["active"]:
             if f"{name}-".startswith(f"{theirs}-") or f"{theirs}-".startswith(f"{name}-"):
                 raise ValueError(f"name: its agents' namespaces could be those of trust {theirs!r}")
+
+
+async def _refuse_shared_tokens(bot: machines.Machine) -> None:
+    """An exchange naming no client takes the one trust a token meets: two that
+    can meet one token, one of them telling agents apart, would leave that
+    token to neither."""
+    for other in await machines.listed():
+        if other["name"] == bot["name"] or not other["active"]:
+            continue
+        same = (other["issuer"], other["audience"]) == (bot["issuer"], bot["audience"])
+        agents_either = bool(other["agent_claim"] or bot["agent_claim"])
+        if same and agents_either and _could_both_take(bot["claims"], dict(other["claims"])):
+            raise ValueError(f"a token this trust takes could also meet {other['name']!r}")
+
+
+def _could_both_take(a: dict[str, str], b: dict[str, str]) -> bool:
+    """Whether one token could meet both trusts' claims: unless a claim both
+    name has values no one value matches."""
+    for claim in a.keys() & b.keys():
+        x, y = a[claim], b[claim]
+        if x.endswith("*") and y.endswith("*"):
+            fits = x[:-1].startswith(y[:-1]) or y[:-1].startswith(x[:-1])
+        elif x.endswith("*") or y.endswith("*"):
+            prefix, exact = (x, y) if x.endswith("*") else (y, x)
+            fits = exact.startswith(prefix[:-1])
+        else:
+            fits = x == y
+        if not fits:
+            return False
+    return True
 
 
 async def disable_bot(name: str, *, by: str) -> bool:
