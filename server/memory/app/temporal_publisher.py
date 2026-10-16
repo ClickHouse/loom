@@ -960,10 +960,11 @@ def _adopt(
             head, [x.a for x in current.values()], WriteIntent(), None, now=now
         )
     except tm.EmptyInterval:
-        return
+        planned = tm.Amendment("restate")  # a span the journal cannot hold (empty, inverted)
     if planned.empty:
-        # The row changes nothing the journal models (a re-save of what it holds): an
-        # empty commit at its version still records that this version was seen.
+        # The row changes nothing the journal models (a re-save of what it holds, or a
+        # span it cannot hold): an empty commit at its version still records that this
+        # version was seen, so the row is not taken for an unseen write again.
         planned = tm.Amendment("restate")
     retired = [current.pop(aid) for aid in planned.retired if aid in current]
     memory_id = str(head.get("memory_id") or "")

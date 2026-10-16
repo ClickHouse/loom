@@ -1695,3 +1695,24 @@ def test_another_builds_resave_of_the_same_value_does_not_block_the_next_write(
     kinds = [(c["operation"], c["change_kind"]) for c in journal.commits[1:]]
     assert kinds[0] == ("memory.observed", "restate") and row["value"] == '"B"'
     assert journal.commits[1]["row_version"] == resaved["version"]
+
+
+def test_another_builds_row_with_an_empty_span_does_not_block_the_next_write(
+    journal: Journal, monkeypatch
+) -> None:
+    run(pub.publish_rows([mrow('"A"')]))
+    at = datetime(2026, 3, 1)
+    empty = mrow(
+        '"A2"', journal_version=journal.commits[-1]["row_version"], valid_at=at, valid_to=at
+    )
+
+    async def heads(*_a, **_k):
+        return [empty]
+
+    async def versions(*_a, **_k):
+        return {("a", "-", "-", "k"): (empty["version"], empty["journal_version"])}
+
+    monkeypatch.setattr(store, "memory_heads", heads)
+    monkeypatch.setattr(store, "landed_heads", versions)
+    (row,) = run(pub.publish_rows([mrow('"B"')]))
+    assert journal.commits[1]["operation"] == "memory.observed" and row["value"] == '"B"'
