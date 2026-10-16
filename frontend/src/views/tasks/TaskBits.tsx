@@ -17,10 +17,11 @@ import {
  */
 
 /** The inbox's own agent is round on the accent, another agent square on
- *  info, a person by initials on the neutral surface. */
-export function Avatar({ name, kind, title }: { name: string; kind: PosterKind; title?: string }) {
+ *  info, a person by initials on the neutral surface. Decorative: the name it stands for
+ *  is written beside it. */
+export function Avatar({ name, kind }: { name: string; kind: PosterKind }) {
   return (
-    <span className="tq-av" data-kind={kind} title={title ?? name} aria-hidden="true">
+    <span className="tq-av" data-kind={kind} aria-hidden="true">
       {initials(name)}
     </span>
   );
@@ -34,12 +35,12 @@ export function PosterAvatar({
   ownerAgent: string | undefined;
 }) {
   const name = posterName(r);
-  return <Avatar name={name} kind={posterKind(r, ownerAgent)} title={name} />;
+  return <Avatar name={name} kind={posterKind(r, ownerAgent)} />;
 }
 
 export function PriorityBar({ priority }: { priority: number }) {
   const label = PRIORITY_LABEL[priority] ?? `P${priority}`;
-  return <span className="tq-pri" data-p={priority} title={label} role="img" aria-label={label} />;
+  return <span className="tq-pri" data-p={priority} role="img" aria-label={label} />;
 }
 
 export function KindTag({ kind }: { kind: string }) {
@@ -62,13 +63,7 @@ export function LeaseBar({
   const pct = Math.max(4, Math.min(100, (left / total) * 100));
   return (
     <>
-      <span
-        className="tq-lease"
-        data-low={left <= 10}
-        title={`lease ends in ${left} min`}
-        role="img"
-        aria-label={`lease: ${left} min left`}
-      >
+      <span className="tq-lease" data-low={left <= 10} role="img" aria-label={`lease: ${left} min left`}>
         <i style={{ width: `${pct}%` }} />
       </span>
       <span className="tabular" aria-hidden="true">

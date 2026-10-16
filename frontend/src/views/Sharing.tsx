@@ -27,7 +27,7 @@ export function Sharing() {
   // it reads from.
   const heading = (
     <>
-      <h1 className="text-2xl font-semibold tracking-tight mb-1">Flow</h1>
+      <h1 className="text-2xl mb-1">Flow</h1>
       <div className="mb-3">
         <ScopeBadge kind="namespace" value={identity.namespace} />
       </div>

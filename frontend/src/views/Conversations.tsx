@@ -41,14 +41,14 @@ const THREADS_FIELDS = ["thread_id", "agent", "msg_count", "title", "last_role",
 // Role → visual treatment for the thread replay. Differentiating turns is the
 // single biggest readability win: a coding chat is otherwise an undifferentiated
 // wall of gray text with code indistinguishable from prose.
-const ROLE_META: Record<string, { label: string; rail: string; card: string }> = {
+const ROLE_META: Record<string, { label: string; rail: string; card: string; muted?: boolean }> = {
   user: { label: "You", rail: "border-l-2 border-accent", card: "bg-surface" },
   assistant: {
     label: "Assistant",
     rail: "border-l-2 border-border",
     card: "bg-surface-2",
   },
-  system: { label: "System", rail: "", card: "bg-transparent opacity-70" },
+  system: { label: "System", rail: "", card: "bg-transparent border border-dashed border-border", muted: true },
   tool: { label: "Tool", rail: "border-l-2 border-warn/60", card: "bg-surface-2" },
 };
 
@@ -84,10 +84,10 @@ function CodeBlock({ code, lang }: { code: string; lang?: string }) {
 // Render message content: split on ``` fences (code blocks), and within prose
 // render inline `code` and linkify URLs. Zero deps — coding transcripts need
 // code legible, not buried in a gray paragraph.
-function MessageBody({ content }: { content: string }) {
+function MessageBody({ content, muted = false }: { content: string; muted?: boolean }) {
   const segs = content.split(/```/);
   return (
-    <div className="text-sm text-text leading-relaxed">
+    <div className={`text-sm leading-relaxed ${muted ? "text-text-muted" : "text-text"}`}>
       {segs.map((seg, i) => {
         if (i % 2 === 1) {
           const nl = seg.indexOf("\n");
@@ -446,7 +446,7 @@ export function Conversations() {
   return (
     <PageContainer>
       <div className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight mb-1">Conversations</h1>
+        <h1 className="text-2xl mb-1">Conversations</h1>
         <div className="mb-2">
           <ScopeBadge kind="namespace" value={identity.namespace} />
         </div>
@@ -681,7 +681,7 @@ export function Conversations() {
                       </time>
                     </div>
                     {m.reasoning ? <ReasoningDisclosure text={m.reasoning} /> : null}
-                    <MessageBody content={m.content} />
+                    <MessageBody content={m.content} muted={meta.muted} />
                   </div>
                 );
               })}

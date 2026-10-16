@@ -37,7 +37,7 @@ export function Blacklist() {
   const namespace = useStore((s) => s.identity?.namespace ?? "");
   return (
     <PageContainer>
-      <h1 className="text-2xl font-semibold tracking-tight inline-flex items-center gap-2 mb-1">
+      <h1 className="text-2xl inline-flex items-center gap-2 mb-1">
         <Icon name="line-in-circle" size="md" aria-hidden="true" /> Guardrails
       </h1>
       <div className="mb-6">

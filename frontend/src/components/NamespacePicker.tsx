@@ -202,6 +202,7 @@ function NamespacePickerMenu() {
       </PopoverTrigger>
       <Popover.Content
         align="start"
+        aria-label="Namespaces"
         onCloseAutoFocus={(e) => {
           e.preventDefault();
           triggerRef.current?.focus();

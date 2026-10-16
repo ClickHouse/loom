@@ -229,7 +229,7 @@ export function Policies() {
   return (
     <PageContainer>
       <div className="flex items-baseline gap-3 mb-2 flex-wrap">
-        <h1 className="text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
+        <h1 className="text-2xl inline-flex items-center gap-2">
           <Icon name="secure" size="md" aria-hidden="true" /> Policies
         </h1>
         <ScopeBadge kind="namespace" value={identity.namespace} />

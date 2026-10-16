@@ -117,7 +117,7 @@ export function TokenGate({ onLogin, reason = null }: TokenGateProps) {
             <Icon name="tree-structure" size="md" aria-hidden="true" />
           </div>
           <div>
-            <h1 className="m-0 text-xl font-semibold tracking-tight">Loom</h1>
+            <h1 className="m-0 text-xl">Loom</h1>
             <div className="text-xs text-text-muted">memory for your AI agents</div>
           </div>
         </header>

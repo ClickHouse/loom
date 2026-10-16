@@ -37,6 +37,7 @@ Loom keeps a few elements of its own, on Click UI tokens:
 - The memory inspector drawer: a Radix dialog sheet, because Click UI's `Flyout` collapses to a hover strip on narrow screens and takes no ref.
 - Disclosure toggles: a native button with `aria-expanded` and a Click UI chevron, because Click UI's `Collapsible` sets no `aria-expanded`.
 - Triggers that show an avatar or a namespace name: native buttons on tokens; Click UI's `empty` button is link text.
+- Sidebar nav items: anchors drawn with Click UI's `--click-sidebar-*` tokens. Click UI's `SidebarNavigationItem` is a `div` whose label may hold a link, which would put the selected state on the `div`, not the link.
 - Loom-specific widgets (the graph canvas, the task grid and board, the patterns board), with Click UI controls inside them.
 
 ## Styles
@@ -46,11 +47,16 @@ Loom keeps a few elements of its own, on Click UI tokens:
 - **Accessibility corrections**: Click UI 0.13's light theme misses WCAG AA in a few places (link and empty-button blue, info alert text, opaque success and info badges, solid default and warning badges, placeholder text, the field, checkbox, radio and switch strokes, and its 10 px small badge). `styles.css` redefines those Click UI variables with the next palette step that passes, so every component picks the fix up. Its focus ring (outline blue, 2 px at 2 px offset) is drawn on every focusable element, including the ones Click UI draws none on.
 - **Disabled with a reason**: Click UI styles only a natively disabled button; `styles.css` gives an `aria-disabled` Click UI button the same look by matching Click UI's class prefixes (`button__`, `button_empty__`).
 - **Layers on top**: dialogs z-50 (a confirm z-[60]), toasts z-[65], every Radix popper (menus, selects, popovers, tooltips) z-[70].
-- **Type**: Click UI's sizes, 12, 14, 16, 18, 20 and 32 px, with an 11 px caption floor; page titles are 20 px. Inter and Inconsolata, latin and latin-ext, are declared in `styles.css` under Click UI's family names.
+- **Type**: Click UI's sizes, 12, 14, 16, 18, 20 and 32 px. Click UI goes down to 10 px for captions and small badges; Loom's floor is 11 px (`text-2xs`), and `styles.css` sets Click UI's small badge to it. Page titles are 20 px. Inter and Inconsolata, latin and latin-ext, are declared in `styles.css` under Click UI's family names.
+
+## What ships of Click UI
+
+- `vite.config.ts` aliases Click UI's flag, logo and payment-mark maps to an empty module (`src/lib/emptyAssetMap.ts`): Click UI's `Icon` imports them whole to resolve any name, and the dashboard draws only interface icons. Click UI ships ~95 kB gz of script this way instead of ~325 kB.
+- `src/lib/clickUiFixes.ts` names the filter field Click UI's Select draws in its option list, which 0.13 leaves unlabelled.
 
 ## Follow a Click UI release
 
-`npm --prefix frontend i --save-exact @clickhouse/click-ui@<version>`, then run the frontend checks below. Re-check each workaround in the primitives table against the release notes: delete a primitive's workaround once Click UI fixes it.
+`npm --prefix frontend i --save-exact @clickhouse/click-ui@<version>`, then run the frontend checks below. Re-check each workaround in the primitives table and in `clickUiFixes.ts` against the release notes: delete a workaround once Click UI fixes it. A new icon, flag or logo map in Click UI may need adding to the alias.
 
 ## Rules a change is checked against
 
@@ -62,7 +68,7 @@ Loom keeps a few elements of its own, on Click UI tokens:
 - A control that is unavailable and has a tooltip saying why uses `aria-disabled="true"` instead of `disabled`, so the reason stays reachable.
 - Semantic elements before ARIA; a widget that needs a WAI-ARIA pattern (a grid, a combobox) names the pattern in a comment.
 - Text holds 4.5:1, focus rings and control boundaries 3:1.
-- Animations live in `styles.css`, which turns them off under `prefers-reduced-motion: reduce`.
+- Animations live in `styles.css`, which turns them off under `prefers-reduced-motion: reduce`, along with Click UI's dialog, popover, menu and tooltip entrances.
 
 ## Checks
 

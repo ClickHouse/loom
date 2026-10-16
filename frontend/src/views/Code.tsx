@@ -88,7 +88,7 @@ import { branchState, branchOrder, buildCards, type CodeFacet } from "../lib/rep
 import { RepositoryCard, BranchChip, FRESH_STATE, type CodeActions, type RecordActionProps } from "./RepositoryCard";
 import { useTrackerSources, useRecordActions, TRACKER_SOURCES_ABSENT } from "./TrackerSources";
 import { TrackersPanel } from "./TrackersPanel";
-import { Chip, TabTrigger, Tip } from "../components/ui";
+import { Chip, TabTrigger, TextClamp, Tip, TipTarget } from "../components/ui";
 import { isRecord } from "../lib/guards";
 import { oneOf } from "../lib/oneOf";
 
@@ -103,12 +103,8 @@ const RegisterTrackerSourceDialog = lazy(() =>
 
 const short = (sha: string) => (sha || "").slice(0, 12);
 
-function Mono({ children, className = "", title }: { children: React.ReactNode; className?: string; title?: string }) {
-  return (
-    <span title={title} className={`font-mono text-xs ${className}`}>
-      {children}
-    </span>
-  );
+function Mono({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+  return <span className={`font-mono text-xs ${className}`}>{children}</span>;
 }
 
 function Stat({ label, value, hint }: { label: string; value: React.ReactNode; hint?: string }) {
@@ -521,7 +517,7 @@ function RepositoriesHome({
     <PageContainer>
       <div className="mb-5 flex items-start justify-between gap-4 flex-wrap">
         <div className="min-w-0">
-          <h1 className="text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
+          <h1 className="text-2xl inline-flex items-center gap-2">
             <Icon name="code" size="md" aria-hidden="true" /> Repositories
           </h1>
           <p className="text-sm text-text-muted mt-1 max-w-2xl">
@@ -1573,10 +1569,12 @@ function RepoDetail({
         Repositories
       </Button>
       <div className="mb-5">
-        <h1 className="text-2xl font-semibold tracking-tight inline-flex items-center gap-3 flex-wrap">
+        <h1 className="text-2xl inline-flex items-center gap-3 flex-wrap">
           <Icon name="git-merge" size="lg" aria-hidden="true" /> {repo.repo}
           <Mono className="text-sm px-2 py-0.5 rounded bg-surface-2 text-text-muted">{repo.branch}</Mono>
-          <Badge text={f.label} state={FRESH_STATE[f.tone]} size="sm" title={f.detail} />
+          <TipTarget tip={f.detail}>
+            <Badge text={f.label} state={FRESH_STATE[f.tone]} size="sm" />
+          </TipTarget>
           <span className="text-xs font-normal text-text-muted">read-only</span>
         </h1>
         <p className="text-sm text-text-muted mt-1">
@@ -1735,9 +1733,11 @@ function StageCard({
               ) : !w.enabled ? (
                 <span className="text-text-subtle">disabled on this replica</span>
               ) : w.consecutive_failures > 0 ? (
-                <span className="text-danger" title={w.last_error}>
-                  {w.consecutive_failures}× failing · {w.last_error.slice(0, 60)}
-                </span>
+                <TipTarget tip={w.last_error}>
+                  <span className="text-danger">
+                    {w.consecutive_failures}× failing · {w.last_error.slice(0, 60)}
+                  </span>
+                </TipTarget>
               ) : (
                 <span className="text-text-muted">
                   every {w.interval_seconds}s · last {w.last_run_at ? relativeTime(w.last_run_at) : "never"} (
@@ -1978,14 +1978,18 @@ function HealthTab({ id }: { id: CodeId }) {
                           <>
                             {fmtInt(l.files)}
                             {l.files_errored > 0 && (
-                              <span className="ml-1 text-warn" title="files with index_error">
-                                · {l.files_errored} err
-                              </span>
+                              <span className="ml-1 text-warn">· {l.files_errored} with index errors</span>
                             )}
                           </>
                         ),
                       },
-                      { label: <span title={l.files_last_at}>{ago(l.files_last_at)}</span> },
+                      {
+                        label: l.files_last_at ? (
+                          <TipTarget tip={l.files_last_at}>{ago(l.files_last_at)}</TipTarget>
+                        ) : (
+                          ago(l.files_last_at)
+                        ),
+                      },
                       {
                         label: (
                           <>
@@ -1999,8 +2003,15 @@ function HealthTab({ id }: { id: CodeId }) {
                         label: l.symbols_treesitter ? (
                           <>
                             {fmtInt(l.symbols_treesitter)}{" "}
-                            <span className="text-text-subtle" title={l.symbols_treesitter_last_at}>
-                              · {ago(l.symbols_treesitter_last_at)}
+                            <span className="text-text-subtle">
+                              ·{" "}
+                              {l.symbols_treesitter_last_at ? (
+                                <TipTarget tip={l.symbols_treesitter_last_at}>
+                                  {ago(l.symbols_treesitter_last_at)}
+                                </TipTarget>
+                              ) : (
+                                ago(l.symbols_treesitter_last_at)
+                              )}
                             </span>
                           </>
                         ) : (
@@ -2011,8 +2022,13 @@ function HealthTab({ id }: { id: CodeId }) {
                         label: l.symbols_scip ? (
                           <>
                             {fmtInt(l.symbols_scip)}{" "}
-                            <span className="text-text-subtle" title={l.symbols_scip_last_at}>
-                              · {ago(l.symbols_scip_last_at)}
+                            <span className="text-text-subtle">
+                              ·{" "}
+                              {l.symbols_scip_last_at ? (
+                                <TipTarget tip={l.symbols_scip_last_at}>{ago(l.symbols_scip_last_at)}</TipTarget>
+                              ) : (
+                                ago(l.symbols_scip_last_at)
+                              )}
                             </span>
                           </>
                         ) : (
@@ -2050,17 +2066,18 @@ function HealthTab({ id }: { id: CodeId }) {
               {recent.map((c) => (
                 <div key={c.commit} className="flex items-start gap-2 text-xs">
                   <Mono className="text-text-muted shrink-0">{short(c.commit).slice(0, 8)}</Mono>
-                  <span className="truncate flex-1" title={c.subject}>
-                    {c.subject || <span className="text-text-subtle">(subject unavailable)</span>}
-                  </span>
+                  {c.subject ? (
+                    <TextClamp text={c.subject} reach="tooltip" className="flex-1 min-w-0" />
+                  ) : (
+                    <span className="flex-1 text-text-subtle">(subject unavailable)</span>
+                  )}
                   {c.pr_number > 0 && (
                     <span className="text-2xs text-text-subtle tabular shrink-0">#{c.pr_number}</span>
                   )}
-                  <span
-                    className="text-2xs text-text-subtle tabular shrink-0"
-                    title={`${c.files} files · committed ${c.committed_at}`}
-                  >
-                    {c.files}f · {c.ingested_at ? relativeTime(c.ingested_at.replace(" ", "T") + "Z") : "—"}
+                  <span className="text-2xs text-text-subtle tabular shrink-0">
+                    <TipTarget tip={`${c.files} files · committed ${c.committed_at}`}>
+                      {c.files}f · {c.ingested_at ? relativeTime(c.ingested_at.replace(" ", "T") + "Z") : "—"}
+                    </TipTarget>
                   </span>
                 </div>
               ))}
@@ -2104,12 +2121,8 @@ function HealthTab({ id }: { id: CodeId }) {
             <div className="mt-2 max-h-64 overflow-auto space-y-1">
               {errs.rows.map((r) => (
                 <div key={r.path} className="text-2xs flex gap-2">
-                  <Mono className="text-2xs truncate flex-1" title={r.path}>
-                    {r.path}
-                  </Mono>
-                  <span className="text-warn truncate max-w-[45%]" title={r.error}>
-                    {r.error}
-                  </span>
+                  <TextClamp text={r.path} reach="tooltip" mono className="text-2xs flex-1 min-w-0" />
+                  <TextClamp text={r.error} reach="tooltip" className="text-warn max-w-[45%]" />
                 </div>
               ))}
               {errs.total > errs.rows.length && (
@@ -2469,33 +2482,35 @@ function ExploreTab({ id }: { id: CodeId }) {
             />
             <span>{res.tokens_returned} tokens</span>
             {res.as_of?.commit && (
-              <span title={`indexed ${res.as_of.indexed_at ?? ""}`}>
-                as of <Mono>{short(res.as_of.commit)}</Mono>
-              </span>
+              <TipTarget tip={`indexed ${res.as_of.indexed_at ?? "at an unknown time"}`}>
+                <span>
+                  as of <Mono>{short(res.as_of.commit)}</Mono>
+                </span>
+              </TipTarget>
             )}
             {res.as_of && typeof res.as_of.lag_commits === "number" && (
-              <Badge
-                text={
-                  res.as_of.lag_commits < 0
-                    ? "lag unknown"
-                    : res.as_of.stale
-                      ? `stale · ${res.as_of.lag_commits} behind`
-                      : res.as_of.lag_commits === 0
-                        ? "at tip"
-                        : `${res.as_of.lag_commits} behind`
-                }
-                state={res.as_of.stale ? "warning" : res.as_of.lag_commits === 0 ? "success" : "neutral"}
-                size="sm"
-                title="as_of.stale is what an agent gates on before trusting a hit for HEAD-accurate work"
-              />
+              <TipTarget tip="as_of.stale is what an agent gates on before trusting a hit for HEAD-accurate work">
+                <Badge
+                  text={
+                    res.as_of.lag_commits < 0
+                      ? "lag unknown"
+                      : res.as_of.stale
+                        ? `stale · ${res.as_of.lag_commits} behind`
+                        : res.as_of.lag_commits === 0
+                          ? "at tip"
+                          : `${res.as_of.lag_commits} behind`
+                  }
+                  state={res.as_of.stale ? "warning" : res.as_of.lag_commits === 0 ? "success" : "neutral"}
+                  size="sm"
+                />
+              </TipTarget>
             )}
           </div>
           {res.note && (
-            <div
-              className="text-xs text-warn"
-              title="The vector leg covers less than the ready share of this repository's chunks; results come from the lexical leg alone until it does."
-            >
-              {res.note}
+            <div className="text-xs text-warn">
+              <TipTarget tip="The vector leg covers less than the ready share of this repository's chunks; results come from the lexical leg alone until it does.">
+                {res.note}
+              </TipTarget>
             </div>
           )}
           {res.abstain && res.abstain_code === "not_covered" && (
@@ -3224,8 +3239,8 @@ function AccessTab({
                     state="neutral"
                     size="sm"
                   />
-                  <span className="text-text-subtle tabular hidden md:inline" title={`added by ${g.granted_by}`}>
-                    {relativeTime(g.granted_at)}
+                  <span className="text-text-subtle tabular hidden md:inline">
+                    <TipTarget tip={`added by ${g.granted_by}`}>{relativeTime(g.granted_at)}</TipTarget>
                   </span>
                   {canManage && g.subject !== me && (
                     <IconButton

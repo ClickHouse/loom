@@ -2,7 +2,7 @@ import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import type { Inbox, InboxCount } from "../../api/tasks";
 import { initials, type Filters, type PosterFilter } from "../../lib/tasks";
-import { Chip } from "../../components/ui";
+import { Chip, Tip } from "../../components/ui";
 import { Avatar } from "./TaskBits";
 
 /**
@@ -36,6 +36,16 @@ export function railCounts(counts: readonly InboxCount[]): Map<string, RailCount
     else if (c.status === "in_progress") e.running += c.n;
   }
   return by;
+}
+
+/** What the rail's folder leaves out: the inbox's description and the agent that owns it. */
+function InboxTip({ inbox }: { inbox: Inbox }) {
+  return (
+    <>
+      {inbox.description && <div>{inbox.description}</div>}
+      {inbox.owner_agent && <div>Owner agent: {inbox.owner_agent}</div>}
+    </>
+  );
 }
 
 function CountText({ c }: { c: RailCounts | undefined }) {
@@ -110,20 +120,25 @@ export function InboxRail({ inboxes, counts, picked, onPick, kinds, filters, onF
             </button>
           )}
           {inboxes.map((i) => (
-            <button
+            <Tip
               key={i.inbox}
-              type="button"
-              className="tq-inbox"
-              aria-current={picked === i.inbox}
-              onClick={() => onPick(i.inbox)}
-              title={i.description || i.inbox}
+              content={<InboxTip inbox={i} />}
+              side="right"
+              disabled={!i.description && !i.owner_agent}
             >
-              <span className="nm">
-                <Avatar name={i.owner_agent || initials(i.inbox)} kind="bot" title={i.owner_agent} />
-                <span>{i.inbox}</span>
-              </span>
-              <CountText c={counts?.get(i.inbox) ?? (counts ? { todo: 0, running: 0 } : undefined)} />
-            </button>
+              <button
+                type="button"
+                className="tq-inbox"
+                aria-current={picked === i.inbox}
+                onClick={() => onPick(i.inbox)}
+              >
+                <span className="nm">
+                  <Avatar name={i.owner_agent || initials(i.inbox)} kind="bot" />
+                  <span>{i.inbox}</span>
+                </span>
+                <CountText c={counts?.get(i.inbox) ?? (counts ? { todo: 0, running: 0 } : undefined)} />
+              </button>
+            </Tip>
           ))}
           {onRegister && (
             <button type="button" className="tq-inbox text-xs" onClick={onRegister}>

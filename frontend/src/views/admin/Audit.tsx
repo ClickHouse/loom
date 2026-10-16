@@ -233,7 +233,7 @@ export function Audit() {
     <PageContainer>
       <div className="mb-6">
         <div className="flex items-baseline gap-3 mb-1">
-          <h1 className="text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
+          <h1 className="text-2xl inline-flex items-center gap-2">
             <Icon name="history" size="md" aria-hidden="true" /> Activity
           </h1>
           <ScopeBadge kind="namespace" value={identity.namespace} />

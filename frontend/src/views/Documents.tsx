@@ -321,7 +321,7 @@ export function Documents() {
   return (
     <PageContainer>
       <div className="flex items-baseline justify-between mb-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Library</h1>
+        <h1 className="text-2xl">Library</h1>
         <div className="flex items-center gap-3">
           <span className="text-sm text-text-muted tabular">
             {rows

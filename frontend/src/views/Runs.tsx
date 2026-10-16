@@ -235,7 +235,7 @@ function runRow(r: RunRow, onOpen: (r: RunRow) => void): TableRowType {
   return {
     id: r.run_id,
     onClick: () => onOpen(r),
-    className: `cursor-pointer ${dim ? "opacity-55" : ""}`,
+    className: "cursor-pointer",
     items: [
       {
         label: (
@@ -248,7 +248,7 @@ function runRow(r: RunRow, onOpen: (r: RunRow) => void): TableRowType {
                     e.stopPropagation();
                     onOpen(r);
                   }}
-                  className="min-w-0 max-w-full truncate text-left rounded outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                  className={`min-w-0 max-w-full truncate text-left rounded outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${dim ? "text-text-muted" : ""}`}
                 >
                   {r.goal || <span className="text-text-subtle">(no goal)</span>}
                 </button>
@@ -377,7 +377,7 @@ export function Runs() {
   return (
     <PageContainer>
       <div className="flex items-baseline gap-3 mb-2">
-        <h1 className="text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
+        <h1 className="text-2xl inline-flex items-center gap-2">
           <Icon name="list-numbered" size="md" aria-hidden="true" /> Runs
         </h1>
         <ScopeBadge kind="namespace" value={identity.namespace} />
@@ -463,9 +463,13 @@ export function Runs() {
               <div className="flex items-center justify-between gap-3 px-3 py-2">
                 <div className="min-w-0 flex items-center gap-2 text-xs">
                   <Icon name="cards" size="xs" aria-hidden="true" className="shrink-0" />
-                  <span className="font-mono truncate" title={g.session_id || "(no session)"}>
-                    {g.session_id ? truncate(g.session_id, 32) : "(no session)"}
-                  </span>
+                  {g.session_id.length > 32 ? (
+                    <TipTarget tip={g.session_id}>
+                      <span className="font-mono">{truncate(g.session_id, 32)}</span>
+                    </TipTarget>
+                  ) : (
+                    <span className="font-mono truncate">{g.session_id || "(no session)"}</span>
+                  )}
                   <span className="text-text-subtle">·</span>
                   <span className="text-text-muted">
                     {g.runs.length} run{g.runs.length === 1 ? "" : "s"}

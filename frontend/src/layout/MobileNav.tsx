@@ -81,11 +81,13 @@ export function MobileNav() {
                 e.preventDefault();
                 setView(p.id);
               }}
-              className={`flex flex-col items-center justify-center gap-0.5 flex-1 h-full transition-colors no-underline hover:no-underline ${
-                active ? "text-text" : "text-text-subtle"
+              className={`relative flex flex-col items-center justify-center gap-0.5 flex-1 h-full transition-colors no-underline hover:no-underline ${
+                active ? "bg-surface-3 text-text" : "text-text-subtle"
               }`}
               aria-current={active ? "page" : undefined}
             >
+              {/* The current tab carries the selected fill and a bar, not only a text colour. */}
+              {active && <span aria-hidden="true" className="absolute inset-x-3 top-0 h-0.5 rounded-b bg-text" />}
               <Icon name={p.icon} size="md" aria-hidden="true" />
               <span className="text-xs font-medium">{p.label}</span>
             </a>
@@ -96,10 +98,11 @@ export function MobileNav() {
           onClick={() => setOpen(true)}
           aria-haspopup="dialog"
           aria-expanded={open}
-          className={`flex flex-col items-center justify-center gap-0.5 flex-1 h-full ${
-            moreActive ? "text-text" : "text-text-subtle"
+          className={`relative flex flex-col items-center justify-center gap-0.5 flex-1 h-full ${
+            moreActive ? "bg-surface-3 text-text" : "text-text-subtle"
           }`}
         >
+          {moreActive && <span aria-hidden="true" className="absolute inset-x-3 top-0 h-0.5 rounded-b bg-text" />}
           <Icon name="dots-horizontal" size="md" aria-hidden="true" />
           <span className="text-xs font-medium">More</span>
         </button>

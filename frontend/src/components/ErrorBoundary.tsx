@@ -52,7 +52,7 @@ export class ErrorBoundary extends Component<Props, State> {
     return (
       <main className="min-h-screen grid place-items-center px-4 bg-bg text-text">
         <div role="alert" className="w-full max-w-md rounded-sm border border-border bg-surface p-6">
-          <h1 className="text-xl font-bold m-0">Something went wrong</h1>
+          <h1 className="text-xl m-0">Something went wrong</h1>
           <p className="mt-2 text-sm text-text-muted">
             The dashboard hit an error it couldn't recover from. Reloading usually fixes it; if it keeps happening, copy
             the diagnostics and send them to whoever runs this Loom.

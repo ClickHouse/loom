@@ -52,7 +52,7 @@ export function Agents() {
   return (
     <PageContainer>
       <div className="flex items-baseline gap-3 mb-2">
-        <h1 className="text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
+        <h1 className="text-2xl inline-flex items-center gap-2">
           <Icon name="plug" size="md" aria-hidden="true" /> Agents
         </h1>
       </div>

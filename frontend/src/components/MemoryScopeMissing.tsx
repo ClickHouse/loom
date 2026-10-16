@@ -79,7 +79,7 @@ export function MemoryScopeMissing({ view }: { view: View }) {
 
   return (
     <PageContainer>
-      <h1 className="text-2xl font-semibold">{title}</h1>
+      <h1 className="text-2xl">{title}</h1>
       <div className="mt-1 mb-6">
         <ScopeBadge kind="namespace" value={namespace} />
       </div>

@@ -1051,12 +1051,23 @@ function ConnectStep({
 
 type CheckState = "pending" | "ok" | "fail" | "todo";
 
-function CheckRow({ state, title, children }: { state: CheckState; title: string; children?: ReactNode }) {
+function CheckRow({
+  state,
+  title,
+  stale = false,
+  children,
+}: {
+  state: CheckState;
+  title: string;
+  /** The result predates an edit: shown in the muted text colour, not in its pass/fail colour. */
+  stale?: boolean;
+  children?: ReactNode;
+}) {
   const icon =
     state === "ok" ? (
-      <Icon name="check-in-circle" size="sm" color={SUCCESS} aria-hidden="true" />
+      <Icon name="check-in-circle" size="sm" color={stale ? MUTED : SUCCESS} aria-hidden="true" />
     ) : state === "fail" ? (
-      <Icon name="cross" size="sm" color={DANGER} aria-hidden="true" />
+      <Icon name="cross" size="sm" color={stale ? MUTED : DANGER} aria-hidden="true" />
     ) : (
       <Icon
         name="circle"
@@ -1071,7 +1082,7 @@ function CheckRow({ state, title, children }: { state: CheckState; title: string
     <li className="flex items-start gap-2.5">
       <span className="mt-0.5 shrink-0">{icon}</span>
       <div className="min-w-0 flex-1">
-        <div className="text-sm">
+        <div className={`text-sm ${stale ? "text-text-muted" : ""}`}>
           {title} <span className="sr-only">— {word}</span>
         </div>
         {children && <div className="mt-1 text-xs text-text-muted">{children}</div>}
@@ -1118,11 +1129,15 @@ function CheckStep({
           />
         </div>
       )}
-      <ul className={`space-y-3 ${stale ? "opacity-60" : ""}`} aria-label="Checks">
-        <CheckRow state={state("reach")} title={`Reach ${form.host || "the host"} as ${form.user || "the user"}`}>
+      <ul className="space-y-3" aria-label="Checks">
+        <CheckRow
+          state={state("reach")}
+          stale={stale}
+          title={`Reach ${form.host || "the host"} as ${form.user || "the user"}`}
+        >
           {refusal?.gate === "reach" && <span className="text-danger">{refusal.message}</span>}
         </CheckRow>
-        <CheckRow state={state("readonly")} title="The user can only read">
+        <CheckRow state={state("readonly")} stale={stale} title="The user can only read">
           {refusal?.gate === "readonly" && (
             <span className="text-danger">
               {refusal.message} — create a user with SELECT only: on the tables you map (or the views) and
@@ -1138,6 +1153,7 @@ function CheckStep({
         </CheckRow>
         <CheckRow
           state={state("schema")}
+          stale={stale}
           title={
             checked?.contract.mode === "mapping"
               ? `Your mapping fits the tables in ${form.database}`
@@ -1150,6 +1166,7 @@ function CheckStep({
         </CheckRow>
         <CheckRow
           state={state("rows")}
+          stale={stale}
           title={
             checked?.contract.mode === "mapping"
               ? "Loom can read rows through your mapping"
@@ -1503,11 +1520,16 @@ export function EditMappingDialog({
         </ul>
       )}
       {checked && (
-        <div className={checked.fp !== fp ? "opacity-60" : ""}>
+        <div>
+          {checked.fp !== fp && (
+            <p className="text-sm text-text-muted mb-1">This result is from before your last change. Check again.</p>
+          )}
           {checked.contract.ok ? (
-            <div className="text-sm text-success flex items-center gap-1.5">
-              <Icon name="check-in-circle" size="sm" color={SUCCESS} aria-hidden="true" /> The mapping reads. Nothing
-              has been saved yet.
+            <div
+              className={`text-sm flex items-center gap-1.5 ${checked.fp !== fp ? "text-text-muted" : "text-success"}`}
+            >
+              <Icon name="check-in-circle" size="sm" color={checked.fp !== fp ? MUTED : SUCCESS} aria-hidden="true" />{" "}
+              The mapping reads. Nothing has been saved yet.
             </div>
           ) : (
             <ErrorNote>{checked.contract.summary}</ErrorNote>

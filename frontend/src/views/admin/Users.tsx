@@ -76,7 +76,7 @@ export function Users() {
   return (
     <PageContainer>
       <div className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
+        <h1 className="text-2xl inline-flex items-center gap-2">
           <Icon name="users" size="md" aria-hidden="true" /> Users
         </h1>
         <div className="mt-1">

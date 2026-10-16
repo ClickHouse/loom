@@ -66,9 +66,9 @@ function Card({ r, ctx, drag }: { r: TaskListRow; ctx: RowContext; drag: HTMLAtt
             </>
           )}
         </span>
-        <span className="tabular shrink-0" title={r.created_at}>
+        <time className="tabular shrink-0" dateTime={r.created_at}>
           {rel(r.created_at, ctx.now)}
-        </span>
+        </time>
       </span>
     </div>
   );

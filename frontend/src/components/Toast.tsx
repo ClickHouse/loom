@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
-import { IconButton } from "@clickhouse/click-ui/IconButton";
+import { IconButton } from "./IconButton";
 import { errorRequestId, humanizeError } from "../lib/format";
 
 /**
@@ -178,14 +178,7 @@ function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: (id: numbe
           <span className="text-xs font-mono text-[var(--click-toast-color-description-default)]">{item.detail}</span>
         )}
       </span>
-      <IconButton
-        icon="cross"
-        type="ghost"
-        size="sm"
-        htmlType="button"
-        aria-label="Dismiss notification"
-        onClick={() => onDismiss(item.id)}
-      />
+      <IconButton icon="cross" size="sm" label="Dismiss notification" onClick={() => onDismiss(item.id)} />
     </div>
   );
 }

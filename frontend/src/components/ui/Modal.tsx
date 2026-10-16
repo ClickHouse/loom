@@ -35,11 +35,10 @@ export interface ModalProps {
 // Toasts are z-[65]; popovers and tooltips z-[70] (styles.css).
 const LAYER = { dialog: "z-50", confirm: "z-[60]" } as const;
 
-// Radix focuses the first tabbable element on open. When the body has none yet (its fields
-// render after a read), that would be the close button, whose tooltip then opens over the
-// title; start on the dialog itself instead.
-const BODY_FOCUSABLE =
-  "input, select, textarea, button:not([data-modal-close]), a[href], [tabindex]:not([tabindex='-1'])";
+// Radix focuses the first tabbable element on open, links aside. When the body has none
+// (its fields render after a read, or it holds only links), that would be the close
+// button, whose tooltip then opens over the title; start on the dialog itself instead.
+const BODY_FOCUSABLE = "input, select, textarea, button:not([data-modal-close]), [tabindex]:not([tabindex='-1'])";
 
 function focusDialog(e: Event) {
   if (!(e.currentTarget instanceof HTMLElement)) return;

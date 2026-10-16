@@ -438,6 +438,7 @@ export function HeaderSearch({
       </RadixPopover.Anchor>
       <Popover.Content
         align="start"
+        aria-label="Search results"
         onOpenAutoFocus={(e) => e.preventDefault()}
         className="w-(--radix-popover-trigger-width) max-h-[70vh] overflow-y-auto"
       >

@@ -11,7 +11,7 @@ import { PageContainer } from "../layout/PageContainer";
 import { MemoryTabs } from "../components/MemoryTabs";
 import { EmptyState } from "../components/EmptyState";
 import { ScopeBadge } from "../components/ScopeBadge";
-import { Chip, TabTrigger } from "../components/ui";
+import { Chip, TabTrigger, TipTarget } from "../components/ui";
 import { humanizeError, relativeTime, displayAgent, previewValue } from "../lib/format";
 import { KEYWORD_PAGE, keywordThenRanked, parseSearchQuery } from "../lib/memoriesSearch";
 import { signed, whyTerms } from "../lib/whyNote";
@@ -72,44 +72,37 @@ function RecallHistoryRow({ r }: { r: SearchTraceLogRow }) {
             risk abstain"). One chip: the abstain outcome if it
             happened, otherwise the band when it is worth flagging. */}
         {r.abstain ? (
-          <Badge
-            text="abstained"
-            state="warning"
-            size="sm"
-            title="Nothing passed the relevance floor, so loom returned no answer rather than a weak guess."
-          />
+          <TipTarget tip="Nothing passed the relevance floor, so loom returned no answer rather than a weak guess.">
+            <Badge text="abstained" state="warning" size="sm" />
+          </TipTarget>
         ) : (
           (r.retrieval_risk === "medium" || r.retrieval_risk === "high") && (
-            <Badge
-              text={`${r.retrieval_risk} risk`}
-              state="warning"
-              size="sm"
-              title="Results were returned, but confidence was below the comfortable band."
-            />
+            <TipTarget tip="Results were returned, but confidence was below the comfortable band.">
+              <Badge text={`${r.retrieval_risk} risk`} state="warning" size="sm" />
+            </TipTarget>
           )
         )}
         {r.operation !== "" && (
-          <Badge
-            text={`via ${r.operation}`}
-            state="neutral"
-            size="sm"
-            title="The operation that ran this search. memory.ask and the MCP search tool carry the wording a person gave; a direct memory.search carries whatever the calling program composed."
-          />
+          <TipTarget tip="The operation that ran this search. memory.ask and the MCP search tool carry the wording a person gave; a direct memory.search carries whatever the calling program composed.">
+            <Badge text={`via ${r.operation}`} state="neutral" size="sm" />
+          </TipTarget>
         )}
         <span>{displayAgent(r.agent)}</span>
         {r.run_id !== "" && r.run_id !== "-" && <span>run {r.run_id}</span>}
       </div>
       {pairs.length > 0 && (
-        <ul className="mt-2 space-y-0.5" aria-label="Returned memories with scores">
+        <div className="mt-2 flex justify-end text-2xs text-text-subtle">
+          <TipTarget tip="blended rank score at the time of the search" underline>
+            score
+          </TipTarget>
+        </div>
+      )}
+      {pairs.length > 0 && (
+        <ul className="mt-0.5 space-y-0.5" aria-label="Returned memories with scores">
           {shown.map(({ key, score }) => (
             <li key={key} className="grid grid-cols-[minmax(0,1fr)_3.5rem] items-center gap-x-2 text-2xs">
-              <span className="min-w-0 truncate font-mono text-text-muted" title={key}>
-                {key}
-              </span>
-              <span
-                className="text-right font-mono tabular-nums text-text"
-                title="blended rank score at the time of the search"
-              >
+              <span className="min-w-0 break-all font-mono text-text-muted">{key}</span>
+              <span className="text-right font-mono tabular-nums text-text">
                 {score == null ? "–" : score.toFixed(3)}
               </span>
               <div className="col-span-2 h-0.5 rounded-full bg-surface-2 overflow-hidden" aria-hidden="true">
@@ -254,8 +247,8 @@ function RecallHistory() {
 function RankedTerms({ hit }: { hit: SearchHit }) {
   return (
     <>
-      <span title="similarity the search reports for the hit">sim {hit.similarity.toFixed(3)}</span>
-      <span title="final score the ranked hits are ordered by">score {hit.rank_score.toFixed(3)}</span>
+      <TipTarget tip="similarity the search reports for the hit">sim {hit.similarity.toFixed(3)}</TipTarget>
+      <TipTarget tip="final score the ranked hits are ordered by">score {hit.rank_score.toFixed(3)}</TipTarget>
       {whyTerms(hit.score_components).map((t) => (
         <span key={t.label} className={t.value < 0 ? "text-warn" : "text-accent"}>
           {t.label} {signed(t.value)}
@@ -377,7 +370,7 @@ export function RecallLab() {
   return (
     <PageContainer>
       <div className="mb-4">
-        <h1 className="text-2xl font-semibold tracking-tight">Memories</h1>
+        <h1 className="text-2xl">Memories</h1>
         <div className="mt-1 mb-3">
           <ScopeBadge kind="namespace" value={identity.namespace} />
         </div>
@@ -467,12 +460,9 @@ export function RecallLab() {
                           <p className="text-sm text-text break-words">{row.text}</p>
                           <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs font-mono text-text-muted">
                             {row.keyword && (
-                              <Badge
-                                text="keyword match"
-                                state="neutral"
-                                size="sm"
-                                title="its text holds the query; the Memories list shows these first, newest first"
-                              />
+                              <TipTarget tip="its text holds the query; the Memories list shows these first, newest first">
+                                <Badge text="keyword match" state="neutral" size="sm" />
+                              </TipTarget>
                             )}
                             {row.hit && <RankedTerms hit={row.hit} />}
                             <span className="text-text-subtle">{row.memoryType}</span>

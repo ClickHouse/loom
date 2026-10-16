@@ -96,7 +96,7 @@ export function Header() {
             <Menu
               label="New"
               trigger={
-                <Button type="primary" htmlType="button" iconLeft="plus">
+                <Button type="secondary" htmlType="button" iconLeft="plus">
                   New
                 </Button>
               }
@@ -174,7 +174,7 @@ export function Header() {
               </div>
             </Dropdown.Group>
             <Dropdown.Item onSelect={() => useStore.getState().setView("setup")}>
-              <ItemLabel icon="gear">Setup & MCP config</ItemLabel>
+              <ItemLabel icon="gear">Settings</ItemLabel>
             </Dropdown.Item>
             {!isProxyMode() && (
               <Dropdown.Item onSelect={onLogout}>
@@ -215,7 +215,7 @@ function ItemLabel({ icon, children }: { icon: IconName; children: ReactNode }) 
 function DisabledNew({ reason }: { reason: string }) {
   return (
     <Unavailable reason={reason}>
-      <Button type="primary" htmlType="button" iconLeft="plus">
+      <Button type="secondary" htmlType="button" iconLeft="plus">
         New
       </Button>
     </Unavailable>

@@ -650,7 +650,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                 </section>
 
                 <section>
-                  <h4 className="text-xs font-medium text-text-muted mb-3">Metadata</h4>
+                  <h3 className="text-xs font-medium text-text-muted mb-3">Metadata</h3>
                   <dl className="grid grid-cols-[110px_1fr] gap-y-2 text-sm">
                     <Row label="Type" value={detail.memory_type || "—"} mono />
                     {detail.char_limit != null && (
@@ -703,7 +703,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                 </section>
 
                 <section>
-                  <h4 className="text-xs font-medium text-text-muted mb-2">Tags</h4>
+                  <h3 className="text-xs font-medium text-text-muted mb-2">Tags</h3>
                   <div className="flex flex-wrap gap-1.5 items-center">
                     {(detail.tags || []).map((t) => (
                       <Chip
@@ -761,7 +761,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                 memory opens the Explorer walked from it — not from the rail. */}
                 {(detail.entities || []).length > 0 && (
                   <section>
-                    <h4 className="text-xs font-medium text-text-muted mb-2">Entities</h4>
+                    <h3 className="text-xs font-medium text-text-muted mb-2">Entities</h3>
                     <div className="flex flex-wrap gap-1.5 items-center">
                       {(detail.entities || []).map((en) => (
                         <EntityChip key={en} entity={en} />
@@ -1065,9 +1065,9 @@ function ProvenanceSection({
   return (
     <section>
       {!embedded && (
-        <h4 className="text-xs font-medium text-text-muted mb-2 flex items-center gap-1.5">
+        <h3 className="text-xs font-medium text-text-muted mb-2 flex items-center gap-1.5">
           <Icon name="git-merge" size="xs" aria-hidden="true" /> Provenance
-        </h4>
+        </h3>
       )}
       <dl className="grid grid-cols-[92px_1fr] gap-y-1.5 text-xs mb-2">
         {showSource && (
@@ -1416,9 +1416,9 @@ function RenameForm({
       className="rounded-xl border border-border bg-surface-2/50 p-4 space-y-3"
       data-testid="rename-form"
     >
-      <h4 id="rename-heading" className="text-xs font-medium text-text-muted flex items-center gap-1.5">
+      <h3 id="rename-heading" className="text-xs font-medium text-text-muted flex items-center gap-1.5">
         <Icon name="arrow-right" size="xs" aria-hidden="true" /> Rename (keep redirect)
-      </h4>
+      </h3>
       <TextField
         label="New key"
         value={toKey}

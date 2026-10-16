@@ -304,7 +304,7 @@ function Header({ onNew, entries, empty }: { onNew: () => void; entries: Profile
     <>
       <div className="flex items-start justify-between gap-3 mb-1">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Your AI profile</h1>
+          <h1 className="text-2xl">Your AI profile</h1>
           <div className="mt-1">
             <ScopeBadge kind="namespace" value={namespace} />
           </div>

@@ -649,7 +649,7 @@ export function Recent() {
   if (entries === null) {
     return (
       <PageContainer className="space-y-3">
-        <h1 className="text-2xl font-semibold tracking-tight mb-3">Memories</h1>
+        <h1 className="text-2xl mb-3">Memories</h1>
         <MemoryTabs active="memories" />
         <SkeletonCard />
         <SkeletonCard />
@@ -661,7 +661,7 @@ export function Recent() {
   if (entries.length === 0 && loadError) {
     return (
       <PageContainer>
-        <h1 className="text-2xl font-semibold tracking-tight">Memories</h1>
+        <h1 className="text-2xl">Memories</h1>
         <div className="mt-1 mb-3">
           <ScopeBadge kind="namespace" value={identity.namespace} />
         </div>
@@ -686,7 +686,7 @@ export function Recent() {
   if (entries.length === 0) {
     return (
       <PageContainer>
-        <h1 className="text-2xl font-semibold tracking-tight">Memories</h1>
+        <h1 className="text-2xl">Memories</h1>
         <div className="mt-1 mb-3">
           <ScopeBadge kind="namespace" value={identity.namespace} />
         </div>
@@ -746,7 +746,7 @@ export function Recent() {
       {/* Wraps below the title on a phone: at 390 px a non-wrapping row
           clips "Add memory" off-screen. */}
       <div className="mb-1 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-2">
-        <h1 className="text-2xl font-semibold tracking-tight">Memories</h1>
+        <h1 className="text-2xl">Memories</h1>
         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           <span className="text-sm text-text-muted tabular whitespace-nowrap">
             {searchActive
@@ -994,7 +994,9 @@ export function Recent() {
                           : "border-border bg-surface hover:border-border-strong",
                       isNew ? "animate-fade-in ring-2 ring-accent" : "",
                       isFocused && !isSelected ? "ring-2 ring-accent" : "",
-                      isTombstoned ? "opacity-60" : "",
+                      // A deleted memory keeps full-contrast text; the dashed edge and the
+                      // "Deleted" line under it set it apart.
+                      isTombstoned ? "border-dashed" : "",
                     ]
                       .filter(Boolean)
                       .join(" ")}

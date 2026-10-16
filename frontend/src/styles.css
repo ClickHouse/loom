@@ -140,7 +140,11 @@
 
   /* Accent — the primary button: slate-800, white text. */
   --color-accent: var(--click-button-basic-color-primary-background-default);
-  --color-accent-soft: color-mix(in srgb, var(--click-button-basic-color-primary-background-default) 8%, transparent);
+  --color-accent-soft: color-mix(
+    in srgb,
+    var(--click-button-basic-color-primary-background-default) 5%,
+    transparent
+  ); /* muted text holds 4.6:1 on it */
   --color-accent-strong: var(--click-button-basic-color-primary-background-hover);
   --color-on-accent: var(--click-button-basic-color-primary-text-default);
 
@@ -161,15 +165,15 @@
   --shadow-xl: 0 8px 16px -4px var(--color-shadow), 0 4px 6px -2px var(--color-shadow);
   --shadow-2xl: 0 16px 32px -8px var(--color-shadow), 0 4px 6px -2px var(--color-shadow);
 
-  /* Radii — Click UI is square-cornered: 2 px checkboxes, 4 px buttons,
-     fields, cards, popovers and nav items, 8 px panels and dialogs, full
-     badges. The Tailwind steps map onto those so `rounded-*` lands on them. */
+  /* Radii — Click UI is square-cornered: 2 px checkboxes, 4 px buttons, fields,
+     cards, panels, popovers and nav items, full for badges. Its dialogs draw their own
+     8 px. Every Tailwind step a card uses lands on the 4 px card radius. */
   --radius-xs: var(--click-checkbox-radii-all);
   --radius-sm: var(--click-button-radii-all);
   --radius-md: var(--click-button-radii-all);
   --radius-lg: var(--click-card-primary-radii-all);
-  --radius-xl: var(--click-dialog-radii-all);
-  --radius-2xl: var(--click-dialog-radii-all);
+  --radius-xl: var(--click-card-primary-radii-all);
+  --radius-2xl: var(--click-card-primary-radii-all);
   --radius-3xl: var(--click-panel-radii-lg);
 
   /* Categorical — for things that are different, not ranked (graph
@@ -504,10 +508,10 @@ body {
   border-radius: var(--radius-md);
 }
 
-/* Reduced motion: the stylesheet's animations and every transition stop for a
-   reader who asks the OS for less motion, so a component needs no
-   `motion-reduce:` variant; a spinner keeps turning, it is a status. After the
-   rules it overrides. */
+/* Reduced motion: the stylesheet's animations, Click UI's entrance animations and
+   every transition stop for a reader who asks the OS for less motion, so a
+   component needs no `motion-reduce:` variant; a spinner keeps turning, it is a
+   status. After the rules it overrides. */
 @media (prefers-reduced-motion: reduce) {
   .animate-network-slide,
   .animate-view-in,
@@ -515,6 +519,12 @@ body {
   .animate-fade-in,
   .skeleton {
     animation: none;
+  }
+  /* Click UI's own entrances: dialogs, popovers, menus, selects and tooltips. */
+  [role="dialog"],
+  [role="tooltip"],
+  [data-radix-popper-content-wrapper] > * {
+    animation: none !important;
   }
   *,
   *::before,

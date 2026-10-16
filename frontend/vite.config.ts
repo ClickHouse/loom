@@ -39,14 +39,23 @@ export default defineConfig({
   base: "/",
   plugins: [react(), tailwindcss(), fontPreload()],
   resolve: {
-    alias: {
+    alias: [
       // Click UI's light tokens and page defaults, which its exports map does not expose.
       // Loaded directly instead of through ClickUIProvider, whose barrel import would ship
       // every component's CSS and the dark theme.
-      "click-ui-styles": fileURLToPath(
-        new URL("./node_modules/@clickhouse/click-ui/dist/esm/theme/styles", import.meta.url),
-      ),
-    },
+      {
+        find: "click-ui-styles",
+        replacement: fileURLToPath(
+          new URL("./node_modules/@clickhouse/click-ui/dist/esm/theme/styles", import.meta.url),
+        ),
+      },
+      // Click UI's Icon resolves a name against its flag, logo and payment-mark maps too,
+      // importing them whole (~1 MB); the dashboard draws only interface icons.
+      {
+        find: /^.*\/(Flags|Logos|Payments)(Light|Dark)\.js$/,
+        replacement: fileURLToPath(new URL("./src/lib/emptyAssetMap.ts", import.meta.url)),
+      },
+    ],
   },
   build: {
     outDir: "dist",

@@ -2,7 +2,7 @@ import { useState, type FocusEvent, type HTMLAttributes, type KeyboardEvent, typ
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import type { TaskListRow } from "../../api/tasks";
-import { GROUPS, GROUP_META, rel, sublineOf, type Group, type Subline } from "../../lib/tasks";
+import { GROUPS, GROUP_META, posterName, rel, sublineOf, type Group, type Subline } from "../../lib/tasks";
 import { Avatar, KindTag, LeaseBar, PosterAvatar, PriorityBar } from "./TaskBits";
 import { useTaskDrag } from "./drag";
 
@@ -94,9 +94,9 @@ function Meta({ r, ctx }: { r: TaskListRow; ctx: RowContext }) {
             </Button>
           </span>
         )}
-        <span className="tabular" title={r.created_at}>
+        <time className="tabular" dateTime={r.created_at}>
           {rel(r.created_at, ctx.now)}
-        </span>
+        </time>
       </span>
     );
   }
@@ -104,10 +104,11 @@ function Meta({ r, ctx }: { r: TaskListRow; ctx: RowContext }) {
     <span className="tq-meta">
       <span className="tq-who">
         <PosterAvatar r={r} ownerAgent={ctx.ownerAgentOf(r.inbox)} />
+        <span className="truncate max-w-40">{posterName(r)}</span>
       </span>
-      <span className="tabular" title={r.created_at}>
+      <time className="tabular" dateTime={r.created_at}>
         {rel(r.created_at, ctx.now)}
-      </span>
+      </time>
     </span>
   );
 }
@@ -151,9 +152,7 @@ function TaskRowView({
       <span className="min-w-0" role="gridcell">
         <span className="t">
           <KindTag kind={r.kind} />
-          <span className="title text-sm" title={r.title}>
-            {r.title}
-          </span>
+          <span className="title text-sm">{r.title}</span>
         </span>
         <SublineView s={sublineOf(r, ctx.now, ctx.progressNotes.get(r.task_id))} />
       </span>

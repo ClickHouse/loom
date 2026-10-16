@@ -156,7 +156,7 @@ export function MemoryCard({
             icon="#"
             onClick={onTagClick ? () => onTagClick(t) : undefined}
             ariaLabel={onTagClick ? `Filter by tag: ${t}` : undefined}
-            className="pointer-events-auto"
+            className="pointer-events-auto relative z-[1]"
           />
         ))}
         <span className="text-2xs text-text-subtle tabular ml-auto">

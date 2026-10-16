@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Alert } from "@clickhouse/click-ui/Alert";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
@@ -216,7 +216,7 @@ export function Setup() {
   return (
     <PageContainer>
       <div className="mb-5 flex flex-wrap items-center gap-x-4 gap-y-2">
-        <h1 className="text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
+        <h1 className="text-2xl inline-flex items-center gap-2">
           <Icon name="gear" size="md" aria-hidden="true" /> Settings
         </h1>
         {tab === "models" ? (
@@ -392,6 +392,22 @@ function TokensSection({
 }) {
   const liveTokens = (sa ?? []).filter((t) => !t.revoked_at);
   const formVisible = formOpen ?? (sa !== null && liveTokens.length === 0);
+  // "New token" and the form's Cancel each remove themselves when pressed, so focus is
+  // handed on once the other side renders: into the form's first control, or back to
+  // "New token". Only a press sets it, so the form shown on load takes no focus.
+  const focusAfterToggle = useRef<"form" | "trigger" | null>(null);
+  const tokenFormRef = useRef<HTMLElement>(null);
+  const newTokenRef = useRef<HTMLButtonElement>(null);
+  const toggleForm = (open: boolean) => {
+    focusAfterToggle.current = open ? "form" : "trigger";
+    onFormOpenChange(open);
+  };
+  useEffect(() => {
+    const target = focusAfterToggle.current;
+    focusAfterToggle.current = null;
+    if (target === "form") tokenFormRef.current?.querySelector<HTMLElement>("button, input, select, textarea")?.focus();
+    if (target === "trigger") newTokenRef.current?.focus();
+  }, [formVisible]);
   const identity = useIdentity();
   const [adminNs, setAdminNs] = useState<MyNamespaceEntry[] | null>(null);
   const whoamiForRole = useStore((s) => s.whoami);
@@ -699,11 +715,12 @@ function TokensSection({
           </p>
           {!formVisible && (
             <Button
+              ref={newTokenRef}
               id="setup-generate-token"
               type="primary"
               htmlType="button"
               iconLeft="plus"
-              onClick={() => onFormOpenChange(true)}
+              onClick={() => toggleForm(true)}
             >
               New token
             </Button>
@@ -711,7 +728,11 @@ function TokensSection({
         </div>
 
         {formVisible && (
-          <section className="mb-4 rounded-2xl border border-border bg-surface p-4 space-y-4" aria-label="New token">
+          <section
+            ref={tokenFormRef}
+            className="mb-4 rounded-2xl border border-border bg-surface p-4 space-y-4"
+            aria-label="New token"
+          >
             <div className="flex flex-wrap items-center justify-between gap-2">
               <ButtonGroup
                 aria-label="Token kind"
@@ -723,7 +744,7 @@ function TokensSection({
                 onClick={(value) => setTab(value === "script" ? "script" : "agent")}
               />
               {liveTokens.length > 0 && (
-                <Button type="empty" htmlType="button" onClick={() => onFormOpenChange(false)}>
+                <Button type="empty" htmlType="button" onClick={() => toggleForm(false)}>
                   Cancel
                 </Button>
               )}

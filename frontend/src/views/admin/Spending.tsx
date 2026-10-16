@@ -176,7 +176,7 @@ export function Spending() {
   return (
     <PageContainer>
       <div className="flex items-baseline gap-3 mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
+        <h1 className="text-2xl inline-flex items-center gap-2">
           <Icon name="dollar" size="md" aria-hidden="true" /> Usage
         </h1>
         <ScopeBadge kind="namespace" value={identity.namespace} />

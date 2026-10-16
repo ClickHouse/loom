@@ -1,3 +1,5 @@
+import * as RadixDialog from "@radix-ui/react-dialog";
+import { useState } from "react";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -169,7 +171,7 @@ describe("TaskPanel", () => {
     expect(within(panel).getByText(/The reproducer must not appear/)).toHaveClass("tq-constraint");
     expect(within(panel).getByText("from reporter-public")).toBeInTheDocument();
     expect(within(panel).getByText("→ private-bot")).toBeInTheDocument();
-    expect(within(panel).getByText("· 01234567…")).toBeInTheDocument();
+    expect(within(panel).getByText("01234567…")).toBeInTheDocument();
     expect(getTask).toHaveBeenCalledTimes(1);
     expect(taskHistory).toHaveBeenCalledTimes(1);
     expect(listPolicies).not.toHaveBeenCalled(); // only a triage task reads the rule
@@ -325,5 +327,48 @@ describe("TaskPanel", () => {
     );
     await waitFor(() => expect(getTask).toHaveBeenCalledTimes(2));
     expect(taskHistory).toHaveBeenCalledTimes(2);
+  });
+  // Under 1180 px the page renders the panel as a modal sheet: a dialog named by the task's
+  // title that takes the focus, closes on Escape and hands the focus back to the task's row.
+  it("as a sheet is a dialog that takes the focus, closes on Escape and returns it to the row", async () => {
+    vi.mocked(getTask).mockResolvedValueOnce(fullRow("todo"));
+    const row = listRow("todo");
+    function Page() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button type="button" data-task-id={row.task_id} onClick={() => setOpen(true)}>
+            row
+          </button>
+          <RadixDialog.Root open={open} onOpenChange={setOpen}>
+            <RadixDialog.Portal>
+              {open && (
+                <TaskPanel
+                  identity={identity}
+                  row={row}
+                  inboxes={[INBOX]}
+                  canWrite
+                  now={NOW}
+                  reloadKey={0}
+                  onClose={() => setOpen(false)}
+                  onAction={noop}
+                  onOpenTask={noop}
+                  sheet
+                />
+              )}
+            </RadixDialog.Portal>
+          </RadixDialog.Root>
+        </>
+      );
+    }
+    const user = userEvent.setup();
+    render(<Page />);
+    await user.click(screen.getByRole("button", { name: "row" }));
+    const dialog = await screen.findByRole("dialog", { name: row.title });
+    expect(dialog).toHaveFocus();
+    expect(screen.queryByRole("complementary", { name: "Task detail" })).toBeNull();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getByRole("button", { name: "row" })).toHaveFocus();
   });
 });

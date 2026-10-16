@@ -1,4 +1,5 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import * as RadixDialog from "@radix-ui/react-dialog";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
 import { Icon } from "@clickhouse/click-ui/Icon";
@@ -68,7 +69,8 @@ const InboxSettingsDialog = lazy(() =>
  * happens next — Triage, To do, In progress, Waiting, Closed — as a list or
  * a board; each row carries the one line that matters for its state and,
  * in Triage, inline Accept / Won't do. A row opens the document-shaped
- * panel beside the list; its footer holds the status's actions.
+ * panel beside the list (under 1180 px, a modal sheet over it); its footer holds the
+ * status's actions.
  *
  * Reads on load: `inbox.list` once, `task.counts` once (the rail), and
  * `task.list` once for the picked inbox (the list's projection); a 60 s poll while
@@ -106,6 +108,27 @@ function writeQuery(key: string, value: string | null): void {
   } catch {
     /* nothing to write into */
   }
+}
+
+// Where styles.css stops giving the panel a column beside the list.
+const SHEET_QUERY = "(max-width: 1180px)";
+
+function matchesSheet(): boolean {
+  return typeof window.matchMedia === "function" && window.matchMedia(SHEET_QUERY).matches;
+}
+
+/** True while the viewport is narrow enough for the panel to be a modal sheet. */
+function useSheetLayout(): boolean {
+  const [sheet, setSheet] = useState(matchesSheet);
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const mq = window.matchMedia(SHEET_QUERY);
+    const sync = () => setSheet(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+  return sheet;
 }
 
 function inEditable(el: EventTarget | null): boolean {
@@ -157,6 +180,8 @@ export function Tasks() {
   const [filters, setFilters] = useState<Filters>(NO_FILTERS);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [openRow, setOpenRow] = useState<TaskListRow | null>(null);
+  const openRowRef = useRef(openRow);
+  openRowRef.current = openRow;
   const [reloadKey, setReloadKey] = useState(0);
   const [progressNotes, setProgressNotes] = useState<ReadonlyMap<string, string>>(new Map());
   const [creating, setCreating] = useState(false);
@@ -164,6 +189,7 @@ export function Tasks() {
   const [dialog, setDialog] = useState<{ action: ReasonAction; task: TaskListRow | TaskRow } | null>(null);
   const [editing, setEditing] = useState<TaskRow | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const sheetLayout = useSheetLayout();
 
   // Only the latest task.counts may write the counts: a namespace switch while A's read is
   // in flight drops A's answer, so B's tiles never show A's numbers.
@@ -313,6 +339,12 @@ export function Tasks() {
     writeQuery("task", r.task_id);
   }, []);
   const closeTask = useCallback(() => {
+    // Closing the side panel from inside it hands the focus back to its row (the sheet's
+    // dialog does the same on its own close).
+    const open = openRowRef.current;
+    const from = document.activeElement;
+    if (open && from instanceof Element && from.closest(".tq-panel"))
+      document.querySelector<HTMLElement>(`[data-task-id="${open.task_id}"]`)?.focus({ preventScroll: true });
     setOpenRow(null);
     writeQuery("task", null);
   }, []);
@@ -487,11 +519,33 @@ export function Tasks() {
 
   const createInbox = inbox?.inbox ?? inboxes?.[0]?.inbox ?? null;
 
+  // The open task beside the list, or (narrow) as the content of a modal sheet.
+  const panelFor = (task: TaskListRow, sheet: boolean) => (
+    <TaskPanel
+      identity={caller}
+      row={task}
+      inboxes={inboxes ?? []}
+      canWrite={mayWrite}
+      sheet={sheet}
+      now={now}
+      reloadKey={reloadKey}
+      onClose={closeTask}
+      onAction={(a, t) => {
+        void onAction(a, t);
+      }}
+      onHistory={onHistory}
+      onOpenTask={(id) => {
+        const r = rows?.find((x) => x.task_id === id);
+        if (r) openTask(r);
+      }}
+    />
+  );
+
   return (
     <PageContainer>
       <header className="flex items-center justify-between gap-4 flex-wrap pb-3">
         <div className="flex items-center gap-2.5 flex-wrap">
-          <h1 className="text-2xl font-semibold tracking-tight inline-flex items-center gap-2.5 m-0">
+          <h1 className="text-2xl inline-flex items-center gap-2.5 m-0">
             <Icon name="email" size="md" aria-hidden="true" /> Tasks
           </h1>
           <ScopeBadge kind="namespace" value={identity.namespace} />
@@ -625,27 +679,23 @@ export function Tasks() {
                 </span>
               </div>
             </div>
-            {openRow && (
-              <TaskPanel
-                identity={caller}
-                row={openRow}
-                inboxes={inboxes}
-                canWrite={mayWrite}
-                now={now}
-                reloadKey={reloadKey}
-                onClose={closeTask}
-                onAction={(a, t) => {
-                  void onAction(a, t);
-                }}
-                onHistory={onHistory}
-                onOpenTask={(id) => {
-                  const r = rows?.find((x) => x.task_id === id);
-                  if (r) openTask(r);
-                }}
-              />
-            )}
+            {openRow && !sheetLayout && panelFor(openRow, false)}
           </div>
         </>
+      )}
+
+      {sheetLayout && (
+        <RadixDialog.Root
+          open={!!openRow}
+          onOpenChange={(v) => {
+            if (!v) closeTask();
+          }}
+        >
+          <RadixDialog.Portal>
+            <RadixDialog.Overlay className="fixed inset-0 z-40 bg-overlay" />
+            {openRow && panelFor(openRow, true)}
+          </RadixDialog.Portal>
+        </RadixDialog.Root>
       )}
 
       {creating && createInbox && (

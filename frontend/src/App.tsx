@@ -137,10 +137,16 @@ export default function App() {
   useKeyboard(
     {
       "?": () => setHelpOpen(true),
-      Escape: () => {
-        if (helpOpen) setHelpOpen(false);
-        else if (inspectedKey) inspect(null);
-      },
+      // Bound only while it has something to close, so it does not take the key (and
+      // preventDefault it) from a view or a component that handles Escape itself.
+      ...(helpOpen || inspectedKey
+        ? {
+            Escape: () => {
+              if (helpOpen) setHelpOpen(false);
+              else inspect(null);
+            },
+          }
+        : {}),
     },
     authed,
   );

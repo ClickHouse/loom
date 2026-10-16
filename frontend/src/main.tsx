@@ -4,12 +4,14 @@ import * as RadixTooltip from "@radix-ui/react-tooltip";
 import App from "./App";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { installStaleChunkReload } from "./lib/staleChunk";
+import { labelSelectSearch } from "./lib/clickUiFixes";
 import "click-ui-styles/tokens-light.css";
 import "click-ui-styles/global.css";
 import "./styles.css";
 
 // A tab older than the running build reloads once on a missing view chunk.
 installStaleChunkReload();
+labelSelectSearch();
 
 // A render error anywhere shows a message, Reload and Copy diagnostics instead of a blank
 // page.

@@ -18,6 +18,7 @@ import { toast } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
 import { IconButton } from "../components/IconButton";
 import { Modal, ModalFooter } from "../components/ui/Modal";
+import { Tip } from "../components/ui";
 import { relativeTime, humanizeError } from "../lib/format";
 import { oneOf } from "../lib/oneOf";
 
@@ -258,15 +259,19 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
                     </div>
                     {canManage ? (
                       <>
-                        <Button
-                          type="secondary"
-                          htmlType="button"
-                          onClick={() => onApprove(r.subject, "approve")}
-                          disabled={busy === r.subject}
-                          title={targets > 1 ? `Also approves: ${elsewhere.map((t) => t.label).join(", ")}` : undefined}
+                        <Tip
+                          content={`Also approves: ${elsewhere.map((t) => t.label).join(", ")}`}
+                          disabled={targets <= 1}
                         >
-                          {`Approve as ${isCode ? (r.requested_role === "admin" ? "maintainer" : "reader") : r.requested_role}${targets > 1 ? ` on ${targets} branches` : ""}`}
-                        </Button>
+                          <Button
+                            type="secondary"
+                            htmlType="button"
+                            onClick={() => onApprove(r.subject, "approve")}
+                            disabled={busy === r.subject}
+                          >
+                            {`Approve as ${isCode ? (r.requested_role === "admin" ? "maintainer" : "reader") : r.requested_role}${targets > 1 ? ` on ${targets} branches` : ""}`}
+                          </Button>
+                        </Tip>
                         <Button
                           type="empty"
                           htmlType="button"

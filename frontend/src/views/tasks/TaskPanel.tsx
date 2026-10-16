@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import * as RadixDialog from "@radix-ui/react-dialog";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Dropdown } from "@clickhouse/click-ui/Dropdown";
 import { Icon } from "@clickhouse/click-ui/Icon";
@@ -38,7 +39,7 @@ import {
 import { humanizeError } from "../../lib/format";
 import { toast } from "../../components/Toast";
 import { IconButton } from "../../components/IconButton";
-import { Tip } from "../../components/ui";
+import { Tip, TipTarget } from "../../components/ui";
 import { KindTag, PriorityBadge, StatusPill } from "./TaskBits";
 import { MenuTrigger } from "../../components/ui/Menu";
 
@@ -68,7 +69,17 @@ interface Props {
   onOpenTask: (taskId: string) => void;
   /** The history landed: the page keeps the latest progress note per row. */
   onHistory?: (taskId: string, events: TaskEvent[]) => void;
+  /** Under 1180 px the panel is a modal sheet: the page renders it inside a Radix
+   *  `Dialog.Root` + `Portal`, and the panel is the dialog's content, titled by its
+   *  heading. Opening focuses the sheet; closing returns the focus to the task's row. */
+  sheet?: boolean;
 }
+
+const ACTOR_KIND_LABEL: Record<ReturnType<typeof actorKind>, string> = {
+  human: "a person",
+  sweeper: "the lease sweeper",
+  bot: "an agent",
+};
 
 const URL_RE = /^https?:\/\/\S+$/i;
 
@@ -218,13 +229,7 @@ function Timeline({ events, now }: { events: TaskEvent[] | null; now: number }) 
         const text = e.reason || e.note;
         return (
           <li key={e.seq}>
-            <span
-              className="ic"
-              data-kind={kind}
-              title={kind === "human" ? "a person" : kind === "sweeper" ? "the lease sweeper" : "an agent"}
-              role="img"
-              aria-label={kind}
-            >
+            <span className="ic" data-kind={kind} role="img" aria-label={ACTOR_KIND_LABEL[kind]}>
               {kind === "human" ? "h" : kind === "sweeper" ? "s" : "b"}
             </span>
             <span className="text-text-muted min-w-0">
@@ -248,8 +253,10 @@ function Timeline({ events, now }: { events: TaskEvent[] | null; now: number }) 
                 </>
               )}
             </span>
-            <span className="text-xs text-text-subtle whitespace-nowrap" title={e.ts}>
-              {rel(e.ts, now)}
+            <span className="text-xs text-text-subtle whitespace-nowrap">
+              <TipTarget tip={e.ts}>
+                <time dateTime={e.ts}>{rel(e.ts, now)}</time>
+              </TipTarget>
             </span>
           </li>
         );
@@ -286,6 +293,7 @@ export function TaskPanel({
   onAction,
   onOpenTask,
   onHistory,
+  sheet = false,
 }: Props) {
   const [task, setTask] = useState<TaskRow | null>(null);
   const [events, setEvents] = useState<TaskEvent[] | null>(null);
@@ -385,8 +393,9 @@ export function TaskPanel({
         : "Reason";
   const parentTaskId = current.parent_task_id;
 
-  return (
-    <aside className="tq-panel" aria-label="Task detail" data-status={current.status}>
+  const titleClass = "text-lg font-semibold m-0 mb-1 [text-wrap:balance] break-words";
+  const body = (
+    <>
       <div className="px-3.5 pt-3 pb-2.5 border-b border-border">
         <div className="flex items-center gap-2 flex-wrap mb-2">
           <StatusPill status={current.status} />
@@ -395,7 +404,11 @@ export function TaskPanel({
           <span className="flex-1" />
           <IconButton icon="cross" label="Close" onClick={onClose} />
         </div>
-        <h2 className="text-lg font-semibold m-0 mb-1 [text-wrap:balance] break-words">{current.title}</h2>
+        {sheet ? (
+          <RadixDialog.Title className={titleClass}>{current.title}</RadixDialog.Title>
+        ) : (
+          <h2 className={titleClass}>{current.title}</h2>
+        )}
         <div className="text-xs text-text-subtle flex gap-1.5 items-center flex-wrap">
           {handed ? (
             <>
@@ -406,8 +419,11 @@ export function TaskPanel({
             <b className="font-medium text-text-muted">this agent's own task</b>
           )}
           <span>· posted {rel(current.created_at, now)}</span>
-          <span className="font-mono" title={current.task_id}>
-            · {shortId(current.task_id)}
+          <span>
+            ·{" "}
+            <TipTarget tip={current.task_id}>
+              <span className="font-mono">{shortId(current.task_id)}</span>
+            </TipTarget>
           </span>
           {parentTaskId && (
             <Button type="empty" htmlType="button" iconLeft="git-merge" onClick={() => onOpenTask(parentTaskId)}>
@@ -494,7 +510,7 @@ export function TaskPanel({
 
       {/* biome-ignore lint/a11y/useSemanticElements: a labelled cluster of action buttons, not form fields */}
       <div
-        className="border-t border-border px-3.5 py-2.5 flex gap-2 items-center flex-wrap"
+        className="border-t border-border px-3.5 py-2.5 flex gap-2 items-center justify-end flex-wrap"
         role="group"
         aria-label="Actions"
       >
@@ -542,6 +558,37 @@ export function TaskPanel({
           </Tip>
         )}
       </div>
-    </aside>
+    </>
+  );
+
+  if (!sheet) {
+    return (
+      <aside className="tq-panel" aria-label="Task detail" data-status={current.status}>
+        {body}
+      </aside>
+    );
+  }
+  return (
+    <RadixDialog.Content
+      asChild
+      aria-describedby={undefined}
+      // The sheet itself takes the focus, not its first control: that is the close button,
+      // whose tooltip would open over the title.
+      onOpenAutoFocus={(e) => {
+        e.preventDefault();
+        if (e.currentTarget instanceof HTMLElement) e.currentTarget.focus();
+      }}
+      // No Dialog.Trigger opened it, so Radix has nowhere to return the focus: the row has it back.
+      onCloseAutoFocus={(e) => {
+        const rowEl = document.querySelector<HTMLElement>(`[data-task-id="${row.task_id}"]`);
+        if (!rowEl) return;
+        e.preventDefault();
+        rowEl.focus({ preventScroll: true });
+      }}
+    >
+      <div className="tq-panel outline-none" data-status={current.status}>
+        {body}
+      </div>
+    </RadixDialog.Content>
   );
 }

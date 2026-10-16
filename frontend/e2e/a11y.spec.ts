@@ -96,3 +96,78 @@ test("the New menu has no WCAG A/AA violations", async ({ page }) => {
   await expect(page.getByRole("menu")).toBeVisible();
   expect(await violations(page)).toEqual([]);
 });
+
+// The shell's overlays, open: axe sees what a user sees once a dialog, popover or menu is up.
+test.describe("open overlays", () => {
+  test("the header search popover", async ({ page }) => {
+    await open(page, "/memories");
+    await page.getByRole("combobox", { name: "Search Loom" }).fill("alerts");
+    await expect(page.getByRole("listbox")).toBeVisible();
+    expect(await violations(page)).toEqual([]);
+  });
+
+  test("the namespace picker", async ({ page }) => {
+    await open(page, "/memories");
+    await page.getByRole("button", { name: /^Namespace: / }).click();
+    await expect(page.getByRole("dialog")).toBeVisible();
+    expect(await violations(page)).toEqual([]);
+  });
+
+  test("the memory inspector", async ({ page }) => {
+    await open(page, "/memories");
+    await page.locator("[data-memory-key] button").first().click();
+    await expect(page.getByRole("dialog")).toBeVisible();
+    await page.waitForLoadState("networkidle");
+    expect(await violations(page)).toEqual([]);
+  });
+
+  test("the Add memory dialog, and focus back on New after Escape", async ({ page }) => {
+    await open(page, "/memories");
+    const trigger = page.getByRole("button", { name: "New" });
+    await trigger.click();
+    await page.getByRole("menuitem", { name: /Memory/ }).click();
+    await expect(page.getByRole("dialog")).toBeVisible();
+    expect(await violations(page)).toEqual([]);
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).toBeHidden();
+    await expect(trigger).toBeFocused();
+  });
+
+  test("an open Select list", async ({ page }) => {
+    await open(page, "/settings");
+    await page.getByRole("button", { name: /Home namespace/ }).click();
+    await expect(page.locator("[cui-select-item]").first()).toBeVisible();
+    expect(await violations(page)).toEqual([]);
+  });
+
+  test("the task sheet at 1000 px", async ({ page }) => {
+    await page.setViewportSize({ width: 1000, height: 900 });
+    await open(page, "/tasks");
+    await page.getByRole("row", { name: "Task 2: a regression the public bot found" }).click();
+    await expect(page.getByRole("dialog")).toBeVisible();
+    expect(await violations(page)).toEqual([]);
+  });
+
+  test.describe("375 px", () => {
+    test.use({ viewport: { width: 375, height: 812 } });
+    test("the More dialog opens on its first link, not on Close", async ({ page }) => {
+      await open(page, "/memories");
+      await page.getByRole("button", { name: "More" }).click();
+      const dialog = page.getByRole("dialog");
+      await expect(dialog).toBeVisible();
+      await expect(page.getByRole("button", { name: "Close" })).not.toBeFocused();
+      expect(await violations(page)).toEqual([]);
+      await page.keyboard.press("Escape");
+      await expect(dialog).toBeHidden();
+    });
+  });
+});
+
+test("reduced motion stops Click UI's dialog animation", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await open(page, "/memories");
+  await page.keyboard.press("?");
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  expect(await dialog.evaluate((el) => getComputedStyle(el).animationName)).toBe("none");
+});

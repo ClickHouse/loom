@@ -161,45 +161,49 @@ export function MentorPanel({ identity }: { identity: Identity }) {
         id="mentor-heading"
         level={2}
         label="Mentor"
-        caption="what the store tells an agent working here"
         hint="Reads one agent's calls in this namespace and names the planes it never used — the code index, the tracker source, documents, records, offload, the entity graph — with the counts behind each hint, and whether past hints were followed. Read-only; the agent acts, the mentor advises."
-        actions={
-          <span className="inline-flex flex-wrap items-center gap-2">
-            {result && result.agents.length > 0 ? (
-              <Select
-                triggerProps={{ "aria-label": "Agent" }}
-                value={agent || result.agent}
-                onSelect={(v) => setAgent(v)}
-                disabled={running}
-                options={[result.agent, ...result.agents.filter((a) => a !== result.agent)].map((a) => ({
-                  value: a,
-                  label: a,
-                }))}
-              />
-            ) : (
-              <span className="w-52">
-                <TextField
-                  aria-label="Agent"
-                  placeholder="agent (default: most active writer)"
-                  value={agent}
-                  onChange={(v) => setAgent(v)}
-                  disabled={running}
-                />
-              </span>
-            )}
-            <Select
-              triggerProps={{ "aria-label": "Mentor window" }}
-              value={String(windowSeconds)}
-              onSelect={(v) => setWindowSeconds(Number(v))}
-              disabled={running}
-              options={WINDOWS.map((w) => ({ value: String(w.seconds), label: w.label }))}
-            />
-            <Button type="secondary" htmlType="button" iconLeft="light-bulb" onClick={run} loading={running}>
-              {result ? "Ask again" : "Ask the mentor"}
-            </Button>
-          </span>
-        }
       />
+      {/* The caption is its own line, so the title row stays label + (i) at any width. */}
+      <p className="caption mb-3">what the store tells an agent working here</p>
+      {/* The controls sit in a toolbar row under the title: Click UI's Select fills its
+          container, so in the heading's action slot it took a line of its own. */}
+      <div className="mb-3 flex flex-wrap items-end gap-3">
+        <div className="w-full sm:w-56">
+          {result && result.agents.length > 0 ? (
+            <Select
+              label="Agent"
+              value={agent || result.agent}
+              onSelect={(v) => setAgent(v)}
+              disabled={running}
+              options={[result.agent, ...result.agents.filter((a) => a !== result.agent)].map((a) => ({
+                value: a,
+                label: a,
+              }))}
+            />
+          ) : (
+            <TextField
+              label="Agent"
+              placeholder="most active writer"
+              value={agent}
+              onChange={(v) => setAgent(v)}
+              disabled={running}
+            />
+          )}
+        </div>
+        <div className="w-40">
+          <Select
+            label="Window"
+            triggerProps={{ "aria-label": "Mentor window" }}
+            value={String(windowSeconds)}
+            onSelect={(v) => setWindowSeconds(Number(v))}
+            disabled={running}
+            options={WINDOWS.map((w) => ({ value: String(w.seconds), label: w.label }))}
+          />
+        </div>
+        <Button type="secondary" htmlType="button" iconLeft="light-bulb" onClick={run} loading={running}>
+          {result ? "Ask again" : "Ask the mentor"}
+        </Button>
+      </div>
 
       {!result && !running && !error && (
         <p className="text-sm text-text-muted leading-relaxed max-w-2xl">

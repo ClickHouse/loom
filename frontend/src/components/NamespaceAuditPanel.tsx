@@ -163,23 +163,27 @@ export function NamespaceAuditPanel({ identity }: { identity: Identity }) {
         id="usage-audit-heading"
         level={2}
         label="Usage audit"
-        caption="how this namespace is being used"
         hint="Reads the ledger and the memory tables for this namespace and names the anti-patterns it finds — an exact-key store, double-encoded values, version churn. Read-only; nothing here rewrites a row."
-        actions={
-          <span className="inline-flex flex-wrap items-center gap-2">
-            <Select
-              triggerProps={{ "aria-label": "Audit window" }}
-              value={String(windowSeconds)}
-              onSelect={(v) => setWindowSeconds(Number(v))}
-              disabled={running}
-              options={WINDOWS.map((w) => ({ value: String(w.seconds), label: w.label }))}
-            />
-            <Button type="secondary" htmlType="button" iconLeft="activity" onClick={run} loading={running}>
-              {result ? "Run again" : "Run audit"}
-            </Button>
-          </span>
-        }
       />
+      {/* The caption is its own line, so the title row stays label + (i) at any width. */}
+      <p className="caption mb-3">how this namespace is being used</p>
+      {/* The controls sit in a toolbar row under the title: Click UI's Select fills its
+          container, so in the heading's action slot it took a line of its own. */}
+      <div className="mb-3 flex flex-wrap items-end gap-3">
+        <div className="w-40">
+          <Select
+            label="Window"
+            triggerProps={{ "aria-label": "Audit window" }}
+            value={String(windowSeconds)}
+            onSelect={(v) => setWindowSeconds(Number(v))}
+            disabled={running}
+            options={WINDOWS.map((w) => ({ value: String(w.seconds), label: w.label }))}
+          />
+        </div>
+        <Button type="secondary" htmlType="button" iconLeft="activity" onClick={run} loading={running}>
+          {result ? "Run again" : "Run audit"}
+        </Button>
+      </div>
 
       {!result && !running && !error && (
         <p className="text-sm text-text-muted leading-relaxed max-w-2xl">

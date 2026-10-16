@@ -22,6 +22,7 @@ import {
   type TrackerTone,
 } from "../lib/trackerSources";
 import { toast } from "../components/Toast";
+import { TipTarget } from "../components/ui";
 
 const ContractReportView = lazy(() =>
   import("../flows/TrackerSourceDialogs").then((m) => ({ default: m.ContractReportView })),
@@ -134,7 +135,9 @@ function TrackerRow({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium">{s.name}</span>
-            <Badge text={status.label} state={TONE_STATE[status.tone]} size="sm" title={status.detail} />
+            <TipTarget tip={status.detail}>
+              <Badge text={status.label} state={TONE_STATE[status.tone]} size="sm" />
+            </TipTarget>
             <span className="text-2xs text-text-subtle">
               {operatorOwned(s) ? "set up by the operator" : "added from the dashboard"}
             </span>
