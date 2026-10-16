@@ -43,17 +43,17 @@ FILLER = {
     r"i apologi[sz]e|sorry for the confusion": "delete; state the correction",
 }
 
-# Details that never belong in public text. A path counts only where it starts one,
-# not inside a URL.
+# Details that never belong in public text. A path counts only where a word does not
+# run into it, so `https://example.com/home/page` is not one.
 INTERNAL = {
-    r"(?<![\w.:/])/(home|Users)/[\w.-]+|(?<![\w.:/])/root/": "a home directory path",
-    r"(?<![\w.:/])/opt/[\w.-]+": "a host path",
+    r"(?<![\w.])/(home|Users)/[\w.-]+|(?<![\w.])/root/": "a home directory path",
+    r"(?<![\w.])/opt/[\w.-]+": "a host path",
     r"\b(10\.\d+|192\.168|172\.(1[6-9]|2\d|3[01]))\.\d+\.\d+\b": "a private IP address",
     r"\b[\w.-]+\.(internal|corp|lan)\b": "an internal host name",
 }
 SECRETS = [
     ("JWT", re.compile(r"\beyJ[\w-]{10,}\.[\w-]{10,}")),
-    ("GitHub token", re.compile(r"\b(?:gh[posu]_\w{20,}|github_pat_\w{20,})")),
+    ("GitHub token", re.compile(r"\b(?:gh[oprsu]_\w{20,}|github_pat_\w{20,})")),
     *PROVIDER_KEY_PATTERNS,
 ]
 
@@ -67,18 +67,22 @@ _FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
 
 
 def split_fences(text: str) -> Iterator[tuple[int, str, bool]]:
-    """Each line with its number and whether it sits inside a fenced code block.
+    """Each line with its number and whether it is code: a fence line or inside a fence.
 
-    A fence closes on a bare run of the same character at least as long as the
-    one that opened it, so a ``` inside a ```` block, or a ```python line, does not.
+    A fence closes on a bare run of the same character at least as long as the one
+    that opened it, so a ``` inside a ```` block, or a ```python line, does not; a
+    backtick run followed by another backtick is inline code, not a fence.
     """
     fence = ""
     for number, line in enumerate(text.splitlines(), start=1):
         marker = _FENCE.match(line)
-        if marker and not fence:
-            fence = marker.group(1)
-        elif marker and line.strip() == marker.group(1) and marker.group(1).startswith(fence):
+        run = marker.group(1) if marker else ""
+        if run and not fence and not (run[0] == "`" and "`" in line.strip()[len(run) :]):
+            fence = run
+            yield number, line, True
+        elif run and fence and line.strip() == run and run.startswith(fence):
             fence = ""
+            yield number, line, True
         else:
             yield number, line, bool(fence)
 

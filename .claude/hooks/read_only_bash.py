@@ -10,6 +10,7 @@ locally.
 
 from __future__ import annotations
 
+import glob
 import json
 import re
 import shlex
@@ -36,10 +37,10 @@ COMMANDS = (
 # Allowed only after a pipe, reading the previous command's output.
 FILTERS = {"head", "tail", "wc", "grep"}
 GIT_WRITE_FLAGS = ("--output", "--ext-diff", "--textconv")
-TAIL_FOLLOW = {"-f", "-F", "--follow"}
+TAIL_FOLLOW = re.compile(r"-[a-zA-Z0-9+]*[fF][a-zA-Z0-9]*|--follow(=.*)?")
 # Everything a listed command needs. Leaving out newline, #, ;, $, braces, parentheses,
-# backslash and backticks rules out a second command and every shell expansion that
-# could hide a flag.
+# backslash and backticks rules out a second command and the expansions that could
+# hide a flag; a glob is checked against what it would expand to.
 SAFE = re.compile(r"[\w .,/:=@+^~%*'\"|&\[\]-]*")
 PYTEST = (".venv/bin/python", "-m", "pytest")
 PYTEST_FLAG = re.compile(
@@ -49,20 +50,28 @@ UNIT_TEST = re.compile(r"tests/unit(/[\w./-]*)?(::[\w\[\]-]+)*")
 
 
 def _pytest_ok(args: list[str]) -> bool:
+    # Without a path pytest collects every test directory, the integration suite too.
+    unit_path = False
     after_k = False
     for arg in args:
         if after_k:  # the -k expression selects tests; it opens nothing
             after_k = False
         elif arg == "-k":
             after_k = True
-        elif ".." in arg or not (PYTEST_FLAG.fullmatch(arg) or UNIT_TEST.fullmatch(arg)):
+        elif UNIT_TEST.fullmatch(arg) and ".." not in arg:
+            unit_path = True
+        elif not PYTEST_FLAG.fullmatch(arg):
             return False
-    return True
+    return unit_path
 
 
 def _segment_ok(words: list[str], piped: bool) -> bool:
-    if "--watch" in words or (words[0] == "tail" and TAIL_FOLLOW & set(words)):
+    if any(w.startswith("--watch") for w in words):
         return False  # it never exits
+    if words[0] == "tail" and any(TAIL_FOLLOW.fullmatch(w) for w in words):
+        return False
+    if any(m.startswith("-") for w in words if "*" in w or "[" in w for m in glob.glob(w)):
+        return False  # a file named like a flag, reached by a glob
     if piped:
         return words[0] in FILTERS
     if tuple(words[:3]) == PYTEST:

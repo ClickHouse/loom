@@ -258,6 +258,7 @@ ASKED = (
     "gh issue create --title t --body-file b.md",
     "gh api repos/ClickHouse/loom/pulls/57/comments/1/replies -f body=x",
     "make bench-quick",
+    ".venv/bin/python -m bench.rejudge --hyp x",
     "git push --force-with-lease",
     "git push origin br --force-with-lease",
     "PYTHONPATH=x .venv/bin/python bench/longmemeval.py --repeats 3",
@@ -341,6 +342,10 @@ def test_reviewer_hook_allows_reads(command: str) -> None:
         "git diff ${X:---output=/tmp/x}",
         "cd /other/checkout && .venv/bin/python -m pytest tests/unit",
         "gh pr checks 57 --watch",
+        "gh pr checks 57 --watch=true",
+        "git log | tail -qf x",
+        ".venv/bin/python -m pytest -q",
+        ".venv/bin/python -m pytest -k x",
         "git log | tail -f",
         "echo 'mutation{x}' | gh api graphql -F query=@-",
         "git diff; rm x",
@@ -370,6 +375,10 @@ def test_check_prose_flags_filler_and_internal_details() -> None:
         "we leverage this inside the block\n"
         "```\n"
         "token sk-ant-example-abcdefghijklmnopqrstuvwxyz0123, see https://example.com/home/page\n"
+        "source file:///home/alice/loom/x.py\n"
+        "```bash ssh 10.0.0.5\n"
+        "```\n"
+        "```leverage``` is inline code, and we leverage it\n"
     )
     out = _check_prose("-", stdin=text)
     assert out.returncode == 1
@@ -381,6 +390,9 @@ def test_check_prose_flags_filler_and_internal_details() -> None:
         "-:5: /home/ubuntu -> remove a home directory path",
         "-:5: 10.1.2.3 -> remove a private IP address",
         "-:9: sk-a… -> remove the Anthropic API key",
+        "-:10: /home/alice -> remove a home directory path",
+        "-:11: 10.0.0.5 -> remove a private IP address",
+        "-:13: leverage -> use",
     ]
     assert _check_prose("-", stdin="Search keeps pinned rows.\n").returncode == 0
     assert _check_prose("/nonexistent").returncode == 2

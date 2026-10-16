@@ -58,6 +58,7 @@ Each line is a rule; the skill named after it is the procedure (`.claude/skills/
 
 - **Diagnose before you edit**: the failing cases from evidence, the pattern they share, the change and the result it predicts. Running confirms a diagnosis; it is never how you find one (`loom-debug`).
 - **Decide within the goal.** Make the design call a senior Loom engineer would and report it. Ask first only for what is public or hard to undo: opening or merging a PR, filing or closing an issue, posting a comment, deleting data, deploying, spending benchmark money.
+- **A guard that stops you is a decision**: a denied command, a refusing hook, a disabled push URL or a failing gate is reported, never routed around by another spelling, URL or tool.
 - **Look before you build**: search for the existing helper, setting or feature, and for an open PR doing the same work (`gh pr list --search <area>`).
 - **One task, one worktree from `origin/main`, its own ClickHouse.** The branch ref `main` and the git stash are shared by every worktree, so a linked worktree never checks out `main` and nobody uses `git stash` (a WIP commit instead). Tests and migrations run against a ClickHouse you started, never one you found listening (`loom-dev-setup`).
 - **Shared machine**: stop every server, container and background run you started before you report, and remove only what you created, by exact name, never by a prefix filter.
@@ -66,4 +67,4 @@ Each line is a rule; the skill named after it is the procedure (`.claude/skills/
 - **Benchmarks run only on request**: they spend provider money and hours (`loom-bench`).
 - **Committed and posted text** is plain technical English: the fact first, short comments that say why, no history, dates, people, hosts, internal namespaces or other products' names (`loom-writing`; `tests/unit/test_public_copy.py`).
 
-`tests/unit/test_agent_instructions.py` checks these files: frontmatter, budgets, trigger cases, links, and that every path, make target and module they name exists. Renaming any of those: the test names each file to update.
+`tests/unit/test_agent_instructions.py` checks these files: frontmatter, budgets, trigger cases, and that every path, make target and module they name exists (links: `test_doc_links.py`). Renaming any of those: the test names each file to update.

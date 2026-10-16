@@ -15,7 +15,7 @@ gh pr view <n> --json title,body,baseRefName,headRefOid,files,comments
 gh pr diff <n>                                  # or: git diff origin/main...<branch>
 ```
 
-Read each changed file in full where the hunk alone does not show the invariant. For a diff over ~3000 lines, split by package and review the parts in parallel.
+Read each changed file in full where the hunk alone does not show the invariant. For a diff over ~3000 lines, split it by package: review the parts in parallel from a session, in sequence inside `loom-reviewer`.
 
 ## 2. Gates
 
