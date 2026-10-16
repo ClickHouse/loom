@@ -509,11 +509,7 @@ async def write_entity_triples(
 
     if not triples:
         return
-    from server.identity.app.namespace_ontology import load_relation_cardinality
-
-    order_ended_before_dated(
-        triples, ended, await load_relation_cardinality(input.org, input.namespace)
-    )
+    order_ended_before_dated(triples, ended)
 
     if inserted_at is None:
         try:

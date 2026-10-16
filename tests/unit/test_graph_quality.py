@@ -428,6 +428,17 @@ def test_within_one_write_a_value_that_still_holds_beats_a_dated_past_one(
     assert _survivors([paris, london]) == {"paris"}
 
 
+@pytest.mark.parametrize("relation", ["live_in", "like"])
+def test_an_ended_value_moves_before_a_dated_one_whatever_the_relation(relation: str) -> None:
+    # Whether a relation holds one value is the namespace's to change; a replay must
+    # store the same seen_at as the write did, so the move cannot depend on it.
+    seen = datetime(2026, 10, 15, 10, 0, 0, 7)
+    london = {**_live("london", None, seen), "relation": relation}
+    paris = {**_live("paris", datetime(2026, 10, 1), seen), "relation": relation}
+    order_ended_before_dated([london, paris], {0})
+    assert london["seen_at"] == datetime(2026, 10, 1) - timedelta(microseconds=2)
+
+
 def test_within_one_write_an_ended_value_restated_with_a_date_does_not_move() -> None:
     # "I lived in Paris" next to "I moved to Paris on Oct 1": the same value, no move.
     seen = datetime(2026, 10, 15, 10, 0, 0, 7)

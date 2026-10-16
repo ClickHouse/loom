@@ -548,38 +548,28 @@ def ended_verb(raw_verb: str) -> bool:
     return bool(_ENDED_VERB_RE.match(re.sub(r"[\s_]+", "_", raw_verb.strip().lower())))
 
 
-def order_ended_before_dated(
-    triples: list[dict[str, object]],
-    ended: Collection[int],
-    declared: Mapping[str, str] | None = None,
-) -> None:
+def order_ended_before_dated(triples: list[dict[str, object]], ended: Collection[int]) -> None:
     """In one write, an undated value whose own verb states an ended state (the triples
-    at `ended`: "user lived_in london") is older than a dated value of the same
-    single-valued relation ("user live_in paris" from Oct 1), whichever is stated
-    first. An undated row starts when it was seen, so its `seen_at` moves to just before
-    the earliest start of another value of that relation in the write, when that start
-    is earlier. A value that still holds ("lives_in") and a dated restatement of the
-    same value move nothing: the order statements come in says nothing about which is
-    current. In place, before the insert, so the stored key carries it."""
-    keys: list[tuple[tuple[str, str], str] | None] = []
+    at `ended`: "user lived_in london") is older than a dated value of the same relation
+    ("user live_in paris" from Oct 1), whichever is stated first. An undated row starts
+    when it was seen, so its `seen_at` moves to just before the earliest start of
+    another value of that relation in the write, when that start is earlier. A value
+    that still holds ("lives_in") and a dated restatement of the same value move
+    nothing: the order statements come in says nothing about which is current. In
+    place, before the insert, so the stored key carries it. Every relation alike: a
+    replay must store what the write did, whatever the namespace declares since."""
     starts: dict[tuple[str, str], list[tuple[datetime, str]]] = {}
     for t in triples:
-        relation = canonical_relation(str(t["relation"])).verb
-        if not is_single_valued_relation(relation, declared):
-            keys.append(None)
-            continue
-        key = (canonical_entity_text(str(t["subject"])), relation)
-        obj = canonical_entity_text(str(t["object"]))
-        keys.append((key, obj))
         start = t.get("valid_from")
         if isinstance(start, datetime):
-            starts.setdefault(key, []).append((start, obj))
+            key = (str(t["subject"]), str(t["relation"]))
+            starts.setdefault(key, []).append((start, str(t["object"])))
     for i in sorted(ended):
-        t, keyed = triples[i], keys[i]
+        t = triples[i]
         seen = t.get("seen_at")
-        if keyed is None or t.get("valid_from") is not None or not isinstance(seen, datetime):
+        if t.get("valid_from") is not None or not isinstance(seen, datetime):
             continue
-        key, obj = keyed
+        key, obj = (str(t["subject"]), str(t["relation"])), str(t["object"])
         others = [start for start, o in starts.get(key, []) if o != obj]
         if others and min(others) <= seen:
             # A microsecond per place left in the write keeps moved rows in stated order.
