@@ -65,10 +65,9 @@ async def reopen_held_facts(
     `restore_id` names this Undo's markers, so a replay with the same id and
     `restored_at` finds and restates them. With `hashes` (id to the `content_sha256`
     restored), only the rows still holding that value are read."""
-    from server.identity.app.namespace_ontology import load_relation_cardinality
-
     if hashes:
         ids = sorted(i for i in ids if i in hashes)
+    asked = ids
     held: frozenset[Any] = frozenset()
     while ids:
         held = await _held_now(input, ids, ch=ch)
@@ -82,8 +81,25 @@ async def reopen_held_facts(
         if still == ids:
             break
         ids = still
-    if not ids or not held:
-        return
+    if ids and held:
+        await _restate(input, held, ch=ch, restore_id=restore_id, restored_at=restored_at)
+    if hashes and asked:
+        # A row revised after the check above ran its own close before these markers
+        # landed, or before an earlier attempt's did: close what it no longer holds now.
+        still = await rows_still_holding(
+            input.org, input.namespace, {i: hashes[i] for i in asked}, ch=ch
+        )
+        changed = [i for i in asked if i not in still]
+        if changed:
+            await close_dropped_facts(input, changed, ch=ch)
+
+
+async def _restate(
+    input: Any, held: frozenset[Any], *, ch: Any, restore_id: str, restored_at: datetime
+) -> None:
+    """Write the Undo's markers for the facts `held` and repair them."""
+    from server.identity.app.namespace_ontology import load_relation_cardinality
+
     now = restored_at.replace(microsecond=0)  # as the DateTime columns store it
     # On the fly: a retirement's closes are mutations, and a row they will close is
     # weighed as closed already (the close expressions are deterministic).
@@ -188,15 +204,6 @@ async def reopen_held_facts(
         for m in markers
     ]
     await repair_intervals(input, restated, ch=ch, at=restored_at)
-    if hashes:
-        # A row revised after the check above ran its own close before these markers
-        # landed: close what it no longer holds now.
-        still = await rows_still_holding(
-            input.org, input.namespace, {i: hashes[i] for i in ids}, ch=ch
-        )
-        changed = [i for i in ids if i not in still]
-        if changed:
-            await close_dropped_facts(input, changed, ch=ch)
 
 
 class _Marker(NamedTuple):

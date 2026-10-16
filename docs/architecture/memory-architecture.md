@@ -388,7 +388,9 @@ the value it was written or stated for (`carried`):
   marker, so a replay after a failed triple insert finds the edge by the id and does not
   repeat it. The failure records each restored row's `content_sha256`; a replay skips a
   row revised since, whose revision reconciles its facts, so the revised value is never
-  dated at the Undo. A failed triple write records when it arrived: a replay of a failed
+  dated at the Undo. A row revised while the Undo ran may have reconciled before the
+  markers landed, so the Undo, and every replay of it, closes what such a row no
+  longer holds. A failed triple write records when it arrived: a replay of a failed
   insert inserts the triples seen at that arrival, not at its own clock, so an older
   value replayed after a newer one lands behind it instead of closing it. Some of its
   triples may have landed before the insert failed, so it also records what the write

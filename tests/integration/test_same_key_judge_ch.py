@@ -1701,6 +1701,49 @@ async def test_an_undo_closes_its_markers_for_a_revision_made_after_its_hash_che
     assert await _open_facts(ch, org, want) == want
 
 
+async def test_a_replayed_undo_closes_its_markers_for_a_revision_made_during_it(
+    ch, org, monkeypatch
+) -> None:
+    # As above, but the Undo's own close fails: its replay finds the revised row no
+    # longer holding the restored value, and must still close London's marker.
+    from server.identity.app import namespace_ontology
+    from server.memory.app import graph_undo
+    from server.memory.app.projection_failures import retry_projection_failure
+    from server.memory.app.restore import handle_memory_restore
+
+    london = await _stated(ch, org, "s1", "I like London", ("user", "like", "london"))
+    paris = await _stated(ch, org, "s2", "I like Paris", ("user", "like", "paris"))
+    await _follow_retirement(ch, org, london, paris)
+    checked, closed, revised = graph_undo.rows_still_holding, graph_undo.close_dropped_facts, []
+    cardinality = namespace_ontology.load_relation_cardinality
+
+    async def check(*args: Any, **kwargs: Any) -> Any:
+        revised.append(False)
+        return await checked(*args, **kwargs)
+
+    async def revised_after_the_check(*args: Any, **kwargs: Any) -> Any:
+        if revised == [False]:
+            revised.append(True)
+            await _revise(
+                "memory.update_by_id", org, london, "I like Rome", (("user", "like", "rome"),)
+            )
+            await _mutations_done(ch, org)
+        return await cardinality(*args, **kwargs)
+
+    async def close_fails(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("close down")
+
+    monkeypatch.setattr(graph_undo, "rows_still_holding", check)
+    monkeypatch.setattr(graph_undo, "close_dropped_facts", close_fails)
+    monkeypatch.setattr(namespace_ontology, "load_relation_cardinality", revised_after_the_check)
+    assert (await handle_memory_restore(_undo_of(paris))).restored and True in revised
+    monkeypatch.setattr(graph_undo, "close_dropped_facts", closed)
+    assert (await retry_projection_failure(await _recorded_reconcile(ch, org), ch=ch)).resolved
+    await _mutations_done(ch, org)
+    want = {("like", "rome"), ("like", "paris")}
+    assert await _open_facts(ch, org, want) == want
+
+
 async def test_undo_makes_the_restored_value_current_and_retires_nothing(
     ch, org, monkeypatch
 ) -> None:
