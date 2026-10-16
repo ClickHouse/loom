@@ -65,7 +65,8 @@
       "Bash(*-m bench.*)",
       "Bash(*python bench/*.py*)",
       "Bash(*python3 bench/*.py*)",
-      "Bash(*python */bench/*.py*)"
+      "Bash(*python */bench/*.py*)",
+      "Bash(*python3 */bench/*.py*)"
     ],
     "deny": [
       "Bash(git stash:*)",
@@ -148,7 +149,20 @@
       "Bash(bash *redeploy.sh --rollback*)",
       "Bash(sh *redeploy.sh)",
       "Bash(sh *redeploy.sh --force*)",
-      "Bash(sh *redeploy.sh --rollback*)"
+      "Bash(sh *redeploy.sh --rollback*)",
+      "Bash(./redeploy.sh 2>*)",
+      "Bash(./redeploy.sh >*)",
+      "Bash(./redeploy.sh &>*)",
+      "Bash(/*redeploy.sh 2>*)",
+      "Bash(/*redeploy.sh >*)",
+      "Bash(/*redeploy.sh &>*)",
+      "Bash(bash *redeploy.sh 2>*)",
+      "Bash(bash *redeploy.sh >*)",
+      "Bash(bash *redeploy.sh &>*)",
+      "Bash(sh *redeploy.sh 2>*)",
+      "Bash(sh *redeploy.sh >*)",
+      "Bash(sh *redeploy.sh &>*)",
+      "Bash(sudo *redeploy.sh*)"
     ]
   }
 }

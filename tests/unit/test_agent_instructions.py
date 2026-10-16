@@ -249,6 +249,8 @@ DENIED = (
     "./redeploy.sh --force",
     "bash ./redeploy.sh",
     "/opt/x/redeploy.sh --force",
+    "./redeploy.sh 2>&1",
+    "sudo ./redeploy.sh",
     "LOOM_COLOUR=blue docker compose -f dev/docker-compose.colour.yml up -d",
     "docker compose -f ./dev/docker-compose.colour.yml down",
     "docker rm -f loom-blue",
@@ -268,6 +270,8 @@ ASKED = (
     ".venv/bin/python ./bench/locomo_qa.py",
     "/w/.venv/bin/python /w/bench/locomo_qa.py --repeats 3",
     "python3 bench/locomo_qa.py",
+    "python3 ./bench/locomo_qa.py",
+    "python3 /w/bench/locomo_qa.py --repeats 3",
 )
 NOT_DENIED = (
     "git push -u origin HEAD",
