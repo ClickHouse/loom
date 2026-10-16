@@ -93,7 +93,9 @@ curl -fsS -X POST "$LOOM_BASE_URL/v1/code.coverage.watch" \
 - One event per (namespace, commit, inbox): its `task_id` is the answer's `event_id`, so
   a retry never posts twice. Deliveries of one event run one at a time under a lease on
   that id, so of two racing deliveries only the one that stored the event answers
-  `emitted=true`.
+  `emitted=true`. A `code.coverage.watch` that delivers in the same call and waits more
+  than 10 s for another delivery answers 409 `PRECONDITION_FAILED`, and 503 when the
+  lease store (Keeper) does not answer; retry either.
 - `code.coverage.unwatch` (same fields) drops a pending watch; `removed: false` means
   none was live.
 
