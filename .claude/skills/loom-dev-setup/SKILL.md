@@ -11,6 +11,7 @@ Everything a task touches is private to it: the branch, the checkout, the virtua
 ## 1. Worktree
 
 ```bash
+BRANCH="$ARGUMENTS"          # e.g. fix/search-floor
 git fetch origin main
 git worktree add -b "$BRANCH" "../loom-${BRANCH//\//-}" origin/main
 cd "../loom-${BRANCH//\//-}"
@@ -23,7 +24,7 @@ cd "../loom-${BRANCH//\//-}"
 ## 2. Virtualenv
 
 ```bash
-uv venv --python 3.12 .venv && uv pip install -e ".[dev,code]"
+uv sync --locked --python 3.12 --extra dev --extra code   # the lockfile CI installs: same ruff, mypy, pytest
 .venv/bin/python -c 'import server; print(server.__file__)'   # must be inside this worktree
 ```
 

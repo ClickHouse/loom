@@ -1,7 +1,6 @@
 ---
 name: loom-bench
 description: Run, read and report a Loom benchmark — when a run is allowed, which harness answers which question, how to run it against the right code, how to judge a delta against noise, and how results are written up. Use when asked to benchmark, measure recall or accuracy, compare two configurations, A/B a ranking change, check a model or embedder change, or update docs/benchmarks/results.md. NOT for unit-test speed or CI timing.
-disable-model-invocation: true
 argument-hint: "<question to answer>"
 ---
 

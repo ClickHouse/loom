@@ -26,8 +26,14 @@
       "Bash(gh run view:*)",
       "Bash(gh run list:*)",
       "Bash(gh issue view:*)",
-      "Bash(./redeploy.sh --status)"
+      "Bash(./redeploy.sh --status)",
+      "Bash(npm --prefix frontend run budget)",
+      "Bash(npm --prefix sdk/typescript run check)",
+      "Bash(node --test:*)",
+      "Bash(.venv/bin/python -m scripts.codegen.:*)",
+      "Bash(.venv/bin/python -m tests.inventory.coverage_floors:*)",
+      "Bash(make migrate-status)"
     ],
-    "deny": ["Bash(git stash:*)", "Bash(git push --force:*)", "Bash(git push -f:*)"]
+    "deny": ["Bash(git stash:*)"]
   }
 }

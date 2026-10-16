@@ -21,9 +21,8 @@ The make targets run `.venv/bin/python` by default (`PYTHON ?= .venv/bin/python`
 ```bash
 git clone https://github.com/ClickHouse/loom.git && cd loom
 
-# with uv (uv.lock pins the resolution)
-uv venv --python 3.12 .venv
-uv pip install -e ".[dev,code]"
+# with uv: the locked resolution CI installs
+uv sync --locked --python 3.12 --extra dev --extra code
 
 # or with pip
 python3.12 -m venv .venv && . .venv/bin/activate

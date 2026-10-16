@@ -1,6 +1,6 @@
 ---
 name: loom-ship-pr
-description: Open, push, review and land a Loom pull request — a public-safe title and body from the template, signed-off commits, the reviewer started at the push in parallel with CI, CI read from gh's JSON, and a squash merge once every check is green. Use when asked to "open a PR", "push this", "ship it", "land it", "merge", "update the PR", or when a change has passed loom-pre-push.
+description: Open, push, review and land a Loom pull request — a public-safe title and body from the template, signed-off commits, the reviewer started at the push in parallel with CI, CI read from gh's JSON, and a squash merge once every check is green. Use when asked to open, update, land or merge a Loom PR ("ship it"). Runs after loom-pre-push; for a red check use loom-investigate-ci.
 argument-hint: "[pr-number]"
 ---
 
@@ -36,7 +36,7 @@ git push -u origin HEAD
 gh pr create --base main --title "<subject>" --body-file /path/to/body.md
 ```
 
-CI runs only on PRs into `main`. A stacked PR gets checks once retargeted (`gh pr edit <n> --base main`); a PR with a merge conflict gets none.
+CI runs on PRs into `main` (and pushes to it). A stacked PR gets checks once retargeted (`gh pr edit <n> --base main`); a PR with a merge conflict gets none.
 
 ## 4. Review at the push
 
@@ -46,7 +46,7 @@ Start the review the moment the push lands — do not wait for CI. In Claude Cod
 
 ```bash
 gh pr checks <n> --watch --fail-fast
-gh pr view <n> --json statusCheckRollup --jq '.statusCheckRollup[] | "\(.conclusion // .status)\t\(.name)"'
+gh pr view <n> --json statusCheckRollup --jq '.statusCheckRollup[] | "\((if (.conclusion // "") == "" then .status else .conclusion end))\t\(.name)"'
 gh pr view <n> --json statusCheckRollup --jq '.statusCheckRollup | length > 0 and all(.[];
   .status == "COMPLETED" and (.conclusion | IN("SUCCESS", "SKIPPED", "NEUTRAL")))'   # true = green
 ```
@@ -62,7 +62,7 @@ gh pr merge <n> --squash --delete-branch
 ```
 
 - Squash-merge always. Never merge another author's PR for them.
-- If another PR merged after your last green run and yours adds files the whole-tree gates scan (any `.py`, `.md`, test or doc), rebase the branch on it (`gh pr update-branch <n> --rebase`) and wait for green again: two PRs green alone can be red together.
+- If another PR merged after your last green run and yours adds files the whole-tree gates scan (any `.py`, `.md`, test or doc), rebase on it (`git fetch origin main && git rebase origin/main && git push --force-with-lease`, which asks for approval) and wait for green again: two PRs green alone can be red together.
 - Two open PRs that bump the plugin to the same version: the second ships nothing. Re-bump before merging.
 
 ## 7. After the merge

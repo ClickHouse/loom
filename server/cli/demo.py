@@ -45,7 +45,7 @@ from server.core.paths import REPO_ROOT
 
 DEFAULT_FILE = "AGENTS.md"
 DEFAULT_QUESTION = "What is the identity tuple on every row?"
-DEFAULT_TAGS = "loom,project-memory"  # what AGENTS.md's own header suggests
+DEFAULT_TAGS = "loom,project-memory"
 TOP_K = 3
 REAL_LLM_HINT = (
     "synthesis needs a real LLM: set LOOM_LLM_PROVIDER=openai and OPENAI_API_KEY "

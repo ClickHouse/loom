@@ -1,6 +1,6 @@
 ---
 name: loom-review
-description: Strict, high-signal review of a Loom pull request or diff against the invariants Loom's design depends on — tenant isolation, the identity tuple and provenance stamps, ReplacingMergeTree column mirroring, additive migrations, erasure coverage, fail-closed auth, the extractor stamp, generated files, public-copy rules — with every finding verified before it is reported. Use when asked to review a PR, a branch or a diff, right after a push, or when the loom-reviewer agent runs.
+description: Strict, high-signal review of a Loom pull request or diff against the invariants Loom's design depends on — tenant isolation, the identity tuple and provenance stamps, ReplacingMergeTree column mirroring, additive migrations, erasure coverage, fail-closed auth, the extractor stamp, generated files, public-copy rules — with every finding verified before it is reported. Use when asked to review a Loom PR, branch or diff. After your own push, launch the loom-reviewer agent (which preloads this skill) instead of reviewing inline.
 argument-hint: "[pr-number | branch | diff-range]"
 ---
 
@@ -43,7 +43,7 @@ Check each one the diff can reach (see [AGENTS.md](../../../AGENTS.md) for the r
 - **Generated files** regenerated in the same PR, never hand-edited.
 - **Plugins.** A hook change edits the Claude Code plugin, syncs the Codex copy, and bumps both manifests to a unique version. Hooks run inside users' sessions: a hook that can throw, block or print secrets is a finding.
 - **Public copy.** No people, hosts, internal namespaces, dates, history, decision numbers or product names in repository text; the PR body carries none of them either.
-- **Compatibility.** Pre-1.0: no shim for a removed field; the changelog entry and the "Compatibility" section name the break.
+- **Compatibility.** No shim for a removed field (it is served and named in `ignored_args`); the changelog entry and the "Compatibility" section name the break.
 
 ## 4. Verify before reporting
 

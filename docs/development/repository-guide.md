@@ -75,11 +75,11 @@ How each suite runs, skips and gates CI is in [testing](./testing.md).
    its handler in `server/<domain>/app/` and the repositories in `server/<domain>/store/`
    it calls.
 5. [`schemas/schema.sql`](../../schemas/schema.sql) for the tables it reads and writes.
-6. [`CLAUDE.md`](../../CLAUDE.md): the conventions and their reasons.
+6. [`AGENTS.md`](../../AGENTS.md) and `.claude/rules/`: the conventions and their reasons.
 
 ## Conventions that are not obvious
 
-[CONTRIBUTING.md](../../CONTRIBUTING.md#conventions-that-arent-obvious) lists them, and [`CLAUDE.md`](../../CLAUDE.md) gives the reasons. These tests and gates enforce them:
+[CONTRIBUTING.md](../../CONTRIBUTING.md#conventions-that-arent-obvious) lists them, and [`AGENTS.md`](../../AGENTS.md) with the rules under `.claude/rules/` gives the reasons. These tests and gates enforce them:
 
 | Gate                                                                             | Holds                                                    |
 | -------------------------------------------------------------------------------- | -------------------------------------------------------- |

@@ -1,6 +1,6 @@
 ---
 name: loom-change
-description: The recipe, generated files and gates for each kind of Loom change — a wire operation, a table or column, a migration, a setting, a worker, a provider, a code-index language lane, a plugin hook, the dashboard, docs. Use before editing Loom server, schema, SDK, plugin or frontend code, when asked to "add an op", "add a column", "add a setting", "add a worker", "retire a flag", or when unsure what else a change must touch.
+description: What else a Loom change must touch — generated files, snapshots, erasure classification, docs, design notes — per change kind (wire op, table or column, migration, setting, worker, provider, code-index language, CLI, plugin hook, dashboard, docs). Use when adding, renaming or removing an op, field, table, column, setting, flag, worker or CLI command, or when asked "what else does this need". NOT for running the gates (loom-pre-push) or a fix inside one function.
 ---
 
 # Making a Loom change
@@ -9,16 +9,16 @@ Find the row for the change, read its guide before the first edit, and finish it
 
 | Change | Guide | Also in the same PR |
 | --- | --- | --- |
-| Wire op (new, renamed, removed field) | [adding-an-operation](../../../docs/development/adding-an-operation.md) | `sdk_py_gen.py`, `sdk_py_client_gen.py`, `sdk_ts_gen.py`, `docs_reference.py`; op reach (`op_reach_census.py`); unit test + integration test for a read or write path; MCP listing budget if it is listed by default |
+| Wire op (new, renamed, removed field) | [adding-an-operation](../../../docs/development/adding-an-operation.md) | `python -m scripts.codegen.sdk_py_gen`, `.sdk_py_client_gen`, `.sdk_ts_gen`, `.docs_reference`, `.op_reach_census`; unit test + integration test for a read or write path; MCP listing budget if it is listed by default |
 | Table or column | [adding-a-table](../../../docs/development/adding-a-table.md) | migration + `make schema-dump`; RMT row builders; `loom.memory_versions` + its view for a `loom.memory` column; erasure step + census row, or a `NO_MEMORY_CONTENT` / `STEP_ONLY_TABLES` entry with its reason |
 | Migration | [migrations](../../../docs/development/migrations.md) | next free number on current `origin/main`; additive only; `make schema-dump` |
-| Setting | [extending-loom](../../../docs/development/extending-loom.md#add-a-setting) | field in `server/settings/_<area>.py` (models in `_models.py`) with a comment on what it controls and its values; `settings_reference.py`; read as `settings.<field>` |
+| Setting | [extending-loom](../../../docs/development/extending-loom.md#add-a-setting) | field in `server/settings/_<area>.py` (models in `_models.py`) with a comment on what it controls and its values; `python -m scripts.codegen.settings_reference`; read as `settings.<field>` |
 | Retire a flag | — | delete the setting, its branch and any request field carrying it; the changelog entry names it |
 | Worker | [adding-a-worker](../../../docs/development/adding-a-worker.md) | registry row; `set_query_tag`; `LOOM_UPDATE_WORKER_SNAPSHOT=1` for an intended snapshot change |
 | Provider | [extending-loom](../../../docs/development/extending-loom.md#add-a-provider) | `make bench-quick` evidence before changing a default (ask first — see `loom-bench`) |
 | Code-index language | [adding-language-support](../../../docs/development/adding-language-support.md) | stay outside the extractor stamp; backfill plan in the PR |
-| CLI command or flag | [code-generation](../../../docs/development/code-generation.md) | `LOOM_UPDATE_CLI_SNAPSHOT=1` snapshot; `docs_reference.py` |
-| Plugin hook or skill | [integrations](../../../integrations/claude-code-plugin/README.md) | edit `integrations/claude-code-plugin/`, then `python scripts/codegen/agent_plugin_sync.py`; bump both plugin manifests to a version no other open PR uses |
+| CLI command or flag | [code-generation](../../../docs/development/code-generation.md) | `LOOM_UPDATE_CLI_SNAPSHOT=1` snapshot; `python -m scripts.codegen.docs_reference` |
+| Plugin hook or skill | [integrations](../../../integrations/claude-code-plugin/README.md) | edit `integrations/claude-code-plugin/`, then `python -m scripts.codegen.agent_plugin_sync`; bump both plugin manifests to a version no other open PR uses |
 | Dashboard | [local-development](../../../docs/development/local-development.md#the-dashboard) | `npm --prefix frontend run test`, `npm --prefix frontend run build`, bundle budget |
 | Docs | [documentation-style](../../../docs/development/documentation-style.md) | regenerate generated pages; never hand-edit them |
 
@@ -34,7 +34,7 @@ Find the row for the change, read its guide before the first edit, and finish it
 
 - Short comments that say why; no history, dates, people or ticket numbers (`tests/unit/test_public_copy.py`).
 - `except Exception as e:  # noqa: BLE001 — <what must not fail>`; anything narrower is better.
-- No compatibility shims pre-1.0; the changelog entry carries the break.
+- No compatibility shims: a removed field is served and named in `ignored_args`; the changelog entry and the PR's compatibility section name the break.
 - A function near the length baseline is split before it grows: `scripts/gates/function_length_gate.py` fails on one added line past its baseline.
 - Moving a module breaks `Path(__file__).parents[N]`; resolve shipped files through `server.core.paths`.
 

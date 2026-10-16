@@ -9,7 +9,7 @@ argument-hint: "[pr-number | run-url]"
 ## 1. Which job, which line
 
 ```bash
-gh pr view <n> --json statusCheckRollup --jq '.statusCheckRollup[] | select(.conclusion != "SUCCESS" and .conclusion != "SKIPPED") | "\(.conclusion // .status)\t\(.name)\t\(.detailsUrl)"'
+gh pr view <n> --json statusCheckRollup --jq '.statusCheckRollup[] | select(.conclusion | IN("SUCCESS", "SKIPPED", "NEUTRAL") | not) | "\((if (.conclusion // "") == "" then .status else .conclusion end))\t\(.name)\t\(.detailsUrl)"'
 gh run view <run-id> --log-failed | tail -200
 ```
 

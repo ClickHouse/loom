@@ -1,6 +1,6 @@
 ---
 name: loom-pre-push
-description: Run the Loom CI gates locally for the paths a diff touches — format, lint, the generators' --check, the mypy and function-length ratchets, unit tests, schema check, frontend and plugin tests, integration tests — and fix each failure at its source. Use before every git push or commit of a Loom change, when asked "is this ready", "run the checks", "make CI green", or after a rebase onto main.
+description: Run the Loom CI gates locally for the paths a diff touches — format, lint, the generators' --check, the mypy and function-length ratchets, unit tests, schema check, frontend and plugin tests, integration tests — and fix each failure at its source. Use before committing or pushing a Loom change, when asked "is this ready" or "run the checks", or after a rebase onto main. NOT for opening or merging the PR (loom-ship-pr) or diagnosing a red CI job (loom-investigate-ci).
 ---
 
 # Loom pre-push gates
@@ -31,12 +31,13 @@ Run them in the worktree's `.venv`. CI also runs `pytest -p randomly`; an order-
 | Paths touched | Also run |
 | --- | --- |
 | `schemas/migrations/` | `make schema-dump` against a private, freshly migrated ClickHouse (`loom-dev-setup`), then `make schema-check`; `git diff schemas/schema.sql` shows only your change |
-| `server/**/api/`, op registry | `python scripts/codegen/sdk_py_gen.py`, `sdk_py_client_gen.py`, `sdk_ts_gen.py`, `docs_reference.py`, `op_reach_census.py` (each without `--check` regenerates) |
-| `server/settings/` | `python scripts/codegen/settings_reference.py` |
+| `server/**/api/`, op registry | `.venv/bin/python -m scripts.codegen.<gen>` for `sdk_py_gen`, `sdk_py_client_gen`, `sdk_ts_gen`, `docs_reference`, `op_reach_census` (without `--check` each regenerates) |
+| `server/settings/` | `.venv/bin/python -m scripts.codegen.settings_reference` |
 | `server/cli/` | `LOOM_UPDATE_CLI_SNAPSHOT=1 .venv/bin/python -m pytest tests/unit/test_cli_surface_snapshot.py` — then read the snapshot diff |
 | `server/workers/` | `LOOM_UPDATE_WORKER_SNAPSHOT=1 .venv/bin/python -m pytest tests/unit/test_worker_registry_snapshot.py` for an intended change |
 | server behaviour | the integration suite against a private server (`loom-dev-setup` §5) |
-| `integrations/` | `python scripts/codegen/agent_plugin_sync.py`; `node --test` in the plugin; both manifests bumped to a version no open PR uses |
+| auth, write paths, erasure, migrations, the worker supervisor | the per-module branch-coverage floors CI enforces (about 10 minutes): `.venv/bin/python -m pytest tests/unit -q --cov=server --cov-branch --cov-report=json:coverage.json && .venv/bin/python -m tests.inventory.coverage_floors coverage.json` |
+| `integrations/` | `.venv/bin/python -m scripts.codegen.agent_plugin_sync`; `node --test` in the plugin; both manifests bumped to a version no open PR uses |
 | `frontend/` | `npm --prefix frontend run test && npm --prefix frontend run build && npm --prefix frontend run budget` |
 | `sdk/typescript/` | `npm --prefix sdk/typescript run check` |
 | `docs/`, any `.md` | `.venv/bin/python -m pytest tests/unit/test_doc_links.py tests/unit/test_public_copy.py` |

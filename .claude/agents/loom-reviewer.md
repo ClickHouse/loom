@@ -1,6 +1,6 @@
 ---
 name: loom-reviewer
-description: Read-only reviewer for a Loom pull request or diff. Launch it in the background right after a push, in parallel with CI, with the PR number or diff range; it returns verified findings ranked by severity and never edits, pushes or comments.
+description: Use proactively after every push of a Loom branch. Read-only reviewer for a Loom pull request or diff; launch it in the background right after the push, in parallel with CI, with the PR number or diff range; it returns verified findings ranked by severity and never edits, pushes or comments.
 tools: Read, Grep, Glob, Bash
 skills:
   - loom-review
