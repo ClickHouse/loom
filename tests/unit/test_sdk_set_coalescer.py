@@ -114,6 +114,20 @@ async def test_a_coalesced_set_of_a_blacklisted_value_raises_as_alone(agent: Age
     assert refused.status == 422
 
 
+async def test_a_coalesced_set_against_a_pinned_row_raises_as_alone(agent: Agent) -> None:
+    # Alone, memory.set answers 409 PINNED_CONFLICT; coalesced, the same error is raised.
+    from loom.errors import PreconditionFailed
+
+    t: Any = agent.transport
+    t.row_verdicts = {"d": "rejected"}
+    results = await asyncio.gather(
+        *[agent.memory.set(k, {"v": k}) for k in "abcde"], return_exceptions=True
+    )
+    (refused,) = [r for r in results if isinstance(r, BaseException)]
+    assert isinstance(refused, PreconditionFailed) and refused.code == "PINNED_CONFLICT"
+    assert refused.status == 409
+
+
 async def test_a_set_with_point_only_fields_is_never_coalesced(agent: Agent) -> None:
     t: Any = agent.transport
     await asyncio.gather(

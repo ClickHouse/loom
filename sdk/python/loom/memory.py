@@ -199,6 +199,14 @@ class _SetCoalescer:
                 detail = {"code": "BLACKLISTED", "message": "value matches a blacklist pattern"}
                 fut.set_exception(from_response({"detail": detail}, 422))
                 continue
+            if row["conflict_verdict"] == "rejected":
+                # Close to a pinned row: the 409 the same set alone would have raised.
+                detail = {
+                    "code": "PINNED_CONFLICT",
+                    "message": "write conflicts with a pinned memory",
+                }
+                fut.set_exception(from_response({"detail": detail}, 409))
+                continue
             fut.set_result(row)
 
     async def flush(self) -> None:
@@ -698,13 +706,14 @@ class MemoryClient:
         `memory.bulk_set`, and such a result carries `coalesced: true` and no
         `memory_id` / `content_sha256`: read the hash with `get()` (a set
         with `if_match_sha256` is never coalesced). A blacklisted value raises
-        the `ValidationError` (`BLACKLISTED`, 422) coalesced or not.
+        the `ValidationError` (`BLACKLISTED`, 422), and a close write against a
+        pinned row the `PreconditionFailed` (`PINNED_CONFLICT`, 409), coalesced
+        or not.
 
         The response also carries the write-time conflict verdict
         (`conflict_verdict`: clear | merge | duplicate | conflict | refines,
-        `pending` (below), and on a coalesced set `rejected` for a close write
-        against a pinned row, or `superseded` when a later stored row of the same
-        key contradicts it, `superseded_by` naming that row),
+        `pending` (below), and on a coalesced set `superseded` when a later
+        stored row of the same key contradicts it, `superseded_by` naming that row),
         the `peers` it was reached against (`memory_id`, `memory_key`,
         `excerpt`, `valid_at`, `similarity`), a `next` hint naming the op to
         reach for (`memory.update(key)` on a conflict, `memory.pin` on a
