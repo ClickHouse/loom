@@ -8,6 +8,7 @@ import { Select } from "@clickhouse/click-ui/Select";
 import { Table } from "@clickhouse/click-ui/Table";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import { TextField } from "@clickhouse/click-ui/TextField";
+import { Title } from "@clickhouse/click-ui/Title";
 import {
   listPolicies,
   setPolicy,
@@ -155,7 +156,9 @@ function Card({ title, children, action }: { title: string; children: React.Reac
       aria-label={title}
       header={
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="section-label text-text-muted">{title}</h2>
+          <Title type="h2" size="sm">
+            {title}
+          </Title>
           {action}
         </div>
       }

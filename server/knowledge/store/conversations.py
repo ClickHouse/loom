@@ -513,25 +513,12 @@ async def thread_agent(
     *,
     ch: _CHClient | None = None,
 ) -> str | None:
-    """The agent a thread was written by, for a caller that knows only its id:
-    the latest live message's agent, else the agent of its metadata row (a
-    thread created with no messages yet). None when the namespace has no such
-    thread."""
+    """The agent that owns a thread, for a caller that knows only its id: the
+    agent of its thread row (conversation.create), else, for a thread built by
+    conversation.append alone, the agent of its latest live message. None when
+    the namespace has no such thread."""
     ch = ch or _default_client()
     params = {"org": org, "ns": namespace, "tid": thread_id}
-    row = await ch.query_one(
-        """
-        SELECT argMax(agent, ts) AS agent
-        FROM loom.conversations
-        WHERE org = {org:String}
-          AND namespace = {ns:String}
-          AND thread_id = {tid:String}
-          AND tombstoned_at IS NULL
-        """,
-        params=params,
-    )
-    if row and row["agent"]:
-        return str(row["agent"])
     row = await ch.query_one(
         """
         SELECT agent
@@ -544,7 +531,20 @@ async def thread_agent(
         """,
         params=params,
     )
-    return str(row["agent"]) if row else None
+    if row:
+        return str(row["agent"])
+    row = await ch.query_one(
+        """
+        SELECT argMax(agent, ts) AS agent
+        FROM loom.conversations
+        WHERE org = {org:String}
+          AND namespace = {ns:String}
+          AND thread_id = {tid:String}
+          AND tombstoned_at IS NULL
+        """,
+        params=params,
+    )
+    return str(row["agent"]) if row and row["agent"] else None
 
 
 async def count_thread_msgs(

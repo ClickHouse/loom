@@ -9,6 +9,7 @@ import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
 import { Link } from "@clickhouse/click-ui/Link";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import { TextField } from "@clickhouse/click-ui/TextField";
+import { Title } from "@clickhouse/click-ui/Title";
 import type {
   CodeLink,
   Identity,
@@ -650,7 +651,9 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                 </section>
 
                 <section>
-                  <h3 className="section-label text-text-muted mb-3">Metadata</h3>
+                  <Title type="h3" size="sm" className="mb-3">
+                    Metadata
+                  </Title>
                   <dl className="grid grid-cols-[110px_1fr] gap-y-2 text-sm">
                     <Row label="Type" value={detail.memory_type || "—"} mono />
                     {detail.char_limit != null && (
@@ -703,7 +706,9 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                 </section>
 
                 <section>
-                  <h3 className="section-label text-text-muted mb-2">Tags</h3>
+                  <Title type="h3" size="sm" className="mb-2">
+                    Tags
+                  </Title>
                   <div className="flex flex-wrap gap-1.5 items-center">
                     {(detail.tags || []).map((t) => (
                       <Chip
@@ -761,7 +766,9 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                 memory opens the Explorer walked from it — not from the rail. */}
                 {(detail.entities || []).length > 0 && (
                   <section>
-                    <h3 className="section-label text-text-muted mb-2">Entities</h3>
+                    <Title type="h3" size="sm" className="mb-2">
+                      Entities
+                    </Title>
                     <div className="flex flex-wrap gap-1.5 items-center">
                       {(detail.entities || []).map((en) => (
                         <EntityChip key={en} entity={en} />
@@ -1065,9 +1072,9 @@ function ProvenanceSection({
   return (
     <section>
       {!embedded && (
-        <h3 className="section-label text-text-muted mb-2 flex items-center gap-1.5">
+        <Title type="h3" size="sm" className="mb-2 flex items-center gap-1.5">
           <Icon name="git-merge" size="xs" aria-hidden="true" /> Provenance
-        </h3>
+        </Title>
       )}
       <dl className="grid grid-cols-[92px_1fr] gap-y-1.5 text-xs mb-2">
         {showSource && (
@@ -1416,9 +1423,9 @@ function RenameForm({
       className="rounded-xl border border-border bg-surface-2/50 p-4 space-y-3"
       data-testid="rename-form"
     >
-      <h3 id="rename-heading" className="section-label text-text-muted flex items-center gap-1.5">
+      <Title type="h3" size="sm" id="rename-heading" className="flex items-center gap-1.5">
         <Icon name="arrow-right" size="xs" aria-hidden="true" /> Rename (keep redirect)
-      </h3>
+      </Title>
       <TextField
         label="New key"
         value={toKey}

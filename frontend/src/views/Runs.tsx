@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Alert } from "@clickhouse/click-ui/Alert";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
+import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
 import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
 import { Select } from "@clickhouse/click-ui/Select";
 import { Table, type TableRowType } from "@clickhouse/click-ui/Table";
@@ -217,8 +218,12 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-// Counts and durations read down a right edge.
-const NUMERIC = "block w-full text-right tabular-nums";
+// Under 769 px Click UI's Table lays each row out as a card of wrapping cells. There the
+// goal takes the whole first line and the rest pair up two to a line, left-aligned; on
+// the table, counts and durations read down a right edge.
+const CARD = "[@media(max-width:768px)]:min-w-0 [@media(max-width:768px)]:basis-1/2";
+const CARD_GOAL = "[@media(max-width:768px)]:basis-full";
+const NUMERIC = "block w-full text-right [@media(max-width:768px)]:text-left tabular-nums";
 const RUN_HEADERS = [
   { label: "Goal" },
   { label: "Agent", width: "160px" },
@@ -238,6 +243,7 @@ function runRow(r: RunRow, onOpen: (r: RunRow) => void): TableRowType {
     className: "cursor-pointer",
     items: [
       {
+        className: CARD_GOAL,
         label: (
           <div className="min-w-0">
             <div className="flex items-center gap-2 min-w-0">
@@ -266,12 +272,13 @@ function runRow(r: RunRow, onOpen: (r: RunRow) => void): TableRowType {
           </div>
         ),
       },
-      { label: displayAgent(r.agent) },
-      { label: <StatusBadge status={r.status} inferred={inferred} /> },
-      { label: <span className={NUMERIC}>{(r.memories_used ?? []).length}</span> },
-      { label: <span className={NUMERIC}>{(r.memories_written ?? []).length}</span> },
-      { label: <span className={NUMERIC}>{fmtDuration(r.duration_ms)}</span> },
+      { className: CARD, label: displayAgent(r.agent) },
+      { className: CARD, label: <StatusBadge status={r.status} inferred={inferred} /> },
+      { className: CARD, label: <span className={NUMERIC}>{(r.memories_used ?? []).length}</span> },
+      { className: CARD, label: <span className={NUMERIC}>{(r.memories_written ?? []).length}</span> },
+      { className: CARD, label: <span className={NUMERIC}>{fmtDuration(r.duration_ms)}</span> },
       {
+        className: CARD,
         label: (
           <time dateTime={r.started_at}>
             {relativeTime(r.started_at)}
@@ -389,21 +396,19 @@ export function Runs() {
       </p>
 
       <div className="flex items-center gap-2 mb-4 flex-wrap">
-        {RUN_FILTERS.map((f) => (
-          <Chip
-            key={f || "all"}
-            label={f ? STATUS_META[f].label : "All"}
-            selected={filter === f}
-            onClick={() => setFilter(f)}
+        {/* Five statuses are wider than a phone: the group scrolls sideways, not the page. */}
+        <div className="max-w-full overflow-x-auto">
+          <ButtonGroup
+            aria-label="Filter runs by status"
+            selected={filter}
+            onClick={(value) => setFilter(value as Filter)}
+            options={RUN_FILTERS.map((f) => ({ value: f, label: f ? STATUS_META[f].label : "All" }))}
           />
-        ))}
-        <span className="w-px h-4 bg-border mx-1" />
+        </div>
+        <span className="w-px h-4 bg-border mx-1 max-md:hidden" />
         <Chip label="Group by session" selected={groupBy} onClick={() => setGroupBy((v) => !v)} />
-        <Chip
-          label={hideConn ? "Show runs with no memory activity" : "Hide runs with no memory activity"}
-          selected={!hideConn}
-          onClick={() => setHideConn((v) => !v)}
-        />
+        {/* One label; pressed means the folded runs are shown. */}
+        <Chip label="Show runs with no memory activity" selected={!hideConn} onClick={() => setHideConn((v) => !v)} />
         {(agents.length > 1 || agent) && (
           <Select
             value={agent || ALL_AGENTS}

@@ -1,3 +1,4 @@
+import { Title } from "@clickhouse/click-ui/Title";
 import type { HTMLAttributes, KeyboardEvent } from "react";
 import type { TaskListRow } from "../../api/tasks";
 import { GROUPS, GROUP_META, leaseMinutesLeft, posterName, rel, sublineOf, type Group } from "../../lib/tasks";
@@ -92,14 +93,16 @@ export function TaskBoard({
         const meta = GROUP_META[g];
         return (
           <section key={g} className="tq-col" aria-labelledby={`tq-col-${g}`} {...drag.target(g)}>
-            <h2
+            <Title
+              type="h2"
+              size="sm"
               id={`tq-col-${g}`}
-              className="section-label text-text-muted m-0 px-3 py-2.5 border-b border-border flex items-center gap-2"
+              className="px-3 py-2.5 border-b border-border flex items-center gap-2"
             >
               <span className="inline-block w-2 h-2 rounded-xs" style={{ background: meta.color }} aria-hidden="true" />
               {meta.label}
               <span className="ml-auto text-xs font-medium text-text-muted tabular">{rows.length}</span>
-            </h2>
+            </Title>
             <div className="p-2 flex flex-col gap-2">
               {rows.length === 0 ? (
                 <div className="p-4 text-xs text-text-muted">

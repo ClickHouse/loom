@@ -164,7 +164,7 @@ class ConversationGetInput(BaseModel):
 
     org: str
     namespace: str
-    # "*" reads the thread under the agent that wrote it, for a caller that has only its id.
+    # "*" reads the thread under the agent that owns it, for a caller that has only its id.
     agent: str
     # The thread to fetch.
     thread_id: str
@@ -207,7 +207,7 @@ class ConversationGetOutput(BaseModel):
 class ConversationListInput(BaseModel):
     org: str
     namespace: str
-    # "*" reads the thread under the agent that wrote it, for a caller that has only its id.
+    # "*" reads the thread under the agent that owns it, for a caller that has only its id.
     agent: str
     # The thread to page through, oldest message first.
     thread_id: str

@@ -3,6 +3,7 @@ import * as RadixDialog from "@radix-ui/react-dialog";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Dropdown } from "@clickhouse/click-ui/Dropdown";
 import { Icon } from "@clickhouse/click-ui/Icon";
+import { Title } from "@clickhouse/click-ui/Title";
 import {
   getTask,
   listPolicies,
@@ -136,7 +137,9 @@ const PRIMARY_ACTIONS: { action: TaskAction; label: string; tip?: string }[] = [
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="tq-sec">
-      <h3 className="section-label m-0 mb-1.5">{title}</h3>
+      <Title type="h3" size="sm" className="mb-1.5">
+        {title}
+      </Title>
       {children}
     </div>
   );

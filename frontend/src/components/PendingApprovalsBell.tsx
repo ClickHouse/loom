@@ -3,6 +3,7 @@ import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { Popover } from "@clickhouse/click-ui/Popover";
+import { Title } from "@clickhouse/click-ui/Title";
 import { IconButton } from "./IconButton";
 import { listPendingApprovals, type GrantRole } from "../api";
 import { sharedCodeRepos } from "../lib/sharedReads";
@@ -151,9 +152,9 @@ export function PendingApprovalsBell() {
         aria-labelledby={headingId}
         className="w-[min(440px,92vw)] max-h-[480px] overflow-y-auto"
       >
-        <h2 id={headingId} className="section-label pb-2 border-b border-border">
+        <Title type="h2" size="sm" id={headingId} className="pb-2 border-b border-border">
           Pending approvals · {items.length}
-        </h2>
+        </Title>
         {items.length === 0 && (
           <div className="py-6 text-sm text-text-muted text-center">
             No one's waiting for your approval.

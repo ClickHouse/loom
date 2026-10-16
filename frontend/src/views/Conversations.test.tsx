@@ -16,6 +16,7 @@ const listMemories = vi.fn();
 const searchConversations = vi.fn();
 const getNamespace = vi.fn();
 const setConversationLogging = vi.fn();
+const listConversationMessages = vi.fn();
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
   return {
@@ -26,6 +27,7 @@ vi.mock("../api", async (importOriginal) => {
     searchConversations: (...args: unknown[]) => searchConversations(...args),
     getNamespace: (...args: unknown[]) => getNamespace(...args),
     setConversationLogging: (...args: unknown[]) => setConversationLogging(...args),
+    listConversationMessages: (...args: unknown[]) => listConversationMessages(...args),
   };
 });
 vi.mock("../lib/namespaceRole", async (importOriginal) => ({
@@ -195,6 +197,26 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     expect(scope).toMatchObject({ namespace: "ns-z" });
     expect([agent, threadId]).toEqual(["*", "thread-z"]);
     expect(listMemories.mock.calls[0][0]).toMatchObject({ namespace: "ns-z" });
+    expect(await screen.findByRole("dialog")).toHaveTextContent("ns-z");
+  });
+
+  it("pages the rest of a thread under the agent conversation.get found", async () => {
+    listConversationThreads.mockResolvedValue({ threads: [] });
+    getNamespace.mockResolvedValue({ conversation_logging_enabled: true });
+    searchConversations.mockResolvedValueOnce({ hits: [hit("thread-y", "said in Y")] });
+    getConversationThread.mockResolvedValue({ ...detail("thread-y", "Title Y"), msg_count: 2 });
+    listMemories.mockResolvedValue(noMemories);
+    listConversationMessages.mockResolvedValue({ rows: [], next_cursor: null });
+
+    render(<Conversations />);
+    const box = screen.getByLabelText("Search conversation transcripts");
+    fireEvent.change(box, { target: { value: "said" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    fireEvent.click(await screen.findByText("said in Y"));
+    fireEvent.click(await screen.findByRole("button", { name: /Load more/ }));
+    await waitFor(() => expect(listConversationMessages).toHaveBeenCalledTimes(1));
+    expect(getConversationThread.mock.calls[0][1]).toBe("*");
+    expect(listConversationMessages.mock.calls[0][1]).toBe("claude-code");
   });
 
   it("ignores '/' pressed inside the thread dialog", async () => {

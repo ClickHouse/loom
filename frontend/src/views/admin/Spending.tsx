@@ -7,6 +7,7 @@ import { NumberField } from "@clickhouse/click-ui/NumberField";
 import { ProgressBar } from "@clickhouse/click-ui/ProgressBar";
 import { Select } from "@clickhouse/click-ui/Select";
 import { Table } from "@clickhouse/click-ui/Table";
+import { Title } from "@clickhouse/click-ui/Title";
 import {
   listCostRollup,
   getOrgBudgetStatus,
@@ -297,7 +298,9 @@ export function Spending() {
               groups), skip the empty chart entirely. */}
           {days.some(([d]) => d !== "—") && (
             <div className="rounded-2xl border border-border bg-surface p-5 mb-6">
-              <h2 className="section-label text-text-muted mb-4">Cost by day</h2>
+              <Title type="h2" size="sm" className="mb-4">
+                Cost by day
+              </Title>
               <div className="flex items-end gap-2 h-[140px]">
                 {days.map(([day, cost]) => (
                   <div key={day} className="flex-1 flex flex-col items-center gap-1.5">

@@ -106,4 +106,11 @@ describe("Setup's MCP home namespace", () => {
     expect(picker()).toHaveTextContent(/^ns-c ·/);
     expect(await mintedNamespace()).toBe("ns-c");
   });
+
+  it("announces each field's hint as its description", async () => {
+    render(<Setup />);
+    await waitFor(() => expect(picker()).toHaveTextContent(/^ns-a ·/), WAIT);
+    expect(picker()).toHaveAccessibleDescription(/Where this client saves memories/);
+    expect(screen.getAllByLabelText("Expires in (days)")[0]).toHaveAccessibleDescription("Blank = 90 days. Max 3650.");
+  });
 });

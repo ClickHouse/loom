@@ -292,7 +292,8 @@ body {
 /* Loom's own classes sit in the components layer, so a utility on the same
    element still applies. */
 @layer components {
-  /* Click UI's navigation title: 12 px medium, sentence case, muted. */
+  /* Click UI's navigation title: 12 px medium, sentence case, muted. It labels a group
+     inside a list, menu or rail; a panel or card title is Click UI's Title (SectionHeading). */
   .section-label {
     font-size: var(--text-xs);
     line-height: var(--text-xs--line-height);

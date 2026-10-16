@@ -1,5 +1,5 @@
 """The conversation store's "*" agent: the substring fallback spans every agent, as
-the vector search does, and `thread_agent` names the agent a thread was written by."""
+the vector search does, and `thread_agent` names the agent that owns a thread."""
 
 from __future__ import annotations
 
@@ -40,14 +40,19 @@ async def test_substring_search_spans_every_agent_on_a_wildcard() -> None:
 
 
 @pytest.mark.asyncio
-async def test_thread_agent_reads_messages_then_the_thread_row() -> None:
-    ch = StubCH([[{"agent": "reviewer"}]])
-    assert await conversation_repo.thread_agent("o", "ns", "t-1", ch=ch) == "reviewer"
+async def test_thread_agent_is_the_thread_rows_owner_before_a_later_writer() -> None:
+    # Created by "planner", appended to later by "reviewer": the thread row names the owner.
+    ch = StubCH([[{"agent": "planner"}], [{"agent": "reviewer"}]])
+    assert await conversation_repo.thread_agent("o", "ns", "t-1", ch=ch) == "planner"
     assert len(ch.calls) == 1
+    assert "conversation_threads" in ch.calls[0][0]
 
-    # A thread created with no messages yet is named by its metadata row.
-    ch = StubCH([[{"agent": ""}], [{"agent": "planner"}]])
-    assert await conversation_repo.thread_agent("o", "ns", "t-2", ch=ch) == "planner"
 
-    ch = StubCH([[{"agent": ""}], []])
+@pytest.mark.asyncio
+async def test_thread_agent_falls_back_to_the_latest_message() -> None:
+    # Built by conversation.append alone: no thread row, the latest message's agent.
+    ch = StubCH([[], [{"agent": "reviewer"}]])
+    assert await conversation_repo.thread_agent("o", "ns", "t-2", ch=ch) == "reviewer"
+
+    ch = StubCH([[], [{"agent": ""}]])
     assert await conversation_repo.thread_agent("o", "ns", "ghost", ch=ch) is None

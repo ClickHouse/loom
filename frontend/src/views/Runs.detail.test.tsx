@@ -123,7 +123,10 @@ describe("Runs page", () => {
     expect(second?.memoryActivity).toBe("");
     expect(await screen.findByText("ISSUE_TRIAGE issue_114194")).toBeInTheDocument();
     expect(screen.getByText("no memory activity")).toBeInTheDocument();
-    expect(screen.getByText("Hide runs with no memory activity")).toBeInTheDocument();
+    // The label stays put; the pressed state says the folded runs are shown.
+    const toggle = screen.getByRole("button", { name: "Show runs with no memory activity" });
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByText("Hide runs with no memory activity")).toBeNull();
   });
 
   it("says so when the folded page is empty, without claiming there are no runs", async () => {
@@ -251,7 +254,10 @@ describe("Runs page", () => {
       ]);
     render(<Runs />);
     await waitFor(() => expect(listRuns).toHaveBeenCalledTimes(1));
-    fireEvent.click(screen.getByRole("button", { name: "Failed" }));
+    const statuses = screen.getByRole("group", { name: "Filter runs by status" });
+    expect(within(statuses).getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(within(statuses).getByRole("button", { name: "Failed" }));
+    expect(within(statuses).getByRole("button", { name: "Failed" })).toHaveAttribute("aria-pressed", "true");
     await waitFor(() => expect(listRuns).toHaveBeenCalledTimes(2));
     expect(listRuns.mock.calls[1][1]?.status).toBe("failed");
     expect(await screen.findByText("the failed one")).toBeInTheDocument();

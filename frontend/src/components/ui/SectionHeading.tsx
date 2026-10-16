@@ -1,8 +1,10 @@
-import { createElement, type ReactNode } from "react";
+import { Title } from "@clickhouse/click-ui/Title";
+import type { ReactNode } from "react";
 import { IconButton } from "../IconButton";
 
 /**
- * SectionHeading — one line of section label, an optional count, an
+ * SectionHeading — the title of a panel, card or pane section (Click UI's
+ * `Title`, 14 px semibold), an optional count, an
  * optional visible caption, and an optional hint that opens as a tooltip
  * from a small (i) button. Nothing here truncates: the label is `whitespace-nowrap`, the
  * row wraps its caption to a second line when the pane is narrow, and the hint lives in a
@@ -10,6 +12,7 @@ import { IconButton } from "../IconButton";
  *
  * `level` picks the heading element (h2–h4) so the outline of a page is
  * real; the visual is the same at every level. The (i) is Click UI's xs icon button.
+ * A label over a group inside a list or menu is `.section-label`, not this.
  */
 export interface SectionHeadingProps {
   label: string;
@@ -38,9 +41,11 @@ export function SectionHeading({
 }: SectionHeadingProps) {
   return (
     <div className={`flex flex-wrap items-center gap-x-inline gap-y-0.5 min-w-0 mb-1.5 ${className}`}>
-      {createElement(`h${level}`, { id, className: "section-label whitespace-nowrap text-text-muted" }, label)}
+      <Title type={`h${level}`} size="sm" id={id} className="whitespace-nowrap">
+        {label}
+      </Title>
       {count !== undefined && (
-        <span className="section-label tabular-nums text-text-muted">
+        <span className="text-sm tabular-nums text-text-muted">
           <span aria-hidden="true">{count}</span>
           <span className="sr-only">{`${count} ${label.toLowerCase()}`}</span>
         </span>

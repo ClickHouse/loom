@@ -336,6 +336,8 @@ export function Conversations() {
         });
         if (signal.aborted) return;
         setThreadDetail(d);
+        // Later pages read under the agent the server found for "*".
+        if (d.found && d.agent) setOpenThread((t) => t && { ...t, agent: d.agent });
         // If the thread's reported msg_count exceeds what we loaded,
         // there are more pages to walk via conversation.list. Cursor
         // value is the last message's id — the server resolves it to
@@ -626,6 +628,11 @@ export function Conversations() {
         initialFocus="dialog"
       >
         <div className="text-xs text-text-muted font-mono truncate">{openThread?.thread_id}</div>
+        {openThread && openThread.namespace !== identity.namespace && (
+          <div className="mt-1">
+            <ScopeBadge kind="namespace" value={openThread.namespace} />
+          </div>
+        )}
         {threadDetail && (
           <div className="text-xs text-text-muted mt-1 flex items-center gap-2 flex-wrap">
             <span>

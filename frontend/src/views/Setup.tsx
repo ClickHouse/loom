@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Alert } from "@clickhouse/click-ui/Alert";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
@@ -754,25 +754,35 @@ function TokensSection({
               <div className="space-y-3">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Field hint="Where this client saves memories and captured sessions. It is not a read limit — see below.">
-                    <Select label="Home namespace" value={mcpNamespace} onSelect={setMcpNamespaceEdited}>
-                      {(eligibleNs.length > 0
-                        ? eligibleNs
-                        : [{ namespace: identity.namespace, role: "writer" as const }]
-                      ).map((n) => (
-                        <Select.Item key={n.namespace} value={n.namespace}>
-                          {n.namespace} · {n.role}
-                        </Select.Item>
-                      ))}
-                    </Select>
+                    {(hintId) => (
+                      <Select
+                        label="Home namespace"
+                        value={mcpNamespace}
+                        onSelect={setMcpNamespaceEdited}
+                        triggerProps={{ "aria-describedby": hintId }}
+                      >
+                        {(eligibleNs.length > 0
+                          ? eligibleNs
+                          : [{ namespace: identity.namespace, role: "writer" as const }]
+                        ).map((n) => (
+                          <Select.Item key={n.namespace} value={n.namespace}>
+                            {n.namespace} · {n.role}
+                          </Select.Item>
+                        ))}
+                      </Select>
+                    )}
                   </Field>
                   <Field hint="Blank = 90 days. Max 3650.">
-                    <TextField
-                      label="Expires in (days)"
-                      inputMode="numeric"
-                      value={mcpTtlDays}
-                      onChange={(value) => setMcpTtlDays(value.replace(/[^0-9]/g, ""))}
-                      placeholder="90"
-                    />
+                    {(hintId) => (
+                      <TextField
+                        label="Expires in (days)"
+                        inputMode="numeric"
+                        value={mcpTtlDays}
+                        onChange={(value) => setMcpTtlDays(value.replace(/[^0-9]/g, ""))}
+                        placeholder="90"
+                        aria-describedby={hintId}
+                      />
+                    )}
                   </Field>
                 </div>
                 <TokenReadScopePanel
@@ -811,7 +821,15 @@ function TokensSection({
               <div className="space-y-3">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Field hint="Short label; can't be changed later.">
-                    <TextField label="Name" value={name} onChange={setName} placeholder="e.g. cron-cleanup" />
+                    {(hintId) => (
+                      <TextField
+                        label="Name"
+                        value={name}
+                        onChange={setName}
+                        placeholder="e.g. cron-cleanup"
+                        aria-describedby={hintId}
+                      />
+                    )}
                   </Field>
 
                   <fieldset>
@@ -945,13 +963,16 @@ function TokensSection({
                   </fieldset>
 
                   <Field hint="Blank = 90 days. Max 3650.">
-                    <TextField
-                      label="Expires in (days)"
-                      inputMode="numeric"
-                      value={ttlDays}
-                      onChange={(value) => setTtlDays(value.replace(/[^0-9]/g, ""))}
-                      placeholder="90"
-                    />
+                    {(hintId) => (
+                      <TextField
+                        label="Expires in (days)"
+                        inputMode="numeric"
+                        value={ttlDays}
+                        onChange={(value) => setTtlDays(value.replace(/[^0-9]/g, ""))}
+                        placeholder="90"
+                        aria-describedby={hintId}
+                      />
+                    )}
                   </Field>
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1093,19 +1114,22 @@ function TokensSection({
             })()}.
           </div>
           <Field hint="The token works in every client — pick yours to copy the matching config block. Your last choice is remembered next time.">
-            <Select
-              label="MCP client"
-              value={dialogClient}
-              onSelect={(c) => {
-                if (isClientId(c)) onDialogClientChange(c);
-              }}
-            >
-              {CLIENTS.map((c) => (
-                <Select.Item key={c.id} value={c.id}>
-                  {c.label}
-                </Select.Item>
-              ))}
-            </Select>
+            {(hintId) => (
+              <Select
+                label="MCP client"
+                value={dialogClient}
+                onSelect={(c) => {
+                  if (isClientId(c)) onDialogClientChange(c);
+                }}
+                triggerProps={{ "aria-describedby": hintId }}
+              >
+                {CLIENTS.map((c) => (
+                  <Select.Item key={c.id} value={c.id}>
+                    {c.label}
+                  </Select.Item>
+                ))}
+              </Select>
+            )}
           </Field>
           {dialogClient === "claude-code" &&
             mcpResult &&
@@ -1369,12 +1393,16 @@ function KindChip({ kind, client }: { kind?: string; client?: string }) {
   return <Badge text="Script" state="neutral" size="sm" />;
 }
 
-/** A form control (which carries its own label) with a hint line under it. */
-function Field({ hint, children }: { hint?: string; children: React.ReactNode }) {
+/** A form control (which carries its own label) with a hint line under it. `children`
+ * gets the hint's id for the control's aria-describedby, so the hint is announced. */
+function Field({ hint, children }: { hint: string; children: (hintId: string) => React.ReactNode }) {
+  const hintId = useId();
   return (
     <div>
-      {children}
-      {hint && <div className="text-xs text-text-muted mt-1">{hint}</div>}
+      {children(hintId)}
+      <div id={hintId} className="text-xs text-text-muted mt-1">
+        {hint}
+      </div>
     </div>
   );
 }

@@ -8,6 +8,7 @@ import { SearchField } from "@clickhouse/click-ui/SearchField";
 import { Select } from "@clickhouse/click-ui/Select";
 import { Table } from "@clickhouse/click-ui/Table";
 import { TextField } from "@clickhouse/click-ui/TextField";
+import { Title } from "@clickhouse/click-ui/Title";
 import {
   listPolicies,
   listPrincipals,
@@ -557,10 +558,9 @@ function TrustTable({ identity, inbox, open }: { identity: Caller; inbox: string
   return (
     <section aria-labelledby="inbox-trust-heading" className="space-y-3 border-t border-border pt-2">
       <div className="flex items-center justify-between gap-2">
-        <h3 id="inbox-trust-heading" className="section-label">
-          Trust table{" "}
-          <span className="normal-case tracking-normal text-text-muted">· poster × kind → deny / review / auto</span>
-        </h3>
+        <Title type="h3" size="sm" id="inbox-trust-heading">
+          Trust table <span className="font-normal text-text-muted">· poster × kind → deny / review / auto</span>
+        </Title>
         {!draft && (
           <Button type="secondary" htmlType="button" iconLeft="plus" onClick={() => setDraft(EMPTY_DRAFT)}>
             Add rule

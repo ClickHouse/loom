@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { Popover } from "@clickhouse/click-ui/Popover";
+import { Title } from "@clickhouse/click-ui/Title";
 import { IconButton } from "./IconButton";
 import { CountBadge } from "./PendingApprovalsBell";
 import { taskCounts, type InboxCount } from "../api/tasks";
@@ -106,9 +107,9 @@ export function TaskInboxBell() {
         aria-labelledby={headingId}
         className="w-[min(400px,92vw)] max-h-[480px] overflow-y-auto"
       >
-        <h2 id={headingId} className="section-label pb-2 border-b border-border">
+        <Title type="h2" size="sm" id={headingId} className="pb-2 border-b border-border">
           Tasks waiting · {total}
-        </h2>
+        </Title>
         {inboxes.length === 0 && (
           <div className="py-6 text-sm text-text-muted text-center">
             Nothing waits for you.

@@ -113,7 +113,7 @@ Fetch one thread by id: thread metadata + optional messages.
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
-| `agent` | `str` | required | "*" reads the thread under the agent that wrote it, for a caller that has only its id. |
+| `agent` | `str` | required | "*" reads the thread under the agent that owns it, for a caller that has only its id. |
 | `thread_id` | `str` | required | The thread to fetch. |
 | `include_messages` | `bool` | `False` | Default off: keeps the metadata lookup to two point reads. |
 | `limit` | `int` | `100` | At most this many messages when `include_messages` is set (1-1000). |
@@ -144,7 +144,7 @@ Enumerate stored conversation threads for an agent / namespace.
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
-| `agent` | `str` | required | "*" reads the thread under the agent that wrote it, for a caller that has only its id. |
+| `agent` | `str` | required | "*" reads the thread under the agent that owns it, for a caller that has only its id. |
 | `thread_id` | `str` | required | The thread to page through, oldest message first. |
 | `run_id` | `str \| None` | `None` | optional filter |
 | `limit` | `int` | `100` | At most this many messages per page (1-1000). |

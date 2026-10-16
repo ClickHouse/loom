@@ -357,7 +357,8 @@ async def handle_conversation_get(
 
 async def _thread_agent(org: str, namespace: str, agent: str, thread_id: str) -> str | None:
     """The agent to read a thread under: the caller's, or for "*"/"-" the agent
-    the thread was written by (None when there is no such thread)."""
+    that owns the thread (None when there is no such thread). A search spans
+    agents; a thread is read under the one that owns it."""
     from server.knowledge.store import conversations as conversation_repo
 
     if agent not in ("*", "-"):

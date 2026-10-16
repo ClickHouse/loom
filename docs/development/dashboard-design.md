@@ -66,6 +66,9 @@ Loom keeps a few elements of its own, on Click UI tokens:
 - Use the Click UI component, or the Loom primitive above, for every control. A Tailwind-styled imitation of a button, field, dialog, tab or badge is a bug.
 - Colours, radii, shadows and text sizes come from tokens: no `text-[13px]`, `rounded-[6px]`, hex colour or raw palette class in TSX.
 - Sentence case for every label, title and button.
+- A panel, card or pane section is titled with `SectionHeading` (Click UI's `Title`, 14 px semibold). `.section-label` (12 px, muted) labels a group inside a list, menu or rail.
+- A toggle keeps one label; `aria-pressed` carries its state. A single choice among a few options is a `ButtonGroup`.
+- A field's hint is tied to its control with `aria-describedby`.
 - An `Alert` takes its lead-in as `<strong>` in `text`, not `title`: Click UI renders the title as an `<h6>`, which breaks the heading order.
 - One primary button per surface. Footers are right-aligned, secondary first, the primary last.
 - A control that is unavailable and has a tooltip saying why uses `aria-disabled="true"` instead of `disabled`, so the reason stays reachable.
