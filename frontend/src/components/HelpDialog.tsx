@@ -47,19 +47,18 @@ const SEARCH: Shortcut[] = [
 export function HelpDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   return (
     <Modal open={open} onOpenChange={onOpenChange} title="Keyboard shortcuts" className="max-w-[520px] w-full">
-      {/* Focusable so a keyboard user can scroll the list. */}
-      <div
+      <section
         className="max-h-[60vh] overflow-y-auto space-y-5"
-        tabIndex={0}
-        role="region"
         aria-label="Keyboard shortcuts"
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: a scrolling region must take focus so a keyboard user can scroll it (WCAG 2.1.1)
+        tabIndex={0}
       >
         <Section title="Global" rows={GLOBAL} />
         <Section title="Universal search" rows={SEARCH} />
         <Section title="Navigation" rows={GOTO} />
         <Section title="Lists" rows={LIST} />
         <Section title="Inspector" rows={INSPECTOR} />
-      </div>
+      </section>
     </Modal>
   );
 }
