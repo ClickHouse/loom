@@ -57,7 +57,7 @@ async def ensure_namespace(m: machines.Machine, agent: str, owner_email: str) ->
     holds it (its reads are sequential under the claim), so two first
     exchanges make one, and one released since is not made again."""
     from server.auth.grant_claims import bot_change
-    from server.auth.self_signup import provision_account
+    from server.auth.self_signup import insert_owner_grant, provision_account
 
     org, ns, who = m["org"], namespace(m["name"], agent), subject(m["name"], agent)
     owner = await _owner(org, owner_email)  # before the row: it names no email
@@ -83,6 +83,10 @@ async def ensure_namespace(m: machines.Machine, agent: str, owner_email: str) ->
                     raise machines.Refused(
                         "invalid_grant", f"trust {m['name']} has made its agents"
                     )
+                # The owner is the one the trust names now, and only now: granted
+                # before the row, so a write that fails leaves nothing to retry past.
+                if owner:
+                    await insert_owner_grant(org, ns, owner)
                 # No contact email: a sign-in by email must never resolve to an agent.
                 await provision_account(
                     org=org,
@@ -93,7 +97,7 @@ async def ensure_namespace(m: machines.Machine, agent: str, owner_email: str) ->
                     tags=[tag(m["name"])],
                 )
             made = True
-        await _finish_grants(org, ns, [who, owner] if owner else [who])
+        await _finish_grants(org, ns, who)
     if made:
         from server.observability import audit
 
@@ -107,21 +111,18 @@ async def ensure_namespace(m: machines.Machine, agent: str, owner_email: str) ->
     return ns
 
 
-async def _finish_grants(org: str, ns: str, subjects: list[str]) -> None:
-    """The agent's and its owner's admin grants, for any never written (a first
-    exchange cut off after the namespace row). One revoked since leaves a row,
-    so it stays revoked."""
+async def _finish_grants(org: str, ns: str, who: str) -> None:
+    """The agent's own grant, if never written (a first exchange cut off after
+    the namespace row). One revoked since leaves a row, so it stays revoked."""
     from server.auth.self_signup import insert_owner_grant
 
-    rows = await get_client().query_all(
-        "SELECT DISTINCT subject FROM loom.namespace_grants WHERE org = {org:String} "
-        "AND namespace = {ns:String} AND subject IN {subjects:Array(String)}",
-        params={"org": org, "ns": ns, "subjects": subjects},
+    row = await get_client().query_one(
+        "SELECT 1 AS x FROM loom.namespace_grants WHERE org = {org:String} "
+        "AND namespace = {ns:String} AND subject = {who:String} LIMIT 1",
+        params={"org": org, "ns": ns, "who": who},
     )
-    granted = {r["subject"] for r in rows}
-    for subject in subjects:
-        if subject not in granted:
-            await insert_owner_grant(org, ns, subject)
+    if row is None:
+        await insert_owner_grant(org, ns, who)
 
 
 async def _made(org: str, trust: str) -> int:

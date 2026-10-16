@@ -252,7 +252,7 @@ async def verify_any_workload(token: str) -> tuple[Machine, dict[str, Any]]:
     signed: dict[tuple[str, str], dict[str, Any] | Refused] = {}
     met: list[tuple[Machine, dict[str, Any]]] = []
     away: list[tuple[Machine, Refused]] = []  # trusts whose keys could not be had
-    refusal = Refused("invalid_grant", "no trust of this issuer takes the subject token")
+    reasons: list[str] = []  # for the log: the presenter learns no trust's claims
     for m in trusts:
         source = (m["jwks_uri"], m["audience"])
         if source not in signed:
@@ -264,13 +264,13 @@ async def verify_any_workload(token: str) -> tuple[Machine, dict[str, Any]]:
         if isinstance(claims, Refused):
             if claims.error == "temporarily_unavailable":
                 away.append((m, claims))
-            refusal = claims
+            reasons.append(f"{m['name']}: {claims}")
             continue
         try:
             _meets(m, claims)
             met.append((m, claims))
         except Refused as e:
-            refusal = e
+            reasons.append(f"{m['name']}: {e}")
     if len(met) > 1:
         log.warning("workload token meets trusts %s", ", ".join(m["name"] for m, _ in met))
         raise Refused("invalid_request", "the subject token meets several trusts; name one")
@@ -281,7 +281,10 @@ async def verify_any_workload(token: str) -> tuple[Machine, dict[str, Any]]:
             if _could_meet(m, met[0][1]):
                 raise outage
         return met[0]
-    raise away[0][1] if away else refusal
+    if away:
+        raise away[0][1]
+    log.info("workload token taken by no trust: %s", "; ".join(reasons) or "none of its issuer")
+    raise Refused("invalid_grant", "no trust of this issuer takes the subject token")
 
 
 def _could_meet(m: Machine, claims: dict[str, Any]) -> bool:

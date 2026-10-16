@@ -688,3 +688,10 @@ def test_a_trust_whose_keys_are_away_and_would_take_the_token_makes_it_wait(
 
     monkeypatch.setattr(oidc, "signing_key", signing_key)
     assert exchange(_ci_token(bots, agent_id="a1")).status_code == 503
+
+
+def test_a_token_no_trust_takes_learns_nothing_of_the_trusts(bots, monkeypatch) -> None:
+    exchange = _client_less(bots, monkeypatch)
+    r = exchange(_ci_token(bots, repository="acme/elsewhere"))
+    assert r.status_code == 400
+    assert r.json()["error_description"] == "no trust of this issuer takes the subject token"

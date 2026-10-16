@@ -206,12 +206,13 @@ export function agentToken({ env = process.env, renew = renewAgentToken, now = D
   const path = agentTokenPath(env);
   let saved = readConfigFile(path);
   if (usable(saved, env, now, renewDue(saved))) return String(saved.token);
-  if (!(Number(saved.retry_at) > now && saved.proof === proofHash(env))) {
+  // The retry mark names the proof that failed, never the saved token's.
+  if (!(Number(saved.retry_at) > now && saved.retry_proof === proofHash(env))) {
     renew(env);
     saved = readConfigFile(path);
     if (usable(saved, env, now, renewDue(saved))) return String(saved.token);
     try {
-      writePrivateFile(path, JSON.stringify({ ...saved, proof: proofHash(env), retry_at: now + AGENT_RETRY_S }));
+      writePrivateFile(path, JSON.stringify({ ...saved, retry_proof: proofHash(env), retry_at: now + AGENT_RETRY_S }));
     } catch {
       // nowhere to note it: the next call tries again
     }

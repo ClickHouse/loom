@@ -186,6 +186,35 @@ Using one model across jobs is a convenience configuration, not the configuratio
 every published benchmark. Tune individual jobs later using
 [models per job](../operations/deployment.md#models-per-job).
 
+### Through an inference gateway
+
+A gateway that speaks the OpenAI or Anthropic API in front of the providers
+(for budgets, cost attribution or one key for many services) takes Loom's
+calls once its API roots point there; the model names stay what the gateway
+serves:
+
+```bash
+LOOM_OPENAI_BASE_URL=https://gateway.example/v1   # chat and embeddings
+LOOM_ANTHROPIC_BASE_URL=https://gateway.example   # Messages: <root>/v1/messages
+OPENAI_API_KEY=<the key the gateway issued for Loom>
+```
+
+Off its default, the Anthropic key is also sent as `Authorization: Bearer`, the
+scheme gateways take. A gateway that accepts workload identity (RFC 8693 token
+exchange) needs no key at all: Loom exchanges its workload's OIDC token there,
+renews the answer halfway through its life, and sends it with every call.
+
+```bash
+LOOM_INFERENCE_TOKEN_URL=https://gateway.example/oauth/token
+LOOM_INFERENCE_WORKLOAD_TOKEN_FILE=/var/run/secrets/tokens/gateway   # rotated by the platform
+LOOM_INFERENCE_TOKEN_SCOPE="chat embeddings"                         # if the gateway asks for one
+```
+
+On Kubernetes the token file is a projected service-account token with the
+gateway's audience; the gateway must trust the cluster's OIDC issuer and match
+Loom's service account (`system:serviceaccount:<namespace>:<name>`), not just
+the issuer, since every pod of the cluster can get a token from it.
+
 ## Apply changes and check the result
 
 **Dashboard changes:** wait for Models & keys to report the active configuration. If a

@@ -40,12 +40,11 @@ def world(monkeypatch) -> dict[str, Any]:
     }
 
     class _CH:
-        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
-            return [{"subject": s} for ns, s in state["grant_rows"] if ns == params["ns"]]
-
         async def query_one(self, sql: str, params: dict[str, Any]) -> Any:
             if "count()" in sql:
                 return {"n": len(state["rows"])}
+            if "namespace_grants" in sql:
+                return {"x": 1} if (params["ns"], params["who"]) in state["grant_rows"] else None
             return state["rows"].get(params["ns"])
 
     async def provision(**kw: Any) -> None:
@@ -180,3 +179,15 @@ def test_a_grant_revoked_since_stays_revoked(world) -> None:
     world["granted"].clear()  # its row (revoked or not) stays in grant_rows
     _ensure("lee@acme.io")
     assert world["granted"] == []
+
+
+def test_a_later_token_naming_another_owner_grants_nothing(world) -> None:
+    # The owner is the one named when the agent was made; a token naming
+    # someone else later (a reassignment, a wrong claim) adds no admin.
+    world["people"] = {
+        "lee@acme.io": ("lee", "acme", ["lee"], ["writer"]),
+        "bob@acme.io": ("bob", "acme", ["bob"], ["writer"]),
+    }
+    _ensure("lee@acme.io")
+    _ensure("bob@acme.io")
+    assert world["granted"] == [("acme", "fleet-a1", "lee")]

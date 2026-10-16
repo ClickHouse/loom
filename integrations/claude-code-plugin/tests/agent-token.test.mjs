@@ -99,6 +99,9 @@ test("a saved token serves only the proof it was exchanged for", () => {
   let renewed = 0;
   assert.equal(agentToken({ env: b, renew: () => renewed++ }), "");
   assert.equal(renewed, 1);
+  // Its failed exchange marks a retry for its own proof: A's token stays A's.
+  assert.equal(agentToken({ env: b, renew: () => renewed++ }), "");
+  assert.equal(agentToken({ env, renew: assert.fail }), "of-a1");
 });
 
 test("an agent whose exchange fails signs in as no one, not as a person", () => {

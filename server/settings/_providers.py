@@ -41,6 +41,23 @@ class ProviderSettings(ModelSettings):
     # Send the optional dimensions request parameter to a compatible endpoint.
     # False uses its native output width; responses must still match embedding_dim.
     embedding_send_dimensions: bool = False
+    # OpenAI's API root, for chat and embeddings: point it at an
+    # OpenAI-compatible inference gateway in front of OpenAI (its /v1 root).
+    openai_base_url: str = "https://api.openai.com/v1"
+    # Anthropic's API root (the Messages API is <root>/v1/messages): point it at
+    # a gateway in front of Anthropic. Off the default, the key also goes as a
+    # bearer, the scheme gateways take.
+    anthropic_base_url: str = "https://api.anthropic.com"
+    # Model calls with no provider key: exchange the workload's OIDC token
+    # (RFC 8693) at this token endpoint of the gateway, and send the answer as
+    # the bearer (server/llm/gateway.py). The gateway must trust the workload's
+    # issuer. "" = the provider keys.
+    inference_token_url: str = ""
+    # The workload's OIDC token, as a file its platform rotates (a projected
+    # service-account token on Kubernetes). Needed with inference_token_url.
+    inference_workload_token_file: str = ""
+    # The scope sent with that exchange; "" sends none.
+    inference_token_scope: str = ""
     # Shared query-embedding cache in loom.embedding_cache behind the
     # per-process LRU, keyed (model, sha1 of normalised text). Only single-text
     # (query) embeds up to `embedding_cache_shared_max_chars` (0 = no cap) use
@@ -97,6 +114,25 @@ class ProviderSettings(ModelSettings):
         if alias in LOCAL_EMBEDDING_MODELS:  # an unknown alias fails when the embedder is built
             self.embedding_dim = LOCAL_EMBEDDING_MODELS[alias][1]
             self._inferred_fields |= {"embedding_dim"}
+        return self
+
+    @model_validator(mode="after")
+    def _check_gateway(self) -> ProviderSettings:
+        """A mistyped API root or a token exchange missing its token fails at
+        load, not at the first model call."""
+        urls = {
+            "openai_base_url": self.openai_base_url,
+            "anthropic_base_url": self.anthropic_base_url,
+            "inference_token_url": self.inference_token_url,
+        }
+        for name, value in urls.items():
+            if value and urlsplit(value).scheme not in ("https", "http"):
+                raise ValueError(f"LOOM_{name.upper()} must be an http(s) URL, got {value!r}")
+        if self.inference_token_url and not self.inference_workload_token_file:
+            raise ValueError(
+                "LOOM_INFERENCE_TOKEN_URL needs LOOM_INFERENCE_WORKLOAD_TOKEN_FILE, "
+                "the token it exchanges"
+            )
         return self
 
     @model_validator(mode="after")
