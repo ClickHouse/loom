@@ -272,9 +272,13 @@ async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
             )
     if memory_row.get("sensitivity") != "high":  # a high row's text stays out of the graph
         # A revision closes what it dropped next and answers: its edges flush first, as
-        # in `_set_post_insert`. A first write has nothing to close and does not wait.
+        # in `_set_post_insert`. A first write has nothing to close and does not wait,
+        # so it cannot check its edges against a revision either.
         await _project_set_entities_fail_open(
-            input, memory_id=memory_id, wait_visible=had_existing_row, content_sha256=new_sha
+            input,
+            memory_id=memory_id,
+            wait_visible=had_existing_row,
+            content_sha256=new_sha if had_existing_row else "",
         )
     await project_stated_relations(
         memory_row,

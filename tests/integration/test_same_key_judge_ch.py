@@ -2642,6 +2642,44 @@ async def test_a_first_write_still_holding_its_value_projects_its_edge(ch, org, 
     assert int(rows[0]["n"]) > 0
 
 
+async def test_a_plain_first_write_projects_its_edge_without_asking_again(
+    ch, org, monkeypatch
+) -> None:
+    # A profile row takes the plain insert path; a first write's edges do not wait
+    # for their flush, so asking afterwards whether the row still holds the value
+    # could not see them. It projects its edge and asks nothing.
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import entity_projections
+    from server.memory.app.write import handle_memory_set
+
+    rows_holding, asked = entity_projections.rows_holding, []
+
+    async def _counted(*a: Any, **k: Any) -> Any:
+        asked.append(True)
+        return await rows_holding(*a, **k)
+
+    monkeypatch.setattr(entity_projections, "rows_holding", _counted)
+    out = await handle_memory_set(
+        MemorySetInput(
+            org=org,
+            namespace=NS,
+            agent="bot",
+            user_id=USER,
+            memory_key="alice",
+            memory_type="profile",
+            value="Alice met Bob in Paris",
+        )
+    )
+    rows = await ch.query_all(
+        "SELECT count() AS n FROM loom.entity_edge_rows "
+        "WHERE org = {org:String} AND memory_id = {id:UUID} "
+        "SETTINGS select_sequential_consistency = 1",
+        params={"org": org, "id": str(out.memory_id)},
+    )
+    assert int(rows[0]["n"]) > 0
+    assert asked == []
+
+
 async def test_an_undo_keeps_its_edge_open_past_another_relations_end(ch, org) -> None:
     # The pair's latest edge is a bounded work fact; the restored London is open-ended,
     # and so is its edge: past the work fact's end both walks still reach London.
