@@ -3,14 +3,18 @@
 @import "@fontsource-variable/jetbrains-mono";
 
 /* ============================================================
-   Design tokens — Loom v3 (ClickHouse-aligned)
+   Design tokens — Click UI (https://github.com/ClickHouse/click-ui)
    ============================================================
-   Single dark theme matching clickhouse.com/cloud:
-   - Backgrounds = the official neutral scale (neutral-950→neutral-700)
-   - Accent      = primary-300 (#FAFF69, the CH yellow), used for CTAs,
-                    active states, links. Text on accent = neutral-950
-                    so the yellow stays legible.
-   - Status      = CH cyan / orange / red. No indigo. */
+   The values are Click UI's own (`src/theme/styles/tokens-dark.css`,
+   `tokens-light.css`, `tokens/themes/primitives.json`), under Loom's
+   semantic names so no component names a Click UI token directly:
+   - Backgrounds = global background-default / -muted, then the stroke
+                    neutrals for raised fills.
+   - Accent      = the primary button: brand yellow on dark, slate-800 on
+                    light, exactly as Click UI swaps it.
+   - Status      = the Click UI success / warning / danger / info scales.
+   Dark is the default; `<html data-theme="light">` (set by lib/theme.ts)
+   switches every token to the light set below. */
 
 /* `static`: every token here is emitted whether or not a utility uses it.
    Without it Tailwind v4 emits only the variables its generated classes
@@ -75,56 +79,129 @@
      inverse scale to `--canvas-scale` and `.graph-svg text` multiplies. */
   --canvas-label-min: 11px;
 
-  /* Surfaces — matches clickhouse.com body bg + neutral scale */
-  --color-bg: #131312; /* CH body bg — warm near-black */
-  --color-surface: #1d1d1d; /* neutral-800 */
-  --color-surface-2: #282828; /* neutral-725 */
-  --color-surface-3: #414141; /* neutral-700 */
-  --color-border: rgba(255, 255, 255, 0.08);
-  --color-border-strong: rgba(255, 255, 255, 0.16);
+  /* Surfaces — Click UI dark (`--click-global-color-*`). The page is
+     background-default, a pane is background-muted, and the two raised steps
+     are the stroke and intense neutrals Click UI uses for hover and disabled
+     fills. The light theme below redefines the same names. */
+  --color-bg: #1f1f1c; /* neutral-750, global background-default */
+  --color-surface: #282828; /* neutral-725, global background-muted */
+  --color-surface-2: #323232; /* neutral-712, hover and raised fills */
+  --color-surface-3: #414141; /* neutral-700, stroke-intense */
+  --color-border: #323232; /* global stroke-default */
+  --color-border-strong: #414141; /* global stroke-intense */
 
-  /* Text — CH uses #f9f9f9 (neutral-100) for body, not pure white.
-     `text-subtle` was #808080 (neutral-500); axe-core flagged it as
-     failing WCAG AA on --color-surface-2 (#282828) — ratio 3.68 vs
-     required 4.5. Bumped to #9b9b9b (neutral-400) → ratio 5.26 on
-     surface-2 and stays comfortably readable on the warm-black bg. */
-  --color-text: #f9f9f9; /* neutral-100 */
-  --color-text-muted: #c0c0c0; /* neutral-300 */
-  --color-text-subtle: #9b9b9b; /* neutral-400 — AA on surface-2 */
+  /* Text — Click UI text-default, text-muted (slate-300). `text-subtle` is
+     slate-400, not Click UI's disabled #808080: subtle text is read, and
+     #9a9ea7 holds WCAG AA (4.9:1) on --color-surface-2. */
+  --color-text: #ffffff; /* global text-default */
+  --color-text-muted: #b3b6bd; /* global text-muted, slate-300 */
+  --color-text-subtle: #9a9ea7; /* slate-400 — AA on surface-2 */
   /* Text drawn on the graph canvas (node labels): full text colour with a
-     surface-coloured stroke behind it; 16.0:1 on --color-surface. The ring
-     and relation captions use text-subtle (6.1:1 on --color-surface). */
+     surface-coloured stroke behind it. The ring and relation captions use
+     text-subtle. */
   --color-text-on-canvas: #f9f9f9;
 
-  /* Focus ring — one token, used by the global focus-visible rule and by
-     every primitive that draws its own ring. */
+  /* Focus ring — Click UI global outline-default. One token, used by the
+     global focus-visible rule and by every primitive that draws its own ring. */
   --color-focus: #faff69;
 
   /* Modal and drawer backdrop. */
-  --color-overlay: rgba(0, 0, 0, 0.5);
+  --color-overlay: rgba(21, 21, 21, 0.6);
 
-  /* Brand yellow — CH primary-300 */
-  --color-accent: #faff69; /* primary-300 */
+  /* Accent — the primary button: brand-300 yellow, lighter on hover (Click UI
+     lightens rather than darkens), #1f1f1c text on it. */
+  --color-accent: #faff69; /* brand-300, button primary background-default */
   --color-accent-soft: rgba(250, 255, 105, 0.1);
-  --color-accent-strong: #eef400; /* primary-400, hover */
-  --color-on-accent: #0a0a0a; /* text/icon color on yellow surfaces */
+  --color-accent-strong: #fbff96; /* button primary background-hover */
+  --color-on-accent: #1f1f1c; /* button primary text */
 
-  /* Semantic — CH cyan / orange / red */
-  --color-success: #00cbeb;
-  --color-warn: #feaa0c;
-  --color-danger: #fe4234;
-  --color-info: #7dd3fc;
+  /* Semantic — the Click UI solid badge colours (success-200, warning-300,
+     danger-200, info-200); `bg-x/15` tints with the same hue read as the
+     Click UI opaque badge and alert. */
+  --color-success: #99ffa1;
+  --color-warn: #ff9457;
+  --color-danger: #ff9898;
+  --color-info: #a1bef7;
+
+  /* Elevation — Click UI's one shadow (cards, popovers, dialogs) in the
+     theme's shadow colour; the Tailwind `shadow-*` steps all resolve to it
+     so a menu and a dialog lift the same way. */
+  --color-shadow: rgba(21, 21, 21, 0.6);
+  --shadow-sm: 0 1px 2px 0 var(--color-shadow);
+  --shadow-md: 0 4px 6px -1px var(--color-shadow), 0 2px 4px -1px var(--color-shadow);
+  --shadow-lg: 0 4px 6px -1px var(--color-shadow), 0 2px 4px -1px var(--color-shadow);
+  --shadow-xl: 0 8px 16px -4px var(--color-shadow), 0 4px 6px -2px var(--color-shadow);
+  --shadow-2xl: 0 16px 32px -8px var(--color-shadow), 0 4px 6px -2px var(--color-shadow);
+
+  /* Radii — Click UI is square-cornered: buttons, fields, cards, popovers
+     and nav items are 4 px; panels and dialogs 8 px; badges full. The
+     Tailwind steps map onto those three so existing `rounded-*` classes
+     land on the system. */
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 4px;
+  --radius-lg: 4px;
+  --radius-xl: 8px;
+  --radius-2xl: 8px;
+  --radius-3xl: 12px;
 
   /* Categorical — eight hues for things that are different, not ranked
      (graph communities, hop rings). Cycle in this order. */
   --color-cat-1: #faff69;
-  --color-cat-2: #00cbeb;
+  --color-cat-2: #6d9bf3;
   --color-cat-3: #feaa0c;
   --color-cat-4: #7dd3fc;
   --color-cat-5: #c4b5fd;
   --color-cat-6: #86efac;
   --color-cat-7: #fda4af;
   --color-cat-8: #fcd34d;
+}
+
+/* ============================================================
+   Light theme — Click UI light (`tokens-light.css`)
+   ============================================================
+   The same names as the dark set. Click UI's light accent is not the
+   yellow: its primary button is slate-800 with white text and its focus
+   outline and links are info-400, so a yellow CTA never sits on white. */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --color-bg: #ffffff; /* global background-default */
+  --color-surface: #f6f7fa; /* slate-50, global background-muted */
+  --color-surface-2: #e6e7e9; /* slate-100 */
+  --color-surface-3: #cccfd3; /* slate-200 */
+  --color-border: #e6e7e9; /* global stroke-default */
+  --color-border-strong: #b3b6bd; /* global stroke-intense */
+
+  --color-text: #161517; /* slate-900, global text-default */
+  --color-text-muted: #53575f; /* slate-700 */
+  --color-text-subtle: #696e79; /* slate-600, global text-muted */
+  --color-text-on-canvas: #161517;
+
+  --color-focus: #437eef; /* info-400, global outline-default */
+  --color-overlay: rgba(21, 21, 21, 0.45);
+
+  --color-accent: #302e32; /* slate-800, button primary background-default */
+  --color-accent-soft: rgba(48, 46, 50, 0.08);
+  --color-accent-strong: #44464b; /* button primary background-hover */
+  --color-on-accent: #ffffff;
+
+  --color-success: #008a0b; /* success-700 */
+  --color-warn: #a33c00; /* warning-700 */
+  --color-danger: #c10000; /* danger-600 */
+  --color-info: #437eef; /* info-400 */
+
+  --color-shadow: rgba(21, 21, 21, 0.15);
+
+  /* Categorical hues dark enough to read on white. */
+  --color-cat-1: #959900;
+  --color-cat-2: #1d64ec;
+  --color-cat-3: #d64f00;
+  --color-cat-4: #0d3e9b;
+  --color-cat-5: #7c3aed;
+  --color-cat-6: #008a0b;
+  --color-cat-7: #be185d;
+  --color-cat-8: #a16207;
 }
 
 /* ============================================================
@@ -197,6 +274,24 @@ h3 {
 }
 .font-mono {
   font-family: var(--font-mono);
+}
+
+/* Agent badge — a Click UI opaque badge in the agent's own hue
+   (`--agent-hue`, set by AgentBadge): a 20 % tint, a 10 % stroke, text
+   light on dark and deep on light. */
+.agent-badge {
+  --agent-l: 0.88;
+  --agent-tint-l: 0.75;
+  background: oklch(var(--agent-tint-l) 0.12 var(--agent-hue) / 0.2);
+  border-color: oklch(var(--agent-tint-l) 0.12 var(--agent-hue) / 0.15);
+  color: oklch(var(--agent-l) 0.08 var(--agent-hue));
+}
+.agent-badge-dot {
+  background: oklch(var(--agent-tint-l) 0.16 var(--agent-hue));
+}
+:root[data-theme="light"] .agent-badge {
+  --agent-l: 0.42;
+  --agent-tint-l: 0.6;
 }
 
 /* ============================================================
@@ -303,7 +398,7 @@ h3 {
   );
   background-size: 200% 100%;
   animation: shimmer 1.4s ease-in-out infinite;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
 }
 
 /* ============================================================
@@ -448,7 +543,7 @@ input:focus-visible,
   pointer-events: none;
   max-width: 60%;
   padding: 2px 8px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   font-size: 12px;
   line-height: 1.4;
   white-space: nowrap;
@@ -456,7 +551,7 @@ input:focus-visible,
   text-overflow: ellipsis;
   background: var(--color-text);
   color: var(--color-bg);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow-md);
   transform: translate(-50%, -100%);
 }
 .graph-readout[data-side="below"] {
@@ -536,7 +631,7 @@ input:focus-visible,
   padding: 10px 12px;
   text-align: left;
   border: 1px solid var(--color-border);
-  border-radius: 10px;
+  border-radius: var(--radius-xl);
   background: var(--color-surface);
 }
 .tq-tile:hover {
@@ -566,7 +661,7 @@ input:focus-visible,
   width: 100%;
   gap: 8px;
   padding: 7px 8px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   color: var(--color-text-muted);
   text-align: left;
 }
@@ -616,19 +711,19 @@ input:focus-visible,
 }
 .tq-av[data-kind="bot"] {
   border-radius: 5px;
-  background: #2a3b44;
+  background: color-mix(in srgb, var(--color-info) 15%, transparent);
   color: var(--color-info);
 }
 .tq-av[data-kind="me"] {
   background: var(--color-accent-soft);
   color: var(--color-accent);
-  border: 1px solid rgba(250, 255, 105, 0.3);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 30%, transparent);
 }
 
 /* ---- list */
 .tq-group {
   border: 1px solid var(--color-border);
-  border-radius: 10px;
+  border-radius: var(--radius-xl);
   background: var(--color-surface);
   margin-bottom: 12px;
   overflow: hidden;
@@ -790,7 +885,7 @@ input:focus-visible,
 .tq-mini {
   height: 26px;
   padding: 0 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   font-size: var(--text-xs);
   font-weight: 500;
   border: 1px solid var(--color-border-strong);
@@ -818,7 +913,7 @@ input:focus-visible,
 .tq-col {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
-  border-radius: 10px;
+  border-radius: var(--radius-xl);
   min-height: 200px;
   display: flex;
   flex-direction: column;
@@ -826,7 +921,7 @@ input:focus-visible,
 .tq-card {
   background: var(--color-surface-2);
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 10px 10px 8px;
   text-align: left;
   width: 100%;
@@ -875,7 +970,7 @@ input:focus-visible,
 .tq-panel {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
-  border-radius: 10px;
+  border-radius: var(--radius-xl);
   position: sticky;
   top: 12px;
   max-height: calc(100vh - 24px);
@@ -935,8 +1030,8 @@ input:focus-visible,
 .tq-constraint {
   border-left: 3px solid var(--color-warn);
   padding: 6px 10px;
-  background: rgba(254, 170, 12, 0.06);
-  border-radius: 0 6px 6px 0;
+  background: color-mix(in srgb, var(--color-warn) 6%, transparent);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
   color: var(--color-text-muted);
   white-space: pre-wrap;
 }
@@ -980,7 +1075,7 @@ input:focus-visible,
 }
 .tq-track div {
   background: var(--color-surface-2);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   padding: 6px 8px;
 }
 .tq-btn {
@@ -989,7 +1084,7 @@ input:focus-visible,
   gap: 6px;
   height: 32px;
   padding: 0 12px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   border: 1px solid var(--color-border-strong);
   color: var(--color-text);
   background: var(--color-surface);
@@ -1018,7 +1113,7 @@ input:focus-visible,
 .tq-seg {
   display: inline-flex;
   border: 1px solid var(--color-border-strong);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   overflow: hidden;
 }
 .tq-seg button {
@@ -1036,7 +1131,7 @@ input:focus-visible,
 }
 .tq-empty {
   border: 1px dashed var(--color-border-strong);
-  border-radius: 10px;
+  border-radius: var(--radius-xl);
   padding: 28px;
   text-align: center;
   color: var(--color-text-muted);
@@ -1050,15 +1145,15 @@ input:focus-visible,
   padding: 4px;
   background: var(--color-surface-2);
   border: 1px solid var(--color-border-strong);
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
 }
 .tq-menu button {
   display: block;
   width: 100%;
   text-align: left;
   padding: 6px 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   font-size: var(--text-sm);
   color: var(--color-text);
 }
@@ -1079,7 +1174,7 @@ input:focus-visible,
     z-index: 40;
     border-radius: 0;
     max-height: none;
-    box-shadow: -24px 0 48px rgba(0, 0, 0, 0.5);
+    box-shadow: var(--shadow-2xl);
   }
 }
 @media (max-width: 820px) {

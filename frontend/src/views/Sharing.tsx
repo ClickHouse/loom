@@ -430,7 +430,7 @@ function RoleBadge({ role }: { role: string }) {
     role === "admin"
       ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
       : role === "writer"
-        ? "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300"
+        ? "bg-[var(--color-success)]/15 text-[var(--color-success)]"
         : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]";
   return <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${tone}`}>{role}</span>;
 }

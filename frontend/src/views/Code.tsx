@@ -819,7 +819,7 @@ function JoinDialog({
   return (
     <Dialog.Root open={repo !== null} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-black/40 z-40" />
+        <Dialog.Overlay className="fixed inset-0 bg-[var(--color-overlay)] z-40" />
         <Dialog.Content className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[min(92vw,500px)] rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl outline-none">
           {repo && (
             <>
@@ -970,7 +970,7 @@ function BranchesDialog({
   return (
     <Dialog.Root open={true} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-black/40 z-40" />
+        <Dialog.Overlay className="fixed inset-0 bg-[var(--color-overlay)] z-40" />
         <Dialog.Content className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[min(92vw,520px)] max-h-[90vh] flex flex-col rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl outline-none">
           <div className="p-6 pb-3">
             <Dialog.Title className="text-[17px] font-semibold tracking-tight flex items-center gap-2">
@@ -1073,7 +1073,7 @@ function BranchesDialog({
                     setBusy(false);
                   }
                 }}
-                className={`inline-flex items-center gap-1.5 px-3.5 py-2 text-[13px] font-medium rounded-md disabled:opacity-50 ${plan.leave.length > 0 && plan.join.length === 0 ? "bg-[var(--color-danger)] text-white hover:opacity-90" : "bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:bg-[var(--color-accent-strong)]"}`}
+                className={`inline-flex items-center gap-1.5 px-3.5 py-2 text-[13px] font-medium rounded-md disabled:opacity-50 ${plan.leave.length > 0 && plan.join.length === 0 ? "bg-[var(--color-danger)] text-[var(--color-on-accent)] hover:opacity-90" : "bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:bg-[var(--color-accent-strong)]"}`}
               >
                 {busy ? <RefreshCw size={13} className="animate-spin" /> : <Check size={13} />} Apply
                 {changes ? ` ${changes} change${changes === 1 ? "" : "s"}` : ""}
@@ -1276,7 +1276,7 @@ export function AddRepositoryDialog({
       }}
     >
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-black/40 z-40" />
+        <Dialog.Overlay className="fixed inset-0 bg-[var(--color-overlay)] z-40" />
         <Dialog.Content className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[min(92vw,540px)] max-h-[90vh] overflow-y-auto rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl outline-none">
           <Dialog.Title className="text-[17px] font-semibold tracking-tight flex items-center gap-2">
             <GitBranch size={16} /> Add a repository
@@ -1705,7 +1705,7 @@ function AddBranchDialog({
   return (
     <Dialog.Root open={group !== null} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-black/40 z-40" />
+        <Dialog.Overlay className="fixed inset-0 bg-[var(--color-overlay)] z-40" />
         <Dialog.Content className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[min(92vw,440px)] rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl outline-none">
           {group && src && (
             <form onSubmit={submit}>

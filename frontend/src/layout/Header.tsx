@@ -1,6 +1,16 @@
 import { Suspense, lazy, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import * as Popover from "@radix-ui/react-popover";
-import { LogOut, Plus, FileText, Sparkles, HelpCircle, Search, Settings as SettingsIcon } from "lucide-react";
+import {
+  LogOut,
+  Plus,
+  FileText,
+  Sparkles,
+  HelpCircle,
+  Search,
+  Settings as SettingsIcon,
+  Sun,
+  Moon,
+} from "lucide-react";
 import { useStore } from "../lib/state";
 import { clearToken, isProxyMode } from "../api";
 import { toast } from "../components/Toast";
@@ -20,6 +30,7 @@ import { PendingApprovalsBell } from "../components/PendingApprovalsBell";
 import { TaskInboxBell } from "../components/TaskInboxBell";
 import { Tip } from "../components/ui";
 import { READ_ONLY_TIP, canWrite, useNamespaceRole } from "../lib/namespaceRole";
+import { setTheme, storedTheme, type Theme } from "../lib/theme";
 
 /**
  * Header — top chrome of every page.
@@ -158,6 +169,8 @@ export function Header() {
         {/* Task inbox bell: review items and blocked tasks in
             this namespace's inboxes. One task.counts call per two minutes. */}
         <TaskInboxBell />
+
+        <ThemeToggle />
 
         {/* Keyboard shortcut + general help. Opens HelpDialog mounted
             in App.tsx (state lives in the store). */}
@@ -438,5 +451,25 @@ function DeferredHeaderSearch({ autoFocus }: { autoFocus: boolean }) {
     <Suspense fallback={placeholder}>
       <HeaderSearch autoFocus={autoFocus || wantFocus} initialQuery={draft} />
     </Suspense>
+  );
+}
+
+/** Switches between Click UI's dark and light themes; the choice is remembered per browser. */
+function ThemeToggle() {
+  const [theme, setThemeState] = useState<Theme>(storedTheme);
+  const next: Theme = theme === "dark" ? "light" : "dark";
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        setTheme(next);
+        setThemeState(next);
+      }}
+      title={`Switch to ${next} theme`}
+      aria-label={`Switch to ${next} theme`}
+      className="h-8 w-8 inline-flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-md transition-colors"
+    >
+      {theme === "dark" ? <Sun size={15} aria-hidden="true" /> : <Moon size={15} aria-hidden="true" />}
+    </button>
   );
 }

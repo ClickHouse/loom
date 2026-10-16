@@ -543,7 +543,7 @@ function NavBtn({
       }}
       className={`w-full flex items-center ${collapsed ? "justify-center" : "justify-between"} gap-2 ${collapsed ? "px-2 py-2" : "px-3 py-2"} text-md rounded-lg transition-colors relative no-underline ${
         active
-          ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)] font-medium"
+          ? "bg-[var(--color-surface-2)] text-[var(--color-text)] font-medium"
           : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]"
       }`}
       aria-label={collapsed ? item.label : undefined}

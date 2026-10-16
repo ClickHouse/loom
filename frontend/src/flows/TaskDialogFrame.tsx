@@ -80,7 +80,7 @@ export const PRIMARY_BTN =
 export const SECONDARY_BTN =
   "inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed";
 export const DANGER_BTN =
-  "inline-flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium rounded-md bg-[var(--color-danger)] text-white hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed";
+  "inline-flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium rounded-md bg-[var(--color-danger)] text-[var(--color-on-accent)] hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed";
 
 export function Field({
   id,
