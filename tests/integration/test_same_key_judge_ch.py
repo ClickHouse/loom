@@ -3351,6 +3351,34 @@ async def test_a_value_closed_with_a_future_end_is_not_current(ch, org) -> None:
     assert await _open_facts(ch, org, want) == want
 
 
+async def test_unrelated_revisions_add_no_weight_to_a_value_valid_until_a_dated_move(
+    ch, org
+) -> None:
+    # Paris holds until the move to Berlin next month starts. Each revision of an
+    # unrelated Oslo row checks the relation, finds Paris valid now and states nothing.
+    live = ("user", "live_in")
+    ahead = naive_utc_now() + timedelta(days=45)
+    await _stated(ch, org, "s1", "I live in Paris", (*live, "paris"), valid_at=datetime(2026, 6, 1))
+    await _stated(
+        ch, org, "s2", "I am moving to Berlin", (*live, "berlin"), memory_key="move", valid_at=ahead
+    )
+    oslo = await _stated(
+        ch,
+        org,
+        "s3",
+        "I lived in Oslo",
+        (*live, "oslo"),
+        memory_key="trip",
+        valid_at=datetime(2026, 1, 1),
+    )
+    await _mutations_done(ch, org)
+    assert (await _open_weights(ch, org, "paris"))["triples"] == 1
+    for value in ("I like Rome", "I like Rome a lot", "I like Rome most"):
+        await _revise("memory.update_by_id", org, oslo, value, (("user", "like", "rome"),))
+        await _mutations_done(ch, org)
+    assert (await _open_weights(ch, org, "paris"))["triples"] == 1
+
+
 async def test_a_recovered_value_starts_at_the_revision_and_walks_on_both_planes(ch, org) -> None:
     # London undone over Paris at T1, then revised away at T2: Paris is stated again
     # from T2, its edge too, and a walk between T1 and T2 still reaches only London.

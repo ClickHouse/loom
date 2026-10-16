@@ -600,11 +600,23 @@ async def _keep_one_current(input: Any, values: list[tfr.Triple], *, ch: Any) ->
     )
     now = naive_utc_now()
 
+    # When each relation's open values start ("moving to Berlin on Dec 1").
+    open_starts: dict[tuple[str, str], list[Any]] = {}
+    for r in rows:
+        if r["valid_to"] is None:
+            open_starts.setdefault((r["subject"], r["relation"]), []).append(r["valid_from"])
+
     def valid_now(r: Mapping[str, Any]) -> bool:
-        # A close with a future end (`invalid_at` set) is not a value that holds on.
         started = r["valid_from"] is None or r["valid_from"] <= now
         ends = r["valid_to"]
-        return started and (ends is None or (ends > now and r["invalid_at"] is None))
+        if not started or (ends is not None and ends <= now):
+            return False
+        if ends is None or r["invalid_at"] is None:
+            return True
+        # A close gave it a later end (`invalid_at` set): it holds on only while an open
+        # value starts by then to take over, and not once that value is gone too.
+        starts = open_starts.get((r["subject"], r["relation"]), [])
+        return any(start is None or start <= ends for start in starts)
 
     current = {(r["subject"], r["relation"]) for r in rows if valid_now(r)}
     # A value still open starts later ("moving on Dec 1"): it is not stated again.

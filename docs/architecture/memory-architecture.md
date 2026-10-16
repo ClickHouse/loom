@@ -341,7 +341,8 @@ the value it was written or stated for (`carried`):
   retired rows' facts again after its plan, so a replay of a follow whose close landed
   still ends the rest. When
   a revision, or a retirement the follow closes, leaves a single-valued relation of the
-  row with no value valid now (a value a close ended later does not count), the newest
+  row with no value valid now (a value a close ended later counts only while an open
+  value starts by that end: Paris holds until the move to Berlin it was closed for), the newest
   value a live row still holds and a close ended is stated again from now, as an Undo
   states it: triple and edge markers, then the interval repair, so a newer value written
   meanwhile wins. London undone over Paris and then revised or retired away leaves Paris
