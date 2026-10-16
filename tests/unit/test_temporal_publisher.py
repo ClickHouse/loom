@@ -1716,3 +1716,26 @@ def test_another_builds_row_with_an_empty_span_does_not_block_the_next_write(
     monkeypatch.setattr(store, "landed_heads", versions)
     (row,) = run(pub.publish_rows([mrow('"B"')]))
     assert journal.commits[1]["operation"] == "memory.observed" and row["value"] == '"B"'
+
+
+def test_a_key_another_build_made_and_deleted_takes_the_next_write(
+    journal: Journal, monkeypatch
+) -> None:
+    # The key's only row is another build's tombstone: nothing to seed, but its version
+    # is recorded as seen, and the write goes on (no planning again until busy).
+    gone = mrow('"A"', journal_version=0, tombstoned_at=datetime(2026, 1, 1))
+
+    async def heads(*_a, **_k):
+        return [gone]
+
+    async def versions(*_a, **_k):
+        return {("a", "-", "-", "k"): (gone["version"], 0)}
+
+    monkeypatch.setattr(store, "memory_heads", heads)
+    monkeypatch.setattr(store, "landed_heads", versions)
+    (row,) = run(pub.publish_rows([mrow('"B"')]))
+    first = journal.commits[0]
+    assert (first["operation"], first["change_kind"], first["row_version"]) == (
+        "memory.observed", "restate", gone["version"],
+    )  # fmt: skip
+    assert row["value"] == '"B"'

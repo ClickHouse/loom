@@ -632,6 +632,8 @@ class _Batch:
     # Keys a past-only change re-cut the current claim of (a plan bounding it): its
     # row is not the write's, so it is reconciled once the batch is published.
     refresh: list[Ident] = field(default_factory=list)
+    # Per key, the loom.memory version of the head the plan read (0: none).
+    read_heads: dict[Ident, int] = field(default_factory=dict)
 
 
 async def _plan(
@@ -668,6 +670,7 @@ async def _plan(
         erased=gone,
     )
     head_rows = {ident_of(h): h for h in heads}
+    b.read_heads = {ident: int(h.get("version") or 0) for ident, h in head_rows.items()}
     # The claim each current row shows, when a restatement wrote it (its commit names it).
     for ident, aid in (await store.restated_claims(org, ns, heads, ch=ch)).items():
         if ident in head_rows:
@@ -922,10 +925,20 @@ def _seed(
     """A key written before the journal existed: its live row is journaled first, as
     a commit of its own, so the change after it revises or removes a real claim.
     It is not this request's change: no retry key, no receipt."""
-    if head is None or removes(head) or _erased_before(head, b.erased):
+    if head is None:
+        return
+    memory_id = str(head["memory_id"])
+    if removes(head) or _erased_before(head, b.erased):
+        # Nothing to serve (a removal, a leftover an erasure cut hides), but the row's
+        # version is recorded as seen, or it would read as another build's unseen write.
+        seen = tm.Amendment("restate")
+        b.planned.append(
+            _Planned(
+                ident, memory_id, seen, seen.payload_sha256(), head, [], seed=True, observed=True
+            )
+        )
         return
     seed = tm.Amendment("assert", (), (assertion_from_row(head, WriteIntent()),))
-    memory_id = str(head["memory_id"])
     for a in seed.added:
         current[a.assertion_id] = Served(a, memory_id, 0, _EPOCH)
     b.planned.append(_Planned(ident, memory_id, seed, seed.payload_sha256(), head, [], seed=True))
@@ -956,8 +969,12 @@ def _adopt(
     # no write-time policy (a lock, a pin guard, a declared field) applies to a write
     # that has already happened.
     try:
-        planned = amendment_for_row(
-            head, [x.a for x in current.values()], WriteIntent(), None, now=now
+        planned = (
+            tm.Amendment("restate")  # a leftover an erasure cut hides: seen, not served
+            if _erased_before(head, b.erased)
+            else amendment_for_row(
+                head, [x.a for x in current.values()], WriteIntent(), None, now=now
+            )
         )
     except tm.EmptyInterval:
         planned = tm.Amendment("restate")  # a span the journal cannot hold (empty, inverted)
@@ -987,7 +1004,7 @@ def _adopt(
 async def adopt(org: str, ns: str, idents: Sequence[Ident]) -> int:
     """Journal the writes of these keys' current rows that the journal has not seen
     (`foreign`), so neither a read nor the reconciler takes them for drift. Returns
-    the keys adopted."""
+    the foreign rows it looked at."""
     heads = await store.memory_heads(org, ns, idents)
     committed = await store.newest_row_versions(org, ns, idents)
     rows = [h for h in heads if foreign(h, committed.get(ident_of(h), 0))]
@@ -1491,8 +1508,11 @@ async def _above_landed(b: _Batch, ch: _CHClient) -> bool:
     committed = await store.newest_row_versions(b.org, b.ns, b.keys, ch=ch)
     # A seed or adoption of this batch journals the row itself: no reason to plan again.
     adopting = {(p.ident, int(p.row.get("version") or 0)) for p in b.planned if p.seed}
+    # Only a foreign row that landed after the plan read the key: one the plan saw was
+    # already seeded or adopted (or found to hold nothing to journal).
     if any(
-        (ident, v) not in adopting
+        v > b.read_heads.get(ident, 0)
+        and (ident, v) not in adopting
         and foreign({"version": v, "journal_version": j}, committed.get(ident, 0))
         for ident, (v, j) in landed.items()
     ):
