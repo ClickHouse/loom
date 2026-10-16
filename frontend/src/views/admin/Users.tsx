@@ -206,7 +206,7 @@ function ClaimReleaseSection() {
 
   return (
     <section className="mt-8">
-      <h2 className="text-lg font-semibold mb-3">Release a namespace claim</h2>
+      <h2 className="mb-3">Release a namespace claim</h2>
       <div className="rounded-2xl border border-border bg-surface p-5">
         <div className="text-sm text-text-muted mb-4">
           Release a namespace whose owner lost their password: its grants are revoked and it is deactivated. Existing

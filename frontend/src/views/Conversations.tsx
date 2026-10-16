@@ -67,7 +67,7 @@ function linkify(text: string) {
 function CodeBlock({ code, lang }: { code: string; lang?: string }) {
   return (
     <div className="relative group my-2">
-      {lang && <span className="absolute left-2 top-1 text-xs text-text-subtle">{lang}</span>}
+      {lang && <span className="absolute left-2 top-1 text-xs text-text-muted">{lang}</span>}
       <CopyButton
         text={code}
         label="Copy"
@@ -432,7 +432,7 @@ export function Conversations() {
               </div>
               {t.title ? <div className="text-sm font-medium text-text truncate">{t.title}</div> : null}
               <div className={`text-sm truncate ${t.title ? "text-text-muted" : "text-text"}`}>
-                <span className="text-xs font-medium text-text-subtle mr-1.5">{t.last_role}</span>
+                <span className="text-xs font-medium text-text-muted mr-1.5">{t.last_role}</span>
                 {truncate(t.last_content_excerpt, 140)}
               </div>
             </div>
@@ -549,7 +549,7 @@ export function Conversations() {
             <div className="mx-auto mb-3 grid place-items-center w-12 h-12 rounded-2xl bg-surface-2">
               <Icon name="search" size="md" aria-hidden="true" />
             </div>
-            <h2 className="text-lg font-semibold tracking-tight">No matches for "{q}"</h2>
+            <h2>No matches for "{q}"</h2>
             <p className="mt-1 text-sm text-text-muted">Try a different phrase, or browse recent threads below.</p>
           </div>
           {renderRecentThreads("Or, the most recent threads")}
@@ -586,7 +586,7 @@ export function Conversations() {
                   >
                     <div className="flex items-center gap-2 mb-1 text-xs tabular">
                       <Badge text={h.role} state="neutral" size="sm" />
-                      <span className="text-text-subtle ml-auto">{relativeTime(h.ts)}</span>
+                      <span className="text-text-muted ml-auto">{relativeTime(h.ts)}</span>
                     </div>
                     <div className="text-sm text-text leading-snug">{truncate(h.content_excerpt || "", 280)}</div>
                   </button>
@@ -673,9 +673,9 @@ export function Conversations() {
                     <div className="flex items-center gap-2 mb-1">
                       <span className="text-xs font-medium text-text-muted">{label}</span>
                       {typeof m.tokens === "number" && m.tokens > 0 && (
-                        <span className="text-xs text-text-subtle">· {m.tokens} tok</span>
+                        <span className="text-xs text-text-muted">· {m.tokens} tok</span>
                       )}
-                      <time dateTime={m.ts} className="text-xs text-text-subtle ml-auto tabular">
+                      <time dateTime={m.ts} className="text-xs text-text-muted ml-auto tabular">
                         {relativeTime(m.ts)}
                         <span className="sr-only"> ({m.ts})</span>
                       </time>

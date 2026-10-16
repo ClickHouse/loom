@@ -421,7 +421,7 @@ function AuditRow({ row }: { row: AuditEntry }) {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 text-sm">
             <span className="text-text">{summary}</span>
-            <span className="text-text-subtle ml-auto tabular text-xs">{relativeTime(row.ts)}</span>
+            <span className="text-text-muted ml-auto tabular text-xs">{relativeTime(row.ts)}</span>
           </div>
           <div className="flex items-center gap-2 text-xs text-text-muted mt-0.5">
             <span className="font-mono">{row.event_type}</span>

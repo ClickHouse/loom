@@ -133,8 +133,8 @@ function FactList({
   onOpenMemory: (k: string) => void;
   emptyText: string;
 }) {
-  if (facts === null) return <div className="text-xs text-text-subtle">Reading…</div>;
-  if (facts.length === 0) return <div className="text-xs text-text-subtle">{emptyText}</div>;
+  if (facts === null) return <div className="text-xs text-text-muted">Reading…</div>;
+  if (facts.length === 0) return <div className="text-xs text-text-muted">{emptyText}</div>;
   return (
     <ul className="space-y-1">
       {facts.map((f) => {
@@ -171,7 +171,7 @@ function FactList({
               </span>
               <span className="tabular-nums text-text-muted shrink-0">{f.co_occur}×</span>
             </div>
-            <div className="mt-0.5 flex items-center gap-1.5 text-xs text-text-subtle min-w-0 flex-wrap">
+            <div className="mt-0.5 flex items-center gap-1.5 text-xs text-text-muted min-w-0 flex-wrap">
               {f.provenance && <Badge text={f.provenance} state="neutral" size="sm" />}
               <span className="tabular-nums">{f.last_seen ? f.last_seen.slice(0, 10) : ""}</span>
               {f.stale ? (
@@ -364,7 +364,7 @@ export function Inspector({
             {c.via_relation ? (
               relationLabel(c.via_relation)
             ) : (
-              <span className="text-text-subtle font-sans">co-mention (no typed relation)</span>
+              <span className="text-text-muted font-sans">co-mention (no typed relation)</span>
             )}
           </MetaRow>
           {c.via_relation && (
@@ -377,7 +377,7 @@ export function Inspector({
             {held}
           </MetaRow>
           <MetaRow label="provenance">
-            {c.via_provenance || <span className="text-text-subtle">{typed ? "unknown" : "co-occurrence edge"}</span>}
+            {c.via_provenance || <span className="text-text-muted">{typed ? "unknown" : "co-occurrence edge"}</span>}
           </MetaRow>
           {stale && (
             <MetaRow label="stale" tone="warn">
@@ -608,7 +608,7 @@ export function Inspector({
                       {e}
                     </button>
                     {step && (
-                      <span className="text-xs text-text-subtle shrink-0 font-sans">
+                      <span className="text-xs text-text-muted shrink-0 font-sans">
                         {typed && step.via_relation ? relationLabel(step.via_relation) : `${step.via_co_occur}×`}
                       </span>
                     )}
@@ -651,9 +651,9 @@ export function Inspector({
               : "Memories naming the seed or this entity (memory.search with an entity boost — an OR, so a row may name only one of them); click one to open it."
           }
         />
-        {hits === null && <div className="text-xs text-text-subtle">Searching…</div>}
+        {hits === null && <div className="text-xs text-text-muted">Searching…</div>}
         {hits && hits.length === 0 && (
-          <div className="text-xs text-text-subtle">
+          <div className="text-xs text-text-muted">
             {memoryTypes.size || tags.size
               ? "No memory row of the chosen type or tags names either entity."
               : "No memory row names either entity; the edge may come from a chunk or a document."}
@@ -676,7 +676,7 @@ export function Inspector({
                     className="w-full text-left text-xs rounded-md border border-border bg-surface px-2 py-1.5 hover:border-border-strong"
                   >
                     <TextClamp text={excerpt} lines={1} max={200} reach="parent" className="leading-snug" />
-                    <div className="mt-0.5 flex items-center gap-1.5 min-w-0 text-xs text-text-subtle">
+                    <div className="mt-0.5 flex items-center gap-1.5 min-w-0 text-xs text-text-muted">
                       <Badge text={h.memory_type} state="neutral" size="sm" className="shrink-0" />
                       {h.created_at && <span className="tabular-nums shrink-0">{h.created_at.slice(0, 10)}</span>}
                       <span className="font-mono truncate flex-1">{h.memory_key}</span>

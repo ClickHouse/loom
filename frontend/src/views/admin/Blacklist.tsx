@@ -319,7 +319,7 @@ function PrivacyFiltersHitSummary({ rows }: { rows: BlacklistRow[] }) {
 
 function PrivacyFilterHits({ row }: { row: BlacklistRow }) {
   if (row.hit_count === 0) {
-    return <span className="text-text-subtle">never matched</span>;
+    return <span className="text-text-muted">never matched</span>;
   }
   const lastHitText = row.last_hit_at ? <>last {relativeTime(row.last_hit_at)}</> : <>last hit unknown</>;
   return (

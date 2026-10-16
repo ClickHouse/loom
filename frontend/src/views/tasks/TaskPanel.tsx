@@ -154,8 +154,8 @@ function Track({
   const ev = policy ? evidenceStatus(policy.require_evidence, task.brief) : null;
   return (
     <Section title="Poster's record in this inbox">
-      {record === undefined && <div className="text-xs text-text-subtle">counting…</div>}
-      {record === null && <div className="text-xs text-text-subtle">not readable</div>}
+      {record === undefined && <div className="text-xs text-text-muted">counting…</div>}
+      {record === null && <div className="text-xs text-text-muted">not readable</div>}
       {record && (
         // biome-ignore lint/a11y/useSemanticElements: a labelled cluster of counts, not form fields
         <div
@@ -173,7 +173,7 @@ function Track({
           ).map(([l, n]) => (
             <div key={l}>
               <div className="text-lg font-semibold leading-5 tabular">{n}</div>
-              <div className="text-xs text-text-subtle">{l}</div>
+              <div className="text-xs text-text-muted">{l}</div>
             </div>
           ))}
         </div>
@@ -219,7 +219,7 @@ function Track({
 
 function Timeline({ events, now }: { events: TaskEvent[] | null; now: number }) {
   if (events === null) return <div className="text-xs text-text-muted">Loading…</div>;
-  if (events.length === 0) return <div className="text-xs text-text-subtle">No events recorded.</div>;
+  if (events.length === 0) return <div className="text-xs text-text-muted">No events recorded.</div>;
   const asc = [...events].sort((a, b) => a.seq - b.seq);
   const rows = collapseHeartbeats(asc).reverse();
   return (
@@ -241,7 +241,7 @@ function Timeline({ events, now }: { events: TaskEvent[] | null; now: number }) 
               {" · "}
               {actorName(e.actor, e.agent)}
               {e.from_status && e.to_status && e.from_status !== e.to_status && (
-                <span className="text-text-subtle">
+                <span className="text-text-muted">
                   {" "}
                   · {e.from_status} → {e.to_status}
                 </span>
@@ -253,7 +253,7 @@ function Timeline({ events, now }: { events: TaskEvent[] | null; now: number }) 
                 </>
               )}
             </span>
-            <span className="text-xs text-text-subtle whitespace-nowrap">
+            <span className="text-xs text-text-muted whitespace-nowrap">
               <TipTarget tip={e.ts}>
                 <time dateTime={e.ts}>{rel(e.ts, now)}</time>
               </TipTarget>
@@ -409,7 +409,7 @@ export function TaskPanel({
         ) : (
           <h2 className={titleClass}>{current.title}</h2>
         )}
-        <div className="text-xs text-text-subtle flex gap-1.5 items-center flex-wrap">
+        <div className="text-xs text-text-muted flex gap-1.5 items-center flex-wrap">
           {handed ? (
             <>
               <b className="font-medium text-text-muted">from {posterName(current)}</b>
@@ -439,7 +439,7 @@ export function TaskPanel({
         <Section title="Objective">
           {task ? (
             <p className="m-0 text-text-muted whitespace-pre-wrap">
-              {brief.objective || <span className="text-text-subtle">The poster left the objective empty.</span>}
+              {brief.objective || <span className="text-text-muted">The poster left the objective empty.</span>}
             </p>
           ) : (
             <div className="text-xs text-text-muted">Loading…</div>
@@ -515,10 +515,10 @@ export function TaskPanel({
         aria-label="Actions"
       >
         {current.status === "deferred" && current.resume_at && (
-          <span className="text-xs text-text-subtle">otherwise resumes {rel(current.resume_at, now)}</span>
+          <span className="text-xs text-text-muted">otherwise resumes {rel(current.resume_at, now)}</span>
         )}
         {current.status === "in_progress" && (
-          <span className="text-xs text-text-subtle">
+          <span className="text-xs text-text-muted">
             owned by <b className="font-medium text-text-muted">{current.owner || "—"}</b>
             {lease !== null && <> · lease ends in {lease} min</>}
           </span>
@@ -586,7 +586,7 @@ export function TaskPanel({
         rowEl.focus({ preventScroll: true });
       }}
     >
-      <div className="tq-panel outline-none" data-sheet="" data-status={current.status}>
+      <div className="tq-panel" data-sheet="" data-status={current.status}>
         {body}
       </div>
     </RadixDialog.Content>

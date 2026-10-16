@@ -140,9 +140,7 @@ function RoleCard({
   return (
     <section aria-labelledby={`${id}-h`} className="rounded-lg border border-border p-3 space-y-2">
       <div className="flex flex-wrap items-center gap-2">
-        <h3 id={`${id}-h`} className="text-sm font-medium">
-          {label.title}
-        </h3>
+        <h3 id={`${id}-h`}>{label.title}</h3>
         <span className="text-xs text-text-muted min-w-0">
           — {label.hint}
           {label.required ? "" : " (optional)"}
@@ -409,7 +407,7 @@ function FieldRow({
           {custom && <Select.Item value="__custom">{describeExpr(expr)}</Select.Item>}
         </Select>
         {badge}
-        {spec.hint && <span className="text-xs text-text-subtle min-w-0">{spec.hint}</span>}
+        {spec.hint && <span className="text-xs text-text-muted min-w-0">{spec.hint}</span>}
       </div>
     </>
   );

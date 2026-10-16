@@ -288,8 +288,8 @@ export function TaskList({ groups, ctx, forceOpen, showClosed }: ListProps) {
                     <span id={`tq-group-${g}`} className="text-sm font-semibold">
                       {meta.label}
                     </span>
-                    <span className="text-xs text-text-subtle tabular">{rows.length}</span>
-                    <span className="ml-auto text-xs text-text-subtle hidden sm:inline">{meta.hint}</span>
+                    <span className="text-xs text-text-muted tabular">{rows.length}</span>
+                    <span className="ml-auto text-xs text-text-muted hidden sm:inline">{meta.hint}</span>
                     <Icon name="chevron-down" size="xs" className="car" aria-hidden="true" />
                   </button>
                 </h2>
@@ -299,7 +299,7 @@ export function TaskList({ groups, ctx, forceOpen, showClosed }: ListProps) {
               <div id={`tq-rows-${g}`} className="tq-rows">
                 {rows.length === 0 ? (
                   <div role="row">
-                    <div role="gridcell" className="px-3.5 py-3.5 text-sm text-text-subtle">
+                    <div role="gridcell" className="px-3.5 py-3.5 text-sm text-text-muted">
                       {g === "triage" ? "Nothing waiting for a decision." : "Drop here."}
                     </div>
                   </div>

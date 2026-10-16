@@ -321,7 +321,7 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
         {activeRows.length > 0 && (
           <div className="space-y-1">
             {pendingRows.length > 0 && (
-              <div className="mb-1 text-xs font-medium text-text-subtle">Members ({activeRows.length})</div>
+              <div className="mb-1 text-xs font-medium text-text-muted">Members ({activeRows.length})</div>
             )}
             {activeRows.map((r) => (
               <div key={r.subject} className="flex items-center gap-3 rounded-lg p-2.5 hover:bg-surface-2">
@@ -329,7 +329,7 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
                 <div className="min-w-0 flex-1">
                   <div className="truncate font-mono text-sm">
                     {r.subject}
-                    {r.subject === me && <span className="ml-2 font-sans text-xs text-text-subtle">(you)</span>}
+                    {r.subject === me && <span className="ml-2 font-sans text-xs text-text-muted">(you)</span>}
                   </div>
                   <div className="text-xs text-text-muted">
                     Granted {relativeTime(r.granted_at)} by {r.granted_by}
@@ -438,5 +438,5 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
 function RoleIcon({ role }: { role: GrantRole }) {
   if (role === "admin") return <Icon name="star" size="xs" color="var(--color-warn)" aria-label="Admin" />;
   if (role === "writer") return <Icon name="user" size="xs" color="var(--color-text-muted)" aria-label="Writer" />;
-  return <Icon name="eye" size="xs" color="var(--color-text-subtle)" aria-label="Viewer" />;
+  return <Icon name="eye" size="xs" color="var(--color-text-muted)" aria-label="Viewer" />;
 }

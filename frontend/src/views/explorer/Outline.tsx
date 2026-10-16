@@ -164,7 +164,7 @@ export function Outline({
     <div className="explorer-outline mt-3 lg:flex-1 lg:min-h-0 flex flex-col">
       <p className="text-xs text-text-muted mb-1" id="explorer-outline-summary">
         {summary}{" "}
-        <span className="text-text-subtle inline-flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+        <span className="text-text-muted inline-flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
           <span>
             <Kbd>↑</Kbd>
             <Kbd>↓</Kbd> move
@@ -249,7 +249,7 @@ export function Outline({
               </button>
               <div className="min-w-0 flex-1">
                 <div className={`font-mono truncate ${isSelected ? "text-text font-semibold" : "text-text"}`}>
-                  {isSeed ? <span className="text-text-subtle mr-1">seed</span> : null}
+                  {isSeed ? <span className="text-text-muted mr-1">seed</span> : null}
                   {n.entity}
                   {pinned.has(n.entity) && (
                     <Icon name="pin" size="xs" aria-hidden="true" className="inline ml-1" color="var(--color-accent)" />
@@ -275,7 +275,7 @@ export function Outline({
                   {hasCommunities && n.community_id !== null && (
                     <span className="truncate">· {communityLabel(n.community_id)}</span>
                   )}
-                  {n.origin === "expand" && <span className="text-text-subtle">· expanded</span>}
+                  {n.origin === "expand" && <span className="text-text-muted">· expanded</span>}
                 </div>
               </div>
               {isSelected && (

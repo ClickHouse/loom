@@ -143,7 +143,7 @@ export function MemoryCard({
             )}
           </span>
           <span className="block text-sm text-text leading-snug">
-            {value === null ? <span className="text-text-subtle">…</span> : truncate(value, 140)}
+            {value === null ? <span className="text-text-muted">…</span> : truncate(value, 140)}
           </span>
         </span>
         <Icon name="chevron-right" size="sm" aria-hidden="true" className="shrink-0" />
@@ -159,7 +159,7 @@ export function MemoryCard({
             className="pointer-events-auto relative z-[1]"
           />
         ))}
-        <span className="text-xs text-text-subtle tabular ml-auto">
+        <span className="text-xs text-text-muted tabular ml-auto">
           {timeMode === "absolute" ? timeOfDay(entry.created_at) : relativeTime(entry.created_at)}
         </span>
       </div>

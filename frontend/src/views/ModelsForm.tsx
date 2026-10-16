@@ -137,13 +137,13 @@ export function ModelsForm({ status, onValidate, onSave }: Props) {
       }}
     >
       <div>
-        <h2 className="text-xl font-semibold">Models &amp; keys</h2>
+        <h2>Models &amp; keys</h2>
         <p className="mt-2 text-sm text-text-muted">
           Configure the models Loom uses internally. Your Claude Code or Codex login stays separate. Keys stay on the
           server; leaving a key blank keeps its existing value.
         </p>
       </div>
-      <fieldset disabled={busy} className="space-y-6 disabled:opacity-70">
+      <fieldset disabled={busy} className="space-y-6">
         <div className="grid gap-4 sm:grid-cols-2">
           <Select
             label="LLM provider"

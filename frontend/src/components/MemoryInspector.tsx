@@ -93,7 +93,7 @@ function Disclosure({
 }
 
 function SectionEmpty({ children }: { children: React.ReactNode }) {
-  return <div className="text-xs text-text-subtle">{children}</div>;
+  return <div className="text-xs text-text-muted">{children}</div>;
 }
 
 interface InspectorProps {
@@ -579,7 +579,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
           onEscapeKeyDown={onEscapeKeyDown}
           onPointerDownOutside={onPointerDownOutside}
           onKeyDown={onContentKeyDown}
-          className={`fixed top-0 bottom-0 right-0 z-30 bg-surface border-l border-border shadow-2xl animate-slide-in flex flex-col outline-none ${
+          className={`fixed top-0 bottom-0 right-0 z-30 bg-surface border-l border-border shadow-2xl animate-slide-in flex flex-col ${
             expanded ? "w-[90vw] md:w-[85vw] max-w-none" : "w-full md:w-[640px] md:max-w-[90vw]"
           }`}
         >
@@ -587,7 +587,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
             <div className="flex items-center gap-2.5 min-w-0 flex-wrap">
               {detail?.pinned && <Icon name="star" size="sm" color="var(--color-warn)" aria-hidden="true" />}
               <Dialog.Title asChild>
-                <h2 className="font-mono text-lg text-text truncate m-0 font-semibold tracking-tight">{memoryKey}</h2>
+                <h2 className="font-mono text-text truncate m-0">{memoryKey}</h2>
               </Dialog.Title>
               <LifecycleBadge status={detail?.status} pinned={!!detail?.pinned} />
               {detail?.status === "duplicate" && detail.canonical_key && (
@@ -650,7 +650,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                 </section>
 
                 <section>
-                  <h3 className="text-xs font-medium text-text-muted mb-3">Metadata</h3>
+                  <h3 className="section-label text-text-muted mb-3">Metadata</h3>
                   <dl className="grid grid-cols-[110px_1fr] gap-y-2 text-sm">
                     <Row label="Type" value={detail.memory_type || "—"} mono />
                     {detail.char_limit != null && (
@@ -703,7 +703,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                 </section>
 
                 <section>
-                  <h3 className="text-xs font-medium text-text-muted mb-2">Tags</h3>
+                  <h3 className="section-label text-text-muted mb-2">Tags</h3>
                   <div className="flex flex-wrap gap-1.5 items-center">
                     {(detail.tags || []).map((t) => (
                       <Chip
@@ -761,7 +761,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                 memory opens the Explorer walked from it — not from the rail. */}
                 {(detail.entities || []).length > 0 && (
                   <section>
-                    <h3 className="text-xs font-medium text-text-muted mb-2">Entities</h3>
+                    <h3 className="section-label text-text-muted mb-2">Entities</h3>
                     <div className="flex flex-wrap gap-1.5 items-center">
                       {(detail.entities || []).map((en) => (
                         <EntityChip key={en} entity={en} />
@@ -927,7 +927,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                           <div className="flex items-center gap-2">
                             <span className="font-mono font-medium text-text">{s.step}</span>
                             <span className="text-text-muted">{s.actor}</span>
-                            <span className="text-text-subtle tabular ml-auto">{relativeTime(s.ts)}</span>
+                            <span className="text-text-muted tabular ml-auto">{relativeTime(s.ts)}</span>
                           </div>
                           {s.detail && <div className="text-xs text-text-muted mt-0.5">{s.detail}</div>}
                         </div>
@@ -1065,7 +1065,7 @@ function ProvenanceSection({
   return (
     <section>
       {!embedded && (
-        <h3 className="text-xs font-medium text-text-muted mb-2 flex items-center gap-1.5">
+        <h3 className="section-label text-text-muted mb-2 flex items-center gap-1.5">
           <Icon name="git-merge" size="xs" aria-hidden="true" /> Provenance
         </h3>
       )}
@@ -1088,8 +1088,8 @@ function ProvenanceSection({
                 </Tip>
               ) : p.source_kind === "conversation" ? (
                 <>
-                  From a conversation · <span className="text-text-subtle">transcript not retained</span>
-                  <div className="text-xs text-text-subtle">
+                  From a conversation · <span className="text-text-muted">transcript not retained</span>
+                  <div className="text-xs text-text-muted">
                     Recording was off, or it expired past the 180-day window.
                   </div>
                 </>
@@ -1097,7 +1097,7 @@ function ProvenanceSection({
                 <>
                   {p.source_label}
                   {p.source_trace && p.source_trace !== p.source_label && (
-                    <div className="text-xs text-text-subtle font-mono break-all">{p.source_trace}</div>
+                    <div className="text-xs text-text-muted font-mono break-all">{p.source_trace}</div>
                   )}
                 </>
               )}
@@ -1147,7 +1147,7 @@ function ProvenanceSection({
               <div className="flex items-center gap-1.5 text-xs text-text-muted mb-0.5">
                 <span>{lk.direction === "out" ? "→" : "←"}</span>
                 <span>{lk.relation || "linked"}</span>
-                {lk.label && <span className="text-text-subtle">· {lk.label}</span>}
+                {lk.label && <span className="text-text-muted">· {lk.label}</span>}
               </div>
               <div className="font-mono text-xs text-text truncate group-hover:text-accent">{lk.memory_key}</div>
             </button>
@@ -1301,7 +1301,7 @@ function CodeLinks({ links }: { links: CodeLink[] }) {
                 <span className="font-mono text-xs truncate">{l.symbol || l.path}</span>
                 <Badge state={state.state} text={state.label + since} size="sm" />
               </div>
-              <p className="text-xs font-mono text-text-subtle break-all">
+              <p className="text-xs font-mono text-text-muted break-all">
                 {l.code_namespace}
                 {l.symbol ? ` · ${l.path}` : ""}
               </p>
@@ -1416,7 +1416,7 @@ function RenameForm({
       className="rounded-xl border border-border bg-surface-2/50 p-4 space-y-3"
       data-testid="rename-form"
     >
-      <h3 id="rename-heading" className="text-xs font-medium text-text-muted flex items-center gap-1.5">
+      <h3 id="rename-heading" className="section-label text-text-muted flex items-center gap-1.5">
         <Icon name="arrow-right" size="xs" aria-hidden="true" /> Rename (keep redirect)
       </h3>
       <TextField
@@ -1448,7 +1448,7 @@ function RenameForm({
           ? "A reader of the old key keeps getting the old value, with the new key named; nothing changes under an agent that still reads it."
           : "The old key is deleted (restorable for 14 days). An agent that still reads it will get “not found”."}
       </p>
-      {!valid && target === fromKey && <p className="text-xs text-text-subtle">Type a different key to rename.</p>}
+      {!valid && target === fromKey && <p className="text-xs text-text-muted">Type a different key to rename.</p>}
       {preview && (
         <div
           role="status"

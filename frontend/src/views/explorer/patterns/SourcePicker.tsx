@@ -92,7 +92,7 @@ export function SourcePicker({
       aria-labelledby="patterns-picker-title"
       className="flex-1 min-h-0 overflow-auto rounded-xl border border-border bg-surface p-5 max-w-2xl"
     >
-      <h2 id="patterns-picker-title" className="text-sm font-semibold text-text">
+      <h2 id="patterns-picker-title" className="text-text">
         Which tracker source?
       </h2>
       <p className="text-sm text-text-muted mt-1">

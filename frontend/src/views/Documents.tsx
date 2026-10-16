@@ -449,7 +449,7 @@ export function Documents() {
           <div className="mx-auto mb-3 grid place-items-center w-12 h-12 rounded-2xl bg-surface-2">
             <Icon name="search" size="md" aria-hidden="true" />
           </div>
-          <h2 className="text-lg font-semibold tracking-tight">No documents match</h2>
+          <h2>No documents match</h2>
           <p className="mt-1 text-sm text-text-muted">
             {rows.length} loaded from this namespace, but none pass the active filters.
           </p>
@@ -608,7 +608,7 @@ export function Documents() {
             )}
           </span>
           {aggregateStats.withBlob < rows.length && (
-            <span className="text-text-subtle">
+            <span className="text-text-muted">
               {rows.length - aggregateStats.withBlob} text-only · no preserved original
             </span>
           )}

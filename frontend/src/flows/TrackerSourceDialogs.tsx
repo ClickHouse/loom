@@ -67,7 +67,7 @@ import { CancelButton, DialogFrame, ErrorNote } from "./TaskDialogFrame";
 function hinted(label: string, hint: string): ReactNode {
   return (
     <>
-      {label} <span className="font-normal text-text-subtle">({hint})</span>
+      {label} <span className="font-normal text-text-muted">({hint})</span>
     </>
   );
 }
@@ -75,7 +75,7 @@ function hinted(label: string, hint: string): ReactNode {
 const SUCCESS = "var(--color-success)";
 const WARN = "var(--color-warn)";
 const DANGER = "var(--color-danger)";
-const SUBTLE = "var(--color-text-subtle)";
+const SUBTLE = "var(--color-text-muted)";
 const MUTED = "var(--color-text-muted)";
 
 // ---------------------------------------------------------------------------
@@ -112,7 +112,7 @@ export function ContractReportView({
               <span className="font-mono text-text shrink-0">{r.table}</span>
               <span className="sr-only">{s.word}</span>
               <span className="text-text-muted min-w-0 break-words">
-                {!r.required && <span className="text-text-subtle">optional · </span>}
+                {!r.required && <span className="text-text-muted">optional · </span>}
                 {r.detail}
               </span>
             </li>
@@ -604,7 +604,7 @@ function Stepper({
               onClick={() => onStep(s.id)}
               aria-current={state === "current" ? "step" : undefined}
               disabled={state === "current" || !canGo(s.id)}
-              className={`inline-flex items-center gap-1.5 rounded-full px-2.5 min-h-8 border ${state === "current" ? "border-accent bg-accent-soft text-text font-medium" : state === "done" ? "border-border text-text" : "border-border text-text-subtle"} disabled:cursor-default`}
+              className={`inline-flex items-center gap-1.5 rounded-full px-2.5 min-h-8 border ${state === "current" ? "border-accent bg-accent-soft text-text font-medium" : state === "done" ? "border-border text-text" : "border-border text-text-muted"} disabled:cursor-default`}
             >
               {state === "done" ? (
                 <Icon name="check-in-circle" size="xs" color={SUCCESS} aria-hidden="true" />
@@ -701,7 +701,7 @@ function ViewsStep({ org, database }: { org: string; database: string }) {
         <>
           <section aria-label="Required views" className="space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <h3 className="text-sm font-medium">Required — Loom does not read the tracker without these</h3>
+              <h3>Required — Loom does not read the tracker without these</h3>
               <div className="flex flex-wrap gap-2">
                 <CopyButton
                   text={() =>
@@ -739,7 +739,7 @@ function ViewsStep({ org, database }: { org: string; database: string }) {
             </p>
           </section>
           <section aria-label="Read-only user" className="space-y-2">
-            <h3 className="text-sm font-medium">A read-only user for Loom</h3>
+            <h3>A read-only user for Loom</h3>
             <p className="text-xs text-text-muted">
               <span className="font-mono">readonly = 2</span>, not 1: it still allows SELECT only, but lets Loom set a
               timeout on each read. It needs SELECT on the views and on{" "}
@@ -802,7 +802,7 @@ function TableCard({ t, defaultOpen }: { t: ContractTable; defaultOpen: boolean 
         />
         <span className="font-mono text-sm">{t.table}</span>
         <span className="text-xs text-text-muted">{t.note}</span>
-        <span className="text-xs text-text-subtle ml-auto">
+        <span className="text-xs text-text-muted ml-auto">
           {t.columns.length} column{t.columns.length === 1 ? "" : "s"}
           {must ? ` · ${must} must map` : ""}
         </span>
@@ -861,9 +861,9 @@ function RepoChips({ repos, onChange }: { repos: string[]; onChange: (r: string[
       <input
         id="tsrc-repos"
         aria-label="Repositories it holds"
-        className="flex-1 min-w-32 bg-transparent outline-none font-mono text-sm"
+        className="flex-1 min-w-32 bg-transparent font-mono text-sm"
         value={draft}
-        placeholder={repos.length ? "add another…" : "Org/repo"}
+        placeholder={repos.length ? "Add another…" : "Org/repo"}
         onChange={(e) => {
           const v = e.target.value;
           if (/[\s,]$/.test(v)) commit(v);
@@ -1220,7 +1220,7 @@ function Capabilities({ caps }: { caps: Record<string, boolean> }) {
       aria-label="What Loom can do with this tracker"
       className="rounded-lg border border-border p-3 space-y-1.5"
     >
-      <h3 className="text-sm font-medium">What Loom can do with this tracker</h3>
+      <h3>What Loom can do with this tracker</h3>
       <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-0.5 text-xs">
         {on.map((k) => (
           <li key={k} className="flex items-center gap-1.5">
@@ -1235,7 +1235,7 @@ function Capabilities({ caps }: { caps: Record<string, boolean> }) {
         ))}
       </ul>
       {off.length > 0 && (
-        <p className="text-xs text-text-subtle">
+        <p className="text-xs text-text-muted">
           Map more fields later (Trackers → Edit mapping) to switch the rest on.
         </p>
       )}

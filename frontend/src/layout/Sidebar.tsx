@@ -361,7 +361,7 @@ export function Sidebar() {
             e.preventDefault();
             setView("memories");
           }}
-          className="flex items-center gap-2.5 rounded-sm hover:opacity-80 transition-opacity outline-none focus-visible:ring-2 focus-visible:ring-focus no-underline hover:no-underline"
+          className="flex items-center gap-2.5 rounded-sm hover:opacity-80 transition-opacity no-underline hover:no-underline"
           aria-label="Loom — go to Memories"
         >
           <LoomMark size={32} />
@@ -381,8 +381,9 @@ export function Sidebar() {
         </div>
       )}
 
-      {/* Main nav — anchors so cmd-click opens in a new tab */}
-      <nav className="flex-1 px-3 mt-1 overflow-y-auto" aria-label="Sections">
+      {/* Main nav — anchors so cmd-click opens in a new tab. Padded, not margined, so the
+          scroll box leaves room for the first and last items' focus ring. */}
+      <nav className="flex-1 px-3 py-1 overflow-y-auto" aria-label="Sections">
         {RAIL_GROUPS.map((g, gi) => (
           <div
             key={g.label ?? "top"}
@@ -489,7 +490,7 @@ const NAV_ITEM = [
   "text-(--click-sidebar-main-navigation-item-color-text-default) hover:text-(--click-sidebar-main-navigation-item-color-text-hover)",
   "bg-(--click-sidebar-main-navigation-item-color-background-default) hover:bg-(--click-sidebar-main-navigation-item-color-background-hover)",
   "aria-[current=page]:bg-(--click-sidebar-main-navigation-item-color-background-active)",
-  "no-underline hover:no-underline outline-none focus-visible:ring-2 focus-visible:ring-focus",
+  "no-underline hover:no-underline",
 ].join(" ");
 const NAV_ICON = "inline-flex shrink-0 text-(--click-sidebar-main-navigation-item-color-icon-default)";
 const NAV_TITLE =

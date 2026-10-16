@@ -168,9 +168,9 @@ export function Header() {
           >
             <Dropdown.Group>
               <div className="px-4 py-2">
-                <div className="text-xs text-text-subtle">Signed in as</div>
+                <div className="text-xs text-text-muted">Signed in as</div>
                 <div className="text-sm font-medium text-text truncate">{whoami.subject}</div>
-                <div className="text-xs text-text-subtle mt-0.5 truncate">{whoami.org}</div>
+                <div className="text-xs text-text-muted mt-0.5 truncate">{whoami.org}</div>
               </div>
             </Dropdown.Group>
             <Dropdown.Item onSelect={() => useStore.getState().setView("setup")}>

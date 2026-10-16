@@ -112,7 +112,7 @@ export function TaskInboxBell() {
         {inboxes.length === 0 && (
           <div className="py-6 text-sm text-text-muted text-center">
             Nothing waits for you.
-            <div className="text-xs text-text-subtle mt-1.5">
+            <div className="text-xs text-text-muted mt-1.5">
               Review items in triage and blocked tasks in the inboxes of <span className="font-mono">{ns}</span> show up
               here.
             </div>
@@ -150,7 +150,7 @@ export function TaskInboxBell() {
                   .join(" · ")}
               </div>
             </div>
-            <span className="text-xs text-text-subtle mt-1 shrink-0">Open →</span>
+            <span className="text-xs text-text-muted mt-1 shrink-0">Open →</span>
           </button>
         ))}
       </Popover.Content>

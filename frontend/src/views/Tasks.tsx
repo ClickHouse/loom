@@ -648,9 +648,9 @@ export function Tasks() {
                   <TaskBoard groups={groups} ctx={ctx} showClosed={showClosed} />
                 ))}
               {truncated && (
-                <div className="text-xs text-text-subtle px-1 pt-1">Showing the first 200 tasks per inbox.</div>
+                <div className="text-xs text-text-muted px-1 pt-1">Showing the first 200 tasks per inbox.</div>
               )}
-              <div className="flex gap-3.5 flex-wrap text-xs text-text-subtle px-1 py-3">
+              <div className="flex gap-3.5 flex-wrap text-xs text-text-muted px-1 py-3">
                 <span>
                   <Kbd>j</Kbd> <Kbd>k</Kbd> move
                 </span>

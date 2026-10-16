@@ -63,7 +63,7 @@ export function TrackersPanel({
     <section aria-labelledby="trackers-heading" className="mt-8">
       <div className="flex flex-wrap items-end justify-between gap-3 mb-3">
         <div className="min-w-0">
-          <h2 id="trackers-heading" className="text-lg font-semibold tracking-tight inline-flex items-center gap-2">
+          <h2 id="trackers-heading" className="inline-flex items-center gap-2">
             <Icon name="database" size="sm" aria-hidden="true" /> Trackers
           </h2>
           <p className="text-xs text-text-muted mt-0.5 max-w-2xl">
@@ -138,11 +138,11 @@ function TrackerRow({
             <TipTarget tip={status.detail}>
               <Badge text={status.label} state={TONE_STATE[status.tone]} size="sm" />
             </TipTarget>
-            <span className="text-xs text-text-subtle">
+            <span className="text-xs text-text-muted">
               {operatorOwned(s) ? "set up by the operator" : "added from the dashboard"}
             </span>
             {/* Read through a mapping of the team's own tables, or loom's views */}
-            <span className="text-xs text-text-subtle">
+            <span className="text-xs text-text-muted">
               · {s.mode === "mapping" ? "your tables, mapped" : "Loom's views"}
             </span>
           </div>

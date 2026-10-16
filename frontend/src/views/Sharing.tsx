@@ -143,7 +143,7 @@ export function Sharing() {
       </p>
 
       <section className="mb-8">
-        <h2 className="text-xs font-medium text-text-muted mb-3">Last {window_days} days</h2>
+        <h2 className="section-label text-text-muted mb-3">Last {window_days} days</h2>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <StatCard label="Writes" value={totals.writes} />
           <StatCard label="Recalls" value={totals.recalls} />
@@ -163,7 +163,7 @@ export function Sharing() {
           and your 7-day activity. Rows ordered by recent activity
           (heat) so high-traffic spaces float to the top. */}
       <section className="mb-8">
-        <h2 className="text-xs font-medium text-text-muted mb-3">What you're sharing</h2>
+        <h2 className="section-label text-text-muted mb-3">What you're sharing</h2>
         {namespaces.length === 0 ? (
           <div className="text-sm text-text-muted py-3">No namespace memberships yet.</div>
         ) : (
@@ -209,7 +209,7 @@ export function Sharing() {
 
       {repos.length > 0 && (
         <section className="mb-8">
-          <h2 className="text-xs font-medium text-text-muted mb-3">Repositories you read</h2>
+          <h2 className="section-label text-text-muted mb-3">Repositories you read</h2>
           {/* One row per repository; the branches you read beneath it. */}
           <div className="space-y-2">
             {Array.from(
@@ -289,7 +289,7 @@ export function Sharing() {
         return (
           <section className="mb-8">
             <div className="flex items-baseline justify-between gap-3 mb-3 flex-wrap">
-              <h2 className="text-xs font-medium text-text-muted">
+              <h2 className="section-label text-text-muted">
                 Tool activity
                 {scope.kind === "namespace" && (
                   <span className="ml-2 normal-case tracking-normal font-mono text-xs">in {scope.namespace}</span>

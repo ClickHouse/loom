@@ -28,7 +28,7 @@ export interface MetaRowProps {
   className?: string;
 }
 
-const TONE = { default: "", muted: "text-text-subtle", warn: "text-warn", danger: "text-danger" } as const;
+const TONE = { default: "", muted: "text-text-muted", warn: "text-warn", danger: "text-danger" } as const;
 
 export function MetaRow({ label, children, mono = false, tone = "default", className = "" }: MetaRowProps) {
   return (

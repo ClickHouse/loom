@@ -38,7 +38,7 @@ export function NamespacePicker() {
   if (isAuthDisabled()) {
     return (
       <div className="inline-flex items-center gap-1.5 h-8 px-3 text-sm text-text">
-        <span className="text-text-subtle">ns</span>
+        <span className="text-text-muted">ns</span>
         <span className="font-medium">{identity?.namespace ?? "local"}</span>
       </div>
     );
@@ -193,7 +193,7 @@ function NamespacePickerMenu() {
           className="inline-flex items-center gap-1.5 max-w-full min-w-0 h-8 px-2 sm:px-3 rounded-sm hover:bg-surface-2 transition-colors text-sm text-text"
           aria-label={`Namespace: ${current}`}
         >
-          <span className="text-text-subtle" aria-hidden="true">
+          <span className="text-text-muted" aria-hidden="true">
             ns
           </span>
           <span className="font-medium truncate">{current}</span>
@@ -403,12 +403,12 @@ function RoleIcon({ role }: { role: MyNamespaceEntry["role"] }) {
   if (role === "admin") {
     return <Icon name="star" size="xs" color="var(--color-warn)" aria-label="You're admin" />;
   }
-  return <Icon name="user" size="xs" color="var(--color-text-subtle)" aria-label={role} />;
+  return <Icon name="user" size="xs" color="var(--color-text-muted)" aria-label={role} />;
 }
 
 function VisibilityBadge({ v }: { v: MyNamespaceEntry["visibility"] }) {
   if (v === "public") {
-    return <Icon name="globe" size="xs" color="var(--color-text-subtle)" aria-label="Public" />;
+    return <Icon name="globe" size="xs" color="var(--color-text-muted)" aria-label="Public" />;
   }
-  return <Icon name="lock" size="xs" color="var(--color-text-subtle)" aria-label="Private" />;
+  return <Icon name="lock" size="xs" color="var(--color-text-muted)" aria-label="Private" />;
 }

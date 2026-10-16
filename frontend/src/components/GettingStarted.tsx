@@ -179,9 +179,7 @@ export function GettingStarted({
     >
       <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
         <div className="min-w-0">
-          <h2 id="getting-started-title" className="text-lg font-semibold">
-            Getting started
-          </h2>
+          <h2 id="getting-started-title">Getting started</h2>
           <p className="text-xs text-text-muted mt-0.5 max-w-xl">
             Loom remembers for your AI tools. Everything you save lands in your space (a <em>namespace</em>, in the
             docs)
@@ -231,11 +229,11 @@ export function GettingStarted({
                   {isDone ? (
                     <Icon name="check-in-circle" size="md" color="var(--color-success)" />
                   ) : (
-                    <Icon name="circle" size="md" color="var(--color-text-subtle)" />
+                    <Icon name="circle" size="md" color="var(--color-text-muted)" />
                   )}
                 </span>
                 <div className="flex-1 min-w-0">
-                  <h3 className="text-sm font-semibold flex items-center gap-2">
+                  <h3 className="flex items-center gap-2">
                     <span className="text-text-muted tabular">{i + 1}.</span>
                     <Icon name={meta.icon} size="xs" aria-hidden="true" />
                     <span>{meta.title}</span>
@@ -243,7 +241,7 @@ export function GettingStarted({
                   </h3>
                   <p className="text-xs text-text-muted mt-0.5">{meta.why}</p>
                   {step === "find" && !isDone && (
-                    <p className="text-xs text-text-subtle mt-1">
+                    <p className="text-xs text-text-muted mt-1">
                       Or press <Kbd>⌘K</Kbd> anywhere and type a few words.
                     </p>
                   )}

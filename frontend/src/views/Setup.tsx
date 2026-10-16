@@ -338,7 +338,7 @@ function MemoryTab() {
   return (
     <div className="max-w-3xl space-y-8">
       <section aria-labelledby="settings-never-save">
-        <h2 id="settings-never-save" className="text-sm! font-semibold text-text">
+        <h2 id="settings-never-save" className="text-text">
           Never save
         </h2>
         <p className="text-xs text-text-muted mt-0.5 mb-3 max-w-2xl">
@@ -349,7 +349,7 @@ function MemoryTab() {
 
       <section aria-labelledby="settings-seed" className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 max-w-2xl">
-          <h2 id="settings-seed" className="text-sm! font-semibold text-text">
+          <h2 id="settings-seed" className="text-text">
             Seed from a document
           </h2>
           <p className="text-xs text-text-muted mt-0.5">
@@ -904,7 +904,7 @@ function TokensSection({
                                       aria-label={`Include ${grp.repo} branch ${n.branch}`}
                                     />
                                     <span className="font-mono flex-1 truncate">{n.branch}</span>
-                                    <span className="font-mono text-xs text-text-subtle truncate max-w-48">
+                                    <span className="font-mono text-xs text-text-muted truncate max-w-48">
                                       {n.namespace}
                                     </span>
                                   </div>
@@ -938,7 +938,7 @@ function TokensSection({
                         New namespace
                       </Button>
                     </div>
-                    <p className="text-xs text-text-subtle mt-1">
+                    <p className="text-xs text-text-muted mt-1">
                       {selectedNs.length} selected — and nothing else, whatever you join later. Priority = search order
                       (1 = searched first). Role is capped at your grant. Or create a new namespace below.
                     </p>
@@ -1018,7 +1018,7 @@ function TokensSection({
                         {s.last_used_at ? (
                           <>used {relativeTime(s.last_used_at)}</>
                         ) : (
-                          <span className="text-text-subtle">no calls in 30 days</span>
+                          <span className="text-text-muted">no calls in 30 days</span>
                         )}
                       </div>
                       {stranded && (
@@ -1312,7 +1312,7 @@ function TokensStatusSummary({ tokens }: { tokens: ServiceAccountEntry[] | null 
 function SaExpiryBadge({ expiresAt, revoked }: { expiresAt: string | null; revoked: boolean }) {
   if (revoked) return null;
   if (!expiresAt) {
-    return <span className="ml-2 text-xs text-text-subtle">never expires</span>;
+    return <span className="ml-2 text-xs text-text-muted">never expires</span>;
   }
   const expiryMs = new Date(expiresAt).getTime();
   const now = Date.now();
@@ -1374,7 +1374,7 @@ function Field({ hint, children }: { hint?: string; children: React.ReactNode })
   return (
     <div>
       {children}
-      {hint && <div className="text-xs text-text-subtle mt-1">{hint}</div>}
+      {hint && <div className="text-xs text-text-muted mt-1">{hint}</div>}
     </div>
   );
 }

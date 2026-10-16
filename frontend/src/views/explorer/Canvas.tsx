@@ -250,7 +250,7 @@ const GraphEdge = memo(function GraphEdge({ id, x1, y1, x2, y2, weight, sel, not
         </text>
       )}
       {note2 && (
-        <text className="graph-edge-note" x={mx} y={my + 22} textAnchor="middle" fill="var(--color-text-subtle)">
+        <text className="graph-edge-note" x={mx} y={my + 22} textAnchor="middle" fill="var(--color-text-muted)">
           {note2}
         </text>
       )}
@@ -579,11 +579,16 @@ export function Canvas({
   const showPicture = !loading && !error && placed && model && visible && visible.nodes.length > 0;
   const noPath = mode === "path" && !loading && !error && pathRes && !pathRes.found;
   const seedHidden = placed?.seed.entity ? pinned.has(placed.seed.entity) : false;
+  // An empty state sits in the card's flow and the card stops clipping, so on a phone
+  // the card grows past its aspect ratio to fit the copy instead of scrolling inside it.
+  const emptyShown =
+    (!loading && !error && mode === "walk" && ((!model && !seedTyped) || (model && visible?.nodes.length === 0))) ||
+    Boolean(noPath && pathRes);
 
   return (
     <div
       ref={cardRef}
-      className="relative rounded-xl border border-border bg-surface overflow-hidden aspect-[820/560] max-h-[560px] w-full"
+      className={`relative rounded-xl border border-border bg-surface aspect-[820/560] max-h-[560px] w-full ${emptyShown ? "flex flex-col" : "overflow-hidden"}`}
     >
       {loading && (
         <div className="absolute inset-0 grid place-items-center" role="status" aria-label={loadingLabel}>
@@ -595,7 +600,7 @@ export function Canvas({
       )}
       {error && <div className="absolute inset-0 grid place-items-center p-6 text-sm text-danger">{error}</div>}
       {!loading && !error && !model && mode === "walk" && !seedTyped && (
-        <div className="absolute inset-0 overflow-auto grid place-items-center">
+        <div className="flex-1 grid place-items-center">
           {taxonomyEmpty ? (
             <EmptyState
               icon="share-network"
@@ -607,7 +612,7 @@ export function Canvas({
               <div className="mb-5 grid place-items-center w-14 h-14 rounded-2xl bg-surface-2 text-text-muted">
                 <Icon name="share-network" size="lg" aria-hidden="true" />
               </div>
-              <h2 className="text-lg font-semibold tracking-tight">Pick an entity to walk from</h2>
+              <h2>Pick an entity to walk from</h2>
               <p className="mt-2 max-w-md text-sm text-text-muted leading-relaxed">
                 Nothing is walked until you ask. Type an entity and press Walk, type{" "}
                 <span className="font-mono">a → b</span> for a path, or start from one the memories mention most.
@@ -636,7 +641,7 @@ export function Canvas({
         </div>
       )}
       {!loading && !error && mode === "walk" && model && visible && visible.nodes.length === 0 && (
-        <div className="absolute inset-0 overflow-auto grid place-items-center">
+        <div className="flex-1 grid place-items-center">
           <EmptyState
             icon="share-network"
             title={
@@ -657,7 +662,7 @@ export function Canvas({
         </div>
       )}
       {noPath && pathRes && (
-        <div className="absolute inset-0 overflow-auto grid place-items-center">
+        <div className="flex-1 grid place-items-center">
           <EmptyState
             icon="arrow-directions"
             title={`No path within ${pathRes.hops} hop${pathRes.hops === 1 ? "" : "s"}`}
@@ -694,7 +699,7 @@ export function Canvas({
                 x={W / 2 - r * 0.7071 - 6}
                 y={H / 2 - r * 0.7071 - 6}
                 textAnchor="end"
-                fill="var(--color-text-subtle)"
+                fill="var(--color-text-muted)"
                 style={{ paintOrder: "stroke", stroke: "var(--color-surface)", strokeWidth: 3 }}
               >
                 {i + 1} hop{i === 0 ? "" : "s"}

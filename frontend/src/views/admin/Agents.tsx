@@ -65,7 +65,7 @@ export function Agents() {
         expect isn't here within seconds of an action, check the config and restart the client.
       </div>
 
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
         <ButtonGroup
           aria-label="Time window"
           options={WINDOWS}

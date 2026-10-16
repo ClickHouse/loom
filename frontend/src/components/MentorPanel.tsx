@@ -164,7 +164,7 @@ export function MentorPanel({ identity }: { identity: Identity }) {
         hint="Reads one agent's calls in this namespace and names the planes it never used — the code index, the tracker source, documents, records, offload, the entity graph — with the counts behind each hint, and whether past hints were followed. Read-only; the agent acts, the mentor advises."
       />
       {/* The caption is its own line, so the title row stays label + (i) at any width. */}
-      <p className="caption mb-3">what the store tells an agent working here</p>
+      <p className="caption mb-3">What the store tells an agent working here</p>
       {/* The controls sit in a toolbar row under the title: Click UI's Select fills its
           container, so in the heading's action slot it took a line of its own. */}
       <div className="mb-3 flex flex-wrap items-end gap-3">

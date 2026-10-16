@@ -82,7 +82,7 @@ export function MobileNav() {
                 setView(p.id);
               }}
               className={`relative flex flex-col items-center justify-center gap-0.5 flex-1 h-full transition-colors no-underline hover:no-underline ${
-                active ? "bg-surface-3 text-text" : "text-text-subtle"
+                active ? "bg-surface-3 text-text" : "text-text-muted"
               }`}
               aria-current={active ? "page" : undefined}
             >
@@ -99,7 +99,7 @@ export function MobileNav() {
           aria-haspopup="dialog"
           aria-expanded={open}
           className={`relative flex flex-col items-center justify-center gap-0.5 flex-1 h-full ${
-            moreActive ? "bg-surface-3 text-text" : "text-text-subtle"
+            moreActive ? "bg-surface-3 text-text" : "text-text-muted"
           }`}
         >
           {moreActive && <span aria-hidden="true" className="absolute inset-x-3 top-0 h-0.5 rounded-b bg-text" />}

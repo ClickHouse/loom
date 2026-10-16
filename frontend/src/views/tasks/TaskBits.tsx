@@ -58,7 +58,7 @@ export function LeaseBar({
   now: number;
 }) {
   const left = leaseMinutesLeft(leaseUntil, now);
-  if (left === null) return <span className="text-xs text-text-subtle">no lease</span>;
+  if (left === null) return <span className="text-xs text-text-muted">no lease</span>;
   const total = Math.max(1, leaseSeconds / 60);
   const pct = Math.max(4, Math.min(100, (left / total) * 100));
   return (

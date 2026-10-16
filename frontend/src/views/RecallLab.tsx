@@ -56,10 +56,10 @@ function RecallHistoryRow({ r }: { r: SearchTraceLogRow }) {
               )}
             </>
           ) : (
-            <span className="italic text-text-subtle">wording not recorded</span>
+            <span className="italic text-text-muted">wording not recorded</span>
           )}
         </div>
-        <div className="text-xs text-text-subtle whitespace-nowrap">{relativeTime(r.ts)}</div>
+        <div className="text-xs text-text-muted whitespace-nowrap">{relativeTime(r.ts)}</div>
       </div>
       <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-muted">
         <span>
@@ -91,7 +91,7 @@ function RecallHistoryRow({ r }: { r: SearchTraceLogRow }) {
         {r.run_id !== "" && r.run_id !== "-" && <span>run {r.run_id}</span>}
       </div>
       {pairs.length > 0 && (
-        <div className="mt-2 flex justify-end text-xs text-text-subtle">
+        <div className="mt-2 flex justify-end text-xs text-text-muted">
           <TipTarget tip="blended rank score at the time of the search" underline>
             score
           </TipTarget>
@@ -204,7 +204,7 @@ function RecallHistory() {
             tip="Remove to show every recorded search again"
             onRemove={() => setRunFilter(null)}
           />
-          <span className="text-text-subtle">last 30 days</span>
+          <span className="text-text-muted">last 30 days</span>
         </div>
       )}
 
@@ -375,7 +375,7 @@ export function RecallLab() {
           <ScopeBadge kind="namespace" value={identity.namespace} />
         </div>
         <MemoryTabs active="recall" />
-        <h2 className="flex items-center gap-2 text-xl font-semibold text-text">
+        <h2 className="flex items-center gap-2 text-text">
           <Icon name="flask" size="md" color="var(--color-accent)" aria-hidden="true" /> Recall
         </h2>
         {tab === "score" && (
@@ -443,7 +443,7 @@ export function RecallLab() {
                 </div>
               )}
               {model && showResults && (
-                <div className="text-xs text-text-subtle mb-2 px-1">
+                <div className="text-xs text-text-muted mb-2 px-1">
                   {rows.length} row{rows.length === 1 ? "" : "s"} · embedder <span className="font-mono">{model}</span>
                 </div>
               )}
@@ -452,11 +452,11 @@ export function RecallLab() {
                   {rows.map((row, i) => (
                     <div key={row.key} className="p-3.5 rounded-xl border border-border bg-surface">
                       <div className="flex items-start gap-3">
-                        <span className="shrink-0 mt-0.5 w-6 text-right text-xs font-mono text-text-subtle">
+                        <span className="shrink-0 mt-0.5 w-6 text-right text-xs font-mono text-text-muted">
                           #{i + 1}
                         </span>
                         <div className="flex-1 min-w-0">
-                          <p className="text-xs font-mono text-text-subtle break-all">{row.key}</p>
+                          <p className="text-xs font-mono text-text-muted break-all">{row.key}</p>
                           <p className="text-sm text-text break-words">{row.text}</p>
                           <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-mono text-text-muted">
                             {row.keyword && (
@@ -465,7 +465,7 @@ export function RecallLab() {
                               </TipTarget>
                             )}
                             {row.hit && <RankedTerms hit={row.hit} />}
-                            <span className="text-text-subtle">{row.memoryType}</span>
+                            <span className="text-text-muted">{row.memoryType}</span>
                           </div>
                           {row.hit && (
                             // score bar, relative to the top ranked hit

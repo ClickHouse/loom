@@ -476,7 +476,7 @@ function Side({
       <div className="font-mono text-xs text-text mb-2 truncate">{memKey}</div>
       <div className="text-sm text-text mb-2 leading-snug min-h-10">
         {value == null ? (
-          <span className="text-text-subtle">
+          <span className="text-text-muted">
             Peer: <span className="font-mono">{peerId?.slice(0, 12)}…</span>
           </span>
         ) : (

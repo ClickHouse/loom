@@ -166,7 +166,7 @@ export function NamespaceAuditPanel({ identity }: { identity: Identity }) {
         hint="Reads the ledger and the memory tables for this namespace and names the anti-patterns it finds — an exact-key store, double-encoded values, version churn. Read-only; nothing here rewrites a row."
       />
       {/* The caption is its own line, so the title row stays label + (i) at any width. */}
-      <p className="caption mb-3">how this namespace is being used</p>
+      <p className="caption mb-3">How this namespace is being used</p>
       {/* The controls sit in a toolbar row under the title: Click UI's Select fills its
           container, so in the heading's action slot it took a line of its own. */}
       <div className="mb-3 flex flex-wrap items-end gap-3">
@@ -279,7 +279,7 @@ export function NamespaceAuditPanel({ identity }: { identity: Identity }) {
           )}
 
           {result.skipped.length > 0 && (
-            <p className="text-xs text-text-subtle leading-relaxed" data-testid="audit-skipped">
+            <p className="text-xs text-text-muted leading-relaxed" data-testid="audit-skipped">
               Skipped: {result.skipped.join("; ")}
             </p>
           )}
@@ -377,7 +377,7 @@ function FindingRows({
               <span className="font-medium text-text">Remedy:</span> {f.remedy}
             </p>
             {f.bytes > 0 && (
-              <p className="mt-1.5 text-xs text-text-subtle tabular">{formatBytes(f.bytes)} across the matching rows</p>
+              <p className="mt-1.5 text-xs text-text-muted tabular">{formatBytes(f.bytes)} across the matching rows</p>
             )}
             {f.samples.length > 0 && (
               <div className="mt-2">

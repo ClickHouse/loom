@@ -835,7 +835,7 @@ export function Recent() {
       {/* Active query-bar filters as dismissable badges; click removes the token. */}
       {(queryTags.length > 0 || queryAgent) && (
         <div className="-mt-2 mb-3 flex flex-wrap items-center gap-1.5 text-xs">
-          <span className="text-text-subtle">Filtering:</span>
+          <span className="text-text-muted">Filtering:</span>
           {queryAgent && (
             <Chip
               label={`agent:${queryAgent}`}
@@ -929,7 +929,7 @@ export function Recent() {
             <div className="mx-auto mb-3 grid place-items-center w-12 h-12 rounded-2xl bg-surface-2">
               <Icon name="trash" size="md" aria-hidden="true" />
             </div>
-            <h2 className="text-lg font-semibold tracking-tight">No recently deleted memories</h2>
+            <h2>No recently deleted memories</h2>
             <p className="mt-1 text-sm text-text-muted leading-relaxed">
               Deleted memories stay here for 14 days so you can restore them — nothing has been deleted recently.
             </p>
@@ -942,7 +942,7 @@ export function Recent() {
             <div className="mx-auto mb-3 grid place-items-center w-12 h-12 rounded-2xl bg-surface-2">
               <Icon name="clock" size="md" aria-hidden="true" />
             </div>
-            <h2 className="text-lg font-semibold tracking-tight">Nothing matches your filters</h2>
+            <h2>Nothing matches your filters</h2>
             <p className="mt-1 text-sm text-text-muted leading-relaxed">
               {(total || entries.length).toLocaleString()} memor{(total || entries.length) === 1 ? "y is" : "ies are"}{" "}
               in this namespace, but none pass the active filters.

@@ -49,8 +49,7 @@
    semantic tokens below are Click UI variables (`--global-color-*`,
    `--click-<component>-*`) for Loom's own elements; Click UI components read
    Click UI's variables directly. A hex literal is a Click UI palette step with
-   no variable of its own, named in its comment. Loom's `text-muted` is one
-   step darker than Click UI's text-muted, which is Loom's `text-subtle`. */
+   no variable of its own, named in its comment. */
 
 /* `static`: every token here is emitted whether or not a utility uses it.
    Without it Tailwind v4 emits only the variables its generated classes
@@ -117,17 +116,14 @@
   --color-border: var(--global-color-stroke-default);
   --color-border-strong: var(--global-color-stroke-intense);
 
-  /* Text. Click UI has two text greys; Loom's middle step (muted) is
-     slate-700, so secondary copy stays a clear step above subtle captions.
-     Subtle is Click UI's text-muted: 4.8:1 on --color-surface-2. */
+  /* Text: Click UI's two greys. Muted is 4.8:1 on --color-surface-2. */
   --color-text: var(--global-color-text-default);
-  --color-text-muted: var(--global-color-feedback-neutral-foreground); /* slate-700 */
-  --color-text-subtle: var(--global-color-text-muted);
+  --color-text-muted: var(--global-color-text-muted);
   --color-text-on-canvas: var(--global-color-text-default);
 
-  /* Links — Click UI's link blue as corrected for AA below, darker on hover. */
+  /* Links — Click UI's link pair, the default corrected for AA below. */
   --color-link: var(--global-color-text-link-default);
-  --color-link-hover: #0d3e9b; /* info-700 */
+  --color-link-hover: var(--global-color-text-link-hover);
 
   /* Focus ring — global outline. */
   --color-focus: var(--global-color-outline-default);
@@ -217,7 +213,17 @@
   --click-radio-color-stroke-default: #808691;
   --click-radio-color-stroke-hover: #696e79;
   --click-switch-color-stroke-default: #808691;
-  /* Click UI's small badge is 10 px, off the 12 px floor. */
+  /* Click UI's avatar lightens to slate-400 on hover (2.6:1 under its white
+     initial); it keeps slate-600 (5.0:1). */
+  --click-avatar-color-background-hover: #696e79;
+  --click-avatar-color-background-active: #696e79;
+  /* Click UI's small badge is 10 px and its small avatar 11 px, off the 12 px floor. */
+  --click-avatar-typography-label-sm-default:
+    600 0.75rem / 1.5 "Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --click-avatar-typography-label-sm-hover:
+    600 0.75rem / 1.5 "Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --click-avatar-typography-label-sm-active:
+    600 0.75rem / 1.5 "Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --click-badge-typography-label-sm-default:
     500 0.75rem / 1.5 "Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
@@ -291,13 +297,13 @@ body {
     font-size: var(--text-xs);
     line-height: var(--text-xs--line-height);
     font-weight: 500;
-    color: var(--color-text-subtle);
+    color: var(--color-text-muted);
   }
   .caption {
     font-size: var(--text-xs);
     line-height: var(--text-xs--line-height);
     letter-spacing: var(--tracking-caption);
-    color: var(--color-text-subtle);
+    color: var(--color-text-muted);
   }
 
   .tabular {
@@ -416,7 +422,7 @@ body {
   border: 2px solid transparent;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background-color: var(--color-text-subtle);
+  background-color: var(--color-text-muted);
 }
 
 /* ============================================================
@@ -677,8 +683,8 @@ textarea:focus-visible {
     max-width: 60%;
     padding: 2px 8px;
     border-radius: var(--radius-md);
-    font-size: 12px;
-    line-height: 1.4;
+    font-size: var(--text-xs);
+    line-height: var(--text-xs--line-height);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -780,7 +786,7 @@ textarea:focus-visible {
     font-weight: 600;
   }
   .tq-tile[data-zero="true"] .n {
-    color: var(--color-text-subtle);
+    color: var(--color-text-muted);
     font-weight: 500;
   }
 
@@ -818,7 +824,7 @@ textarea:focus-visible {
   }
   .tq-inbox .cnt {
     font-size: var(--text-xs);
-    color: var(--color-text-subtle);
+    color: var(--color-text-muted);
     white-space: nowrap;
   }
   .tq-inbox .cnt b {
@@ -843,7 +849,7 @@ textarea:focus-visible {
     text-transform: lowercase;
   }
   .tq-av[data-kind="bot"] {
-    border-radius: 5px;
+    border-radius: var(--radius-sm);
     background: color-mix(in srgb, var(--color-info) 15%, transparent);
     color: var(--color-info);
   }
@@ -875,7 +881,7 @@ textarea:focus-visible {
   }
   .tq-ghead .car {
     transition: transform 0.15s;
-    color: var(--color-text-subtle);
+    color: var(--color-text-muted);
   }
   .tq-group[data-collapsed="true"] .tq-ghead {
     border-bottom: 0;
@@ -946,7 +952,7 @@ textarea:focus-visible {
     gap: 6px;
     align-items: center;
     font-size: var(--text-xs);
-    color: var(--color-text-subtle);
+    color: var(--color-text-muted);
     margin-top: 2px;
     min-width: 0;
     flex-wrap: wrap;
@@ -959,15 +965,12 @@ textarea:focus-visible {
     white-space: nowrap;
     max-width: 100%;
   }
-  .tq-sub a {
-    color: var(--color-info);
-  }
   .tq-meta {
     display: flex;
     align-items: center;
     gap: 14px;
     font-size: var(--text-xs);
-    color: var(--color-text-subtle);
+    color: var(--color-text-muted);
     white-space: nowrap;
   }
   .tq-who {
@@ -1088,7 +1091,7 @@ textarea:focus-visible {
   }
   .tq-sec h4 {
     font-size: var(--text-xs);
-    color: var(--color-text-subtle);
+    color: var(--color-text-muted);
     font-weight: 500;
     margin: 0 0 6px;
   }
@@ -1099,21 +1102,12 @@ textarea:focus-visible {
     font-size: var(--text-sm);
   }
   .tq-kv dt {
-    color: var(--color-text-subtle);
+    color: var(--color-text-muted);
   }
   .tq-kv dd {
     margin: 0;
     color: var(--color-text-muted);
     overflow-wrap: anywhere;
-  }
-  .tq-kv a,
-  .tq-outcome a {
-    color: var(--color-info);
-    text-decoration: none;
-  }
-  .tq-kv a:hover,
-  .tq-outcome a:hover {
-    text-decoration: underline;
   }
   .tq-constraint {
     border-left: 3px solid var(--color-warn);
@@ -1154,7 +1148,7 @@ textarea:focus-visible {
     color: var(--color-accent);
   }
   .tq-tl .ic[data-kind="sweeper"] {
-    color: var(--color-text-subtle);
+    color: var(--color-text-muted);
   }
   .tq-track {
     display: grid;
@@ -1184,7 +1178,7 @@ textarea:focus-visible {
     max-height: none;
     box-shadow: var(--shadow-2xl);
   }
-  @media (max-width: 820px) {
+  @media (max-width: 767px) {
     .tq-body,
     .tq-body[data-panel="true"] {
       grid-template-columns: minmax(0, 1fr);

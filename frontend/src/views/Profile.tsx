@@ -371,7 +371,7 @@ function ActivityChip({ empty }: { empty?: boolean }) {
   if (entries.length === 0) {
     return (
       <span className="inline-flex items-center gap-1.5 text-text-muted">
-        <span className="inline-block w-2 h-2 rounded-full bg-text-muted opacity-50" />
+        <span className="inline-block w-2 h-2 rounded-full bg-surface-3" />
         No AI client has read this in the last 7 days
         <IconButton
           icon="information"
@@ -391,7 +391,7 @@ function ActivityChip({ empty }: { empty?: boolean }) {
     <Popover open={expanded} onOpenChange={setExpanded}>
       <PopoverTrigger>
         <button type="button" className="inline-flex items-center gap-1.5 text-text-muted hover:text-text">
-          <span className={`inline-block w-2 h-2 rounded-full ${empty ? "bg-text-muted opacity-50" : dotClass}`} />
+          <span className={`inline-block w-2 h-2 rounded-full ${empty ? "bg-surface-3" : dotClass}`} />
           {empty ? "Checked by" : "Read by"} {entries.length === 1 ? mostRecent.agent : `${entries.length} clients`} ·{" "}
           {mostRecent.last_activated_at ? relativeTime(mostRecent.last_activated_at) : "—"}
           {empty && " · empty, nothing to read yet"}
@@ -409,7 +409,7 @@ function ActivityChip({ empty }: { empty?: boolean }) {
             <span className="min-w-0">
               <span className="font-mono text-xs">{e.agent}</span>
               {e.operations.length > 0 && (
-                <span className="block text-xs text-text-subtle">via {e.operations.map(readPathLabel).join(", ")}</span>
+                <span className="block text-xs text-text-muted">via {e.operations.map(readPathLabel).join(", ")}</span>
               )}
             </span>
             <span className="shrink-0 text-xs text-text-muted tabular-nums">
@@ -582,7 +582,7 @@ function EmptyState({ onPickTemplate }: { onPickTemplate: (t: (typeof TEMPLATES)
   return (
     <div className="mt-6 rounded-lg border border-border bg-surface p-6">
       <div className="text-center mb-5">
-        <h2 className="text-xl font-medium mb-1">Start with a persona</h2>
+        <h2 className="mb-1">Start with a persona</h2>
         <p className="text-sm text-text-muted">Pick the style you want every AI conversation to default to.</p>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">

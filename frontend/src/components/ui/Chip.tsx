@@ -41,9 +41,15 @@ export interface ChipProps {
 
 const BASE =
   "inline-flex items-center justify-center gap-1 max-w-full min-h-6 px-3 py-0.5 rounded-full border text-xs font-medium pointer-coarse:min-h-11 pointer-coarse:min-w-11";
-const OFF = "bg-surface-2 border-border text-text-subtle";
+const OFF = "bg-surface-2 border-border text-text-muted";
 const INTERACTIVE_OFF = "hover:text-text hover:border-border-strong";
 const ON = "bg-text border-text text-bg";
+// Click UI's disabled field colours, not an opacity: natively disabled, and aria-disabled
+// (a disabled chip with a tip stays focusable so its reason can be read).
+const DISABLED =
+  "disabled:bg-(--click-field-color-background-disabled) disabled:border-(--click-field-color-stroke-disabled) disabled:text-(--click-field-color-text-disabled)";
+const SOFT_DISABLED =
+  "aria-disabled:bg-(--click-field-color-background-disabled) aria-disabled:border-(--click-field-color-stroke-disabled) aria-disabled:text-(--click-field-color-text-disabled)";
 
 export function Chip({
   label,
@@ -117,7 +123,7 @@ export function Chip({
       disabled={disabled && !softDisabled}
       aria-disabled={disabled || undefined}
       onClick={softDisabled ? undefined : onClick}
-      className={`${BASE} ${tone} ${onRemove ? "rounded-r-none border-r-0" : ""} disabled:opacity-50 aria-disabled:opacity-50 aria-disabled:cursor-not-allowed ${className}`}
+      className={`${BASE} ${tone} ${onRemove ? "rounded-r-none border-r-0" : ""} ${DISABLED} ${SOFT_DISABLED} aria-disabled:cursor-not-allowed ${className}`}
     >
       {inner}
     </button>
@@ -134,7 +140,7 @@ export function Chip({
         disabled={disabled}
         aria-disabled={disabled || undefined}
         onClick={onRemove}
-        className={`inline-flex items-center justify-center min-h-6 min-w-6 rounded-r-full border ${selected ? ON : `${OFF} ${INTERACTIVE_OFF}`} disabled:opacity-50 pointer-coarse:min-h-11 pointer-coarse:min-w-11`}
+        className={`inline-flex items-center justify-center min-h-6 min-w-6 rounded-r-full border ${selected ? ON : `${OFF} ${INTERACTIVE_OFF}`} ${DISABLED} pointer-coarse:min-h-11 pointer-coarse:min-w-11`}
       >
         <Icon name="cross" size="xs" aria-hidden="true" />
       </button>

@@ -79,13 +79,13 @@ function RowHeader({ row }: { row: BoardRow }) {
         <span className="tabular-nums text-text-muted shrink-0">{row.open}</span>
         {g && t ? (
           <span
-            className={`tabular-nums shrink-0 inline-flex items-center gap-0.5 ${t.word === "worse" ? "text-danger" : t.word === "better" ? "text-success" : "text-text-subtle"}`}
+            className={`tabular-nums shrink-0 inline-flex items-center gap-0.5 ${t.word === "worse" ? "text-danger" : t.word === "better" ? "text-success" : "text-text-muted"}`}
             aria-hidden="true"
           >
             {pct(g.gap_ratio)} <span>{t.glyph}</span>
           </span>
         ) : (
-          <span className="text-text-subtle shrink-0" aria-hidden="true">
+          <span className="text-text-muted shrink-0" aria-hidden="true">
             —
           </span>
         )}
@@ -336,7 +336,7 @@ export function Board({
                       key={s}
                       role="gridcell"
                       aria-label={`${r.label} ${s}: none`}
-                      className="border-b border-border/60 px-2 py-1 text-text-subtle text-center"
+                      className="border-b border-border/60 px-2 py-1 text-text-muted text-center"
                       aria-disabled="true"
                     >
                       ·
@@ -354,7 +354,7 @@ export function Board({
                     aria-selected={isSel}
                     aria-label={`${r.label} ${s}: ${c.open} open, ${c.untested} untested${c.flaky ? `, ${c.flaky} flaky` : ""}${c.bisected ? `, ${c.bisected} bisected` : ""}`}
                     style={HEAT_STYLE(share)}
-                    className={`board-cell border-b border-border/60 px-2 py-1 text-center cursor-pointer select-none outline-none ${isSel ? "ring-2 ring-inset ring-text" : ""}`}
+                    className={`board-cell border-b border-border/60 px-2 py-1 text-center cursor-pointer select-none ${isSel ? "ring-2 ring-inset ring-text" : ""}`}
                   >
                     <span className="tabular-nums font-medium">{c.open}</span>
                     <span className="tabular-nums text-text-muted ml-1 text-xs" aria-hidden="true">

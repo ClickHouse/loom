@@ -19,10 +19,10 @@ interface EmptyStateProps {
 export function EmptyState({ icon, title, description, action, details }: EmptyStateProps) {
   return (
     <div className="flex flex-col items-center justify-center text-center py-16 px-6">
-      <div className="mb-6 grid place-items-center w-16 h-16 rounded-sm bg-surface-2 text-text-subtle">
+      <div className="mb-6 grid place-items-center w-16 h-16 rounded-sm bg-surface-2 text-text-muted">
         <Icon name={icon} size="xl" aria-hidden="true" />
       </div>
-      <h2 className="text-lg font-semibold text-text">{title}</h2>
+      <h2 className="text-text">{title}</h2>
       {description && <p className="mt-2 max-w-md text-sm text-text-muted">{description}</p>}
       {details && (
         <Accordion title="How it works" size="sm" className="mt-4 max-w-md">

@@ -185,18 +185,18 @@ export function Bar({
                       className={`flex items-center gap-2 px-2.5 py-1.5 cursor-pointer ${i === hi ? "bg-surface-2" : ""}`}
                     >
                       <span className="font-mono truncate flex-1">{s.value}</span>
-                      <span className="text-xs text-text-subtle">{s.how}</span>
+                      <span className="text-xs text-text-muted">{s.how}</span>
                       <span className="tabular-nums text-text-muted w-14 text-right">{s.count}</span>
                     </li>
                   ))}
                 </ul>
                 {suggestions.length === 0 && (
-                  <p role="status" className="px-2.5 py-1.5 text-text-subtle">
+                  <p role="status" className="px-2.5 py-1.5 text-text-muted">
                     No entity matches “{typing}”; Walk tries it as typed (the server canonicalises).
                   </p>
                 )}
                 {suggestions.length > 0 && pathQuery && (
-                  <p className="px-2.5 py-1 text-xs text-text-subtle border-t border-border">
+                  <p className="px-2.5 py-1 text-xs text-text-muted border-t border-border">
                     ↵ finds the path from <span className="font-mono">{pathQuery.a}</span> to the highlighted entity
                   </p>
                 )}
@@ -262,7 +262,7 @@ export function Bar({
           <span>walked:</span>
           {trail.map((t, i) => (
             <span key={`${t}-${i}`} className="inline-flex items-center gap-1">
-              {i > 0 && <span className="text-text-subtle">›</span>}
+              {i > 0 && <span className="text-text-muted">›</span>}
               <button
                 type="button"
                 onClick={() => onWalk(t)}

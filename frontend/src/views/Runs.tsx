@@ -172,7 +172,7 @@ function budgetText(detail: RunGetResponse): string {
 
 function KeyChipButtons({ keys, empty }: { keys: string[]; empty: string }) {
   const inspect = useStore((s) => s.inspect);
-  if (!keys.length) return <span className="text-xs text-text-subtle">{empty}</span>;
+  if (!keys.length) return <span className="text-xs text-text-muted">{empty}</span>;
   return (
     <div className="flex flex-wrap gap-1.5">
       {keys.map((k) => (
@@ -248,9 +248,9 @@ function runRow(r: RunRow, onOpen: (r: RunRow) => void): TableRowType {
                     e.stopPropagation();
                     onOpen(r);
                   }}
-                  className={`min-w-0 max-w-full truncate text-left rounded outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${dim ? "text-text-muted" : ""}`}
+                  className={`min-w-0 max-w-full truncate text-left rounded ${dim ? "text-text-muted" : ""}`}
                 >
-                  {r.goal || <span className="text-text-subtle">(no goal)</span>}
+                  {r.goal || <span className="text-text-muted">(no goal)</span>}
                 </button>
               </Tip>
               {inferred && (
@@ -260,7 +260,7 @@ function runRow(r: RunRow, onOpen: (r: RunRow) => void): TableRowType {
                 />
               )}
             </div>
-            <div className="text-xs font-mono text-text-subtle truncate">
+            <div className="text-xs font-mono text-text-muted truncate">
               {dim ? (inferred ? "connection only — no memory activity" : "no memory activity") : r.run_id}
             </div>
           </div>
@@ -470,7 +470,7 @@ export function Runs() {
                   ) : (
                     <span className="font-mono truncate">{g.session_id || "(no session)"}</span>
                   )}
-                  <span className="text-text-subtle">·</span>
+                  <span className="text-text-muted">·</span>
                   <span className="text-text-muted">
                     {g.runs.length} run{g.runs.length === 1 ? "" : "s"}
                   </span>
@@ -605,16 +605,16 @@ export function Runs() {
                         <>
                           {detail.turns}
                           {(detail.unpriced_turns ?? 0) > 0 && (
-                            <span className="text-text-subtle"> ({detail.unpriced_turns} unpriced)</span>
+                            <span className="text-text-muted"> ({detail.unpriced_turns} unpriced)</span>
                           )}
                         </>
                       ) : (
-                        <span className="text-text-subtle">no session</span>
+                        <span className="text-text-muted">no session</span>
                       )}
                     </Stat>
                     <Stat label="cost" help={hasSession ? EMPTY_WHY.sessionCost : EMPTY_WHY.noSession}>
                       {!hasSession ? (
-                        <span className="text-text-subtle">no session</span>
+                        <span className="text-text-muted">no session</span>
                       ) : detail.cost_usd > 0 ? (
                         usd(detail.cost_usd)
                       ) : (
@@ -645,7 +645,7 @@ export function Runs() {
                 Recall history for this run
               </Button>
             )}
-            {!detailLoading && !detail && <div className="text-xs text-text-subtle">Could not load the replay.</div>}
+            {!detailLoading && !detail && <div className="text-xs text-text-muted">Could not load the replay.</div>}
           </Section>
           {open?.final_response && (
             <Section title="Final response">

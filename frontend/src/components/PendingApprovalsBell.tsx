@@ -157,7 +157,7 @@ export function PendingApprovalsBell() {
         {items.length === 0 && (
           <div className="py-6 text-sm text-text-muted text-center">
             No one's waiting for your approval.
-            <div className="text-xs text-text-subtle mt-1.5">
+            <div className="text-xs text-text-muted mt-1.5">
               Join requests on namespaces you admin show up here. To invite someone proactively, head to Spaces →
               Namespaces you manage.
             </div>
@@ -210,12 +210,12 @@ export function PendingApprovalsBell() {
                   <>
                     {repoInfo[it.namespace]?.repo ?? it.namespace}
                     {it.branches && it.branches.length > 1 ? (
-                      <span className="text-text-subtle font-normal">
+                      <span className="text-text-muted font-normal">
                         {" "}
                         · {it.branches.length} branches ({it.branches.join(", ")}) — one decision
                       </span>
                     ) : (
-                      <span className="text-text-subtle font-normal">
+                      <span className="text-text-muted font-normal">
                         {" "}
                         @ {repoInfo[it.namespace]?.branch ?? it.namespace}
                       </span>
@@ -226,17 +226,17 @@ export function PendingApprovalsBell() {
                 )}
               </div>
               {isServiceSubject(it.subject) && (
-                <div className="text-xs font-mono text-text-subtle break-all">{it.subject}</div>
+                <div className="text-xs font-mono text-text-muted break-all">{it.subject}</div>
               )}
               {it.kind === "code" && repoInfo[it.namespace] && (
-                <div className="text-xs font-mono text-text-subtle break-all">{it.namespace}</div>
+                <div className="text-xs font-mono text-text-muted break-all">{it.namespace}</div>
               )}
               <div className="text-xs text-text-muted mt-0.5">
                 {it.current_role !== it.requested_role && <>currently {it.current_role} · </>}
                 {it.pending_since && <>requested {relativeTime(it.pending_since)}</>}
               </div>
             </div>
-            <span className="text-xs text-text-subtle mt-1 shrink-0">Review →</span>
+            <span className="text-xs text-text-muted mt-1 shrink-0">Review →</span>
           </button>
         ))}
       </Popover.Content>
@@ -266,7 +266,7 @@ function RoleIcon({ role }: { role: GrantRole }) {
   if (role === "admin")
     return <Icon name="star" size="xs" color="var(--color-warn)" aria-label="Admin" className="mt-1" />;
   if (role === "writer") return <Icon name="user" size="xs" aria-label="Writer" className="mt-1" />;
-  return <Icon name="eye" size="xs" color="var(--color-text-subtle)" aria-label="Viewer" className="mt-1" />;
+  return <Icon name="eye" size="xs" color="var(--color-text-muted)" aria-label="Viewer" className="mt-1" />;
 }
 
 /** The count over a bell: Click UI's small solid badge, read out by the bell's tooltip. */

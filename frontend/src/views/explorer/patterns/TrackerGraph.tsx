@@ -440,7 +440,7 @@ export function TrackerGraph({ graph, loading, error, hint, selected, onSelect, 
             selected={selected === placed.seed.number}
             sel={selChain ? selChain.has(placed.seed.id) : false}
           />
-          <text x={12} y={H - 14} fill="var(--color-text-subtle)">
+          <text x={12} y={H - 14} fill="var(--color-text-muted)">
             ← caused by · fixed by → · duplicates and related below
           </text>
         </svg>

@@ -78,7 +78,7 @@ export function DiffView({ prev, next, prevLabel, nextLabel }: DiffViewProps) {
           const marker = l.kind === "add" ? "+" : l.kind === "del" ? "−" : " ";
           return (
             <div key={idx} className={cls}>
-              <span className="select-none text-text-subtle pr-2">{marker}</span>
+              <span className="select-none text-text-muted pr-2">{marker}</span>
               {l.text || " "}
             </div>
           );

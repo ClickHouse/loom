@@ -189,8 +189,8 @@ export function Browse() {
           Hidden when the caller doesn't admin anything. */}
       {adminNs.length > 0 && (
         <section className="mb-8">
-          <div className="flex items-baseline justify-between mb-3">
-            <h2 className="text-lg font-semibold tracking-tight inline-flex items-center gap-2">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-2 mb-3">
+            <h2 className="inline-flex items-center gap-2">
               <Icon name="star" size="sm" color="var(--color-warn)" aria-hidden="true" /> Namespaces you manage
             </h2>
             <span className="text-xs text-text-muted tabular">
@@ -235,12 +235,12 @@ export function Browse() {
       )}
 
       {/* SECTION 2: public namespaces in the org to join. */}
-      <div className="flex items-baseline justify-between mb-3 gap-3">
-        <h2 className="text-lg font-semibold tracking-tight inline-flex items-center gap-2">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-2 mb-3">
+        <h2 className="inline-flex flex-wrap items-center gap-x-2">
           <Icon name="globe" size="sm" aria-hidden="true" /> Public namespaces in{" "}
           <span className="font-mono">{identity.org}</span>
         </h2>
-        <div className="flex items-center gap-3 text-xs">
+        <div className="flex flex-wrap items-center gap-3 text-xs">
           <span className="text-text-muted tabular">
             {rows ? `${filtered.length} ${filtered.length === 1 ? "namespace" : "namespaces"}` : ""}
           </span>

@@ -82,7 +82,7 @@ function DecisionChip({ decision }: { decision: string }) {
   return <Badge text={decision} state={deny ? "danger" : "success"} iconDir="start" size="sm" />;
 }
 
-const DASH = <span className="text-text-subtle">—</span>;
+const DASH = <span className="text-text-muted">—</span>;
 
 function Bool({ v }: { v: boolean | null | undefined }) {
   if (v === null || v === undefined) return DASH;
@@ -154,8 +154,8 @@ function Card({ title, children, action }: { title: string; children: React.Reac
       as="section"
       aria-label={title}
       header={
-        <div className="flex items-center justify-between gap-2">
-          <h2 className="text-xs font-medium text-text-muted">{title}</h2>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="section-label text-text-muted">{title}</h2>
           {action}
         </div>
       }
@@ -279,7 +279,7 @@ export function Policies() {
                       <div className="font-mono text-xs">
                         <div>{r.policy_id}</div>
                         {r.updated_at && (
-                          <div className="text-xs font-sans text-text-subtle">updated {relativeTime(r.updated_at)}</div>
+                          <div className="text-xs font-sans text-text-muted">updated {relativeTime(r.updated_at)}</div>
                         )}
                       </div>
                     ),
@@ -606,7 +606,7 @@ function DryRunPanel({ onRan }: { onRan: () => void }) {
             />
           )}
           {result.rules.length === 0 && (
-            <div className="text-xs text-text-subtle">
+            <div className="text-xs text-text-muted">
               No rule matches <span className="font-mono">{operation.trim()}</span>.
             </div>
           )}
@@ -653,7 +653,7 @@ function DryRunPanel({ onRan }: { onRan: () => void }) {
                         <td className="px-3 py-2">
                           {lf ? (
                             lf.skipped ? (
-                              <span className="text-text-subtle">skipped</span>
+                              <span className="text-text-muted">skipped</span>
                             ) : lf.error ? (
                               <span className="text-danger">error</span>
                             ) : (
@@ -750,7 +750,7 @@ function DecisionsPanel({ version }: { version: number }) {
       )}
       {rows !== null && error && <div className="text-sm text-danger">{error}</div>}
       {rows !== null && !error && rows.length === 0 && (
-        <div className="text-xs text-text-subtle py-4 text-center">
+        <div className="text-xs text-text-muted py-4 text-center">
           No decisions{filter ? ` with decision=${filter}` : ""} yet.
         </div>
       )}

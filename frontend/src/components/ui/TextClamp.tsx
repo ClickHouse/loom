@@ -84,7 +84,7 @@ export function TextClamp({ text, lines = 1, max, reach, mono = false, className
   const span = (
     <span
       ref={ref}
-      className={`${cls} ${clamped && reach === "tooltip" ? "outline-none focus-visible:ring-2 focus-visible:ring-focus rounded-sm" : ""}`}
+      className={`${cls} ${clamped && reach === "tooltip" ? "rounded-sm" : ""}`}
       style={clampStyle(lines)}
       tabIndex={clamped && reach === "tooltip" ? 0 : undefined}
     >

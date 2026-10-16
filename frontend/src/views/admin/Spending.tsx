@@ -146,7 +146,7 @@ export function Spending() {
                   r.user_id && r.user_id !== "-" ? (
                     <span className="font-mono text-xs">{r.user_id}</span>
                   ) : (
-                    <span className="text-text-subtle">— unattributed</span>
+                    <span className="text-text-muted">— unattributed</span>
                   ),
               },
             ]
@@ -297,7 +297,7 @@ export function Spending() {
               groups), skip the empty chart entirely. */}
           {days.some(([d]) => d !== "—") && (
             <div className="rounded-2xl border border-border bg-surface p-5 mb-6">
-              <h2 className="text-sm font-medium text-text-muted mb-4">Cost by day</h2>
+              <h2 className="section-label text-text-muted mb-4">Cost by day</h2>
               <div className="flex items-end gap-2 h-[140px]">
                 {days.map(([day, cost]) => (
                   <div key={day} className="flex-1 flex flex-col items-center gap-1.5">
@@ -306,7 +306,7 @@ export function Spending() {
                       className="w-full bg-accent rounded-t"
                       style={{ height: `${(cost / maxCost) * 100}%`, minHeight: "2px" }}
                     />
-                    <div className="text-xs tabular text-text-subtle">{day === "—" ? "—" : day.slice(5)}</div>
+                    <div className="text-xs tabular text-text-muted">{day === "—" ? "—" : day.slice(5)}</div>
                   </div>
                 ))}
               </div>
@@ -362,7 +362,7 @@ export function Spending() {
                   { label: <span className="tabular">{fmt(r.ops)}</span> },
                   {
                     label: (
-                      <span className={`tabular ${r.errors > 0 ? "text-danger" : "text-text-subtle"}`}>
+                      <span className={`tabular ${r.errors > 0 ? "text-danger" : "text-text-muted"}`}>
                         {r.errors || ""}
                       </span>
                     ),
@@ -371,7 +371,7 @@ export function Spending() {
                     label: (
                       <span className="tabular text-xs">
                         {fmt(r.tokens)}
-                        {r.embed_tokens > 0 && <span className="text-text-subtle"> + {fmt(r.embed_tokens)} embed</span>}
+                        {r.embed_tokens > 0 && <span className="text-text-muted"> + {fmt(r.embed_tokens)} embed</span>}
                       </span>
                     ),
                   },
@@ -381,7 +381,7 @@ export function Spending() {
                       r.cost_usd > 0 ? (
                         <span className="tabular font-mono">${r.cost_usd.toFixed(4)}</span>
                       ) : (
-                        <span className="text-text-subtle">—</span>
+                        <span className="text-text-muted">—</span>
                       ),
                   },
                 ],
@@ -395,7 +395,7 @@ export function Spending() {
 }
 
 function agentCell(r: CostRow): ReactNode {
-  if (!r.agent) return <span className="text-text-subtle">—</span>;
+  if (!r.agent) return <span className="text-text-muted">—</span>;
   return SENTINEL_AGENTS.has(r.agent) ? (
     <span className="italic text-text-muted">{displayAgent(r.agent)}</span>
   ) : (
@@ -408,7 +408,7 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
     <div className="p-4 rounded-xl border border-border bg-surface">
       <div className="text-xs text-text-muted mb-1">{label}</div>
       <div className="text-xl font-semibold tabular tracking-tight">{value}</div>
-      {hint && <div className="text-xs text-text-subtle mt-1">{hint}</div>}
+      {hint && <div className="text-xs text-text-muted mt-1">{hint}</div>}
     </div>
   );
 }

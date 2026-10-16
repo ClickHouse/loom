@@ -150,11 +150,7 @@ function StandingChip({
       ariaLabel={`${name}: ${disabledReason ? disabledReason : standingWord(st)}`}
       tip={tip}
       className={
-        st === "pending"
-          ? "border-warn/40 text-warn"
-          : st === "closed" || st === "registering"
-            ? "text-text-subtle"
-            : ""
+        st === "pending" ? "border-warn/40 text-warn" : st === "closed" || st === "registering" ? "text-text-muted" : ""
       }
     />
   );
@@ -596,7 +592,7 @@ export function RepositoryCard({
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
             {/* The disclosure: the heading is the button, so the row opens from its
                 name (WAI-ARIA disclosure pattern); the chevron says which way. */}
-            <h2 className="text-lg font-semibold tracking-tight min-w-0 max-w-full">
+            <h2 className="min-w-0 max-w-full">
               <button
                 type="button"
                 onClick={() => setOpen((v) => !v)}

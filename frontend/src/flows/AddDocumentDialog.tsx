@@ -232,7 +232,7 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
             >
               {replaceMode ? "Pick the new file" : "Pick a file"}
             </Button>
-            <p className="mt-1.5 text-xs text-text-subtle">
+            <p className="mt-1.5 text-xs text-text-muted">
               PDF, Word (.docx), Markdown, text, JSON, YAML, CSV, HTML or XML. Text is extracted in your browser before
               upload — review it below before saving. Scanned/image PDFs need OCR (not supported); paste the text
               directly instead.
@@ -277,7 +277,7 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
               placeholder="Paste the document text here. Loom chunks + embeds on upload."
               rows={10}
             />
-            <div className="mt-1 text-xs text-text-subtle tabular">
+            <div className="mt-1 text-xs text-text-muted tabular">
               {content.length.toLocaleString()} chars
               {originalBlob && " · original file preserved for download"}
             </div>

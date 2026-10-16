@@ -63,7 +63,7 @@ const MODE_HELP =
 function hinted(label: string, hint: string): ReactNode {
   return (
     <>
-      {label} <span className="font-normal text-text-subtle">({hint})</span>
+      {label} <span className="font-normal text-text-muted">({hint})</span>
     </>
   );
 }
@@ -445,7 +445,7 @@ function PosterPicker({
                       )}
                       <PrincipalKindPill kind={p.kind} />
                     </span>
-                    <span className="block break-words text-xs text-text-subtle">
+                    <span className="block break-words text-xs text-text-muted">
                       {shown.length > 0 ? (
                         <>
                           <span className="font-mono">{shown.join(", ")}</span>
@@ -464,7 +464,7 @@ function PosterPicker({
           </ul>
         )}
       </div>
-      <div className="mt-1 text-xs text-text-subtle">
+      <div className="mt-1 text-xs text-text-muted">
         {selected.length} listed as {selected.length === 1 ? "poster" : "posters"}
         {truncated && " · the directory was cut at the limit; the filter narrows it on the server"}
       </div>
@@ -559,7 +559,7 @@ function TrustTable({ identity, inbox, open }: { identity: Caller; inbox: string
       <div className="flex items-center justify-between gap-2">
         <h3 id="inbox-trust-heading" className="section-label">
           Trust table{" "}
-          <span className="normal-case tracking-normal text-text-subtle">· poster × kind → deny / review / auto</span>
+          <span className="normal-case tracking-normal text-text-muted">· poster × kind → deny / review / auto</span>
         </h3>
         {!draft && (
           <Button type="secondary" htmlType="button" iconLeft="plus" onClick={() => setDraft(EMPTY_DRAFT)}>
@@ -649,7 +649,7 @@ function TrustTable({ identity, inbox, open }: { identity: Caller; inbox: string
                 }}
                 options={MODES.map((m) => ({ value: m, label: m }))}
               />
-              <div id="policy-mode-help" className="mt-1 text-xs text-text-subtle">
+              <div id="policy-mode-help" className="mt-1 text-xs text-text-muted">
                 {MODE_HELP}
               </div>
             </div>

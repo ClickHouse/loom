@@ -265,7 +265,7 @@ export function TaskEditDialog({ open, onOpenChange, identity, mode, onSaved }: 
               {JSON.stringify(conflict.current?.brief ?? {}, null, 1)}
             </pre>
             {conflict.current && (
-              <div className="text-text-subtle">
+              <div className="text-text-muted">
                 status {conflict.current.status} · last actor {conflict.current.last_actor || "—"}
               </div>
             )}

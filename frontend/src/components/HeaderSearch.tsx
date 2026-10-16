@@ -454,7 +454,7 @@ export function HeaderSearch({
         {q.length > 0 && !hasResults && (memoryPending ? <Searching /> : <NoResults q={q} />)}
 
         {hasResults && (
-          <div className="pb-1.5 text-xs text-text-subtle flex items-center justify-between">
+          <div className="pb-1.5 text-xs text-text-muted flex items-center justify-between">
             <span>
               {[
                 matchedNamespaces.length > 0 &&
@@ -499,7 +499,7 @@ export function HeaderSearch({
                           size="sm"
                           state={r.visibility === "public" ? "success" : "default"}
                         />
-                        {!r.joined && <span className="text-xs text-text-subtle">not joined</span>}
+                        {!r.joined && <span className="text-xs text-text-muted">not joined</span>}
                       </div>
                       {r.description && <div className="text-xs text-text-muted mt-0.5 truncate">{r.description}</div>}
                     </a>
@@ -554,7 +554,7 @@ export function HeaderSearch({
                       <div className="flex items-center gap-2 min-w-0">
                         <TypeChip label="memory" />
                         <span className="font-mono text-sm truncate">{e.memory_key}</span>
-                        <span className="text-xs text-text-subtle shrink-0 ml-auto">
+                        <span className="text-xs text-text-muted shrink-0 ml-auto">
                           {e.memory_type}
                           {e.created_at ? ` · ${relativeTime(e.created_at)}` : ""}
                         </span>
@@ -562,7 +562,7 @@ export function HeaderSearch({
                       <div className="text-xs text-text-muted mt-0.5 truncate">
                         {e.agent ? (
                           <>
-                            <span className="text-text-subtle">{e.agent}</span> ·{" "}
+                            <span className="text-text-muted">{e.agent}</span> ·{" "}
                           </>
                         ) : null}
                         {e.content_excerpt || "(empty)"}
@@ -812,7 +812,7 @@ function NoResults({ q }: { q: string }) {
       <div>
         No matches for <span className="font-mono text-text">{q}</span>
       </div>
-      <div className="text-xs text-text-subtle mt-1.5">
+      <div className="text-xs text-text-muted mt-1.5">
         Try <code className="font-mono">tag:</code>, <code className="font-mono">namespace:</code>, or{" "}
         <code className="font-mono">type:</code>.
       </div>

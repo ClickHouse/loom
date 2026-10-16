@@ -403,13 +403,13 @@ export function WorkersPanel() {
                         ? "bg-danger"
                         : status === "stalled"
                           ? "bg-warn"
-                          : "bg-text-subtle"
+                          : "bg-text-muted"
                   }`}
                 />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-sm font-medium text-text">{info.label}</span>
-                    <span className="text-xs text-text-subtle font-mono">{w.name}</span>
+                    <span className="text-xs text-text-muted font-mono">{w.name}</span>
                     {(w.consecutive_failures ?? 0) > 0 && (
                       <Badge
                         size="sm"
@@ -433,7 +433,7 @@ export function WorkersPanel() {
                   </div>
                   <div className="text-xs text-text-muted mt-1">{info.blurb}</div>
                   {status !== "disabled" && (
-                    <div className="text-xs text-text-subtle mt-1 tabular">
+                    <div className="text-xs text-text-muted mt-1 tabular">
                       {w.last_run_at ? (
                         <>
                           Last ran {relativeTime(w.last_run_at)}
@@ -686,12 +686,12 @@ export function OpMixPanel() {
 
 const CLASS_BAR: Record<string, string> = {
   create: "bg-cat-4",
-  read: "bg-text-subtle",
+  read: "bg-text-muted",
   update: "bg-cat-6",
   annotate: "bg-cat-5",
   delete: "bg-cat-7",
   scratchpad: "bg-cat-3",
-  maintain: "bg-text-subtle",
+  maintain: "bg-text-muted",
   other: "bg-text-muted",
 };
 

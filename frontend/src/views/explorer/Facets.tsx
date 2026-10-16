@@ -273,7 +273,7 @@ export function Facets({
         hint="Relations on this walk's typed edges. A chip hides every other edge now, client-side, and rides the next walk as relations[]."
       >
         {relations.length === 0 ? (
-          <p className="text-text-subtle">
+          <p className="text-text-muted">
             {seed
               ? "This walk has no typed edges; tick “typed edges only” to walk the triples."
               : "Chips appear once a walk has typed edges; a chip set now rides the next walk."}
@@ -321,7 +321,7 @@ export function Facets({
           ))}
         </div>
         {filteredOut > 0 && (
-          <p className="mt-1.5 text-text-subtle">
+          <p className="mt-1.5 text-text-muted">
             <span className="tabular-nums">{filteredOut}</span> node{filteredOut === 1 ? "" : "s"} hidden by chips;
             pinned nodes stay.
           </p>
@@ -361,7 +361,7 @@ export function Facets({
         </Section>
       )}
 
-      {patternsNote && <p className="caption text-text-subtle pb-3 mb-3 border-b border-border">{patternsNote}</p>}
+      {patternsNote && <p className="caption text-text-muted pb-3 mb-3 border-b border-border">{patternsNote}</p>}
 
       {taxonomy && taxonomy.entities.length > 0 && (
         <Section

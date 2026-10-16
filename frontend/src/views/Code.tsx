@@ -901,7 +901,7 @@ function BranchesDialog({
         <Button type="empty" htmlType="button" onClick={() => setAll(false)}>
           None
         </Button>
-        <span className="text-text-subtle">·</span>
+        <span className="text-text-muted">·</span>
         <span className="text-text-muted tabular">
           {want.size} of {selectable.length} selected
         </span>
@@ -1199,7 +1199,7 @@ export function AddRepositoryDialog({
                   placeholder="Acme/widgets"
                   autoFocus
                 />
-                <div className="text-xs text-text-subtle mt-1">owner/name, or paste an HTTPS/SSH Git URL</div>
+                <div className="text-xs text-text-muted mt-1">owner/name, or paste an HTTPS/SSH Git URL</div>
               </div>
               <Button
                 type="secondary"
@@ -1221,7 +1221,7 @@ export function AddRepositoryDialog({
                     {warning}
                   </div>
                 ))}
-                <div className="text-xs text-text-subtle mb-1.5">
+                <div className="text-xs text-text-muted mb-1.5">
                   Each branch is its own index sharing one mirror.{" "}
                   {remote.default_branch && (
                     <>
@@ -1251,7 +1251,7 @@ export function AddRepositoryDialog({
                         placeholder={`Search ${fmtInt(remote.total)} branches…`}
                       />
                     </div>
-                    <span className="text-xs text-text-subtle whitespace-nowrap tabular">
+                    <span className="text-xs text-text-muted whitespace-nowrap tabular">
                       showing {shownBranches.length} of {fmtInt(remote.total)}
                       {remote.truncated && q && !shownBranches.some((b) => b.name.toLowerCase().includes(q))
                         ? " — press Enter to search the remote's full list"
@@ -1315,7 +1315,7 @@ export function AddRepositoryDialog({
             ) : (
               <div className="w-48">
                 <TextField id="add-branch" label="Branch" value={branch} onChange={(v) => setBranch(v)} />
-                <div className="text-xs text-text-subtle mt-1">
+                <div className="text-xs text-text-muted mt-1">
                   Or press Find branches to choose from what the remote shows.
                 </div>
               </div>
@@ -1336,13 +1336,13 @@ export function AddRepositoryDialog({
                   autoComplete="off"
                   autoFocus={tokenNeeded === "refused"}
                 />
-                <div className="text-xs text-text-subtle mt-1">
+                <div className="text-xs text-text-muted mt-1">
                   A fine-grained token with read access to Contents on this repository is enough. Stored encrypted, used
                   only to fetch, never shown again.
                 </div>
               </div>
             ) : (
-              <div className="text-xs text-text-subtle">
+              <div className="text-xs text-text-muted">
                 A public repository needs no token; Loom asks the remote first and only asks you for one if it refuses.{" "}
                 <Button type="empty" htmlType="button" onClick={() => setTokenNeeded("asked")}>
                   It is private — add a token now
@@ -1384,7 +1384,7 @@ export function AddRepositoryDialog({
                   onChange={(v) => setPrefixes(v)}
                   placeholder="src/, include/"
                 />
-                <div className="text-xs text-text-subtle mt-1">Comma-separated prefixes. Empty = the whole tree.</div>
+                <div className="text-xs text-text-muted mt-1">Comma-separated prefixes. Empty = the whole tree.</div>
               </div>
               <div>
                 <TextField
@@ -1394,7 +1394,7 @@ export function AddRepositoryDialog({
                   onChange={(v) => setExclude(v)}
                   placeholder="**/generated/**, third_party/**"
                 />
-                <div className="text-xs text-text-subtle mt-1">
+                <div className="text-xs text-text-muted mt-1">
                   Globs, comma-separated. Vendored and generated code usually.
                 </div>
               </div>
@@ -1405,7 +1405,7 @@ export function AddRepositoryDialog({
                   checked={skipGenerated}
                   onCheckedChange={(x) => setSkipGenerated(x === true)}
                 />
-                <div className="mt-1 text-xs text-text-subtle">
+                <div className="mt-1 text-xs text-text-muted">
                   Files that say so in their header (<span className="font-mono">Code generated … DO NOT EDIT</span>,{" "}
                   <span className="font-mono">@generated</span>) and the repository's own{" "}
                   <span className="font-mono">.gitattributes</span> rules. Their sources stay indexed.
@@ -1430,7 +1430,7 @@ export function AddRepositoryDialog({
                     </Select.Item>
                   ))}
                 </Select>
-                <div className="text-xs text-text-subtle mt-1">
+                <div className="text-xs text-text-muted mt-1">
                   Exact cross-file calls on top of the parser tier; detected from go.mod, tsconfig, CMakeLists or
                   pyproject when left to the tree.
                 </div>
@@ -1446,7 +1446,7 @@ export function AddRepositoryDialog({
         </div>
 
         <ModalFooter>
-          <span className="mr-auto text-xs text-text-subtle">
+          <span className="mr-auto text-xs text-text-muted">
             The remote is asked first; nothing is written if it refuses.
           </span>
           <Button type="secondary" htmlType="button" onClick={() => close(false)}>
@@ -1524,7 +1524,7 @@ function AddBranchDialog({
             autoFocus
             error={error ?? undefined}
           />
-          <div className="text-xs text-text-subtle mt-1">
+          <div className="text-xs text-text-muted mt-1">
             Already indexed: {group.branches.map((b) => b.branch).join(", ")}
           </div>
           <ModalFooter>
@@ -1582,7 +1582,7 @@ function RepoDetail({
         </p>
         {others.length > 0 && (
           <div className="mt-3 flex items-center gap-2 flex-wrap">
-            <span className="text-xs text-text-subtle">Branches</span>
+            <span className="text-xs text-text-muted">Branches</span>
             {others.map((b) => (
               <BranchChip
                 key={b.namespace}
@@ -1722,16 +1722,16 @@ function StageCard({
         watermark <Mono className="text-text">{watermarkText(watermark) || "—"}</Mono>
         {updatedAt && <> · advanced {relativeTime(updatedAt.replace(" ", "T") + "Z")}</>}
       </div>
-      {note && <div className={`mt-1 text-xs ${tone === "warn" ? "text-warn" : "text-text-subtle"}`}>{note}</div>}
+      {note && <div className={`mt-1 text-xs ${tone === "warn" ? "text-warn" : "text-text-muted"}`}>{note}</div>}
       {workers.length > 0 && (
         <div className="mt-3 space-y-1">
           {workers.map(([name, w]) => (
             <div key={name} className="flex items-center justify-between text-xs tabular">
               <Mono className="text-xs text-text-muted">{name}</Mono>
               {!w ? (
-                <span className="text-text-subtle">not on this replica</span>
+                <span className="text-text-muted">not on this replica</span>
               ) : !w.enabled ? (
-                <span className="text-text-subtle">disabled on this replica</span>
+                <span className="text-text-muted">disabled on this replica</span>
               ) : w.consecutive_failures > 0 ? (
                 <TipTarget tip={w.last_error}>
                   <span className="text-danger">
@@ -1970,7 +1970,7 @@ function HealthTab({ id }: { id: CodeId }) {
                         label: l.lang ? (
                           <span className="font-mono">{l.lang}</span>
                         ) : (
-                          <span className="text-text-subtle">(outside indexed paths)</span>
+                          <span className="text-text-muted">(outside indexed paths)</span>
                         ),
                       },
                       {
@@ -2003,7 +2003,7 @@ function HealthTab({ id }: { id: CodeId }) {
                         label: l.symbols_treesitter ? (
                           <>
                             {fmtInt(l.symbols_treesitter)}{" "}
-                            <span className="text-text-subtle">
+                            <span className="text-text-muted">
                               ·{" "}
                               {l.symbols_treesitter_last_at ? (
                                 <TipTarget tip={l.symbols_treesitter_last_at}>
@@ -2015,14 +2015,14 @@ function HealthTab({ id }: { id: CodeId }) {
                             </span>
                           </>
                         ) : (
-                          <span className="text-text-subtle">—</span>
+                          <span className="text-text-muted">—</span>
                         ),
                       },
                       {
                         label: l.symbols_scip ? (
                           <>
                             {fmtInt(l.symbols_scip)}{" "}
-                            <span className="text-text-subtle">
+                            <span className="text-text-muted">
                               ·{" "}
                               {l.symbols_scip_last_at ? (
                                 <TipTarget tip={l.symbols_scip_last_at}>{ago(l.symbols_scip_last_at)}</TipTarget>
@@ -2032,14 +2032,14 @@ function HealthTab({ id }: { id: CodeId }) {
                             </span>
                           </>
                         ) : (
-                          <span className="text-text-subtle">not compiler-indexed</span>
+                          <span className="text-text-muted">not compiler-indexed</span>
                         ),
                       },
                     ],
                   };
                 })}
             />
-            <div className="text-xs text-text-subtle">
+            <div className="text-xs text-text-muted">
               Symbols agents can trust for exact callers/callees are the compiler (scip) column; languages with only
               tree-sitter symbols answer search and definitions but their call graph is heuristic.
               {cov.tiers.map((t) => (
@@ -2060,7 +2060,7 @@ function HealthTab({ id }: { id: CodeId }) {
           {recent === null ? (
             <Skeleton className="h-20 w-full" />
           ) : recent.length === 0 ? (
-            <div className="text-xs text-text-subtle">No commits recorded yet.</div>
+            <div className="text-xs text-text-muted">No commits recorded yet.</div>
           ) : (
             <div className="space-y-1.5">
               {recent.map((c) => (
@@ -2069,10 +2069,10 @@ function HealthTab({ id }: { id: CodeId }) {
                   {c.subject ? (
                     <TextClamp text={c.subject} reach="tooltip" className="flex-1 min-w-0" />
                   ) : (
-                    <span className="flex-1 text-text-subtle">(subject unavailable)</span>
+                    <span className="flex-1 text-text-muted">(subject unavailable)</span>
                   )}
-                  {c.pr_number > 0 && <span className="text-xs text-text-subtle tabular shrink-0">#{c.pr_number}</span>}
-                  <span className="text-xs text-text-subtle tabular shrink-0">
+                  {c.pr_number > 0 && <span className="text-xs text-text-muted tabular shrink-0">#{c.pr_number}</span>}
+                  <span className="text-xs text-text-muted tabular shrink-0">
                     <TipTarget tip={`${c.files} files · committed ${c.committed_at}`}>
                       {c.files}f · {c.ingested_at ? relativeTime(c.ingested_at.replace(" ", "T") + "Z") : "—"}
                     </TipTarget>
@@ -2106,7 +2106,7 @@ function HealthTab({ id }: { id: CodeId }) {
           </button>
           {errs === null && <Skeleton className="h-6 w-full mt-2" />}
           {errs && errs.total === 0 && (
-            <div className="mt-2 text-xs text-text-subtle">
+            <div className="mt-2 text-xs text-text-muted">
               Every file under the indexed prefixes parsed and chunked.
             </div>
           )}
@@ -2124,7 +2124,7 @@ function HealthTab({ id }: { id: CodeId }) {
                 </div>
               ))}
               {errs.total > errs.rows.length && (
-                <div className="text-xs text-text-subtle">+{errs.total - errs.rows.length} more</div>
+                <div className="text-xs text-text-muted">+{errs.total - errs.rows.length} more</div>
               )}
             </div>
           )}
@@ -2262,7 +2262,7 @@ function UnitCard({ u, onOpen }: { u: CodeUnit; onOpen: (symbol: string) => void
               <span className="font-mono text-sm">{u.path.split("/").pop()}</span>
             )}
             <Badge text={u.kind || "unit"} state="neutral" size="sm" />
-            {u.tier && <span className="text-xs text-text-subtle">{u.tier}</span>}
+            {u.tier && <span className="text-xs text-text-muted">{u.tier}</span>}
           </div>
           <div className="mt-0.5 text-xs text-text-muted font-mono break-all">
             {u.path}
@@ -2270,7 +2270,7 @@ function UnitCard({ u, onOpen }: { u: CodeUnit; onOpen: (symbol: string) => void
           </div>
           {u.description && <div className="mt-1.5 text-xs text-text-muted">{u.description}</div>}
         </div>
-        <div className="text-right shrink-0 text-xs text-text-subtle tabular">
+        <div className="text-right shrink-0 text-xs text-text-muted tabular">
           {u.score > 0 && <div>score {u.score.toFixed(3)}</div>}
           {(u.churn > 0 || u.amp > 0) && (
             <div>
@@ -2324,7 +2324,7 @@ function EdgeList({
         {title} <span className="tabular">({names.length})</span>
       </div>
       {names.length === 0 ? (
-        <div className="text-xs text-text-subtle">none in the graph</div>
+        <div className="text-xs text-text-muted">none in the graph</div>
       ) : (
         <div className="flex flex-wrap gap-1.5">
           {names.slice(0, 60).map((n) => (
@@ -2337,7 +2337,7 @@ function EdgeList({
               {n}
             </button>
           ))}
-          {names.length > 60 && <span className="text-xs text-text-subtle">+{names.length - 60} more</span>}
+          {names.length > 60 && <span className="text-xs text-text-muted">+{names.length - 60} more</span>}
         </div>
       )}
     </div>
@@ -2427,7 +2427,7 @@ function ExploreTab({ id }: { id: CodeId }) {
           Search
         </Button>
       </form>
-      <p className="text-xs text-text-subtle">
+      <p className="text-xs text-text-muted">
         Runs the same <span className="font-mono">code.search</span> / <span className="font-mono">code.symbol</span> /{" "}
         <span className="font-mono">code.callers</span> ops agents call. Click a symbol to see its definition and graph.
       </p>
@@ -2681,7 +2681,7 @@ function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
                   />
                   <span className="font-mono text-xs tabular shrink-0">#{r.pr_number}</span>
                   <span className="text-sm truncate flex-1">
-                    {r.title || <span className="text-text-subtle">(title not in history yet)</span>}
+                    {r.title || <span className="text-text-muted">(title not in history yet)</span>}
                   </span>
                   <span className="text-xs text-text-muted tabular shrink-0 hidden md:inline">{r.author}</span>
                   <span className="text-xs text-text-muted tabular shrink-0">{fmtInt(r.pack_tokens)} tok</span>
@@ -3040,7 +3040,7 @@ function AccessTab({
           <>
             <div className="flex items-start justify-between gap-4 flex-wrap">
               <div className="min-w-0">
-                <div className="text-xs text-text-subtle">How people join</div>
+                <div className="text-xs text-text-muted">How people join</div>
                 <div className="mt-1 text-lg font-medium inline-flex items-center gap-2 flex-wrap">
                   <Icon name={RULE_META[rule].icon} size="sm" color={RULE_COLOR[rule]} aria-hidden="true" />
                   {RULE_META[rule].headline(id.org)}
@@ -3134,7 +3134,7 @@ function AccessTab({
                   asks to be a <span className="font-medium text-text">{ROLE_WORD[asked]}</span>
                   {g.status !== "pending" && g.role === "viewer" && asked === "admin" ? " (reads today)" : ""}
                 </span>
-                <span className="text-text-subtle tabular hidden md:inline">
+                <span className="text-text-muted tabular hidden md:inline">
                   {g.pending_since ? relativeTime(g.pending_since) : ""}
                 </span>
                 {canManage ? (
@@ -3207,7 +3207,7 @@ function AccessTab({
             />
           )}
           {active.length === 0 ? (
-            <div className="text-xs text-text-subtle">
+            <div className="text-xs text-text-muted">
               Nobody reads this repository yet.{" "}
               {rule === "open"
                 ? "People join from the Repositories page."
@@ -3230,14 +3230,14 @@ function AccessTab({
                   />
                   <span className="font-mono flex-1 truncate">
                     {g.subject}
-                    {g.subject === me && <span className="ml-2 text-text-subtle">(you)</span>}
+                    {g.subject === me && <span className="ml-2 text-text-muted">(you)</span>}
                   </span>
                   <Badge
                     text={`${roleWord(g.role)}${g.pending_role ? " · asked to maintain" : ""}`}
                     state="neutral"
                     size="sm"
                   />
-                  <span className="text-text-subtle tabular hidden md:inline">
+                  <span className="text-text-muted tabular hidden md:inline">
                     <TipTarget tip={`added by ${g.granted_by}`}>{relativeTime(g.granted_at)}</TipTarget>
                   </span>
                   {canManage && g.subject !== me && (
@@ -3286,7 +3286,7 @@ function AccessTab({
               <Button type="primary" htmlType="submit" iconLeft="plus" disabled={busy !== null || !subject.trim()}>
                 Add
               </Button>
-              <span className="text-xs text-text-subtle basis-full">
+              <span className="text-xs text-text-muted basis-full">
                 Adding someone by name works under every rule. Agents read with a token that names this repository.
               </span>
             </form>
