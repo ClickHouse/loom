@@ -1666,3 +1666,25 @@ async def test_a_session_scoped_delete_leaves_another_sessions_keys_current_or_p
         assert (await a.call("memory.get", {"memory_key": "w", **own}))["found"]
         planned = {"memory_key": "q", **own, "valid_as_of": due}
         assert (await a.call("memory.get", planned))["value"] == "later"
+
+
+async def test_a_namespace_wide_delete_retracts_the_plan_written_last(
+    control_plane_url, mint_test_token
+) -> None:
+    from loom import Agent
+
+    a, ns = await _agent(control_plane_url, mint_test_token, "delete-latest")
+    tok = mint_test_token(org=ORG, namespaces=[ns], roles=["admin"])
+    later = datetime.now(UTC) + timedelta(days=30)
+    due = (later + timedelta(days=1)).isoformat()
+    plan = {"memory_key": "q", "change_kind": "transition", "effective_at": later.isoformat()}
+    async with a:
+        for name in ("b", "c"):  # c's is written last
+            async with Agent(
+                org=ORG, namespace=ns, agent=name, base_url=control_plane_url, api_key=tok
+            ) as w:
+                await w.call("memory.amend", {**plan, "value": f"from {name}"})
+        assert (await a.call("memory.delete", {"memory_key": "q"}))["found"] is True
+        # c's went; b's is still due (a read as c would find b's namespace-wide).
+        got = await a.call("memory.get", {"memory_key": "q", "agent": "b", "valid_as_of": due})
+        assert got["value"] == "from b"

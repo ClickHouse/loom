@@ -92,13 +92,11 @@ def _author(actor: str) -> str:
     return actor
 
 
-def refusal_hint(existing: Any, *, op: str) -> dict[str, Any]:
+def refusal_hint(actor: str, *, key: str, ns: str) -> dict[str, Any]:
     """The structured `hint` a refused member write carries (the refusal says how to
     make it right), so any client can show who wrote the rule and what a member can do
     instead."""
-    key = str(getattr(existing, "memory_key", "") or "")
-    ns = str(getattr(existing, "namespace", "") or "")
-    author = _author(str(getattr(existing, "actor", "") or "")) or "another member"
+    author = _author(actor) or "another member"
     return {
         "code": "TEAM_RULE_NOT_YOURS",
         "author": author,
@@ -117,16 +115,29 @@ def assert_own_row(existing: Any, *, op: str) -> None:
     server-stamped `actor`) is refused 403 — a member revises and deletes only their own
     rules — with a `hint` naming the author, the key and what the member can do instead.
     A no-op for a call the ordinary gate admitted (an admin), or when there is no row."""
-    if existing is None or not _member_write.get():
+    if existing is None:
+        return
+    assert_own_author(
+        str(getattr(existing, "actor", "") or ""),
+        key=str(getattr(existing, "memory_key", "") or ""),
+        ns=str(getattr(existing, "namespace", "") or ""),
+        op=op,
+    )
+
+
+def assert_own_author(actor: str, *, key: str, ns: str, op: str) -> None:
+    """`assert_own_row` for what a row's author is known by without the row (a plan only
+    the journal holds: its last commit's actor)."""
+    if not _member_write.get():
         return
     from fastapi import HTTPException
 
     from server.memory.app.provenance import writer_actor
 
     mine = writer_actor()
-    if mine and str(getattr(existing, "actor", "") or "") == mine:
+    if mine and actor == mine:
         return
-    hint = refusal_hint(existing, op=op)
+    hint = refusal_hint(actor, key=key, ns=ns)
     raise HTTPException(
         status_code=403,
         detail={

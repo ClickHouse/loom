@@ -208,7 +208,7 @@ async def test_delete_of_a_journal_only_key_prefers_the_exact_identity_and_check
     authors: list[str] = []
     monkeypatch.setattr(temporal_store, "journal_only_identities", _journal_only)
     monkeypatch.setattr(hm, "_retract_journal_only", _retract)
-    monkeypatch.setattr(hm, "assert_own_row", lambda row, op: authors.append(row.actor))
+    monkeypatch.setattr(hm, "assert_own_author", lambda actor, **_k: authors.append(actor))
     monkeypatch.setattr(hm, "request_scope", lambda: "scope")
     monkeypatch.setattr("server.memory.app.temporal_publisher.read_token", lambda r: "t")
     out = await hm._delete_journal_only(

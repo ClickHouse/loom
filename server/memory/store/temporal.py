@@ -1063,7 +1063,7 @@ async def journal_only_identities(
     """The (identity, memory_id, actor of its last commit) of every key of the scope the
     journal has a commit for and loom.memory serves no live row of (a plan an amendment
     made, not yet due): what `memory.clear` and `memory.delete` retract in the journal
-    itself. In identity order."""
+    itself. The most recently written first, as a namespace-wide row lookup picks."""
     ch = ch or _default_client()
     where = ["org = {org:String}", "namespace = {ns:String}"]
     params: dict[str, Any] = {"org": org, "ns": namespace}
@@ -1090,7 +1090,7 @@ async def journal_only_identities(
         f"AND {_IDENT} NOT IN (SELECT {_IDENT} FROM loom.memory FINAL "
         f"WHERE {cond} AND tombstoned_at IS NULL) "
         "GROUP BY agent, user_id, session_id, memory_key "
-        "ORDER BY agent, user_id, session_id, memory_key",
+        "ORDER BY max(commit_seq) DESC",
         params=params,
     )
     return [

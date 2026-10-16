@@ -16,7 +16,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from server.auth.context import current_auth
-from server.code.app.member_writes import assert_own_row
+from server.code.app.member_writes import assert_own_author, assert_own_row
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
@@ -893,8 +893,6 @@ async def _delete_journal_only(input: MemoryDeleteInput) -> MemoryDeleteOutput |
     """A delete of a key only the journal holds, found as the row lookup finds a row:
     the caller's exact identity first, else one match namespace-wide for its user, in
     the request's read scope. Its claims retracted, or None when there is none."""
-    from types import SimpleNamespace
-
     from server.memory.app import temporal_publisher as publisher
     from server.memory.store import temporal as temporal_store
 
@@ -917,10 +915,7 @@ async def _delete_journal_only(input: MemoryDeleteInput) -> MemoryDeleteOutput |
         return None
     ident, memory_id, actor = found[0]
     # A member of a code namespace retracts only the rules they wrote.
-    assert_own_row(
-        SimpleNamespace(actor=actor, memory_key=input.memory_key, namespace=input.namespace),
-        op="memory.delete",
-    )
+    assert_own_author(actor, key=input.memory_key, ns=input.namespace, op="memory.delete")
     done, pending = await _retract_journal_only(
         input.org, input.namespace, [(ident, memory_id)], "memory.delete"
     )
