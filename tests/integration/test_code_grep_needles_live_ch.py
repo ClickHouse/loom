@@ -158,17 +158,20 @@ def test_the_engines_differ_where_the_planner_says_they_do(ch_client: Any) -> No
     assert tuple(row) == (1, 1, 0)
 
 
-def _skip_index_granules(reader: Any, sql: str, params: dict[str, Any]) -> tuple[int, int]:
-    """(kept, total) granules `idx_code_chunks_content_ng` reports in EXPLAIN."""
+def _granules(reader: Any, sql: str, params: dict[str, Any]) -> dict[str, tuple[int, int]]:
+    """(kept, total) granules per EXPLAIN index block: `PrimaryKey` and the text index."""
     lines = [
         r[0].strip()
         for r in reader.query("EXPLAIN indexes = 1 " + sql, parameters=params).result_rows
     ]
     assert "Name: idx_code_chunks_content_ng" in lines, "\n".join(lines)
-    at = lines.index("Name: idx_code_chunks_content_ng")
-    granules = next(line for line in lines[at:] if line.startswith("Granules:"))
-    kept, total = granules.removeprefix("Granules:").strip().split("/")
-    return int(kept), int(total)
+    out = {}
+    for key, header in (("pk", "PrimaryKey"), ("text", "Name: idx_code_chunks_content_ng")):
+        at = lines.index(header)
+        granules = next(line for line in lines[at:] if line.startswith("Granules:"))
+        kept, total = granules.removeprefix("Granules:").strip().split("/")
+        out[key] = (int(kept), int(total))
+    return out
 
 
 def test_a_case_insensitive_search_regex_still_prunes_on_the_text_index(
@@ -177,23 +180,19 @@ def test_a_case_insensitive_search_regex_still_prunes_on_the_text_index(
     """code.search's guard for a case-insensitive regex stays index-visible and
     selective: EXPLAIN shows the n-gram index keeping only the granule with the
     match, and the chunk that matches only through the Kelvin sign comes back."""
-    granule = int(
-        ch_client.query(
-            "SELECT extract(engine_full, 'index_granularity = (\\d+)') FROM system.tables "
-            "WHERE database = 'loom' AND name = 'code_chunks'"
-        ).result_rows[0][0]
-    )
     org, ns = unique_org("grep-explain"), "code-explain"
     rows = [
         [org, ns, "m", f"src/f{i:05d}.cpp", uuid.uuid4(), 1, 1, f"filler body {i}", [0.0] * 3072, 1]
-        for i in range(12 * granule)  # paths sort in insert order: one granule per `granule` rows
+        for i in range(3072)  # paths sort in insert order
     ]
-    match = 6 * granule + granule // 2
+    # far enough apart to land in different granules however the table splits them
+    # (by row count, or by bytes: each row carries a 12 KB vector)
+    match, near_misses = 1664, (128, 2944)
     # matches (?i)checkStackSize only through the Kelvin sign, which lower() leaves alone
     rows[match][7] = "void chec\u212aStackSize();"
-    # near misses in other granules: every piece of the identifier, never the whole of it
-    rows[granule // 2][7] = "check the stack size"
-    rows[10 * granule][7] = "stackSize; check"
+    # every piece of the identifier, never the whole of it
+    rows[near_misses[0]][7] = "check the stack size"
+    rows[near_misses[1]][7] = "stackSize; check"
     ch_client.insert(
         "loom.code_chunks",
         rows,
@@ -218,5 +217,8 @@ def test_a_case_insensitive_search_regex_still_prunes_on_the_text_index(
             f"AND namespace = {{ns:String}} AND tombstoned_at IS NULL AND {cond} "
             f"{GREP_FINAL_SETTINGS}"
         )
-        assert _skip_index_granules(reader, sql, params) == (1, 12), (pattern, cond)
+        granules = _granules(reader, sql, params)
+        _, total = granules["pk"]
+        assert total >= 3, granules  # the match and the near misses sit apart
+        assert granules["text"] == (1, total), (pattern, cond, granules)
         assert _rows(reader, sql, params) == [(f"src/f{match:05d}.cpp",)], pattern
