@@ -1546,6 +1546,30 @@ async def test_a_successor_closes_the_older_value_a_sibling_still_states(ch, org
     assert await _open_cities(ch, org, {"london"}) == {"london"}
 
 
+async def test_a_clause_the_winner_keeps_word_for_word_keeps_its_end(ch, org) -> None:
+    # The winner has no link to London's fact, but still says it in the same words.
+    december = naive_utc_now().replace(microsecond=0) + timedelta(days=60)
+    lives = ("user", "live_in", "london")
+    acme = await _stated(
+        ch,
+        org,
+        "s1",
+        "I live in London until December. I work at Acme",
+        lives,
+        fact_valid_to=december,
+    )
+    was = "I live in London until December. I work at Initech"
+    initech = await _stated(ch, org, "s2", was, extracted=False)
+    await _follow_retirement(ch, org, acme, initech)
+    await _mutations_done(ch, org)
+    rows = await ch.query_all(
+        "SELECT valid_to FROM loom.entity_triples WHERE org = {org:String}"
+        " AND object = 'london' SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert [r["valid_to"] for r in rows] == [december]
+
+
 async def test_an_ended_live_end_of_the_chain_holds_nothing(ch, org) -> None:
     paris = await _stated(ch, org, "s1", "I currently live in Paris")
     london = await _stated(

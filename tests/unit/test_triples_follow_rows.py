@@ -845,3 +845,16 @@ def test_a_losers_facts_end_when_its_row_was_replaced_open_or_not() -> None:
     assert plan.closes == [] and plan.ends == {paris: jan}
     merged = tfr.merge_plans([plan, tfr.plan_follow([], [pair(feb, paris, acme)])])
     assert merged.ends == {paris: feb, acme: feb}
+
+
+def test_a_fact_ending_later_the_winner_still_says_is_kept() -> None:
+    # Not open ("until December"), so no close is planned; a follow must not end it.
+    lives = ("user", "live_in", "london")
+    pair = tfr.RowSupersession(
+        loser_text="I live in London until December. I work at Acme",
+        winner_text="I live in London until December. I work at Initech",
+        winner_id="w",
+        loser_triples=frozenset({lives}),
+        winner_triples=frozenset({("user", "work_at", "initech")}),
+    )
+    assert lives in tfr.plan_follow([], [pair]).kept

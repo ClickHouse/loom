@@ -292,7 +292,7 @@ class FollowPlan:
     inserts: list[Successor]
     # When each closed triple stopped holding: the latest `loser_valid_to` closing it.
     closed_at: dict[Triple, Any] = field(default_factory=dict)
-    # Open triples a live winner still states: no pair closes them.
+    # Triples a live winner still states: no pair closes or ends them.
     kept: set[Triple] = field(default_factory=set)
     # When each triple a loser's row linked stopped holding there, open or not: the
     # latest `loser_valid_to` of the losers linking it.
@@ -631,6 +631,9 @@ def plan_follow(open_triples: list[dict[str, Any]], pairs: list[RowSupersession]
         for linked in pair.loser_triples | pair.loser_inferred:
             end = pair.loser_valid_to
             ends[linked] = _later(ends[linked], end) if linked in ends else end
+            # One not open ("until December") the winner still says is kept as well.
+            if _winner_attests(pair, linked) or _still_says(pair, linked):
+                kept.add(linked)
     return FollowPlan(closes=closes, inserts=inserts, closed_at=closed_at, kept=kept, ends=ends)
 
 

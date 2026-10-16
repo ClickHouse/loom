@@ -998,7 +998,8 @@ async def follow_row_supersessions(
     # attempt closed, and must still end what came after it.
     losers = sorted({lo for lo, _wi in followed})
     linked = sorted({*await linked_triples(input, losers, ch=ch), *plan.closes})
-    held = await stated_by_live_rows(input.org, input.namespace, linked, ch=ch)
+    # A fact the winner still says word for word is held too, linked or not.
+    held = await stated_by_live_rows(input.org, input.namespace, linked, ch=ch) | plan.kept
     gone = [t for t in linked if t not in held]
     # A fact the loser stated until later ends now, or when a winner dated ahead
     # starts, as an open one closes; a close's own later end stays.
