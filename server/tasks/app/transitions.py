@@ -8,6 +8,7 @@ import json
 import time
 import uuid
 from datetime import timedelta
+from functools import partial
 from typing import Any, cast
 
 from server.core.datetimes import utc_now as _now
@@ -150,25 +151,28 @@ async def handle_task_create(input: TaskCreateInput) -> TaskCreateOutput:
     )
     # ``_record`` writes from a "previous" row: for a create that row has no
     # status yet, so from_status is empty and to_status is the landing state.
+    record = partial(
+        _record,
+        cast(TaskRow, {**task, "status": ""}),
+        event="created",
+        actor=actor,
+        agent=input.agent,
+        patch={"kind": input.kind, "mode": mode, "policy": bool(policy)},
+        status=status,
+    )
     try:
-        row, seq = await _record(
-            cast(TaskRow, {**task, "status": ""}),
-            event="created",
-            actor=actor,
-            agent=input.agent,
-            patch={"kind": input.kind, "mode": mode, "policy": bool(policy)},
-            dedup_token=token,
-            status=status,
-        )
+        row, seq = await record(dedup_token=token)
     except _InsertDropped:
         # A create with the same key landed between our lookup and our insert:
         # answer with that task, as a later retry would.
         prior = await repo.fetch_task_by_idempotency_key(
             input.org, input.inbox, input.idempotency_key
         )
-        if prior is None:
-            raise
-        return TaskCreateOutput(task=_payload(prior), created=False, seq=int(prior["version"]))
+        if prior is not None:
+            return TaskCreateOutput(task=_payload(prior), created=False, seq=int(prior["version"]))
+        # No task holds the key: it was erased, and ClickHouse still remembers
+        # the token. A token with this task's id is one it has never seen.
+        row, seq = await record(dedup_token=f"{token}:{task_id}")
     backend = await repo.lease_backend()
     await backend.ensure_row(task_id, input.org, input.inbox, 0)
     nxt = _triage_note(inbox, input.agent, policy) if status == "triage" else ""

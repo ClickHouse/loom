@@ -115,3 +115,39 @@ async def test_a_second_ready_event_with_the_same_id_is_dropped(ch: Any) -> None
     await wrepo.insert_ready_event(event(100))
     await wrepo.insert_ready_event(event(200))
     assert await wrepo.ready_event_seq(org, "bot", task_id) == 100
+
+
+@pytest.mark.asyncio
+async def test_a_create_after_its_task_was_erased_lands_a_new_task(ch: Any) -> None:
+    # ClickHouse keeps an insert's dedup token after DELETE, so the second
+    # create's insert is dropped although no task holds the key any more.
+    from server.erasure.store.steps_ledgers import delete_tasks_by_namespace
+
+    org = f"itest-erased-{uuid.uuid4().hex[:8]}"
+    ident = {"org": org, "namespace": "private", "agent": "admin"}
+    await inboxes.handle_inbox_register(
+        wire.InboxRegisterInput(
+            **ident, inbox="bot", owner_agent="bot", accept_disclosure=["internal"]
+        )
+    )
+    body = {
+        "org": org,
+        "namespace": "public",
+        "agent": "poster",
+        "inbox": "bot",
+        "kind": "chore",
+        "title": "one task",
+        "disclosure": "internal",
+        "idempotency_key": "k1",
+    }
+    first = await transitions.handle_task_create(wire.TaskCreateInput(**body))
+    await delete_tasks_by_namespace(org, first.task.namespace)
+
+    second = await transitions.handle_task_create(wire.TaskCreateInput(**body))
+
+    assert second.created
+    assert second.task.task_id != first.task.task_id
+    rows = await ch.query_all(
+        "SELECT task_id FROM loom.tasks FINAL WHERE org = {org:String}", params={"org": org}
+    )
+    assert [str(r["task_id"]) for r in rows] == [second.task.task_id]
