@@ -846,7 +846,13 @@ async def _set_post_insert(
     # A write with fewer than two entities projects no edge: no task, no mark.
     ents = set_entities_for_projection(input, input.value)
     if len(ents) >= 2 and revised:
-        tail.append(_project_set_entities_fail_open(input, memory_id=memory_id, ents=ents))
+        # Its edges flushed before the close runs and before the write answers, so a walk
+        # on any replica reads them and a failed flush is reported, not dropped.
+        tail.append(
+            _project_set_entities_fail_open(
+                input, memory_id=memory_id, wait_visible=True, ents=ents
+            )
+        )
     elif len(ents) >= 2:
         from server.memory.app import graph_write_marks
 

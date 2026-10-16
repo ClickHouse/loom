@@ -138,6 +138,8 @@ async def test_a_revision_waits_for_its_entity_projection(post_insert) -> None:
     gate.set()
     await asyncio.wait_for(_post_insert(revised=True), timeout=1.0)
     assert seen["scheduled"] == [] and "entities" in seen["order"]
+    # Its edges are readable once it returns, as the projection beside a response's are.
+    assert seen["project_kw"]["wait_visible"] is True
 
 
 @pytest.mark.asyncio
