@@ -13,6 +13,7 @@ from server.identity.app import account_admin
 from server.identity.store import namespaces
 
 _KEY = machines.generate_key()[1].decode()
+_real_sleep = asyncio.sleep
 
 
 @pytest.mark.parametrize(
@@ -71,7 +72,11 @@ def world(monkeypatch) -> dict[str, Any]:
 
     async def revoke(token_id: str, **kw: Any) -> dict[str, Any]:
         state["revoked"].append((token_id, kw["reason"]))
+        state["cutoff"] = kw["issued_before"]
         return {}
+
+    async def no_wait(seconds: float) -> None:
+        return None
 
     async def emit(event_type: str, **kw: Any) -> str:
         return ""
@@ -82,6 +87,7 @@ def world(monkeypatch) -> dict[str, Any]:
     monkeypatch.setattr(revocation, "revoked_outright", revoked_outright)
     monkeypatch.setattr(revocation, "revoke", revoke)
     monkeypatch.setattr(account_admin.audit, "emit", emit)
+    monkeypatch.setattr(account_admin.asyncio, "sleep", no_wait)
     return state
 
 
@@ -111,3 +117,31 @@ def test_replacing_a_bot_ends_the_tokens_it_had(world) -> None:
     assert world["revoked"] == [("sa:triage", "bot replaced")]
     assert asyncio.run(account_admin.disable_bot("triage", by="ops"))
     assert world["revoked"][-1] == ("sa:triage", "bot disabled")
+
+
+def test_a_token_minted_from_the_old_row_during_a_replace_is_revoked(world, monkeypatch) -> None:
+    # A request reads the bot while its replacement is being saved: its token
+    # is issued as of that read, and the replace's cutoff, taken after the
+    # save, must be later.
+    import time
+
+    asyncio.run(account_admin.create_bot(_bot(["triage=writer"]), by="ops", replace=False))
+    save, read_during_save = machines.save, []
+
+    async def slow_save(m: machines.Machine, *, by: str, active: bool = True) -> None:
+        read_during_save.append(int(time.time()))  # `since` of a request now
+        await save(m, by=by, active=active)
+
+    monkeypatch.setattr(machines, "save", slow_save)
+    monkeypatch.setattr(account_admin.asyncio, "sleep", _real_sleep)  # the real wait
+    asyncio.run(account_admin.create_bot(_bot(["triage=viewer"]), by="ops", replace=True))
+    assert read_during_save[0] < world["cutoff"].timestamp()
+
+
+def test_a_saved_bot_stands_when_its_audit_row_fails(world, monkeypatch) -> None:
+    async def down(event_type: str, **kw: Any) -> str:
+        raise RuntimeError("ClickHouse away")
+
+    monkeypatch.setattr(account_admin.audit, "emit", down)
+    asyncio.run(account_admin.create_bot(_bot(["triage=writer"]), by="ops", replace=False))
+    assert "triage" in world["bots"]

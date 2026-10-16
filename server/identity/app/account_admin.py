@@ -196,13 +196,14 @@ async def create_bot(bot: machines.Machine, *, by: str, replace: bool) -> None:
     existing = await machines.get(name)
     if existing is not None and not replace:
         raise ValueError(f"bot {name!r} exists; replace it to change it")
+    await machines.save(bot, by=by)
     if existing is not None:
-        # Tokens from its old key or wider roles end now, not within the hour;
-        # saved once that cutoff has passed, so the new key's first token lives.
+        # Tokens from its old key or wider roles end now, not within the hour.
+        # The cutoff is taken after the save, so a request that read the old
+        # row falls under it; returning once it has passed lets the new key's
+        # first token live.
         cutoff = await _end_tokens(name, by=by, reason="bot replaced")
         await asyncio.sleep(max(0.0, cutoff.timestamp() - time.time()))
-    # The last step that may fail: once it lands, the bot (and its key) stands.
-    await machines.save(bot, by=by)
     try:
         await audit.emit(
             "auth.machine_created",
