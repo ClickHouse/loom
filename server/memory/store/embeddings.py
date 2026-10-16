@@ -739,10 +739,12 @@ async def unsupersede_embeddings(
     session_id: str,
     memory_key: str,
     *,
+    status: str = "active",
     ch: _CHClient | None = None,
 ) -> int:
     """Inverse of the supersede re-emit for one key: every live
-    memory_embeddings row goes back to status='active' with the retirement
+    memory_embeddings row goes back to `status` (the restored memory row's:
+    `active`, or `conflicted` for a row still under review) with the retirement
     stamp cleared, so recall sees it again. Returns rows re-emitted."""
     ch = ch or _default_client()
     rows = await live_embedding_rows_for_key(
@@ -758,7 +760,7 @@ async def unsupersede_embeddings(
         build_embedding_row(
             **(
                 {c: val for c, val in r.items() if c in EMBEDDING_PERSISTED_COLS}
-                | {"status": "active", "invalid_at": None, "version": reemit_version(r)}
+                | {"status": status, "invalid_at": None, "version": reemit_version(r)}
             )
         )
         for r in rows

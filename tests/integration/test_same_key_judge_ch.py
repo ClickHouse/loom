@@ -4301,9 +4301,12 @@ async def test_an_undo_gives_a_conflicted_row_back_its_conflict(ch, org) -> None
     retired = {**paris, "version": M.next_version(), "status": "superseded"}
     retired["superseded_by"] = str(london["memory_id"])
     await M.insert_memory_versions([paris, london, retired], ch=ch)
+    await _retired_embedding(ch, paris)
     assert (await handle_memory_restore(_undo_of(london))).restored
     head = await M.get_by_id(str(paris["memory_id"]), org=org, ch=ch, scope=WHOLE_NAMESPACE)
     assert (head.status, head.conflict_with) == ("conflicted", [str(peer["memory_id"])])
+    # Search ranks on the embedding row's status: it carries the conflict too.
+    assert await _embedding_status(ch, paris) == "conflicted"
 
 
 @pytest.mark.parametrize("peer_end", ["deleted", "resolved"])
@@ -4326,9 +4329,37 @@ async def test_an_undo_after_its_peer_left_review_restores_active(ch, org, peer_
         ended = {"status": "active", "conflict_with": []}
     peer_ended = {**peer, "version": M.next_version(), **ended}
     await M.insert_memory_versions([paris, peer, london, retired, peer_ended], ch=ch)
+    await _retired_embedding(ch, paris)
     assert (await handle_memory_restore(_undo_of(london))).restored
     head = await M.get_by_id(str(paris["memory_id"]), org=org, ch=ch, scope=WHOLE_NAMESPACE)
     assert head.status == "active"
+    assert await _embedding_status(ch, paris) == "active"
+
+
+async def _retired_embedding(ch: Any, row: dict[str, Any]) -> None:
+    """`row`'s search row as its retirement left it: superseded, with a vector."""
+    from server.memory import store as M
+
+    cols = ("org", "namespace", "agent", "user_id", "session_id", "memory_key", "content_sha256")
+    emb = M.build_embedding_row(
+        **{c: row[c] for c in cols},
+        embedding_model="itest",
+        embedding_dim=3072,
+        embedding=[0.01] * 3072,
+        status="superseded",
+        invalid_at=naive_utc_now(),
+    )
+    await M.insert_embedding_rows([emb], ch=ch)
+
+
+async def _embedding_status(ch: Any, row: dict[str, Any]) -> str:
+    found = await ch.query_one(
+        "SELECT status FROM loom.memory_embeddings FINAL "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND session_id = {s:String} "
+        "AND memory_key = {k:String} SETTINGS select_sequential_consistency = 1",
+        params={"org": row["org"], "ns": NS, "s": row["session_id"], "k": row["memory_key"]},
+    )
+    return str(found["status"])
 
 
 def _undo_of(winner: dict[str, Any]) -> Any:

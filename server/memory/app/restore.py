@@ -75,11 +75,13 @@ async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryResto
         # The Undo's assertion time, taken with the restore: its graph step runs after the
         # lock is released, and is dated here, not then.
         restored_at = naive_utc_now()
+        # The search row takes the same status: ranking reads its own copy.
+        status = await _status_before_retirement(existing, ch=ch)
         restore_row = memory_repo.build_memory_version_row(
             existing,
             version=new_version,
             updated_at=memory_repo.written_now(),
-            status=await _status_before_retirement(existing, ch=ch),
+            status=status,
             superseded_by="",
             invalid_at=None,
         )
@@ -92,6 +94,7 @@ async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryResto
                 input.user_id,
                 input.session_id,
                 input.memory_key,
+                status=status,
                 ch=ch,
             )
         except Exception:
