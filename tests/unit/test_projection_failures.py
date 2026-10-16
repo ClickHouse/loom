@@ -699,8 +699,7 @@ async def test_a_follow_replay_first_finishes_a_fallbacks_recorded_repair(monkey
 
     at = datetime(2026, 10, 16, 12, 0, 0)
     paris = IntervalRepair("user", "live_in", "paris", "berlin", valid_to=datetime(2026, 12, 1))
-    failed = TriplesRepairFailed(at, ConnectionError("edge close"), [paris])
-    failed.restore_id = "r1"
+    failed = TriplesRepairFailed(at, ConnectionError("edge close"), [paris], restore_id="r1")
     calls: list[tuple] = []
 
     async def finish(input, restore_id, *, restored_at, repaired, ch):
@@ -743,9 +742,7 @@ async def test_a_follow_replay_whose_fallback_fails_records_its_repair(monkeypat
     paris = IntervalRepair("user", "live_in", "paris", "berlin", valid_to=datetime(2026, 12, 1))
 
     async def follow(input, pairs, *, ch, hops):
-        failed = TriplesRepairFailed(at, ConnectionError("edge close"), [paris])
-        failed.restore_id = "r1"
-        raise failed
+        raise TriplesRepairFailed(at, ConnectionError("edge close"), [paris], restore_id="r1")
 
     monkeypatch.setattr(entity_projections, "follow_row_supersessions", follow)
     failure = ProjectionFailureRow(

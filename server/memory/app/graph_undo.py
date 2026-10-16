@@ -225,13 +225,12 @@ async def restate_facts(
     ]
     try:
         await repair_intervals(input, restated, ch=ch, at=restored_at)
-    except Exception as e:
+    except TriplesRepairFailed as e:
         # Recorded by the caller with this id, for `finish_restated_repair` to finish.
-        failed = e if isinstance(e, TriplesRepairFailed) else TriplesRepairFailed(restored_at, e)
-        failed.restore_id = restore_id
-        if failed is e:
-            raise
-        raise failed from e
+        e.restore_id = restore_id
+        raise
+    except Exception as e:
+        raise TriplesRepairFailed(restored_at, e, restore_id=restore_id) from e
 
 
 async def finish_restated_repair(

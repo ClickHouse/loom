@@ -56,13 +56,15 @@ class TriplesRepairFailed(Exception):
         inserted_at: datetime,
         cause: BaseException,
         repairs: list[IntervalRepair] | None = None,
+        *,
+        restore_id: str = "",
     ) -> None:
         super().__init__(f"interval repair failed: {type(cause).__name__}: {cause}")
         self.inserted_at = inserted_at
         self.repairs = repairs or []
         self.entity_map: dict[str, str] = {}
         # Set when the triples were an Undo's or a fallback's markers (`restore_id`).
-        self.restore_id = ""
+        self.restore_id = restore_id
 
 
 def messages_source_resource_id(input: Any) -> str:
