@@ -38,6 +38,7 @@ SearchableMemoryType = str
 Scope = Literal["private", "shared"]
 SENTINEL = "-"
 
+from loom.errors import from_response  # noqa: E402
 from loom.records import MemoryRecordClient, MemorySchemaClient  # noqa: E402
 from loom.run import credit_answer, current_run_id  # noqa: E402  (after the module constants)
 
@@ -193,6 +194,11 @@ class _SetCoalescer:
                 str(row["memory_key"]), res
             )
             row["noop"] = int(row.get("version") or 0) == 0
+            if row["conflict_verdict"] == "blacklisted":
+                # Refused, as the same set alone is: the 422 it would have raised.
+                detail = {"code": "BLACKLISTED", "message": "value matches a blacklist pattern"}
+                fut.set_exception(from_response({"detail": detail}, 422))
+                continue
             fut.set_result(row)
 
     async def flush(self) -> None:
@@ -691,11 +697,13 @@ class MemoryClient:
         identity inside 200 ms the SDK coalesces sets into one
         `memory.bulk_set`, and such a result carries `coalesced: true` and no
         `memory_id` / `content_sha256`: read the hash with `get()` (a set
-        with `if_match_sha256` is never coalesced).
+        with `if_match_sha256` is never coalesced). A blacklisted value raises
+        the `ValidationError` (`BLACKLISTED`, 422) coalesced or not.
 
         The response also carries the write-time conflict verdict
         (`conflict_verdict`: clear | merge | duplicate | conflict | refines,
-        or `superseded` on a coalesced set when a later stored row of the same
+        `pending` (below), and on a coalesced set `rejected` for a close write
+        against a pinned row, or `superseded` when a later stored row of the same
         key contradicts it, `superseded_by` naming that row),
         the `peers` it was reached against (`memory_id`, `memory_key`,
         `excerpt`, `valid_at`, `similarity`), a `next` hint naming the op to

@@ -100,6 +100,20 @@ async def test_a_coalesced_set_keeps_the_rows_own_verdict(agent: Agent) -> None:
     assert by_key == {"c": "refines", "d": "conflict", "e": "conflict"}
 
 
+async def test_a_coalesced_set_of_a_blacklisted_value_raises_as_alone(agent: Agent) -> None:
+    # Alone, memory.set answers 422 BLACKLISTED; coalesced, the same error is raised.
+    from loom.errors import ValidationError
+
+    t: Any = agent.transport
+    t.row_verdicts = {"d": "blacklisted"}
+    results = await asyncio.gather(
+        *[agent.memory.set(k, {"v": k}) for k in "abcde"], return_exceptions=True
+    )
+    (refused,) = [r for r in results if isinstance(r, BaseException)]
+    assert isinstance(refused, ValidationError) and refused.code == "BLACKLISTED"
+    assert refused.status == 422
+
+
 async def test_a_set_with_point_only_fields_is_never_coalesced(agent: Agent) -> None:
     t: Any = agent.transport
     await asyncio.gather(
