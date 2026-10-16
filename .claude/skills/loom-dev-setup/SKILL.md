@@ -35,22 +35,22 @@ The make targets use `.venv/bin/python`. Run repository scripts as modules (`.ve
 Pick free ports and a name that cannot be mistaken for a deployment's containers (`loom-blue`, `loom-green`, `loom-proxy`, `loom-server`, `loom-ch` are taken by convention):
 
 ```bash
-LOOM_CH_CONTAINER="ch-${BRANCH//\//-}" LOOM_CH_HOST_PORT=18123 LOOM_CH_NATIVE_HOST_PORT=19000 bash dev/ci_start_clickhouse.sh
-docker ps --filter "name=^ch-${BRANCH//\//-}$" --format '{{.Names}} {{.Ports}}'   # yours, on your ports
+LOOM_CH_CONTAINER="ch-$(basename "$PWD")" LOOM_CH_HOST_PORT=18123 LOOM_CH_NATIVE_HOST_PORT=19000 bash dev/ci_start_clickhouse.sh
+docker ps --filter "name=^ch-$(basename "$PWD")$" --format '{{.Names}} {{.Ports}}'   # yours, on your ports
 curl -s "http://loom:loomdev@localhost:18123/?query=SELECT+count()+FROM+system.tables+WHERE+database='loom'"   # 0 before the first migrate
 ```
 
-The script refuses a port that is already taken (pick others and re-run), so a failed start cannot hand your migrations to another server. Remove it when done: `docker rm -f "ch-<branch>"` — check the name first; never `rm -f` a container you did not start.
+The script refuses a port that is already taken (pick others and re-run), so a failed start cannot hand your migrations to another server. Remove it when done: `docker rm -f "ch-$(basename "$PWD")"` — check the name first; never `rm -f` a container you did not start.
 
 ## 4. One `.env` for this worktree
 
 An agent's shell keeps no variables between calls, and a server started without them falls back to `localhost:8123` and migrates whatever answers there at boot. Put the worktree's values in its own `.env` (ignored; a fresh worktree has none), which the server, `make migrate` and the tests all read:
 
 ```bash
-test -e .env && echo ".env exists: edit it instead" || cat > .env <<ENV
+test -e .env && { echo ".env exists: check its LOOM_CH_* before migrating"; exit 1; }
+cat > .env <<ENV
 LOOM_CH_HOST=localhost
 LOOM_CH_PORT=18123
-LOOM_INSTANCE_LABEL=iso:$(basename "$PWD"):7790
 LOOM_BASE_URL=http://localhost:7790
 LOOM_BACKGROUND_WORKERS=off
 LOOM_JWT_SECRET=$(openssl rand -hex 16)
@@ -69,11 +69,12 @@ The last four lines are the posture of CI's main integration pass (`.github/work
 Run it in the background (`run_in_background`, or `&`), from the worktree root:
 
 ```bash
-LOOM_BUILD_COMMIT=$(git rev-parse --short HEAD) .venv/bin/uvicorn server.main:app \
+LOOM_INSTANCE_LABEL="iso:$(basename "$PWD"):7790" LOOM_BUILD_COMMIT=$(git rev-parse --short HEAD) \
+  .venv/bin/uvicorn server.main:app \
   --app-dir "$PWD" --host 127.0.0.1 --port 7790 --loop asyncio --reload
 ```
 
-Check it in a separate call: `curl -s localhost:7790/v1/health | jq '{status, build_commit, schema}'`. `--app-dir "$PWD"` makes uvicorn serve this worktree's code; `build_commit` confirms it (a source run reports `unknown` without `LOOM_BUILD_COMMIT`).
+Check it in a separate call: `curl -s localhost:7790/v1/health | jq '{status, build_commit, schema}'`. `--app-dir "$PWD"` makes uvicorn serve this worktree's code; `build_commit` confirms it (a source run reports `unknown` without `LOOM_BUILD_COMMIT`). The label is read from the process environment, not `.env`: without it the server refuses to start.
 
 ## 6. Integration tests
 

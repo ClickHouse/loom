@@ -108,6 +108,9 @@ def test_rule_paths_match_tracked_files(rule: Path) -> None:
 
 def _matches(rule: str, command: str) -> bool:
     """Claude Code's Bash rule match: `:*` is a word-boundary prefix, `*` any text."""
+    command = re.sub(
+        r"^(?:[A-Z_][A-Z0-9_]*=\S* )+", "", command
+    )  # deny rules strip env assignments
     pattern = rule.removeprefix("Bash(").removesuffix(")")
     if pattern.endswith(":*"):
         pattern = pattern[:-2] + "*"
@@ -134,7 +137,12 @@ DENIED = (
     "./redeploy.sh",
     "bash redeploy.sh --rollback",
     "./redeploy.sh --force",
-    "docker compose -f dev/docker-compose.colour.yml up -d",
+    "bash ./redeploy.sh",
+    "/opt/x/redeploy.sh --force",
+    "git push origin refs/tags/v1.2.3",
+    "git push origin HEAD --follow-tags",
+    "git push origin main -u",
+    "LOOM_COLOUR=blue docker compose -f dev/docker-compose.colour.yml up -d",
     "docker rm -f loom-blue",
     "docker stop loom-workers",
 )
@@ -143,6 +151,8 @@ NOT_DENIED = (
     "git push --force-with-lease",
     "git push origin br --force-with-lease",
     "./redeploy.sh --status",
+    "git push -u origin validate-settings",
+    "LOOM_COLOUR=blue docker compose -f dev/docker-compose.colour.yml config -q",
     "docker rm -f ch-my-branch",
 )
 
