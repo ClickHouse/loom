@@ -293,6 +293,9 @@ class FollowPlan:
     closed_at: dict[Triple, Any] = field(default_factory=dict)
     # Open triples a live winner still states: no pair closes them.
     kept: set[Triple] = field(default_factory=set)
+    # When each triple a loser's row linked stopped holding there, open or not: the
+    # latest `loser_valid_to` of the losers linking it.
+    ends: dict[Triple, Any] = field(default_factory=dict)
 
 
 def _later(a: Any, b: Any) -> Any:
@@ -622,7 +625,11 @@ def plan_follow(open_triples: list[dict[str, Any]], pairs: list[RowSupersession]
             )
     closes = [t for t in closes if t not in kept]
     closed_at = {t: at for t, at in closed_at.items() if t not in kept}
-    return FollowPlan(closes=closes, inserts=inserts, closed_at=closed_at, kept=kept)
+    ends: dict[Triple, Any] = {}
+    for pair in pairs:
+        for t in pair.loser_triples | pair.loser_inferred:
+            ends[t] = _later(ends[t], pair.loser_valid_to) if t in ends else pair.loser_valid_to
+    return FollowPlan(closes=closes, inserts=inserts, closed_at=closed_at, kept=kept, ends=ends)
 
 
 def merge_plans(plans: list[FollowPlan], kept: frozenset[Triple] = frozenset()) -> FollowPlan:
@@ -636,7 +643,10 @@ def merge_plans(plans: list[FollowPlan], kept: frozenset[Triple] = frozenset()) 
     closed_at: dict[Triple, Any] = {}
     inserts: list[Successor] = []
     written: set[tuple[Triple, str, str]] = set()
+    ends: dict[Triple, Any] = {}
     for plan in plans:
+        for t, end in plan.ends.items():
+            ends[t] = _later(ends[t], end) if t in ends else end
         for t in plan.closes:
             if t in never_closed:
                 continue
@@ -649,7 +659,7 @@ def merge_plans(plans: list[FollowPlan], kept: frozenset[Triple] = frozenset()) 
             if (ins.triple, ins.memory_key, ins.memory_id) not in written:
                 written.add((ins.triple, ins.memory_key, ins.memory_id))
                 inserts.append(ins)
-    return FollowPlan(closes=closes, inserts=inserts, closed_at=closed_at, kept=all_kept)
+    return FollowPlan(closes=closes, inserts=inserts, closed_at=closed_at, kept=all_kept, ends=ends)
 
 
 def edge_ends(

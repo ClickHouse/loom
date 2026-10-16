@@ -3538,6 +3538,31 @@ async def test_a_retirement_ends_now_a_fact_its_row_stated_until_later(ch, org) 
     assert await _walked(org, ["rome"], labeled=False) == ["rome"]
 
 
+async def test_a_retirement_ends_a_fact_stated_until_later_when_a_dated_winner_starts(
+    ch, org
+) -> None:
+    # Paris until next month, retired behind Berlin from ten days on: Paris holds
+    # until Berlin starts, as an open Paris would.
+    from server.memory import store as M
+
+    now = naive_utc_now().replace(microsecond=0)
+    live, starts = ("user", "live_in"), now + timedelta(days=10)
+    paris = await _stated(
+        ch, org, "s1", "I live in Paris", (*live, "paris"), fact_valid_to=now + timedelta(days=30)
+    )
+    berlin = await _stated(ch, org, "s2", "I live in Berlin", (*live, "berlin"), valid_at=starts)
+    berlin = {**berlin, "valid_at": starts, "version": M.next_version()}
+    await M.insert_memory_versions([berlin], ch=ch)
+    await _edges_like_triples(ch, org)
+    await _follow_retirement(ch, org, paris, berlin)
+    await asyncio.sleep(1.1)  # the walk counts a fact ended this second as current
+    between = now + timedelta(days=5)
+    assert await _walked(org, ["paris"], labeled=True, as_of=between) == ["paris"]
+    assert await _walked(org, ["paris"], labeled=False, as_of=between) == ["paris"]
+    later = starts + timedelta(days=1)
+    assert await _walked(org, ["berlin"], labeled=True, as_of=later) == ["berlin"]
+
+
 async def test_a_revision_ends_now_a_value_still_valid_until_a_later_move(ch, org) -> None:
     # After the Undo, a move to Berlin dated ahead ends London then. London's row is then
     # revised away: London ends now, and Paris holds until Berlin starts.

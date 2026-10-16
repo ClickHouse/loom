@@ -334,8 +334,8 @@ the value it was written or stated for (`carried`):
   by the same rule (another row's claim keeps a fact from closing, but never reopens
   one); either, when it fails, is recorded for `projection_repair` as
   `triples_reconcile`. A dropped fact still valid later ("until Dec 1") ends now, and so
-  does one a retired row stated until later (a later end the follow's close gave, for a
-  winner dated ahead, stays). Its edge ends with its triples, at their latest end, unless
+  does one a retired row stated until later, or it ends when a winner dated ahead starts,
+  as an open one closes (a later end the follow's close gave stays). Its edge ends with its triples, at their latest end, unless
   a live row still holds another fact valid now between the same two entities, or a live row of
   another key names both (`entity_edge_memories`: the edge is that row's co-occurrence
   too); the edge keeps no `invalid_at`, so a walk at an earlier time still finds it. The follow reads the

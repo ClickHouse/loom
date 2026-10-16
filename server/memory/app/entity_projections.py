@@ -902,10 +902,15 @@ async def follow_row_supersessions(
     linked = sorted({*await linked_triples(input, losers, ch=ch), *plan.closes})
     held = await stated_by_live_rows(input.org, input.namespace, linked, ch=ch)
     gone = [t for t in linked if t not in held]
-    # A fact the loser stated until later ends now; a close's own later end (a winner
-    # dated ahead) stays.
+    # A fact the loser stated until later ends now, or when a winner dated ahead
+    # starts, as an open one closes; a close's own later end stays.
     await end_triples_now(
-        ch, org=input.org, namespace=input.namespace, triples=gone, stated_ends_only=True
+        ch,
+        org=input.org,
+        namespace=input.namespace,
+        triples=gone,
+        stated_ends_only=True,
+        ends=plan.ends,
     )
     await _after_the_close(input, losers, gone, ch=ch)
     if closed or inserted:

@@ -956,17 +956,33 @@ async def end_triples_now(
     namespace: str,
     triples: list[tuple[str, str, str]],
     stated_ends_only: bool = False,
+    ends: Mapping[tuple[str, str, str], Any] | None = None,
 ) -> None:
     """End now the intervals of `triples` that end later ("until Dec 1"), as a close
-    does: no row states them any longer. With `stated_ends_only`, a later end a close
-    gave (it stamps `invalid_at`) is kept. One read, and an UPDATE only when one does."""
+    does: no row states them any longer. One with a later date in `ends` (a retired
+    row's winner dated ahead) ends then instead, unless it ended sooner. With
+    `stated_ends_only`, a later end a close gave (it stamps `invalid_at`) is kept. One
+    read, and an UPDATE only when one does."""
     if not triples:
         return
     now = naive_utc_now().replace(microsecond=0)  # as the DateTime columns store it
-    params = {"org": org, "ns": namespace, "triples": triples, "now": now}
-    where = """org = {org:String} AND namespace = {ns:String}
-          AND (subject, relation, object) IN {triples:Array(Tuple(String, String, String))}
-          AND valid_to > {now:DateTime}"""
+    dates = [(ends or {}).get(t) for t in triples]
+    params = {
+        "org": org,
+        "ns": namespace,
+        "triples": triples,
+        "now": now,
+        "ends": [
+            max(now, d.replace(microsecond=0)) if isinstance(d, datetime) else now for d in dates
+        ],
+    }
+    end = (
+        "arrayElement({ends:Array(DateTime)}, indexOf("
+        "{triples:Array(Tuple(String, String, String))}, (subject, relation, object)))"
+    )
+    where = f"""org = {{org:String}} AND namespace = {{ns:String}}
+          AND (subject, relation, object) IN {{triples:Array(Tuple(String, String, String))}}
+          AND valid_to > {end}"""
     if stated_ends_only:
         where += " AND invalid_at IS NULL"
     later = await ch.query_all(
@@ -979,7 +995,7 @@ async def end_triples_now(
     await ch.execute(
         f"""
         ALTER TABLE loom.entity_triples
-        UPDATE valid_to = greatest({{now:DateTime}}, ifNull(valid_from, {{now:DateTime}})),
+        UPDATE valid_to = greatest({end}, ifNull(valid_from, {end})),
                invalid_at = {{now:DateTime}}
         WHERE {where}
         """,

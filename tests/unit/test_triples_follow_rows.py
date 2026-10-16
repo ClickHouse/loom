@@ -824,3 +824,24 @@ def test_a_dropped_facts_edge_ends_with_its_triples_unless_another_fact_is_held(
     # Rows of triples not gone say nothing.
     assert tfr.edge_ends(gone[:1], frozenset(), rows, now) == [("london", "user", now)]
     assert tfr.edge_ends([], held, work, now) == []
+
+
+def test_a_losers_facts_end_when_its_row_was_replaced_open_or_not() -> None:
+    from datetime import datetime
+
+    paris, acme = ("user", "live_in", "paris"), ("user", "work_at", "acme")
+    jan, feb = datetime(2027, 1, 1), datetime(2027, 2, 1)
+
+    def pair(until: datetime, *triples: tfr.Triple) -> tfr.RowSupersession:
+        return tfr.RowSupersession(
+            loser_text="I live in Paris",
+            winner_text="I like Rome",
+            loser_valid_to=until,
+            loser_triples=frozenset(triples),
+        )
+
+    # Paris is not open (it was stated until later): it still gets the date.
+    plan = tfr.plan_follow([], [pair(jan, paris)])
+    assert plan.closes == [] and plan.ends == {paris: jan}
+    merged = tfr.merge_plans([plan, tfr.plan_follow([], [pair(feb, paris, acme)])])
+    assert merged.ends == {paris: feb, acme: feb}
