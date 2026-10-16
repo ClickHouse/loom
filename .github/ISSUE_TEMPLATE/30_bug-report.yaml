@@ -1,0 +1,125 @@
+name: Bug report
+description: An op, SDK call, CLI command, worker, migration or plugin hook does the wrong thing.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > Search [existing issues](https://github.com/ClickHouse/loom/issues?q=is%3Aissue) first; it may already be tracked or fixed on `main`.
+        > **Never paste tokens, API keys, JWTs, passwords or customer data.** `loom report` output is safe to paste: it records only whether each secret is set.
+        > A security issue goes to security@clickhouse.com, not here ([SECURITY.md](https://github.com/ClickHouse/loom/blob/main/SECURITY.md)).
+  - type: textarea
+    attributes:
+      label: Company or project name
+      description: Optional. Put your company name or project description here.
+    validations:
+      required: false
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Memory and search
+        - Knowledge (documents)
+        - Conversations, sessions and runs
+        - Code index
+        - Tracker
+        - Namespaces, tokens and grants
+        - MCP server
+        - Agent plugin (Claude Code, Codex, Cursor)
+        - Python SDK
+        - TypeScript SDK
+        - CLI
+        - Dashboard
+        - Background workers
+        - Migrations and schema
+        - Deployment and installation
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: Describe what's wrong
+      description: What you ran and what came back. Include the `error.code` and the `X-Request-Id` header if the server returned them.
+    validations:
+      required: true
+  - type: dropdown
+    id: latest
+    attributes:
+      label: Does it reproduce on the latest release or `main`?
+      description: "[Releases](https://github.com/ClickHouse/loom/releases)"
+      options:
+        - "Yes"
+        - "No, only on an older version"
+        - "Not checked"
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: |
+        The smallest sequence that triggers it:
+        * the ops or SDK calls with their inputs, as a curl, Python or TypeScript snippet, or the `loom` / `make` commands
+        * non-default settings (`LOOM_*` variables), and whether auth is on
+        * the rows it depends on, if stored state matters, and the latest applied migration (`SELECT max(filename) FROM loom._migrations`)
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened, and what says so (a doc page, an op's description, a test).
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error message and logs
+      description: The relevant lines from the server, the workers, the plugin or the test run.
+      render: text
+    validations:
+      required: false
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Paste `loom report` (or `loom report --open`, which fills this in). Otherwise give the Loom version (`loom --version`), ClickHouse version (`SELECT version()`) and where it runs (bundled, self-managed or ClickHouse Cloud), the SDK or plugin version and agent host, and the LLM and embedding providers.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: related
+    attributes:
+      label: Related issues and pull requests
+      description: |
+        Full GitHub URLs, one relationship per line.
+        * If a pull request caused this (a regression): `Caused by: <full pull request URL>`
+        * For any related issue or pull request: `Related: <full URL>`
+    validations:
+      required: false
+  - type: dropdown
+    id: ai-assistance
+    attributes:
+      label: How this was found
+      description: This asks how the problem was found and confirmed, not how the text was written; drafting with AI is fine. It tells us how much to trust the reproduction, and does not count against the report.
+      options:
+        - I found and reproduced it myself
+        - An AI tool helped find it, and I reproduced it myself
+        - An AI tool found it, and I have not reproduced it myself
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Additional context
+      description: Anything else about the problem.
+    validations:
+      required: false
+  - type: checkboxes
+    id: redacted
+    attributes:
+      label: Redaction
+      options:
+        - label: I removed tokens, keys, passwords and personal or customer data from everything above.
+          required: true
