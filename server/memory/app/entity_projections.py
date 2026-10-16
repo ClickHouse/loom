@@ -418,9 +418,10 @@ async def project_revised_edges(row: Mapping[str, Any], value: Any, *, op: str, 
     """The co-occurrence edges a revision's new `value` names, linked to its `row` (the
     `loom.memory` row holding it), as `memory.set` projects them. Written before the
     close of what the revision dropped, so an edge its new value still names stays
-    open. A 'high' row's text stays out of the graph. Fail-open: a failed write is
-    recorded for the projection repair to replay."""
-    if row.get("sensitivity") == "high":
+    open. A row that may not hold graph facts (`holds_graph_facts`: retired, 'high',
+    ...) projects none. Fail-open: a failed write is recorded for the projection
+    repair to replay."""
+    if not holds_graph_facts(row):
         return
     scope = SimpleNamespace(tags=row.get("tags"), source_trace=row.get("source_trace", ""))
     ents = set_entities_for_projection(scope, value)

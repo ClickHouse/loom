@@ -4444,6 +4444,20 @@ async def test_a_revision_that_still_names_the_pair_keeps_its_edge(
     assert [(r["co_occur"], r["valid_to"]) for r in rows] == [(1, None)] * 3
 
 
+async def test_a_retired_rows_revision_projects_no_edges(ch, org) -> None:
+    # London's row retired behind Paris's and is then revised; not embedded, it is not
+    # judged again and stays retired. It holds no graph facts, so its new value's edges
+    # are not written.
+    london = await _stated(
+        ch, org, "s1", "Alice likes London", ("alice", "like", "london"), memory_type="episodic"
+    )
+    paris = await _stated(ch, org, "s2", "Alice likes Paris", ("alice", "like", "paris"))
+    await _follow_retirement(ch, org, london, paris)
+    await _revise("memory.update_by_id", org, london, "Alice works at Umbrella")
+    await _mutations_done(ch, org)
+    assert "umbrella" not in await _walked(org, [], labeled=False, seed="alice")
+
+
 async def test_a_row_naming_the_pair_while_its_edge_ends_keeps_it_open(ch, org) -> None:
     # The trip row's edge lands after the close checked the pair and before its UPDATE:
     # the check after the UPDATE finds the row's link and opens the edge again.
