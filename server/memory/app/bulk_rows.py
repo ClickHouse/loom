@@ -17,6 +17,8 @@ from server.core.datetimes import parse_iso_dt
 from server.core.hashing import sha256_value as _content_sha256
 from server.memory.api.models_bulk import (
     BLACKLISTED,
+    LOCKED,
+    PINNED,
     MemoryBulkSetInput,
     _BulkSetResult,
 )
@@ -241,11 +243,15 @@ def _bulk_skip_gate(
     # key; a batch skips just that entry, surfaced in `skipped_locked`.
     if _bulk_value_locked(state, entry.memory_key):
         state.skipped_locked.append(entry.memory_key)
-        state.results.append(_BulkSetResult(memory_key=entry.memory_key, version=0))
+        state.results.append(
+            _BulkSetResult(memory_key=entry.memory_key, version=0, conflict_verdict=LOCKED)
+        )
         return True
     if state.existing_pinned.get(entry.memory_key):
         state.skipped_pinned.append(entry.memory_key)
-        state.results.append(_BulkSetResult(memory_key=entry.memory_key, version=0))
+        state.results.append(
+            _BulkSetResult(memory_key=entry.memory_key, version=0, conflict_verdict=PINNED)
+        )
         return True
     return False
 

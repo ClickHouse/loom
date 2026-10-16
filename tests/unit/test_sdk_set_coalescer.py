@@ -20,6 +20,8 @@ class _FakeTransport:
         self.fail_bulk: BaseException | None = None
         self.bulk_extra: dict[str, Any] = {}
         self.row_verdicts: dict[str, str] = {}
+        # A verdict for one entry by its value, when one key comes twice.
+        self.value_verdicts: dict[str, str] = {}
 
     async def post(
         self, op_path: str, payload: dict[str, Any], idempotency_key=None, *, timeout_s=None
@@ -42,7 +44,9 @@ class _FakeTransport:
                         "version": 0
                         if e["memory_key"] in self.bulk_extra.get("merged", [])
                         else 100 + i,
-                        "conflict_verdict": self.row_verdicts.get(e["memory_key"], ""),
+                        "conflict_verdict": self.value_verdicts.get(
+                            str(e["value"]), self.row_verdicts.get(e["memory_key"], "")
+                        ),
                     }
                     for i, e in enumerate(payload["entries"])
                 ],
@@ -129,17 +133,21 @@ async def test_a_coalesced_set_against_a_pinned_row_raises_as_alone(agent: Agent
 
 
 @pytest.mark.parametrize(
-    ("skipped", "code", "status"),
-    [("skipped_pinned", "PINNED_CONFLICT", 409), ("skipped_locked", "LOCKED", 423)],
+    ("skipped", "verdict", "code", "status"),
+    [
+        ("skipped_pinned", "pinned", "PINNED_CONFLICT", 409),
+        ("skipped_locked", "locked", "LOCKED", 423),
+    ],
 )
 async def test_a_coalesced_set_to_a_pinned_or_locked_key_raises_as_alone(
-    agent: Agent, skipped: str, code: str, status: int
+    agent: Agent, skipped: str, verdict: str, code: str, status: int
 ) -> None:
     # Alone, a set to a pinned key answers 409 and to a read_only key 423; the
-    # batch skips the entry with no verdict and names it in its skipped list.
+    # batch skips the entry, gives it that verdict and names it in its skipped list.
     from loom.errors import LoomError
 
     t: Any = agent.transport
+    t.row_verdicts = {"d": verdict}
     t.bulk_extra = {"merged": ["d"], skipped: ["d"]}
     results = await asyncio.gather(
         *[agent.memory.set(k, {"v": k}) for k in "abcde"], return_exceptions=True
@@ -147,6 +155,27 @@ async def test_a_coalesced_set_to_a_pinned_or_locked_key_raises_as_alone(
     (refused,) = [r for r in results if isinstance(r, BaseException)]
     assert isinstance(refused, LoomError) and refused.code == code
     assert refused.status == status
+
+
+async def test_a_restatement_of_a_pinned_key_in_a_burst_with_a_change_resolves(
+    agent: Agent,
+) -> None:
+    # The pinned key k is set to its own value V, then to W, in one batch: the
+    # server skips V as unchanged and refuses only W, though the list names k.
+    from loom.errors import PreconditionFailed
+
+    t: Any = agent.transport
+    t.value_verdicts = {"W": "pinned"}
+    t.bulk_extra = {"skipped_pinned": ["k"]}
+    a, b, same, changed = await asyncio.gather(
+        agent.memory.set("a", 1),
+        agent.memory.set("b", 2),
+        agent.memory.set("k", "V"),
+        agent.memory.set("k", "W"),
+        return_exceptions=True,
+    )
+    assert same["memory_key"] == "k" and same["coalesced"] is True
+    assert isinstance(changed, PreconditionFailed) and changed.code == "PINNED_CONFLICT"
 
 
 async def test_a_set_with_point_only_fields_is_never_coalesced(agent: Agent) -> None:

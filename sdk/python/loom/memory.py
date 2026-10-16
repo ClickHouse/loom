@@ -194,13 +194,14 @@ class _SetCoalescer:
                 str(row["memory_key"]), res
             )
             row["noop"] = int(row.get("version") or 0) == 0
-            # A pinned or read_only key is skipped with no verdict, only named
-            # in a list: raise the 409 / 423 the same set alone would have.
-            if row["memory_key"] in (res.get("skipped_pinned") or ()):
+            # A change to a pinned or read_only key is skipped: raise the 409 / 423
+            # the same set alone would have. The row says so, not the key's list,
+            # since a restatement of the same key in the batch is not refused.
+            if row["conflict_verdict"] == "pinned":
                 detail = {"code": "PINNED_CONFLICT", "message": "the key is pinned"}
                 fut.set_exception(from_response({"detail": detail}, 409))
                 continue
-            if row["memory_key"] in (res.get("skipped_locked") or ()):
+            if row["conflict_verdict"] == "locked":
                 detail = {"code": "LOCKED", "message": "the key is locked read_only"}
                 fut.set_exception(from_response({"detail": detail}, 423))
                 continue

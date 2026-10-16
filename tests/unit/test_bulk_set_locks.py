@@ -180,3 +180,26 @@ async def test_a_permitted_write_carries_the_lock_and_attestation(wire) -> None:
     # The attestation is over the old bytes, so the new version reads it as stale.
     assert row["verified_sha256"] == "a" * 64 != row["content_sha256"]
     assert (row["on_expire"], row["expire_reason"]) == ("archive", "quarterly")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("live", "verdict"), [({"pinned": 1}, "pinned"), ({"lock_mode": "read_only"}, "locked")]
+)
+async def test_a_refused_entry_carries_its_verdict_and_a_restatement_does_not(
+    wire, live: dict[str, Any], verdict: str
+) -> None:
+    # One batch restates the live value, then changes it: only the change is
+    # refused, so only its own result says so (the key's list names it either way).
+    from server.core.hashing import sha256_value
+
+    same = sha256_value("user_deploy_day is Thursday")
+    ch = _StubCH([_live(content_sha256=same, **live)])
+    wire(ch)
+    entries = [
+        _BulkSetEntry(memory_key="user_deploy_day", memory_type="semantic", value=v)
+        for v in ("user_deploy_day is Thursday", "user_deploy_day is Friday")
+    ]
+    inp = _input("user_deploy_day").model_copy(update={"entries": entries})
+    out = await mem_extract.handle_memory_bulk_set(inp)
+    assert [(r.version, r.conflict_verdict) for r in out.written] == [(0, ""), (0, verdict)]

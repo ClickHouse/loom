@@ -297,6 +297,10 @@ class MemorySetFromMessagesOutput(BaseModel):
 
 # The verdict of an entry the blacklist refused (memory.set answers 422 BLACKLISTED).
 BLACKLISTED = "blacklisted"
+# The verdict of an entry skipped on a pinned key (memory.set answers 409 PINNED_CONFLICT).
+PINNED = "pinned"
+# The verdict of an entry skipped on a read_only key (memory.set answers 423 LOCKED).
+LOCKED = "locked"
 # The verdict of an entry that landed retired behind a later stored row.
 SUPERSEDED = "superseded"
 
@@ -308,7 +312,8 @@ class _BulkSetResult(BaseModel):
     memory_id: str = ""
     # The per-row verdict memory.set returns, so a caller of
     # bulk_set can act on one entry without decoding the aggregate lists, plus
-    # `superseded` (see `superseded_by`) and `blacklisted` (refused, version 0).
+    # `superseded` (see `superseded_by`), and `blacklisted`, `pinned` or `locked`
+    # (refused, version 0; a restatement of a pinned or locked key's value is not).
     # Empty when the entry was not checked (non-searchable, past the cap).
     conflict_verdict: str = ""
     peers: list[MemorySetPeer] = Field(default_factory=list)
