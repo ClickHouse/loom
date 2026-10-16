@@ -1,6 +1,6 @@
 """Sign-in state against the real store: of several requests spending one
 credential or moving one device grant at the same moment, exactly one goes
-ahead. Needs a ClickHouse with a Keeper (loom.oauth_signin_state, migration 033)."""
+ahead. Needs a ClickHouse with a Keeper (loom.oauth_signin_state, migration 034)."""
 
 from __future__ import annotations
 

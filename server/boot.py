@@ -216,6 +216,28 @@ async def register_tracker_namespaces(ch: Any) -> None:
         query_tag_var.reset(tag)
 
 
+async def require_clickhouse_ready() -> None:
+    """The ClickHouse preflight, before the first connect (which selects the
+    `loom` database): a wrong address, an old server or a missing database
+    stops boot with one line that names the fix. Every process but a read
+    replica needs the DDL grants (its workers and provider rebuilds use them);
+    one that migrates also creates a missing database where its user may."""
+    from server.core.schema import preflight
+
+    try:
+        server = await asyncio.to_thread(
+            preflight.require_ready,
+            need=preflight.needed_at_boot(),
+            migrates=settings.boot_migrate,
+        )
+    except preflight.PreflightError as e:
+        # Logged first, so the reason heads the startup failure's traceback.
+        logging.getLogger(__name__).error("ClickHouse preflight: %s", e)
+        raise RuntimeError(f"ClickHouse preflight: {e}") from None
+    if warning := preflight.warnings(server):
+        logging.getLogger(__name__).warning("ClickHouse preflight: %s", warning)
+
+
 async def run_fenced_boot_migrations(
     ch: Any,
     migrate: Callable[[list[str]], int],
@@ -263,6 +285,15 @@ async def _fenced_boot_migrations(
     if exists is None or type(exists.get("n")) is not int or exists["n"] not in (0, 1):
         raise RuntimeError("Cannot establish provider configuration schema before boot DDL")
     if exists["n"] == 0:
+        return run_boot_migrations_if_enabled(migrate, lock_path, enabled=True, pending=pending)
+    keeper = await ch.query_one(
+        "SELECT count() AS n FROM system.tables "
+        "WHERE database='loom' AND name='_migration_lock' AND engine='KeeperMap'"
+    )
+    if not (keeper and keeper.get("n")):
+        # No Keeper: the runner never made its KeeperMap lock, so the provider
+        # lock (a key in it) could never be held and no configuration was ever
+        # published. There is no rebuild to fence against.
         return run_boot_migrations_if_enabled(migrate, lock_path, enabled=True, pending=pending)
     from server.insights.domain.provider_setup import pending_configuration
     from server.insights.store.provider_configuration import configurations
@@ -365,14 +396,13 @@ async def probe_vector_capabilities(ch: Any) -> None:
     `vector_search_use_quantized_codes`, which columns are coded and at which
     width, and which tables carry patch parts), the fact leg's patch-part
     reading (seeded so the first search does not wait on it and the gauge has
-    a value), and the vector-read version floor. The codec state is read again:
+    a value). The codec state is read again:
     `connect()` probed it before the boot migrations created a fresh install's
     tables, and the write guards need their widths from the first request."""
-    from server.core.vectors import codes_state, patch_parts, vector_floor
+    from server.core.vectors import codes_state, patch_parts
 
     await codes_state.ensure_probed(ch, reread=True)
     await patch_parts.probe_patch_parts(ch)
-    await vector_floor.warn_below_vector_floor(ch)
 
 
 # The embedder the scalar similarity gates were tuned for.

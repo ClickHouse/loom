@@ -606,14 +606,16 @@ def _reader_user_problems(settings: Any, state: HealthState) -> list[Problem]:
         return []
     user = settings.ch_reader_user
     fix = (
-        f"Install deploy/clickhouse-config/nlp_user_settings.xml (it defines {user}) in "
-        "the server's users.d and restart ClickHouse, or unset LOOM_CH_READER_USER."
+        f"Run `loom ch-setup`, which creates {user} or says why it cannot (on the bundled "
+        "server it comes from deploy/clickhouse-config/nlp_user_settings.xml), or set "
+        "LOOM_CH_READER_USER empty."
     )
     if error_code(state.ch_reader_error) == _SETTING_CONSTRAINT_VIOLATION:
         fix = (
             f"A LOOM_CH_CALLER_SHAPED_* ceiling is outside the {user} profile's bounds "
             f"(ClickHouse: {_constraint_message(state.ch_reader_error)}). Bring it within "
-            "them, or change the bounds in nlp_user_settings.xml to match."
+            "them, or run `loom ch-setup` to rebuild the profile from the current values (on "
+            "the bundled server, change the bounds in nlp_user_settings.xml)."
         )
     return [
         Problem(
@@ -657,7 +659,7 @@ def _oauth_claim_problems(settings: Any, state: HealthState) -> list[Problem]:
             "MCP connect answer 503: their codes and refresh tokens could not be spent "
             "exactly once. Tokens from `loom mint-token` and service accounts still work.",
             "Run ClickHouse with a Keeper (deploy/clickhouse-config/keeper.xml), create the "
-            "table from schemas/migrations/033_oauth_signin_state.sql (the migration skipped it) "
+            "table from schemas/migrations/034_oauth_signin_state.sql (the migration skipped it) "
             "and restart Loom.",
             source="runtime",
         )

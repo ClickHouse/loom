@@ -318,8 +318,8 @@ host SSH key: use an HTTPS remote with an access token.
 
 **Which stacks run the sandbox.** The blue/green colours `redeploy.sh` deploys
 (`dev/docker-compose.colour.yml`) set the container options below. The other Compose
-files (`dev/docker-compose.cloud.yml`, `dev/docker-compose.dev.yml`,
-`dev/docker-compose.read-replica.yml`, `deploy/standalone/compose.yaml`) do not: an
+files (`compose.yaml`, `dev/docker-compose.cloud.yml`,
+`dev/docker-compose.read-replica.yml`) do not: an
 AppArmor profile the host has not loaded stops a container from starting, so they keep
 Docker's defaults, the probe fails and every repository job runs as a plain process (see
 _Without the sandbox_). To run it there, once the host has the profile:
@@ -327,8 +327,8 @@ _Without the sandbox_). To run it there, once the host has the profile:
 - copy the colour file's `security_opt` block and its `pids_limit` (the container's
   backstop). The `seccomp=` path is relative to the project directory (the compose
   file's folder unless `--project-directory` says otherwise): `./seccomp/…` works
-  for the files in `dev/`, and `deploy/standalone/compose.yaml` needs
-  `../../dev/seccomp/loom-repo-sandbox.json`;
+  for the files in `dev/`, and `compose.yaml` needs
+  `./dev/seccomp/loom-repo-sandbox.json`;
 - the release's standalone bundle (`loom-stack.tar.gz`) ships neither the seccomp file
   nor the AppArmor profile: take both from the same release's source tree and point
   `seccomp=` at where you put the JSON;

@@ -288,7 +288,9 @@ def _runner(monkeypatch, tmp_path: Path, *, applied_reads: list[dict[str, str]],
     recorded: list[str] = []
     reads = list(applied_reads)
     monkeypatch.setattr(mig, "client", lambda: object())
-    monkeypatch.setattr(mig, "_applied", lambda ch: reads.pop(0) if len(reads) > 1 else reads[0])
+    monkeypatch.setattr(
+        mig, "applied_migrations", lambda ch: reads.pop(0) if len(reads) > 1 else reads[0]
+    )
     monkeypatch.setattr(mig, "_apply_file", lambda ch, f, **kw: applied.append(1))
     monkeypatch.setattr(mig, "_record", lambda ch, name, cs: recorded.append(name))
     monkeypatch.setattr(mig, "_nlp_available", lambda ch: True)

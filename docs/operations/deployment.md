@@ -12,62 +12,139 @@ files. Every setting named here is in the generated
 Each rung keeps the previous one's image and schema. What changes is where ClickHouse
 lives and how many containers run.
 
-| Rung                           | Start it with                                                                                          | ClickHouse                                   | Use for                                        |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------ | -------------------------------------------- | ---------------------------------------------- |
-| Local stack                    | `loom up` or `make dev` → `dev/docker-compose.dev.yml`                                                 | bundled ClickHouse OSS container (`loom-ch`) | evaluation, development                        |
-| Loom with your ClickHouse      | `make dev-cloud` → `dev/docker-compose.cloud.yml`                                                      | ClickHouse Cloud or any reachable OSS server | teams; the production shape                    |
-| Zero-downtime pair (optional)  | `./redeploy.sh`: two projects of `dev/docker-compose.colour.yml` behind `dev/docker-compose.proxy.yml` | external                                     | deploys with no refused-connection window      |
-| ClickHouse Cloud backing store | either rung above with `LOOM_CH_*` pointing at a Cloud service                                         | ClickHouse Cloud (`SharedMergeTree`)         | replicated, backed-up storage without a Keeper |
+| Rung                          | Start it with                                                                                          | ClickHouse                                         | Use for                                   |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------ | -------------------------------------------------- | ----------------------------------------- |
+| Installed stack               | `install.sh` → `compose.yaml`                                                                          | bundled container, a self-managed server, or Cloud | evaluation, a single host                 |
+| Local stack from a clone      | `loom up` or `make dev` → `compose.yaml` + `dev/docker-compose.dev.yml`                                | bundled container (`loom-ch`)                      | development                               |
+| Web and workers apart         | `make dev-cloud` → `dev/docker-compose.cloud.yml`                                                      | a self-managed server or Cloud                     | teams; the production shape               |
+| Zero-downtime pair (optional) | `./redeploy.sh`: two projects of `dev/docker-compose.colour.yml` behind `dev/docker-compose.proxy.yml` | a self-managed server or Cloud                     | deploys with no refused-connection window |
 
 Sizing (web replicas, uvicorn processes, the workers container) is in
 [failure and recovery](../architecture/failure-and-recovery.md), driven by the metrics in
 [monitoring](./monitoring.md#what-to-alert-on).
 
-### Local stack
+## Choosing the ClickHouse
+
+`compose.yaml` is the one shipped stack. Its `clickhouse` service runs under the
+`bundled` Compose profile, so `COMPOSE_PROFILES` in `.env` decides the target:
+
+| Target                      | Install                                                                         | `.env`                                           |
+| --------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------ |
+| Bundled container (default) | `curl -fsSL …/install.sh \| sh`                                                 | `COMPOSE_PROFILES=bundled`, no `LOOM_CH_*`       |
+| Self-managed server         | `curl -fsSL …/install.sh \| sh -s -- --clickhouse http://loom@ch.internal:8123` | `COMPOSE_PROFILES=` and `LOOM_CH_*` from the URL |
+| ClickHouse Cloud            | `curl -fsSL …/install.sh \| sh -s -- --clickhouse https://loom@<host>:8443`     | `COMPOSE_PROFILES=` and `LOOM_CH_*` from the URL |
+
+- **The user.** Give Loom a user of its own (`loom` above) rather than an admin such
+  as Cloud's `default`, which would let Loom manage every database and user on the
+  service. The URL must name one.
+- **The URL.** `http://` defaults to port 8123, `https://` to 8443 and TLS.
+  Percent-encode `@`, `:`, `/` and `%` in the user or password; an empty password is
+  `user:@host` or `LOOM_CH_PASSWORD=`. `LOOM_CH_URL` works in place of `--clickhouse`.
+  A server on the Docker host is `host.docker.internal`: `localhost` inside the
+  container is the container itself.
+- **The password.** Set `LOOM_CH_PASSWORD`, or answer the prompt, which does not echo;
+  one in the URL works too, but `ps` and the shell history see it. It is written only to
+  `.env`, which is mode 600, double-quoted with `\`, `"` and `$` escaped so Compose reads
+  it back exactly. That `.env` is for Compose: run Loom commands through
+  `docker compose --project-directory ~/.loom run --rm loom loom …`, not by pointing a
+  checkout's `LOOM_ENV_FILE` at it, which reads the escapes differently.
+- **Setup.** With a server of your own the installer runs `loom ch-setup` before it
+  starts Loom. It creates the `loom` database and the read-only `loom_reader` user
+  (below), and checks the version and the grants. Run it again at any time with
+  `docker compose --project-directory ~/.loom run --rm loom loom ch-setup`; what is
+  already in place is left alone. A `loom_reader` whose profile or grants differ from what
+  `ch-setup` gives it is rebuilt to exactly that (SELECT on `loom.*` only, the current
+  caps), so a role, grant or `REVOKE` an admin adds to it does not survive a rerun; the
+  installer reruns `ch-setup` on every install and upgrade. An existing `loom_reader` is
+  replaced only when it has the shape `ch-setup` gives it (a password user on the settings
+  profile of its own name) and logs in with `LOOM_CH_PASSWORD`; anything else of that name
+  is left alone.
+- **Without admin rights.** When the user cannot create the database, read the system
+  tables the migrations read, or create the reader or its settings profile, `ch-setup`
+  stops and prints the SQL for an admin, with the password as a placeholder.
+  `loom ch-setup --print-sql` prints it without connecting. The SQL grants the Loom user
+  everything the admin holds on `loom.*` through `GRANT CURRENT GRANTS` (ClickHouse Cloud
+  does not accept `GRANT ALL`), `SELECT` on the system tables Loom reads, and
+  `READ ON REMOTE`, which `clusterAllReplicas` needs to ask every replica for its version
+  (a self-managed server shows it as `REMOTE` in `SHOW GRANTS`; writes through `remote()`
+  are still refused). It creates the reader with `OR REPLACE`, so check that no other
+  account has that name; `ch-setup` running the SQL itself refuses one it cannot prove is
+  Loom's.
+- **Other users' queries.** Loom reads `system.query_log` for each request's cost and
+  `system.processes` to see whether its own statements are still running, so the Loom
+  user sees every user's past and running queries on that server, literals included. On
+  a server Loom shares, a self-managed admin can keep both to Loom's own:
+  `CREATE ROW POLICY loom_own ON system.query_log, system.processes USING user IN ('loom', 'loom_reader') TO loom`;
+  ClickHouse Cloud does not allow row policies on system tables.
+- **Switching.** Re-run the installer with `--clickhouse` to move an install to your own
+  server; Loom starts on an empty `loom` database there. The bundled container keeps
+  running on its old volume until you stop it (the installer prints the command); copy
+  the data first with [backup and restore](./backup-and-recovery.md) if you need it.
+
+Every boot runs the same checks before it connects (the oldest replica's version, the
+database, the grants) and stops with one line naming the fix. Every Loom process but a
+read replica is checked, on every boot, for `CREATE TABLE`, `CREATE VIEW`, `ALTER TABLE`,
+`ALTER VIEW`, `DROP TABLE`, `DROP VIEW`, `INSERT`, `SELECT`, `OPTIMIZE` and `TRUNCATE` on
+`loom.*`, with boot migrations on or off: besides the migrations, it sets retention TTLs,
+compacts and rebuilds provider tables. Without `SYSTEM REFRESH VIEW` on `loom.*` it boots
+with a warning: purged code stays in the refreshable views until their next scheduled
+refresh. A read replica is checked for `SELECT`, `INSERT`, `ALTER UPDATE` and
+`ALTER DELETE`. `GRANT CURRENT GRANTS ON loom.*` from an admin covers all of them. Only the
+replica-version and system-table reads, which only migrations need, relax while nothing
+is pending or when boot migrations are off.
+`loom doctor` reports the checks as `clickhouse_preflight`.
+
+### Local stack from a clone
 
 `loom up` (or `make dev`) creates `.env` from `.env.example` and
 `deploy/clickhouse-config/named_collections.xml` from its template, then runs:
 
 ```bash
-docker compose --env-file .env -f dev/docker-compose.dev.yml up -d --build
+docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml --profile bundled up -d --build
 ```
 
-`--env-file .env` matters: compose resolves its own `.env` relative to the first `-f`
-file (`dev/`), so without the flag the compose file's fallbacks apply (auth on, an
-OpenAI provider with no key). The [quickstart](../getting-started/quickstart.md) walks
-through the stock stack.
+The override builds the image from the checkout and pins Loom to the bundled ClickHouse,
+because a checkout's `.env` also serves `make server` on the host. Compose reads the
+`.env` beside the first `-f` file, here the root one; `--env-file .env` only says so
+explicitly.
 
 | Service      | Container     | Ports                          | Role                                                                                     |
 | ------------ | ------------- | ------------------------------ | ---------------------------------------------------------------------------------------- |
 | `clickhouse` | `loom-ch`     | `8123` (HTTP), `9000` (native) | ClickHouse OSS (pinned image), database `loom`, user `loom`, password `loomdev`.         |
 | `loom`       | `loom-server` | `7777`                         | HTTP, MCP, `/me` and the background workers in one process, built from the `Dockerfile`. |
 
-ClickHouse starts with the files in `deploy/clickhouse-config/`:
+The bundled ClickHouse starts with the files in `deploy/clickhouse-config/`:
 
-| File                                    | Why                                                                                                                                                                             |
-| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `lemmatizers.xml` + `deploy/lemmagen3/` | The English lemmatizer behind the stemmed lexical search leg.                                                                                                                   |
-| `nlp_user_settings.xml`                 | Enables ClickHouse's experimental NLP and AI SQL functions for ad-hoc queries; Loom sets the flags per statement. Also the per-tenant quota and the `loom_reader` user (below). |
-| `merge_tree_settings.xml`               | MergeTree defaults that let lightweight `UPDATE` (tombstone paths) work on OSS.                                                                                                 |
-| `keeper.xml`                            | An embedded single-node Keeper, so the `KeeperMap` task-inbox lease table works on OSS.                                                                                         |
-| `named_collections.xml`                 | Named collections for ClickHouse's `ai*` SQL functions. Git-ignored; defines none as shipped; keys come via `from_env`.                                                         |
+| File                                    | Why                                                                                                                     |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `lemmatizers.xml` + `deploy/lemmagen3/` | The English lemmatizer for ad-hoc `lemmatize('en', …)` queries. Loom lemmatizes in Python.                              |
+| `nlp_user_settings.xml`                 | The `loom_reader` user and profile (below), the per-tenant quota, and the experimental NLP and AI SQL flags.            |
+| `keeper.xml`                            | An embedded single-node Keeper, so the `KeeperMap` tables work.                                                         |
+| `named_collections.xml`                 | Named collections for ClickHouse's `ai*` SQL functions. Git-ignored; defines none as shipped; keys come via `from_env`. |
 
-- **Read-only user.** `nlp_user_settings.xml` defines `loom_reader`: SELECT on
-  `loom.*` only (it cannot read `system.query_log`), a read-only profile whose
-  time, memory and rows-read caps each have a ceiling no statement can raise and a
-  floor no statement can go under, so none can be set to 0 (no limit), not even by a
-  `SETTINGS` clause in the SQL. The time floor is 0.05 s, `code.grep`'s statement floor
-  under `deadline_ms`. Its password is the `loom` user's
-  (`CLICKHOUSE_PASSWORD`). The caps equal the `LOOM_CH_CALLER_SHAPED_*` defaults;
-  raising one of those settings needs the profile raised too, and setting one to 0 leaves the profile's cap in force. With `LOOM_CH_READER_USER=loom_reader` (set in the
-  shipped compose files) the reads a caller shapes (`code.grep`, a patterned
-  `code.search`, `memory.aggregate`, `memory.record.query`) run as that user, so
-  none of them can write, change schema or grant. Unset, they run as `LOOM_CH_USER`.
-  The server probes the user at boot with a read of `loom.memory` under those caps;
-  `/v1/health` and `loom doctor` report `ch_reader_user_failing` when ClickHouse
-  refuses it (a missing grant, or a `LOOM_CH_CALLER_SHAPED_*` outside the profile's
-  bounds). Before migrations have created `loom.memory` the boot probe reports
-  nothing, and `loom doctor` says the reader user was not probed.
+- **Read-only user.** Loom runs the reads a caller shapes (`code.grep`, a patterned
+  `code.search`, `memory.aggregate`, `memory.record.query`) as `LOOM_CH_READER_USER`,
+  which `compose.yaml` and the local stack set to `loom_reader` (set it in `.env` for
+  `dev/docker-compose.cloud.yml`), so none of them can write,
+  change schema or grant. It has SELECT on `loom.*` only (it cannot read
+  `system.query_log`) and a read-only profile whose time, memory and rows-read caps each
+  have a ceiling no statement can raise and a floor no statement can go under (time:
+  0.05 s, `code.grep`'s statement floor), not even with a `SETTINGS` clause. Its password
+  is `LOOM_CH_PASSWORD`. The bundled server defines it in `nlp_user_settings.xml`;
+  `loom ch-setup` creates the same user and profile with SQL on any other server, from
+  the current `LOOM_CH_CALLER_SHAPED_*` values. Raising one of those settings on the
+  bundled server needs the XML profile raised too. Elsewhere, so no read fails on the
+  profile's bounds in between: to raise a cap, change `.env`, re-run `ch-setup`, then
+  recreate Loom (`up -d --force-recreate loom`); to lower one, change `.env`, recreate
+  Loom, then re-run `ch-setup`. After
+  changing `LOOM_CH_PASSWORD`, which the reader shares, drop the reader
+  (`DROP USER loom_reader; DROP SETTINGS PROFILE loom_reader`) and re-run `ch-setup`: it
+  replaces only a reader that logs in with the current password. The server probes the
+  user at boot; `/v1/health` and `loom doctor` report `ch_reader_user_failing` when
+  ClickHouse refuses it; before migrations have created `loom.memory` the probe reports
+  nothing, and `loom doctor` says the reader user was not probed. Set empty
+  (`LOOM_CH_READER_USER=` in `.env`), `ch-setup` makes no reader and the reads run as
+  `LOOM_CH_USER`.
 - **Ports.** If `8123` or `9000` is taken, set `LOOM_CH_HOST_PORT` or
   `LOOM_CH_NATIVE_HOST_PORT` in `.env`. These are compose variables for the host side
   only; containers always talk to `clickhouse:8123`.
@@ -76,18 +153,19 @@ ClickHouse starts with the files in `deploy/clickhouse-config/`:
 - **No external systems.** The local stack runs no Langfuse or ClickStack;
   the erasure steps for them do nothing until configured.
 - **From source.** `make server` runs uvicorn on `:7777` with reload against the
-  ClickHouse `.env` names. Build the dashboard first with `make frontend-build`, or `/me`
-  returns 503. Contributor setup is in
+  ClickHouse `.env` names (localhost:8123 when unset). Build the dashboard first with
+  `make frontend-build`, or `/me` returns 503. Contributor setup is in
   [local development](../development/local-development.md).
 
-### Loom against your own ClickHouse
+### Web and workers apart
 
 ```bash
-cp .env.example .env    # then set LOOM_CH_*, auth and providers (below)
+cp .env.example .env    # then set LOOM_CH_*, auth and providers (below); COMPOSE_PROFILES=
 make dev-cloud
 ```
 
-`dev/docker-compose.cloud.yml` runs two containers from one image:
+`dev/docker-compose.cloud.yml` builds the image from the checkout and runs two
+containers from it against the ClickHouse in `.env` (run `loom ch-setup` against it once):
 
 | Container      | Role                                                 | Key environment                                    |
 | -------------- | ---------------------------------------------------- | -------------------------------------------------- |
@@ -107,9 +185,9 @@ migrations ([upgrades](./upgrades.md#how-migrations-run)).
 - `.env` in the working directory is read by default. `LOOM_ENV_FILE` names another
   file; an empty value reads none. `.env.example` is the commented template.
 - The compose file's `environment:` wins over `.env`. `dev/docker-compose.dev.yml` pins
-  the ClickHouse connection, `LOOM_SELF_SIGNUP=open` and the development
-  `LOOM_JWT_SECRET`, so those lines in `.env` do nothing on the local stack.
-  `dev/docker-compose.cloud.yml` takes them from `.env`.
+  the ClickHouse connection and `LOOM_SELF_SIGNUP=open`, so those lines in `.env` do
+  nothing on the local stack. `compose.yaml` and `dev/docker-compose.cloud.yml` take
+  them from `.env`.
 - Validate before every start. This catches quoting errors in JSON-valued settings
   without starting anything:
 
@@ -221,15 +299,25 @@ out of `.env`.
 
 ## ClickHouse requirements
 
-| Requirement                       | Why                                                                                                                                                                                                                                                                                                                                                                                                                          | ClickHouse Cloud                                                    | Self-managed OSS                                                                                                                                                                                                                                                                                                                                                      |
-| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Lightweight `UPDATE`              | knowledge tombstones, memory reject, bulk tombstone                                                                                                                                                                                                                                                                                                                                                                          | native                                                              | needs the MergeTree defaults in `deploy/clickhouse-config/merge_tree_settings.xml` (25.1 or later)                                                                                                                                                                                                                                                                    |
-| Keeper                            | the `KeeperMap` migration lock, the task-inbox lease table, the run id claims (a key lives only while a `run.begin` runs; one left by a begin that failed or died before writing its row stays until the same user and session re-begin and complete that id, or an erasure of its namespace or user), the sign-in state (each code, device grant and session spent once) and the grant change claims (one change per grant) | present                                                             | optional: `deploy/clickhouse-config/keeper.xml` runs one embedded node; without it the migration runner falls back to a lease row and `002_task_leases.sql`, `025_agent_run_claims.sql`, `029_grant_claims.sql` and `033_oauth_signin_state.sql` are skipped, `loom login`, SSO and MCP connect answer 503, and grant changes are kept apart within each process only |
-| Experimental NLP functions        | the stemmed and lemmatized lexical columns                                                                                                                                                                                                                                                                                                                                                                                   | flag is read-only; the runner drops it and `stem()` runs without it | `nlp_user_settings.xml` and `lemmatizers.xml` with the Lemmagen3 model in `deploy/lemmagen3/`                                                                                                                                                                                                                                                                         |
-| `Quantized` codec (26.8 or later) | codes-first vector search: a fresh install creates its vector columns coded when `LOOM_EMBEDDING_DIM` is a multiple of 8                                                                                                                                                                                                                                                                                                     | where the service version has it                                    | nothing to configure; an older server gets plain vectors and full-precision scans                                                                                                                                                                                                                                                                                     |
-| `aiEmbed` (26.7 or later)         | only `loom reembed --in-database`                                                                                                                                                                                                                                                                                                                                                                                            | where the service version has it                                    | needs a named collection (`named_collections.xml.template`)                                                                                                                                                                                                                                                                                                           |
-| The version CI tests              | only the latest release, resolved once per run (`dev/clickhouse_release.sh`); a release bundle names the one that was latest, and passed `schema-check`, when it was built                                                                                                                                                                                                                                                   | n/a                                                                 | an installed bundle keeps its release; `LOOM_CLICKHOUSE_IMAGE` overrides it. Older releases are untested; the migrator still applies on them: before 26.8 vector columns are created plain, and before 26.7 aggregating tables are created without `allow_dimensions_outside_sorting_key`                                                                             |
+Loom needs no server config of its own: the table settings it relies on are set on its
+tables (`032_table_settings.sql`), and `loom ch-setup` makes the database and the reader
+user with SQL.
 
+| Requirement               | Why                                                                                                                                                                                                                                                 | ClickHouse Cloud                                 | Self-managed                                                                                                                                                                                                                                                  |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Version 26.4 or later     | the oldest server that applies every migration (26.3 still gates `stem()`); boot refuses an older one                                                                                                                                               | the service's version; the oldest replica counts | upgrade the server. CI tests only the latest release (`dev/clickhouse_release.sh`); a release bundle names the one that was latest when it was built                                                                                                          |
+| Grants                    | everything on `loom.*` (`GRANT ALL`, or `GRANT CURRENT GRANTS` on Cloud): the migrations create, alter and drop tables and views, and Loom rebuilds tables and refreshes views at runtime; `SELECT` on the system tables it reads; `READ ON REMOTE` | the user `ch-setup --print-sql` grants           | an admin, or the same SQL                                                                                                                                                                                                                                     |
+| Keeper                    | the `KeeperMap` migration lock, the task-inbox lease table, the run id claims, the sign-in state (each code, device grant and session spent once) and the grant change claims (one change per grant)                                                | present                                          | optional: without it the runner uses a lease row and skips `002_task_leases.sql`, `025_agent_run_claims.sql`, `028_oauth_claims.sql`, `029_grant_claims.sql` and `034_oauth_signin_state.sql`; `loom login`, SSO and MCP connect then answer 503 and grant changes are kept apart within each process only |
+| `Quantized` codec (26.8+) | codes-first vector search: a fresh install creates its vector columns coded when `LOOM_EMBEDDING_DIM` is a multiple of 8                                                                                                                            | where the service version has it                 | nothing to configure; an older server gets plain vectors and full-precision scans                                                                                                                                                                             |
+| `aiEmbed` (26.7+)         | only `loom reembed --in-database`                                                                                                                                                                                                                   | where the service version has it                 | needs a named collection (`named_collections.xml.template`)                                                                                                                                                                                                   |
+
+- **Newer servers.** Features past the floor are probed where they are used: the
+  `Quantized` codec, `aiEmbed`, lightweight `UPDATE` (Loom falls back to a mutation where
+  it is off). Before 26.8 a vector read can leave wrong entries in the query condition
+  cache, so every Loom session on an older server turns the cache off when it connects.
+- **Run id claims.** With Keeper, a claim key lives only while a `run.begin` runs; one
+  left by a begin that failed or died before writing its row stays until the same user
+  and session re-begin and complete that id, or an erasure of its namespace or user.
 - **Run ids without Keeper.** Without Keeper (or while Keeper fails) a narrowed
   token's `run.begin` with a new caller-supplied `run_id` gets a server-made id
   instead, so a client that makes the id itself must use the returned `run_id` (the
@@ -245,18 +333,12 @@ out of `.env`.
   write data in a format an older release cannot read, so switching back to an older release may
   need a fresh ClickHouse volume.
 - **ClickHouse Cloud.** Loom's DDL uses plain `MergeTree` engines, which Cloud runs as
-  `SharedMergeTree`, so replication and durability come with the service. The one
-  migration that needs the NLP functions is skipped and recorded, so the lexical leg
-  matches plain tokens instead of stems.
-- **Self-managed OSS.** Mount `deploy/clickhouse-config/` the way
-  `dev/docker-compose.dev.yml` does. Without it the server boots, but the lemmatized
-  columns cannot evaluate and inserts into `loom.memory_embeddings` fail. A single OSS
-  node is durable only to its own disk and has no point-in-time recovery; high
-  availability on OSS is a Keeper ensemble and `ReplicatedMergeTree`, an operator
-  project.
-- **Vector codec.** Where the `Quantized` codec exists the runner uses it for vector
-  columns; elsewhere they stay `Array(BFloat16) CODEC(NONE)`
-  ([migrations](../development/migrations.md#runner-directives)).
+  `SharedMergeTree`, so replication and durability come with the service. The
+  experimental NLP flag is read-only there; the runner drops it, and `stem()` runs
+  without it.
+- **Self-managed.** A single node is durable only to its own disk and has no
+  point-in-time recovery; high availability is a Keeper ensemble and
+  `ReplicatedMergeTree`, an operator project.
 
 How Loom uses ClickHouse is in [ClickHouse](../architecture/clickhouse.md).
 
@@ -485,7 +567,7 @@ The image serves plain HTTP. Put a TLS-terminating proxy or load balancer in fro
   `LOOM_TRUSTED_PROXIES` (default `127.0.0.1`); set it to your proxy's address or
   network. `X-Forwarded-Host` is never read: client-facing URLs come from
   `LOOM_PUBLIC_BASE_URL`.
-- With `deploy/standalone/compose.yaml` or `dev/docker-compose.cloud.yml` and a proxy on
+- With `compose.yaml` or `dev/docker-compose.cloud.yml` and a proxy on
   the host, the proxy reaches Loom through the published port, so Loom sees the Docker
   network's gateway as the peer, not `127.0.0.1`. Set `LOOM_TRUSTED_PROXIES` to that
   gateway, which
@@ -669,7 +751,7 @@ proxy (`docker compose -p loom-proxy -f dev/docker-compose.proxy.yml up -d`).
 
 | Step            | Do                                                                                                                                                                                                                                            |
 | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ClickHouse      | Cloud, or OSS with `deploy/clickhouse-config/` mounted ([requirements](#clickhouse-requirements)). `LOOM_CH_*` set; TLS on. Across a WAN, `LOOM_LATENCY_BUDGET_MULTIPLIER≈20`.                                                                |
+| ClickHouse      | Cloud or a self-managed server, 26.4 or later, prepared with `loom ch-setup` ([requirements](#clickhouse-requirements)). `LOOM_CH_*` set; TLS on. Across a WAN, `LOOM_LATENCY_BUDGET_MULTIPLIER≈20`.                                          |
 | Providers       | Real embedder and LLM with keys; `LOOM_REQUIRE_REAL_PROVIDERS=true`. Choose the embedder once. Only the LLM workers you want; check the cost cap.                                                                                             |
 | Identity        | `LOOM_AUTH_REQUIRED=true` and `LOOM_IDENTITY_PROVIDER` set explicitly. Platform admins named with `loom set-host`. Know `loom claim-release` before you need it.                                                                              |
 | Keys and tokens | A generated `LOOM_JWT_SECRET`; a rotation plan (`LOOM_JWT_SECRETS_JSON`). Service tokens minted with `--ttl-days` and a re-mint schedule; a token without `exp` is retired only by `loom revoke-token`.                                       |

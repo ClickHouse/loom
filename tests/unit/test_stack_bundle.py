@@ -33,10 +33,10 @@ def test_release_stack_bundle_is_complete_and_checksummed(tmp_path: Path) -> Non
             "loom-stack/THIRD_PARTY_NOTICES",
             "loom-stack/compose.yaml",
             "loom-stack/env.example",
-            "loom-stack/lemmagen3/en.bin",
-            "loom-stack/lemmagen3/LICENSE",
-            "loom-stack/lemmagen3/README.md",
-            "loom-stack/clickhouse-config/named_collections.xml",
+            "loom-stack/deploy/lemmagen3/en.bin",
+            "loom-stack/deploy/lemmagen3/LICENSE",
+            "loom-stack/deploy/lemmagen3/README.md",
+            "loom-stack/deploy/clickhouse-config/named_collections.xml",
         } <= names
         assert bundle.extractfile("loom-stack/VERSION").read() == b"1.2.3\n"
         compose = bundle.extractfile("loom-stack/compose.yaml").read().decode()
@@ -48,7 +48,7 @@ def test_release_stack_bundle_is_complete_and_checksummed(tmp_path: Path) -> Non
 
 def test_standalone_compose_uses_release_image_and_embeds_no_secret() -> None:
     root = Path(__file__).parents[2]
-    compose = (root / "deploy" / "standalone" / "compose.yaml").read_text(encoding="utf-8")
+    compose = (root / "compose.yaml").read_text(encoding="utf-8")
     env = (root / "deploy" / "standalone" / "env.example").read_text(encoding="utf-8")
     assert "${LOOM_IMAGE_REPOSITORY:-ghcr.io/clickhouse/loom}:${LOOM_VERSION:-latest}" in compose
     assert "build:" not in compose

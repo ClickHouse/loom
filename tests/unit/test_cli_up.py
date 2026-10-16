@@ -40,6 +40,7 @@ def root(tmp_path: Path) -> Path:
     cfg = tmp_path / "deploy" / "clickhouse-config"
     cfg.mkdir(parents=True)
     (cfg / "named_collections.xml.template").write_text("<clickhouse/>\n")
+    (tmp_path / "compose.yaml").write_text(COMPOSE_TEXT)
     compose = tmp_path / "dev" / "docker-compose.dev.yml"
     compose.parent.mkdir()
     compose.write_text(COMPOSE_TEXT)
@@ -245,7 +246,11 @@ def test_up_single_user_boots_and_prints_connect_snippets(root: Path, stack, cap
             "--env-file",
             str(root / ".env"),
             "-f",
+            str(root / "compose.yaml"),
+            "-f",
             str(root / "dev/docker-compose.dev.yml"),
+            "--profile",
+            "bundled",
             "up",
             "-d",
             "--build",
@@ -276,6 +281,8 @@ def test_up_no_build_and_custom_file(root: Path, stack) -> None:
             str(root / ".env"),
             "-f",
             str(root / "dev/other.yml"),
+            "--profile",
+            "bundled",
             "up",
             "-d",
         ]
@@ -297,7 +304,7 @@ def test_compose_up_env_file_wins_over_loaded_checkout_env(
 
     monkeypatch.setattr(up, "_run", run)
     monkeypatch.setattr(up, "_git_short_head", lambda root: "deadbee")
-    assert up.compose_up(root, "dev/docker-compose.dev.yml", ".env", build=False) == 0
+    assert up.compose_up(root, up.DEFAULT_COMPOSE_FILES, ".env", build=False) == 0
     assert "selected-project" in seen["argv"]
     assert "wrong-project" not in seen["argv"]
     assert "COMPOSE_PROJECT_NAME" not in seen["env"]
@@ -347,7 +354,11 @@ def test_up_timeout_prints_last_body_and_tails_logs(root: Path, stack, capsys) -
             "--env-file",
             str(root / ".env"),
             "-f",
+            str(root / "compose.yaml"),
+            "-f",
             str(root / "dev/docker-compose.dev.yml"),
+            "--profile",
+            "bundled",
             "logs",
             "--tail",
             "40",
@@ -459,14 +470,14 @@ def test_loom_up_is_registered_on_the_cli(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(up, "_cmd_up", lambda args: seen.append(args) or 0)
     assert cli.main(["up", "--no-build", "--timeout", "12", "--port", "7778"]) == 0
     assert seen[0].no_build is True and seen[0].timeout == 12 and seen[0].port == 7778
-    assert seen[0].file == up.DEFAULT_COMPOSE_FILE and seen[0].env_file == ".env"
+    assert seen[0].file is None and seen[0].env_file == ".env"
 
 
 def test_down_preserves_data_by_default(root: Path, stack, capsys) -> None:
     (root / ".env").write_text("COMPOSE_PROJECT_NAME=loom-safe-stop\n")
     fake = stack([(200, OK_BODY)])
     assert up._cmd_down(_down_args(root)) == 0
-    assert fake.calls == [up.compose_argv(root, up.DEFAULT_COMPOSE_FILE, ".env", "down")]
+    assert fake.calls == [up.compose_argv(root, up.DEFAULT_COMPOSE_FILES, ".env", "down")]
     assert "data volumes were preserved" in capsys.readouterr().out
 
 
@@ -483,7 +494,7 @@ def test_down_delete_data_requires_exact_project_confirmation(
     monkeypatch.setattr("builtins.input", lambda prompt: "loom-confirm-me")
     assert up._cmd_down(_down_args(root, delete_data=True)) == 0
     assert fake.calls == [
-        up.compose_argv(root, up.DEFAULT_COMPOSE_FILE, ".env", "down", "--volumes")
+        up.compose_argv(root, up.DEFAULT_COMPOSE_FILES, ".env", "down", "--volumes")
     ]
 
 

@@ -241,6 +241,7 @@ python scripts/codegen/docs_reference.py
 | `loom okf-lint` | Lint an OKF bundle directory offline — the compile gate a mirror repository's CI runs. | `<path>`, `--json`, `--strict` |
 | `loom up` | Boot the local stack (Loom + ClickHouse) and print how to connect: creates .env and the ClickHouse config from their templates, runs docker compose up --build, waits for /v1/health, then prints the… | `--root`, `--file`, `--env-file`, `--no-build`, `--rebuild`, `--port`, `--timeout`, `--subject`, `--org`, `--namespace`, `--open` |
 | `loom down` | Stop the local stack while preserving data; --delete-data performs a confirmed reset. | `--root`, `--file`, `--env-file`, `--delete-data`, `-y` |
+| `loom ch-setup` | Prepare a self-managed ClickHouse or a ClickHouse Cloud service for Loom: create the loom database and the read-only reader user, or print the SQL for an admin. | `--print-sql` |
 | `loom read-replica` | Read-replicas: more Looms on the same ClickHouse. |  |
 | `loom read-replica retire` | Retire the provider participant of a read-replica whose process died without shutting down (its id is in that replica's /v1/health). | `--participant`, `--yes` |
 | `loom reembed` | Re-embed vectors whose embedding_model != the configured embedder (run after changing LOOM_EMBEDDING_MODEL — Loom does not auto-re-embed). | `--org`, `--namespace`, `--batch-size`, `--in-database`, `--dry-run`, `--delete-old`, `--key-only`, `--resume` |
@@ -265,6 +266,7 @@ python scripts/codegen/docs_reference.py
 | `loom sso` | Carry password accounts over to single sign-on. |  |
 | `loom sso adopt` | Let SSO sign-ins reach the password accounts whose email is at --domain: each person then signs in with the identity provider to their own account, its namespaces and data. | `--domain`, `--org`, `--apply`, `--dry-run` |
 | `loom sso unlink` | Undo the links of one email. | `--email`, `--apply`, `--dry-run` |
+| `loom sso password-link` | Print a one-time link (a day) that sets the password of an email's SSO accounts, for after single sign-on is turned off. | `--email`, `--org` |
 | `loom doctor` | Diagnose pre-boot misconfig (Python version, settings, JWT, CH reachability) and print the problem list /v1/health carries, each with its fix. | `--json`, `--client`, `--server-url`, `--token` |
 | `loom report` | Print a GitHub-Issue-ready bug report with auto-attached `loom doctor` diagnostic. | `--open` |
 | `loom drops` | Print the memory ingest drop ledger (loom.memory_drops) for a namespace, by stage/reason — what the pipeline discarded, truncated or gave up on. | `--namespace`, `--org`, `--hours` |
