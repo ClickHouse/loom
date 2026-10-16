@@ -21,7 +21,7 @@ async def _recording_on(agent, control_plane_url: str):
     `agent` fixture mints a fresh, never-registered namespace, so the gate in
     `conversation_repo.namespace_logging_enabled` fails closed and every append
     below would be an accepted no-op. Declaring the opt-in here is what a real
-    namespace owner does via /me → Sessions.
+    namespace owner does from the dashboard's Conversations page.
 
     Deliberately not folded into the `agent` fixture: that would silently turn
     recording on for every integration test, which is the opposite of the

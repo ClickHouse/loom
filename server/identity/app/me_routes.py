@@ -1,10 +1,8 @@
-"""Self-serve dashboard: the /me surface.
-
-The static-SPA routes (`GET /me`, `/me/`, `/me/{spa_path:path}`) plus the
-`/me/assets` StaticFiles mount that serves the built Vite bundle, and the
-`/v1/me/*` JSON API the SPA calls: per-user state and the sharing summary
-here, MCP-client setup in `me_setup.py`, service-account self-mint in
-`me_service_accounts.py`. `attach` mounts all of it.
+"""The caller API: `/v1/me/*`, the JSON endpoints about the authenticated
+caller that the dashboard calls. Per-user state and the sharing summary here,
+MCP-client setup in `me_setup.py`, service-account self-mint in
+`me_service_accounts.py`. `attach` mounts all of it; the dashboard page itself
+is `dashboard_routes.py`.
 
 These endpoints authenticate through `me_callers`, not the operation
 registry's role gate.
@@ -12,154 +10,16 @@ registry's role gate.
 
 from __future__ import annotations
 
-import json
-import secrets
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, HTTPException, Request
 
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.grant_sql import LIVE_GRANT
-from server.core.paths import FRONTEND_DIST
 from server.identity.app import me_callers, me_service_accounts, me_setup
 from server.settings import settings
 
 me_router = APIRouter()
-
-
-_FRONTEND_DIST = FRONTEND_DIST
-
-
-def dashboard_csp(nonce: str) -> str:
-    """The /me page's Content-Security-Policy. Scripts run only from the
-    bundle's own origin or the one boot snippet carrying `nonce`; a document
-    preview is a blob: frame or image, never a script source."""
-    return (
-        "default-src 'self'; "
-        f"script-src 'self' 'nonce-{nonce}'; "
-        "style-src 'self' 'unsafe-inline'; "
-        # Vite inlines small font subsets as data: URLs.
-        "font-src 'self' data:; "
-        "img-src 'self' data: blob:; "
-        "frame-src 'self' blob:; "
-        "connect-src 'self'; "
-        "object-src 'none'; "
-        "base-uri 'none'; "
-        "frame-ancestors 'none'; "
-        "form-action 'self'"
-    )
-
-
-def _js_string(value: str) -> str:
-    """Render `value` as a JS string literal safe to inline in a `<script>`.
-
-    Quote-only escaping isn't enough for operator-supplied config: a value
-    ending in a backslash escapes its own closing quote, and the resulting
-    SyntaxError takes out *every* boot global (the SPA then falls back to the
-    login gate on a deployment that has no login). `json.dumps` covers quotes,
-    backslashes and control characters; the `</` rewrite covers `</script>`,
-    which ends the element at the HTML level no matter how the JS is escaped;
-    the `<!--` rewrite keeps the HTML tokenizer out of script-data-escaped
-    state, where the snippet's real `</script>` would stop closing the element.
-    """
-    return json.dumps(value).replace("</", "<\\/").replace("<!--", "<\\!--")
-
-
-@me_router.get("/me/favicon.svg")
-async def favicon() -> Response:
-    """Tab icon. Needs its own route: it lives at the dist root (not under the
-    /me/assets mount), so without it the /me/{spa_path:path} catch-all below
-    returns index.html and the browser gets HTML instead of an SVG — no icon."""
-    from fastapi.responses import FileResponse
-
-    path = _FRONTEND_DIST / "favicon.svg"
-    if not path.is_file():
-        return Response(status_code=404)
-    return FileResponse(path, media_type="image/svg+xml")
-
-
-@me_router.get("/me")
-@me_router.get("/me/")
-@me_router.get("/me/{spa_path:path}")
-async def memory_dashboard(request: Request, spa_path: str = "") -> Response:
-    # spa_path exists only so the server returns the SPA for every /me/*
-    # URL instead of 404'ing on direct loads / refreshes; the React app
-    # reads window.location.pathname itself.
-    from fastapi.responses import RedirectResponse
-
-    # A bare /me serves the SPA like every other path: the client's landing rule chooses the
-    # first view from the token's namespaces — Setup for a first visit, Repositories for a
-    # token that names only repositories. A server redirect to /me/setup would make every
-    # visit an explicit Setup deep link and bypass that rule.
-    # Federated-deployment escape hatch: redirect /me to an aggregator's
-    # entry point. Auth-disabled mode skips this — the solo user IS the
-    # intended /me audience there.
-    if settings.dashboard_redirect_url and settings.auth_actually_required():
-        return RedirectResponse(url=settings.dashboard_redirect_url, status_code=302)
-    from fastapi.responses import HTMLResponse, PlainTextResponse
-
-    from server.auth.bearer import bearer_token
-    from server.auth.jwt import TokenError
-
-    try:
-        has_bearer = bearer_token(request.headers.get("Authorization")) is not None
-    except TokenError:
-        has_bearer = False
-
-    # auth_actually_required, not auth_required: LOOM_IDENTITY_PROVIDER=
-    # single-user with auth_required left true (common in prod-derived dev
-    # configs) is still an auth-off deployment — the transport accepts
-    # tokenless calls, so the SPA must get __LOOM_AUTH_DISABLED=true and the
-    # namespace row must exist.
-    auth_disabled = not settings.auth_actually_required()
-
-    # Ensure the auth-disabled default namespace (`dev/local` unless
-    # LOOM_DEFAULT_NAMESPACE overrides it) has a backing row in
-    # loom.namespaces. Without it, namespace.list_mine returns nothing and a
-    # future auth-enabled migration sees orphaned data with no owner. Cached
-    # process-wide (also runs from the lifespan), so this is a bool check on
-    # every page load after the first.
-    default_ns = settings.default_namespace
-    if auth_disabled:
-        from server.auth.default_namespace import ensure_default_namespace_cached
-
-        await ensure_default_namespace_cached()
-    # Self-signup availability rides the boot snippet rather than being probed: probing by
-    # POSTing a real signup would be a read that writes (claiming a namespace on a fresh
-    # instance, then a 409 on every later load). The server already knows the answer.
-    # With SSO on, the sign-in screen is one button to the identity provider:
-    # password sign-in and self-signup are both refused server-side.
-    sso = settings.oauth_login_provider == "oidc"
-    signup_open = settings.self_signup == "open" and not sso
-    nonce = secrets.token_urlsafe(16)
-    boot_snippet = (
-        f'<script nonce="{nonce}">'
-        f"window.__LOOM_PROXY_AUTH = {'true' if has_bearer else 'false'};"
-        f"window.__LOOM_AUTH_DISABLED = {'true' if auth_disabled else 'false'};"
-        f"window.__LOOM_SELF_SIGNUP = {'true' if signup_open else 'false'};"
-        f"window.__LOOM_SSO = {'true' if sso else 'false'};"
-        f"window.__LOOM_DEFAULT_NAMESPACE = {_js_string(default_ns)};"
-        f"</script>"
-    )
-
-    built_index = _FRONTEND_DIST / "index.html"
-    if not built_index.is_file():
-        return PlainTextResponse(
-            "Dashboard not built. Run `npm --prefix frontend run build` "
-            "or use the published Docker image.",
-            status_code=503,
-        )
-    html = built_index.read_text()
-    if "</head>" in html:
-        html = html.replace("</head>", boot_snippet + "\n</head>", 1)
-    else:
-        html = boot_snippet + html
-    # no-store: the HTML references content-hashed assets that rotate per
-    # build; a cached HTML would point at a bundle hash that no longer exists.
-    return HTMLResponse(
-        content=html,
-        headers={"Cache-Control": "no-store", "Content-Security-Policy": dashboard_csp(nonce)},
-    )
 
 
 @me_router.post("/v1/me/set-default-namespace")
@@ -170,7 +30,7 @@ async def me_set_default_namespace(
     """Persist the caller's currently-selected workspace.
 
     The MCP transport reads `loom.user_state` to resolve the caller's
-    default workspace, so /me's selection becomes the default for MCP
+    default workspace, so the dashboard's selection becomes the default for MCP
     clients too — single source of truth across surfaces.
     """
     import time as _time
@@ -471,22 +331,7 @@ async def me_sharing_summary(request: Request) -> dict[str, object]:
 
 
 def attach(app: Any) -> None:
-    """Mount the /me surface on the FastAPI app.
-
-    Mount order is load-bearing: `/me/assets` (hashed JS/CSS) must mount
-    BEFORE me_router's `/me/{spa_path:path}` catch-all, or asset requests
-    match the catch-all and get HTML back (MIME mismatch). The .is_dir()
-    guard lets `npm run dev` work without a built bundle on disk.
-    """
-    if _FRONTEND_DIST.is_dir():
-        from fastapi.staticfiles import StaticFiles
-
-        app.mount(
-            "/me/assets",
-            StaticFiles(directory=str(_FRONTEND_DIST / "assets")),
-            name="me_assets",
-        )
-
+    """Mount the caller API on the FastAPI app."""
     app.include_router(me_router)
     app.include_router(me_setup.router)
     app.include_router(me_service_accounts.router)

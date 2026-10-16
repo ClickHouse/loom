@@ -8,6 +8,7 @@ the graph-mode hit carrying `via_path`.
 from __future__ import annotations
 
 import re
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -114,7 +115,21 @@ async def test_fetch_graph_neighbors_return_value_is_unchanged_without_paths() -
 # ----------------------------------------------------------------------
 
 
+@pytest.fixture
+def _no_graph_marks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A fresh walk memo; the graph-write marks read as no write and nothing in flight."""
+    from server.memory.app import facts, graph_write_marks
+
+    facts.reset_traverse_cache()
+
+    async def _never_written(org: str, ns: str, *, wait_s: float) -> tuple[None, datetime]:
+        return None, datetime.now(UTC)
+
+    monkeypatch.setattr(graph_write_marks, "last_write", _never_written)
+
+
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("_no_graph_marks")
 async def test_facts_traverse_projects_the_visited_chain_as_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

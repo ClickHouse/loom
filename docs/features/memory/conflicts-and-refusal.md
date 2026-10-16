@@ -121,7 +121,7 @@ async with Agent(org="acme", namespace="support", agent="curator") as agent:
 
 ### The Review queue
 
-The dashboard's Review queue (`/me/admin/review_queue`, `g r`) lists conflicted pairs and
+The dashboard's Review queue (`<server>/admin/review_queue`, `g r`) lists conflicted pairs and
 applies `conflicts.resolve`. Two more tabs appear when they have content: **Learnings**
 ([learnings](./procedures-and-learnings.md#learnings-review-queue)) and **Exceptions**
 (the allowlist). See [the dashboard](../dashboard.md).
@@ -194,7 +194,7 @@ bumps a one-row version watermark (`loom.blacklist_version`); replicas poll it e
 (`LOOM_BLACKLIST_CACHE_TTL_SECONDS`, 300 s). For up to one interval, another replica can
 still accept a newly refused value.
 
-The dashboard's Guardrails page (`/me/admin/guardrails`) manages patterns. Refusing is
+The dashboard's Guardrails page (`<server>/admin/guardrails`) manages patterns. Refusing is
 not erasing: to remove a person's data, use [erasure](./retention-and-erasure.md#erasure).
 
 ## Settings

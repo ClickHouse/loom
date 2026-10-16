@@ -4,6 +4,7 @@ stored memory a search hit is, and the worker row and table it runs on."""
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import subprocess
@@ -40,9 +41,13 @@ def _no_remembered_anchors():
 
 
 @pytest.fixture(autouse=True)
-def _no_keeper(monkeypatch):
-    # no ClickHouse here: leases are held in this process, as on a server without Keeper
-    monkeypatch.setattr(code_link_pass.repository_locks, "_keeper", False)
+def _free_leases(monkeypatch):
+    # no ClickHouse here: every repository lease is free
+    @contextlib.asynccontextmanager
+    async def lease(name, *, wait_s=None):
+        yield
+
+    monkeypatch.setattr(code_link_pass.repository_locks, "lease", lease)
 
 
 @pytest.fixture(autouse=True)

@@ -6,7 +6,7 @@ import { useStore } from "../lib/state";
 import { Skeleton } from "../components/Skeleton";
 import { relativeTime } from "../lib/format";
 
-// Read-only preview of a Profile section; editing lives on /me/profile
+// Read-only preview of a Profile section; editing lives on /profile
 // to avoid duplicating its editor + char-cap + save logic here.
 export function ProfileSectionDialog() {
   const label = useStore((s) => s.inspectedProfileLabel);

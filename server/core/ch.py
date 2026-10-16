@@ -17,8 +17,8 @@ import re
 import sys
 import time
 import uuid
-from collections.abc import Awaitable, Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from types import FrameType
@@ -26,6 +26,7 @@ from typing import Any
 
 import clickhouse_connect
 from clickhouse_connect.driver.asyncclient import AsyncClient
+from clickhouse_connect.driver.binding import quote_identifier
 from clickhouse_connect.driver.external import ExternalData
 
 from server.core.ch_class_settings import is_read_statement, traffic_class_settings
@@ -84,6 +85,17 @@ def set_query_tag(tag: str) -> None:
 
 def current_query_tag() -> str:
     return query_tag_var.get()
+
+
+@contextmanager
+def query_tag(tag: str) -> Iterator[None]:
+    """`set_query_tag(tag)` for the block only: for a step run in a context
+    whose later queries are not its own (the lifespan, a lease loop)."""
+    token = query_tag_var.set(str(tag or "")[:_QUERY_TAG_MAX])
+    try:
+        yield
+    finally:
+        query_tag_var.reset(token)
 
 
 # The ClickHouse `quota_key` of the verified caller, `<org>:<subject>`, so a
@@ -369,6 +381,10 @@ _POOL_TIMEOUTS_TOTAL = 0
 _OVERLOADED_LOG_EVERY_S = 5.0
 _overloaded_last_log = 0.0
 _overloaded_since_log = 0
+# Reads whose body the client pulls at its own pace (`raw_stream`) wait on this
+# gate instead, so slow downloads cannot take the pool's slots. The connector
+# has room for them beside the pool.
+STREAM_SLOTS = 4
 
 
 def pool_reading() -> dict[str, int]:
@@ -494,7 +510,7 @@ async def _turn_off_unsafe_condition_cache(client: AsyncClient) -> None:
     replica predates its vector-read fix (`condition_cache_unsafe`), or when the
     replicas cannot be asked. Each new connection asks, so a reconnect keeps
     the setting."""
-    from server.core.schema.preflight import CLUSTER_DOESNT_EXIST, REPLICA_VERSIONS_SQL, version_key
+    from server.core.schema.preflight import CLUSTER_DOESNT_EXIST, replica_versions_sql, version_key
 
     async def versions(sql: str) -> list[str]:
         # The raw client, before CHClient tags its queries: name this one here.
@@ -503,7 +519,7 @@ async def _turn_off_unsafe_condition_cache(client: AsyncClient) -> None:
 
     try:
         try:
-            replicas = await versions(REPLICA_VERSIONS_SQL)
+            replicas = await versions(replica_versions_sql())
         except Exception as e:
             if error_code(e) != CLUSTER_DOESNT_EXIST:
                 raise
@@ -516,6 +532,63 @@ async def _turn_off_unsafe_condition_cache(client: AsyncClient) -> None:
     if condition_cache_unsafe(oldest):
         client.set_client_setting("use_query_condition_cache", 0)
         log.info("ClickHouse %s: sessions run with use_query_condition_cache = 0", oldest)
+
+
+def _sql_string(value: str) -> str:
+    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+_STORED_KINDS = "('MATERIALIZED', 'ALIAS', 'EPHEMERAL')"  # as rmt_carry reads the lists
+
+
+def _stray_columns_sql(table: str, stored: frozenset[str]) -> str:
+    """How many stored columns `table` has outside `stored`: 0 while the lists a
+    carried write took still describe it."""
+    db, _, name = table.rpartition(".")
+    known = ", ".join(_sql_string(c) for c in sorted(stored))
+    return (
+        f"SELECT count() AS n FROM system.columns WHERE database = {_sql_string(db)} "
+        f"AND table = {_sql_string(name)} AND default_kind NOT IN {_STORED_KINDS} "
+        f"AND name NOT IN [{known}]"
+    )
+
+
+FENCE_MESSAGE = "rmt carry fence"
+# Server errors that do not prove a carried send's query ended: the same id still
+# running (216, a driver re-send after a reset) and the connection's own failures
+# (209 SOCKET_TIMEOUT, 210 NETWORK_ERROR).
+_NOT_ENDED_CODES = frozenset({209, 210, 216})
+DEADLINE_MESSAGE = "rmt carry deadline"
+# A carried send's server-side limit when the write class sets none: a write the
+# client gave up on must not run on past the barrier.
+_FENCE_MAX_S = 60
+
+
+def _fenced_statement(
+    table: str,
+    columns: list[str],
+    type_names: list[str],
+    stored: frozenset[str],
+    deadline: float,
+) -> str:
+    """The INSERT a carried batch is sent as. ClickHouse judges the guard when the
+    query starts, against the receiving server's metadata: one that starts after
+    an ALTER added a column the rows lack (held by a proxy, a retry) is refused
+    (`FENCE_MESSAGE`) instead of resetting it, and so is one that starts after
+    `deadline` (server clock, epoch seconds: `DEADLINE_MESSAGE`). One that started
+    in time is bounded by its `max_execution_time` (`_FENCE_MAX_S` when the write
+    class has none)."""
+    cols = ", ".join(quote_identifier(c) for c in columns)
+    structure = ", ".join(
+        f"{quote_identifier(c)} {t}" for c, t in zip(columns, type_names, strict=True)
+    )
+    return (
+        f"INSERT INTO {table} ({cols}) SELECT {cols} FROM input({_sql_string(structure)}) "
+        f"WHERE throwIf(({_stray_columns_sql(table, stored)}) != 0, "
+        f"{_sql_string(FENCE_MESSAGE)}) = 0 "
+        f"AND throwIf(toUnixTimestamp64Milli(now64(3)) > {round(deadline * 1000)}, "
+        f"{_sql_string(DEADLINE_MESSAGE)}) = 0 FORMAT Native\n"
+    )
 
 
 def _insert_data(
@@ -561,6 +634,7 @@ class CHClient:
     _inflight: dict[int, int]
     _retired: dict[int, AsyncClient]
     _slots: asyncio.Semaphore | None
+    _stream_slots: asyncio.Semaphore
     _reconnect_lock: asyncio.Lock
 
     def __init__(self) -> None:
@@ -582,10 +656,14 @@ class CHClient:
         if "_slots" not in d:
             limit = int(settings.ch_pool_maxsize)
             d["_slots"] = asyncio.Semaphore(limit) if limit > 0 else None
+        d.setdefault("_stream_slots", asyncio.Semaphore(STREAM_SLOTS))
         if "_reconnect_lock" not in d:
             d["_reconnect_lock"] = asyncio.Lock()
 
     async def connect(self) -> None:
+        limit = int(settings.ch_pool_maxsize)
+        # Streaming reads have connections of their own beside the pool; 0 is unbounded.
+        connector_limit = limit + STREAM_SLOTS if limit > 0 else 0
         client = await clickhouse_connect.get_async_client(
             **connection_kwargs(),
             compress=True,
@@ -595,8 +673,8 @@ class CHClient:
             # per call in `_with_retry`.
             send_receive_timeout=_driver_read_timeout_s(),
             tz_source="server",
-            connector_limit=settings.ch_pool_maxsize,
-            connector_limit_per_host=settings.ch_pool_maxsize,
+            connector_limit=connector_limit,
+            connector_limit_per_host=connector_limit,
             # Close idle pooled connections before the Cloud load balancer
             # does, so the pool never holds a peer-closed TLS transport.
             keepalive_timeout=float(settings.ch_keepalive_timeout),
@@ -902,6 +980,76 @@ class CHClient:
         result = await self._query_fail_open("query_all", sql, params)
         return [dict(zip(result.column_names, row, strict=False)) for row in result.result_rows]
 
+    async def raw_bytes(self, sql: str, params: dict[str, Any] | None = None) -> bytes:
+        """A SELECT's whole output as bytes (`FORMAT RawBLOB` for one String
+        value), read under one pool slot like any query."""
+
+        async def _q() -> bytes:
+            return await self.client.raw_query(
+                sql,
+                parameters=params or {},
+                settings=statement_settings(sql, cls="read"),
+                **_reader_auth(),
+            )
+
+        await guard_pending_schema("raw_bytes", sql, "read")
+        return bytes(await self._with_retry("raw_bytes", _q, cls="read"))
+
+    @asynccontextmanager
+    async def raw_stream(
+        self, sql: str, params: dict[str, Any] | None = None
+    ) -> AsyncIterator[AsyncIterator[bytes]]:
+        """A SELECT's output as raw byte chunks (`FORMAT RawBLOB` for one String
+        value), for a body too large to buffer. Opening is retried like any
+        read; the stream holds one of the `STREAM_SLOTS` until the block exits,
+        not a pool slot, since the client sets how long that takes."""
+
+        held: list[int] = []  # the generation whose client opened the stream
+
+        async def _open() -> Any:
+            # The client and generation this attempt runs on, taken together; the
+            # response belongs to that client, which a reconnect may retire.
+            gen, client = int(self._generation), self.client
+            stream = await client.raw_stream(
+                sql,
+                parameters=params or {},
+                settings=statement_settings(sql, cls="read"),
+                **_reader_auth(),
+            )
+            # Held before `_bounded` drops its count, so the client is never
+            # closed between opening and the stream's end.
+            self._inflight[gen] = self._inflight.get(gen, 0) + 1
+            held.append(gen)
+            return stream
+
+        self._ensure_state()
+        await guard_pending_schema("raw_stream", sql, "read")
+        await self._acquire_stream_slot()
+        try:
+            stream = await self._retry_ladder("raw_stream", _open, cls="read")
+            async with stream:
+                yield stream
+        finally:
+            for gen in held:
+                self._inflight[gen] = self._inflight.get(gen, 1) - 1
+                await self._retire_if_done(gen)
+            self._stream_slots.release()
+
+    async def _acquire_stream_slot(self) -> None:
+        """One of the `STREAM_SLOTS`, or 503 OVERLOADED after `ch_pool_wait_ms`."""
+        wait_ms = int(settings.ch_pool_wait_ms)
+        if wait_ms <= 0:
+            await self._stream_slots.acquire()
+            return
+        try:
+            await asyncio.wait_for(self._stream_slots.acquire(), timeout=wait_ms / 1000.0)
+        except TimeoutError:
+            from server.core.errors import OverloadedError
+
+            raise OverloadedError(
+                "every streaming read of this process is busy; retry shortly", retry_after_s=1
+            ) from None
+
     async def execute(
         self,
         sql: str,
@@ -963,6 +1111,23 @@ class CHClient:
         # Before the DESCRIBE — that read is the first statement
         # to raise code 60 against a table the service does not have yet.
         await guard_pending_schema("insert", "", "write", insert_table=table)
+        from server.core import rmt_carry
+
+        if not rmt_carry.carries(table):
+            await self._insert_batch(table, rows, settings, project_onto_table)
+            return
+        async with rmt_carry.writing():
+            # A version row keeps the columns a newer build's migration added.
+            for batch in await rmt_carry.carry_unknown_columns(self, table, rows):
+                await self._insert_batch(table, batch, settings, project_onto_table)
+
+    async def _insert_batch(
+        self,
+        table: str,
+        rows: list[dict[str, Any]],
+        settings: dict[str, Any] | None,
+        project_onto_table: bool | None,
+    ) -> None:
         # A coded vector column needs every row at full length.
         from server.core.vectors import codes_state, placeholders
 
@@ -987,6 +1152,35 @@ class CHClient:
         if all(codes_state.stored_width(table, c) == n for c, n in sized.items()):
             raise refused  # the fresh reading does not explain it
         await self._insert_rows(table, rows, settings, project_onto_table)
+
+    async def _fenced_insert(
+        self,
+        table: str,
+        data: list[list[Any]],
+        columns: list[str],
+        type_names: list[str] | None,
+        stored: frozenset[str],
+        settings: dict[str, Any],
+        deadline: float,
+    ) -> Any:
+        """A carried batch, sent as `_fenced_statement` in place of the driver's
+        plain INSERT (the first block carries the statement)."""
+        ctx = await self.client.create_insert_context(
+            table, columns, column_type_names=type_names, settings=settings
+        )
+        types = [t.name for t in ctx.column_types]
+        statement = _fenced_statement(
+            table, list(ctx.column_names), types, stored, deadline
+        ).encode()
+        blocks = ctx.next_block
+
+        def fenced() -> Any:
+            for block in blocks():
+                yield block._replace(prefix=statement) if block.prefix else block
+
+        ctx.next_block = fenced  # type: ignore[method-assign]
+        ctx.data = data
+        return await self.client.data_insert(ctx)
 
     async def _insert_rows(
         self,
@@ -1034,15 +1228,59 @@ class CHClient:
         )
 
         async def _q() -> None:
-            res = await self.client.insert(
-                table,
-                data,
-                column_names=columns,
-                column_type_names=type_names,
-                settings=_with_request_query_id(
-                    _apply_class_timeout(query_settings(settings), "write")
-                ),
-            )
+            from server.core import rmt_carry
+
+            attempt = query_settings(settings)
+            # A carried batch is guarded by the lists it was built against: one
+            # that arrives after an ALTER added a column it lacks lands nothing.
+            stored = rmt_carry.fence_columns(table) if rmt_carry.carries(table) else None
+            if stored is None:
+                res = await self.client.insert(
+                    table,
+                    data,
+                    column_names=columns,
+                    column_type_names=type_names,
+                    settings=_with_request_query_id(_apply_class_timeout(attempt, "write")),
+                )
+            else:
+                fenced = _apply_class_timeout({**attempt, "async_insert": 0}, "write")
+                fenced.setdefault("max_execution_time", _FENCE_MAX_S)
+                fenced = _with_request_query_id(fenced)
+                # A known id per send, naming this process: a cut-off write is held
+                # until the server says this query ended (`rmt_carry.writing`), and a
+                # boot waits for one a killed process left running (`await_acks`).
+                fenced["query_id"] = rmt_carry.carry_query_id(
+                    str(fenced.get("query_id") or uuid.uuid4().hex)
+                )
+                deadline = rmt_carry.send_deadline()
+                rmt_carry.note_send(
+                    str(fenced["query_id"]), deadline, float(fenced["max_execution_time"])
+                )
+                try:
+                    res = await self._fenced_insert(
+                        table, data, columns, type_names, stored, fenced, deadline
+                    )
+                    rmt_carry.note_ended(str(fenced["query_id"]))
+                except Exception as e:
+                    from server.core.errors import BackendUnavailableError
+
+                    if error_code(e) not in (None, *_NOT_ENDED_CODES):
+                        # The server's own error for this query: it is over.
+                        rmt_carry.note_ended(str(fenced["query_id"]))
+
+                    if DEADLINE_MESSAGE in str(e):
+                        # Queued past its start deadline: a fresh send gets a new one.
+                        raise BackendUnavailableError(
+                            f"rmt carry: a write to {table} reached the server too late; retry"
+                        ) from None
+                    if FENCE_MESSAGE not in str(e):
+                        raise
+                    rmt_carry.invalidate(table)
+
+                    # The table gained a column these rows lack: retry with fresh lists.
+                    raise BackendUnavailableError(
+                        f"rmt carry: {table} changed under this write; retry"
+                    ) from None
             note_result_summary(res)
 
         async def _run() -> None:

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from contextlib import AsyncExitStack
 from typing import Any
 
 import pytest
@@ -68,8 +69,24 @@ class _FakeAsync:
     ) -> None:
         await self._act("insert", table, settings)
 
+    async def raw_query(self, sql: str, parameters: Any = None, settings: Any = None) -> bytes:
+        await self._act("raw_query", sql, settings)
+        return b"body"
+
+    async def raw_stream(self, sql: str, parameters: Any = None, settings: Any = None) -> Any:
+        await self._act("raw_stream", sql, settings)
+        return _Stream()
+
     async def close(self) -> None:
         self.closed = True
+
+
+class _Stream:
+    async def __aenter__(self) -> _Stream:
+        return self
+
+    async def __aexit__(self, *_a: Any) -> None:
+        return None
 
 
 def _client(monkeypatch: pytest.MonkeyPatch, fake: _FakeAsync, **over: Any) -> Any:
@@ -265,6 +282,20 @@ def test_token_is_stable_for_a_batch_and_distinct_across_nonces() -> None:
     assert len(t1) == 40
 
 
+def test_token_reads_a_long_value_by_its_length_and_prefix() -> None:
+    """An uploaded original is not hashed whole on the event loop: the nonce
+    already tells batches apart."""
+    big = b"%PDF" + b"\0" * (8 << 20)
+    token = ch_writes.insert_dedup_token
+    assert token("loom.t", ["d"], [{"d": big}], "n") == token(
+        "loom.t", ["d"], [{"d": big[:-1] + b"x"}], "n"
+    )
+    assert token("loom.t", ["d"], [{"d": big}], "n") != token(
+        "loom.t", ["d"], [{"d": big[:-1]}], "n"
+    )
+    assert token("loom.t", ["d"], [{"d": "x"}], "n") != token("loom.t", ["d"], [{"d": b"x"}], "n")
+
+
 async def test_execute_insert_gets_a_token_and_a_mutation_does_not(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -349,6 +380,24 @@ async def test_slot_gate_fails_fast_with_503_and_counts_waiters(
     assert r["in_use"] == 0 and r["waiters"] == 0
     # The refused statement never reached the driver.
     assert [key for k, key, _s in fake.calls if k == "query"] == ["SELECT slow 1"]
+
+
+async def test_an_open_stream_holds_no_pool_slot_and_streams_have_their_own_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A download the client reads slowly cannot take the pool from every
+    other request: it waits on `STREAM_SLOTS`, which refuse with 503 when full."""
+    c = _client(monkeypatch, _FakeAsync(), ch_pool_maxsize=1, ch_pool_wait_ms=60)
+    async with AsyncExitStack() as stack:
+        for _ in range(ch_mod.STREAM_SLOTS):
+            await stack.enter_async_context(c.raw_stream("SELECT data FORMAT RawBLOB"))
+        assert ch_mod.pool_reading()["in_use"] == 0
+        assert await c.raw_bytes("SELECT data FORMAT RawBLOB") == b"body"
+        with pytest.raises(OverloadedError):
+            async with c.raw_stream("SELECT data FORMAT RawBLOB"):
+                pass
+    async with c.raw_stream("SELECT data FORMAT RawBLOB"):
+        pass
 
 
 async def test_slot_gate_off_queues_instead_of_refusing(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -439,13 +488,77 @@ async def test_a_graph_table_insert_notes_its_namespaces(monkeypatch: pytest.Mon
     from server.memory.app import graph_write_marks
 
     noted: list[tuple[str, str]] = []
-
-    class _Marks:
-        def note_write(self, org: str, ns: str) -> None:
-            noted.append((org, ns))
-
-    monkeypatch.setattr(graph_write_marks, "marks", lambda: _Marks())
+    monkeypatch.setattr(graph_write_marks, "note_write", lambda org, ns: noted.append((org, ns)))
     fake = _FakeAsync()
     c = _client(monkeypatch, fake)
     await c.insert("loom.entity_edges", [{"org": "o", "namespace": "n", "a": 1}])
     assert noted == [("o", "n")]
+
+
+class _OwnedStream:
+    """A response that knows its client and notes whether that client was
+    closed when the caller entered it."""
+
+    def __init__(self, owner: _GatedAsync) -> None:
+        self.owner = owner
+        self.closed_on_enter: bool | None = None
+
+    async def __aenter__(self) -> _OwnedStream:
+        self.closed_on_enter = self.owner.closed
+        self.owner.open_streams += 1
+        return self
+
+    async def __aexit__(self, *_a: Any) -> None:
+        self.owner.open_streams -= 1
+        if not self.owner.open_streams:
+            self.owner.drained.set()
+
+
+class _GatedAsync(_FakeAsync):
+    """A driver whose stream opening waits on `gate`; with `drain`, close()
+    waits until no stream of it is open, as a pooled HTTP client does."""
+
+    def __init__(self, gen: int = 0, *, drain: bool = False) -> None:
+        super().__init__(gen)
+        self.gate = asyncio.Event()
+        self.opening = asyncio.Event()
+        self.drain = drain
+        self.open_streams = 0
+        self.drained = asyncio.Event()
+        self.drained.set()
+
+    async def raw_stream(self, sql: str, parameters: Any = None, settings: Any = None) -> Any:
+        self.opening.set()
+        await self.gate.wait()
+        self.drained.clear()
+        return _OwnedStream(self)
+
+    async def close(self) -> None:
+        if self.drain:
+            await self.drained.wait()
+        self.closed = True
+
+
+@pytest.mark.parametrize("drain", [False, True], ids=["plain-close", "drain-on-close"])
+async def test_a_stream_keeps_the_client_it_opened_on_through_a_reconnect(
+    monkeypatch: pytest.MonkeyPatch, drain: bool
+) -> None:
+    """A reconnect lands while the stream's opening call is suspended: the
+    response is read from the client that opened it, which closes only once
+    the stream ends (a draining close must not stall the caller either)."""
+    fake = _GatedAsync(drain=drain)
+    c = _client(monkeypatch, fake)
+
+    async def _read() -> _OwnedStream:
+        async with c.raw_stream("SELECT data FORMAT RawBLOB") as s:
+            assert not fake.closed, "the stream's client closed under it"
+            return s
+
+    reader = asyncio.create_task(_read())
+    await asyncio.wait_for(fake.opening.wait(), 1)
+    await c._reconnect()  # generation 0 is retired while it opens the stream
+    assert c.generation == 1 and not fake.closed
+    fake.gate.set()
+    stream = await asyncio.wait_for(reader, 2)
+    assert stream.owner is fake and stream.closed_on_enter is False
+    assert fake.closed and c._retired == {}, "generation 0 closes once its stream ends"

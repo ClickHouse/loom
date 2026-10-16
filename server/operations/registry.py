@@ -20,8 +20,6 @@ from server.identity.api import ops_policy as policy
 from server.insights.api import ops_agents as agents
 from server.insights.api import ops_audit as audit
 from server.insights.api import ops_cost as cost
-from server.insights.api import ops_embedding as embedding
-from server.insights.api import ops_llm as llm
 from server.insights.api import ops_mentor as mentor
 from server.insights.api import ops_ops as ops
 from server.insights.api import ops_ui as ui
@@ -88,8 +86,6 @@ _OPERATION_MODULES = (
     tracker,
     task,
     ui,
-    embedding,
-    llm,
 )
 
 

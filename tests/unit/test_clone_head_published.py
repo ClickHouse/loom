@@ -50,7 +50,7 @@ def test_the_pass_publishes_the_tip_after_its_fetch() -> None:
     from server.code.app.index import ingest_pass as w
 
     src = open(w.__file__, encoding="utf-8").read()
-    i_fetch = src.index("await gitrepo.fetch(git_dir, cfg.git_remote, cfg.git_branch")
+    i_fetch = src.index("await fetch_entry(cfg, git_dir, repo, result)")
     i_head = src.index("head = await gitrepo.head_sha(git_dir, cfg.git_branch)", i_fetch)
     i_pub = src.index("await _publish_clone_head(repo, org, ns, head, cfg.git_branch)", i_head)
     assert i_fetch < i_head < i_pub

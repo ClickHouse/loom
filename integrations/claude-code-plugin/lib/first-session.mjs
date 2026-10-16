@@ -6,7 +6,7 @@
 // token plus a one-time claim code. The token goes to ~/.loom/config.json
 // (0600), the claim code to ~/.loom/claim-<namespace>.txt (0600) — never
 // into the model's context. A person makes the namespace theirs by signing
-// in at /me with the namespace name and the code (the ordinary login).
+// in to the dashboard with the namespace name and the code (the ordinary login).
 //
 // LOOM_AUTO_SIGNUP=off disables. A server with self-signup off (404) or a
 // rate limit (429) leaves the machine without a credential: hooks no-op, and
@@ -63,7 +63,7 @@ function _peerResult(cfg, { base, dir, configPath }) {
     token: String(cfg.token),
     namespace,
     org: cfg.org || "",
-    claimUrl: `${String(cfg.url || base).replace(/\/+$/, "")}/me`,
+    claimUrl: `${String(cfg.url || base).replace(/\/+$/, "")}/`,
     claimPath: cfg.claimed === true ? "" : join(dir, `claim-${namespace}.txt`),
     claimed: cfg.claimed === true,
     configPath,
@@ -187,7 +187,7 @@ async function _signUp({ base, client, host, user, fetchImpl, now, configPath, d
     signed_up_by: client,
     claimed,
   });
-  const claimUrl = String(body.claim_url || `${base}/me`);
+  const claimUrl = String(body.claim_url || `${base}/`);
   const claimPath = claimed ? "" : paths.claimPath || join(dir, `claim-${namespace}.txt`);
   if (!claimed) {
     writePrivateFile(
@@ -217,7 +217,7 @@ export function renderFirstSessionNotice(result, serverUrl) {
     case "unavailable":
       return (
         `Loom: no credential, and ${base} does not offer self-signup. Tell the user once: get a token at ` +
-        `${base}/me → Setup, then \`claude plugin install loom@loom --config token=…\` or save it to ~/.loom/token.`
+        `${base}/ (Settings → Tokens), then \`claude plugin install loom@loom --config token=…\` or save it to ~/.loom/token.`
       );
     case "rate_limited":
       return `Loom: no credential; ${base} rate-limited sign-up for this address — the next session retries.`;

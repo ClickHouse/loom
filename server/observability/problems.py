@@ -58,13 +58,16 @@ class HealthState:
     provider_status: Mapping[str, Any] | None = None  # provider_health.status()
     pending_migrations: tuple[str, ...] | None = None
     worker_lease_held: bool | None = None
+    # Why this process could not ask for the lease ('' when it could).
+    worker_lease_error: str = ""
+    # Why this process stopped contending for the workers lease ('' while it does).
+    worker_lease_given_up: str = ""
     # `None` = not a server process (the doctor shell); '' = a server that
     # booted without a label.
     instance_label: str | None = None
-    # A read-replica's last word from its main Loom (`main_loom.MAIN_STATE`):
-    # True answered, False did not, None not asked yet or not a replica.
-    main_reachable: bool | None = None
-    main_error: str = ""
+    # How this process differs from the deployment's published configuration
+    # (`deployment_config.drift()`); None = not a server process.
+    config_drift: tuple[str, ...] | None = None
     # OTel metrics tables without the `mapValues(Attributes)`
     # skip index the erasure leg needs; `None` = not probed (doctor shell,
     # ClickHouse down, leg off).
@@ -72,6 +75,8 @@ class HealthState:
     # Seconds since this process read loom.revoked_tokens (inf = never);
     # None = not a server process.
     revocation_age_s: float | None = None
+    # `server.auth.keyring.status()`; None = not a server process.
+    keyring: Mapping[str, Any] | None = None
     # Whether repository jobs run inside the sandbox (code/app/index/sandbox.py):
     # None = not probed yet in this process.
     repo_sandbox: bool | None = None
@@ -81,17 +86,16 @@ class HealthState:
     ch_reader_ok: bool | None = None
     # ClickHouse's answer when that read failed.
     ch_reader_error: str = ""
-    # Whether run.begin claims run ids in Keeper (loom.agent_run_claims exists):
-    # None = no run.begin has asked yet in this process.
-    run_claims_atomic: bool | None = None
     # Whether sign-in state has its Keeper table (loom.oauth_signin_state exists):
     # None = not asked yet in this process.
-    oauth_signin_keeper: bool | None = None
     # Whether a sign-in lately found loom.oauth_signin_state at its key limit.
     oauth_signin_state_full: bool = False
-    # Whether grant changes are claimed in Keeper (loom.grant_claims exists):
-    # None = no grant change or boot probe has asked yet.
-    grant_claims_atomic: bool | None = None
+    # Provider participants this process's last sweep could not retire
+    # (`provider_barrier.stale_participants()`): None = not swept yet.
+    stale_participants: tuple[Mapping[str, str], ...] | None = None
+    # Cut-off carried writes held past their release or uncountable
+    # (`rmt_carry.pinned_overdue()`): None = not a server process.
+    carry_pinned: tuple[Mapping[str, Any], ...] | None = None
     env: Mapping[str, str] = field(default_factory=lambda: os.environ)
     # Saved keys take precedence over the environment, including explicit empty keys.
     saved_keys: Mapping[str, bool] = field(default_factory=saved_key_presence)
@@ -127,12 +131,6 @@ def _embedder_provider(model: str) -> str:
         return "unknown"
 
 
-def _embeds_via_main(settings: Any) -> bool:
-    """A read-replica with the main Loom's URL embeds and completes there
-    instead of falling back to the fakes, so a missing key is not a problem on it."""
-    return bool(settings.read_replica) and bool(str(settings.read_replica_main_url).strip())
-
-
 def _fake_severity(settings: Any) -> Severity:
     """A configured fake is a `warn` so the stock dev stack stays `status: ok`;
     `LOOM_REQUIRE_REAL_PROVIDERS=true` (production) makes it an `error`."""
@@ -162,7 +160,7 @@ def _embedder_problems(settings: Any, state: HealthState) -> list[Problem]:
     else:
         keys = _embedder_key_envs(provider)
         missing = keys and not state.saved_keys.get(provider, any(state.env.get(k) for k in keys))
-        if missing and not _embeds_via_main(settings):
+        if missing:
             out.append(
                 Problem(
                     "embedder_key_missing",
@@ -225,11 +223,7 @@ def _llm_problems(settings: Any, state: HealthState) -> list[Problem]:
             )
         ]
     key_env = _llm_key_env(provider)
-    if (
-        key_env
-        and not state.saved_keys.get(provider, bool(state.env.get(key_env)))
-        and not _embeds_via_main(settings)
-    ):
+    if key_env and not state.saved_keys.get(provider, bool(state.env.get(key_env))):
         # Say how the provider was chosen — an inferred openai
         # with no key is the case worth naming.
         how = (
@@ -319,13 +313,71 @@ def _revocation_problems(settings: Any, state: HealthState) -> list[Problem]:
     return []
 
 
+def _keyring_problems(state: HealthState) -> list[Problem]:
+    """A keyring this process never read, keys it cannot open (another root
+    secret sealed them) and a keyring that leaves it nothing to sign with."""
+    k = state.keyring
+    if k is None:
+        return []
+    if not k.get("loaded"):
+        return [
+            Problem(
+                "keyring_not_loaded",
+                "error",
+                "This process has not read loom.signing_keys since it started: every token "
+                "it is shown answers 503 and nothing can be signed.",
+                "Check that this process's ClickHouse user can SELECT loom.signing_keys "
+                "and that migration 033 is applied; the server log names the read error.",
+                source="runtime",
+            )
+        ]
+    out: list[Problem] = []
+    if k.get("root_row") == "other":
+        out.append(
+            Problem(
+                "keyring_root_mismatch",
+                "error",
+                "LOOM_JWT_SECRET is not the root secret loom.signing_keys was recorded under: "
+                "tokens of the keys the other processes sign with are refused here.",
+                "Give this process the deployment's LOOM_JWT_SECRET; if the root was "
+                "replaced on purpose, run `loom signing-key record-root` with the new one.",
+                source="runtime",
+            )
+        )
+    if k.get("unsealable"):
+        out.append(
+            Problem(
+                "signing_keys_unsealable",
+                "warn",
+                f"Signing key(s) {', '.join(k['unsealable'])} do not unseal with this "
+                "LOOM_JWT_SECRET: their tokens are refused here.",
+                "Run this process with the LOOM_JWT_SECRET the keys were sealed under, or "
+                "retire a key nothing signs with (`loom signing-key retire <kid>`).",
+                source="runtime",
+            )
+        )
+    if not k.get("signing_kid"):
+        out.append(
+            Problem(
+                "no_signing_key",
+                "error",
+                "No signing key is active here, and kid 'default' is retired or "
+                "LOOM_JWT_SECRET signs neither HS256 nor RS256: every sign-in and "
+                "token mint answers 503 NO_SIGNING_KEY.",
+                "Run `loom signing-key rotate` with the deployment's LOOM_JWT_SECRET.",
+                source="runtime",
+            )
+        )
+    return out
+
+
 def _auth_problems(settings: Any) -> list[Problem]:
     if not str(settings.jwt_secret):
         return [
             Problem(
                 "jwt_secret_empty",
                 "error",
-                "LOOM_JWT_SECRET is empty: `loom mint-token` and /me/setup cannot sign.",
+                "LOOM_JWT_SECRET is empty: `loom mint-token` and the dashboard cannot sign tokens.",
                 "Set LOOM_JWT_SECRET to a random secret (`openssl rand -hex 32`).",
             )
         ]
@@ -340,18 +392,6 @@ def _auth_problems(settings: Any) -> list[Problem]:
                 "has read this repo can mint tokens this server accepts.",
                 "Set LOOM_JWT_SECRET to a random secret (`openssl rand -hex 32`) and "
                 "re-mint every token.",
-            )
-        ]
-    if settings.auth_actually_required() and settings.jwt_sealing_secret_is_dev_default():
-        return [
-            Problem(
-                "dev_sealing_secret",
-                "warn",
-                "LOOM_JWT_SECRET is the checked-in dev default: tokens are signed with "
-                "LOOM_JWT_SECRETS_JSON, but stored credentials are sealed with it, so anyone "
-                "who reads the tables can open them.",
-                "Set LOOM_JWT_SECRET to a random secret (`openssl rand -hex 32`) and enter "
-                "the stored credentials again.",
             )
         ]
     return []
@@ -425,6 +465,20 @@ def _exposure_problems(settings: Any) -> list[Problem]:
 
 def _deployment_problems(settings: Any, state: HealthState) -> list[Problem]:
     out: list[Problem] = []
+    if state.carry_pinned:
+        ids = ", ".join(q for p in state.carry_pinned for q in p["query_ids"])
+        out.append(
+            Problem(
+                "carry_write_pinned",
+                "warn",
+                f"A cut-off write (queries {ids}) is still held: "
+                f"{state.carry_pinned[0]['error']}. Until it is released this process "
+                "acknowledges the older column lists, so a boot after a migration waits for it.",
+                "Grant the Loom user SELECT on system.processes (clusterAllReplicas on "
+                "LOOM_CH_CLUSTER), or check LOOM_CH_CLUSTER names this cluster.",
+                source="schema",
+            )
+        )
     pending = state.pending_migrations
     if pending:
         names = ", ".join(pending[:3]) + (", …" if len(pending) > 3 else "")
@@ -453,9 +507,38 @@ def _deployment_problems(settings: Any, state: HealthState) -> list[Problem]:
                 "compose deployment only.",
             )
         )
-    if state.worker_lease_held is False:
-        mode = str(settings.background_workers).strip().lower()
-        if mode == "off":
+    if state.worker_lease_given_up:
+        out.append(
+            Problem(
+                "workers_lease_given_up",
+                "warn",
+                f"This process gave the workers lease up: {state.worker_lease_given_up}. "
+                "It runs no background workers for a few minutes, then asks again; "
+                "another process takes them meanwhile.",
+                "Read the workers child's log lines (`loom.workers.child`) for why it exits.",
+                source="workers",
+            )
+        )
+    elif state.worker_lease_held is False and state.worker_lease_error:
+        out.append(
+            Problem(
+                "workers_lease_unreachable",
+                "warn",
+                f"This process could not ask for the workers lease: {state.worker_lease_error}. "
+                "If every process sees this, no process runs the background workers.",
+                "Check that this host reaches ClickHouse and its Keeper (LOOM_CH_HOST) and "
+                "that its user may write loom._migration_lock.",
+                source="workers",
+            )
+        )
+    elif state.worker_lease_held is False:
+        mode = settings.workers_mode()
+        if mode == "off" and settings.background_workers == "auto":
+            msg = (
+                "This process runs no background workers: LOOM_BACKGROUND_WORKERS=auto runs "
+                "none outside the deployment (LOOM_DEPLOYMENT unset). Set it to on to run them."
+            )
+        elif mode == "off":
             msg = (
                 "This process runs no background workers (LOOM_BACKGROUND_WORKERS=off): "
                 "extraction and consolidation depend on a workers container holding the lease."
@@ -470,8 +553,8 @@ def _deployment_problems(settings: Any, state: HealthState) -> list[Problem]:
                 "workers_lease_absent",
                 "info",
                 msg,
-                "Run the workers service (`loom-<colour>-workers`), or set "
-                "LOOM_BACKGROUND_WORKERS=auto on a single-container stack.",
+                "Keep LOOM_BACKGROUND_WORKERS=auto on every replica; one of them holds the "
+                "lease and runs the workers.",
                 source="workers",
             )
         )
@@ -503,22 +586,21 @@ def _otel_problems(settings: Any, state: HealthState) -> list[Problem]:
     ]
 
 
-def _replica_problems(settings: Any, state: HealthState) -> list[Problem]:
-    """A read-replica whose main Loom does not answer serves no blame and, with
-    no provider key of its own, no embedding or LLM answer: an error, so
-    `status` says `degraded` while the HTTP code stays 200 (the replica still
-    serves every read from ClickHouse)."""
-    if not settings.read_replica or state.main_reachable is not False:
+def _drift_problems(state: HealthState) -> list[Problem]:
+    """A process whose token keys or MUST_MATCH settings differ from the
+    deployment's: it is not ready, so the load balancer sends it nothing."""
+    if not state.config_drift:
         return []
     return [
         Problem(
-            "main_loom_unreachable",
+            "config_drift",
             "error",
-            "This read-replica's main Loom does not answer "
-            f"({state.main_error or 'no detail'}): blame, and embeddings and LLM calls "
-            "it sends there, fail until it does.",
-            "Check that LOOM_READ_REPLICA_MAIN_URL is reachable from this host and the main "
-            "Loom is up.",
+            "This process's configuration differs from the deployment's published one: "
+            + "; ".join(state.config_drift),
+            "Give every replica the same env (LOOM_JWT_SECRET, LOOM_EMBEDDING_MODEL, "
+            'LOOM_EMBEDDING_DIM) and restart this one — "Running N replicas" in '
+            "docs/operations/replicas.md.",
+            source="runtime",
         )
     ]
 
@@ -631,75 +713,43 @@ def _reader_user_problems(settings: Any, state: HealthState) -> list[Problem]:
 
 
 def _oauth_claim_problems(settings: Any, state: HealthState) -> list[Problem]:
-    """No Keeper: sign-in cannot spend a credential exactly once, so it is off.
-    A full claims table turns new sign-ins away until the sweep frees keys.
+    """A full claims table turns new sign-ins away until the sweep frees keys.
     Nothing to say where sign-in is not mounted (auth off, no MCP connect)."""
     if not (settings.auth_actually_required() or settings.oauth_enabled):
         return []
-    if state.oauth_signin_state_full:
-        return [
-            Problem(
-                "oauth_signin_state_full",
-                "warn",
-                "loom.oauth_signin_state reached its key limit (seen by this process), so new "
-                "codes, device sign-ins and sessions answer 503 until keys expire; they are "
-                "swept every five minutes.",
-                "Rate-limit /oauth/device_authorization, /oauth/device and /oauth/callback by "
-                "network at the proxy; the server log names an address it refused each minute.",
-                source="runtime",
-            )
-        ]
-    if state.oauth_signin_keeper is not False:
+    if not state.oauth_signin_state_full:
         return []
     return [
         Problem(
-            "oauth_signin_needs_keeper",
+            "oauth_signin_state_full",
             "warn",
-            "loom.oauth_signin_state is absent (no ClickHouse Keeper), so `loom login`, SSO and "
-            "MCP connect answer 503: their codes and refresh tokens could not be spent "
-            "exactly once. Tokens from `loom mint-token` and service accounts still work.",
-            "Run ClickHouse with a Keeper (deploy/clickhouse-config/keeper.xml), create the "
-            "table from schemas/migrations/034_oauth_signin_state.sql (the migration skipped it) "
-            "and restart Loom.",
+            "loom.oauth_signin_state reached its key limit (seen by this process), so new "
+            "codes, device sign-ins and sessions answer 503 until keys expire; they are "
+            "swept every five minutes.",
+            "Rate-limit /oauth/device_authorization, /oauth/device and /oauth/callback by "
+            "network at the proxy; the server log names an address it refused each minute.",
             source="runtime",
         )
     ]
 
 
-def _run_claim_problems(state: HealthState) -> list[Problem]:
-    """No Keeper: two concurrent run.begin calls on one run id can both keep it."""
-    if state.run_claims_atomic is not False:
+def _participant_problems(state: HealthState) -> list[Problem]:
+    """A provider reconfiguration waits on every participant it cannot count as stopped."""
+    if not state.stale_participants:
         return []
+    ids = ", ".join(
+        f"{p.get('participant_id')} ({p.get('reason')})" for p in state.stale_participants
+    )
     return [
         Problem(
-            "run_claims_not_atomic",
-            "info",
-            "loom.agent_run_claims is absent (no ClickHouse Keeper), so run.begin checks a "
-            "caller-supplied run_id and then writes it: two users' concurrent begins on one "
-            "run_id can both keep it, and only one run survives.",
-            "Run ClickHouse with a Keeper (deploy/clickhouse-config/keeper.xml), create the "
-            "table from schemas/migrations/025_agent_run_claims.sql (the migration skipped "
-            "it) and restart Loom.",
-            source="runtime",
-        )
-    ]
-
-
-def _grant_claim_problems(state: HealthState) -> list[Problem]:
-    """No Keeper: two processes can change one grant at once, the later writing over
-    the earlier."""
-    if state.grant_claims_atomic is not False:
-        return []
-    return [
-        Problem(
-            "grant_changes_not_atomic",
+            "provider_participants_stale",
             "warn",
-            "loom.grant_claims is absent (no ClickHouse Keeper), so two changes of one grant "
-            "are kept apart only within each server process: across processes an approval "
-            "can still write over a promotion or a revoke that landed after its read.",
-            "Run ClickHouse with a Keeper (deploy/clickhouse-config/keeper.xml) and create the "
-            "table from schemas/migrations/029_grant_claims.sql (the migration skipped it); "
-            "a grant change within a minute finds it.",
+            f"A provider reconfiguration would wait on these participants: {ids}. "
+            "`heartbeat_expired` ones stopped heartbeating (they may be paused), "
+            "`queries_running` ones did so with a query still running, and `no_heartbeat` "
+            "rows come from a build without heartbeats.",
+            "Once a participant's process is confirmed stopped, retire it with "
+            "`loom participant retire --participant <id> --yes`.",
             source="runtime",
         )
     ]
@@ -722,14 +772,14 @@ def collect_problems(settings: Any, state: HealthState | None = None) -> list[Pr
         + _auth_problems(settings)
         + _exposure_problems(settings)
         + _revocation_problems(settings, st)
+        + _keyring_problems(st)
         + _deployment_problems(settings, st)
         + _otel_problems(settings, st)
-        + _replica_problems(settings, st)
+        + _drift_problems(st)
         + _sandbox_problems(settings, st)
         + _reader_user_problems(settings, st)
-        + _run_claim_problems(st)
         + _oauth_claim_problems(settings, st)
-        + _grant_claim_problems(st)
+        + _participant_problems(st)
     )
     return sorted(problems, key=lambda p: (SEVERITY_RANK.get(p.severity, 9), p.code))
 

@@ -1486,9 +1486,9 @@ async def test_copies_that_read_the_head_before_the_high_write_retire_themselves
         )
         b_read_done.set()
         await go_b_insert.wait()
-        from server.memory.store.embeddings import _reemit_rows
+        from server.memory.store.embeddings import reemit_rows
 
-        return await _reemit_rows(rows, ov, ch=ch)
+        return await reemit_rows(rows, ov, ch=ch)
 
     monkeypatch.setattr(M, "reemit_embedding_rows_for_key", wrapped)
     monkeypatch.setattr(handlers, "get_client", lambda: ch)

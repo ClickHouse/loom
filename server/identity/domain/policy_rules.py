@@ -47,7 +47,7 @@ import fnmatch
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
@@ -341,8 +341,13 @@ class CallContext:
             params["p_user"] = self.user_id
         return clause, params
 
-    def decision_time(self) -> datetime:
-        return self.now or datetime.now(UTC)
+    def now_clause(self, params: dict[str, Any]) -> str:
+        """The decision instant in SQL: the pinned `now` as a parameter, else the
+        server's clock, the one every replica stamps witness rows with."""
+        if self.now is None:
+            return "now64(3)"
+        params["p_now"] = self.now
+        return "{p_now:DateTime64(3)}"
 
 
 # Rows written by background passes are never a principal's own history.
@@ -374,13 +379,13 @@ def compile_leaf(leaf: Formerly | CountWithin | NotSince, ctx: CallContext) -> C
     correlate on, so the leaf cannot hold (and a `require` on it denies)."""
     key_clause, params = ctx.key_clause(leaf.key)
     secs = window_seconds(leaf.within)
-    now = ctx.decision_time()
-    params.update({"p_now": now, "p_secs": secs})
+    params["p_secs"] = secs
+    now = ctx.now_clause(params)
     where = [
         key_clause,
         _NOT_WORKER,
-        "ts <= {p_now:DateTime64(3)}",
-        "ts >= {p_now:DateTime64(3)} - INTERVAL {p_secs:UInt32} SECOND",
+        f"ts <= {now}",
+        f"ts >= {now} - INTERVAL {{p_secs:UInt32}} SECOND",
     ]
     if leaf.success is not None:
         where.append("success = {p_success:Bool}")
@@ -422,18 +427,17 @@ def compile_breadth(leaf: BreadthWithin, ctx: CallContext) -> CompiledLeaf | Non
     Returns None when the pin is the actor and the call carries none (auth
     off): nothing to bound, so the leaf cannot hold."""
     secs = window_seconds(leaf.within)
-    now = ctx.decision_time()
     params: dict[str, Any] = {
         "p_org": ctx.org,
         "p_ns": ctx.namespace,
-        "p_now": now,
         "p_secs": secs,
     }
+    now = ctx.now_clause(params)
     where = [
         "org = {p_org:String}",
         "namespace = {p_ns:String}",
-        "ts <= {p_now:DateTime64(3)}",
-        "ts >= {p_now:DateTime64(3)} - INTERVAL {p_secs:UInt32} SECOND",
+        f"ts <= {now}",
+        f"ts >= {now} - INTERVAL {{p_secs:UInt32}} SECOND",
     ]
     if leaf.key == "actor":
         if not ctx.actor:

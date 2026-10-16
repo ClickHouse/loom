@@ -74,7 +74,7 @@ async def test_widening_failure_leaves_owned_set(monkeypatch: pytest.MonkeyPatch
 
 
 async def test_password_login_token_names_restricted_grants(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, auth_attempts: Any
 ) -> None:
     fake = _FakeCH(_own("jdoe"), [{"namespace": "code-example-private"}])
     monkeypatch.setattr(login, "get_client", lambda: fake)
@@ -101,7 +101,9 @@ async def test_oidc_identity_names_restricted_grants(monkeypatch: pytest.MonkeyP
     assert out[2] == ["jdoe", "tracker-private"]
 
 
-async def test_bad_password_never_reads_grants(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_bad_password_never_reads_grants(
+    monkeypatch: pytest.MonkeyPatch, auth_attempts: Any
+) -> None:
     fake = _FakeCH(_own("jdoe"), [{"namespace": "code-example-private"}])
     monkeypatch.setattr(login, "get_client", lambda: fake)
 

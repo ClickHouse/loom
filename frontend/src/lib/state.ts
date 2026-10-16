@@ -69,7 +69,7 @@ export function pathToView(p: string): View | null {
 }
 
 export function viewHref(v: View): string {
-  return `/me/${viewToPath(v)}`;
+  return `/${viewToPath(v)}`;
 }
 
 /** Query-string keys a view owns. Graph links a walk with `?seed=`, the
@@ -111,12 +111,11 @@ function pushView(v: View): void {
   }
 }
 
-/** Resolve the current view from window.location.pathname; null for bare /me. */
+/** Resolve the current view from window.location.pathname; null for the bare root. */
 export function pathnameView(): View | null {
   if (typeof window === "undefined") return null;
   const p = window.location.pathname;
-  if (p === "/me" || p === "/me/") return null;
-  const m = p.match(/^\/me\/(.+)$/);
+  const m = p.match(/^\/(.+?)\/?$/);
   if (!m) return null;
   return pathToView(m[1]);
 }

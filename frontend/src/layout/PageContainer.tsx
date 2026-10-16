@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 
 /**
  * Single source of truth for the top-level page wrapper. Every view under
- * /me/* renders inside this so width and padding stay consistent. Pass
+ * Every dashboard page renders inside this so width and padding stay consistent. Pass
  * `className` for view-specific extras (e.g. `space-y-3`, `pb-24`); don't
  * override the width or padding from outside — that's the drift this prevents.
  *

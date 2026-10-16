@@ -135,7 +135,7 @@ def smoke(image: str, clickhouse_image: str) -> None:
             health = request(base, "/v1/health")
             assert health["status"] == "ok", health
             assert not health.get("schema", {}).get("pending"), health
-            with urllib.request.urlopen(base + "/me", timeout=10) as response:
+            with urllib.request.urlopen(base + "/", timeout=10) as response:
                 assert response.status == 200 and b"<html" in response.read()
             request(
                 base,

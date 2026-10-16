@@ -123,7 +123,6 @@ def ledger(monkeypatch):
         rows.update({r["run_id"]: dict(r) for r in new})
 
     monkeypatch.setattr(run_app, "get_client", lambda: state["ch"])
-    monkeypatch.setattr(runs_store, "_claims_atomic", None)
     monkeypatch.setattr(runs_store, "fetch_run", fetch_run)
     monkeypatch.setattr(runs_store, "insert_runs", insert_runs)
     return rows, state
@@ -147,7 +146,6 @@ def test_two_users_first_begins_never_share_an_id_under_any_schedule(ledger) -> 
     rows, state = ledger
     for order in _SCHEDULES:
         rows.clear()
-        runs_store._claims_atomic = None
 
         async def both(order: str = order) -> list[str]:
             sched = _Schedule(order)
@@ -168,7 +166,6 @@ def test_two_begins_by_one_user_share_the_run_under_any_schedule(ledger) -> None
     rows, state = ledger
     for order in _SCHEDULES:
         rows.clear()
-        runs_store._claims_atomic = None
 
         async def both(order: str = order) -> list[str]:
             sched = _Schedule(order)
@@ -272,7 +269,6 @@ def test_a_failed_begin_keeps_its_claim_so_no_other_user_takes_the_id(ledger, mo
     orders = ["ACCAAABBCBCB"] + ["".join(rng.choice("ABC") for _ in range(12)) for _ in range(3000)]
     for order in orders:
         rows.clear()
-        runs_store._claims_atomic = None
         ids = _three_begins_with_a_failed_insert(order, rows, state)
         on_shared = {users[me] for me, run_id in ids.items() if run_id == "shared"}
         assert len(on_shared) <= 1, (order, ids)
@@ -284,17 +280,6 @@ class _BrokenKeeperCH(_KeeperCH):
     async def execute(self, sql: str, params: Any = None) -> None:
         await self.sched.turn()
         raise RuntimeError("Code: 999. Coordination::Exception: Session expired")
-
-
-class _NoClaimsCH(_KeeperCH):
-    """A server without Keeper: no claims table, so nothing is ever claimed."""
-
-    async def query_one(self, sql: str, params: Any = None) -> Any:
-        assert "system.tables" in sql
-        return None
-
-    async def execute(self, sql: str, params: Any = None) -> None:
-        raise AssertionError("no claims table to write")
 
 
 _WIDE = AuthInfo(
@@ -323,10 +308,7 @@ def test_a_keeper_error_falls_back_to_the_row_check(ledger, monkeypatch, caplog)
     assert "run_claims" not in provider_health.status().get("providers", {})
 
 
-_UNCLAIMED = [
-    pytest.param(_BrokenKeeperCH, id="keeper-error"),
-    pytest.param(_NoClaimsCH, id="no-keeper"),
-]
+_UNCLAIMED = [pytest.param(_BrokenKeeperCH, id="keeper-error")]
 
 
 @pytest.mark.parametrize("ch_type", _UNCLAIMED)
@@ -334,7 +316,6 @@ def test_without_claims_two_narrowed_users_never_share_an_id(ledger, ch_type) ->
     rows, state = ledger
     for order in _SCHEDULES:
         rows.clear()
-        runs_store._claims_atomic = None
 
         async def both(order: str = order) -> list[str]:
             sched = _Schedule(order)
@@ -354,7 +335,6 @@ def test_without_claims_a_narrowed_user_reopens_its_own_run(ledger, ch_type) -> 
     for order in _SCHEDULES:
         rows.clear()
         rows["shared"] = {"run_id": "shared", "user_id": "U", "session_id": "-"}
-        runs_store._claims_atomic = None
 
         async def both(order: str = order) -> list[str]:
             sched = _Schedule(order)
@@ -398,74 +378,3 @@ def test_an_unreadable_held_claim_is_another_users(ledger, auth: AuthInfo, user:
         return (await run_app.handle_run_begin(_input(user))).run_id
 
     assert contextvars.Context().run(lambda: asyncio.run(go())) != "shared"
-
-
-@pytest.mark.parametrize(("engine", "atomic"), [("KeeperMap", True), (None, False)])
-def test_the_boot_probe_sets_the_health_flag(monkeypatch, engine, atomic) -> None:
-    monkeypatch.setattr(runs_store, "_claims_atomic", None)
-
-    class _CH:
-        async def query_one(self, sql: str, params: Any = None) -> Any:
-            assert "system.tables" in sql
-            return {"engine": engine} if engine else None
-
-    asyncio.run(runs_store.probe_claims(_CH()))
-    assert runs_store.claims_atomic() is atomic
-
-
-def test_a_failed_boot_probe_leaves_it_to_the_first_begin(monkeypatch) -> None:
-    monkeypatch.setattr(runs_store, "_claims_atomic", None)
-
-    class _CH:
-        async def query_one(self, sql: str, params: Any = None) -> Any:
-            raise RuntimeError("connection refused")
-
-    asyncio.run(runs_store.probe_claims(_CH()))
-    assert runs_store.claims_atomic() is None
-
-
-@pytest.mark.parametrize("table", ["agent_run_claims", "oauth_signin_state", "grant_claims"])
-@pytest.mark.parametrize(
-    ("rows", "atomic"), [([{"engine": "KeeperMap"}], True), ([], False), (None, None)]
-)
-def test_the_doctor_reads_the_same_claims_check(monkeypatch, rows, atomic, table) -> None:
-    from server.auth import claims, grant_claims
-    from server.cli import doctor
-    from server.core.schema import migrate_lease
-    from server.settings import settings
-
-    table_sql = {
-        "agent_run_claims": migrate_lease.RUN_CLAIMS_TABLE_SQL,
-        "oauth_signin_state": claims.TABLE_SQL,
-        "grant_claims": grant_claims.CLAIMS.table_sql,
-    }[table]
-
-    def query(_settings, sql, params):
-        assert f"'{table}'" in sql
-        if rows is None:
-            raise RuntimeError("connection refused")
-        return rows
-
-    monkeypatch.setattr(doctor, "_doctor_ch_query", query)
-    assert doctor._doctor_keeper_table(settings, table_sql) is atomic
-
-
-def test_the_doctor_reports_sign_in_without_a_keeper(monkeypatch) -> None:
-    from server.cli import doctor
-
-    def query(_settings, sql, params):
-        return [] if "'oauth_signin_state'" in sql else [{"engine": "KeeperMap"}]
-
-    monkeypatch.setattr(doctor, "_doctor_ch_query", query)
-    monkeypatch.setattr(doctor, "_doctor_reader_probe", lambda _s: ("ok", ""))
-    assert "oauth_signin_needs_keeper" in [p.code for p in doctor._doctor_problems()]
-
-
-def test_the_doctor_reports_grant_changes_without_a_keeper(monkeypatch) -> None:
-    from server.cli import doctor
-
-    def _missing(_settings, table_sql):
-        return "'grant_claims'" not in table_sql
-
-    monkeypatch.setattr(doctor, "_doctor_keeper_table", _missing)
-    assert "grant_changes_not_atomic" in [p.code for p in doctor._doctor_problems()]

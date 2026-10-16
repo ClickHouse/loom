@@ -5,6 +5,7 @@ import json
 import logging
 from typing import Any
 
+from server.core import deployment_config, embedding_space
 from server.core.background import drain_task_sets
 from server.core.ch import get_client, set_query_tag
 from server.core.model_work_gate import get_model_work_gate
@@ -13,10 +14,7 @@ from server.embedding import embedder
 from server.insights.api.models_provider_setup import ProviderSetupInput
 from server.insights.app.provider_credentials import open_configuration
 from server.insights.domain.provider_rebuild_manifest import RebuildManifest
-from server.insights.domain.provider_serving_policy import (
-    embedding_space_fingerprint,
-    serving_vector_settings,
-)
+from server.insights.domain.provider_serving_policy import serving_vector_settings
 from server.insights.domain.provider_setup import (
     committed_configuration,
     committed_descendant,
@@ -56,6 +54,17 @@ def environment_settings() -> dict[str, Any]:
     return dict(_environment_settings)
 
 
+def _environment_embedding() -> dict[str, Any] | None:
+    """The env's embedding settings once captured: a dashboard configuration may
+    have replaced the live ones since."""
+    if _environment_settings is None:
+        return None
+    return {name: _environment_settings[name] for name in embedding_space.FIELDS}
+
+
+deployment_config.set_environment_source(_environment_embedding)
+
+
 def apply_environment_configuration() -> None:
     """Clear dashboard overrides; embedding transitions must already be rebuilt."""
     for name, value in environment_settings().items():
@@ -65,24 +74,12 @@ def apply_environment_configuration() -> None:
     embedder.reset()
 
 
-def _embedding_identity(values: dict[str, Any]) -> tuple[str, str, int, str, bool]:
-    model = str(values["embedding_model"])
-    provider = str(values["embedding_provider"]) or embedder._inferred_provider(model)
-    return (
-        provider,
-        model,
-        int(values["embedding_dim"]),
-        str(values["embedding_base_url"]).rstrip("/"),
-        bool(values["embedding_send_dimensions"]),
-    )
+def environment_embedding() -> embedding_space.Identity:
+    return embedding_space.identity(environment_settings())
 
 
-def environment_embedding() -> tuple[str, str, int, str, bool]:
-    return _embedding_identity(environment_settings())
-
-
-def current_embedding() -> tuple[str, str, int, str, bool]:
-    return _embedding_identity(settings.model_dump())
+def current_embedding() -> embedding_space.Identity:
+    return embedding_space.identity(settings.model_dump())
 
 
 def apply_configuration(setup: ProviderSetupInput) -> None:
@@ -117,7 +114,7 @@ def apply_configuration(setup: ProviderSetupInput) -> None:
 def _active_setup(active: dict[str, Any]) -> ProviderSetupInput | None:
     if active["state"] == "environment":
         expected = json.loads(active.get("progress", "{}")).get("environment")
-        if expected and _embedding_identity(json.loads(expected)) != environment_embedding():
+        if expected and embedding_space.identity(json.loads(expected)) != environment_embedding():
             raise RuntimeError(
                 "Environment embedding settings differ from the committed reset; "
                 "restore the prior environment or rebuild before switching embedding spaces."
@@ -152,7 +149,9 @@ async def _refresh_calibration() -> None:
     embedder_calibration.set_calibration(None)
     embedder_calibration.clear_ns_overrides()
     if settings.adaptive_thresholds:
-        embedder_calibration.set_calibration(await embedder_calibration.calibrate_embedder())
+        # The new embedder's shared row when one exists, else a probe.
+        await embedder_calibration.adopt_or_probe()
+        embedder_calibration.start_refresh_loop()
 
 
 def _serving_settings(
@@ -175,7 +174,7 @@ def _serving_settings(
                 str(manifest.job_id) != identity
                 or row["state"] not in ("active", "environment")
                 or progress.get("phase") != "activate"
-                or manifest.embedding_fingerprint != embedding_space_fingerprint(*target)
+                or manifest.embedding_fingerprint != embedding_space.fingerprint(*target)
             ):
                 raise ValueError("Serving recipe differs from committed embedding space")
             return serving_vector_settings(

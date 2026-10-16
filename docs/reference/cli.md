@@ -226,6 +226,7 @@ python scripts/codegen/docs_reference.py
 | `loom code answers-purge` | Tombstone cached code.ask answers (after a synthesis-model upgrade, stale weaker-model answers would otherwise be served forever — the cache only self-invalidates on cited-file change). | `--llm-model`, `--all`, `--apply`, `--dry-run`, `--org`, `--namespace` |
 | `loom code scip-full` | Full compiler-tier re-index (the weekly backstop: heals the TU-cap degrades of per-merge deltas and any drift). | `--checkout`, `--jobs`, `--keep-delta`, `--apply-delta`, `--org`, `--namespace` |
 | `loom code scip-lock-path` | Print the entry's compiler-tier lock file (for `flock` in a host script: a full pass and a delta never work on one entry at once). | `--org`, `--namespace` |
+| `loom code entry-lock` | Run a command under the entry's compiler-tier lock (this host's file and the deployment's lease): exit 75 when another pass holds it, 3 when the lease is lost mid-run (the command is stopped). | `--org`, `--namespace`, `<command>` |
 | `loom code scip-delta` | One compiler-tier delta pass (same code as the code_scip_delta worker) for the host cron: git_head vs scip_commit per configured repo, scip-clang over the changed TUs, apply. |  |
 | `loom code entries` | One line per configured repository for the host crons: org namespace checkout lock-file (the lock path resolved). |  |
 | `loom code warm` | Pre-seed the code.ask answer cache from a question list (one question per line, or JSONL with a 'question' field). | `<file>`, `--org`, `--namespace` |
@@ -242,8 +243,20 @@ python scripts/codegen/docs_reference.py
 | `loom up` | Boot the local stack (Loom + ClickHouse) and print how to connect: creates .env and the ClickHouse config from their templates, runs docker compose up --build, waits for /v1/health, then prints the… | `--root`, `--file`, `--env-file`, `--no-build`, `--rebuild`, `--port`, `--timeout`, `--subject`, `--org`, `--namespace`, `--open` |
 | `loom down` | Stop the local stack while preserving data; --delete-data performs a confirmed reset. | `--root`, `--file`, `--env-file`, `--delete-data`, `-y` |
 | `loom ch-setup` | Prepare a self-managed ClickHouse or a ClickHouse Cloud service for Loom: create the loom database and the read-only reader user, or print the SQL for an admin. | `--print-sql` |
-| `loom read-replica` | Read-replicas: more Looms on the same ClickHouse. |  |
-| `loom read-replica retire` | Retire the provider participant of a read-replica whose process died without shutting down (its id is in that replica's /v1/health). | `--participant`, `--yes` |
+| `loom participant` | The Loom processes a provider change waits for. |  |
+| `loom participant retire` | Retire the provider participant of a process that died without shutting down (its id is `participant_id` in that process's /v1/health). | `--participant`, `--yes` |
+| `loom deployment` | The configuration every replica checks itself against. |  |
+| `loom deployment publish` | Publish this env's configuration as the deployment's, replacing its root secret or LOOM_EMBEDDING_MODEL/DIM on purpose. | `--yes` |
+| `loom signing-key` | The token signing keys beside LOOM_JWT_SECRET, kept in ClickHouse. |  |
+| `loom signing-key rotate` | Add a key; it signs once every process has loaded it. | `--algorithm`, `--activate-in` |
+| `loom signing-key import` | Copy a kid -> key map (the former LOOM_JWT_SECRETS_JSON, else {--active: LOOM_JWT_SECRET}) into the keyring, so the tokens it signed keep verifying; --active signs from now. | `--map-env`, `--active`, `--algorithm`, `--activate-in` |
+| `loom signing-key retire` | Stop a key (or 'default') verifying tokens. | `<kid>` |
+| `loom signing-key record-root` | Record this LOOM_JWT_SECRET as the deployment's root secret, after replacing it on purpose (keys sealed under the old one stay unusable). |  |
+| `loom signing-key list` | List the keys. |  |
+| `loom blobs` | Uploaded document originals. |  |
+| `loom blobs import` | Move the originals of a filesystem blob directory (the old LOOM_BLOB_DIR) into ClickHouse. | `<blob_dir>`, `--apply`, `--dry-run`, `--accept-missing` |
+| `loom provider-lock` | The provider configuration lock. |  |
+| `loom provider-lock clear` | Free the provider configuration lock of a holder whose process stopped (refused while it renews, heartbeats or has a query running). | `--holder` |
 | `loom reembed` | Re-embed vectors whose embedding_model != the configured embedder (run after changing LOOM_EMBEDDING_MODEL — Loom does not auto-re-embed). | `--org`, `--namespace`, `--batch-size`, `--in-database`, `--dry-run`, `--delete-old`, `--key-only`, `--resume` |
 | `loom reextract` | Replay a namespace's raw evidence (memory.set_from_messages turns) through a running server's write path into ANOTHER namespace — the current extractor over the stored transcripts; the source is… | `--org`, `--namespace`, `--into`, `--base-url`, `--token`, `--dates`, `--concurrency`, `--limit-sessions`, `--dry-run` |
 | `loom deploy-delta` | What a colour swap changed: the deployment's ledger rows (volume, errors, p50/p95, upstream spend per operation) and its ClickHouse statement shapes (runs, bytes, seconds) for a window on each side… | `--swap-at`, `--window-min`, `--ch-os-user`, `--cluster`, `--top`, `--json` |

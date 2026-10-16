@@ -3,8 +3,8 @@
 # the env file the server reads (.env outside Docker); unset in both, it starts
 # one uvicorn process per CPU this container may use, bounded by its memory and
 # at most 8 (server/core/web_workers.py). The count is exported so the server's
-# rate limiter divides by the same number. One of the processes takes the
-# supervisor lock and runs the background workers.
+# rate limiter divides by the same number. The deployment's workers run in the
+# one process holding the ClickHouse workers lease (server/workers/leader.py).
 set -eu
 
 chosen=""

@@ -37,7 +37,7 @@ class _PrPostImage(BaseModel):
     overlays the PR on the index. A caller holding the PR's checkout (a CI review
     job) sends the changed files' text and the PR's diff, and the overlay parses
     them instead of reading `refs/pull/N/head` from a git mirror, so any Loom on
-    the service answers, a read-replica with no mirror included. Read for this
+    the service answers, one with no mirror (yet) included. Read for this
     request only: nothing sent here is written to the index or stored."""
 
     # Repo-relative path -> the file's full text at the PR's head, for the files

@@ -1,5 +1,5 @@
 """A merged PR's brief is stored only when its diff was read: one built where
-the mirror is missing (a read-replica) or git failed would otherwise be served
+the mirror is missing (a host still cloning it) or git failed would otherwise be served
 from the shared table as `precomputed` by every later read."""
 
 from __future__ import annotations

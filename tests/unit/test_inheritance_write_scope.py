@@ -16,7 +16,6 @@ import asyncio
 import pytest
 
 import server.auth.authz as authz
-import server.auth.jwt as jwt_mod
 from server.auth.authz import Role, check_authorized
 from server.auth.jwt import AuthInfo, mint_token, verify_token
 
@@ -93,10 +92,8 @@ def test_explicit_writer_grant_still_allows_write_up(monkeypatch):
     asyncio.run(check_authorized(_private_auth(), Role.WRITER, "clickgap", "clickgap-public"))
 
 
-def test_ns_write_claim_round_trips(monkeypatch):
-    """mint_token/verify_token preserve the ns_write claim. Pin HS256 so the
-    explicit-secret round-trip is independent of the deployment algorithm."""
-    monkeypatch.setattr(jwt_mod.settings, "jwt_algorithm", "HS256")
+def test_ns_write_claim_round_trips():
+    """mint_token/verify_token preserve the ns_write claim."""
     secret = "unit-test-secret-unit-test-secret"  # >=32 bytes for HS256
     tok = mint_token(
         "clickgap-private",

@@ -36,6 +36,7 @@ from tests.unit.test_code_blame_introduced import (
     _Repo,
     _row,
 )
+from tests.unit.test_code_blame_range import mirror_on_disk
 
 SRC = "src/Storages/MergeTree/MergeTreeData.cpp"
 QA = "tracker-clickhouse"
@@ -207,8 +208,9 @@ def test_marks_keep_the_reverted_pr_alive_and_the_reland_inherits_symbol_marks()
 
 
 @pytest.fixture
-def wired_blame(monkeypatch):
+def wired_blame(monkeypatch, tmp_path):
     h.reset_cache_for_tests()
+    mirror_on_disk(monkeypatch, tmp_path)
     repo, git = _Repo(), _Git()
     monkeypatch.setattr(h, "CodeRepo", lambda: repo)
     monkeypatch.setattr(h, "require_code_intel", lambda: None)
@@ -461,8 +463,9 @@ def _prs() -> list[dict[str, Any]]:
 
 
 @pytest.fixture
-def wired_bisect(monkeypatch):
+def wired_bisect(monkeypatch, tmp_path):
     h.reset_cache_for_tests()
+    mirror_on_disk(monkeypatch, tmp_path)
     repo = _BisectRepo()
     repo.records = {
         500: {"title": "Speed up loading", "body_excerpt": "", "merge_commit_sha": b"5" * 40},

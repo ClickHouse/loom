@@ -521,7 +521,7 @@ Resolve one duplicate pair.
 
 ## `memory.delete`
 
-WHAT: Tombstone a memory by key (14-day recovery via /me).
+WHAT: Tombstone a memory by key (14-day recovery in the dashboard).
 
 `POST /v1/memory.delete` · MCP `loom_memory_delete` · role `writer` · idempotent · audited
 

@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "sdk" / "python"))
 sys.path.insert(0, str(ROOT))
 
+from tests.integration._eventually import overrides_adopted  # noqa: E402
 from tests.integration._resources import unique_org  # noqa: E402
 
 ORG = unique_org("budget-rpt")
@@ -29,11 +30,13 @@ ORG = unique_org("budget-rpt")
 async def _set_budget(c: httpx.AsyncClient, op: str, ms: int) -> None:
     r = await c.post("/v1/admin/budget.set", json={"op": op, "budget_ms": ms})
     assert r.status_code == 200, r.text
+    await overrides_adopted()
 
 
 async def _clear_budget(c: httpx.AsyncClient, op: str) -> None:
     r = await c.post("/v1/admin/budget.set", json={"op": op, "clear": True})
     assert r.status_code == 200
+    await overrides_adopted()
 
 
 async def _wait_for_violation(

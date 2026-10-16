@@ -80,6 +80,19 @@ class Overloaded(BackendUnavailable):
         self.retry_after_s = retry_after_s
 
 
+class IdempotentInProgress(BackendUnavailable):
+    """503 IDEMPOTENT_IN_PROGRESS — the first request with this
+    Idempotency-Key still runs. Retried after `retry_after_s` (the transport
+    does, for an idempotent op); the retry gets the first request's answer."""
+
+    code = "IDEMPOTENT_IN_PROGRESS"
+    retry_after_s: float = DEFAULT_RETRY_AFTER_S
+
+    def __init__(self, message: str = "", retry_after_s: float = DEFAULT_RETRY_AFTER_S) -> None:
+        super().__init__(message or f"request still running; retry-after={retry_after_s:g}s")
+        self.retry_after_s = retry_after_s
+
+
 class BackendTimeout(BackendUnavailable):
     """504 BACKEND_TIMEOUT — a ClickHouse statement behind the call ran past
     its class deadline and was not retried."""
@@ -101,13 +114,6 @@ class CodedWidthMismatch(BackendUnavailable):
     its coded vector tables do not take; `/v1/health` says how to fix it."""
 
     code = "CODED_WIDTH_MISMATCH"
-
-
-class OverrideNotShared(BackendUnavailable):
-    """503 OVERRIDE_NOT_SHARED — a runtime override could not reach the
-    server's other web processes, so none took it; the server log says why."""
-
-    code = "OVERRIDE_NOT_SHARED"
 
 
 #: `code` of a `BackendUnavailable` for a request that got no complete
@@ -149,10 +155,12 @@ ERROR_CODES: dict[str, type[LoomError]] = {
     "OVERLOADED": Overloaded,
     "BACKEND_TIMEOUT": BackendTimeout,
     "SCHEMA_PENDING": SchemaPending,
-    "OVERRIDE_NOT_SHARED": OverrideNotShared,
     "CODED_WIDTH_MISMATCH": CodedWidthMismatch,
     "IDEMPOTENT_CONFLICT": IdempotentConflict,
+    "IDEMPOTENT_IN_PROGRESS": IdempotentInProgress,
     "PRECONDITION_FAILED": PreconditionFailed,
+    # ClickHouse refused to store an override: no precondition, and not retried.
+    "OVERRIDE_NOT_STORED": LoomError,
 }
 
 

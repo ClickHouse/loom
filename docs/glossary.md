@@ -59,7 +59,7 @@ backs the `if_match_sha256` precondition and anchors audit rows.
 memories, procedures and decisions, loaded once at the start of a session.
 See [unified search](features/unified-search.md#contextpack).
 
-**Dashboard** — the `/me` web application for people: memory, activity, sources, review
+**Dashboard** — the web application at the server root, for people: memory, activity, sources, review
 queue, tasks, repositories and settings. See [dashboard](features/dashboard.md).
 
 **Decision** — a first-class record of a choice (`decision.record`) with reasoning,

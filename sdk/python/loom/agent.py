@@ -288,7 +288,7 @@ class Agent:
         stamp_write(path, payload, current_run_id())
         s = _spec(op)
         key = idempotency_key
-        if key is None and s is not None and s.idempotent:
+        if key is None and s is not None and s.idempotent and not s.read_only:
             import uuid
 
             key = str(uuid.uuid4())
@@ -314,8 +314,8 @@ class Agent:
         method for yet (the wire adds fields and never renames them).
 
         `body` and `**fields` are merged over the identity, so what you pass
-        wins. Ops the registry marks idempotent get an `Idempotency-Key`
-        unless you supply one. `loom.ops.OPS` names every served op and
+        wins. Ops the registry marks idempotent, read-only ones aside, get an
+        `Idempotency-Key` unless you supply one. `loom.ops.OPS` names every served op and
         `loom.ops.<Op>Input` its fields, for completion and type checking.
         `call_with_meta` is the same call returning the response metadata.
         """

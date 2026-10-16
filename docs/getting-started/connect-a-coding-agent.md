@@ -13,7 +13,7 @@ saved. To run a server yourself, start with the [quickstart](quickstart.md).
   for a stack started with `loom up`.
 - **A writer token for your namespace**, except against a single-user server on the same
   machine: there the plugins connect without one. Create one in the dashboard at
-  `<server>/me/settings` → **Tokens**, or ask an operator to run
+  `<server>/settings` → **Tokens**, or ask an operator to run
   `loom mint-token --subject you --org <org> --namespaces <namespace> --roles writer`.
   On a server with self-signup open, the Claude Code plugin can sign the machine up by
   itself on the first session. See [what happens with no credential](#no-token-yet).
@@ -78,7 +78,7 @@ command writes.
    reached the server.
 2. Tell the agent something durable, for example "our deploy window is Tuesday and
    Thursday only". In a new session, ask "when can we deploy?". The answer comes from Loom.
-3. Open `<server>/me`. The session's conversation and the saved fact are there, and you can
+3. Open the dashboard (`<server>/`). The session's conversation and the saved fact are there, and you can
    correct or delete either.
 
 `loom doctor --client` adds the local wiring checks when you have the CLI.
@@ -115,7 +115,7 @@ Details: [Claude Code](../features/integrations/claude-code.md#the-code-shunt).
 On a server started with `LOOM_SELF_SIGNUP=open`, the first Claude Code session that finds
 no token signs the machine up. It writes the token to `~/.loom/config.json` (mode 0600)
 and a one-time claim code to `~/.loom/claim-<namespace>.txt`, and the primer says how to
-claim the namespace at `/me`. `LOOM_AUTO_SIGNUP=off` turns this off. A server without
+claim the namespace in the dashboard. `LOOM_AUTO_SIGNUP=off` turns this off. A server without
 self-signup leaves the session without a token, and the primer says how to get one.
 
 ## Next

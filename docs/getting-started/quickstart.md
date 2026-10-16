@@ -36,15 +36,15 @@ This downloads `loom-stack.tar.gz` from the latest GitHub Release, verifies its 
 installs the Compose and ClickHouse configuration under `~/.loom`, pulls the matching
 `ghcr.io/clickhouse/loom:X.Y.Z` image, and waits for
 `http://localhost:7777/v1/health`. The image contains the API, workers, migrations and
-the built React dashboard at `/me`; no Python or Node installation is needed. Python,
+the built React dashboard at the server root; no Python or Node installation is needed. Python,
 TypeScript and Go compiler indexers are included and enabled. A repository indexed
 with the TypeScript indexer gets its dependencies installed automatically.
 The image supports Linux `amd64` and `arm64`, including Docker Desktop on Apple Silicon.
 
 The stack runs its own ClickHouse container. To use a ClickHouse you already run, a
-self-managed server or a ClickHouse Cloud service (26.4 or later), pass its URL; the
-installer asks for the password when the URL has none, creates the `loom` database and a
-read-only reader user, or prints the SQL an admin has to run
+self-managed server or a ClickHouse Cloud service (26.4 or later, with a Keeper), pass its
+URL; the installer asks for the password when the URL has none, creates the `loom`
+database and a read-only reader user, or prints the SQL an admin has to run
 ([choosing the ClickHouse](../operations/deployment.md#choosing-the-clickhouse)):
 
 ```bash
@@ -116,7 +116,7 @@ docker compose --project-directory "$HOME/.loom" run --rm loom loom ch-setup  # 
 docker compose --project-directory "$HOME/.loom" up -d
 ```
 
-After the [health checks](#check-the-stack) pass, open `http://localhost:7777/me` and
+After the [health checks](#check-the-stack) pass, open `http://localhost:7777/` and
 sign up. SDK and MCP clients need tokens; use the org and namespaces granted to your
 account, not the single-user `dev/local` defaults in the examples below.
 
@@ -151,7 +151,7 @@ loom up
    body and log lines.
 
 The first contributor boot builds the image and applies every schema migration, so allow
-a few minutes. `loom up` then prints the dashboard URL (`http://localhost:7777/me`), a `curl`
+a few minutes. `loom up` then prints the dashboard URL (`http://localhost:7777/`), a `curl`
 call and a Python snippet that save a first memory, and a line that wires Claude Code.
 When auth is on, it also mints a writer token and puts it in those snippets.
 
@@ -232,7 +232,7 @@ docker compose --project-directory "$HOME/.loom" exec loom loom doctor
 
 ## 2. Open the dashboard
 
-`http://localhost:7777/me` opens straight into the dashboard in `single-user` mode;
+`http://localhost:7777/` opens straight into the dashboard in `single-user` mode;
 in multi-user mode, sign up or sign in first. In `single-user` mode
 the dashboard and agent defaults use `dev/local` (`LOOM_DEFAULT_NAMESPACE` renames the
 namespace). This is a convenience mode, not a user-isolation boundary: anyone who can
@@ -259,7 +259,7 @@ docker compose --project-directory "$HOME/.loom" up -d --force-recreate loom
 docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml --profile bundled up -d --force-recreate loom
 ```
 
-`/me` then opens on **Sign up**, and every SDK and MCP call needs a token. The identity
+The dashboard then opens on **Sign up**, and every SDK and MCP call needs a token. The identity
 modes are in [Identities and namespaces](../concepts/identities-and-namespaces.md#identity-modes).
 Before making the server reachable by a team, follow the
 [deployment guide](../operations/deployment.md#identity-modes) for operator access and
@@ -287,7 +287,7 @@ when auth is turned on.
 - **A bot that signs itself up** (trust-network only):
   `loom init --agent nightly-triage --server-url http://localhost:7777` creates the
   namespace `agent-nightly-triage`, saves a writer token to `~/.loom/token` and the URL
-  to `~/.loom/config.json`, and prints a one-time claim code. A person signs in at `/me`
+  to `~/.loom/config.json`, and prints a one-time claim code. A person signs in to the dashboard
   with that code to take ownership.
 
 Save the token where the SDK, the CLI and the plugins look for it:
@@ -396,11 +396,11 @@ search from the tool descriptions; there are no trigger words.
 
 ## 7. See it in the dashboard
 
-| Page                 | Shows                                             |
-| -------------------- | ------------------------------------------------- |
-| `/me/memories`       | The namespace's memories, with writer and time.   |
-| `/me/admin/activity` | The audit log: which agent wrote which key, when. |
-| `/me/admin/usage`    | Cost per operation and agent.                     |
+| Page              | Shows                                             |
+| ----------------- | ------------------------------------------------- |
+| `/memories`       | The namespace's memories, with writer and time.   |
+| `/admin/activity` | The audit log: which agent wrote which key, when. |
+| `/admin/usage`    | Cost per operation and agent.                     |
 
 The rest is in [Dashboard](../features/dashboard.md).
 
@@ -480,7 +480,7 @@ the answer and the chunks it cited. With the fake LLM it prints the top
 | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `set_from_messages` writes no facts; results arbitrary | Fake providers are active. Follow [Models and keys](./models-and-keys.md) to configure providers and rebuild existing embeddings. Do not delete your volumes to change models.     |
 | 401 `AUTH_INVALID` after turning auth on               | No token, or one signed with another `LOOM_JWT_SECRET`. Re-mint with the Compose command in [Get a token](#3-get-a-token).                                                         |
-| `/me` returns 503                                      | The server runs from source (`make server`) without a built frontend. Run `make frontend-build`.                                                                                   |
+| The dashboard returns 503                              | The server runs from source (`make server`) without a built frontend. Run `make frontend-build`.                                                                                   |
 | Released stack does not become healthy                 | Run `docker compose --project-directory "$HOME/.loom" logs --tail 100 loom clickhouse`. See [Troubleshooting](../operations/troubleshooting.md).                                   |
 | Adding a repository answers `SANDBOX_UNAVAILABLE`      | The stack runs without the repository-job sandbox. Index the repository through `LOOM_CODE_REPOS_JSON` ([Index a repository](#optional-index-a-repository-on-the-released-stack)). |
 | Port `8123`, `9000` or `7777` is taken                 | Remap the ClickHouse host ports ([local stack](../operations/deployment.md#local-stack-from-a-clone)).                                                                             |

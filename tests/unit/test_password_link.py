@@ -48,8 +48,10 @@ def world(monkeypatch) -> dict[str, Any]:
         return ""
 
     async def fetch_row(org: str, namespace: str) -> dict[str, Any] | None:
-        found = [a for a in written["accounts"] if (a["org"], a["namespace"]) == (org, namespace)]
-        return dict(found[0]) if found else None
+        # The newest row wins, as under FINAL.
+        rows = written["accounts"] + written["rows"]
+        found = [a for a in rows if (a["org"], a["namespace"]) == (org, namespace)]
+        return dict(found[-1]) if found else None
 
     monkeypatch.setattr(password_link, "sso_accounts", accounts)
     monkeypatch.setattr(password_link.namespaces, "fetch_row", fetch_row)
@@ -156,7 +158,7 @@ def test_a_release_that_lands_first_is_not_undone(world, monkeypatch) -> None:
     assert r.status_code == 400 and not world["rows"]
 
 
-def test_a_spend_that_fails_after_the_write_keeps_the_link_and_its_audit(
+def test_a_spend_that_fails_after_the_write_keeps_the_sso_link_and_its_audit(
     world, monkeypatch
 ) -> None:
     c, code = TestClient(oauth_app(), raise_server_exceptions=False), _code()
@@ -164,7 +166,11 @@ def test_a_spend_that_fails_after_the_write_keeps_the_link_and_its_audit(
     async def spend_fails(state: str) -> None:
         raise RuntimeError("Keeper away after the write")
 
-    monkeypatch.setattr(oauth.store, "take_pending", spend_fails)
-    assert _set(c, code, "correct horse").status_code == 500
+    with monkeypatch.context() as away:
+        away.setattr(oauth.store, "take_pending", spend_fails)
+        assert _set(c, code, "correct horse").status_code == 500
     assert len(world["rows"]) == 1 and world["links"]
+    # The retry finds the password set: closed, and no second audit row.
+    assert _set(c, code, "correct horse").status_code == 400
+    assert len(world["rows"]) == 1
     assert [e for e, _ in world["events"]].count("auth.password_set") == 1

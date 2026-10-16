@@ -31,15 +31,17 @@ def seal(purpose: str, plain: str) -> str:
     return str(_fernet(purpose).encrypt(plain.encode()).decode())
 
 
-def unseal(purpose: str, enc: str) -> str:
+def unseal(purpose: str, enc: str, *, warn: bool = True) -> str:
     """The plaintext, or '' for '' and for a value that no longer decrypts (a
-    rotated secret makes the credential unusable, not fatal)."""
+    rotated secret makes the credential unusable, not fatal). `warn=False`
+    leaves the warning to a caller that reports it once."""
     if not enc:
         return ""
     try:
         return str(_fernet(purpose).decrypt(enc.encode()).decode())
     except Exception:  # noqa: BLE001 — a rotated secret: the credential is unusable, say so
-        log.warning("a stored %s no longer decrypts (secret rotated?)", purpose)
+        if warn:
+            log.warning("a stored %s no longer decrypts (secret rotated?)", purpose)
         return ""
 
 

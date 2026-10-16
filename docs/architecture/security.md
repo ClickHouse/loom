@@ -33,11 +33,16 @@ are in [tokens and grants](../guides/tokens-and-grants.md).
 
 **Verification** (`verify_token` in `server/auth/jwt.py`):
 
-- Algorithms are an allow-list: `LOOM_JWT_ALGORITHM` (`HS256` default, or `RS256`), plus
-  `RS256` when `LOOM_JWT_PUBLIC_KEYS_JSON` is set, intersected with `{HS256, RS256}`.
-  `alg=none` and every other algorithm are refused.
-- The key is picked by the header's `kid`; a missing `kid` means `LOOM_JWT_ACTIVE_KID`,
-  and an unknown one is refused.
+- Algorithms are an allow-list: `HS256` and `RS256`. `alg=none` and every other
+  algorithm are refused.
+- The key is picked by the header's `kid` and `alg` (`server/auth/keyring.py`): a key in
+  `loom.signing_keys`, the root secret (kid `default`, HS256), or a gateway's RS256 public
+  key in `LOOM_JWT_PUBLIC_KEYS_JSON`. A missing `kid` means `default`; an RS256 token of
+  `default` verifies with the `default-rs256` key (imported, else a PEM RSA root secret,
+  which signs as `default`) and with the gateway map's `default`. A `kid`
+  with no key under the token's algorithm is refused, and so is a retired one, unless
+  the gateway map still lists it with a key this deployment never retired: a retire stops
+  Loom's keys under every kid, and a gateway kid verifies until it leaves the map.
 - `iss` must be `LOOM_JWT_ISSUER` or in `LOOM_JWT_TRUSTED_ISSUERS`; `aud` must be
   `LOOM_JWT_AUDIENCE`. `iat`, `sub`, `iss` and `aud` are required. `exp` is enforced when
   present, with `LOOM_JWT_LEEWAY_SECONDS` (30) of skew.
@@ -45,23 +50,42 @@ are in [tokens and grants](../guides/tokens-and-grants.md).
   refuses the token.
 - `verify_bearer` (`server/auth/bearer.py`) parses the bearer for routes outside the
   operation transport: 401 `AUTH_INVALID` for a missing, foreign-scheme or failing token;
-  503 `AUTH_UNAVAILABLE` with `Retry-After` while revocation is not loaded.
+  503 `AUTH_UNAVAILABLE` with `Retry-After` while revocation or the keyring is not loaded.
 
-**Signing keys.** `LOOM_JWT_SECRET`, or a `{kid: key}` map in `LOOM_JWT_SECRETS_JSON`,
-signs. `LOOM_JWT_ACTIVE_KID` names the key for new tokens; settings load fails when it is
-not in the map. Under RS256 the public keys are served at
-`GET /v1/.well-known/jwks.json`.
+**Signing keys.** `LOOM_JWT_SECRET` is the root secret: it signs as kid `default` and
+seals the private half of every other key in `loom.signing_keys`, so a database reader
+without it cannot mint tokens. Every process loads the keyring at boot and every
+`LOOM_JWT_KEYRING_REFRESH_SECONDS` (30 s); the newest active key signs, else the root
+secret (HS256, or RS256 for a PEM RSA one; any other PEM signs nothing and sign-ins answer
+503 `NO_SIGNING_KEY`). A keyring last read longer ago than
+`LOOM_JWT_REVOCATION_MAX_STALE_SECONDS` (at least three refresh intervals) verifies
+nothing (503 `AUTH_UNAVAILABLE`) and signs nothing (503 `BACKEND_UNAVAILABLE`) until a read
+lands: a retire since may be unseen. The public keys of RS256 keys are served at
+`GET /v1/.well-known/jwks.json`. The `default` row holds `HMAC(root, label)`, written by
+the workers leader or a keyring command (never a replica's first boot, which would trust a
+mistyped secret); a process whose root does not match it reports
+`keyring_root_mismatch`, and the keyring commands and `loom mint-token` refuse there.
 
-**Rotation.** Point `LOOM_JWT_ACTIVE_KID` at a new key. Tokens signed under the old `kid`
-verify until that `kid` is removed from the map; removing it invalidates them all.
+**Rotation.** `loom signing-key rotate [--algorithm HS256|RS256] [--activate-in 300]`
+writes a key whose `activate_at` lies `--activate-in` seconds ahead on the ClickHouse
+server's clock; it must exceed two of the slowest process's refresh intervals (each
+process records its own in `loom.keyring_readers` hourly), so every process verifies the
+key before any token carries it. Until a process has read the keyring once,
+it refuses tokens with a retryable 503 and signs none. Tokens signed under an older `kid` verify until
+`loom signing-key retire <kid>`, which invalidates them all within a refresh interval.
+`default` can be retired too, for an RS256-only deployment; a retire that would leave no
+key to sign with is refused. One retire runs at a time across the deployment (a cluster
+claim, `server.core.leases.holding`), and it reads the keyring with sequential
+consistency, so two retires at once cannot each leave the other's key as the last signer. Changing `LOOM_JWT_SECRET`
+re-keys everything: keyring keys and stored credentials sealed with the old value no
+longer open.
 
 **Expiry.** Tokens have no `exp` unless minted with a TTL (`--ttl-days`). Every token
 Loom mints carries a `jti`; an outside token without one is identified by its digest.
 
 **Revocation** (`server/auth/revocation.py`). `loom.revoked_tokens` holds revoked `jti`
 or `sub` values, optionally with an issued-before cutoff. Each process loads a snapshot at
-boot and refreshes it every `LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` (30 s), through the
-`jwt_revocation_refresh` worker on the leader or the process's own loop elsewhere.
+boot and refreshes it on its own loop every `LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` (30 s).
 
 - Until the first load succeeds, every token gets 503 `AUTH_UNAVAILABLE`.
 - After that, a ClickHouse outage keeps the last good snapshot for at most
@@ -191,10 +215,10 @@ denied.
 Every admitted request writes a `namespace.restricted_access` audit row, and code search
 traces keep only the query digest; neither can be switched off.
 
-| Setting                        | Default | Effect                                                        |
-| ------------------------------ | ------- | ------------------------------------------------------------- |
-| `LOOM_RESTRICTED_SERVE`        | `true`  | `false` refuses every restricted read while ingest continues. |
-| `LOOM_RESTRICTED_AUDIT_INLINE` | `false` | `true` commits the audit row before answering.                |
+| Setting                        | Default | Effect                                                            |
+| ------------------------------ | ------- | ----------------------------------------------------------------- |
+| `LOOM_RESTRICTED_SERVE`        | `true`  | `false` refuses every restricted read while ingest continues.     |
+| `LOOM_RESTRICTED_AUDIT_INLINE` | `true`  | `false` writes the audit row beside the answer (a kill loses it). |
 
 ### History policy
 
@@ -295,9 +319,7 @@ nothing on the server, so only an authenticated callback, a device sign-in start
 adds a key. Sign-in starts are limited per address (an IPv6 /64 counts as one), and the
 table's key limit is the backstop: past it new sign-ins answer 503 and `/v1/health` reports
 `oauth_signin_state_full`. When Keeper fails mid-change, the change is undone before the
-client is told to retry, so its retry is not taken for a replay. A ClickHouse without a
-Keeper has no claims table: sign-in answers 503, `/v1/health` reports
-`oauth_signin_needs_keeper`, and minted tokens keep working. A refresh token issued before
+client is told to retry, so its retry is not taken for a replay. A refresh token issued before
 sessions had a family is refused, so its owner signs in once more.
 
 **The IdP round trip is bound to its browser.** What the callback needs (the nonce, the
@@ -352,12 +374,24 @@ outlive it. The cutoffs an operator action writes (a bot replaced or disabled, a
 adopted) sit in their own revocation row beside the subject's, so an outright revocation
 written at any moment is never replaced by one.
 
-**Unauthenticated routes.** Sign-up and password sign-in are rate-limited in-process
+**Unauthenticated routes.** Sign-up and password sign-in are rate-limited
 (`server/auth/attempts.py`) per client address (the connection's peer, which uvicorn
 replaces with the `X-Forwarded-For` client only when the peer is in
 `LOOM_TRUSTED_PROXIES`), and sign-in also per identifier. An unknown account costs one full argon2id
-hash, like a wrong password. The limits are per process, so N replicas allow N times the
-limit.
+hash, like a wrong password. Attempts are rows of `loom.auth_attempts` (the kind, an HMAC
+of the key keyed by the root secret, the time; a 1-day TTL), so the limits hold across
+every process of the deployment and a database reader cannot recover an address by
+hashing them all. Both counts read with sequential consistency, so a process sees the
+attempts another replica recorded a moment ago. A sign-up is counted before it is admitted. A sign-in is recorded and
+recounted before its password is checked, under its identifier and its address, and
+released once it succeeds or its check fails to run, so a concurrent burst across
+processes reaches the check at most the limit's number of times (10 per identifier, 50 per
+address, per 15 minutes). A release carries its attempt's time, so the two leave the window
+together. What a refused attempt costs is bounded per process: a key seen over its limit
+is refused for 10 s without a query, at most `LOOM_AUTH_ATTEMPTS_CONCURRENCY` (8) checks
+run at once (past it a caller waits a second, then gets 429 with `Retry-After: 1`), and
+attempts are waiting async inserts, so a burst shares parts and cannot take the
+ClickHouse pool every route uses.
 
 **Client-facing URLs** (OAuth metadata, setup config, claim links) come from
 `LOOM_OAUTH_ISSUER` / `LOOM_PUBLIC_BASE_URL`, else (only on a loopback bind) the
@@ -379,7 +413,7 @@ host and port) when it is set; otherwise an `Origin` whose host and port match t
 request's `Host` counts, whatever its scheme, so a TLS proxy whose `X-Forwarded-Proto`
 is not trusted still works. `loom doctor` and `/v1/health` report each of these.
 
-**Browser.** Every response is `X-Content-Type-Options: nosniff`. `/me` carries a
+**Browser.** Every response is `X-Content-Type-Options: nosniff`. The dashboard page carries a
 Content-Security-Policy whose `script-src` admits the bundle's origin and the one boot
 snippet by a per-response nonce, never `unsafe-inline`. An uploaded document is
 attacker-chosen bytes under an attacker-chosen type, so `knowledge.download` previews
@@ -490,11 +524,9 @@ hashing are engineering primitives, not a compliance guarantee.
   (`dev_jwt_secret`).
 - **Stored tokens.** Private-repository tokens, tracker-source passwords and provider
   keys are encrypted at rest with a key derived from `LOOM_JWT_SECRET` and a per-purpose
-  salt (`seal` and `unseal` in `server/core/secrets_at_rest.py`). `LOOM_JWT_SECRET` seals
-  even when `LOOM_JWT_SECRETS_JSON` holds the signing keys, so a deployment with auth on
-  also refuses to start while `LOOM_JWT_SECRET` is the checked-in dev secret, and
-  `/v1/health` flags it elsewhere (`dev_sealing_secret`). Changing the secret
-  makes them undecryptable; re-enter them.
+  salt (`seal` and `unseal` in `server/core/secrets_at_rest.py`), as are the signing
+  keys in `loom.signing_keys`. Changing the secret makes them undecryptable; re-enter
+  the credentials and re-mint tokens.
 - **Ledger arguments.** `loom.agent_events` stores free-text arguments as
   `sha256:<digest>/<length>`, not text (`server/observability/event_args.py`).
 - **Errors.** A 500 carries only the request id, never exception text.

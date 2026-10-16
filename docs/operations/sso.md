@@ -195,9 +195,7 @@ addresses so that address is the user's own, not the proxy's for everyone.
 
 Sign-in keeps codes, device grants and each session's current refresh token in
 ClickHouse Keeper and changes them only by compare-and-set, so each is spent
-exactly once. The Loom stacks and ClickHouse Cloud have a Keeper. On a
-self-managed ClickHouse without one, sign-in answers 503 and `/v1/health`
-reports `oauth_signin_needs_keeper`; tokens from `loom mint-token` still work.
+exactly once; Loom requires a Keeper and refuses to start without one.
 If `/v1/health` reports `oauth_signin_state_full`, the Keeper table hit its key
 limit (a flood of device sign-ins): new sign-ins answer 503 until keys expire,
 so rate-limit the sign-in routes by network at your proxy.

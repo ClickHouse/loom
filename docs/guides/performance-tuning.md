@@ -89,7 +89,8 @@ To move an existing table onto a codec or layout, use `scripts/ops/vector_codec_
 | Operation budgets         | `LOOM_LATENCY_BUDGET_MULTIPLIER`                                             | Scales every op's `budget_p99_ms`; a WAN hop to ClickHouse needs about 20. Budgets only raise `budget.violated` events; they do not cut requests. |
 
 Web capacity is `LOOM_WEB_WORKERS` per container times containers; the rate limiter divides
-its caps by `LOOM_REPLICA_COUNT` ([deployment](../operations/deployment.md)).
+its caps by the live replicas it counts in `loom.instances`, never fewer than
+`LOOM_REPLICA_COUNT` ([replicas](../operations/replicas.md#rate-limits)).
 
 ## Providers
 

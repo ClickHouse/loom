@@ -1,6 +1,6 @@
 """Sign-in state against the real store: of several requests spending one
 credential or moving one device grant at the same moment, exactly one goes
-ahead. Needs a ClickHouse with a Keeper (loom.oauth_signin_state, migration 034)."""
+ahead. Needs a ClickHouse with a Keeper (loom.oauth_signin_state, migration 040)."""
 
 from __future__ import annotations
 
@@ -27,10 +27,6 @@ async def store() -> Any:
 
     ch = get_client()
     await ch.connect()
-    claims._atomic = None  # ask this server
-    if not await claims._available(ch):
-        await ch.disconnect()
-        pytest.skip("this ClickHouse has no Keeper: loom.oauth_signin_state is absent")
     yield ClickHouseStore()
     await ch.disconnect()
 
@@ -236,14 +232,6 @@ async def test_polling_a_pending_device_grant_writes_nothing(
     polled = await store.take_device(code)
     assert polled is not None and polled["status"] == "pending"
     assert swaps == []
-
-
-async def test_without_a_keeper_sign_in_answers_busy(
-    store: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(claims, "_atomic", False)
-    with pytest.raises(claims.Busy):
-        await store.save_code(secrets.token_urlsafe(32), _grant("loom-mcp"))
 
 
 async def test_an_owed_revocation_counts_in_every_process(store: Any) -> None:

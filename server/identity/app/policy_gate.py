@@ -180,7 +180,7 @@ async def gate(
         rules = await _policy.rules_for(str(org), str(ns), ch=ch)
         if not any(r.enabled and r.applies_to(op.name) for r in rules):
             return None
-        from server.core.ch import get_client
+        from server.core.ch import get_client, sequential_reads
 
         if ch is None:
             # The caller's previous call may still sit in this replica's
@@ -188,7 +188,9 @@ async def gate(
             from server.observability.events import get_emitter
 
             await get_emitter().flush_now()
-        decision = await _policy.evaluate(rules, ctx, ch or get_client(), mode)
+        # A witness another replica committed is in a sequentially consistent read.
+        with sequential_reads():
+            decision = await _policy.evaluate(rules, ctx, ch or get_client(), mode)
     except Exception as e:  # noqa: BLE001 — the gate itself failed
         decision = policy_rules.PolicyDecision(
             decision="allow",

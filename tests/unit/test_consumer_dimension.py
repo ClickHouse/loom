@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -284,10 +285,22 @@ def test_settings_map_loosens_or_tightens_without_a_redeploy(
 def test_effective_budget_ms_applies_the_deployment_multiplier_after_the_consumer_rule(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from server.core import runtime_overrides as ro
     from server.observability import budgets
+
+    written: list[dict[str, Any]] = []
+
+    class _CH:
+        async def query_one(self, sql: str, params: Any = None) -> dict[str, Any]:
+            return {"v": time.time_ns()}
+
+        async def insert(self, table: str, rows: list[dict[str, Any]], settings: Any = None):
+            assert table == ro.TABLE
+            written.extend(rows)
 
     b = BudgetOverrides()
     monkeypatch.setattr(budgets, "_overrides", b)
+    monkeypatch.setattr(ro, "_default_client", _CH)
     monkeypatch.setattr(settings, "latency_budget_overrides_by_consumer", "")
     monkeypatch.setattr(settings, "latency_budget_multiplier", 20.0)
     b.set_for_consumer("bench", "*", "2x")
@@ -483,10 +496,22 @@ def test_admin_consumers_joins_calls_and_outcome_feedback_per_window(
 def test_admin_budget_set_takes_a_consumer(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from server.core import runtime_overrides as ro
     from server.observability import budgets
+
+    written: list[dict[str, Any]] = []
+
+    class _CH:
+        async def query_one(self, sql: str, params: Any = None) -> dict[str, Any]:
+            return {"v": time.time_ns()}
+
+        async def insert(self, table: str, rows: list[dict[str, Any]], settings: Any = None):
+            assert table == ro.TABLE
+            written.extend(rows)
 
     b = BudgetOverrides()
     monkeypatch.setattr(budgets, "_overrides", b)
+    monkeypatch.setattr(ro, "_default_client", _CH)
     monkeypatch.setattr(settings, "latency_budget_overrides_by_consumer", "")
     r = client.post("/v1/admin/budget.set", json={"op": "*", "consumer": "bench", "budget": "3x"})
     assert r.status_code == 200 and r.json()["consumer"] == "bench" and r.json()["budget"] == "3x"
@@ -514,6 +539,13 @@ def test_admin_budget_set_takes_a_consumer(
     # the per-op path is unchanged
     r = client.post("/v1/admin/budget.set", json={"op": "memory.search", "budget_ms": 800})
     assert r.status_code == 200 and b.get("memory.search") == 800
+    # every accepted change is a loom.runtime_overrides row, so every process adopts it
+    assert [(w["kind"], json.loads(w["key"]), json.loads(w["value"])) for w in written] == [
+        (ro.BUDGET_CONSUMER, ["bench", "*"], "3x"),
+        (ro.BUDGET_CONSUMER, ["plugin", "memory.search"], 250),
+        (ro.BUDGET_CONSUMER, ["bench", "*"], None),
+        (ro.BUDGET_OP, ["memory.search"], 800),
+    ]
 
 
 # ---------------------------------------------------------------- capabilities + compat

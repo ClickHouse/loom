@@ -2,7 +2,7 @@
 
 The transport decides which namespace an unaddressed call lands in
 (`server/transport/mcp_identity.py`); what it decides on — the user's saved
-/me pick and their live grants, ranked — is the identity plane's data, read
+dashboard pick and their live grants, ranked — is the identity plane's data, read
 here through its store.
 """
 
@@ -15,7 +15,7 @@ from server.identity.store import user_state as user_state_store
 
 
 async def saved_default(org: str, subject: str, *, ch: Any | None = None) -> str:
-    """The namespace `subject` picked in the /me switcher, "" when none."""
+    """The namespace `subject` picked in the dashboard's switcher, "" when none."""
     return await user_state_store.saved_default_namespace(org, subject, ch=ch)
 
 

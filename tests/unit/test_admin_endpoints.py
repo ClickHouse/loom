@@ -23,8 +23,14 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from server.core.ch import current_query_tag
 from server.insights.app.admin_routes import admin_router, org_admin_router
 from server.insights.store import admin as admin_repo
+
+# The overrides an admin route wrote to loom.runtime_overrides, in order.
+persisted: list[tuple[str, tuple, object]] = []
+# The query tag each of those writes ran under.
+write_tags: list[str] = []
 
 
 @pytest.fixture
@@ -38,6 +44,19 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     from server import settings as settings_mod
 
     monkeypatch.setattr(settings_mod.settings, "auth_required", False)
+    persisted.clear()
+    write_tags.clear()
+
+    async def put(kind: str, key: tuple, value: object = None) -> None:
+        persisted.append((kind, key, value))
+        write_tags.append(current_query_tag())
+
+    async def clear(kind: str, key: tuple) -> None:
+        persisted.append((kind, key, None))
+        write_tags.append(current_query_tag())
+
+    monkeypatch.setattr("server.core.runtime_overrides.put", put)
+    monkeypatch.setattr("server.core.runtime_overrides.clear", clear)
     app = FastAPI()
     app.include_router(admin_router)
     app.include_router(org_admin_router)
@@ -154,6 +173,7 @@ def test_budget_set_install(
     # the canonical shape advertised in the OpenAPI doc.
     assert body["ok"] is True
     assert body["op"] == "memory.set"
+    assert persisted == [("budget.op", ("memory.set",), 50)]
     assert body["budget_ms"] == 50
     assert body.get("cleared") in (None, False)
 
@@ -175,6 +195,7 @@ def test_budget_set_clear_omits_budget_ms(
     )
     assert r.status_code == 200
     assert r.json()["cleared"] is True
+    assert persisted == [("budget.op", ("memory.set",), None)]
 
 
 def test_budget_set_missing_budget_ms_when_not_clear(
@@ -305,3 +326,72 @@ def test_namespace_adopt_stays_inside_the_admins_org(monkeypatch: pytest.MonkeyP
     with pytest.raises(HTTPException) as err:
         asyncio.run(admin.admin_namespace_adopt(object(), inp))  # type: ignore[arg-type]
     assert err.value.status_code == 403
+
+
+def test_ratelimit_set_writes_the_override_through_and_applies_it_here(
+    client: TestClient,
+) -> None:
+    """The override reaches every process through loom.runtime_overrides; this
+    process applies it at once."""
+    from server.core.ratelimit import Limit, get_limiter
+
+    body = {"namespace": "ns-x", "op_class": "memory", "capacity": 3, "rate": 1}
+    assert client.post("/v1/admin/ratelimit.set", json=body).status_code == 200
+    assert persisted == [("ratelimit.namespace", ("ns-x", "memory"), {"capacity": 3, "rate": 1})]
+    assert get_limiter()._ns_overrides[("ns-x", "memory")] == Limit(3, 1)
+    clear = {"namespace": "ns-x", "op_class": "memory", "clear": True}
+    assert client.post("/v1/admin/ratelimit.set", json=clear).status_code == 200
+    assert persisted[-1] == ("ratelimit.namespace", ("ns-x", "memory"), None)
+    assert ("ns-x", "memory") not in get_limiter()._ns_overrides
+
+
+def test_an_invalid_value_is_refused_before_it_is_stored(client: TestClient) -> None:
+    """A stored override binds every process and outlives restarts."""
+    r = client.post("/v1/admin/budget.set", json={"op": "memory.set", "budget_ms": -5})
+    assert r.status_code == 422
+    for bad in ({"capacity": 0, "rate": 1}, {"capacity": 5, "rate": -1}):
+        body = {"namespace": "ns", "op_class": "memory", **bad}
+        assert client.post("/v1/admin/ratelimit.set", json=body).status_code == 422
+    assert persisted == []
+
+
+def test_a_refused_override_write_is_a_typed_409_and_changes_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A read-only ClickHouse user: the route answers OVERRIDE_NOT_STORED, not a bare 500,
+    and this process applies nothing."""
+    from server import settings as settings_mod
+    from server.core import runtime_overrides as ro
+    from server.core.errors import register_exception_handler
+    from server.core.ratelimit import get_limiter
+    from server.observability.budgets import get_overrides
+
+    class _ReadOnly:
+        async def query_one(self, *_a: Any, **_kw: Any) -> dict[str, Any]:
+            return {"v": 1}
+
+        async def insert(self, *_a: Any, **_kw: Any) -> None:
+            raise RuntimeError("Code: 164. DB::Exception: readonly mode")
+
+    monkeypatch.setattr(settings_mod.settings, "auth_required", False)
+    monkeypatch.setattr(ro, "_default_client", lambda: _ReadOnly())
+    app = FastAPI()
+    app.include_router(admin_router)
+    register_exception_handler(app)
+    client = TestClient(app)
+    body = {"namespace": "ns-ro", "op_class": "memory", "capacity": 3, "rate": 1}
+    r = client.post("/v1/admin/ratelimit.set", json=body)
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "OVERRIDE_NOT_STORED"
+    assert ("ns-ro", "memory") not in get_limiter()._ns_overrides
+    r = client.post("/v1/admin/budget.set", json={"op": "memory.ro", "budget_ms": 5})
+    assert r.status_code == 409 and get_overrides().get("memory.ro") is None
+
+
+def test_override_writes_are_tagged_with_their_route(client: TestClient) -> None:
+    body = {"namespace": "ns-x", "op_class": "memory", "capacity": 3, "rate": 1}
+    assert client.post("/v1/admin/ratelimit.set", json=body).status_code == 200
+    assert (
+        client.post("/v1/admin/budget.set", json={"op": "memory.get", "clear": True}).status_code
+        == 200
+    )
+    assert write_tags == ["admin.ratelimit_set", "admin.budget_set"]

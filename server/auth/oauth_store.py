@@ -252,11 +252,14 @@ class ClickHouseStore:
         )
 
     async def get_client(self, client_id: str) -> dict[str, Any] | None:
-        row = await self._ch().query_one(
-            f"SELECT redirect_uris, client_name FROM {_T} FINAL "
-            "WHERE record_type = 'client' AND id = {id:String} AND consumed = 0 LIMIT 1",
-            params={"id": client_id},
-        )
+        from server.core.ch import own_write_reads
+
+        with own_write_reads():  # /register may have landed on another replica
+            row = await self._ch().query_one(
+                f"SELECT redirect_uris, client_name FROM {_T} FINAL "
+                "WHERE record_type = 'client' AND id = {id:String} AND consumed = 0 LIMIT 1",
+                params={"id": client_id},
+            )
         if not row:
             return None
         return {"redirect_uris": list(row["redirect_uris"]), "client_name": row["client_name"]}

@@ -13,6 +13,7 @@ import hmac
 import html
 import secrets
 import time
+from collections import OrderedDict
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -37,11 +38,24 @@ _INTERVAL = 5
 _USER_CODE_ALPHABET = "BCDFGHJKLMNPQRSTVWXZ"
 _USER_CODE_LENGTH = 8  # 20**8 ≈ 2**34.6, against 10 guesses per address per 15 min
 
-_requests_by_address = Attempts(30, 900)
-_wrong_codes_by_address = Attempts(10, 900)
+_requests_by_address = Attempts("device.start", 30, 900)
+_wrong_codes_by_address = Attempts("device.wrong_code", 10, 900)
 # One poll per interval (with a second of slack for timer jitter); a faster
-# poll gets `slow_down`.
-_polls = Attempts(1, _INTERVAL - 1)
+# poll gets `slow_down`. Pacing, not a limit, so it is kept per process.
+_last_polls: OrderedDict[str, float] = OrderedDict()
+_LAST_POLLS_KEPT = 10_000
+
+
+def _polled_too_soon(device_id: str) -> bool:
+    now = time.monotonic()
+    last = _last_polls.get(device_id)
+    if last is not None and now - last < _INTERVAL - 1:
+        return True
+    _last_polls[device_id] = now
+    _last_polls.move_to_end(device_id)
+    if len(_last_polls) > _LAST_POLLS_KEPT:
+        _last_polls.popitem(last=False)
+    return False
 
 
 def _new_user_code() -> str:
@@ -70,7 +84,7 @@ async def device_authorization(request: Request) -> JSONResponse:
     if f.get("client_id") != DEVICE_CLIENT_ID:
         raise oauth.OAuthError("invalid_client")
     address = client_address(request)
-    if not _requests_by_address.allow(address_key(address)):
+    if not await _requests_by_address.allow(address_key(address)):
         oauth.log_refused("device start", address)
         raise oauth.OAuthError("slow_down", 429, headers={"Retry-After": "900"})
     device_code = secrets.token_urlsafe(32)
@@ -143,12 +157,12 @@ async def device_sign_in(request: Request) -> Response:
     f = await oauth.form_body(request)
     typed = f.get("user_code", "")
     address = client_address(request)
-    if _wrong_codes_by_address.blocked(address_key(address)):
+    if await _wrong_codes_by_address.blocked(address_key(address)):
         return _code_form(typed, "Too many wrong codes. Try again later.", 429)
     user_code = normalize_user_code(typed)
     device = await oauth.store.device_by_user_code(_user_code_id(user_code))
     if device is None:
-        _wrong_codes_by_address.record(address_key(address))
+        await _wrong_codes_by_address.record(address_key(address))
         return _code_form(typed, "That code is wrong or has expired.", 400)
     if device["status"] != "pending":
         return _decided_page(device)
@@ -373,7 +387,7 @@ async def device_code_grant(f: dict[str, str]) -> dict[str, Any]:
         raise oauth.OAuthError("expired_token")
     if device["status"] == "pending":
         # Counted only for a real grant, so made-up codes take no slot.
-        if not _polls.allow(device["id"]):
+        if _polled_too_soon(device["id"]):
             raise oauth.OAuthError("slow_down")
         raise oauth.OAuthError("authorization_pending")
     if device["status"] != "approved":

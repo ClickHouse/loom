@@ -1,4 +1,4 @@
-"""Boot DDL and provider publication share a cross-process fence."""
+"""Boot DDL never starts during a provider rebuild, and never runs under the provider lock."""
 
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, Mock
@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from server import boot
+from server.insights.app import provider_barrier
 from server.insights.store import provider_configuration, provider_lock
 
 
@@ -16,10 +17,12 @@ def setup(monkeypatch):
     migration = Mock(return_value=0)
     pending = Mock(return_value=["024_new.sql"])
     owned = []
+    events = []
 
     @asynccontextmanager
-    async def lock(**kwargs):
-        assert kwargs["wait_s"] == boot.settings.boot_migrate_lease_wait_s
+    async def lock(*, wait_s=5):
+        assert wait_s == boot.settings.boot_migrate_lease_wait_s
+        events.append("lock")
         owned.append(True)
         try:
             yield
@@ -27,6 +30,12 @@ def setup(monkeypatch):
             owned.pop()
 
     monkeypatch.setattr(provider_lock, "configuration_lock", lock)
+    monkeypatch.setattr(
+        provider_barrier,
+        "enroll_before_migrations",
+        AsyncMock(side_effect=lambda _ch: events.append("enrolled")),
+    )
+    client.events = events
     rows = AsyncMock(return_value=[])
     monkeypatch.setattr(provider_configuration, "configurations", rows)
     execute = Mock(return_value=0)
@@ -35,21 +44,19 @@ def setup(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_installed_schema_migrations_hold_fence_for_whole_run(setup):
+async def test_migrations_run_under_the_migrate_lease_alone_after_enrolling(setup):
+    """A replica killed mid-migration must not leave the provider lock held."""
     client, migrate, pending, _, execute, owned = setup
 
     def run(*args, **kwargs):
-        assert owned
+        assert not owned
         return 7
 
     execute.side_effect = run
     assert (
-        await boot.run_fenced_boot_migrations(
-            client, migrate, "lock", enabled=True, pending=pending
-        )
-        == 7
+        await boot.run_fenced_boot_migrations(client, migrate, enabled=True, pending=pending) == 7
     )
-    assert not owned
+    assert client.events == ["enrolled", "lock"]
 
 
 @pytest.mark.asyncio
@@ -60,14 +67,10 @@ async def test_pending_rebuild_never_runs_boot_ddl(setup, missing):
     pending.return_value = missing
     if missing:
         with pytest.raises(RuntimeError, match="Finish the provider rebuild"):
-            await boot.run_fenced_boot_migrations(
-                client, migrate, "lock", enabled=True, pending=pending
-            )
+            await boot.run_fenced_boot_migrations(client, migrate, enabled=True, pending=pending)
     else:
         assert (
-            await boot.run_fenced_boot_migrations(
-                client, migrate, "lock", enabled=True, pending=pending
-            )
+            await boot.run_fenced_boot_migrations(client, migrate, enabled=True, pending=pending)
             == 0
         )
     execute.assert_not_called()
@@ -77,26 +80,10 @@ async def test_pending_rebuild_never_runs_boot_ddl(setup, missing):
 async def test_first_install_predates_provider_lock_table(setup):
     client, migrate, pending, rows, execute, owned = setup
     client.query_one.return_value = {"n": 0}
-    await boot.run_fenced_boot_migrations(client, migrate, "lock", enabled=True, pending=pending)
+    await boot.run_fenced_boot_migrations(client, migrate, enabled=True, pending=pending)
     execute.assert_called_once()
     rows.assert_not_awaited()
     assert not owned
-
-
-@pytest.mark.asyncio
-async def test_an_upgrade_without_keeper_migrates_without_the_provider_lock(setup):
-    # provider_configuration exists, the KeeperMap lock table does not.
-    client, migrate, pending, rows, execute, owned = setup
-    client.query_one.side_effect = [{"n": 1}, {"n": 0}]
-    execute.side_effect = lambda *args, **kwargs: 0 if not owned else 9
-    assert (
-        await boot.run_fenced_boot_migrations(
-            client, migrate, "lock", enabled=True, pending=pending
-        )
-        == 0
-    )
-    execute.assert_called_once()
-    rows.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -104,10 +91,7 @@ async def test_noop_restart_requires_no_keeper_and_never_invokes_migration_runne
     client, migrate, pending, rows, execute, _ = setup
     pending.return_value = []
     assert (
-        await boot.run_fenced_boot_migrations(
-            client, migrate, "lock", enabled=True, pending=pending
-        )
-        == 0
+        await boot.run_fenced_boot_migrations(client, migrate, enabled=True, pending=pending) == 0
     )
     client.query_one.assert_not_awaited()
     rows.assert_not_awaited()
@@ -117,7 +101,7 @@ async def test_noop_restart_requires_no_keeper_and_never_invokes_migration_runne
 @pytest.mark.asyncio
 async def test_disabled_migrations_require_no_new_schema_or_lock(setup):
     client, migrate, pending, rows, execute, _ = setup
-    await boot.run_fenced_boot_migrations(client, migrate, "lock", enabled=False, pending=pending)
+    await boot.run_fenced_boot_migrations(client, migrate, enabled=False, pending=pending)
     client.query_one.assert_not_awaited()
     rows.assert_not_awaited()
     assert execute.call_args.kwargs["enabled"] is False
@@ -129,9 +113,7 @@ async def test_unknown_schema_status_never_bypasses_provider_fence(setup, unknow
     client, migrate, pending, rows, execute, _ = setup
     client.query_one.return_value = unknown
     with pytest.raises(RuntimeError, match="Cannot establish"):
-        await boot.run_fenced_boot_migrations(
-            client, migrate, "lock", enabled=True, pending=pending
-        )
+        await boot.run_fenced_boot_migrations(client, migrate, enabled=True, pending=pending)
     execute.assert_not_called()
     rows.assert_not_awaited()
 
@@ -149,9 +131,7 @@ async def test_boot_forgets_a_pending_schema_a_sibling_applied(setup, missing):
     ch_schema_guard._schema_guard["tables"] = {"_provider_participants": "023_x.sql"}
     try:
         assert (
-            await boot.run_fenced_boot_migrations(
-                client, migrate, "lock", enabled=True, pending=pending
-            )
+            await boot.run_fenced_boot_migrations(client, migrate, enabled=True, pending=pending)
             == 0
         )
         assert ch_schema_guard._schema_guard["at"] is None
@@ -169,9 +149,7 @@ async def test_failed_boot_migrations_keep_the_cache(setup):
     ch_schema_guard._schema_guard["at"] = 1e12
     try:
         assert (
-            await boot.run_fenced_boot_migrations(
-                client, migrate, "lock", enabled=True, pending=pending
-            )
+            await boot.run_fenced_boot_migrations(client, migrate, enabled=True, pending=pending)
             == 3
         )
         assert ch_schema_guard._schema_guard["at"] == 1e12
@@ -193,8 +171,6 @@ async def test_a_lock_still_missed_after_the_wait_fails_the_start(setup, monkeyp
 
     monkeypatch.setattr(provider_lock, "configuration_lock", missed)
     with pytest.raises(provider_lock.ConfigurationLockUnavailable):
-        await boot.run_fenced_boot_migrations(
-            client, migrate, "lock", enabled=True, pending=pending
-        )
+        await boot.run_fenced_boot_migrations(client, migrate, enabled=True, pending=pending)
     pending.assert_called_once()
     execute.assert_not_called()

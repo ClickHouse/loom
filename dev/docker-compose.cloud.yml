@@ -15,7 +15,9 @@
 #   - loom          the web tier, LOOM_WEB_WORKERS processes, :7777,
 #                   LOOM_BACKGROUND_WORKERS=off
 #   - loom-workers  the WorkerSupervisor and every background worker, one
-#                   process, no published port, LOOM_BACKGROUND_WORKERS=on
+#                   process, no published port, LOOM_BACKGROUND_WORKERS=auto
+#                   (the ClickHouse lease: two hosts running this file still
+#                   run one supervisor)
 #
 # Why two: with one service the process that won the supervisor lease
 # served requests 2-3x slower at the tail (memory.get p90 148 ms vs 74-79 ms
@@ -36,11 +38,11 @@ x-loom-common: &loom-common
       LOOM_EMBEDDING_MODEL: "${LOOM_EMBEDDING_MODEL:-}"
       LOOM_BUILD_COMMIT: "${LOOM_BUILD_COMMIT:-unknown}"
   restart: unless-stopped
-  # Uvicorn waits up to LOOM_GRACEFUL_SHUTDOWN_S (10 s) for
-  # in-flight requests, then the lifespan drains run (supervisor ≤ 10 s,
-  # events emitter ≤ 5 s, events stream ≤ 5 s). Docker's default 10 s grace
-  # would SIGKILL that sequence mid-drain.
-  stop_grace_period: 45s
+  # SIGTERM: 15 s not ready while serving (LOOM_SHUTDOWN_READY_DELAY_S), then
+  # uvicorn waits up to LOOM_GRACEFUL_SHUTDOWN_S (10 s) for in-flight
+  # requests, then the lifespan drains (≤ 40 s together) and participant
+  # retirement. Docker's default 10 s grace would SIGKILL that sequence.
+  stop_grace_period: 75s
   # The image's default of 1024 open files is too low: a connector that leaks
   # CLOSED TCP sockets can exhaust it within hours and every request then
   # fails. This is headroom; /v1/health → 503 and the per-worker fd gauge are
@@ -60,11 +62,6 @@ x-loom-common: &loom-common
     # (docs/operations/code-index-operations.md). Harmless when the code plane is
     # disabled — the directory just sits empty.
     - ../var/code_repos:/app/var/code_repos
-    # The supervisor flock lives on a volume both containers
-    # mount, so `LOOM_BACKGROUND_WORKERS=auto` on either side would still
-    # elect one supervisor across the pair. The services below pin
-    # off/on and never contend; the shared path is the safety net.
-    - loom-run:/app/var/run
 
 services:
   loom:
@@ -84,9 +81,6 @@ services:
       # One process unless .env names a count: the image's own default (one per
       # CPU) would change an existing deployment's size on upgrade.
       LOOM_WEB_WORKERS: "${LOOM_WEB_WORKERS:-1}"
-      LOOM_SUPERVISOR_LOCK_PATH: /app/var/run/supervisor.lock
-      # Graph-write marks shared by the web workers and the workers container.
-      LOOM_GRAPH_WRITE_MARKS_DIR: /app/var/run/graph-marks
       # This IS the deployment — the only place LOOM_DEPLOYMENT
       # is set — and its rows carry the label `deploy:web`.
       LOOM_DEPLOYMENT: "1"
@@ -101,14 +95,14 @@ services:
           "CMD",
           "python",
           "-c",
-          "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:7777/v1/health', timeout=3).status==200 else 1)",
+          "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:7777/v1/health/ready', timeout=3).status==200 else 1)",
         ]
       interval: 10s
       timeout: 5s
       retries: 6
-      # Server lifespan applies pending migrations on boot — generous
-      # start_period covers a fresh CH applying every migration in order.
-      start_period: 45s
+      # Readiness, not liveness. A boot can wait up to 900 s on another
+      # process's migration lease before it applies or finds nothing pending.
+      start_period: 900s
 
   loom-workers:
     # The per-server runtime files (server/core/runtime_files.py), empty on every start.
@@ -127,19 +121,21 @@ services:
     # The workers' process boots the same lifespan (migrations under the same
     # ledger — whichever container applies them first, the other finds
     # nothing pending), then runs the WorkerSupervisor. One uvicorn process:
-    # it serves /v1/health on an internal port for the healthcheck and the
-    # `?include=workers` view (`docker exec loom-workers curl
+    # it serves /v1/health/ready on an internal port for the healthcheck and
+    # /v1/health for the `?include=workers` view (`docker exec loom-workers curl
     # localhost:7778/v1/health?include=workers`), nothing else reaches it.
     environment:
       LOOM_BLOB_DIR: /app/var/blobs
-      LOOM_BACKGROUND_WORKERS: "on"
+      LOOM_BACKGROUND_WORKERS: "auto"
       LOOM_WEB_WORKERS: "1"
-      LOOM_SUPERVISOR_LOCK_PATH: /app/var/run/supervisor.lock
-      # Graph-write marks shared by the web workers and the workers container.
-      LOOM_GRAPH_WRITE_MARKS_DIR: /app/var/run/graph-marks
+      # The workers run in this process itself, not a child: it serves no
+      # traffic for them to slow down.
+      LOOM_WORKERS_PROCESS: "inline"
       PORT: "7778"
       LOOM_DEPLOYMENT: "1"
       LOOM_INSTANCE_LABEL: "deploy:workers"
+      # No load balancer routes here: its row is not a rate-limit replica.
+      LOOM_SERVES_TRAFFIC: "false"
       # No published port.
       LOOM_BIND_HOST: "127.0.0.1"
       # The shared rate table is one per server (server/core/runtime_files.py).
@@ -152,13 +148,12 @@ services:
           "CMD",
           "python",
           "-c",
-          "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:7778/v1/health', timeout=3).status==200 else 1)",
+          "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:7778/v1/health/ready', timeout=3).status==200 else 1)",
         ]
       interval: 10s
       timeout: 5s
       retries: 6
-      start_period: 45s
+      start_period: 900s
 
 volumes:
   loom-blob-data:
-  loom-run:

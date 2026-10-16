@@ -303,7 +303,7 @@ _CENSUS: tuple[Substrate, ...] = (
     # The knowledge plane: chunk text, and the whole documents with their
     # uploaded originals. Namespace-only (no user axis). A chunk is live by the
     # predicate every reader and the step's count use; a document by its own
-    # `superseded_at`, or while its original is still on disk.
+    # `superseded_at`, or while its original is not erased yet; an original by its row.
     Substrate("loom.chunks", LIVE_CHUNK_SQL, None, "chunks.supersede", None, final=False),
     Substrate(
         "loom.documents",
@@ -312,6 +312,7 @@ _CENSUS: tuple[Substrate, ...] = (
         "documents.tombstone",
         None,
     ),
+    Substrate("loom.document_blobs", "1", None, "documents.tombstone", None, final=False),
 )
 
 # Steps that mutate a table the census does not count, with the reason. The
@@ -379,7 +380,7 @@ STEP_ONLY_TABLES: dict[str, tuple[str, ...]] = {
     "term_aggregates.delete": TERM_AGGREGATE_TABLES,
     "code_index.purge": CODE_INDEX_STEP_ONLY_TABLES,
     # Who began each still-open run (KeeperMap: ids and user ids, no run text);
-    # dropped beside the runs, not counted (absent on a server without a Keeper).
+    # dropped beside the runs, not counted.
     "agent_runs.delete": ("loom.agent_run_claims",),
 }
 
@@ -397,8 +398,8 @@ NO_MEMORY_CONTENT: dict[str, str] = {
     ),
     # -- configuration, not content ------------------------------------------
     "loom.deployment_config": (
-        "The main Loom's published deployment settings for read-replicas (one JSON row, "
-        "secrets stripped) — configuration, keyed by name, holding no memory, "
+        "The deployment's published settings every replica checks itself against (one "
+        "JSON row, secrets stripped) — configuration, keyed by name, holding no memory, "
         "conversation, document or code content."
     ),
     "loom.provider_configuration": (
@@ -425,7 +426,7 @@ NO_MEMORY_CONTENT: dict[str, str] = {
         "label, fence, lease_until) — identifiers only, deleted on the terminal transition."
     ),
     "loom.task_claims": (
-        "The append-only claim arbitration log where no Keeper exists "
+        "The claim arbitration log a build before 033 wrote without a Keeper "
         "(task id, fence, claimant label, timestamp) — identifiers only, no task text."
     ),
     "loom.task_webhook_cursor": (
@@ -490,12 +491,26 @@ NO_MEMORY_CONTENT: dict[str, str] = {
     "loom.agent_cost_rollup_daily": "cost aggregates per (org, namespace, agent, day, operation).",
     "loom.agent_turn_usage": "token counts and cost per turn; no text.",
     "loom.namespace_write_marks": "last-write marks per plane (AggregatingMergeTree).",
+    "loom.namespace_write_keys": "each namespace's last-write time as a Keeper key.",
+    "loom.graph_projections": (
+        "ids and start times of graph projections in flight and each namespace's last "
+        "graph-write time, as Keeper keys."
+    ),
+    "loom.auth_attempts": "keyed hashes of sign-in identifiers and client addresses; 1-day TTL.",
+    "loom.keyring_readers": "each process's host, pid and keyring refresh interval; 1-day TTL.",
+    "loom.carry_acks": "each process's host, pid and column-list fingerprints; 1-day TTL.",
+    "loom.instances": "one heartbeat row per Loom process: build, fingerprints, host; no content.",
+    "loom.frontend_assets": "the dashboard's built JS, CSS and fonts; no tenant data; 30-day TTL.",
+    "loom.embedder_calibration": "similarity thresholds per embedder model; no content.",
+    "loom.usage_acted_credits": "hashes of credited write/read pairs; no text; 3-day TTL.",
     "loom.policy_decisions": (
         "request-level policy verdicts: rule ids, error codes, latency; no memory text; "
         "90-day TTL ages the identity columns out."
     ),
     # -- namespace registry and configuration ---------------------------------
     "loom.namespaces": "namespace registry and per-namespace settings.",
+    "loom.signing_keys": "token signing keys, sealed with the root secret; no subject data.",
+    "loom.runtime_overrides": "operator rate-limit and latency-budget overrides; numbers only.",
     "loom.namespace_types": "per-type retention/dedup configuration.",
     "loom.namespace_grants": "access grants (subject, role).",
     "loom.namespace_visits": "last-seen per (subject, namespace) for the namespace picker.",

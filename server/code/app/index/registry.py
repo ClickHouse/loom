@@ -1,7 +1,7 @@
 """Register code namespaces in the namespace directory.
 
 The code plane keys every row on (org, namespace); without a loom.namespaces row its
-namespaces would be invisible to the /me sidebar, un-mintable from Setup, and
+namespaces would be invisible to the dashboard's sidebar, un-mintable from Setup, and
 indistinguishable from memory namespaces. Each ingest pass calls
 ensure_registered() once per process per repo entry: if no directory row exists, insert
 one with kind='code' and visibility='private' (read access stays grant-driven — see

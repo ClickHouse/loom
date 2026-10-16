@@ -76,7 +76,7 @@ function PasswordGate({ onLogin, reason = null }: TokenGateProps) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [errRequestId, setErrRequestId] = useState<string>("");
-  // Read availability off the boot snippet the /me handler templates in. The server knows
+  // Read availability off the boot snippet the dashboard handler templates in. The server knows
   // the answer; probing with a real signup for a throwaway namespace would be a read that
   // writes (it claims the namespace on a fresh instance).
   const [signupAvailable] = useState<boolean>(() => window.__LOOM_SELF_SIGNUP !== false);
@@ -272,8 +272,7 @@ function PasswordGate({ onLogin, reason = null }: TokenGateProps) {
               {name.trim() && (
                 <div className="mt-3 px-3 py-2 text-xs text-[var(--color-text-muted)] bg-[var(--color-surface-2)] rounded-md">
                   You'll own <span className="font-mono text-[var(--color-text)]">{name.trim()}</span> — your private
-                  space. You can create more namespaces later from{" "}
-                  <span className="font-mono text-[var(--color-text)]">/me</span>.
+                  space. You can create more namespaces later from the dashboard.
                 </div>
               )}
               <button
@@ -299,8 +298,8 @@ function PasswordGate({ onLogin, reason = null }: TokenGateProps) {
         </p>
         <p className="text-center mt-2 text-2xs text-[var(--color-text-subtle)] leading-relaxed">
           Running this yourself? Mint a token with <code>loom mint-token …</code> and open{" "}
-          <code>/me#token=&lt;jwt&gt;</code>, or set <code>LOOM_AUTH_REQUIRED=false</code> for a single-user install.
-          See{" "}
+          <code>&lt;server&gt;/#token=&lt;jwt&gt;</code>, or set <code>LOOM_AUTH_REQUIRED=false</code> for a single-user
+          install. See{" "}
           <a
             href={DOCS_TOKENS_URL}
             target="_blank"

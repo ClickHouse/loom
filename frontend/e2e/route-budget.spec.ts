@@ -14,26 +14,26 @@ const LONG_TASK_BUDGET_MS = 1500;
 const CALL_BUDGET = 12;
 
 const ROUTES: Array<[string, string]> = [
-  ["Memories", "/me/memories"],
-  ["Recall", "/me/recall"],
-  ["Settings", "/me/settings"],
-  ["Repositories", "/me/repositories"],
-  ["Flow", "/me/flow"],
-  ["Library", "/me/library"],
-  ["Conversations", "/me/conversations"],
-  ["Graph", "/me/graph"],
-  ["Spaces", "/me/spaces"],
-  ["Profile", "/me/profile"],
-  ["Runs", "/me/runs"],
-  ["Tasks", "/me/tasks"],
-  ["Review queue", "/me/admin/review_queue"],
-  ["Health", "/me/admin/health"],
-  ["Guardrails", "/me/admin/guardrails"],
-  ["Policies", "/me/admin/policies"],
-  ["Activity", "/me/admin/activity"],
-  ["Usage", "/me/admin/usage"],
-  ["Agents", "/me/admin/agents"],
-  ["Users", "/me/admin/users"],
+  ["Memories", "/memories"],
+  ["Recall", "/recall"],
+  ["Settings", "/settings"],
+  ["Repositories", "/repositories"],
+  ["Flow", "/flow"],
+  ["Library", "/library"],
+  ["Conversations", "/conversations"],
+  ["Graph", "/graph"],
+  ["Spaces", "/spaces"],
+  ["Profile", "/profile"],
+  ["Runs", "/runs"],
+  ["Tasks", "/tasks"],
+  ["Review queue", "/admin/review_queue"],
+  ["Health", "/admin/health"],
+  ["Guardrails", "/admin/guardrails"],
+  ["Policies", "/admin/policies"],
+  ["Activity", "/admin/activity"],
+  ["Usage", "/admin/usage"],
+  ["Agents", "/admin/agents"],
+  ["Users", "/admin/users"],
 ];
 
 for (const [name, path] of ROUTES) {
@@ -53,7 +53,7 @@ for (const [name, path] of ROUTES) {
       }
     });
     // The Runs route renders rows, projected by the request's fields — a field the page reads but did not ask for fails here.
-    await installApi(page, path === "/me/runs" ? { runRows: 12 } : {});
+    await installApi(page, path === "/runs" ? { runRows: 12 } : {});
     // A route that crashes still paints its heading (the error boundary's), so the budget listens for the crash itself.
     const crashes: string[] = [];
     page.on("pageerror", (e) => crashes.push(String(e.message).slice(0, 160)));

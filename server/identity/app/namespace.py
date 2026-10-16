@@ -472,7 +472,8 @@ async def handle_namespace_list(input: NamespaceListInput) -> NamespaceListOutpu
                 warm_days=int(r.get("warm_days") or 0),
                 visibility=r.get("visibility") or "private",
                 created_at=r["created_at"],
-                updated_at=r["updated_at"],
+                # An auto-registered row's version is the epoch; it was last changed when made.
+                updated_at=max(r["updated_at"], r["created_at"]),
             )
             for r in rows
         ]
@@ -561,7 +562,7 @@ async def handle_namespace_get(input: NamespaceGetInput) -> NamespaceGetOutput:
         # caller to this row, so the word says nothing the caller could not read.
         classification=("restricted" if row.get("classification") == "restricted" else "standard"),
         created_at=row["created_at"],
-        updated_at=row["updated_at"],
+        updated_at=max(row["updated_at"], row["created_at"]),
     )
 
 

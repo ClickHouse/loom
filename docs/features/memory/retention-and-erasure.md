@@ -122,8 +122,9 @@ flowchart TD
   summaries, links) are tombstoned, and `memory.restore` can still revive them inside the
   window; `erasure.list` reports such revivals as `reversals_count`. `purge=true` deletes
   the rows instead (a lightweight `DELETE FROM` on the wide tables).
-- **Uploaded originals** of knowledge documents are deleted from the blob store first,
-  and `blob_erased_at` is stamped.
+- **Uploaded originals** of knowledge documents: the namespace's rows of
+  `loom.document_blobs` are deleted first, and `blob_erased_at` is stamped. The census
+  counts that table.
 
 ### The federated cascade
 

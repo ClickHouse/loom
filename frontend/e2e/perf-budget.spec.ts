@@ -19,9 +19,7 @@ const LONG_TASK_BUDGET_MS = 2500;
 // a closed dialog, a forced layout or a per-row formatter creeps back into every boot.
 const SHELL_LONG_TASK_BUDGET_MS = 1200;
 
-test("boot on /me/memories: LCP within budget at 4x CPU, fonts preloaded, boot reads leave together", async ({
-  page,
-}) => {
+test("boot on /memories: LCP within budget at 4x CPU, fonts preloaded, boot reads leave together", async ({ page }) => {
   await page.addInitScript(() => {
     window.__lcp = 0;
     try {
@@ -42,7 +40,7 @@ test("boot on /me/memories: LCP within budget at 4x CPU, fonts preloaded, boot r
     if (u.pathname.startsWith("/v1/")) requested.push(u.pathname.replace("/v1/", ""));
   });
 
-  await page.goto("/me/memories", { waitUntil: "domcontentloaded" });
+  await page.goto("/memories", { waitUntil: "domcontentloaded" });
   await expect(page.locator("main").getByRole("heading", { name: "Memories" }).first()).toBeVisible();
   await page.waitForTimeout(1500); // let LCP settle
 
@@ -111,7 +109,7 @@ async function renderBudget(
 
 test("Memories with 100 rows: DOM nodes and long tasks within budget at 4x CPU", async ({ page }) => {
   await installApi(page, { memoryRows: ROWS });
-  const m = await renderBudget(page, "/me/memories", "Memories", /^alerts\/2026-09-19\/\d{4}$/, ROWS);
+  const m = await renderBudget(page, "/memories", "Memories", /^alerts\/2026-09-19\/\d{4}$/, ROWS);
   expect(m.shown, "every row is in the DOM (no virtualisation — containment instead)").toBe(ROWS);
   expect(
     m.nodes,
@@ -125,7 +123,7 @@ test("Memories with 100 rows: DOM nodes and long tasks within budget at 4x CPU",
 
 test("Library with 100 rows: DOM nodes and long tasks within budget at 4x CPU", async ({ page }) => {
   await installApi(page, { knowledgeRows: ROWS });
-  const m = await renderBudget(page, "/me/library", "Library", /^Runbook \d+: lane \d recovery$/, ROWS);
+  const m = await renderBudget(page, "/library", "Library", /^Runbook \d+: lane \d recovery$/, ROWS);
   expect(m.shown, "every row is in the DOM").toBe(ROWS);
   expect(
     m.nodes,
@@ -148,7 +146,7 @@ test("opening a card is one read until a section is opened", async ({ page }) =>
     const u = new URL(r.url());
     if (u.pathname.startsWith("/v1/")) requested.push(u.pathname.replace("/v1/", ""));
   });
-  await page.goto("/me/memories", { waitUntil: "domcontentloaded" });
+  await page.goto("/memories", { waitUntil: "domcontentloaded" });
   const first = page.locator("[data-memory-key]").first();
   await expect(first).toBeVisible();
   await page.waitForTimeout(500);
@@ -186,7 +184,7 @@ test("the Memories search asks for memory legs only and aborts a stale search", 
     const u = new URL(r.url());
     if (u.pathname === "/v1/memory.search") aborted.push(r.failure()?.errorText ?? "failed");
   });
-  await page.goto("/me/memories", { waitUntil: "domcontentloaded" });
+  await page.goto("/memories", { waitUntil: "domcontentloaded" });
   await expect(page.locator("[data-memory-key]").first()).toBeVisible();
   const box = page.getByLabel("Search memories");
   await box.fill("e"); // one character is not a query
@@ -207,7 +205,7 @@ test("the Memories search asks for memory legs only and aborts a stale search", 
 // show; the list answers nothing else.
 test("the Memories list asks for the twelve fields the page reads and a 160-character preview", async ({ page }) => {
   const calls = await installApi(page, { memoryRows: 12 });
-  await page.goto("/me/memories", { waitUntil: "domcontentloaded" });
+  await page.goto("/memories", { waitUntil: "domcontentloaded" });
   await expect(page.locator("[data-memory-key]").first()).toBeVisible();
   await expect.poll(() => calls.list.length).toBeGreaterThanOrEqual(1);
   const body = calls.list[0];
@@ -237,7 +235,7 @@ test("the Memories list asks for the twelve fields the page reads and a 160-char
 // The Profile page builds its sections from the list; a row is read only when the list says its value was cut.
 test("the Profile page reads its sections once when they fit the preview", async ({ page }) => {
   const calls = await installApi(page, { profileRows: 3 });
-  await page.goto("/me/profile", { waitUntil: "domcontentloaded" });
+  await page.goto("/profile", { waitUntil: "domcontentloaded" });
   await expect(page.getByLabel("Select section role")).toBeVisible();
   await page.waitForTimeout(600);
   const lists = calls.memory.filter((p) => p === "/v1/memory.list").length;
@@ -259,7 +257,7 @@ test("the shell issues no scrollTo on a fresh boot", async ({ page }) => {
       Reflect.apply(orig, this, args);
     };
   });
-  await page.goto("/me/runs", { waitUntil: "domcontentloaded" });
+  await page.goto("/runs", { waitUntil: "domcontentloaded" });
   await expect(page.locator("main").locator("h1, h2").first()).toBeVisible();
   await page.waitForTimeout(600);
   expect(await page.evaluate(() => window.__scrolls), "no scrollTo before or after first paint on a fresh boot").toBe(
@@ -270,7 +268,7 @@ test("the shell issues no scrollTo on a fresh boot", async ({ page }) => {
 // The Library page asks for the eleven fields its rows read; the 24 kB content_preview no row renders stays on the server.
 test("the Library list asks for the fields its rows read and no content preview", async ({ page }) => {
   const calls = await installApi(page, { knowledgeRows: 12 });
-  await page.goto("/me/library", { waitUntil: "domcontentloaded" });
+  await page.goto("/library", { waitUntil: "domcontentloaded" });
   await expect(page.getByText("Runbook 0: lane 0 recovery")).toBeVisible();
   await expect.poll(() => calls.knowledge.length).toBeGreaterThanOrEqual(1);
   const fields = stringArray(calls.knowledge[0].fields) ?? [];
@@ -297,7 +295,7 @@ test("an idle Memories tab issues only its watermark poll and runs no long task"
   });
   const cdp = await page.context().newCDPSession(page);
   await cdp.send("Emulation.setCPUThrottlingRate", { rate: 4 });
-  await page.goto("/me/memories", { waitUntil: "domcontentloaded" });
+  await page.goto("/memories", { waitUntil: "domcontentloaded" });
   await expect(page.locator("[data-memory-key]").first()).toBeVisible();
   await page.waitForTimeout(2500);
   const calls: string[] = [];
@@ -321,7 +319,7 @@ test("an idle Memories tab issues only its watermark poll and runs no long task"
 // The Activity page asks for the four fields its rows read.
 test("the Activity list asks for the fields its rows read", async ({ page }) => {
   const calls = await installApi(page);
-  await page.goto("/me/admin/activity", { waitUntil: "domcontentloaded" });
+  await page.goto("/admin/activity", { waitUntil: "domcontentloaded" });
   await expect.poll(() => calls.audit.length).toBeGreaterThanOrEqual(1);
   expect(calls.audit[0].fields).toEqual(["ts", "event_type", "actor", "subject"]);
 });
@@ -347,7 +345,7 @@ test("Memories interactions: typing, clearing, opening and closing a card stay u
   });
   const cdp = await page.context().newCDPSession(page);
   await cdp.send("Emulation.setCPUThrottlingRate", { rate: 4 });
-  await page.goto("/me/memories", { waitUntil: "domcontentloaded" });
+  await page.goto("/memories", { waitUntil: "domcontentloaded" });
   await expect(page.locator("[data-memory-key]").first()).toBeVisible();
   await page.waitForTimeout(2000);
   const worst = async (label: string, fn: () => Promise<void>) => {
@@ -395,7 +393,7 @@ test("the shell alone: long tasks within budget at 4x CPU on a light page", asyn
   });
   const cdp = await page.context().newCDPSession(page);
   await cdp.send("Emulation.setCPUThrottlingRate", { rate: 4 });
-  await page.goto("/me/runs", { waitUntil: "domcontentloaded" });
+  await page.goto("/runs", { waitUntil: "domcontentloaded" });
   await expect(page.locator("main").getByRole("heading", { name: "Runs" }).first()).toBeVisible();
   await page.waitForTimeout(1500);
   const longTaskMs = await page.evaluate(() => window.__lt.reduce((a, b) => a + b, 0));

@@ -14,10 +14,10 @@ from loom.errors import (
     BackendUnavailable,
     CodedWidthMismatch,
     IdempotentConflict,
+    IdempotentInProgress,
     LoomError,
     NotFound,
     Overloaded,
-    OverrideNotShared,
     PreconditionFailed,
     RateLimited,
     SchemaPending,
@@ -122,15 +122,20 @@ _SERVER_CODE_CLASSES: dict[str, type[LoomError]] = {
     "BACKEND_UNAVAILABLE": BackendUnavailable,
     "BACKEND_TIMEOUT": BackendTimeout,
     "SCHEMA_PENDING": SchemaPending,
-    "OVERRIDE_NOT_SHARED": OverrideNotShared,
     "CODED_WIDTH_MISMATCH": CodedWidthMismatch,
     "POLICY_FORBIDDEN": AuthInsufficient,
     "EMBED_TIMEOUT": BackendUnavailable,  # a 503 with no SDK class: mapped by status
     "GRANT_BUSY": BackendUnavailable,
+    "NO_SIGNING_KEY": BackendUnavailable,  # a 503 with no SDK class: mapped by status
+    "OVERRIDE_NOT_STORED": LoomError,  # a 409 refusal by ClickHouse: no precondition, not retried
+    "ENTRY_LEASE_NOT_HELD": PreconditionFailed,  # the uploading pass no longer holds its entry
 }
 
 
 def test_every_server_error_maps_to_its_documented_sdk_class() -> None:
+    import server.auth.keyring  # defines NO_SIGNING_KEY
+    import server.code.app.ingest  # defines ENTRY_LEASE_NOT_HELD
+    import server.core.runtime_overrides  # defines OVERRIDE_NOT_STORED
     import server.identity.app.policy_gate  # noqa: F401 — defines POLICY_FORBIDDEN
 
     def subclasses(cls: type[LoomServerError]) -> list[type[LoomServerError]]:
@@ -142,3 +147,16 @@ def test_every_server_error_maps_to_its_documented_sdk_class() -> None:
         e = from_response({"detail": {"code": code, "message": "m"}}, cls.status_code)
         assert type(e) is _SERVER_CODE_CLASSES[code], (code, cls.status_code, type(e))
         assert e.code == code and e.status == cls.status_code
+
+
+def test_a_key_still_running_is_retryable_after_its_retry_after() -> None:
+    """The transport's answers, which no server error class raises."""
+    e = from_response(
+        {"detail": {"code": "IDEMPOTENT_IN_PROGRESS", "message": "m", "in_progress": True}},
+        503,
+        retry_after_s=1,
+    )
+    assert type(e) is IdempotentInProgress and isinstance(e, BackendUnavailable)
+    assert e.retry_after_s == 1.0
+    e = from_response({"detail": {"code": "IDEMPOTENT_CONFLICT", "message": "m"}}, 409)
+    assert type(e) is IdempotentConflict

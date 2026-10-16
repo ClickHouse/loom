@@ -1,21 +1,8 @@
 """Serving settings reconstructed from the completed rebuild's frozen recipe."""
 
-import hashlib
 import json
 
 from server.core.vectors.prefix import parse_prefix_label
-
-
-def embedding_space_fingerprint(
-    provider: str, model: str, dimensions: int, base_url: str, send_dimensions: bool
-) -> str:
-    """Provider/endpoint identity matters even when two services use the same label."""
-    return hashlib.sha256(
-        json.dumps(
-            [provider, model, dimensions, base_url.rstrip("/"), send_dimensions],
-            separators=(",", ":"),
-        ).encode()
-    ).hexdigest()
 
 
 def serving_vector_settings(

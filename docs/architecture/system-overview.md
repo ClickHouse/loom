@@ -24,7 +24,7 @@ The storage layout is in [ClickHouse](clickhouse.md).
 
 ```mermaid
 flowchart TB
-  clients["Clients<br/>MCP · HTTP · SDKs · /me dashboard"]
+  clients["Clients<br/>MCP · HTTP · SDKs · dashboard"]
   subgraph cp["Control-plane process (FastAPI)"]
     transports["Transports<br/>server/transport"]
     auth["Auth<br/>server/auth"]
@@ -58,7 +58,7 @@ flowchart TB
 | Auth               | `server/auth/`                                        | JWT verification, revocation, role and namespace authorization, OIDC, the OAuth server and self-signup. See [security](security.md).                                                                                                                                                                                                             |
 | Providers          | `server/embedding/`, `server/llm/`                    | Pluggable embedder and LLM clients, each with a deterministic fake. See [LLM architecture](llm-architecture.md).                                                                                                                                                                                                                                 |
 | Observability      | `server/observability/`                               | The per-op ledger (`loom.agent_events`), the batched events stream, audit rows, provider health, OpenTelemetry and Langfuse export.                                                                                                                                                                                                              |
-| Dashboard          | `frontend/` (served from `frontend/dist/` at `/me`)   | React UI over the same HTTP ops. An unbuilt checkout answers `/me` with 503.                                                                                                                                                                                                                                                                     |
+| Dashboard          | `frontend/` (served from `frontend/dist/` at `/`)     | React UI over the same HTTP ops. An unbuilt checkout answers its pages with 503.                                                                                                                                                                                                                                                                 |
 | CLI                | `server/cli/`                                         | The `loom` command: operator actions (migrate, tokens, re-embed, doctor) and a client for the ops. See the [CLI reference](../reference/cli.md).                                                                                                                                                                                                 |
 
 The registry is the whole wire surface. `GET /v1/operations` lists every op with its
@@ -228,31 +228,32 @@ Grants and `ns_roles` carry only `viewer`, `writer` or `admin`; `ORG_ADMIN` and
 
 One image serves every role. Settings decide what a process does:
 
-| Mode                | Settings                                                             | What runs                                                                                                                                                                                                             |
-| ------------------- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| All-in-one          | `LOOM_BACKGROUND_WORKERS=auto` (default)                             | Web tier, and the workers in the process that wins the host lock.                                                                                                                                                     |
-| Web replica         | `LOOM_BACKGROUND_WORKERS=off`                                        | HTTP, MCP and `/me`. Refreshes its own revocation snapshot.                                                                                                                                                           |
-| Workers             | `LOOM_BACKGROUND_WORKERS=on`, or `auto` on a shared lock path        | The supervisor and its workers; `/v1/health` still answers.                                                                                                                                                           |
-| Branch / A-B server | `LOOM_BOOT_MIGRATE=false`, `LOOM_INSTANCE_LABEL=<who>:<what>:<port>` | Serves a shared ClickHouse without applying migrations.                                                                                                                                                               |
-| Read-replica        | `LOOM_READ_REPLICA=true`                                             | Serves the shared data, ops and writes from its own endpoint with the same tokens: no migrations, workers or git mirrors; takes the main Loom's published settings ([read-replicas](../operations/read-replicas.md)). |
+| Mode                | Settings                                                             | What runs                                                                               |
+| ------------------- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| All-in-one          | `LOOM_BACKGROUND_WORKERS=auto` (default)                             | Web tier, and the workers in the process that holds the deployment's ClickHouse lease.  |
+| Web replica         | `LOOM_BACKGROUND_WORKERS=off`                                        | HTTP, MCP and the dashboard. Refreshes its own revocation snapshot and signing keyring. |
+| Workers             | `LOOM_BACKGROUND_WORKERS=on`, or `auto`                              | The supervisor and its workers; `/v1/health` still answers.                             |
+| Branch / A-B server | `LOOM_BOOT_MIGRATE=false`, `LOOM_INSTANCE_LABEL=<who>:<what>:<port>` | Serves a shared ClickHouse without applying migrations; `auto` runs no workers there.   |
 
 `LOOM_WEB_WORKERS` sets uvicorn processes per container (unset, the image starts one per
 CPU the container may use, at most one per GiB of memory and at most 8). Each runs the full
-lifespan; under `auto` the host lock picks the one that runs the workers. `on` takes no
-lock, so it belongs only on a single-process workers container.
+lifespan; under `auto` the deployment's lease picks the one that runs the workers. `on`
+takes no lease, so it belongs only on a single-process workers container.
 
-**Leader election.** `server/workers/leader.py` (`decide_supervisor`) takes an advisory
-`flock` on `LOOM_SUPERVISOR_LOCK_PATH` (default `/tmp/loom-supervisor.lock`). The first
-process to lock it keeps it for its lifetime; the kernel drops a dead leader's lock. In
-`auto`, a process without the lock retries every `LOOM_SUPERVISOR_LEASE_RETRY_S` (5 s) and
-starts the workers when it gets it. That is how the new colour of a blue/green pair takes
-over. A lock path that cannot be opened fails open: the process runs the workers and logs
-it.
+**Leader election.** `server/workers/leader.py` (`decide_supervisor`, `keep_lease`) elects
+one supervisor per deployment through ClickHouse: key `workers_supervisor` in the Keeper
+lock table `loom._migration_lock` (strict KeeperMap, so of two contenders one write
+lands). Expiry is
+judged on the ClickHouse server's clock. The holder renews every
+`LOOM_SUPERVISOR_LEASE_TTL_S / 6` and stops its workers half the TTL after its last
+renewal, or when a renewal finds another holder; when the holder dies, another `auto`
+process takes the lease after `LOOM_SUPERVISOR_LEASE_TTL_S` (default 30 s). The timings
+are in [failure and recovery](failure-and-recovery.md#background-workers). A graceful stop releases it at once, which is
+how the new colour of a blue/green pair takes over.
 
-**Why a file lock:** the fork that creates sibling processes is host-local, so a host lock
-matches it, with no renewal and no clock. It elects one leader per host, not per
-deployment: with several hosts, set `off` on all but one
-([capacity](failure-and-recovery.md#background-workers)).
+**Why ClickHouse:** the processes that may run the workers span containers and hosts,
+and ClickHouse is the one thing they all share. Several hosts can run `auto`; one runs the
+workers ([capacity](failure-and-recovery.md#background-workers)).
 
 ## Boot
 
@@ -261,14 +262,13 @@ The `lifespan` in `server/main.py` runs in every process, in this order (its ste
 
 1. **Launch rule.** A process is the deployment (`LOOM_DEPLOYMENT=1`, set by the compose
    files) or carries a non-empty `LOOM_INSTANCE_LABEL`; otherwise it refuses to start. A
-   deployment that requires auth and signs with the checked-in dev secret refuses too
+   deployment that requires auth with the checked-in dev `LOOM_JWT_SECRET` refuses too
    (`require_real_signing_secret`); only `LOOM_INSTANCE_LABEL=deploy:dev` is exempt.
 2. **Connect** to ClickHouse.
-3. **Migrate** (`LOOM_BOOT_MIGRATE`, on by default). A file lock at
-   `LOOM_BOOT_MIGRATE_LOCK_PATH` serialises one host's processes. Across containers the
-   runner takes a KeeperMap key in `loom._migration_lock`, or a lease row in
-   `loom._migration_lease` without Keeper (`server/core/schema/migrate_lease.py`). A failed migration
-   stops the boot. With `LOOM_BOOT_MIGRATE=false` the process logs pending files and
+3. **Migrate** (`LOOM_BOOT_MIGRATE`, on by default). Every process takes the
+   deployment's migration lock before applying: a KeeperMap key in `loom._migration_lock`
+   (`server/core/schema/migrate_lease.py`). A server without a Keeper, or a failed
+   migration, stops the boot. With `LOOM_BOOT_MIGRATE=false` the process logs pending files and
    reports them on `/v1/health`.
 4. **Start the `agent_events` emitter.**
 5. **Default namespace.** With auth off, give the configured namespace its
@@ -276,9 +276,11 @@ The `lifespan` in `server/main.py` runs in every process, in this order (its ste
 6. **Elect the worker leader.**
 7. **Leader duties.** Apply retention TTL overrides where they differ, and register the
    configured tracker namespaces.
-8. **Revocation.** Load the revoked-token snapshot (`server/auth/revocation.py`). A
-   non-leader refreshes it on its own timer.
-9. **Start the workers** in the leader, or the lease-retry loop in `auto`.
+8. **Token state and overrides.** Load the revoked-token snapshot
+   (`server/auth/revocation.py`) and the signing keyring (`server/auth/keyring.py`); every
+   process refreshes both on its own timer. Start adopting the admin runtime overrides
+   (`loom.runtime_overrides`) every `LOOM_RUNTIME_OVERRIDES_REFRESH_SECONDS`.
+9. **Start the workers** in the leader, and the lease loop in `auto`.
 10. **Provider report.** Log the resolved LLM provider and probe the embedder's dimension.
 11. **Vector features.** Probe the quantized-codes read setting, patch parts and whether
     inserts can skip the vector-index build.
@@ -317,7 +319,7 @@ flowchart LR
     gw["loom-green"]
     gk["loom-green-workers"]
   end
-  shared[("loom-shared volume<br/>rate-limit buckets · locks")]
+  shared[("loom-shared volume<br/>rate-limit buckets")]
   ch[("ClickHouse<br/>Cloud or OSS")]
   lb --> bw
   bw --> ch
@@ -327,15 +329,18 @@ flowchart LR
   gk -.- shared
 ```
 
-- **Server processes hold no durable state.** Cross-replica state (revocations, erasure checkpoints, the
-  blacklist version, the idempotency cache) lives in ClickHouse.
-- **State outside ClickHouse.** Uploaded document originals in a content-addressed blob
-  directory (`LOOM_BLOB_DIR`, default `var/blobs`); the code plane's git mirrors under
-  `var/code_repos`; the rate-limit buckets, supervisor and migration locks and graph write
-  marks as files on the `loom-shared` volume. None is the system of record for memory.
+- **Server processes hold no durable state.** Cross-replica state (revocations, signing
+  keys, runtime overrides, sign-in attempt counts, graph write marks, the supervisor lease,
+  erasure checkpoints, the blacklist version, the idempotency cache) and uploaded document
+  originals live in ClickHouse. A new Loom with the same ClickHouse, env config and
+  `LOOM_JWT_SECRET` gets every feature back.
+- **State outside ClickHouse.** The code plane's git mirrors under `var/code_repos` (a
+  cache: a host without them re-clones); the document originals an older build left in
+  `LOOM_BLOB_DIR` (default `var/blobs`) until `loom blobs import`; the rate-limit buckets on
+  the `loom-shared` volume. None is the system of record.
 - **Two containers, one image.** `dev/docker-compose.cloud.yml` runs `loom-server`
-  (`LOOM_BACKGROUND_WORKERS=off`) and `loom-workers` (`on`), so a long worker pass never
-  shares an event loop with requests.
+  (`LOOM_BACKGROUND_WORKERS=off`) and `loom-workers` (`auto`: it runs the workers while it
+  holds the lease), so a long worker pass never shares an event loop with requests.
 - **Blue/green pair.** `dev/docker-compose.colour.yml` runs two colours behind the proxy;
   `./redeploy.sh` starts the idle colour, waits for health, switches the upstream and
   stops the old one. Rollback needs no schema step because every migration is additive.
@@ -413,7 +418,7 @@ combinations of these. See [memory](../concepts/memory.md).
   errors.
 - A process is the deployment or carries a `LOOM_INSTANCE_LABEL`. A failed boot migration
   stops it before any worker starts.
-- At most one process per lock path holds the supervisor lease under `auto`.
+- At most one process of the deployment holds the supervisor lease under `auto`.
 - ClickHouse is the system of record for every memory-plane row.
 - The server, not the caller, stamps `actor` and `source_class` on memory writes.
 

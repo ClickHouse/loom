@@ -73,7 +73,7 @@ GROUP BY side
 """
 
 # The dashboard's own paint, per route, before and
-# after the swap — the `ui.vitals` rows the /me shell posts once per page
+# after the swap — the `ui.vitals` rows the dashboard shell posts once per page
 # view (route, LCP of the first view, long tasks, DOM nodes, /v1 calls).
 VITALS_SQL = f"""
 SELECT args['route'] AS route,

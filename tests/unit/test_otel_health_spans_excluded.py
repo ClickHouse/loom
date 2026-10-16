@@ -15,8 +15,8 @@ from server.observability import otel
 
 def test_default_excludes_the_health_path(settings_override) -> None:
     assert otel._fastapi_excluded_urls() == "/v1/health,/oauth/"
-    settings_override(otel_excluded_urls=" /v1/health,/me/assets ")
-    assert otel._fastapi_excluded_urls() == "/v1/health,/me/assets,/oauth/"
+    settings_override(otel_excluded_urls=" /v1/health,/assets ")
+    assert otel._fastapi_excluded_urls() == "/v1/health,/assets,/oauth/"
 
 
 def test_sign_in_urls_never_reach_a_trace(settings_override) -> None:

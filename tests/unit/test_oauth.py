@@ -21,7 +21,7 @@ from fastapi.testclient import TestClient
 from server.auth import login, oauth
 from tests.unit.oauth_store_fake import MemoryOAuthStore, oauth_app
 
-pytestmark = pytest.mark.usefixtures("subjects_not_revoked")
+pytestmark = pytest.mark.usefixtures("subjects_not_revoked", "auth_attempts")
 
 
 def _revoke_subject(monkeypatch: pytest.MonkeyPatch, cutoff: int | None) -> None:
@@ -723,7 +723,7 @@ async def test_a_put_back_finishes_though_the_request_is_cancelled_again() -> No
 
 
 async def test_shutdown_lands_a_put_back_its_cancelled_request_left_running() -> None:
-    from server.core import keeper_claims
+    from server.auth import shielded
 
     saved = asyncio.Event()
 
@@ -737,5 +737,5 @@ async def test_shutdown_lands_a_put_back_its_cancelled_request_left_running() ->
     with pytest.raises(asyncio.CancelledError):
         await request
     assert not saved.is_set()
-    await keeper_claims.drain(timeout_s=1)  # what shutdown does before ClickHouse goes
+    await shielded.drain(timeout_s=1)  # what shutdown does before ClickHouse goes
     assert saved.is_set()

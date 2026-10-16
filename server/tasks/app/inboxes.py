@@ -52,6 +52,12 @@ def next_version() -> int:
     return repo.next_version()
 
 
+async def server_version() -> int:
+    """A task event's ``seq`` from the server's clock, as every task event is
+    stamped, so the task cursors order a domain's event across replicas."""
+    return await repo.server_version()
+
+
 async def handle_inbox_register(input: InboxRegisterInput) -> InboxRegisterOutput:
     """Admin side: ``namespace`` is the owner namespace. Re-registering an
     existing inbox writes a new version (a settings edit); ``if_match_version``

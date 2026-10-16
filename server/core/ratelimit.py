@@ -1,9 +1,10 @@
 """Per-(namespace, op-class) token bucket rate limiter.
 
 Configured caps target the deployment-wide rate; each replica's cap is
-`configured / replica_count`. That correction is approximate — a runaway
-tenant can hit each replica fresh, so aggregate burst can be up to N× the
-per-replica burst.
+`configured / replicas`, where replicas is the hosts with a live serving
+`loom.instances` row (`replica_count()`), floored at LOOM_REPLICA_COUNT. That
+correction is approximate — a runaway tenant can hit each replica fresh, so
+aggregate burst can be up to N× the per-replica burst.
 
 Within one replica the web workers share one table: a
 memory-mapped file under /tmp holds the buckets for every process of a
@@ -12,21 +13,22 @@ sees the whole per-replica cap, not 1/N of it. When the table cannot be
 opened, or the server runs one worker, buckets live in this process and
 the cap is divided by the worker count;
 `/v1/health` reports which (`ratelimit.backend`).
+
+Bucket fill is per host on purpose: it refills in seconds, and a ClickHouse
+round trip per request is the wrong trade. The admin overrides are the
+deployment's and live in loom.runtime_overrides (`adopt`).
 """
 
 from __future__ import annotations
 
-import contextlib
+import functools
 import json
 import logging
-import os
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from server.core.numbers import finite_non_negative
-from server.core.shared_document import SharedDocument, server_document, share_override
 from server.settings import settings
 
 if TYPE_CHECKING:
@@ -206,21 +208,31 @@ def _scale_for_replicas(base: Limit, *, shared: bool = False) -> Limit:
     of it: replicas × web workers with per-process buckets, replicas alone
     when the workers share one table.
 
-    Floored at the configured cap (n>=1) so a misconfig doesn't open the throttle.
+    Floored at the configured cap (n>=1) so a misconfig doesn't open the throttle,
+    and the burst at one request.
     """
     n = effective_divisor(shared=shared)
     if n == 1:
         return base
-    return Limit(capacity=base.capacity / n, rate=base.rate / n)
+    # A request costs one token: a share below one would refuse every request.
+    return Limit(capacity=max(1.0, base.capacity / n), rate=base.rate / n)
 
 
 class TokenBucket:
-    __slots__ = ("_clock", "capacity", "last_refill", "rate", "tokens")
+    __slots__ = ("_clock", "capacity", "last_refill", "limit_of", "rate", "tokens")
 
-    def __init__(self, limit: Limit, *, clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(
+        self,
+        limit: Limit,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+        limit_of: Callable[[], Limit | None] | None = None,
+    ) -> None:
         # `clock` is injectable for tests. MUST be monotonic: refill math
         # assumes elapsed >= 0; a backward jump leaks tokens.
         self._clock = clock
+        # What the bucket's limit is now: asked again when the replica count moves.
+        self.limit_of = limit_of
         self.capacity = limit.capacity
         self.rate = limit.rate
         self.tokens = limit.capacity  # start full
@@ -257,62 +269,36 @@ class CheckResult:
     reset_s: float  # seconds until bucket is full again
 
 
+def replica_count() -> int:
+    """Replicas sharing the deployment-wide cap: the hosts with a live serving
+    instance row (`server.core.instances`), never fewer than LOOM_REPLICA_COUNT, and
+    that setting alone while the rows are unread or stale."""
+    from server.core.instances import live_hosts
+    from server.settings import settings as _s
+
+    floor = max(1, int(_s.replica_count))
+    live = live_hosts()
+    return floor if live is None else max(floor, live)
+
+
 def effective_replicas() -> int:
     """Processes sharing the deployment-wide cap: replicas × uvicorn workers
     per replica. Each process with its own buckets caps at
     configured / this."""
     from server.settings import settings as _s
 
-    return max(1, int(_s.replica_count)) * max(1, int(_s.web_workers))
+    return replica_count() * max(1, int(_s.web_workers))
 
 
 def effective_divisor(*, shared: bool) -> int:
     """What one bucket's cap is divided by: the replica count when the
     replica's workers share a table, every process otherwise."""
-    if shared:
-        from server.settings import settings as _s
-
-        return max(1, int(_s.replica_count))
-    return effective_replicas()
+    return replica_count() if shared else effective_replicas()
 
 
 def _wants_table(mode: str, workers: int) -> bool:
     """Whether LOOM_RATELIMIT_SHARED puts this server's buckets in a shared table."""
     return mode == "on" or (mode == "auto" and workers > 1)
-
-
-@dataclass(frozen=True)
-class _Overrides:
-    """Admin overrides per (namespace, op class), (org, op class) and
-    (namespace, actor, op class)."""
-
-    ns: dict[tuple[str, str], Limit]
-    org: dict[tuple[str, str], Limit]
-    actor: dict[tuple[str, str, str], Limit]
-
-
-def _stored_limit(capacity: Any, rate: Any) -> Limit:
-    """A limit as the setters store it; anything else makes the document corrupt."""
-    for value in (capacity, rate):
-        if not finite_non_negative(value):
-            raise ValueError(f"not a rate limit: {value!r}")
-    return Limit(float(capacity), float(rate))
-
-
-def _decode_overrides(data: Any) -> _Overrides:
-    return _Overrides(
-        ns={(str(a), str(b)): _stored_limit(c, r) for a, b, c, r in data["ns"]},
-        org={(str(a), str(b)): _stored_limit(c, r) for a, b, c, r in data["org"]},
-        actor={(str(a), str(b), str(o)): _stored_limit(c, r) for a, b, o, c, r in data["actor"]},
-    )
-
-
-def _encode_overrides(o: _Overrides) -> dict[str, list[list[object]]]:
-    return {
-        "ns": [[a, b, v.capacity, v.rate] for (a, b), v in o.ns.items()],
-        "org": [[a, b, v.capacity, v.rate] for (a, b), v in o.org.items()],
-        "actor": [[a, b, n, v.capacity, v.rate] for (a, b, n), v in o.actor.items()],
-    }
 
 
 class Limiter:
@@ -349,16 +335,17 @@ class Limiter:
         self._org_overrides: dict[tuple[str, str], Limit] = {}
         self._actor_buckets: dict[tuple[str, ...], TokenBucket] = {}
         self._actor_overrides: dict[tuple[str, str, str], Limit] = {}
+        # Unusable override rows already warned about, said once per row.
+        self._unusable_warned: set[tuple[str, tuple[str, ...], str]] = set()
         # Host-shared table. Resolved lazily from settings on
         # first use and re-resolved when the governing settings change, so a
         # test that flips them gets the backend it asked for.
         self._shared: SharedBucketStore | None = None
         self._shared_key: tuple[object, ...] | None = None
         self._shared_reason: str = "not resolved yet"
-        # With several web workers the admin overrides live in a host file, so
-        # one set through any worker binds them all.
-        self._overrides_doc: SharedDocument[_Overrides] | None = None
-        self._overrides_key: tuple[str, str, int] | None = None
+        # The divisor this process's buckets were sized with; a change in the
+        # live replica count resizes them (`_follow_divisor`).
+        self._divisor = 0
 
     # -- backend selection ---------------------------------
 
@@ -400,70 +387,42 @@ class Limiter:
         self._shared_reason = f"shared table {target}"
         return self._shared
 
-    # -- overrides shared through the table's directory --------------------
+    # -- overrides kept in loom.runtime_overrides --------------------------
 
-    def _overrides_document(self) -> SharedDocument[_Overrides] | None:
-        """Beside an explicit shared table this server uses (two servers sharing a
-        cap share their overrides too), else one per server once there are
-        several workers. Resolved once per setting, as `_store` is."""
-        mode, explicit = str(settings.ratelimit_shared), str(settings.ratelimit_shared_path)
-        workers = max(1, int(settings.web_workers))
-        if (mode, explicit, workers) != self._overrides_key:
-            self._overrides_key = (mode, explicit, workers)
-            codec = (_decode_overrides, _encode_overrides)
-            if explicit and _wants_table(mode, workers):
-                self._overrides_doc = SharedDocument(f"{explicit}.overrides.json", *codec)
-            elif workers > 1:
-                self._overrides_doc = server_document("ratelimit-overrides", *codec)
-            else:
-                self._overrides_doc = None
-        return self._overrides_doc
+    def adopt(self, snapshot: dict[str, dict[tuple[str, ...], Any]]) -> None:
+        """Take the deployment's namespace and org overrides (a
+        `runtime_overrides.load()` snapshot) and resize the live buckets whose
+        limit changed."""
+        from server.core import runtime_overrides as ro
 
-    def _sync_overrides(self) -> None:
-        """Adopt the host's overrides when another worker changed them."""
-        doc = self._overrides_document()
-        latest = doc.poll() if doc is not None else None
-        if latest is not None:
-            self._rebase_buckets(self._overrides(), latest)
-            self._adopt(latest)
+        def limits(kind: str) -> dict[tuple[str, str], Limit]:
+            out: dict[tuple[str, str], Limit] = {}
+            for k, v in snapshot.get(kind, {}).items():
+                try:
+                    lim = Limit(float(v["capacity"]), float(v["rate"]))
+                    if len(k) == 2 and lim.capacity > 0 and lim.rate >= 0:
+                        out[(k[0], k[1])] = lim
+                        continue
+                except (KeyError, TypeError, ValueError):
+                    pass
+                row = (kind, k, repr(v))
+                if row not in self._unusable_warned:
+                    self._unusable_warned.add(row)
+                    log.warning("rate limiter: override %s %s unusable (%r); skipped", kind, k, v)
+            return out
 
-    def _rebase_buckets(self, old: _Overrides, new: _Overrides) -> None:
-        """Re-size this process's buckets for the overrides another worker changed,
-        as the setting worker did its own; a removed override's buckets restart
-        at the default limit."""
-        self._rebase(self._ns_buckets, old.ns, new.ns, skip=1)
-        self._rebase(self._org_buckets, old.org, new.org, skip=0)
-        self._rebase(self._actor_buckets, old.actor, new.actor, skip=1)
-
-    def _rebase[K: tuple[str, ...]](
-        self,
-        buckets: dict[tuple[str, ...], TokenBucket],
-        before: dict[K, Limit],
-        after: dict[K, Limit],
-        *,
-        skip: int,
-    ) -> None:
-        for key, limit in after.items():
-            if before.get(key) != limit:
-                self._apply_override(buckets, key, limit, skip=skip)
-        for key in before.keys() - after.keys():
-            for full_key in [k for k in buckets if self._reaches(k, key, skip)]:
-                del buckets[full_key]
-
-    def _overrides(self) -> _Overrides:
-        return _Overrides(self._ns_overrides, self._org_overrides, self._actor_overrides)
-
-    def _adopt(self, overrides: _Overrides) -> None:
-        self._ns_overrides, self._org_overrides = overrides.ns, overrides.org
-        self._actor_overrides = overrides.actor
-
-    def _change_overrides(self, change: Callable[[_Overrides], _Overrides]) -> None:
-        """Apply `change` to the overrides of every worker on the host; a change
-        that cannot be shared is refused and this worker keeps its own."""
-        mine = self._overrides()
-        new = share_override(self._overrides_document(), change, mine, what="rate-limit override")
-        self._rebase_buckets(mine, new)
-        self._adopt(new)
+        ns, org = limits(ro.RATELIMIT_NAMESPACE), limits(ro.RATELIMIT_ORG)
+        for key, lim in ns.items():
+            if self._ns_overrides.get(key) != lim:
+                self._apply_override(self._ns_buckets, key, lim, skip=1)
+        for key, lim in org.items():
+            if self._org_overrides.get(key) != lim:
+                self._apply_override(self._org_buckets, key, lim)
+        for key in self._ns_overrides.keys() - ns.keys():
+            self._restore_default(self._ns_buckets, key, DEFAULT_LIMITS, skip=1)
+        for key in self._org_overrides.keys() - org.keys():
+            self._restore_default(self._org_buckets, key, DEFAULT_ORG_LIMITS)
+        self._ns_overrides, self._org_overrides = ns, org
 
     @property
     def shared_active(self) -> bool:
@@ -477,7 +436,8 @@ class Limiter:
             "backend": "shared" if store is not None else "per-process",
             "reason": self._shared_reason,
             "divisor": effective_divisor(shared=store is not None),
-            "replica_count": max(1, int(settings.replica_count)),
+            "replica_count": replica_count(),
+            "replica_count_floor": max(1, int(settings.replica_count)),
             "web_workers": max(1, int(settings.web_workers)),
             # The non-production classes' share of the base cap.
             "class_fractions": dict(class_fractions()),
@@ -545,7 +505,13 @@ class Limiter:
                 return None
             if len(self._actor_buckets) >= MAX_BUCKETS:
                 self._actor_buckets.pop(next(iter(self._actor_buckets)))
-            bucket = TokenBucket(limit, clock=self._clock)
+            bucket = TokenBucket(
+                limit,
+                clock=self._clock,
+                limit_of=functools.partial(
+                    self._actor_limit_for, namespace, actor, op_class, traffic_class
+                ),
+            )
             self._actor_buckets[key] = bucket
         return bucket
 
@@ -559,9 +525,8 @@ class Limiter:
         if bucket is None:
             if len(self._ns_buckets) >= MAX_BUCKETS:
                 self._ns_buckets.pop(next(iter(self._ns_buckets)))
-            bucket = TokenBucket(
-                self._ns_limit_for(namespace, op_class, traffic_class), clock=self._clock
-            )
+            limit_of = functools.partial(self._ns_limit_for, namespace, op_class, traffic_class)
+            bucket = TokenBucket(limit_of(), clock=self._clock, limit_of=limit_of)
             self._ns_buckets[key] = bucket
         return bucket
 
@@ -571,9 +536,8 @@ class Limiter:
         if bucket is None:
             if len(self._org_buckets) >= MAX_BUCKETS:
                 self._org_buckets.pop(next(iter(self._org_buckets)))
-            bucket = TokenBucket(
-                self._org_limit_for(org, op_class, traffic_class), clock=self._clock
-            )
+            limit_of = functools.partial(self._org_limit_for, org, op_class, traffic_class)
+            bucket = TokenBucket(limit_of(), clock=self._clock, limit_of=limit_of)
             self._org_buckets[key] = bucket
         return bucket
 
@@ -609,11 +573,11 @@ class Limiter:
         op_class = op_class_for(op_name)
         cls = bucket_class(traffic_class)
         store = self._store()
-        self._sync_overrides()
         if store is not None:
             return self._check_shared(
                 store, namespace, op_class, org=org, actor=actor, traffic_class=cls
             )
+        self._follow_divisor()
         buckets: list[TokenBucket] = [self._ns_bucket(org or "", namespace, op_class, cls)]
         if org:
             buckets.append(self._org_bucket(org, op_class, cls))
@@ -644,6 +608,24 @@ class Limiter:
             key=lambda j: (buckets[j].tokens / max(buckets[j].capacity, 1), j),
         )
         return _result(buckets[i], allowed=True, wait=0.0)
+
+    def _follow_divisor(self) -> None:
+        """Resize the live per-process buckets when the replica count moved
+        (a replica joined or left) to the limit their key has now: each keeps its
+        fill, capped at the new size.
+        The shared table is sized on every check and needs none of this."""
+        n = effective_divisor(shared=False)
+        if n == self._divisor:
+            return
+        old, self._divisor = self._divisor, n
+        if not old:
+            return
+        for buckets in (self._ns_buckets, self._org_buckets, self._actor_buckets):
+            for b in buckets.values():
+                limit = b.limit_of() if b.limit_of is not None else None
+                if limit is not None:
+                    b.capacity, b.rate = limit.capacity, limit.rate
+                    b.tokens = min(b.tokens, b.capacity)
 
     def _check_shared(
         self,
@@ -690,30 +672,29 @@ class Limiter:
 
     def set_namespace_limit(self, namespace: str, op_class: str, limit: Limit) -> None:
         """Install a per-namespace override for one op_class."""
-        key = (namespace, op_class)
-        self._change_overrides(lambda o: replace(o, ns={**o.ns, key: limit}))
+        self._ns_overrides[(namespace, op_class)] = limit
+        # The namespace's buckets in every org (key element 0 is the org).
+        self._apply_override(self._ns_buckets, (namespace, op_class), limit, skip=1)
 
     def clear_namespace_limit(self, namespace: str, op_class: str) -> None:
-        key = (namespace, op_class)
-        self._change_overrides(lambda o: replace(o, ns={k: v for k, v in o.ns.items() if k != key}))
+        self._ns_overrides.pop((namespace, op_class), None)
+        self._restore_default(self._ns_buckets, (namespace, op_class), DEFAULT_LIMITS, skip=1)
 
     def set_org_limit(self, org: str, op_class: str, limit: Limit) -> None:
         """Install a per-org override for one op_class. Bounds the total
         fan-out across all of the org's namespaces for this op class."""
-        key = (org, op_class)
-        self._change_overrides(lambda o: replace(o, org={**o.org, key: limit}))
+        self._org_overrides[(org, op_class)] = limit
+        self._apply_override(self._org_buckets, (org, op_class), limit)
 
     def clear_org_limit(self, org: str, op_class: str) -> None:
-        key = (org, op_class)
-        self._change_overrides(
-            lambda o: replace(o, org={k: v for k, v in o.org.items() if k != key})
-        )
+        self._org_overrides.pop((org, op_class), None)
+        self._restore_default(self._org_buckets, (org, op_class), DEFAULT_ORG_LIMITS)
 
     def set_actor_limit(self, namespace: str, actor: str, op_class: str, limit: Limit) -> None:
         """Install a per-(namespace, actor) override for one op_class. Creates
         the actor bucket even when the deployment fraction is 1.0."""
-        key = (namespace, actor, op_class)
-        self._change_overrides(lambda o: replace(o, actor={**o.actor, key: limit}))
+        self._actor_overrides[(namespace, actor, op_class)] = limit
+        self._apply_override(self._actor_buckets, (namespace, actor, op_class), limit, skip=1)
 
     def _apply_override(
         self,
@@ -723,27 +704,36 @@ class Limiter:
         *,
         skip: int = 0,
     ) -> None:
-        """Resize the live bucket(s) an override reaches, as a fresh bucket would
-        be sized: the base key and every class-suffixed key on it, divided across
-        the processes that hold copies, each at its own class fraction. `skip`
-        leading key elements (the org) are not part of what the override names."""
-        per_process = _scale_for_replicas(limit, shared=self.shared_active)
+        """Resize the live bucket(s) an override reaches: the base key and every
+        class-suffixed key on it, sized as a fresh bucket would be: the
+        replica share of the override, times a carved-out class's fraction.
+        `skip` leading key elements (the org) are not part of what the
+        override names."""
+        self._follow_divisor()
         for full_key, existing in buckets.items():
-            if not self._reaches(full_key, base, skip):
-                continue
             key = full_key[skip:]
+            if key[: len(base)] != base or len(key) > len(base) + 1:
+                continue
             cls = key[len(base)] if len(key) > len(base) else ""
-            scaled = _scale_for_class(per_process, cls)
+            # As a fresh bucket would be: the replica share, then the class's.
+            scaled = _scale_for_class(_scale_for_replicas(limit, shared=self.shared_active), cls)
             existing.capacity = scaled.capacity
             existing.rate = scaled.rate
             existing.tokens = min(existing.tokens, scaled.capacity)
 
-    @staticmethod
-    def _reaches(full_key: tuple[str, ...], base: tuple[str, ...], skip: int) -> bool:
-        """Whether an override on `base` governs the bucket `full_key`: the base
-        key or one class-suffixed key on it, after `skip` leading elements."""
-        key = full_key[skip:]
-        return key[: len(base)] == base and len(key) <= len(base) + 1
+    def _restore_default(
+        self,
+        buckets: dict[tuple[str, ...], TokenBucket],
+        base: tuple[str, ...],
+        defaults: dict[str, Limit],
+        *,
+        skip: int = 0,
+    ) -> None:
+        """Resize the live bucket(s) a cleared override reached to the default
+        limit for its op class (`base[-1]`), keeping the tokens left: clearing
+        an override does not refill a throttled tenant's bucket."""
+        limit = defaults.get(base[-1], defaults["default"])
+        self._apply_override(buckets, base, limit, skip=skip)
 
     def reset(self) -> None:
         """Test hook. Clears bucket state but keeps overrides — admin policy
@@ -764,13 +754,6 @@ class Limiter:
         self._actor_overrides.clear()
         if self._shared is not None:
             self._shared.reset()
-        if self._overrides_doc is not None:
-            path = self._overrides_doc.path  # None: never used, or no directory
-            if path:
-                # The lock file stays: a sibling may hold it.
-                with contextlib.suppress(OSError):
-                    os.remove(path)
-            self._overrides_doc, self._overrides_key = None, None
 
 
 _limiter = Limiter()

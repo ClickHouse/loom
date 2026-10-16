@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Literal
 
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from server.settings._env import DEV_JWT_SECRET, json_map_items
 
@@ -25,7 +25,7 @@ class AuthSettings(BaseModel):
     # only): missing tokens are not rejected and the SPA synthesizes a local
     # identity. identity_provider=single-user forces auth off regardless.
     auth_required: bool = True
-    # The one namespace auth-off mode serves (SPA identity, /me bootstrap,
+    # The one namespace auth-off mode serves (SPA identity, dashboard bootstrap,
     # MCP/SDK caller defaults). Ignored when auth is required; `personal-*` is
     # reserved and rejected.
     default_namespace: str = "local"
@@ -49,7 +49,7 @@ class AuthSettings(BaseModel):
         `namespace.register` and the create dialog accept). `personal-*` is
         additionally reserved for per-subject auto-provisioning: reusing it
         collides with that scheme and skews the `NOT LIKE 'personal-%'`
-        analytics split in `/me`.
+        analytics split in the dashboard.
 
         Auth-ON deployments never read the setting, so a stale value left in
         a shared .env must not crash-loop the server/CLI/migrations for a
@@ -116,35 +116,21 @@ class AuthSettings(BaseModel):
             s.strip().lower() for s in (self.oidc_jit_email_domains or "").split(",") if s.strip()
         }
 
-    # JWT signing secret; required when auth is on. The default is the
-    # checked-in DEV secret anyone can mint with: a deployment with auth on
-    # refuses to start with it, except the `make dev` stack (`loom doctor`
-    # warns everywhere else). Rotation: `jwt_secrets_json` = kid → secret map,
-    # `jwt_active_kid` = signing kid; old tokens verify by their header kid.
-    # Empty map = {jwt_active_kid: jwt_secret}. Stored credentials are sealed
-    # with jwt_secret even when the map holds the signing keys.
+    # The root secret, and the one secret a deployment carries: it signs tokens
+    # as kid `default` and seals every stored credential and every signing key
+    # in loom.signing_keys (`loom signing-key rotate` adds those). Required when
+    # auth is on. The default is the checked-in DEV secret anyone can mint
+    # with: a deployment with auth on refuses to start with it, except the
+    # `make dev` stack (`loom doctor` warns everywhere else).
     jwt_secret: str = DEV_JWT_SECRET
-    # JSON (or base64 JSON) map kid → secret (PEM private key under RS256) for rotation;
-    # empty = the single entry {`jwt_active_kid`: `jwt_secret`}.
-    jwt_secrets_json: str = ""
-    # Kid that signs new tokens; it must be a key of the secret map (checked at load).
-    jwt_active_kid: str = "default"
+    # Seconds between re-reads of loom.signing_keys in every process (at least
+    # 1); `loom signing-key rotate` waits out two of the slowest process's.
+    jwt_keyring_refresh_seconds: float = Field(default=30.0, ge=1.0)
 
     def jwt_secret_is_dev_default(self) -> bool:
-        """Whether the *signing* secret (the active kid's entry, or
-        ``jwt_secret`` when no key map is set) is the checked-in dev default —
-        the value anyone who can read this repo can mint tokens with
-        (`loom mint-token` warns, `loom doctor` grades WARN)."""
-        try:
-            active = self.jwt_secret_map().get(self.jwt_active_kid, self.jwt_secret)
-        except ValueError:
-            active = self.jwt_secret
-        return active == DEV_JWT_SECRET
-
-    def jwt_sealing_secret_is_dev_default(self) -> bool:
-        """Whether ``jwt_secret``, the key stored credentials are sealed with,
-        is the checked-in dev default. With a key map set it no longer signs,
-        so the signing check above cannot see it."""
+        """Whether the root secret is the checked-in dev default — the value
+        anyone who can read this repo can mint tokens with (`loom mint-token`
+        warns, `loom doctor` grades WARN)."""
         return self.jwt_secret == DEV_JWT_SECRET
 
     # The `iss` Loom stamps on every token it mints and the `aud` every
@@ -156,12 +142,8 @@ class AuthSettings(BaseModel):
     # key in `jwt_public_keys_json`. Loom's own tokens (iss = jwt_issuer) pass.
     jwt_trusted_issuers: str = ""
 
-    # "HS256" (default) or "RS256": under RS256 the secret-map entries are PEM
-    # private keys and verifiers use the public keys (JWKS endpoint), so the
-    # public map must hold the signing kid (checked at load).
-    jwt_algorithm: Literal["HS256", "RS256"] = "HS256"
-    # JSON (or base64 JSON) map kid → PEM public key: this deployment's own
-    # keys under RS256, and a gateway's keys whose RS256 tokens it accepts.
+    # JSON (or base64 JSON) map kid → PEM public key of a gateway whose RS256
+    # tokens this deployment accepts. Loom's own keys live in loom.signing_keys.
     jwt_public_keys_json: str = ""
     # Clock-skew tolerance on iat/exp, seconds; small enough to give replay no
     # useful post-exp window.
@@ -181,6 +163,11 @@ class AuthSettings(BaseModel):
     # one that wrote it).
     grant_cache_ttl_seconds: float = 10.0
 
+    # Sign-ins and sign-ups one process checks at once (each costs ClickHouse
+    # statements and a password hash); past it a caller waits up to a second,
+    # then gets 429, so a burst cannot take the shared connection pool.
+    auth_attempts_concurrency: int = Field(default=8, ge=1)
+
     # Browser self-signup: "off" (endpoint 404s) or "open"
     # (/v1/auth/self-signup mints JWTs scoped to the requested namespace).
     self_signup: Literal["off", "open"] = "off"
@@ -195,7 +182,7 @@ class AuthSettings(BaseModel):
     # Empty = inferred from auth_required + self_signup at boot.
     identity_provider: Literal["", "single-user", "trust-network", "gateway"] = ""
 
-    # When set, GET /me redirects (302) here instead of serving the SPA (Loom
+    # When set, a dashboard page load redirects (302) here instead of serving the SPA (Loom
     # behind an aggregator). Deployment-specific; never hardcode.
     dashboard_redirect_url: str = ""
 
@@ -227,30 +214,10 @@ class AuthSettings(BaseModel):
             return "trust-network"
         return "gateway"
 
-    def jwt_secret_map(self) -> dict[str, str]:
-        """Resolve the kid → secret/private-key map. Always returns at least one
-        entry. Accepts raw JSON or base64-encoded JSON."""
-        raw = self.jwt_secrets_json.strip()
-        if raw:
-            return dict(json_map_items(raw, "jwt_secrets_json", non_empty=True))
-        return {self.jwt_active_kid: self.jwt_secret}
-
     @model_validator(mode="after")
-    def _check_signing_keys(self) -> AuthSettings:
-        """The signing kid must be in the secret map (or no token can be
-        minted), and under RS256 in the public map too (or every token Loom
-        mints is one nothing here accepts). Malformed key JSON fails here, not
-        on the first request."""
-        if self.jwt_active_kid not in self.jwt_secret_map():
-            raise ValueError(
-                f"LOOM_JWT_ACTIVE_KID {self.jwt_active_kid!r} is not a kid in LOOM_JWT_SECRETS_JSON"
-            )
-        public = self.jwt_public_key_map()
-        if self.jwt_algorithm == "RS256" and self.jwt_active_kid not in public:
-            raise ValueError(
-                f"LOOM_JWT_ALGORITHM=RS256 requires a public key for the signing kid "
-                f"{self.jwt_active_kid!r} in LOOM_JWT_PUBLIC_KEYS_JSON"
-            )
+    def _check_gateway_keys(self) -> AuthSettings:
+        """A malformed gateway key map fails here, not on the first RS256 token."""
+        self.jwt_public_key_map()
         return self
 
     @model_validator(mode="after")
@@ -261,6 +228,13 @@ class AuthSettings(BaseModel):
             raise ValueError(
                 "LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be larger than "
                 "LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS"
+            )
+        # The keyring goes stale at the same limit: a failed read, and the next
+        # one landing a little after its interval, must not trip it.
+        if self.jwt_revocation_max_stale_seconds < 3 * self.jwt_keyring_refresh_seconds:
+            raise ValueError(
+                "LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times "
+                "LOOM_JWT_KEYRING_REFRESH_SECONDS"
             )
         return self
 
@@ -276,9 +250,10 @@ class AuthSettings(BaseModel):
     # read is refused while ingest continues.
     restricted_serve: bool = True
     # Commit the `namespace.restricted_access` audit row every admitted read of a
-    # restricted namespace writes before answering (inline) instead of beside
-    # the request. Off by default: the awaited insert adds seconds.
-    restricted_audit_inline: bool = False
+    # restricted namespace writes before answering (inline). True by default: a
+    # row written beside the request is lost when the process is killed before it
+    # lands. False trades that row for the seconds the awaited insert adds.
+    restricted_audit_inline: bool = True
     # Comma-separated origin list. "*" allows all (acceptable when
     # auth_required=True). Empty disables CORS entirely.
     cors_origins: str = ""

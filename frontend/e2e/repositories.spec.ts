@@ -15,7 +15,7 @@ import {
 // A repository is one card with two facets: `code.repos` and `tracker.source.list` join
 // by repository into one card; the Code facet keeps the branch chips; the Issues & PRs
 // facet is the tracker namespace(s) whose `repos` name the repository, chips named by
-// scope; five verbs on both facets; the page lives at /me/repositories;
+// scope; five verbs on both facets; the page lives at /repositories;
 // at 400 px nothing truncates and every control is 44 px under a coarse pointer. A card
 // is folded by default — one row with the standing, a one-line summary and the primary
 // verb — and its heading is the disclosure that opens the facets.
@@ -58,9 +58,9 @@ test.describe("desktop 1360", () => {
   }) => {
     const calls = await installApi(page, { codeRepos: codeReposFixture(), trackerSources: trackerSourcesFixture() });
     const errors = collectErrors(page);
-    await page.goto("/me/repositories");
+    await page.goto("/repositories");
     await expect(page.getByRole("heading", { name: "Repositories" })).toBeVisible();
-    await expect(page).toHaveURL(/\/me\/repositories$/);
+    await expect(page).toHaveURL(/\/repositories$/);
     // No "tracker sources" heading; the plane is named by its contents.
     await expect(page.getByRole("heading", { name: "tracker sources" })).toHaveCount(0);
     await expect(page.getByRole("region", { name: /^tracker source/ })).toHaveCount(0);
@@ -169,24 +169,24 @@ test.describe("desktop 1360", () => {
 
     // Open the record: the picker on the tracker namespace, the Graph view in Patterns mode.
     await rec.getByRole("button", { name: "Public: reading" }).click();
-    await expect(page).toHaveURL(/\/me\/graph\?mode=patterns$/);
+    await expect(page).toHaveURL(/\/graph\?mode=patterns$/);
     await expect(page.getByRole("button", { name: `Namespace: ${TRACKER_PUBLIC_NS}` })).toBeVisible();
     await expect(page.getByRole("button", { name: "Patterns" })).toHaveAttribute("aria-pressed", "true");
     expect(errors).toEqual([]);
   });
 
-  test("the sidebar link says Repositories and points to /me/repositories", async ({ page }) => {
+  test("the sidebar link says Repositories and points to /repositories", async ({ page }) => {
     await installApi(page, { codeRepos: codeReposFixture() });
-    await page.goto("/me/repositories?repo=");
+    await page.goto("/repositories?repo=");
     await expect(page.getByRole("heading", { name: "Repositories" })).toBeVisible();
-    await expect(page).toHaveURL(/\/me\/repositories/);
+    await expect(page).toHaveURL(/\/repositories/);
     const link = page.getByRole("link", { name: "Repositories" }).first();
-    await expect(link).toHaveAttribute("href", "/me/repositories");
+    await expect(link).toHaveAttribute("href", "/repositories");
   });
 
   test("a server without tracker.source.list: the cards render, one stated line, no error banner", async ({ page }) => {
     const calls = await installApi(page, { codeRepos: codeReposFixture() });
-    await page.goto("/me/repositories");
+    await page.goto("/repositories");
     await expect(card(page)).toBeVisible();
     await expect(page.getByText("Trackers are not available on this deployment yet.")).toBeVisible();
     await expect(page.getByRole("alert")).toHaveCount(0);
@@ -208,7 +208,7 @@ test.describe("desktop 1360", () => {
       const u = new URL(r.url());
       if (u.pathname.startsWith("/v1/")) requested.push(u.pathname);
     });
-    await page.goto("/me/repositories");
+    await page.goto("/repositories");
     await expect(card(page)).toBeVisible();
     await page.waitForTimeout(600);
     const unexpected = requested.filter((p) =>
@@ -230,7 +230,7 @@ test.describe("phone 400, coarse pointer", () => {
   }) => {
     await installApi(page, { codeRepos: codeReposFixture(), trackerSources: trackerSourcesFixture() });
     const errors = collectErrors(page);
-    await page.goto("/me/repositories");
+    await page.goto("/repositories");
     const c = card(page);
     await expect(c).toBeVisible();
     const title = c.getByRole("heading", { level: 2, name: CODE_REPO });

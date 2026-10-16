@@ -28,6 +28,11 @@ This pass heals the gauge instead of only reading it:
      the last inserted row, and the row stays in its partition. No mutation
      anywhere in this pass (tombstones are never written with ALTER UPDATE).
 
+  4. re-emit the live embedding rows whose `verified` mirror disagrees with
+     their memory row's attestation (memory.verify mirrors it after its
+     answer, so a crash in between leaves the ranking signal wrong), at the
+     pass's version, so a verify or revoke landing after the scan wins.
+
 Idempotent: a healed identity leaves the ANTI JOIN, so re-running is a
 fixed point. The cascade at the source (`tombstone_cascade_by_ids`) means
 this should find nothing on a healthy deployment; the count it heals is the
@@ -54,6 +59,7 @@ class OrphanReconcileResult:
     embeddings_healed: int = 0  # embedding rows re-emitted with a tombstone
     identities_healed: int = 0
     entity_vectors_healed: int = 0  # entity_vectors rows re-emitted with a tombstone
+    verified_healed: int = 0  # embedding rows re-emitted with the memory row's attestation
     errors: list[str] = field(default_factory=list)
 
 
@@ -82,6 +88,62 @@ def orphan_identities_sql() -> str:
         ORDER BY e.org, e.namespace, e.memory_key
         LIMIT {limit:UInt32}
     """
+
+
+def verified_drift_sql() -> str:
+    """Live embedding identities whose `verified` mirror disagrees with the live
+    memory row's attestation, for memory versions older than the grace cutoff
+    (an in-flight memory.verify mirror is not drift)."""
+    from server.memory.store.sql import attested_sql
+
+    return f"""
+        SELECT m.org AS org, m.namespace AS namespace, m.agent AS agent,
+               m.user_id AS user_id, m.session_id AS session_id,
+               m.memory_key AS memory_key, m.attested AS attested
+        FROM (SELECT org, namespace, agent, user_id, session_id, memory_key,
+                     min(verified) AS vmin, max(verified) AS vmax
+              FROM loom.memory_embeddings FINAL
+              WHERE tombstoned_at IS NULL AND embedding_dim > 0
+              GROUP BY org, namespace, agent, user_id, session_id, memory_key) AS e
+        INNER JOIN (SELECT org, namespace, agent, user_id, session_id, memory_key,
+                           toUInt8({attested_sql()}) AS attested
+                    FROM loom.memory FINAL
+                    WHERE tombstoned_at IS NULL AND version < {{cutoff:UInt64}}) AS m
+          ON e.org = m.org AND e.namespace = m.namespace
+             AND e.agent = m.agent AND e.user_id = m.user_id
+             AND e.session_id = m.session_id AND e.memory_key = m.memory_key
+        WHERE e.vmin != m.attested OR e.vmax != m.attested
+        ORDER BY m.org, m.namespace, m.memory_key
+        LIMIT {{limit:UInt32}}
+    """
+
+
+async def _heal_verified_drift(
+    ch: _CHClient, result: OrphanReconcileResult, *, version: int, grace: int, limit: int
+) -> None:
+    import server.memory.store as memory_repo
+
+    cutoff = max(0, version - grace * 1_000_000_000)
+    try:
+        rows = await ch.query_all(verified_drift_sql(), params={"cutoff": cutoff, "limit": limit})
+        items = [
+            (
+                (
+                    str(r["org"]),
+                    str(r["namespace"]),
+                    str(r["agent"]),
+                    str(r["user_id"]),
+                    str(r["session_id"]),
+                    str(r["memory_key"]),
+                ),
+                {"verified": int(r["attested"]), "version": version},
+            )
+            for r in rows
+        ]
+        if items:
+            result.verified_healed += await memory_repo.reemit_embedding_rows_for_keys(items, ch=ch)
+    except Exception as e:  # noqa: BLE001 — the drift scan repeats next pass
+        result.errors.append(f"verified: {e}")
 
 
 async def run_pass(ch: _CHClient | None = None) -> OrphanReconcileResult:
@@ -145,6 +207,8 @@ async def run_pass(ch: _CHClient | None = None) -> OrphanReconcileResult:
             except Exception as e:  # noqa: BLE001 — one namespace's failure never stops the rest
                 result.errors.append(f"entity_vectors {ns}: {e}")
 
+        await _heal_verified_drift(ch, result, version=version, grace=grace, limit=limit)
+
         if result.orphans_seen:
             log.info(
                 "orphan_vector_reconcile: %d orphan identities, %d embedding rows "
@@ -165,6 +229,7 @@ def _outcome(result: OrphanReconcileResult) -> dict[str, Any]:
         "identities_healed": result.identities_healed,
         "embeddings_healed": result.embeddings_healed,
         "entity_vectors_healed": result.entity_vectors_healed,
+        "verified_healed": result.verified_healed,
         "errors": len(result.errors),
     }
 
@@ -173,4 +238,5 @@ __all__ = [
     "OrphanReconcileResult",
     "orphan_identities_sql",
     "run_pass",
+    "verified_drift_sql",
 ]

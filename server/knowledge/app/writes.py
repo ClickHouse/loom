@@ -49,49 +49,18 @@ def _nano_version() -> int:
     return time.time_ns()
 
 
-def _blob_carries(prior: DocumentRow | None) -> bool:
-    """Whether a write without fresh bytes keeps `prior`'s download: only from a live
-    document. A deleted one (superseded_at) had its file removed unless another document
-    shares it, and an erased one (blob_erased_at) had it removed by the erasure; carrying
-    either would point a live row at a missing file (410 BLOB_GONE), and an erased blob
-    carried back would count as erasure residue."""
-    return prior is not None and prior.superseded_at is None and prior.blob_erased_at is None
-
-
-async def _release_blob(org: str, namespace: str, blob_path: str, source_uri: str) -> None:
-    """Delete the file at `blob_path` unless a live document other than
-    `source_uri` shares it (blobs are content-addressed per namespace). A
-    delete runs it after writing the superseded rows, so documents deleted
-    together do not keep each other's file. Best-effort: an orphaned file is
-    wasted disk, not a correctness bug."""
-    from server.knowledge.store import documents as documents_repo
-    from server.storage.blob_store import get_store
-
-    try:
-        if not await documents_repo.blob_shared_by_another_document(
-            org, namespace, blob_path, source_uri
-        ):
-            await asyncio.to_thread(get_store().delete, blob_path)
-    except Exception as e:  # noqa: BLE001 — blob cleanup is best-effort; orphan is only disk
-        log.warning(
-            "blob cleanup failed for %s/%s/%s (path=%s): %s",
-            org,
-            namespace,
-            source_uri,
-            blob_path,
-            e,
-        )
-
-
 async def _resolve_blob(
     input: KnowledgeAddInput, prior: DocumentRow | None
 ) -> tuple[str, int, str, str]:
-    """Resolve the blob columns for a knowledge write. Fresh bytes win and
-    evict the superseded prior blob unless another document shares it;
-    otherwise a prior blob carries forward so a metadata-only edit doesn't
-    drop the user's download. Returns
-    (blob_path, blob_size, blob_content_type, original_filename)."""
-    prior_blob_path = (prior.blob_path if prior else "") or ""
+    """Resolve the blob columns for a knowledge write. Fresh bytes win (the
+    prior original stays until the sweep finds no live document naming it, so a
+    write that fails after this keeps the old download); otherwise a prior blob
+    carries forward so a metadata-only edit doesn't drop the user's download.
+    Only a live, unerased prior carries: a deleted one's original is the sweep's
+    and an erased one's is gone (carrying it would answer 410 or be residue).
+    Returns (blob_path, blob_size, blob_content_type, original_filename)."""
+    from server.knowledge.store.documents import serves_original
+
     blob_path = ""
     blob_size = 0
     blob_content_type = (input.blob_content_type or "").strip()
@@ -104,19 +73,15 @@ async def _resolve_blob(
             from server.core.errors import ValidationError
 
             raise ValidationError(f"original_bytes_b64 is not valid base64: {e}") from e
-        from server.storage.blob_store import get_store
+        from server.knowledge.store import blobs
 
-        # File I/O with an fsync: off the event loop, which every other request shares.
-        _sha, blob_path = await asyncio.to_thread(get_store().put, input.org, input.namespace, raw)
+        blob_path = await blobs.put(input.org, input.namespace, raw)
         blob_size = len(raw)
-        if prior_blob_path and prior_blob_path != blob_path:
-            await _release_blob(input.org, input.namespace, prior_blob_path, input.source_uri)
-    elif prior_blob_path and _blob_carries(prior):
-        blob_path = prior_blob_path
-        blob_size = (prior.blob_size if prior else 0) or 0
-        blob_content_type = blob_content_type or ((prior.blob_content_type if prior else "") or "")
-        if not original_filename and prior:
-            original_filename = prior.original_filename or ""
+    elif prior is not None and serves_original(prior):
+        blob_path = prior.blob_path
+        blob_size = prior.blob_size or 0
+        blob_content_type = blob_content_type or (prior.blob_content_type or "")
+        original_filename = original_filename or (prior.original_filename or "")
     return blob_path, blob_size, blob_content_type, original_filename
 
 
@@ -205,8 +170,8 @@ async def handle_knowledge_upsert(input: KnowledgeUpsertInput) -> KnowledgeUpser
         )
 
     # Blob handling — three cases:
-    #   (a) caller supplied new bytes → write them, delete prior blob
-    #       (if different) after the row lands.
+    #   (a) caller supplied new bytes → write them; the sweep reclaims the
+    #       prior blob once no live document names it.
     #   (b) no new bytes but prior doc had a blob → carry the prior
     #       blob_path forward (a metadata-only edit must not strip the
     #       user's download capability).
@@ -441,8 +406,6 @@ async def handle_knowledge_delete(
         await documents_repo.insert_one(
             documents_repo.build_document_row(doc, version=_nano_version(), superseded_at=now)
         )
-        if doc.blob_path:
-            await _release_blob(input.org, input.namespace, doc.blob_path, input.source_uri)
 
     return KnowledgeDeleteOutput(deleted=True, chunks_tombstoned=active)
 
@@ -578,7 +541,7 @@ async def handle_knowledge_bulk_add(
         version = _nano_version()
         chunks = _chunk_text(entry.content)
         prior = priors.get(entry.source_uri)
-        prior = prior if _blob_carries(prior) else None
+        prior = prior if documents_repo.serves_original(prior) else None
 
         doc_rows.append(
             documents_repo.build_document_row(
@@ -692,11 +655,6 @@ async def handle_knowledge_bulk_delete(
             for i, d in enumerate(existing_docs)
         ]
         await documents_repo.insert_many(doc_rows)
-        # With every row of the batch superseded, a file only batch members
-        # shared is released too.
-        for d in existing_docs:
-            if d.blob_path:
-                await _release_blob(input.org, input.namespace, d.blob_path, d.source_uri)
 
     deleted_results = [
         _KnowledgeBulkDeleteResult(

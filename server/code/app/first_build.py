@@ -26,7 +26,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from server.code.api.models_history import CodeFirstBuildOutput
-from server.code.app.blame import repo_siblings
+from server.code.app.blame import history_git_dir, repo_siblings
 from server.code.app.common import (
     new_trace_run_id,
     require_code_intel,
@@ -37,7 +37,6 @@ from server.code.app.index import gitrepo
 from server.code.app.spans import code_span, set_code_span_attributes
 from server.code.domain.index import first_build as fb
 from server.code.domain.index.blame_range import sha_text
-from server.code.domain.index.repos import default_git_dir
 from server.code.store.index import CodeRepo
 from server.core.errors import ValidationError
 
@@ -181,7 +180,7 @@ async def handle_code_first_build(input: Any) -> Any:
     org, ns = resolve_code_identity(input.org, input.namespace)
     repo = CodeRepo()
     cfg, siblings = repo_siblings(org, ns)
-    git_dir = (cfg.git_dir if cfg is not None else "") or default_git_dir()
+    git_dir, gap = await history_git_dir(cfg, "code.first_build")
     sub = Subject(sha=fb.normalize_sha(input.sha), pr_number=int(input.pr_number or 0))
     # Shape complaints come after the gate (the transport already ran it on org/namespace),
     # never before it, so a refused principal learns nothing about the input.
@@ -218,6 +217,8 @@ async def handle_code_first_build(input: Any) -> Any:
     )
     if not tracker_ns and "tracker_unavailable" in causes:
         causes = ["tracker_unbound" if c == "tracker_unavailable" else c for c in causes]
+    if gap:
+        causes = [*causes, gap]
     first: fb.Build | None = named[0] if named else (carrier.first if carrier else None)
     if first is None and own and verdict == fb.BUILT:
         first = own[0]

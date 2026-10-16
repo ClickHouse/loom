@@ -86,7 +86,7 @@ def observe_insert(table: str, rows: list[dict[str, Any]]) -> None:
         note_recent_write(org, ns)
     graph_namespaces = namespaces_of_rows(table, rows, graph=True)
     if graph_namespaces:
-        from server.memory.app.graph_write_marks import marks
+        from server.memory.app.graph_write_marks import note_write
 
         for org, ns in graph_namespaces:
-            marks().note_write(org, ns)
+            note_write(org, ns)

@@ -37,7 +37,7 @@ const FIXTURES: Fixture[] = [
 
 const uri = (f: Fixture) => `docs/${f.title.toLowerCase().replace(/ /g, "-")}`;
 
-// The /me page's policy, as server/identity/app/me_routes.py::dashboard_csp builds it
+// The dashboard page's policy, as server/identity/app/dashboard_routes.py::dashboard_csp builds it
 // (tests/unit/test_web_exposure.py checks this copy against it). vite preview sends no headers,
 // so the page is served here with it and the nonce'd boot snippet the server injects.
 const NONCE = "e2eNonce0123456789";
@@ -64,12 +64,20 @@ async function serveUnderDashboardCsp(page: Page) {
       window.__cspViolations.push(`${e.violatedDirective} ${e.blockedURI}`),
     );
   });
-  await page.route("**/me/**", async (r) => {
-    if (r.request().resourceType() !== "document") return r.fallback();
-    const response = await r.fetch();
-    const body = (await response.text()).replace("</head>", `${BOOT_SNIPPET}</head>`);
-    return r.fulfill({ response, body, headers: { ...response.headers(), "content-security-policy": DASHBOARD_CSP } });
-  });
+  // Dashboard page loads only: an API document (a preview frame's download URL) keeps its own headers.
+  await page.route(
+    (url) => !url.pathname.startsWith("/v1/"),
+    async (r) => {
+      if (r.request().resourceType() !== "document") return r.fallback();
+      const response = await r.fetch();
+      const body = (await response.text()).replace("</head>", `${BOOT_SNIPPET}</head>`);
+      return r.fulfill({
+        response,
+        body,
+        headers: { ...response.headers(), "content-security-policy": DASHBOARD_CSP },
+      });
+    },
+  );
 }
 
 interface Probe {
@@ -81,7 +89,11 @@ async function setup(page: Page): Promise<Probe> {
   await installApi(page);
   await serveUnderDashboardCsp(page);
   const probe: Probe = { exfil: [], dialogs: [] };
-  const json = (b: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(b) });
+  const json = (b: unknown) => ({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify(b),
+  });
   const rows = FIXTURES.map((f) => ({
     source_uri: uri(f),
     title: f.title,
@@ -145,7 +157,7 @@ async function expectNothingRan(page: Page, probe: Probe) {
 
 test("active and mismatched uploads never run script in the preview", async ({ page }) => {
   const probe = await setup(page);
-  await page.goto("/me/library", { waitUntil: "domcontentloaded" });
+  await page.goto("/library", { waitUntil: "domcontentloaded" });
 
   // HTML and SVG: no frame, no image, a download prompt.
   for (const f of FIXTURES.slice(0, 2)) {
@@ -210,7 +222,7 @@ test("the download URL opened on its own cannot run script", async ({ page }) =>
       body: HTML,
     }),
   );
-  await page.goto("/me/library", { waitUntil: "domcontentloaded" });
+  await page.goto("/library", { waitUntil: "domcontentloaded" });
   const standalone = await page.context().newPage();
   await standalone.goto("/v1/knowledge.download?org=dev&namespace=bench&source_uri=docs/html-page&inline=true");
   await expectNothingRan(standalone, probe);

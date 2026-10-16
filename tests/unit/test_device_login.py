@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
+from collections import OrderedDict
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -18,6 +19,8 @@ from server.auth import device, jit, login, oauth, oidc, revocation, sso_links
 from server.auth.jwt import mint_token
 from server.auth.passwords import hash_password
 from tests.unit.oauth_store_fake import MemoryOAuthStore, oauth_app
+
+pytestmark = pytest.mark.usefixtures("auth_attempts")
 
 _USER = ("alice@example.com", "acme", ["alice"], ["writer"])
 
@@ -76,13 +79,7 @@ def _world(monkeypatch):
         return roles
 
     monkeypatch.setattr(login, "refreshed_roles", active)
-    for limiter in (
-        device._polls,
-        device._requests_by_address,
-        device._wrong_codes_by_address,
-        oauth._starts_by_address,
-    ):
-        limiter.clear()
+    monkeypatch.setattr(device, "_last_polls", OrderedDict())
     return {"store": store, "revoked": revoked, "expiries": expiries, "events": events}
 
 
@@ -97,7 +94,7 @@ def _start(c: TestClient) -> dict[str, Any]:
 
 
 def _poll(c: TestClient, device_code: str) -> httpx.Response:
-    device._polls.clear()  # each test poll stands for one a full interval later
+    device._last_polls.clear()  # each test poll stands for one a full interval later
     return c.post(
         "/oauth/token",
         data={
@@ -206,7 +203,7 @@ def test_an_unknown_device_code_is_an_invalid_grant() -> None:
 
 def test_an_unknown_device_code_takes_no_poll_slot() -> None:
     assert _error(_poll(_client(), "made-up")) == "invalid_grant"
-    assert len(device._polls) == 0
+    assert not device._last_polls
 
 
 def test_a_device_code_for_another_client_is_refused() -> None:
@@ -380,7 +377,7 @@ def test_a_refresh_past_its_deadline_answers_busy_and_keeps_the_token(monkeypatc
 def test_a_failed_refresh_puts_its_token_back_even_when_cancelled(monkeypatch) -> None:
     # The rollback of a failed refresh runs to its end: a request cancelled
     # in it must not leave the token spent with nothing issued in its place.
-    from server.core import keeper_claims
+    from server.auth import shielded
 
     c = _client()
     token = _signed_in_tokens(c)["refresh_token"]
@@ -405,7 +402,7 @@ def test_a_failed_refresh_puts_its_token_back_even_when_cancelled(monkeypatch) -
         go.set()
         with pytest.raises(asyncio.CancelledError):
             await task
-        await keeper_claims.drain()
+        await shielded.drain()
 
     asyncio.run(cancel_mid_rollback())
     monkeypatch.setattr(oauth.store, "save_refresh", original_save)
@@ -867,7 +864,7 @@ def test_a_strangers_failed_sign_in_does_not_end_someone_elses_grant(sso) -> Non
 
 
 def test_dashboard_sso_starts_are_throttled_per_address(sso, monkeypatch) -> None:
-    monkeypatch.setattr(oauth, "_starts_by_address", oauth.Attempts(30, 900))
+    monkeypatch.setattr(oauth, "_starts_by_address", oauth.Attempts("oidc.start", 30, 900))
     c = _client()
     for _ in range(30):
         assert c.get("/oauth/sso", follow_redirects=False).status_code == 302

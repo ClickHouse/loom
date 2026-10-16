@@ -42,11 +42,6 @@ class _Keeper:
         return {"value": self.value} if self.value is not None else None
 
 
-@pytest.fixture(autouse=True)
-def _keeper_present(monkeypatch) -> None:
-    monkeypatch.setattr(claims, "_atomic", True)
-
-
 async def _cancel_during_read_back(ch: _Keeper, old: str | None) -> None:
     task = asyncio.create_task(claims.swap(ch, "family:f", old, "mine", 2_000_000_000))
     await ch.reading.wait()

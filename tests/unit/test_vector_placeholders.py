@@ -55,7 +55,10 @@ def test_pad_rows_replaces_only_empty_vectors_of_memory_embeddings(
 
 @pytest.mark.asyncio
 async def test_ch_insert_pads_memory_embeddings_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.core import rmt_carry
+
     monkeypatch.setattr(settings, "embedding_dim", 3)
+    monkeypatch.setattr(rmt_carry, "carries", lambda _table: False)  # its own tests
     captured: list[Any] = []
 
     class _Inner:

@@ -382,7 +382,10 @@ def _cmd_set_host(args: argparse.Namespace) -> int:
         "    docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml"
         " --profile bundled up -d --force-recreate loom"
     )
-    print("  then have each host log out + back in at /me to mint a fresh platform_admin JWT.")
+    print(
+        "  then have each host sign out and back in to the dashboard"
+        " to mint a fresh platform_admin JWT."
+    )
     return 0
 
 
@@ -396,7 +399,7 @@ def _add_shell_client_parsers(sub: Any) -> None:
             "conversation table as one thread. Generic ingest for tools "
             "without an MCP integration (Aider, Continue.dev, JetBrains "
             "AI, anything else): export the chat → run this command → "
-            "the thread shows in /me Sessions."
+            "the thread shows in the dashboard's Conversations."
         ),
     )
     p_ingest.add_argument(

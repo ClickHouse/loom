@@ -682,13 +682,20 @@ def test_token_claim_round_trips_and_an_unknown_value_is_ignored() -> None:
 
 
 def test_cli_mint_token_takes_traffic_class(monkeypatch, capsys, settings_override) -> None:
+    import asyncio
     import json
 
     from server import cli
     from server.auth.jwt import verify_token
+    from server.cli import access
     from server.settings import settings
 
-    secret = settings.jwt_secret_map()[settings.jwt_active_kid]
+    class _NoKeys:
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            return []
+
+    monkeypatch.setattr(access, "run_connected", lambda run: asyncio.run(run(_NoKeys())))
+    secret = settings.jwt_secret  # an empty keyring signs with the root secret
     rc = cli.main(
         [
             "mint-token",

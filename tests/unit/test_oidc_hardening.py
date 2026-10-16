@@ -18,6 +18,8 @@ from server.auth import login, oauth, oidc, sso_links
 from server.settings import settings
 from tests.unit.oauth_store_fake import MemoryOAuthStore
 
+pytestmark = pytest.mark.usefixtures("auth_attempts")
+
 _ISS = "https://idp.example.com"
 
 
@@ -274,7 +276,9 @@ async def test_callbacks_the_idp_refuses_are_limited_per_address(
 
     monkeypatch.setattr(oauth, "store", MemoryOAuthStore())
     monkeypatch.setattr(oidc, "exchange_code", refused)
-    monkeypatch.setattr(oauth, "_failed_callbacks_by_address", oauth.Attempts(2, 900))
+    monkeypatch.setattr(
+        oauth, "_failed_callbacks_by_address", oauth.Attempts("oidc.failed_callback", 2, 900)
+    )
     for _ in range(2):
         assert (await oauth.oidc_callback(_Req())).status_code == 400  # type: ignore[arg-type]
     assert (await oauth.oidc_callback(_Req())).status_code == 429  # type: ignore[arg-type]
@@ -288,7 +292,7 @@ async def test_sign_in_starts_are_limited_per_address_and_ipv6_net(
 
     monkeypatch.setattr(oauth, "store", MemoryOAuthStore())
     monkeypatch.setattr(oidc, "build_authorize_url", authorize_url)
-    monkeypatch.setattr(oauth, "_starts_by_address", oauth.Attempts(2, 900))
+    monkeypatch.setattr(oauth, "_starts_by_address", oauth.Attempts("oidc.start", 2, 900))
     for host in ("2001:db8::1", "2001:db8::2"):
         assert (await oauth.start_oidc_login("dashboard", host)).status_code == 302
     assert (await oauth.start_oidc_login("dashboard", "2001:db8::3")).status_code == 429
@@ -326,7 +330,9 @@ async def test_error_callbacks_count_toward_the_limit(monkeypatch: pytest.Monkey
 
     monkeypatch.setattr(oauth, "store", MemoryOAuthStore())
     monkeypatch.setattr(oauth.audit, "emit", emit)
-    monkeypatch.setattr(oauth, "_failed_callbacks_by_address", oauth.Attempts(2, 900))
+    monkeypatch.setattr(
+        oauth, "_failed_callbacks_by_address", oauth.Attempts("oidc.failed_callback", 2, 900)
+    )
     cancelled = _Req()
     cancelled.query_params = {"error": "access_denied", "state": "s"}
     for _ in range(2):
@@ -345,7 +351,9 @@ async def test_a_rejected_client_secret_is_the_servers_fault_not_the_users(
 
     monkeypatch.setattr(oauth, "store", MemoryOAuthStore())
     monkeypatch.setattr(oidc, "exchange_code", rejected)
-    monkeypatch.setattr(oauth, "_failed_callbacks_by_address", oauth.Attempts(1, 900))
+    monkeypatch.setattr(
+        oauth, "_failed_callbacks_by_address", oauth.Attempts("oidc.failed_callback", 1, 900)
+    )
     for _ in range(3):  # never counted against the person's address
         assert (await oauth.oidc_callback(_Req())).status_code == 502  # type: ignore[arg-type]
 

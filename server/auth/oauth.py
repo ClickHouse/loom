@@ -28,7 +28,7 @@ import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
-from server.auth import claims, machines, sso_links
+from server.auth import claims, machines, shielded, sso_links
 from server.auth.attempts import Attempts, address_key, client_address
 from server.auth.delegation import SESSION_TTL
 from server.auth.jwt import AuthInfo, mint_token, new_jti
@@ -42,7 +42,6 @@ from server.auth.oauth_store import (
     OAuthStore,
     token_id,
 )
-from server.core import keeper_claims
 from server.core.secrets_at_rest import open_sealed, seal, unseal
 from server.observability import audit
 from server.settings import settings
@@ -460,10 +459,10 @@ def _state_cookie(state: str) -> str:
 
 _PENDING_PURPOSE = "oidc sign-in in flight"
 _COOKIE_MAX = 3800  # browsers drop a cookie past 4 KB
-_starts_by_address = Attempts(300, 900)
+_starts_by_address = Attempts("oidc.start", 300, 900)
 # Callbacks that failed (cancelled, or a code the IdP would not exchange): a
 # flood of them costs audit rows and calls to the IdP.
-_failed_callbacks_by_address = Attempts(30, 900)
+_failed_callbacks_by_address = Attempts("oidc.failed_callback", 30, 900)
 
 
 def seal_pending(record: dict[str, Any]) -> str:
@@ -486,7 +485,7 @@ async def start_oidc_login(kind: str, address: str, **data: str) -> Response:
     writes nothing on the server: only a callback the IdP sent back does."""
     from server.auth import oidc
 
-    if not _starts_by_address.allow(address_key(address)):
+    if not await _starts_by_address.allow(address_key(address)):
         log_refused("start", address)
         return html_page(
             "Sign in to Loom",
@@ -650,20 +649,20 @@ async def _exchange_at_idp(
             code_verifier=pending["code_verifier"],
         )
     except OAuthError:
-        _failed_callbacks_by_address.record(address)
+        await _failed_callbacks_by_address.record(address)
         raise
     except httpx.HTTPStatusError as e:
         # Its response body stays in the log, not the browser.
         log.warning("oidc callback: the identity provider answered %s", e.response.status_code)
         if e.response.status_code == 400 and oidc.error_code(e.response) == "invalid_grant":
-            _failed_callbacks_by_address.record(address)
+            await _failed_callbacks_by_address.record(address)
             raise _StartAgain from e  # a stale or made-up code
         raise OAuthError("temporarily_unavailable", 502) from e
     except httpx.TransportError as e:  # the IdP is away
         log.warning("oidc callback: identity provider exchange failed: %s", type(e).__name__)
         raise OAuthError("temporarily_unavailable", 502) from e
     except Exception as e:  # any other exchange failure refuses the login (re-raised)
-        _failed_callbacks_by_address.record(address)
+        await _failed_callbacks_by_address.record(address)
         log.warning("oidc callback: identity provider exchange refused: %s", type(e).__name__)
         raise OAuthError("oidc_error") from e
     try:
@@ -673,7 +672,7 @@ async def _exchange_at_idp(
         await oidc.revoke(str(tokens.get("refresh_token") or ""))
         raise _Spent from e
     except Exception as e:  # any other verify failure refuses the login (re-raised)
-        _failed_callbacks_by_address.record(address)
+        await _failed_callbacks_by_address.record(address)
         log.warning("oidc callback: id_token refused: %s", type(e).__name__)
         raise OAuthError("oidc_error") from e
     return tokens, id_claims
@@ -690,7 +689,7 @@ async def _finish_oidc_login(request: Request) -> Response:
         return _expired_sign_in()
     kind, user_code = pending["kind"], pending.get("user_code", "")
     address = address_key(client_address(request))
-    if _failed_callbacks_by_address.blocked(address):
+    if await _failed_callbacks_by_address.blocked(address):
         log_refused("callback", address)
         return html_page(
             "Sign in to Loom",
@@ -701,7 +700,7 @@ async def _finish_oidc_login(request: Request) -> Response:
     if request.query_params.get("error"):
         # Cancelled at the IdP, or refused there. A device grant stays pending:
         # who cancelled is unknown, so it is no reason to end anyone's sign-in.
-        _failed_callbacks_by_address.record(address)
+        await _failed_callbacks_by_address.record(address)
         await _signin_denied("", "cancelled at the identity provider")
         return _denied_page("The identity provider did not sign you in; try again")
     code = request.query_params.get("code", "")
@@ -1204,7 +1203,7 @@ async def put_back(saving: Coroutine[Any, Any, None]) -> None:
         except Exception as e:  # noqa: BLE001 — the request's own outcome is what goes on
             log.warning("oauth: could not put a credential back: %r", e)
 
-    await keeper_claims.shielded(logged(), name="oauth put-back")
+    await shielded.shielded(logged(), name="oauth put-back")
 
 
 def _unavailable() -> OAuthError:

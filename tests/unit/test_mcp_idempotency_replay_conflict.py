@@ -94,6 +94,7 @@ def probe(monkeypatch: pytest.MonkeyPatch) -> tuple[_Store, list[str]]:
         idempotent=True,
         budget_p99_ms=10_000,
         required_role=Role.VIEWER,
+        writes=True,  # a read-only op keeps no replay
     )
     monkeypatch.setitem(mcp_call._TOOLS_BY_NAME, TOOL, op)
 

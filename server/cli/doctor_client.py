@@ -112,7 +112,7 @@ def server_check(base_url: str, source: str, get_json: GetJson) -> tuple[Check, 
                 WARN,
                 f"{base_url} answers (build {build}) but reports {health}: "
                 f"{', '.join(map(str, errors)) or status}. "
-                "Fix: `loom doctor` on the server, or /me → Status.",
+                "Fix: `loom doctor` on the server, or the dashboard's Health page.",
             ),
             body if isinstance(body, dict) else {},
         )
@@ -127,7 +127,7 @@ def token_check(token: str, source: str, claims: dict[str, Any], now: float) -> 
             WARN,
             "no token: LOOM_API_KEY unset, no ~/.loom/config.json `token`, no ~/.loom/token. "
             "Fine for a single-user stack; otherwise `loom mint-token --save`, "
-            "`loom init --agent NAME`, or mint one at /me → Setup.",
+            "`loom init --agent NAME`, or mint one in the dashboard (Settings → Tokens).",
         )
     if not claims:
         return (
@@ -216,7 +216,8 @@ def auth_check(
                 name,
                 FAIL,
                 f"the server rejected the token: {msg}. Fix: mint a new token "
-                "(`loom mint-token --save`, /me → Setup, or `loom init --agent`) — "
+                "(`loom mint-token --save`, Settings → Tokens in the dashboard, or "
+                "`loom init --agent`) — "
                 "the hooks fail open, so this is why captures vanish.",
             ),
             [],
@@ -287,8 +288,8 @@ def reads_check(
             parts.append(
                 f"not included: {_fmt(excluded)} — restricted; a client token's own "
                 "subject holds no direct grant there. Fix: add the "
-                "repository when minting at /me → Setup, or `loom mint-token --subject "
-                "<you> --namespaces <ns>` for your own subject."
+                "repository when minting in the dashboard (Settings → Tokens), or "
+                "`loom mint-token --subject <you> --namespaces <ns>` for your own subject."
             )
     return (name, PASS, "reads " + " · ".join(parts))
 
@@ -314,7 +315,7 @@ def namespace_check(namespace: str, rows: list[dict[str, Any]], token: str, auth
         FAIL,
         f"hooks write to {namespace!r} but the token has no grant there "
         f"(it has {sorted(mine) or 'none'}). Fix: set LOOM_NAMESPACE / `namespace` in "
-        "~/.loom/config.json to one of those, or join it at /me.",
+        "~/.loom/config.json to one of those, or join it in the dashboard.",
     )
 
 
@@ -327,7 +328,7 @@ def recording_check(
     auth_ok: bool,
 ) -> Check:
     """Whether the namespace the hooks write to keeps the
-    conversation turns they send. The owner's Recording switch in /me
+    conversation turns they send. The owner's Recording switch in the dashboard
     (`conversation_logging_enabled`) decides; with it off every append is
     accepted and nothing is kept, which the hooks alone would never notice."""
     name = "client:recording"
@@ -348,7 +349,7 @@ def recording_check(
             name,
             WARN,
             f"conversation recording is off for {namespace!r} (the owner's Recording switch "
-            "in /me): the hooks send no turns and none are kept. Turn it on at /me if "
+            "in the dashboard): the hooks send no turns and none are kept. Turn it on there if "
             "you want transcripts.",
         )
     return (name, PASS, f"conversation recording is on for {namespace!r}")
@@ -401,7 +402,8 @@ def claude_code_checks(
                     else "no Authorization header in the entry"
                 ),
                 fix="`claude mcp remove <name>` then "
-                "`loom install --client claude-code --token <new>`, or /me → Setup → Claude Code",
+                "`loom install --client claude-code --token <new>`, "
+                "or Settings → Claude Code in the dashboard",
             )
         )
         if plugin:
@@ -539,9 +541,9 @@ def code_access_check(
             ("client:code-access", PASS, f"{slug}: readable as {', '.join(ns)} by every credential")
         ]
     fix = (
-        "claim this machine's self-signup namespace at /me (the code is in "
+        "claim this machine's self-signup namespace in the dashboard (the code is in "
         "~/.loom/claim-*.txt) so its token acts as you, or save a token for your own "
-        "user (`loom mint-token --save`), or request access at /me → Discover"
+        "user (`loom mint-token --save`), or request access from the dashboard's Spaces page"
     )
     if readers:
         return [

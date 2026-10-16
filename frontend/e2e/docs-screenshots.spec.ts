@@ -1,4 +1,4 @@
-// Documentation screenshots of the /me dashboard: the production build (`vite preview`, as
+// Documentation screenshots of the / dashboard: the production build (`vite preview`, as
 // every spec here) with every `/v1/*` call answered from the invented demo data below, one
 // small team "acme" — never a live server. The spec is skipped unless
 // LOOM_DOCS_SCREENSHOTS=1, so the suite's own run never writes into docs/. Regenerate the
@@ -675,7 +675,7 @@ test.describe("docs screenshots", () => {
 
   test("memories", async ({ page }) => {
     await installDemoApi(page);
-    await page.goto("/me/memories");
+    await page.goto("/memories");
     await expect(page.getByText("deploys/policy/windows").first()).toBeVisible();
     // The list, not the audit and mentor panels above it, is the subject.
     await page.getByPlaceholder(/Search memories/).evaluate((el) => {
@@ -688,7 +688,7 @@ test.describe("docs screenshots", () => {
 
   test("memory detail", async ({ page }) => {
     await installDemoApi(page);
-    await page.goto("/me/memories");
+    await page.goto("/memories");
     await page.getByText("api/rate-limit/public", { exact: true }).first().click();
     const drawer = page.getByRole("dialog");
     await expect(drawer.getByText("Conflicts with 1 other memory")).toBeVisible();
@@ -702,14 +702,14 @@ test.describe("docs screenshots", () => {
 
   test("review queue", async ({ page }) => {
     await installDemoApi(page);
-    await page.goto("/me/admin/review_queue");
+    await page.goto("/admin/review_queue");
     await expect(page.getByText("Conflict 1 of 2")).toBeVisible();
     await capture(page, "dashboard-review-queue");
   });
 
   test("recall", async ({ page }) => {
     await installDemoApi(page);
-    await page.goto("/me/recall");
+    await page.goto("/recall");
     const input = page.getByLabel("Recall query");
     await input.fill("when can I deploy to production?");
     await expect(page.getByText(/5 rows/)).toBeVisible();
@@ -719,7 +719,7 @@ test.describe("docs screenshots", () => {
 
   test("repositories", async ({ page }) => {
     await installDemoApi(page);
-    await page.goto("/me/repositories");
+    await page.goto("/repositories");
     const toggle = page.getByRole("button", { name: "acme/payments", exact: true });
     await toggle.click();
     await expect(toggle).toHaveAttribute("aria-expanded", "true");
@@ -728,7 +728,7 @@ test.describe("docs screenshots", () => {
 
   test("connect a client", async ({ page }) => {
     await installDemoApi(page);
-    await page.goto("/me/settings");
+    await page.goto("/settings");
     await page.getByRole("button", { name: "New token" }).click();
     await page.getByRole("button", { name: "Generate token" }).click();
     const dialog = page.getByRole("dialog");

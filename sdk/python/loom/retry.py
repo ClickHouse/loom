@@ -8,10 +8,11 @@ What is retried and why:
   registry marks idempotent (its `Idempotency-Key` is deduplicated). Any
   other op is retried only on a 408 or a refusal made before dispatch
   (503 AUTH_UNAVAILABLE): a 5xx after the handler started may have written;
-- a read timeout only when the op is idempotent by the registry
-  (`retry_timeouts="idempotent"`): the request carried an `Idempotency-Key`
-  the server dedups on. A non-idempotent op that timed out may still be
-  executing and is never retried by default;
+- a read timeout only when the op is idempotent by the registry and not
+  read-only (`retry_timeouts="idempotent"`): the request carried an
+  `Idempotency-Key` the server dedups on. Any other op that timed out may
+  still be executing (a read-only `memory.ask` would run its synthesis twice)
+  and is never retried by default;
 - never a response cut off, or any other transport failure: the server may
   have acted.
 
@@ -55,7 +56,8 @@ class RetryPolicy:
     statuses: frozenset[int] = field(default_factory=_default_statuses)
     #: Retry when the connection failed before a response.
     retry_connection_errors: bool = True
-    #: Retry a read timeout: never, only for registry-idempotent ops, or always.
+    #: Retry a read timeout: never, only for ops the server dedups (registry-idempotent,
+    #: not read-only), or always.
     retry_timeouts: RetryTimeouts = "idempotent"
     #: Honour a `Retry-After` on a retried status instead of the backoff.
     respect_retry_after: bool = True

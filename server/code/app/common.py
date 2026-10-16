@@ -224,14 +224,17 @@ async def index_as_of(repo: CodeRepo, org: str, ns: str) -> dict[str, Any]:
         commit = str(head.get("value") or "")
         if not commit:
             return {}
+        from server.code.app.index.mirrors import present_dir
         from server.code.domain.index.repos import repo_for_namespace
 
         cfg = repo_for_namespace(org, ns)
         updated = head.get("updated_at")
-        if settings.read_replica:
-            lag = _published_lag(state, cfg, commit) if cfg else -1
+        if cfg is None:
+            lag = -1
+        elif await present_dir(cfg):
+            lag = await _lag_commits_cached(cfg, commit)
         else:
-            lag = await _lag_commits_cached(cfg, commit) if cfg else -1
+            lag = _published_lag(state, cfg, commit)
         fetched = (state.get("clone_head") or {}).get("updated_at")
         unfetched = mirror_fetch_overdue(fetched)
         stale = lag > settings.code_stale_after_commits or unfetched
@@ -283,8 +286,8 @@ _LAG_CACHE: TtlCache[tuple[str, str, str], int] = TtlCache(60.0, maxsize=64)
 
 
 def _published_lag(state: Any, cfg: Any, git_head: str) -> int:
-    """A read-replica has no clone to count with: the lag the main Loom published
-    for this same index head and clone tip, else -1 (unknown)."""
+    """A host without the mirror has no clone to count with: the lag another process
+    published for this same index head and clone tip, else -1 (unknown)."""
     from server.code.app.index_status import published_clone_head, published_lags
 
     tip = published_clone_head(state, cfg.git_branch)

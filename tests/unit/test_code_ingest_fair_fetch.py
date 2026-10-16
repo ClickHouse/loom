@@ -26,6 +26,14 @@ from server.code.app.index import pass_stream as ingest_stream
 from server.settings import settings
 from tests.unit.test_code_ingest_pass_budget import _cfg, _Clock, _StateRepo, _wire_commits
 
+pytestmark = pytest.mark.usefixtures("mirror_here")
+
+
+@pytest.fixture(autouse=True)
+def _locks_in_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    """The fake git_dirs are relative: their fetch-lock files land in tmp_path."""
+    monkeypatch.chdir(tmp_path)
+
 
 def _entry(ns: str, git_dir: str, branch: str) -> Any:
     return _cfg(ns, git_dir=git_dir, git_branch=branch, git_remote="r", github_token="")
@@ -409,11 +417,8 @@ def test_run_repo_skips_the_fetch_its_mirror_did_and_leaves_the_commits_pending(
     monkeypatch.setattr(gitrepo, "head_sha", head)
     monkeypatch.setattr(gitrepo, "commits_between", between)
     monkeypatch.setattr(ingest_fetch, "fetch_extra_branches", zero)
-    monkeypatch.setattr(w, "fetch_extra_branches", zero)
     monkeypatch.setattr(ingest_fetch, "fetch_missing_merges", zero)
-    monkeypatch.setattr(w, "fetch_missing_merges", zero)
     monkeypatch.setattr(ingest_fetch, "fetch_pr_heads", zero)
-    monkeypatch.setattr(w, "fetch_pr_heads", zero)
     monkeypatch.setattr(ingest_fetch, "_publish_clone_head", none)
     monkeypatch.setattr(w, "_publish_clone_head", none)
     monkeypatch.setattr(ingest_commit, "_ingest_commit", boom)

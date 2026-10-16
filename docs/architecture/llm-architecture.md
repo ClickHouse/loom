@@ -130,19 +130,27 @@ Each search resolves thresholds in three tiers:
 
 1. a per-namespace calibration (`loom.namespace_calibration_result`, written by
    `code.calibrate`);
-2. the boot calibration;
+2. the cluster calibration (`loom.embedder_calibration`, one row per embedder model);
 3. the scalar settings (`LOOM_MEMORY_SEARCH_MIN_SIMILARITY`,
    `LOOM_MEMORY_SEARCH_ABSTAIN_THRESHOLD`, `LOOM_MEMORY_SEARCH_HYDE_FALLBACK_THRESHOLD`,
    `LOOM_MEMORY_SEARCH_QUERY_REWRITE_THRESHOLD`, `LOOM_LLM_RERANK_SKIP_ABOVE`,
    `LOOM_CONFLICT_THRESHOLD`).
 
-`calibration.get` and `/v1/health` (`adaptive_thresholds`) show what is in force.
+`calibration.get` and `/v1/health` (`adaptive_thresholds`) show what is in force;
+`adaptive_thresholds.calibration_hash` is equal on every replica serving the same gates.
 
+- Every replica serves one calibration. At boot a replica adopts the
+  `loom.embedder_calibration` row of its embedder and probes only when there is none
+  (the first replica to boot publishes its probe). Each replica re-reads the row every
+  `LOOM_CALIBRATION_REFRESH_SECONDS` (60) and adopts a changed one; a replica whose boot
+  probe failed probes again on that tick. Per-namespace rows are cached for 60 s, so a
+  `code.calibrate` run on one replica serves on all of them within a minute.
 - Fake embedders skip calibration and use the scalar gates. So does a failed probe; it
   never fails boot.
 - With adaptivity off and a real embedder other than `text-embedding-3-small` (the model
   the scalar gates were tuned for), boot logs a warning. You own re-benching.
-- The `recalibration` worker (weekly, `LOOM_RECALIBRATION_ENABLED`) re-runs the probe,
+- The `recalibration` worker (weekly, `LOOM_RECALIBRATION_ENABLED`, on the leader)
+  re-runs the probe, publishes the result as the cluster calibration,
   warns on a drift of 0.05 or more, and re-probes namespace corpora with at least 5
   similar and 3 distractor pairs.
 

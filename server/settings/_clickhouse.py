@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from server.settings._env import JsonObject
 
@@ -20,6 +20,10 @@ class ClickHouseSettings(BaseModel):
     ch_password: str = "loomdev"
     # Database that holds every Loom table and that migrations run against.
     ch_database: str = "loom"
+    # The cluster `clusterAllReplicas` reads to find a stopped Loom process's
+    # queries on every node (`default` on ClickHouse Cloud). A server without
+    # it answers for itself; '' reads only the connected server.
+    ch_cluster: Annotated[str, Field(pattern=r"^[A-Za-z0-9_.-]*$")] = "default"
     # Connect over HTTPS. Unset infers TLS from the port (8443 on, anything else off).
     ch_secure: bool | None = None
     # Append `sql:<shape12> <first 200 chars>` of each statement to its
@@ -83,9 +87,6 @@ class ClickHouseSettings(BaseModel):
         '"background": {"priority": 5, "max_threads": 3, '
         '"read_from_filesystem_cache_if_exists_otherwise_bypass_cache": 1}}'
     )
-    # Advisory flock that serialises boot migrations across the processes of
-    # one host.
-    boot_migrate_lock_path: str = "/tmp/loom-migrate.lock"
     # Apply pending migrations at boot. Set False for any server started from
     # a branch against a shared service, or it applies unmerged migrations.
     boot_migrate: bool = True
@@ -93,11 +94,8 @@ class ClickHouseSettings(BaseModel):
     boot_migrate_lease_ttl_s: int = 300
     # Seconds a contender waits for the holder before boot fails (exit 1, the
     # container restarts); also how long a booting process waits for the
-    # provider configuration lock a sibling holds while it migrates.
+    # provider configuration lock (a sibling's rebuild step may hold it).
     boot_migrate_lease_wait_s: float = 900.0
-    # Pause between a contender's insert and its read-back, so a row just
-    # acknowledged on another replica is visible.
-    boot_migrate_lease_settle_s: float = 1.0
     # Seconds a migration file waits for the mutations it started (MATERIALIZE,
     # UPDATE, a column type change) to finish on every replica; past it the
     # file fails unrecorded.

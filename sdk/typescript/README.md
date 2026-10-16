@@ -82,7 +82,7 @@ Every failure is a `LoomError` with `status`, `code` (the server's `detail.code`
 | `PreconditionFailed`, `IdempotentConflict` | 409 / 412 — a version, lifecycle or idempotency precondition                                                                                                           |
 | `RateLimited`                              | 429 past the pacing budget; `retryAfterS` is the server's hint                                                                                                         |
 | `BackendUnavailable`                       | 5xx after the retries, or a connection that never got a response — then the message reads `cannot reach <baseUrl>: …` and `code` is `NETWORK_ERROR_CODE` (`"NETWORK"`) |
-| `TimeoutError`                             | the per-call timeout elapsed; retried only for registry-idempotent ops (`retryTimeouts`), since the server may still be processing                                     |
+| `TimeoutError`                             | the per-call timeout elapsed; retried only for idempotent non-read-only ops (`retryTimeouts`), since the server may still be processing                                |
 
 A 2xx whose body is not JSON (a proxy or gateway page) is a `LoomError` with `code` `INVALID_RESPONSE_CODE` (`"INVALID_RESPONSE"`); it is not retried, and `detail.message` holds the start of the body.
 
@@ -131,15 +131,15 @@ await loom.memory.get(input, { retry: { maxAttempts: 1 } }); // this call: no re
 await loom.memory.setFromMessages(input, { retry: { retryTimeouts: "always" } });
 ```
 
-| field                                        | default        | meaning                                                                                                                 |
-| -------------------------------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `maxAttempts`                                | 3              | total attempts including the first                                                                                      |
-| `backoffMs`, `backoffMaxMs`, `backoffJitter` | 250, 5000, 0.5 | exponential backoff between attempts, ±25 % jitter                                                                      |
-| `statuses`                                   | 408 + 5xx      | statuses retried (a 429 is paced, not retried)                                                                          |
-| `retryConnectionErrors`                      | true           | the server never saw the request                                                                                        |
-| `retryTimeouts`                              | `"idempotent"` | retry a per-call timeout never, only for registry-idempotent ops (the server dedups their `Idempotency-Key`), or always |
-| `respectRetryAfter`, `maxRetryAfterS`        | true, 60       | honour a `Retry-After` on a retried status (a 503 OVERLOADED sends one) up to the cap                                   |
-| `totalBackoffBudgetMs`                       | ∞              | total time one call may sleep between attempts                                                                          |
+| field                                        | default        | meaning                                                                                                                      |
+| -------------------------------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `maxAttempts`                                | 3              | total attempts including the first                                                                                           |
+| `backoffMs`, `backoffMaxMs`, `backoffJitter` | 250, 5000, 0.5 | exponential backoff between attempts, ±25 % jitter                                                                           |
+| `statuses`                                   | 408 + 5xx      | statuses retried (a 429 is paced, not retried)                                                                               |
+| `retryConnectionErrors`                      | true           | the server never saw the request                                                                                             |
+| `retryTimeouts`                              | `"idempotent"` | retry a per-call timeout never, only for idempotent non-read-only ops (the server dedups their `Idempotency-Key`), or always |
+| `respectRetryAfter`, `maxRetryAfterS`        | true, 60       | honour a `Retry-After` on a retried status (a 503 OVERLOADED sends one) up to the cap                                        |
+| `totalBackoffBudgetMs`                       | ∞              | total time one call may sleep between attempts                                                                               |
 
 ## Logging
 

@@ -130,7 +130,7 @@ def test_every_http_bearer_check_answers_an_unloaded_list_with_503(
 def test_me_and_task_watch_answer_an_unloaded_list_with_503(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The /me bearer checks and the task watch stream use the same check: a
+    """The caller API's bearer checks and the task watch stream use the same check: a
     booting process must not tell the dashboard to drop a good token."""
     from types import SimpleNamespace
 

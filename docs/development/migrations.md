@@ -10,7 +10,9 @@ This page holds the rules for writing a migration. How a deployment applies them
 - Each applied file is recorded in `loom._migrations` with the SHA-256 of its contents.
   A re-run applies only new files. A changed file is **checksum drift** and a file the
   repository no longer has is a **ledger-only row**; `loom migrate --dry-run --strict`
-  (a CI step and the deploy preflight) fails on either.
+  (a CI step and the deploy preflight) fails on either. A file renamed with its text
+  unchanged is not ledger-only: its SHA-256 names it, and it is recorded under the new
+  name without running again.
 - Every file addresses `loom.<table>`, so the schema always lives in a database named
   `loom` whatever `LOOM_CH_DATABASE` says.
 
@@ -66,11 +68,11 @@ rebuilds instead of `ALTER` for key changes.
 
 A migration file can carry comment directives the runner reads:
 
-| Directive                           | Effect                                                                                          |
-| ----------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `-- loom: tolerate-error <code>`    | the file survives one named server error (for example `KeeperMap` on a server without a Keeper) |
-| `-- loom: rebuild-if-empty <table>` | declares a target sort or partition key for `<table>` (below)                                   |
-| `-- loom: baseline covers N`        | the file replaces every file numbered N or lower that the repository no longer carries          |
+| Directive                           | Effect                                                                                    |
+| ----------------------------------- | ----------------------------------------------------------------------------------------- |
+| `-- loom: tolerate-error <code>`    | the file survives one named server error (for example a setting only some servers accept) |
+| `-- loom: rebuild-if-empty <table>` | declares a target sort or partition key for `<table>` (below)                             |
+| `-- loom: baseline covers N`        | the file replaces every file numbered N or lower that the repository no longer carries    |
 
 **Baselines.** A baseline is numbered N, after the newest file it replaces. A fresh
 database runs it. A database whose ledger holds file N records it without running and

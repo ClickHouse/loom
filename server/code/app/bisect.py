@@ -82,11 +82,11 @@ from server.code.app.common import (
     schedule_code_trace,
 )
 from server.code.app.index import merge_shas
+from server.code.app.index.mirrors import history_dir
 from server.code.app.spans import code_span, set_code_span_attributes
 from server.code.domain.index import blame_introduced as intro
 from server.code.domain.index import blame_range as br
 from server.code.domain.index.coverage_claim import is_test_file
-from server.code.domain.index.repos import default_git_dir
 from server.code.domain.time_window import _iso, _parse_when
 from server.code.store.index import CodeRepo
 from server.core.errors import ValidationError
@@ -273,8 +273,12 @@ async def _mark_stage(
         records, stage.status = {}, "ledger_failed"
     first = bi.mark_bisect_candidates(pool, records=records, frames=frames, diff_kinds={})
     cfg, _siblings = cb.repo_siblings(org, ns)
-    git_dir = (cfg.git_dir if cfg is not None else "") or default_git_dir()
-    targets = _diff_targets(pool, first, records, frames_or_paths=bool(frames or paths))
+    git_dir, stage.reason = await cb.history_git_dir(cfg, "code.bisect_candidates")
+    targets = (
+        _diff_targets(pool, first, records, frames_or_paths=bool(frames or paths))
+        if git_dir
+        else []
+    )
     got = await asyncio.gather(
         *(
             cb.diff_kind(git_dir, sha, tuple(c.matched_paths or paths[:8]), frames)
@@ -295,7 +299,7 @@ async def _mark_stage(
     )
     for c in pool:
         c.mark = stage.marks.get(c.pr_number)
-    if stage.status == "skipped":
+    if stage.status == "skipped" and not stage.reason:
         stage.status = "ok"
     return bi.rank_marked(pool, stage.marks), stage
 
@@ -312,7 +316,8 @@ async def _attach_merge_shas(repo: CodeRepo, org: str, ns: str, ranked: list[bi.
         logger.info("bisect: ledger merge commits unread (%s)", e)
         stored = {}
     cfg, _siblings = cb.repo_siblings(org, ns)
-    git_dir = (cfg.git_dir if cfg is not None else "") or settings.code_git_dir
+    # no mirror here yet: the ledger's shas alone (history_dir starts the clone)
+    git_dir = (await history_dir(cfg))[0] if cfg is not None else settings.code_git_dir
     branch = (cfg.git_branch if cfg is not None else "") or settings.code_git_branch
     since = min((br.unix_of(c.merged_at) for c in ranked), default=0)
     got = await merge_shas.resolve(
@@ -939,9 +944,12 @@ async def _time_window(input: Any, org: str, ns: str) -> tuple[datetime | None, 
             raise ValidationError(
                 f"{ns} has no repository mirror to resolve {sha!r}", code="BAD_SHA"
             )
+        git_dir, gap = await history_dir(cfg)
+        if gap:
+            raise ValidationError(f"{gap}; pass `before` as a time instead", code="BAD_SHA")
         try:
-            epoch = await gitrepo.commit_time(cfg.git_dir, sha)
-        except Exception:  # noqa: BLE001 — unknown sha, missing mirror, git error
+            epoch = await gitrepo.commit_time(git_dir, sha)
+        except Exception:  # noqa: BLE001 — unknown sha, git error
             raise ValidationError(
                 f"commit {sha!r} is not on the {ns} mirror; pass `before` as a time instead",
                 code="BAD_SHA",

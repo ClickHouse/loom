@@ -72,16 +72,15 @@ async def note_restricted_access(
     auth: Any, *, op: str, org: str | None, namespace: str | None, transport: str
 ) -> bool:
     """One audit row for a request the gate admitted to a restricted
-    namespace. Returns True when a row was scheduled (or, with
-    `restricted_audit_inline`, written). Never raises.
+    namespace. Returns True when the row was written (or, with
+    `restricted_audit_inline` off, scheduled). Never raises.
 
-    The row's one-row INSERT into loom.audit_log takes 0.5-3.2 s at the
-    median (p90 5 s); awaited before the handler, every request on a
-    restricted namespace would pay it unseen by the ledger's latency clock. So
-    the row is written beside the request: same row, same hash, same ledger; a
-    crash between the answer and the flush loses that row, the loss window the
-    events stream and the exposure ledger already accept. `restricted_audit_inline`
-    restores the wait for a deployment that wants the row committed first."""
+    By default the row is committed before the handler runs, so a process
+    killed after answering never loses it. The one-row INSERT into
+    loom.audit_log takes 0.5-3.2 s at the median (p90 5 s) on Cloud;
+    `restricted_audit_inline=false` writes it beside the request instead
+    (same row, same hash, drained at shutdown) and accepts losing it to a
+    SIGKILL."""
     if auth is None or not org or not namespace:
         return False
     try:

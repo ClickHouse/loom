@@ -108,9 +108,15 @@ def _invalid_namespace_names(names: list[str]) -> list[str]:
 
 
 def _cmd_mint_token(args: argparse.Namespace) -> int:
+    from server.auth import keyring
     from server.auth.authz import GRANT_ROLES
     from server.auth.jwt import mint_token, new_jti
 
+    try:
+        keyring.load_for_offline_mint(run=run_connected)
+    except ValueError as e:  # another root: no server would accept the token
+        print(f"  ✗ {e}", file=sys.stderr)
+        return 1
     ttl_seconds = (args.ttl_days * 86400) if args.ttl_days else None
     # Every minted token carries a jti; generated here so
     # the summary can name it beside (or instead of) the token — it is the

@@ -4,14 +4,16 @@ has a plain URL."""
 
 from __future__ import annotations
 
-import asyncio
+from collections.abc import AsyncIterator
+from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 
 from server.auth.authz import check_authorized
 from server.auth.bearer import verify_bearer_header
+from server.core.ch import sequential_reads
 from server.knowledge.domain.documents import text_download_filename
 from server.knowledge.store import documents as documents_repo
 from server.operations.base import Role
@@ -39,8 +41,6 @@ async def knowledge_download(
     from `loom.documents.content` — the same column `knowledge.get` serves.
     `X-Loom-Download-Source: blob|text` says which path answered.
     """
-    from server.storage.blob_store import get_store
-
     # The HTTP transport's rule: a present bearer is verified whether or not
     # the deployment requires one; a missing one is a 401 only when auth is on.
     auth = verify_bearer_header(request.headers.get("Authorization"))
@@ -75,26 +75,61 @@ async def knowledge_download(
             inline=inline,
             source="text",
         )
-    try:
-        data = await asyncio.to_thread(get_store().read, doc.blob_path)
-    except FileNotFoundError as e:
+    response = await _original_response(org, namespace, doc, inline=inline)
+    if response is None:
+        # An upload through another replica may not have reached this one yet.
+        with sequential_reads():
+            response = await _original_response(org, namespace, doc, inline=inline)
+    if response is None and documents_repo.is_legacy_blob_path(doc.blob_path):
         raise HTTPException(
             status_code=410,
             detail={
                 "code": "BLOB_GONE",
-                "message": (
-                    "the original file is no longer in the blob store; the "
-                    "document row references it but the bytes were removed "
-                    "out-of-band"
-                ),
+                "message": "this original is still a file of the old blob directory; "
+                "run `loom blobs import` on the host that holds it",
             },
-        ) from e
-    return _download_response(
-        data,
-        filename=doc.original_filename or doc.source_uri or "document.bin",
-        content_type=doc.blob_content_type or "application/octet-stream",
+        )
+    if response is None:
+        raise HTTPException(
+            status_code=410,
+            detail={
+                "code": "BLOB_GONE",
+                "message": "the document row references an original that is no longer stored",
+            },
+        )
+    return response
+
+
+# An original up to this size is read whole and the ClickHouse connection freed
+# before the answer is sent; a larger one streams under `ch.STREAM_SLOTS`.
+_BUFFER_MAX_BYTES = 4 * 1024 * 1024
+
+
+async def _original_response(
+    org: str, namespace: str, doc: documents_repo.DocumentRow, *, inline: bool
+) -> Response | None:
+    """The answer carrying `doc`'s original, or None when no row holds it."""
+    from server.knowledge.store import blobs
+
+    sha = documents_repo.original_sha(doc.blob_path)
+    size = await blobs.size(org, namespace, sha)
+    if size is None:
+        return None
+    filename = doc.original_filename or doc.source_uri or "document.bin"
+    content_type = doc.blob_content_type or "application/octet-stream"
+    if size <= _BUFFER_MAX_BYTES:
+        data = await blobs.read(org, namespace, sha)
+        if len(data) != size:
+            return None
+        return _download_response(
+            data, filename=filename, content_type=content_type, inline=inline, source="blob"
+        )
+    return await _blob_response(
+        blobs.stream(org, namespace, sha),
+        size,
+        filename=filename,
+        content_type=content_type,
         inline=inline,
-        source="blob",
     )
 
 
@@ -132,15 +167,11 @@ def preview_type(content_type: str, data: bytes) -> str | None:
     return None
 
 
-def _download_response(
-    data: bytes,
-    *,
-    filename: str,
-    content_type: str,
-    inline: bool,
-    source: str,
-) -> Response:
-    """The bytes of a `knowledge.download` answer with its headers.
+def _headers(
+    head: bytes, size: int, *, filename: str, content_type: str, inline: bool, source: str
+) -> tuple[str, dict[str, str]]:
+    """The media type and headers of a `knowledge.download` answer whose body
+    starts with `head`.
 
     `inline=true` previews only the passive types `preview_type` allows;
     anything else is an attachment of `application/octet-stream`. A plain
@@ -149,26 +180,83 @@ def _download_response(
     so it cannot break out of the Content-Disposition header.
     """
     safe_name = "".join(c if 32 <= ord(c) < 127 and c not in '"\\' else "_" for c in filename)
-    passive = preview_type(content_type, data)
+    passive = preview_type(content_type, head)
     if inline and passive:
         disposition, media_type = "inline", passive
     elif passive:
         disposition, media_type = "attachment", _base_type(content_type)
     else:
         disposition, media_type = "attachment", "application/octet-stream"
-    return Response(
-        content=data,
-        media_type=media_type,
-        headers={
-            "Content-Disposition": f'{disposition}; filename="{safe_name}"',
-            "Content-Length": str(len(data)),
-            # no-store: the row can be repointed at new bytes.
-            "Cache-Control": "no-store",
-            "X-Loom-Download-Source": source,
-            "X-Content-Type-Options": "nosniff",
-            "Content-Security-Policy": _DOWNLOAD_CSP,
-        },
+    return media_type, {
+        "Content-Disposition": f'{disposition}; filename="{safe_name}"',
+        "Content-Length": str(size),
+        # no-store: the row can be repointed at new bytes.
+        "Cache-Control": "no-store",
+        "X-Loom-Download-Source": source,
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": _DOWNLOAD_CSP,
+    }
+
+
+def _download_response(
+    data: bytes, *, filename: str, content_type: str, inline: bool, source: str
+) -> Response:
+    """A buffered answer: a small original, or the stored text of a document
+    without one."""
+    media_type, headers = _headers(
+        data,
+        len(data),
+        filename=filename,
+        content_type=content_type,
+        inline=inline,
+        source=source,
     )
+    return Response(content=data, media_type=media_type, headers=headers)
+
+
+# Bytes read before the headers are chosen: enough for every magic in _BINARY_MAGIC.
+_HEAD_BYTES = 12
+
+
+async def _blob_response(
+    opened: AbstractAsyncContextManager[AsyncIterator[bytes]],
+    size: int,
+    *,
+    filename: str,
+    content_type: str,
+    inline: bool,
+) -> StreamingResponse | None:
+    """Stream an original from ClickHouse without holding it in memory. The
+    first chunks are read before the answer starts, so a failed read is a
+    plain error, a row deleted since its size was read is None, and the
+    preview type sees the file's opening bytes; the stream closes when the
+    body is sent or the client goes away."""
+    stack = AsyncExitStack()
+    try:
+        chunks = await stack.enter_async_context(opened)
+        head = b""
+        async for chunk in chunks:
+            head += chunk
+            if len(head) >= _HEAD_BYTES:
+                break
+    except BaseException:
+        await stack.aclose()
+        raise
+    if not head:
+        await stack.aclose()
+        return None
+
+    async def body() -> AsyncIterator[bytes]:
+        async with stack:
+            if head:
+                yield head
+            async for chunk in chunks:
+                yield chunk
+
+    media_type, headers = _headers(
+        head, size, filename=filename, content_type=content_type, inline=inline, source="blob"
+    )
+    return StreamingResponse(body(), media_type=media_type, headers=headers)
 
 
 def attach(app: Any) -> None:

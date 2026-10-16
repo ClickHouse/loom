@@ -10,7 +10,7 @@ import { Setup } from "./Setup";
 
 // Setup's "Never save" panel must not list the blacklist for every visitor: a
 // viewer token that reads only code-clickhouse + tracker-clickhouse (no memory namespace)
-// would draw a `blacklist.list` AUTH_INSUFFICIENT on every /me load. The panel asks
+// would draw a `blacklist.list` AUTH_INSUFFICIENT on every dashboard load. The panel asks
 // `canCall` first: an unknown role sends nothing and reads one sentence; a granted viewer
 // lists read-only; an admin lists and gets the add form and the remove buttons.
 
@@ -102,7 +102,7 @@ describe("Setup's 'Never save' panel", () => {
     vi.clearAllMocks();
     localStorage.clear();
     // The open tab rides the URL (`?tab=memory`); start each test on the landing tab.
-    window.history.replaceState(null, "", "/me/settings");
+    window.history.replaceState(null, "", "/settings");
     resetNamespaceRoleCache();
     // Stray fetches answer an empty object; nothing here is about them.
     vi.stubGlobal(
@@ -181,7 +181,7 @@ describe("Setup's 'Never save' panel", () => {
 describe("Setup's remembered MCP client", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    window.history.replaceState(null, "", "/me/settings");
+    window.history.replaceState(null, "", "/settings");
     resetNamespaceRoleCache();
     vi.stubGlobal(
       "fetch",

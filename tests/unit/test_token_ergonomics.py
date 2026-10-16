@@ -29,6 +29,7 @@ from loom.transport import Transport, token_from_file
 
 import server.cli as cli
 from server.auth import revocation
+from server.cli import access
 from server.settings import settings
 
 pytestmark = pytest.mark.usefixtures("stub_model_command")
@@ -45,12 +46,17 @@ def home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     return tmp_path
 
 
+class _NoKeys:
+    async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+        return []
+
+
 @pytest.fixture
 def quiet_secret(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A real secret so the dev-secret warning stays out of stderr."""
+    """A real secret and an empty keyring, so stderr carries neither the
+    dev-secret warning nor a keyring read from a live ClickHouse."""
     monkeypatch.setattr(settings, "jwt_secret", "a-real-secret-that-is-not-the-default")
-    monkeypatch.setattr(settings, "jwt_secrets_json", "")
-    monkeypatch.setattr(settings, "jwt_active_kid", "default")
+    monkeypatch.setattr(access, "run_connected", lambda run: asyncio.run(run(_NoKeys())))
 
 
 def _utcnow() -> datetime:

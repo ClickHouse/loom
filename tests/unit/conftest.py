@@ -20,6 +20,7 @@ import socket
 import sys
 import threading
 import time
+from collections import OrderedDict
 from collections.abc import Callable, Iterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -66,6 +67,65 @@ def stub_model_command(monkeypatch):
     monkeypatch.setattr(provider_command, "model_command", command)
 
 
+class FakeAuthAttempts:
+    """loom.auth_attempts in memory: `insert` appends a row stamped `now`,
+    `query_one` counts a kind's rows for a key within the window."""
+
+    def __init__(self) -> None:
+        self.now = time.time()
+        self.rows: list[dict[str, Any]] = []
+
+    async def insert(self, table: str, rows: list[dict[str, Any]], settings: Any = None) -> None:
+        assert table == "loom.auth_attempts"
+        self.settings = settings
+        # A row's own `at` (on the fake clock) when it names one, else `now`.
+        self.rows += [{**r, "at": _epoch(r["at"]) if "at" in r else self.now} for r in rows]
+
+    async def query_one(self, sql: str, params: Any = None) -> dict[str, Any]:
+        assert "FROM loom.auth_attempts" in sql
+        p = params or {}
+        return {"n": self._count(p["kind"], p["key"], p["window"])}
+
+    async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+        assert "FROM loom.auth_attempts" in sql and "GROUP BY kind, key_sha256" in sql
+        p = params or {}
+        return [
+            # bytes, as the driver returns the FixedString column
+            {"kind": kind, "key_sha256": key.encode(), "n": self._count(kind, key, p["window"])}
+            for kind, key in set(p["pairs"])
+        ]
+
+    def _count(self, kind: str, key: str, window: int) -> int:
+        return sum(
+            r["kind"] == kind and r["key_sha256"] == key and r["at"] > self.now - window
+            for r in self.rows
+        )
+
+
+def _epoch(at: Any) -> float:
+    """A naive UTC datetime (what the server stores) as epoch seconds."""
+    from datetime import UTC
+
+    return float(at.replace(tzinfo=UTC).timestamp())
+
+
+@pytest.fixture
+def auth_attempts(monkeypatch: pytest.MonkeyPatch) -> FakeAuthAttempts:
+    """Every `server.auth.attempts.Attempts` counts in one fresh in-memory table."""
+    from datetime import UTC, datetime
+
+    from server.auth import attempts, keyring
+
+    fake = FakeAuthAttempts()
+    monkeypatch.setattr(attempts, "_default_client", lambda: fake)
+    monkeypatch.setattr(attempts, "_clock", lambda: fake.now)
+    monkeypatch.setattr(
+        keyring, "_now", lambda: datetime.fromtimestamp(fake.now, UTC).replace(tzinfo=None)
+    )
+    monkeypatch.setattr(attempts, "_known_over", OrderedDict())
+    return fake
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _load_repo_dotenv() -> None:
     """Shadows the integration suite's fixture of the same name: a unit test
@@ -76,6 +136,15 @@ def _load_repo_dotenv() -> None:
 def _seed_test_api_key() -> None:
     """Shadows the integration suite's fixture of the same name: no unit test
     runs with a minted wildcard-org `LOOM_API_KEY` in its environment."""
+
+
+@pytest.fixture
+def mirror_here(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every configured mirror counts as present on this host: for tests whose git
+    is a fake (`gitrepo` patched) and whose git_dir does not exist."""
+    from server.code.app.index import mirrors
+
+    monkeypatch.setattr(mirrors, "_present", lambda cfg: True)
 
 
 @pytest.fixture
@@ -321,30 +390,28 @@ def subjects_not_revoked(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _no_grant_claims() -> Iterator[None]:
-    """A grant change sees no Keeper unless a test says otherwise, so it holds
-    a lock in this process and asks no client about the claims table."""
+def _grant_claims_in_memory() -> Iterator[None]:
+    """Grant changes claim in process memory: the unit fakes have no lease table.
+    A test that drives the real claim patches `grant_claims.take` itself. No
+    `monkeypatch` here: requesting it would set it up ahead of the settings guard."""
     from server.auth import grant_claims
+    from tests.unit.claims_fake import MemoryClaims
 
-    before = (grant_claims.CLAIMS.atomic, grant_claims.CLAIMS.absent_until)
-    grant_claims.CLAIMS.atomic, grant_claims.CLAIMS.absent_until = False, float("inf")
-    grant_claims._local.clear()  # each test runs its own event loop
+    before = grant_claims.take
+    grant_claims.take = MemoryClaims().take  # type: ignore[assignment]
     yield
-    grant_claims._local.clear()
-    grant_claims.CLAIMS.atomic, grant_claims.CLAIMS.absent_until = before
+    grant_claims.take = before
 
 
 @pytest.fixture(autouse=True)
-def _no_run_claims() -> Iterator[None]:
-    """run.begin sees no Keeper unless a test says otherwise: the claims-table
-    check is cached per process, so without this the first test to ask decides
-    it for every later one (and asks whatever client it wired)."""
-    from server.tasks.store import runs
+def _not_draining() -> Iterator[None]:
+    """A test that ran an app's lifespan leaves the process marked draining,
+    which the workers lease reads: every test starts serving."""
+    from server.core import readiness
 
-    before = (runs._claims_atomic, runs._keeper_errors_logged)
-    runs._claims_atomic, runs._keeper_errors_logged = False, set()
+    readiness._draining = False
     yield
-    runs._claims_atomic, runs._keeper_errors_logged = before
+    readiness._draining = False
 
 
 @pytest.fixture(autouse=True)
@@ -663,20 +730,22 @@ def _vector_read_state_not_probed() -> Iterator[None]:
 
 @pytest.fixture(autouse=True)
 def _revocation_snapshot_loaded() -> Iterator[None]:
-    """A unit test models a booted process: the revocation snapshot has been
-    read just now (and is empty), and no creator's account state is cached
+    """A unit test models a booted process: the revocation snapshot and the
+    signing keyring have been read just now (both empty), and no creator's account state is cached
     yet. Tests of the not-yet-loaded state
-    set `_loaded` back to False. Saved and restored by hand, not through
+    set them back to not loaded. Saved and restored by hand, not through
     `monkeypatch`: requesting it here would set it up before
     `_settings_left_as_found` and so tear it down after that check."""
     import server.auth.delegation as delegation
+    import server.auth.keyring as keyring
     import server.auth.revocation as rev
 
-    saved = rev._loaded, rev._loaded_at
+    saved = rev._loaded, rev._loaded_at, keyring._view
     rev._loaded, rev._loaded_at = True, rev.time.monotonic()
+    keyring._view = keyring._View(read_at=keyring.time.monotonic(), loaded=True)
     delegation._account_active.clear()
     yield
-    rev._loaded, rev._loaded_at = saved
+    rev._loaded, rev._loaded_at, keyring._view = saved
 
 
 # The scalar repository the code-plane fixtures model, with its repository-shaped

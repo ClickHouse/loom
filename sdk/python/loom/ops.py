@@ -35,6 +35,7 @@ class OpSpec:
     maturity: str
     budget_p99_ms: int
     audit: bool
+    read_only: bool
 
 
 OpName = Literal[
@@ -125,7 +126,6 @@ OpName = Literal[
     "decision.outcome",
     "decision.precedents",
     "decision.record",
-    "embedding.embed",
     "erasure.export",
     "erasure.list",
     "erasure.request",
@@ -162,7 +162,6 @@ OpName = Literal[
     "learnings.list",
     "learnings.quality",
     "learnings.review",
-    "llm.complete",
     "memory.agents_list",
     "memory.aggregate",
     "memory.apply",
@@ -432,7 +431,6 @@ OP_NAMES: tuple[str, ...] = (
     "decision.outcome",
     "decision.precedents",
     "decision.record",
-    "embedding.embed",
     "erasure.export",
     "erasure.list",
     "erasure.request",
@@ -469,7 +467,6 @@ OP_NAMES: tuple[str, ...] = (
     "learnings.list",
     "learnings.quality",
     "learnings.review",
-    "llm.complete",
     "memory.agents_list",
     "memory.aggregate",
     "memory.apply",
@@ -662,6 +659,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         300,
         False,
+        False,
     ),
     "agents.connected": OpSpec(
         "agents.connected",
@@ -673,6 +671,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         120,
         False,
+        True,
     ),
     "audit.list": OpSpec(
         "audit.list",
@@ -684,6 +683,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         200,
         False,
+        True,
     ),
     "blacklist.add": OpSpec(
         "blacklist.add",
@@ -695,6 +695,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         50,
         True,
+        False,
     ),
     "blacklist.list": OpSpec(
         "blacklist.list",
@@ -706,6 +707,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         80,
         False,
+        True,
     ),
     "blacklist.remove": OpSpec(
         "blacklist.remove",
@@ -717,6 +719,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         80,
         True,
+        False,
     ),
     "blacklist.sweep": OpSpec(
         "blacklist.sweep",
@@ -728,6 +731,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         5000,
         True,
+        False,
     ),
     "calibration.get": OpSpec(
         "calibration.get",
@@ -739,6 +743,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         60,
         False,
+        True,
     ),
     "code.ask": OpSpec(
         "code.ask",
@@ -750,6 +755,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         8000,
         False,
+        True,
     ),
     "code.backport_gap": OpSpec(
         "code.backport_gap",
@@ -761,6 +767,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         1500,
         False,
+        True,
     ),
     "code.backport_gaps": OpSpec(
         "code.backport_gaps",
@@ -772,6 +779,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         500,
         False,
+        True,
     ),
     "code.bisect_candidates": OpSpec(
         "code.bisect_candidates",
@@ -783,6 +791,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         1500,
         False,
+        True,
     ),
     "code.blame_range": OpSpec(
         "code.blame_range",
@@ -794,6 +803,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         6000,
         False,
+        True,
     ),
     "code.calibrate": OpSpec(
         "code.calibrate",
@@ -805,6 +815,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         30000,
         True,
+        False,
     ),
     "code.callees": OpSpec(
         "code.callees",
@@ -816,6 +827,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         400,
         False,
+        True,
     ),
     "code.callers": OpSpec(
         "code.callers",
@@ -827,6 +839,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         400,
         False,
+        True,
     ),
     "code.context_pack": OpSpec(
         "code.context_pack",
@@ -838,6 +851,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         2000,
         False,
+        True,
     ),
     "code.context_packs": OpSpec(
         "code.context_packs",
@@ -849,6 +863,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         300,
         False,
+        True,
     ),
     "code.conventions": OpSpec(
         "code.conventions",
@@ -860,6 +875,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         4000,
         False,
+        True,
     ),
     "code.coverage": OpSpec(
         "code.coverage",
@@ -871,6 +887,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         1500,
         False,
+        True,
     ),
     "code.coverage.unwatch": OpSpec(
         "code.coverage.unwatch",
@@ -881,6 +898,7 @@ OPS: dict[str, OpSpec] = {
         "viewer",
         "stable",
         500,
+        False,
         False,
     ),
     "code.coverage.watch": OpSpec(
@@ -893,6 +911,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         1500,
         False,
+        False,
     ),
     "code.coverage_claim": OpSpec(
         "code.coverage_claim",
@@ -904,6 +923,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         1200,
         False,
+        True,
     ),
     "code.enclosing": OpSpec(
         "code.enclosing",
@@ -915,6 +935,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         800,
         False,
+        True,
     ),
     "code.examples": OpSpec(
         "code.examples",
@@ -926,6 +947,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         500,
         False,
+        True,
     ),
     "code.files": OpSpec(
         "code.files",
@@ -937,6 +959,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         400,
         False,
+        True,
     ),
     "code.first_build": OpSpec(
         "code.first_build",
@@ -948,6 +971,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         2500,
         False,
+        True,
     ),
     "code.grep": OpSpec(
         "code.grep",
@@ -959,6 +983,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         600,
         False,
+        True,
     ),
     "code.history": OpSpec(
         "code.history",
@@ -970,6 +995,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         300,
         False,
+        True,
     ),
     "code.impact": OpSpec(
         "code.impact",
@@ -981,6 +1007,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         1500,
         False,
+        True,
     ),
     "code.index_errors": OpSpec(
         "code.index_errors",
@@ -992,6 +1019,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         400,
         False,
+        True,
     ),
     "code.index_status": OpSpec(
         "code.index_status",
@@ -1003,6 +1031,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         200,
         False,
+        True,
     ),
     "code.map": OpSpec(
         "code.map",
@@ -1014,6 +1043,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         300,
         False,
+        True,
     ),
     "code.outcome": OpSpec(
         "code.outcome",
@@ -1024,6 +1054,7 @@ OPS: dict[str, OpSpec] = {
         "viewer",
         "stable",
         150,
+        False,
         False,
     ),
     "code.outline": OpSpec(
@@ -1036,6 +1067,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         300,
         False,
+        True,
     ),
     "code.path_guards": OpSpec(
         "code.path_guards",
@@ -1047,6 +1079,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         1500,
         False,
+        True,
     ),
     "code.pr_check": OpSpec(
         "code.pr_check",
@@ -1058,6 +1091,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         600,
         False,
+        True,
     ),
     "code.recent_commits": OpSpec(
         "code.recent_commits",
@@ -1069,6 +1103,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         800,
         False,
+        True,
     ),
     "code.refresh": OpSpec(
         "code.refresh",
@@ -1080,6 +1115,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         1000,
         True,
+        False,
     ),
     "code.reindex": OpSpec(
         "code.reindex",
@@ -1091,6 +1127,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         500,
         True,
+        False,
     ),
     "code.repo.add": OpSpec(
         "code.repo.add",
@@ -1102,6 +1139,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         30000,
         True,
+        False,
     ),
     "code.repo.add_branch": OpSpec(
         "code.repo.add_branch",
@@ -1113,6 +1151,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         30000,
         True,
+        False,
     ),
     "code.repo.remote_branches": OpSpec(
         "code.repo.remote_branches",
@@ -1124,6 +1163,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         30000,
         False,
+        True,
     ),
     "code.repo.remove": OpSpec(
         "code.repo.remove",
@@ -1135,6 +1175,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         30000,
         True,
+        False,
     ),
     "code.repo.set_access": OpSpec(
         "code.repo.set_access",
@@ -1146,6 +1187,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         5000,
         True,
+        False,
     ),
     "code.repo.set_source": OpSpec(
         "code.repo.set_source",
@@ -1157,6 +1199,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         3000,
         True,
+        False,
     ),
     "code.repos": OpSpec(
         "code.repos",
@@ -1168,6 +1211,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         800,
         False,
+        True,
     ),
     "code.review_brief": OpSpec(
         "code.review_brief",
@@ -1179,6 +1223,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         8000,
         False,
+        True,
     ),
     "code.scip_ingest": OpSpec(
         "code.scip_ingest",
@@ -1190,6 +1235,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         2000,
         True,
+        False,
     ),
     "code.scip_status": OpSpec(
         "code.scip_status",
@@ -1201,6 +1247,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         150,
         False,
+        True,
     ),
     "code.search": OpSpec(
         "code.search",
@@ -1212,6 +1259,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         400,
         False,
+        True,
     ),
     "code.setting_facts": OpSpec(
         "code.setting_facts",
@@ -1223,6 +1271,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         1200,
         False,
+        True,
     ),
     "code.symbol": OpSpec(
         "code.symbol",
@@ -1234,6 +1283,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         250,
         False,
+        True,
     ),
     "code.symbol_history": OpSpec(
         "code.symbol_history",
@@ -1245,6 +1295,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         1800,
         False,
+        True,
     ),
     "code.test_gate": OpSpec(
         "code.test_gate",
@@ -1256,6 +1307,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         1500,
         False,
+        True,
     ),
     "code.test_home": OpSpec(
         "code.test_home",
@@ -1267,6 +1319,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         1500,
         False,
+        True,
     ),
     "code.tests_for": OpSpec(
         "code.tests_for",
@@ -1278,6 +1331,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         400,
         False,
+        True,
     ),
     "code.trace": OpSpec(
         "code.trace",
@@ -1289,6 +1343,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         800,
         False,
+        True,
     ),
     "code.verify": OpSpec(
         "code.verify",
@@ -1300,6 +1355,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         1500,
         False,
+        True,
     ),
     "code.verify_citations": OpSpec(
         "code.verify_citations",
@@ -1311,6 +1367,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         1500,
         False,
+        True,
     ),
     "conflicts.allowlist_list": OpSpec(
         "conflicts.allowlist_list",
@@ -1322,6 +1379,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         80,
         False,
+        True,
     ),
     "conflicts.allowlist_remove": OpSpec(
         "conflicts.allowlist_remove",
@@ -1333,6 +1391,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         80,
         True,
+        False,
     ),
     "conflicts.list": OpSpec(
         "conflicts.list",
@@ -1344,6 +1403,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         80,
         False,
+        True,
     ),
     "conflicts.propose_revision": OpSpec(
         "conflicts.propose_revision",
@@ -1355,6 +1415,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         120,
         False,
+        True,
     ),
     "conflicts.resolve": OpSpec(
         "conflicts.resolve",
@@ -1366,6 +1427,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         500,
         True,
+        False,
     ),
     "consolidations.list": OpSpec(
         "consolidations.list",
@@ -1377,6 +1439,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         200,
         False,
+        True,
     ),
     "context.fetch": OpSpec(
         "context.fetch",
@@ -1388,6 +1451,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         150,
         False,
+        True,
     ),
     "context.offload": OpSpec(
         "context.offload",
@@ -1398,6 +1462,7 @@ OPS: dict[str, OpSpec] = {
         "writer",
         "experimental",
         300,
+        False,
         False,
     ),
     "context.pack": OpSpec(
@@ -1410,6 +1475,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         600,
         False,
+        True,
     ),
     "conversation.append": OpSpec(
         "conversation.append",
@@ -1420,6 +1486,7 @@ OPS: dict[str, OpSpec] = {
         "writer",
         "stable",
         30,
+        False,
         False,
     ),
     "conversation.compact": OpSpec(
@@ -1432,6 +1499,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         3500,
         True,
+        False,
     ),
     "conversation.create": OpSpec(
         "conversation.create",
@@ -1442,6 +1510,7 @@ OPS: dict[str, OpSpec] = {
         "writer",
         "experimental",
         30,
+        False,
         False,
     ),
     "conversation.delete": OpSpec(
@@ -1454,6 +1523,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         600,
         True,
+        False,
     ),
     "conversation.get": OpSpec(
         "conversation.get",
@@ -1465,6 +1535,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         100,
         False,
+        True,
     ),
     "conversation.list": OpSpec(
         "conversation.list",
@@ -1476,6 +1547,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         80,
         False,
+        True,
     ),
     "conversation.search": OpSpec(
         "conversation.search",
@@ -1487,6 +1559,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         120,
         False,
+        True,
     ),
     "conversation.set_logging": OpSpec(
         "conversation.set_logging",
@@ -1498,6 +1571,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         200,
         True,
+        False,
     ),
     "conversation.threads": OpSpec(
         "conversation.threads",
@@ -1509,6 +1583,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         120,
         False,
+        True,
     ),
     "conversation.update": OpSpec(
         "conversation.update",
@@ -1519,6 +1594,7 @@ OPS: dict[str, OpSpec] = {
         "writer",
         "experimental",
         50,
+        False,
         False,
     ),
     "cost.agent_summary": OpSpec(
@@ -1531,6 +1607,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         250,
         False,
+        True,
     ),
     "cost.budget_status": OpSpec(
         "cost.budget_status",
@@ -1542,6 +1619,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         120,
         False,
+        True,
     ),
     "cost.record_turns": OpSpec(
         "cost.record_turns",
@@ -1552,6 +1630,7 @@ OPS: dict[str, OpSpec] = {
         "writer",
         "experimental",
         150,
+        False,
         False,
     ),
     "cost.summary": OpSpec(
@@ -1564,6 +1643,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         200,
         False,
+        True,
     ),
     "decision.chain": OpSpec(
         "decision.chain",
@@ -1575,6 +1655,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         500,
         False,
+        True,
     ),
     "decision.outcome": OpSpec(
         "decision.outcome",
@@ -1586,6 +1667,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         1500,
         True,
+        False,
     ),
     "decision.precedents": OpSpec(
         "decision.precedents",
@@ -1597,6 +1679,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         800,
         False,
+        True,
     ),
     "decision.record": OpSpec(
         "decision.record",
@@ -1608,16 +1691,6 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         1500,
         True,
-    ),
-    "embedding.embed": OpSpec(
-        "embedding.embed",
-        "EmbeddingEmbedInput",
-        "EmbeddingEmbedBody",
-        "EmbeddingEmbedOutput",
-        True,
-        "viewer",
-        "experimental",
-        3000,
         False,
     ),
     "erasure.export": OpSpec(
@@ -1630,6 +1703,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         2000,
         True,
+        False,
     ),
     "erasure.list": OpSpec(
         "erasure.list",
@@ -1641,6 +1715,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         150,
         False,
+        True,
     ),
     "erasure.request": OpSpec(
         "erasure.request",
@@ -1652,6 +1727,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         2000,
         True,
+        False,
     ),
     "erasure.status": OpSpec(
         "erasure.status",
@@ -1663,6 +1739,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         25,
         False,
+        True,
     ),
     "facts.expire_by_adapter": OpSpec(
         "facts.expire_by_adapter",
@@ -1674,6 +1751,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         500,
         True,
+        False,
     ),
     "facts.list": OpSpec(
         "facts.list",
@@ -1685,6 +1763,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         80,
         False,
+        True,
     ),
     "facts.path": OpSpec(
         "facts.path",
@@ -1696,6 +1775,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         250,
         False,
+        True,
     ),
     "facts.related": OpSpec(
         "facts.related",
@@ -1707,6 +1787,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         60,
         False,
+        True,
     ),
     "facts.traverse": OpSpec(
         "facts.traverse",
@@ -1718,6 +1799,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         200,
         False,
+        True,
     ),
     "grants.approve": OpSpec(
         "grants.approve",
@@ -1729,6 +1811,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         80,
         True,
+        False,
     ),
     "grants.create": OpSpec(
         "grants.create",
@@ -1740,6 +1823,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         50,
         True,
+        False,
     ),
     "grants.list": OpSpec(
         "grants.list",
@@ -1751,6 +1835,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         80,
         False,
+        True,
     ),
     "grants.pending_for_me": OpSpec(
         "grants.pending_for_me",
@@ -1762,6 +1847,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         150,
         False,
+        True,
     ),
     "grants.revoke": OpSpec(
         "grants.revoke",
@@ -1773,6 +1859,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         80,
         True,
+        False,
     ),
     "inbox.list": OpSpec(
         "inbox.list",
@@ -1784,6 +1871,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         800,
         False,
+        True,
     ),
     "inbox.policy_list": OpSpec(
         "inbox.policy_list",
@@ -1795,6 +1883,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         800,
         False,
+        True,
     ),
     "inbox.policy_set": OpSpec(
         "inbox.policy_set",
@@ -1806,6 +1895,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         800,
         True,
+        False,
     ),
     "inbox.principals": OpSpec(
         "inbox.principals",
@@ -1816,6 +1906,7 @@ OPS: dict[str, OpSpec] = {
         "admin",
         "experimental",
         1500,
+        False,
         False,
     ),
     "inbox.register": OpSpec(
@@ -1828,6 +1919,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         800,
         True,
+        False,
     ),
     "knowledge.add": OpSpec(
         "knowledge.add",
@@ -1838,6 +1930,7 @@ OPS: dict[str, OpSpec] = {
         "writer",
         "stable",
         50,
+        False,
         False,
     ),
     "knowledge.bulk_add": OpSpec(
@@ -1850,6 +1943,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         2000,
         False,
+        False,
     ),
     "knowledge.bulk_delete": OpSpec(
         "knowledge.bulk_delete",
@@ -1861,6 +1955,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         500,
         True,
+        False,
     ),
     "knowledge.dedup_list": OpSpec(
         "knowledge.dedup_list",
@@ -1871,6 +1966,7 @@ OPS: dict[str, OpSpec] = {
         "admin",
         "experimental",
         400,
+        False,
         False,
     ),
     "knowledge.dedup_resolve": OpSpec(
@@ -1883,6 +1979,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         400,
         True,
+        False,
     ),
     "knowledge.delete": OpSpec(
         "knowledge.delete",
@@ -1894,6 +1991,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         100,
         True,
+        False,
     ),
     "knowledge.get": OpSpec(
         "knowledge.get",
@@ -1905,6 +2003,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         30,
         False,
+        True,
     ),
     "knowledge.list": OpSpec(
         "knowledge.list",
@@ -1916,6 +2015,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         150,
         False,
+        True,
     ),
     "knowledge.outline": OpSpec(
         "knowledge.outline",
@@ -1927,6 +2027,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         80,
         False,
+        True,
     ),
     "knowledge.reads": OpSpec(
         "knowledge.reads",
@@ -1938,6 +2039,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         500,
         False,
+        True,
     ),
     "knowledge.search": OpSpec(
         "knowledge.search",
@@ -1949,6 +2051,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         250,
         False,
+        True,
     ),
     "knowledge.synthesize": OpSpec(
         "knowledge.synthesize",
@@ -1960,6 +2063,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         60000,
         True,
+        False,
     ),
     "knowledge.update_metadata": OpSpec(
         "knowledge.update_metadata",
@@ -1971,6 +2075,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         60,
         True,
+        False,
     ),
     "knowledge.upsert": OpSpec(
         "knowledge.upsert",
@@ -1981,6 +2086,7 @@ OPS: dict[str, OpSpec] = {
         "writer",
         "experimental",
         100,
+        False,
         False,
     ),
     "learnings.list": OpSpec(
@@ -1993,6 +2099,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         80,
         False,
+        True,
     ),
     "learnings.quality": OpSpec(
         "learnings.quality",
@@ -2004,6 +2111,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         120,
         False,
+        True,
     ),
     "learnings.review": OpSpec(
         "learnings.review",
@@ -2015,16 +2123,6 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         150,
         True,
-    ),
-    "llm.complete": OpSpec(
-        "llm.complete",
-        "LlmCompleteInput",
-        "LlmCompleteBody",
-        "LlmCompleteOutput",
-        False,
-        "viewer",
-        "experimental",
-        120000,
         False,
     ),
     "memory.agents_list": OpSpec(
@@ -2037,6 +2135,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         80,
         False,
+        True,
     ),
     "memory.aggregate": OpSpec(
         "memory.aggregate",
@@ -2048,6 +2147,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         250,
         False,
+        True,
     ),
     "memory.apply": OpSpec(
         "memory.apply",
@@ -2059,6 +2159,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         3000,
         True,
+        False,
     ),
     "memory.ask": OpSpec(
         "memory.ask",
@@ -2070,6 +2171,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         8000,
         False,
+        True,
     ),
     "memory.assign_category": OpSpec(
         "memory.assign_category",
@@ -2081,6 +2183,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         60,
         True,
+        False,
     ),
     "memory.backlinks": OpSpec(
         "memory.backlinks",
@@ -2092,6 +2195,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         200,
         False,
+        True,
     ),
     "memory.brief": OpSpec(
         "memory.brief",
@@ -2103,6 +2207,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         4000,
         False,
+        True,
     ),
     "memory.bulk_get": OpSpec(
         "memory.bulk_get",
@@ -2114,6 +2219,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         80,
         False,
+        True,
     ),
     "memory.bulk_set": OpSpec(
         "memory.bulk_set",
@@ -2124,6 +2230,7 @@ OPS: dict[str, OpSpec] = {
         "writer",
         "stable",
         300,
+        False,
         False,
     ),
     "memory.clear": OpSpec(
@@ -2136,6 +2243,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         600,
         True,
+        False,
     ),
     "memory.consolidate": OpSpec(
         "memory.consolidate",
@@ -2147,6 +2255,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         15000,
         True,
+        False,
     ),
     "memory.copy_to": OpSpec(
         "memory.copy_to",
@@ -2158,6 +2267,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         400,
         True,
+        False,
     ),
     "memory.cross_promote": OpSpec(
         "memory.cross_promote",
@@ -2169,6 +2279,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         400,
         True,
+        False,
     ),
     "memory.dedup_collapse": OpSpec(
         "memory.dedup_collapse",
@@ -2180,6 +2291,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         2000,
         True,
+        False,
     ),
     "memory.dedup_list": OpSpec(
         "memory.dedup_list",
@@ -2190,6 +2302,7 @@ OPS: dict[str, OpSpec] = {
         "admin",
         "stable",
         300,
+        False,
         False,
     ),
     "memory.dedup_resolve": OpSpec(
@@ -2202,6 +2315,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         400,
         True,
+        False,
     ),
     "memory.delete": OpSpec(
         "memory.delete",
@@ -2213,6 +2327,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         30,
         True,
+        False,
     ),
     "memory.demonstrate": OpSpec(
         "memory.demonstrate",
@@ -2224,6 +2339,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         400,
         False,
+        True,
     ),
     "memory.demote": OpSpec(
         "memory.demote",
@@ -2235,6 +2351,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         100,
         True,
+        False,
     ),
     "memory.digests": OpSpec(
         "memory.digests",
@@ -2246,6 +2363,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         120,
         False,
+        True,
     ),
     "memory.evidence": OpSpec(
         "memory.evidence",
@@ -2257,6 +2375,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         150,
         False,
+        True,
     ),
     "memory.export_evidence": OpSpec(
         "memory.export_evidence",
@@ -2268,6 +2387,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         800,
         False,
+        True,
     ),
     "memory.exposure_summary": OpSpec(
         "memory.exposure_summary",
@@ -2278,6 +2398,7 @@ OPS: dict[str, OpSpec] = {
         "admin",
         "experimental",
         300,
+        False,
         False,
     ),
     "memory.extraction_status": OpSpec(
@@ -2290,6 +2411,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         80,
         False,
+        True,
     ),
     "memory.for_file": OpSpec(
         "memory.for_file",
@@ -2301,6 +2423,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         150,
         False,
+        True,
     ),
     "memory.get": OpSpec(
         "memory.get",
@@ -2312,6 +2435,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         25,
         False,
+        True,
     ),
     "memory.get_by_id": OpSpec(
         "memory.get_by_id",
@@ -2323,6 +2447,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         50,
         False,
+        True,
     ),
     "memory.health": OpSpec(
         "memory.health",
@@ -2334,6 +2459,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         400,
         False,
+        True,
     ),
     "memory.history": OpSpec(
         "memory.history",
@@ -2345,6 +2471,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         80,
         False,
+        True,
     ),
     "memory.import_curated": OpSpec(
         "memory.import_curated",
@@ -2356,6 +2483,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         30000,
         True,
+        False,
     ),
     "memory.import_evidence": OpSpec(
         "memory.import_evidence",
@@ -2367,6 +2495,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         30000,
         True,
+        False,
     ),
     "memory.lineage": OpSpec(
         "memory.lineage",
@@ -2378,6 +2507,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         150,
         False,
+        True,
     ),
     "memory.link": OpSpec(
         "memory.link",
@@ -2389,6 +2519,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         60,
         True,
+        False,
     ),
     "memory.list": OpSpec(
         "memory.list",
@@ -2400,6 +2531,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         150,
         False,
+        True,
     ),
     "memory.lock": OpSpec(
         "memory.lock",
@@ -2411,6 +2543,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         40,
         True,
+        False,
     ),
     "memory.move": OpSpec(
         "memory.move",
@@ -2422,6 +2555,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         400,
         True,
+        False,
     ),
     "memory.outcome": OpSpec(
         "memory.outcome",
@@ -2433,6 +2567,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         200,
         True,
+        False,
     ),
     "memory.outcome_run": OpSpec(
         "memory.outcome_run",
@@ -2444,6 +2579,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         500,
         True,
+        False,
     ),
     "memory.outline": OpSpec(
         "memory.outline",
@@ -2455,6 +2591,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         250,
         False,
+        True,
     ),
     "memory.owner_report": OpSpec(
         "memory.owner_report",
@@ -2466,6 +2603,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         800,
         False,
+        True,
     ),
     "memory.pin": OpSpec(
         "memory.pin",
@@ -2476,6 +2614,7 @@ OPS: dict[str, OpSpec] = {
         "writer",
         "experimental",
         30,
+        False,
         False,
     ),
     "memory.promote": OpSpec(
@@ -2488,6 +2627,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         100,
         True,
+        False,
     ),
     "memory.proposal_decide": OpSpec(
         "memory.proposal_decide",
@@ -2499,6 +2639,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         800,
         True,
+        False,
     ),
     "memory.proposals": OpSpec(
         "memory.proposals",
@@ -2510,6 +2651,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         400,
         False,
+        True,
     ),
     "memory.provenance": OpSpec(
         "memory.provenance",
@@ -2521,6 +2663,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         100,
         False,
+        True,
     ),
     "memory.recall": OpSpec(
         "memory.recall",
@@ -2532,6 +2675,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         400,
         False,
+        True,
     ),
     "memory.record.conflicts": OpSpec(
         "memory.record.conflicts",
@@ -2543,6 +2687,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         150,
         False,
+        True,
     ),
     "memory.record.history": OpSpec(
         "memory.record.history",
@@ -2554,6 +2699,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         150,
         False,
+        True,
     ),
     "memory.record.query": OpSpec(
         "memory.record.query",
@@ -2565,6 +2711,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         150,
         False,
+        True,
     ),
     "memory.record.write": OpSpec(
         "memory.record.write",
@@ -2576,6 +2723,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         150,
         True,
+        False,
     ),
     "memory.redact": OpSpec(
         "memory.redact",
@@ -2587,6 +2735,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         500,
         True,
+        False,
     ),
     "memory.reindex": OpSpec(
         "memory.reindex",
@@ -2598,6 +2747,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         5000,
         True,
+        False,
     ),
     "memory.reject": OpSpec(
         "memory.reject",
@@ -2609,6 +2759,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         150,
         True,
+        False,
     ),
     "memory.related": OpSpec(
         "memory.related",
@@ -2620,6 +2771,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         120,
         False,
+        True,
     ),
     "memory.resolve_orphan_duplicates": OpSpec(
         "memory.resolve_orphan_duplicates",
@@ -2631,6 +2783,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         5000,
         True,
+        False,
     ),
     "memory.restore": OpSpec(
         "memory.restore",
@@ -2642,6 +2795,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         80,
         True,
+        False,
     ),
     "memory.search": OpSpec(
         "memory.search",
@@ -2653,6 +2807,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         200,
         False,
+        True,
     ),
     "memory.search_trace": OpSpec(
         "memory.search_trace",
@@ -2664,6 +2819,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         200,
         False,
+        True,
     ),
     "memory.search_trace_log": OpSpec(
         "memory.search_trace_log",
@@ -2675,6 +2831,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         200,
         False,
+        True,
     ),
     "memory.set": OpSpec(
         "memory.set",
@@ -2685,6 +2842,7 @@ OPS: dict[str, OpSpec] = {
         "writer",
         "stable",
         200,
+        False,
         False,
     ),
     "memory.set_from_messages": OpSpec(
@@ -2697,6 +2855,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         2500,
         False,
+        False,
     ),
     "memory.stack": OpSpec(
         "memory.stack",
@@ -2708,6 +2867,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         200,
         False,
+        True,
     ),
     "memory.sweep_expired": OpSpec(
         "memory.sweep_expired",
@@ -2719,6 +2879,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         2000,
         True,
+        False,
     ),
     "memory.timeline": OpSpec(
         "memory.timeline",
@@ -2730,6 +2891,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         120,
         False,
+        True,
     ),
     "memory.touch": OpSpec(
         "memory.touch",
@@ -2740,6 +2902,7 @@ OPS: dict[str, OpSpec] = {
         "writer",
         "experimental",
         40,
+        False,
         False,
     ),
     "memory.unlock": OpSpec(
@@ -2752,6 +2915,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         40,
         True,
+        False,
     ),
     "memory.unpin": OpSpec(
         "memory.unpin",
@@ -2763,6 +2927,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         40,
         True,
+        False,
     ),
     "memory.update": OpSpec(
         "memory.update",
@@ -2774,6 +2939,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         120,
         True,
+        False,
     ),
     "memory.update_by_id": OpSpec(
         "memory.update_by_id",
@@ -2784,6 +2950,7 @@ OPS: dict[str, OpSpec] = {
         "writer",
         "stable",
         80,
+        False,
         False,
     ),
     "memory.verify": OpSpec(
@@ -2796,6 +2963,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         80,
         True,
+        False,
     ),
     "memory_schema.approve": OpSpec(
         "memory_schema.approve",
@@ -2807,6 +2975,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         120,
         True,
+        False,
     ),
     "memory_schema.list": OpSpec(
         "memory_schema.list",
@@ -2818,6 +2987,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         120,
         False,
+        True,
     ),
     "memory_schema.propose": OpSpec(
         "memory_schema.propose",
@@ -2829,6 +2999,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         120,
         True,
+        False,
     ),
     "memory_schema.register": OpSpec(
         "memory_schema.register",
@@ -2840,6 +3011,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         120,
         True,
+        False,
     ),
     "mentor.brief": OpSpec(
         "mentor.brief",
@@ -2851,6 +3023,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         3000,
         False,
+        True,
     ),
     "namespace.audit": OpSpec(
         "namespace.audit",
@@ -2862,6 +3035,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         3000,
         False,
+        True,
     ),
     "namespace.browse": OpSpec(
         "namespace.browse",
@@ -2873,6 +3047,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         120,
         False,
+        True,
     ),
     "namespace.cancel_request": OpSpec(
         "namespace.cancel_request",
@@ -2884,6 +3059,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         80,
         True,
+        False,
     ),
     "namespace.delete": OpSpec(
         "namespace.delete",
@@ -2895,6 +3071,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         60,
         True,
+        False,
     ),
     "namespace.get": OpSpec(
         "namespace.get",
@@ -2906,6 +3083,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         30,
         False,
+        True,
     ),
     "namespace.join": OpSpec(
         "namespace.join",
@@ -2917,6 +3095,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         80,
         True,
+        False,
     ),
     "namespace.leave": OpSpec(
         "namespace.leave",
@@ -2928,6 +3107,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         80,
         True,
+        False,
     ),
     "namespace.list": OpSpec(
         "namespace.list",
@@ -2938,6 +3118,7 @@ OPS: dict[str, OpSpec] = {
         "org_admin",
         "experimental",
         80,
+        False,
         False,
     ),
     "namespace.list_categories": OpSpec(
@@ -2950,6 +3131,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         80,
         False,
+        True,
     ),
     "namespace.list_mine": OpSpec(
         "namespace.list_mine",
@@ -2961,6 +3143,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         120,
         False,
+        True,
     ),
     "namespace.list_ontology": OpSpec(
         "namespace.list_ontology",
@@ -2972,6 +3155,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         60,
         False,
+        True,
     ),
     "namespace.mark_seen": OpSpec(
         "namespace.mark_seen",
@@ -2982,6 +3166,7 @@ OPS: dict[str, OpSpec] = {
         "viewer",
         "experimental",
         50,
+        False,
         False,
     ),
     "namespace.register": OpSpec(
@@ -2994,6 +3179,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         30,
         True,
+        False,
     ),
     "namespace.register_category": OpSpec(
         "namespace.register_category",
@@ -3005,6 +3191,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         400,
         True,
+        False,
     ),
     "namespace.register_ontology": OpSpec(
         "namespace.register_ontology",
@@ -3016,6 +3203,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         80,
         True,
+        False,
     ),
     "namespace.restore": OpSpec(
         "namespace.restore",
@@ -3027,6 +3215,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         3000,
         True,
+        False,
     ),
     "namespace.rollback": OpSpec(
         "namespace.rollback",
@@ -3038,6 +3227,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         10000,
         True,
+        False,
     ),
     "namespace.search_categories": OpSpec(
         "namespace.search_categories",
@@ -3049,6 +3239,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         150,
         False,
+        True,
     ),
     "namespace.snapshot": OpSpec(
         "namespace.snapshot",
@@ -3060,6 +3251,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         2000,
         True,
+        False,
     ),
     "namespace.summary": OpSpec(
         "namespace.summary",
@@ -3071,6 +3263,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         300,
         False,
+        True,
     ),
     "namespace.taxonomy": OpSpec(
         "namespace.taxonomy",
@@ -3082,6 +3275,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         120,
         False,
+        True,
     ),
     "namespace.validate": OpSpec(
         "namespace.validate",
@@ -3093,6 +3287,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         1500,
         False,
+        True,
     ),
     "observe.crystallize": OpSpec(
         "observe.crystallize",
@@ -3103,6 +3298,7 @@ OPS: dict[str, OpSpec] = {
         "writer",
         "stable",
         2000,
+        False,
         False,
     ),
     "observe.record": OpSpec(
@@ -3115,6 +3311,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         150,
         False,
+        False,
     ),
     "ops.capabilities": OpSpec(
         "ops.capabilities",
@@ -3126,6 +3323,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         100,
         False,
+        True,
     ),
     "ops.health": OpSpec(
         "ops.health",
@@ -3136,6 +3334,7 @@ OPS: dict[str, OpSpec] = {
         "org_admin",
         "stable",
         500,
+        False,
         False,
     ),
     "ops.projection_failures.list": OpSpec(
@@ -3148,6 +3347,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         300,
         False,
+        False,
     ),
     "ops.projection_failures.resolve": OpSpec(
         "ops.projection_failures.resolve",
@@ -3159,6 +3359,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         500,
         True,
+        False,
     ),
     "ops.projection_failures.retry": OpSpec(
         "ops.projection_failures.retry",
@@ -3170,6 +3371,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         3000,
         True,
+        False,
     ),
     "policy.check": OpSpec(
         "policy.check",
@@ -3181,6 +3383,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         500,
         False,
+        True,
     ),
     "policy.decisions": OpSpec(
         "policy.decisions",
@@ -3192,6 +3395,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         300,
         False,
+        True,
     ),
     "policy.delete": OpSpec(
         "policy.delete",
@@ -3203,6 +3407,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         400,
         True,
+        False,
     ),
     "policy.list": OpSpec(
         "policy.list",
@@ -3214,6 +3419,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         200,
         False,
+        True,
     ),
     "policy.set": OpSpec(
         "policy.set",
@@ -3225,6 +3431,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         400,
         True,
+        False,
     ),
     "procedure.add": OpSpec(
         "procedure.add",
@@ -3235,6 +3442,7 @@ OPS: dict[str, OpSpec] = {
         "writer",
         "stable",
         120,
+        False,
         False,
     ),
     "procedure.evolve": OpSpec(
@@ -3247,6 +3455,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         200,
         False,
+        False,
     ),
     "procedure.fork": OpSpec(
         "procedure.fork",
@@ -3258,6 +3467,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         400,
         True,
+        False,
     ),
     "procedure.list": OpSpec(
         "procedure.list",
@@ -3269,6 +3479,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         100,
         False,
+        True,
     ),
     "procedure.locate": OpSpec(
         "procedure.locate",
@@ -3280,6 +3491,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         150,
         False,
+        True,
     ),
     "procedure.match": OpSpec(
         "procedure.match",
@@ -3291,6 +3503,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         150,
         False,
+        True,
     ),
     "procedure.record_run": OpSpec(
         "procedure.record_run",
@@ -3301,6 +3514,7 @@ OPS: dict[str, OpSpec] = {
         "writer",
         "experimental",
         150,
+        False,
         False,
     ),
     "procedure.revise": OpSpec(
@@ -3313,6 +3527,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         300,
         True,
+        False,
     ),
     "profile.activity": OpSpec(
         "profile.activity",
@@ -3324,6 +3539,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         80,
         False,
+        True,
     ),
     "profile.append": OpSpec(
         "profile.append",
@@ -3334,6 +3550,7 @@ OPS: dict[str, OpSpec] = {
         "writer",
         "experimental",
         80,
+        False,
         False,
     ),
     "profile.render": OpSpec(
@@ -3346,6 +3563,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         60,
         False,
+        True,
     ),
     "profile.replace": OpSpec(
         "profile.replace",
@@ -3356,6 +3574,7 @@ OPS: dict[str, OpSpec] = {
         "writer",
         "experimental",
         80,
+        False,
         False,
     ),
     "profile.set": OpSpec(
@@ -3368,6 +3587,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         30,
         False,
+        False,
     ),
     "run.begin": OpSpec(
         "run.begin",
@@ -3379,6 +3599,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         150,
         True,
+        False,
     ),
     "run.complete": OpSpec(
         "run.complete",
@@ -3390,9 +3611,19 @@ OPS: dict[str, OpSpec] = {
         "stable",
         800,
         True,
+        False,
     ),
     "run.get": OpSpec(
-        "run.get", "RunGetInput", "RunGetBody", "RunGetOutput", True, "viewer", "stable", 300, False
+        "run.get",
+        "RunGetInput",
+        "RunGetBody",
+        "RunGetOutput",
+        True,
+        "viewer",
+        "stable",
+        300,
+        False,
+        True,
     ),
     "run.grade": OpSpec(
         "run.grade",
@@ -3404,6 +3635,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         800,
         True,
+        False,
     ),
     "run.list": OpSpec(
         "run.list",
@@ -3415,6 +3647,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         200,
         False,
+        True,
     ),
     "search.query": OpSpec(
         "search.query",
@@ -3426,6 +3659,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         3500,
         False,
+        True,
     ),
     "session.brief_delete": OpSpec(
         "session.brief_delete",
@@ -3437,6 +3671,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         200,
         True,
+        False,
     ),
     "session.brief_get": OpSpec(
         "session.brief_get",
@@ -3448,6 +3683,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         200,
         False,
+        True,
     ),
     "session.brief_list": OpSpec(
         "session.brief_list",
@@ -3459,6 +3695,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         200,
         False,
+        True,
     ),
     "session.brief_save": OpSpec(
         "session.brief_save",
@@ -3470,6 +3707,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         800,
         True,
+        False,
     ),
     "task.accept": OpSpec(
         "task.accept",
@@ -3480,6 +3718,7 @@ OPS: dict[str, OpSpec] = {
         "writer",
         "experimental",
         1500,
+        False,
         False,
     ),
     "task.block": OpSpec(
@@ -3492,6 +3731,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         1500,
         False,
+        False,
     ),
     "task.cancel": OpSpec(
         "task.cancel",
@@ -3502,6 +3742,7 @@ OPS: dict[str, OpSpec] = {
         "writer",
         "experimental",
         1500,
+        False,
         False,
     ),
     "task.claim": OpSpec(
@@ -3514,6 +3755,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         1500,
         False,
+        False,
     ),
     "task.complete": OpSpec(
         "task.complete",
@@ -3524,6 +3766,7 @@ OPS: dict[str, OpSpec] = {
         "writer",
         "experimental",
         1500,
+        False,
         False,
     ),
     "task.counts": OpSpec(
@@ -3536,6 +3779,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         800,
         False,
+        True,
     ),
     "task.create": OpSpec(
         "task.create",
@@ -3546,6 +3790,7 @@ OPS: dict[str, OpSpec] = {
         "writer",
         "experimental",
         1500,
+        False,
         False,
     ),
     "task.defer": OpSpec(
@@ -3558,6 +3803,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         1500,
         False,
+        False,
     ),
     "task.fail": OpSpec(
         "task.fail",
@@ -3568,6 +3814,7 @@ OPS: dict[str, OpSpec] = {
         "writer",
         "experimental",
         1500,
+        False,
         False,
     ),
     "task.get": OpSpec(
@@ -3580,6 +3827,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         500,
         False,
+        True,
     ),
     "task.heartbeat": OpSpec(
         "task.heartbeat",
@@ -3590,6 +3838,7 @@ OPS: dict[str, OpSpec] = {
         "writer",
         "experimental",
         1000,
+        False,
         False,
     ),
     "task.history": OpSpec(
@@ -3602,6 +3851,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         800,
         False,
+        True,
     ),
     "task.list": OpSpec(
         "task.list",
@@ -3613,6 +3863,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         800,
         False,
+        True,
     ),
     "task.progress": OpSpec(
         "task.progress",
@@ -3623,6 +3874,7 @@ OPS: dict[str, OpSpec] = {
         "writer",
         "experimental",
         1000,
+        False,
         False,
     ),
     "task.pull": OpSpec(
@@ -3635,6 +3887,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         33000,
         False,
+        False,
     ),
     "task.reassign": OpSpec(
         "task.reassign",
@@ -3645,6 +3898,7 @@ OPS: dict[str, OpSpec] = {
         "writer",
         "experimental",
         2000,
+        False,
         False,
     ),
     "task.reopen": OpSpec(
@@ -3657,6 +3911,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         1500,
         False,
+        False,
     ),
     "task.resume": OpSpec(
         "task.resume",
@@ -3667,6 +3922,7 @@ OPS: dict[str, OpSpec] = {
         "writer",
         "experimental",
         1500,
+        False,
         False,
     ),
     "task.unblock": OpSpec(
@@ -3679,6 +3935,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         1500,
         False,
+        False,
     ),
     "task.update": OpSpec(
         "task.update",
@@ -3689,6 +3946,7 @@ OPS: dict[str, OpSpec] = {
         "writer",
         "experimental",
         1500,
+        False,
         False,
     ),
     "task.updates": OpSpec(
@@ -3701,6 +3959,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         33000,
         False,
+        True,
     ),
     "task.wont_do": OpSpec(
         "task.wont_do",
@@ -3711,6 +3970,7 @@ OPS: dict[str, OpSpec] = {
         "writer",
         "experimental",
         1500,
+        False,
         False,
     ),
     "tracker.answer": OpSpec(
@@ -3723,6 +3983,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         1200,
         False,
+        True,
     ),
     "tracker.binding": OpSpec(
         "tracker.binding",
@@ -3734,6 +3995,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         50,
         False,
+        True,
     ),
     "tracker.component": OpSpec(
         "tracker.component",
@@ -3745,6 +4007,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         300,
         False,
+        True,
     ),
     "tracker.contract": OpSpec(
         "tracker.contract",
@@ -3756,6 +4019,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         50,
         False,
+        True,
     ),
     "tracker.duplicate_check": OpSpec(
         "tracker.duplicate_check",
@@ -3767,6 +4031,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         2000,
         False,
+        True,
     ),
     "tracker.flaky": OpSpec(
         "tracker.flaky",
@@ -3778,6 +4043,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         300,
         False,
+        True,
     ),
     "tracker.item": OpSpec(
         "tracker.item",
@@ -3789,6 +4055,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         300,
         False,
+        True,
     ),
     "tracker.links": OpSpec(
         "tracker.links",
@@ -3800,6 +4067,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         300,
         False,
+        True,
     ),
     "tracker.release": OpSpec(
         "tracker.release",
@@ -3811,6 +4079,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         300,
         False,
+        True,
     ),
     "tracker.similar": OpSpec(
         "tracker.similar",
@@ -3822,6 +4091,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         600,
         False,
+        True,
     ),
     "tracker.source.add": OpSpec(
         "tracker.source.add",
@@ -3833,6 +4103,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         30000,
         True,
+        False,
     ),
     "tracker.source.check": OpSpec(
         "tracker.source.check",
@@ -3844,6 +4115,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         10000,
         False,
+        True,
     ),
     "tracker.source.inspect": OpSpec(
         "tracker.source.inspect",
@@ -3855,6 +4127,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         30000,
         False,
+        True,
     ),
     "tracker.source.list": OpSpec(
         "tracker.source.list",
@@ -3866,6 +4139,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         4000,
         False,
+        True,
     ),
     "tracker.source.remove": OpSpec(
         "tracker.source.remove",
@@ -3877,6 +4151,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         30000,
         True,
+        False,
     ),
     "tracker.source.rotate": OpSpec(
         "tracker.source.rotate",
@@ -3888,6 +4163,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         30000,
         True,
+        False,
     ),
     "tracker.source.set_mapping": OpSpec(
         "tracker.source.set_mapping",
@@ -3899,6 +4175,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         30000,
         True,
+        False,
     ),
     "tracker.test_signal": OpSpec(
         "tracker.test_signal",
@@ -3910,6 +4187,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         8000,
         False,
+        True,
     ),
     "ui.vitals": OpSpec(
         "ui.vitals",
@@ -3920,6 +4198,7 @@ OPS: dict[str, OpSpec] = {
         "viewer",
         "experimental",
         50,
+        False,
         False,
     ),
     "working_memory.append": OpSpec(
@@ -3932,6 +4211,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         80,
         False,
+        False,
     ),
     "working_memory.delete": OpSpec(
         "working_memory.delete",
@@ -3942,6 +4222,7 @@ OPS: dict[str, OpSpec] = {
         "writer",
         "experimental",
         40,
+        False,
         False,
     ),
     "working_memory.get": OpSpec(
@@ -3954,6 +4235,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         40,
         False,
+        True,
     ),
     "working_memory.render": OpSpec(
         "working_memory.render",
@@ -3965,6 +4247,7 @@ OPS: dict[str, OpSpec] = {
         "stable",
         60,
         False,
+        True,
     ),
     "working_memory.replace": OpSpec(
         "working_memory.replace",
@@ -3976,6 +4259,7 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         80,
         False,
+        False,
     ),
     "working_memory.set": OpSpec(
         "working_memory.set",
@@ -3986,6 +4270,7 @@ OPS: dict[str, OpSpec] = {
         "writer",
         "stable",
         40,
+        False,
         False,
     ),
 }
@@ -6112,6 +6397,7 @@ class CodeScipIngestInput(TypedDict, total=False):
     base_sha: NotRequired[str]
     producer: NotRequired[str]
     payload: Required[str]
+    entry_lease_holder: NotRequired[str]
 
 
 class CodeScipIngestBody(TypedDict, total=False):
@@ -6127,6 +6413,7 @@ class CodeScipIngestBody(TypedDict, total=False):
     base_sha: NotRequired[str]
     producer: NotRequired[str]
     payload: Required[str]
+    entry_lease_holder: NotRequired[str]
 
 
 class CodeScipIngestOutput(TypedDict, total=False):
@@ -7797,22 +8084,6 @@ class DecisionRecordOutput(TypedDict, total=False):
     next: NotRequired[str]
 
 
-class EmbeddingEmbedInput(TypedDict, total=False):
-    texts: Required[list[str]]
-    mode: NotRequired[Literal["query", "batch"]]
-
-
-class EmbeddingEmbedBody(TypedDict, total=False):
-    texts: Required[list[str]]
-    mode: NotRequired[Literal["query", "batch"]]
-
-
-class EmbeddingEmbedOutput(TypedDict, total=False):
-    model: Required[str]
-    dim: Required[int]
-    vectors: Required[list[list[float]]]
-
-
 class ErasureExportInput(TypedDict, total=False):
     org: Required[str]
     scope_type: Required[Literal["user_id", "namespace", "namespace_list"]]
@@ -9051,37 +9322,6 @@ class LearningsReviewOutput(TypedDict, total=False):
     promoted_to_knowledge: NotRequired[bool]
     knowledge_source_uri: NotRequired[str]
     decided_at: Required[str]  # date-time as ISO-8601 text
-
-
-class LlmCompleteInput(TypedDict, total=False):
-    system: Required[str]
-    user: Required[str]
-    max_tokens: NotRequired[int]
-    response_format: NotRequired[Optional[dict[str, str]]]
-    temperature: NotRequired[Optional[float]]
-    model: NotRequired[str]
-    stage: NotRequired[str]
-
-
-class LlmCompleteBody(TypedDict, total=False):
-    system: Required[str]
-    user: Required[str]
-    max_tokens: NotRequired[int]
-    response_format: NotRequired[Optional[dict[str, str]]]
-    temperature: NotRequired[Optional[float]]
-    model: NotRequired[str]
-    stage: NotRequired[str]
-
-
-class LlmCompleteOutput(TypedDict, total=False):
-    text: Required[str]
-    tokens_in: Required[int]
-    tokens_out: Required[int]
-    provider: Required[str]
-    model: Required[str]
-    cached_input_tokens: NotRequired[int]
-    cache_write_input_tokens: NotRequired[int]
-    stop_reason: NotRequired[str]
 
 
 class MemoryAgentsListInput(TypedDict, total=False):

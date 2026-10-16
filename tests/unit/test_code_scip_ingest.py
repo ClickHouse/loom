@@ -142,3 +142,48 @@ def test_both_uuid_spellings_are_accepted_as_sent(repo: _Repo, spelling: str) ->
     batch_id = uuid.UUID(int=9).hex if spelling == "hex" else str(uuid.UUID(int=9))
     out = _ingest(batch_id=batch_id, total_parts=1)
     assert out.complete is True and out.batch_id == batch_id
+
+
+# -- an upload a pass hands off is fenced by that pass's entry lease -------------
+
+
+@pytest.fixture
+def lock_table(monkeypatch: pytest.MonkeyPatch) -> Any:
+    from tests.unit.claims_fake import FakeLockTable
+
+    ch = FakeLockTable()
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    return ch
+
+
+_LEASE = "scip_entry:o/n"
+
+
+def test_a_part_from_a_pass_that_lost_its_entry_lease_is_refused(
+    repo: _Repo, lock_table: Any
+) -> None:
+    """Another host took the entry over: the old pass's upload must not complete a batch."""
+    lock_table.seed(_LEASE, "other-host:7:zz")
+    with pytest.raises(h.EntryLeaseNotHeld):
+        _ingest(entry_lease_holder="this-host:1:aa")
+    assert repo.parts == {} and repo.upserts == []
+    lock_table.keys.clear()  # released: the pass is over, its upload no longer fenced in
+    with pytest.raises(h.EntryLeaseNotHeld):
+        _ingest(entry_lease_holder="this-host:1:aa")
+    assert repo.parts == {}
+
+
+def test_a_part_from_the_holder_lands(repo: _Repo, lock_table: Any) -> None:
+    lock_table.seed(_LEASE, "this-host:1:aa")
+    assert _ingest(entry_lease_holder="this-host:1:aa").parts_received == 1
+    lock_table.seed(_LEASE, "this-host:1:aa", stale=True)  # expired: takeable by another host
+    with pytest.raises(h.EntryLeaseNotHeld):
+        _ingest(seq=1, entry_lease_holder="this-host:1:aa")
+    assert set(repo.parts) == {0}
+
+
+def test_an_unfenced_upload_reads_no_lease(repo: _Repo, lock_table: Any) -> None:
+    """CI pushes name no holder: no lease is read and the part lands."""
+    lock_table.seed(_LEASE, "other-host:7:zz")
+    assert _ingest().parts_received == 1
+    assert lock_table.sql == []

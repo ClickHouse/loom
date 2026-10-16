@@ -162,6 +162,10 @@ class PassBudget:
     stop_after: float
 
     def exhausted(self) -> bool:
+        # Every unit boundary is also where a stopped pass stops writing.
+        from server.workers import pass_context
+
+        pass_context.check_stop()
         return time.monotonic() >= self.stop_after
 
     def elapsed(self) -> float:

@@ -533,8 +533,10 @@ def _token() -> str:
     if tok:
         return tok
     if os.environ.get("LOOM_JWT_SECRET"):
+        from server.auth import keyring
         from server.auth.jwt import mint_token
 
+        keyring.load_for_offline_mint()
         return mint_token(
             subject="op-planning-bench",
             org=ORG,

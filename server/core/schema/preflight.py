@@ -30,11 +30,10 @@ MIN_VERSION = (26, 4)
 # ALTER TABLE and ALTER VIEW, not ALTER: from 26.9 the ALTER group holds ALTER
 # HANDLER, which is global only, so `CHECK GRANT ALTER ON loom.*` fails even
 # after GRANT ALL ON loom.*.
-Need = Literal["server", "replica", "read"]
+Need = Literal["server", "read"]
 GRANTS: dict[Need, str] = {
     "server": "CREATE TABLE, CREATE VIEW, ALTER TABLE, ALTER VIEW, DROP TABLE, DROP VIEW, "
     "INSERT, SELECT, OPTIMIZE, TRUNCATE",
-    "replica": "SELECT, INSERT, ALTER UPDATE, ALTER DELETE",
     "read": "SELECT",
 }
 # A server refreshes the code views with it after a purge, and tolerates a
@@ -68,13 +67,22 @@ TELEMETRY_SYSTEM_TABLES = (
     "zookeeper_connection",
 )
 SYSTEM_TABLES = RUNNER_SYSTEM_TABLES + TELEMETRY_SYSTEM_TABLES
-# Every replica's version; a server without the `default` cluster is one node.
-# Every configured replica must answer: one that does not is unverified, not
-# absent. Set here, so a profile that skips unavailable shards cannot.
-REPLICA_VERSIONS_SQL = (
-    "SELECT version() FROM clusterAllReplicas('default', system.one) "
-    "SETTINGS skip_unavailable_shards = 0"
-)
+
+
+def replica_versions_sql() -> str:
+    """Every replica's version, over LOOM_CH_CLUSTER (unset: this server alone); a
+    server without that cluster is one node. Every configured replica must answer:
+    one that does not is unverified, not absent. Set here, so a profile that skips
+    unavailable shards cannot."""
+    from server.settings import settings
+
+    if not settings.ch_cluster:
+        return "SELECT version()"
+    return (
+        f"SELECT version() FROM clusterAllReplicas('{settings.ch_cluster}', system.one) "
+        "SETTINGS skip_unavailable_shards = 0"
+    )
+
 
 _DATABASE_COUNT = f"SELECT count() FROM system.databases WHERE name = '{DATABASE}'"
 
@@ -87,13 +95,15 @@ CLUSTER_DOESNT_EXIST = 701
 class PreflightError(RuntimeError):
     """A check failed; the message names the fix. `needs_admin`: only a
     ClickHouse admin can apply it, and the text says where the SQL is; `reason`
-    is the message without that pointer, for ch-setup, which prints the SQL."""
+    is the message without that pointer, for ch-setup, which prints the SQL.
+    `no_keeper`: the server has no Keeper, which only its configuration can add."""
 
-    def __init__(self, reason: str, *, needs_admin: bool = False) -> None:
+    def __init__(self, reason: str, *, needs_admin: bool = False, no_keeper: bool = False) -> None:
         pointer = " (`loom ch-setup --print-sql` prints it)" if needs_admin else ""
         super().__init__(reason + pointer)
         self.reason = reason
         self.needs_admin = needs_admin
+        self.no_keeper = no_keeper
 
 
 @dataclass(frozen=True)
@@ -213,21 +223,22 @@ def oldest_version(
 ) -> str:
     """The oldest version among the server's replicas: a Cloud service in a
     rolling upgrade answers from replicas on two versions, and the old one
-    still runs the DDL. A server without the `default` cluster is one node.
+    still runs the DDL. A server without the LOOM_CH_CLUSTER cluster is one node.
     When the replicas cannot be asked, `strict` (a process about to migrate)
     stops; otherwise the connected server answers, and what a strict check
     would have refused goes to `gaps`."""
     from server.settings import settings
 
     try:
-        versions = [str(row[0]) for row in ch.query(REPLICA_VERSIONS_SQL).result_rows]
+        versions = [str(row[0]) for row in ch.query(replica_versions_sql()).result_rows]
     except Exception as e:  # noqa: BLE001 — a missing cluster is one node; the rest depends on strict
         code = error_code(e)
         if code != CLUSTER_DOESNT_EXIST:
             if code == ACCESS_DENIED:
                 refusal = PreflightError(
-                    f"{settings.ch_user!r} may not run clusterAllReplicas('default', "
-                    "system.one) for every replica's version: an admin has to run Loom's "
+                    f"{settings.ch_user!r} may not run clusterAllReplicas("
+                    f"'{settings.ch_cluster}', system.one) for every replica's version: an "
+                    "admin has to run Loom's "
                     "setup SQL",
                     needs_admin=True,
                 )
@@ -269,13 +280,6 @@ def _cannot_create(user: str) -> PreflightError:
         "an admin has to run Loom's setup SQL",
         needs_admin=True,
     )
-
-
-def needed_at_boot() -> Need:
-    """What the server process needs: everything but a read replica runs DDL."""
-    from server.settings import settings
-
-    return "replica" if settings.read_replica else "server"
 
 
 def check(
@@ -350,6 +354,12 @@ def check(
             "WHERE database = 'system' AND name = 'zookeeper_connection'"
         )
     )
+    if not keeper and need != "read":
+        from server.core.schema.migrate_lease import KeeperRequired
+
+        raise PreflightError(
+            str(KeeperRequired("the server has no Keeper configured")), no_keeper=True
+        )
     lightweight = str(
         ch.command("SELECT value FROM system.settings WHERE name = 'enable_lightweight_update'")
     ) in ("1", "true")

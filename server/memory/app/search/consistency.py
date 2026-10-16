@@ -36,6 +36,23 @@ def _fresh_namespace_read(
     )
 
 
+async def _written_elsewhere(
+    org: str, namespace: str, *, already_sequential: bool, enabled: bool, window_s: float
+) -> bool:
+    """The same question for every other process: the namespace's write key, which
+    a write sets before it answers (where the server has a Keeper). A failed read
+    is no evidence either way: False."""
+    if already_sequential or not enabled or window_s <= 0 or not org or not namespace:
+        return False
+    from server.core import namespace_write_marks
+
+    try:
+        return await namespace_write_marks.written_within(org, namespace, window_s)
+    except Exception as e:  # noqa: BLE001 — the after-the-fact re-reads still apply
+        log.warning("memory.search: write-mark read failed: %s", e)
+        return False
+
+
 def _newest_hit_age_s(hits: list[Any], *, now: datetime | None = None) -> float:
     """Seconds since the most recently ingested hit (`created_at`, ingest
     time); +inf when no hit carries a parseable one."""
@@ -94,12 +111,13 @@ async def _fresh_namespace_reread(input: MemorySearchInput) -> MemorySearchOutpu
     from server.memory.store import read_your_writes_enabled
     from server.settings import settings as _rw_settings
 
+    org, ns = str(input.org or ""), str(input.namespace or "")
+    window_s = float(_rw_settings.ch_read_your_writes_window_s)
+    already, enabled = sequential_reads_active(), read_your_writes_enabled()
     if _fresh_namespace_read(
-        str(input.org or ""),
-        str(input.namespace or ""),
-        already_sequential=sequential_reads_active(),
-        enabled=read_your_writes_enabled(),
-        window_s=float(_rw_settings.ch_read_your_writes_window_s),
+        org, ns, already_sequential=already, enabled=enabled, window_s=window_s
+    ) or await _written_elsewhere(
+        org, ns, already_sequential=already, enabled=enabled, window_s=window_s
     ):
         log.info(
             "memory.search: namespace written within the replication window; "

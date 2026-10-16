@@ -17,6 +17,8 @@ from pathlib import Path
 import httpx
 import pytest
 
+from tests.integration._eventually import overrides_adopted
+
 ROOT = Path(__file__).resolve().parents[2]
 CLI = ROOT / "dev" / "onboard_tenant.py"
 
@@ -105,6 +107,7 @@ async def test_onboard_rate_limits_are_raised(
         "--json",
     )
     assert init.returncode == 0, init.stderr
+    await overrides_adopted()  # the raised limits reach every worker within a refresh
 
     # Hammer knowledge.add directly via HTTP (no SDK pacing in play)
     body = {

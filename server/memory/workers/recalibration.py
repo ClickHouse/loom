@@ -1,7 +1,8 @@
 """Recalibration worker — re-runs the embedder calibration probe so threshold
 values stay aligned if the vendor silently revises the embedder.
 
-Cadence via LOOM_RECALIBRATION_INTERVAL_SECONDS (weekly default). A pass is
+Cadence via LOOM_RECALIBRATION_INTERVAL_SECONDS (weekly default). The result
+is published to loom.embedder_calibration, which every replica re-reads. A pass is
 recorded like every worker's (`record_pass`): a probe that raises fails the
 pass and keeps the current calibration; an unavailable calibration (fake
 embedder, no key) is a successful pass that changed nothing. Per-namespace
@@ -90,7 +91,10 @@ async def _recalibrate() -> RecalibrationResult:
                 log.warning("recalibration drift: %s", msg)
                 result.drift_warnings.append(msg)
 
-    embedder_calibration.set_calibration(new)
+    # The leader's probe is the cluster's: published, every replica adopts it
+    # on its next refresh.
+    published = await embedder_calibration.publish_calibration(new)
+    embedder_calibration.set_calibration(new, source="shared" if published else "probe")
     result.ran = True
     result.new_calibration_at = datetime.now(UTC)
 
@@ -100,7 +104,5 @@ async def _recalibrate() -> RecalibrationResult:
             DRIFT_THRESHOLD * 100,
         )
 
-    # Found per-namespace rows stay cached until cleared: re-read what
-    # code.calibrate wrote from another process since.
     embedder_calibration.clear_ns_overrides()
     return result

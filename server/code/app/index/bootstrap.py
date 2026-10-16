@@ -19,6 +19,7 @@ carries an ETA while indexing and the coverage while embedding.
 from __future__ import annotations
 
 import asyncio
+import glob
 import json
 import logging
 import math
@@ -28,6 +29,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from server.code.app.index.mirror_locks import fetch_lock, lock_file
 from server.settings import settings
 
 logger = logging.getLogger("loom.code_index.bootstrap")
@@ -43,6 +45,12 @@ BUILDING_STAGES = frozenset({"queued", "cloning", "indexing", "embedding"})
 # itself after the hold.
 _EMBED_BREAKER_HOLD_S = 600.0
 _embed_breaker_until = 0.0
+
+
+def history_enabled() -> bool:
+    """Whether this host reads git history from its own mirrors
+    (`LOOM_GIT_HISTORY`, `none` on an edge host without mirrors)."""
+    return settings.git_history != "none"
 
 
 def embedding_coverage(embeddable: int, embedded: int) -> float:
@@ -108,19 +116,74 @@ async def set_stage(repo: Any, org: str, ns: str, stage: str, **detail: Any) -> 
 async def clone_if_missing(cfg: Any, repo: Any) -> bool:
     """True when the mirror exists after the call. A failed clone records
     stage=error with the reason and returns False; the next pass retries."""
+    if await asyncio.to_thread(os.path.isdir, cfg.git_dir):
+        return True
+    return not await staged_clone(cfg, repo)
+
+
+async def staged_clone(cfg: Any, repo: Any) -> str:
+    """The leader's clone: `clone_and_pin`, '' on success, else why not. An entry not
+    indexed yet shows `cloning` then `error` on its card; an indexed one keeps its
+    stage (the mirror is a cache: a new host clones it again), and the path is logged
+    so a mistyped operator git_dir is not a silent multi-GB clone."""
+    indexed = bool(str(await repo.get_state(cfg.org, cfg.namespace, "git_head") or ""))
+    if indexed or cfg.source != "registry":
+        logger.warning(
+            "bootstrap: %s has no mirror at %s (cwd %s); cloning %s there",
+            cfg.label,
+            cfg.git_dir,
+            Path.cwd(),
+            cfg.git_remote,
+        )
+    if not indexed:
+        await set_stage(repo, cfg.org, cfg.namespace, "cloning", remote=cfg.git_remote)
+    reason = await clone_and_pin(cfg)
+    if reason:
+        if not indexed:
+            await set_stage(repo, cfg.org, cfg.namespace, "error", reason=reason)
+        return reason  # logged by the mirror job
+    await repo.set_state(cfg.org, cfg.namespace, "repo_remote", cfg.git_remote)
+    await repo.set_state(cfg.org, cfg.namespace, "repo_branch", cfg.git_branch)
+    logger.info("bootstrap: cloned %s -> %s", cfg.git_remote, cfg.git_dir)
+    return ""
+
+
+async def clone_in_background(cfg: Any, repo: Any) -> tuple[bool, str]:
+    """(mirror present, why the last clone failed). A missing mirror's clone runs as
+    the host's mirror job and the pass moves on, so one long clone does not hold up
+    every later entry."""
+    if await asyncio.to_thread(os.path.isdir, cfg.git_dir):
+        return True, ""
+
+    async def _run(c: Any) -> str:
+        return await staged_clone(c, repo)
+
+    if await mirror_job("clone", _run, cfg, 0):
+        return True, ""
+    return False, job_state(cfg.git_dir)[1]
+
+
+async def clone_mirror(cfg: Any, *, pin: bool = False) -> str:
+    """Clone `cfg`'s remote into its bare mirror; '' on success (or when another
+    clone got there first), else why not. The processes of one host share the
+    mirror directory, so one clones while the others wait on its lock file. With
+    `pin`, a clone this call made then pins the ledger merges it lacks."""
     from server.code.app.index.gitrepo import auth_env, remote_access, upload_pack_args
     from server.code.app.index.sandbox import SandboxRequiredError, run_job
 
     git_dir = cfg.git_dir
-    if await asyncio.to_thread(os.path.isdir, git_dir):
-        return True
-    await set_stage(repo, cfg.org, cfg.namespace, "cloning", remote=cfg.git_remote)
-    await asyncio.to_thread(os.makedirs, os.path.dirname(git_dir) or ".", exist_ok=True)
-    tmp = git_dir + ".partial"
-    # The clone runs as a repository job: the empty target its one writable path.
-    await asyncio.to_thread(shutil.rmtree, tmp, True)
-    await asyncio.to_thread(os.makedirs, tmp)
+    tmp = f"{git_dir}.partial-{os.getpid()}-{time.monotonic_ns()}"
+    lock = -1
     try:
+        lock = await lock_file(f"{git_dir}.clone-lock")
+        if await asyncio.to_thread(os.path.isdir, git_dir):
+            return ""
+        # Under the lock no clone is running: what is left was a killed one's
+        # (`.partial` without a suffix: an older build's).
+        for stale in await asyncio.to_thread(glob.glob, f"{glob.escape(git_dir)}.partial*"):
+            await asyncio.to_thread(shutil.rmtree, stale, True)
+        await asyncio.to_thread(os.makedirs, tmp)
+        # The clone runs as a repository job: the empty target its one writable path.
         done = await run_job(
             ["git", "clone", "-c", "gc.auto=0", "-c", "maintenance.auto=false"]
             + ["--bare", "--quiet", *upload_pack_args(cfg.git_remote), cfg.git_remote, tmp],
@@ -129,26 +192,225 @@ async def clone_if_missing(cfg: Any, repo: Any) -> bool:
             writable=[Path(tmp)],
             **remote_access(cfg.git_remote),
         )
+        if done.returncode != 0:
+            last = done.stderr.decode(errors="replace").strip().splitlines()[-1:]
+            return (last or ["git clone failed"])[0][:300]
+        if cfg.classification == "restricted":
+            await asyncio.to_thread(os.chmod, tmp, 0o700)
+        await asyncio.to_thread(os.rename, tmp, git_dir)
+        if pin:
+            await _pin_ledger_merges(cfg)
+        return ""
     except TimeoutError:
-        await set_stage(
-            repo, cfg.org, cfg.namespace, "error", reason="clone timed out; retrying next pass"
-        )
-        return False
+        return "clone timed out; retrying next pass"
     except SandboxRequiredError as e:
-        await set_stage(repo, cfg.org, cfg.namespace, "error", reason=str(e)[:300])
+        return str(e)[:300]
+    except OSError as e:
+        return f"clone failed: {e}"[:300]
+    finally:
+        await asyncio.to_thread(shutil.rmtree, tmp, True)
+        if lock >= 0:
+            os.close(lock)
+
+
+async def fetch_mirror(cfg: Any) -> str:
+    """Bring `cfg`'s mirror up to its remote branch; '' on success, else why not."""
+    from server.code.app.index import gitrepo
+
+    try:
+        async with fetch_lock(cfg.git_dir):
+            await gitrepo.fetch(cfg.git_dir, cfg.git_remote, cfg.git_branch, token=cfg.github_token)
+    except gitrepo.GitError as e:
+        return str(e)[:300]
+    return ""
+
+
+async def clone_and_pin(cfg: Any) -> str:
+    """A history read's clone: the mirror, then the ledger's merge commits it lacks. A
+    fresh clone carries only the branches the remote advertises now, so a merge made on
+    a staging branch upstream has since deleted (which the worker's mirror keeps, never
+    pruning) is fetched by sha and pinned, as the worker's sweep does."""
+    return await clone_mirror(cfg, pin=True)
+
+
+async def _pin_ledger_merges(cfg: Any) -> None:
+    """Every ledger merge of the mirror's entries the clone lacks, fetched by sha a page
+    at a time. A failure is logged; the host's fetch loop sweeps the same, slower."""
+    from server.code.app.index import gitrepo
+    from server.code.app.index.pass_fetch import pin_merges
+    from server.code.domain.index.repos import configured_repos
+    from server.code.store.index import CodeRepo
+
+    if not settings.code_git_fetch_ledger_merges:
+        return
+    repo, fetched = CodeRepo(), 0
+    page = max(1, int(settings.code_git_ledger_merge_page))
+    batch = max(1, int(settings.code_git_ledger_merge_batch))
+    shared = {
+        c.namespace for c in configured_repos() if (c.org, c.git_dir) == (cfg.org, cfg.git_dir)
+    }
+    for ns in shared | {cfg.namespace}:
+        below = 0
+        try:
+            while rows := await repo.merge_shas_page(cfg.org, ns, below_pr=below, limit=page):
+                missing = await gitrepo.missing_commits(cfg.git_dir, [s for _, s in rows])
+                async with fetch_lock(cfg.git_dir):
+                    for i in range(0, len(missing), batch):
+                        fetched += await pin_merges(cfg, cfg.git_dir, missing[i : i + batch])
+                below = rows[-1][0]
+                if len(rows) < page:
+                    break
+        except Exception as e:  # noqa: BLE001 — the clone is usable without the pins
+            logger.warning(
+                "mirror clone of %s: ledger merges of %s not pinned: %s", cfg.label, ns, e
+            )
+    if fetched:
+        logger.info("mirror clone of %s: pinned %d ledger merge commits", cfg.label, fetched)
+
+
+# The clone or fetch running per (job, git_dir), with when it started: one per mirror
+# however many reads ask; after a failure not again for _MIRROR_RETRY_S, after a
+# success not for _MIRROR_AGAIN_S.
+_MIRROR_JOBS: dict[tuple[str, str], tuple[asyncio.Task[str], float]] = {}
+_MIRROR_RETRY_S = 60.0
+_MIRROR_AGAIN_S = 5.0
+# Indexed heads a mirror is known to hold (checked once).
+_HAVE: set[tuple[str, str]] = set()
+# (git_dir, sha) a mirror lacks → (no fetch for it before, fetches made for it). A
+# sha no fetch brings waits _MIRROR_RETRY_S, doubled per fetch up to an hour.
+_FOREIGN: dict[tuple[str, str], tuple[float, int]] = {}
+_BACKOFF_MAX_S = 3600.0
+
+
+async def _logged(name: str, run: Any, cfg: Any) -> str:
+    """`run(cfg)` under its own query tag, its failure logged once by the job itself,
+    not by every read."""
+    from server.core.ch import set_query_tag
+
+    set_query_tag(f"code.mirror_{name}")
+    reason = str(await run(cfg))
+    if reason:
+        logger.warning("mirror %s of %s failed: %s", name, cfg.label, reason)
+    return reason
+
+
+def _job_failure(task: asyncio.Task[str] | None) -> str:
+    """Why a finished job failed; '' while it runs, after a success or with no job."""
+    if task is None or not task.done():
+        return ""
+    if task.cancelled():
+        return "cancelled"
+    if (e := task.exception()) is not None:
+        return f"{type(e).__name__}: {e}"[:300]
+    return task.result()
+
+
+def _current_job(key: tuple[str, str]) -> asyncio.Task[str] | None:
+    """The job running for `key`, or finished within its interval; None when one is due."""
+    task, started = _MIRROR_JOBS.get(key, (None, 0.0))
+    if task is not None and task.done():
+        failed = bool(_job_failure(task))
+        if time.monotonic() - started >= (_MIRROR_RETRY_S if failed else _MIRROR_AGAIN_S):
+            return None
+    return task
+
+
+def job_state(git_dir: str) -> tuple[str, str]:
+    """('cloning' | 'failed' | '', reason) of this process's clone of `git_dir`."""
+    task, _ = _MIRROR_JOBS.get(("clone", git_dir), (None, 0.0))
+    if task is not None and not task.done():
+        return "cloning", ""
+    reason = _job_failure(task)
+    return ("failed", reason) if reason else ("", "")
+
+
+async def mirror_job(name: str, run: Any, cfg: Any, wait_s: float) -> bool:
+    """Whether the job succeeded. The read that starts it waits up to `wait_s`;
+    one that finds it running answers at once, so a clone of minutes costs one
+    read the wait, not every read. The job belongs to the process, not to the
+    request that started it (a fresh context)."""
+    from server.core.background import detached_task
+
+    key = (name, cfg.git_dir)
+    task = _current_job(key)
+    if task is None:
+        task = detached_task(_logged(name, run, cfg), name=f"loom-mirror-{name}:{cfg.namespace}")
+        _MIRROR_JOBS[key] = (task, time.monotonic())
+    elif not task.done():
         return False
-    err = done.stderr
-    if done.returncode != 0:
-        reason = err.decode(errors="replace").strip().splitlines()[-1:] or ["git clone failed"]
-        await set_stage(repo, cfg.org, cfg.namespace, "error", reason=reason[0][:300])
-        logger.warning("bootstrap: clone of %s failed: %s", cfg.label, reason[0][:300])
+    try:
+        return not await asyncio.wait_for(asyncio.shield(task), max(0.0, wait_s))
+    except TimeoutError:
         return False
-    await asyncio.to_thread(os.rename, tmp, git_dir)
-    if cfg.classification == "restricted":
-        await asyncio.to_thread(os.chmod, git_dir, 0o700)
-    await repo.set_state(cfg.org, cfg.namespace, "repo_remote", cfg.git_remote)
-    await repo.set_state(cfg.org, cfg.namespace, "repo_branch", cfg.git_branch)
-    logger.info("bootstrap: cloned %s -> %s", cfg.git_remote, git_dir)
+    except Exception:  # noqa: BLE001 — the job's own failure, already logged
+        return False
+
+
+def network_refusal(cfg: Any) -> str:
+    """Why this host must not clone or fetch `cfg` for a read, '' when it may: the
+    worker's rule (`compiler_tier.unsandboxed_skip`), so a viewer-added remote is
+    never reached by a plain process without the egress proxy."""
+    from server.code.app.index.compiler_tier import unsandboxed_skip
+
+    return unsandboxed_skip(cfg, "history_read")
+
+
+async def mirror_ready(
+    cfg: Any, *, want: str = "", wait_s: float = 10.0, fetchable: Any = None
+) -> bool:
+    """Whether this host's mirror of `cfg` holds `want` (any commit when empty) now.
+
+    A host without the mirror clones it from the remote ClickHouse names
+    (`code_history_clone_on_read`), the read waiting up to `wait_s` for it. A present
+    mirror answers at once: one that lacks `want` fetches the branch in the background
+    and answers False meanwhile. `fetchable` (async, no arguments) says whether `want`
+    is the branch's to fetch; a commit it refuses (a PR head), or one a fetch did not
+    bring, is not fetched for again until its backoff passes."""
+    if not history_enabled():
+        return False
+    if not await asyncio.to_thread(os.path.isdir, cfg.git_dir):
+        if not cfg.git_remote or not settings.code_history_clone_on_read:
+            return False
+        if network_refusal(cfg):
+            return False
+        return await mirror_job("clone", clone_and_pin, cfg, wait_s)
+    return await holds(cfg, want, fetchable=fetchable)
+
+
+async def holds(cfg: Any, want: str, *, fetchable: Any = None) -> bool:
+    """Whether the mirror of `cfg`, present on this host, holds `want` (any commit when
+    empty); one that lacks it fetches the branch in the background (see `mirror_ready`)."""
+    from server.code.app.index import gitrepo
+
+    key = (cfg.git_dir, want)
+    if not want or key in _HAVE:
+        return True
+    until, tries = _FOREIGN.get(key, (0.0, 0))
+    now = time.monotonic()
+    if now < until:
+        return False
+    try:
+        await gitrepo.run(cfg.git_dir, "cat-file", "-e", f"{want}^{{commit}}")
+    except gitrepo.GitError:
+        running = _current_job(("fetch", cfg.git_dir))
+        if not cfg.git_remote or (running is not None and not running.done()):
+            return False  # nothing to fetch from, or a fetch is under way
+        if len(_FOREIGN) > 1024:
+            _FOREIGN.clear()
+        if network_refusal(cfg) or (fetchable is not None and not await fetchable()):
+            _FOREIGN[key] = (now + _MIRROR_RETRY_S, 0)
+            return False
+        if tries and not until:
+            # The fetch made for it ended without it (the remote lost it): back off.
+            _FOREIGN[key] = (now + min(_MIRROR_RETRY_S * 2 ** (tries - 1), _BACKOFF_MAX_S), tries)
+            return False
+        _FOREIGN[key] = (0.0, tries + 1)
+        await mirror_job("fetch", fetch_mirror, cfg, 0)
+        return False
+    _FOREIGN.pop(key, None)
+    if len(_HAVE) > 1024:
+        _HAVE.clear()
+    _HAVE.add(key)
     return True
 
 

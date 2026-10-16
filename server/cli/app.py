@@ -139,8 +139,8 @@ _SPLIT_PARSERS: tuple[Any, ...] = (
 
 
 def _add_code_okf_up_parsers(sub: Any) -> None:
-    """The `code`, `okf`, `up` and `read-replica` subcommands, registered by
-    their own modules."""
+    """The `code`, `okf`, `up`, `participant`, `deployment`, `signing-key`,
+    `blobs` and `provider-lock` subcommands, registered by their own modules."""
     from server.cli.code import register_code_cli
 
     register_code_cli(sub)
@@ -157,9 +157,21 @@ def _add_code_okf_up_parsers(sub: Any) -> None:
 
     register_ch_setup_cli(sub)
 
-    from server.cli.read_replica import register_read_replica_cli
+    from server.cli.participant import register_participant_cli
 
-    register_read_replica_cli(sub)
+    register_participant_cli(sub)
+
+    from server.cli.deployment import register_deployment_cli
+
+    register_deployment_cli(sub)
+
+    from server.cli.portability import register_portability_cli
+
+    register_portability_cli(sub)
+
+    from server.cli.provider_lock import register_provider_lock_cli
+
+    register_provider_lock_cli(sub)
 
 
 def _add_claim_release_parser(sub: Any) -> None:

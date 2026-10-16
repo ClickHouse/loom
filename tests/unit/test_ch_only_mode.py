@@ -4,7 +4,7 @@ These pin two contracts the CH-only positioning depends on:
 
   1. `/v1/health` reports a structured `mode` token that names the
      active integrations (`ch`, `ch+langfuse`, `ch+clickstack`, etc.).
-     Operators and the `/me` dashboard render this to know the tier.
+     Operators and the dashboard render this to know the tier.
 
   2. `prompts.evaluate` returns 501 INTEGRATION_NOT_CONFIGURED — not
      503 BACKEND_UNAVAILABLE — when Langfuse is unconfigured. 503

@@ -1,7 +1,7 @@
 """Sign-in state that changes once, kept in ClickHouse Keeper.
 
 Whatever a sign-in spends or moves lives here, one key each, in
-loom.oauth_signin_state (KeeperMap, schemas/migrations/034_oauth_signin_state.sql):
+loom.oauth_signin_state (KeeperMap, schemas/migrations/040_oauth_signin_state.sql):
 a code, a device grant, a single-use mark per identity provider callback the
 provider vouched for, an MCP approval awaiting its click, and the current
 refresh token of each session. Every change is a compare-and-set (`swap`):
@@ -14,10 +14,6 @@ Callers make every value unique (a nonce in it), so reading our value back
 proves our write landed. Each key carries the expiry of what it holds and is
 swept once it passes; the table's key limit is a backstop against a flood of
 unauthenticated sign-in starts, and /v1/health says when it is reached.
-
-A ClickHouse without a Keeper has no claims table. Sign-in then answers a
-retryable 503 (`Busy`) rather than spend credentials unguarded, and
-/v1/health says why (`oauth_signin_needs_keeper`).
 """
 
 from __future__ import annotations
@@ -29,15 +25,11 @@ import secrets
 import time
 from typing import Any
 
-from server.core import keeper_claims
-from server.core.schema.migrate_lease import is_keeper_table, key_exists
+from server.auth import shielded
 
 log = logging.getLogger(__name__)
 
 _TABLE = "loom.oauth_signin_state"
-TABLE_SQL = (
-    "SELECT engine FROM system.tables WHERE database = 'loom' AND name = 'oauth_signin_state'"
-)
 SWEEP_INTERVAL_SECONDS = 300
 _FULL_FOR_S = 900  # how long hitting the key limit stays a health problem
 UNDO_S = 5  # an undo Keeper does not finish by then is left to the key's expiry
@@ -45,15 +37,12 @@ UNDO_S = 5  # an undo Keeper does not finish by then is left to the key's expiry
 # timed out has put its credential back or another has called it abandoned.
 _BOUNDED = "max_execution_time = 5"
 
-# Whether loom.oauth_signin_state exists here: None until the boot probe or the
-# first sign-in asks.
-_atomic: bool | None = None
 # When an insert last found the table at its key limit (monotonic seconds).
 _full_at: float | None = None
 
 
 class Busy(Exception):
-    """Keeper cannot answer, or there is none: the request should retry."""
+    """Keeper cannot answer: the request should retry."""
 
 
 class Changed(Busy):
@@ -64,36 +53,14 @@ def nonce() -> str:
     return secrets.token_hex(8)
 
 
-def keeper_available() -> bool | None:
-    """Whether this ClickHouse has the claims table; None = not asked yet."""
-    return _atomic
+def key_exists(e: BaseException) -> bool:
+    """Keeper's strict-mode answer to an insert of a key that is there."""
+    return "Node exists" in str(e)
 
 
 def keeper_full() -> bool:
     """Whether a sign-in found the table at its key limit lately."""
     return _full_at is not None and time.monotonic() - _full_at < _FULL_FOR_S
-
-
-async def _available(ch: Any) -> bool:
-    global _atomic
-    if _atomic is None:
-        _atomic = is_keeper_table(await ch.query_one(TABLE_SQL))
-        if not _atomic:
-            log.warning("sign-in: no %s (no Keeper); sign-in answers 503", _TABLE)
-    return _atomic
-
-
-async def probe(ch: Any) -> None:
-    """At boot, so /v1/health names the missing table before any sign-in."""
-    try:
-        await _available(ch)
-    except Exception as e:  # noqa: BLE001 — a failed probe leaves it to the first sign-in
-        log.warning("oauth claims: could not read system.tables: %s", e)
-
-
-async def _require(ch: Any) -> None:
-    if not await _available(ch):
-        raise Busy("sign-in needs a ClickHouse Keeper (loom.oauth_signin_state)")
 
 
 def _lost_race(e: BaseException) -> bool:
@@ -102,7 +69,6 @@ def _lost_race(e: BaseException) -> bool:
 
 
 async def get(ch: Any, key: str) -> str | None:
-    await _require(ch)
     try:
         row = await ch.query_one(
             f"SELECT value FROM {_TABLE} WHERE claim_key = {{k:String}}", params={"k": key}
@@ -116,7 +82,6 @@ async def swap(ch: Any, key: str, old: str | None, new: str, expires_at: int) ->
     """Set `key` to `new`, kept until `expires_at` (epoch seconds), if it
     holds `old` (None: if it is absent). Returns what it holds afterwards:
     `new` if this call's write landed."""
-    await _require(ch)
     # A cancelled request does not stop ClickHouse running the write, so the
     # write and its read-back finish as one, and only then is a cancelled
     # write undone: an undo run first would find nothing and miss it.
@@ -131,7 +96,7 @@ async def swap(ch: Any, key: str, old: str | None, new: str, expires_at: int) ->
         raise
     except asyncio.CancelledError:
         # Held to its end, before whoever cancelled puts the credential back.
-        await keeper_claims.shielded(
+        await shielded.shielded(
             _undo_once_settled(write, ch, key, old, new, expires_at), name="undo"
         )
         raise
@@ -221,8 +186,6 @@ async def sweep() -> None:
     from server.core.ch import get_client
 
     ch = get_client()
-    if not await _available(ch):
-        return
     try:
         # Strict: a key renewed after this read it is not deleted.
         await ch.execute(

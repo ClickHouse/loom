@@ -1368,6 +1368,7 @@ Accept one part of a SCIP index upload (compiler-tier symbols and references) fo
 | `base_sha` | `str` | `''` | The commit the delta was computed from; recorded on the batch row. |
 | `producer` | `str` | `''` | The indexer that built the delta (scip-clang, scip-python, scip-typescript, scip-go); it picks the watermark key the batch advances, '' = the C++ key `scip_commit`. |
 | `payload` | `str` | required | one part of the JSON-encoded ScipDelta |
+| `entry_lease_holder` | `str` | `''` | The holder of the entry's lease the delta was built under (`loom code entry-lock` hands it to its command); when set, the part is refused unless that holder still holds the lease. '' = unfenced (CI pushes). |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

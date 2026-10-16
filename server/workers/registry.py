@@ -189,6 +189,12 @@ _WORKERS: tuple[_Worker, ...] = (
         "retention_reconcile_interval_seconds",
     ),
     _Worker(
+        "document_blob_gc",
+        "server.knowledge.workers.blob_gc",
+        "document_blob_gc_enabled",
+        "document_blob_gc_interval_seconds",
+    ),
+    _Worker(
         "namespace_gc",
         "server.identity.workers.namespace_gc",
         "namespace_gc_worker_enabled",
@@ -205,6 +211,22 @@ _WORKERS: tuple[_Worker, ...] = (
         "usage_fold",
         "server.memory.workers.usage_fold",
         "usage_fold_enabled",
+        "INTERVAL_SECONDS",
+        interval_in_module=True,
+    ),
+    # Always on: deletes the KeeperMap keys a dead process left behind.
+    _Worker(
+        "keeper_sweep",
+        "server.workers.keeper_sweep",
+        None,
+        "INTERVAL_SECONDS",
+        interval_in_module=True,
+    ),
+    # Always on: re-runs deferred conflict judges a dead replica left owed.
+    _Worker(
+        "conflict_sweep",
+        "server.memory.workers.conflict_sweep",
+        None,
         "INTERVAL_SECONDS",
         interval_in_module=True,
     ),
@@ -362,14 +384,6 @@ _WORKERS: tuple[_Worker, ...] = (
         "server.code.workers.summary",
         "code_summary_enabled",
         "code_summary_interval_seconds",
-    ),
-    # jwt_revocation_refresh: always-on, no enable flag.
-    _Worker(
-        "jwt_revocation_refresh",
-        "server.auth.revocation",
-        None,
-        "jwt_revocation_cache_ttl_seconds",
-        pass_attr="refresh",
     ),
     _Worker(
         "task_lease_sweep",

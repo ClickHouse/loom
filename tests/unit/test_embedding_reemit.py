@@ -831,3 +831,55 @@ async def test_the_live_read_is_chunked_and_can_be_sequential() -> None:
     await M.live_rows_for_keys(keys, ch=_CH(), sequential=True)
     assert [n for n, _ in calls] == [500, 500, 203]
     assert all("select_sequential_consistency" in sql for _, sql in calls)
+
+
+def _judged_memory_row() -> dict[str, Any]:
+    # A deferred verdict lands at the judged write's version + 1 (`conflicts.judged_write`).
+    return {**_LIVE, "content_sha256": "a", "status": "duplicate", "version": _LIVE["version"] + 1}
+
+
+@pytest.mark.asyncio
+async def test_a_judged_mirror_outranks_a_metadata_copy_that_landed_first() -> None:
+    """Entity sync re-emitted write V's vector at V + 1 before the settle: the
+    verdict's mirror must not tie with it or skip it."""
+    ch = _RMTCH()
+    ch.emb += [
+        {**_LIVE, "content_sha256": "a"},
+        {**_LIVE, "content_sha256": "a", "version": _LIVE["version"] + 1},
+    ]
+    await M.mirror_status_to_embeddings([_judged_memory_row()], ch=ch, judged=True)
+    (live,) = ch.live_emb()
+    assert live["status"] == "duplicate"
+
+
+@pytest.mark.asyncio
+async def test_a_judged_mirror_outranks_a_metadata_copy_that_lands_after() -> None:
+    ch = _RMTCH()
+    ch.emb.append({**_LIVE, "content_sha256": "a"})
+    await M.mirror_status_to_embeddings([_judged_memory_row()], ch=ch, judged=True)
+    # A copy that read write V before the mirror landed writes V + 1, still active.
+    ch.emb.append({**_LIVE, "content_sha256": "a", "version": _LIVE["version"] + 1})
+    (live,) = ch.live_emb()
+    assert live["status"] == "duplicate"
+
+
+@pytest.mark.asyncio
+async def test_a_judged_mirror_leaves_a_newer_revisions_vector_alone() -> None:
+    ch = _RMTCH()
+    newer = {**_LIVE, "content_sha256": "b", "version": M.next_version()}
+    ch.emb += [{**_LIVE, "content_sha256": "a"}, newer]
+    assert await M.mirror_status_to_embeddings([_judged_memory_row()], ch=ch, judged=True) == 0
+    (live,) = ch.live_emb()
+    assert live["content_sha256"] == "b" and live["status"] == "active"
+
+
+@pytest.mark.asyncio
+async def test_a_judged_mirror_leaves_a_vector_a_supersede_hid_meanwhile() -> None:
+    """Another write's refines verdict superseded A between the settle's memory row
+    and its mirror: the retire stands, A does not come back into search."""
+    ch = _RMTCH()
+    retired = {**_LIVE, "content_sha256": "a", "status": "superseded", "version": M.next_version()}
+    ch.emb += [{**_LIVE, "content_sha256": "a"}, retired]
+    assert await M.mirror_status_to_embeddings([_judged_memory_row()], ch=ch, judged=True) == 0
+    (live,) = ch.live_emb()
+    assert live["status"] == "superseded"

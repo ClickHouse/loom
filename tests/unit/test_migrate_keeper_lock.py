@@ -14,15 +14,16 @@ from types import SimpleNamespace
 
 import pytest
 
+from server.core.leases import LOCK_TABLE
 from server.core.schema import migrate as mig
 from server.core.schema.journal import sorted_migrations
 from server.core.schema.migrate_lease import (
     LEASE_NAME,
     LOCK_DDL,
-    LOCK_TABLE,
     KeeperLock,
+    KeeperRequired,
+    KeeperUnavailable,
     LeaseConfig,
-    MigrationLease,
     bootstrap_keeper_lock,
 )
 
@@ -45,8 +46,11 @@ class Clock:
 
 
 class FakeKeeper:
-    def __init__(self, clock: Clock, *, create_error: str | None = None) -> None:
+    def __init__(
+        self, clock: Clock, *, create_error: str | None = None, name: str = LEASE_NAME
+    ) -> None:
         self.clock = clock
+        self.name = name
         self.create_error = create_error
         self.insert_error: str | None = None
         self.row: dict | None = None
@@ -73,7 +77,7 @@ class FakeKeeper:
                 raise RuntimeError(self.create_error)
             return None
         assert LOCK_TABLE in sql and "keeper_map_strict_mode = 1" in sql
-        assert p.get("name") == LEASE_NAME
+        assert p.get("name") == self.name
         now = self.clock.now
         if sql.startswith("INSERT"):
             if self.insert_error:
@@ -108,7 +112,7 @@ class FakeKeeper:
         return None
 
     def query(self, sql: str, parameters=None, settings=None):
-        assert LOCK_TABLE in sql and parameters == {"name": LEASE_NAME}
+        assert LOCK_TABLE in sql and parameters == {"name": self.name}
         if self.row is None:
             return SimpleNamespace(result_rows=[])
         r = self.row
@@ -238,6 +242,21 @@ def test_renewal_is_conditional_on_holder_and_detects_a_takeover() -> None:
     assert ch.row is not None  # a lost lock is not deleted
 
 
+def test_renewals_that_fail_for_half_the_ttl_lose_the_lock() -> None:
+    """Stop while the key is still this holder's, before another can take it."""
+    clock, out = Clock(), []
+    ch = FakeKeeper(clock)
+    me = _lock(ch, clock, "web:1:aa", out, ttl_s=30)
+    assert me.acquire() == "held"
+    ch.command = lambda *a, **k: (_ for _ in ()).throw(ConnectionError("down"))  # type: ignore[method-assign]
+    clock.sleep(11)
+    me.renew_if_due()
+    assert me.held and any("renewal failed" in line for line in out)
+    clock.sleep(5)
+    me.renew_if_due()
+    assert not me.held and any("no renewal in time" in line for line in out)
+
+
 def test_heartbeat_renews_from_its_own_connection() -> None:
     clock, out = Clock(), []
     ch = FakeKeeper(clock)
@@ -264,20 +283,87 @@ def test_heartbeat_renews_from_its_own_connection() -> None:
     assert ch.row is None
 
 
-def test_bootstrap_reports_a_server_without_keeper() -> None:
+def test_bootstrap_refuses_a_server_without_keeper() -> None:
     clock = Clock()
     assert bootstrap_keeper_lock(FakeKeeper(clock)) is None
     for msg in (
-        "Code: 999. DB::Exception: Cannot get ZooKeeper. (KEEPER_EXCEPTION)",
         "Code: 139. DB::Exception: KeeperMap is disabled. (NO_ELEMENTS_IN_CONFIG)",
         "Code: 36. DB::Exception: KeeperMap is disabled. (BAD_ARGUMENTS)",
     ):
-        why = bootstrap_keeper_lock(FakeKeeper(clock, create_error=msg))
-        assert why is not None and "no Keeper" in why
-    other = bootstrap_keeper_lock(
-        FakeKeeper(clock, create_error="Code: 497. not enough privileges")
-    )
-    assert other is not None and "497" in other
+        with pytest.raises(KeeperRequired, match="Loom needs a ClickHouse Keeper"):
+            bootstrap_keeper_lock(FakeKeeper(clock, create_error=msg))
+    with pytest.raises(Exception, match="497"):
+        bootstrap_keeper_lock(FakeKeeper(clock, create_error="Code: 497. not enough privileges"))
+
+
+def test_bootstrap_retries_a_failing_keeper_and_never_falls_back_on_it() -> None:
+    """A Keeper that is there but failing is not a server without one: retried."""
+    clock = Clock()
+    ch = FakeKeeper(clock, create_error="Code: 999. Session expired. (KEEPER_EXCEPTION)")
+    with pytest.raises(KeeperUnavailable):
+        bootstrap_keeper_lock(ch, wait_s=10.0, poll_s=2.0, sleep=clock.sleep, clock=clock.monotonic)
+    assert clock.t >= 10.0 and len(ch.commands) == 6
+    calls = []
+
+    def heal(s: float) -> None:
+        calls.append(s)
+        ch.create_error = None
+
+    assert bootstrap_keeper_lock(ch, wait_s=10.0, sleep=heal, clock=clock.monotonic) is None
+    assert calls == [2.0]
+
+
+def test_a_keeper_error_on_the_first_insert_retries_instead_of_falling_back() -> None:
+    clock, out = Clock(), []
+    ch = FakeKeeper(clock)
+    ch.insert_error = "Code: 999. Connection loss. (KEEPER_EXCEPTION)"
+    me = _lock(ch, clock, "web:1:aa", out, wait_s=5.0)
+    assert me.acquire() == "timeout" and not me.held
+    ch.insert_error = "Code: 497. not enough privileges"
+    assert _lock(ch, clock, "web:1:aa", out).acquire() == "unleased"
+
+
+def test_a_holder_that_counted_its_key_lost_takes_it_back_at_once() -> None:
+    """Missed renewals stop the workers while the key is still this holder's;
+    when ClickHouse answers again the key is renewed back, not waited out
+    until it is stale (a TTL with no supervisor anywhere)."""
+    clock, out = Clock(), []
+    ch = FakeKeeper(clock)
+    me = _lock(ch, clock, "web:1:aa", out, ttl_s=30, wait_s=0.0)
+    assert me.acquire() == "held"
+    real = ch.command
+    ch.command = lambda *a, **k: (_ for _ in ()).throw(ConnectionError("down"))  # type: ignore[method-assign]
+    clock.sleep(16)
+    me.renew_if_due()
+    assert not me.held
+    ch.command = real  # type: ignore[method-assign]
+    assert me.acquire() == "held" and me.waited_s == 0.0
+    assert ch.row["holder"] == "web:1:aa" and ch.row["renewed_at"] == clock.now
+    assert not ch._stale()
+    assert me.last_renew == clock.t
+    # Someone else's live key is not taken back.
+    other = _lock(ch, clock, "workers:2:bb", [], ttl_s=30, wait_s=0.0)
+    assert other.acquire() == "timeout"
+
+
+def test_the_renewal_is_stamped_when_it_was_sent() -> None:
+    """A renewal that takes seconds to answer counts from its send: the
+    server's renewed_at is never earlier than the holder believes."""
+    clock, out = Clock(), []
+    ch = FakeKeeper(clock)
+    me = _lock(ch, clock, "web:1:aa", out, ttl_s=30)
+    assert me.acquire() == "held"
+    clock.sleep(11)
+    sent = clock.t
+    real = ch.query
+
+    def slow(*a, **k):
+        clock.sleep(6)
+        return real(*a, **k)
+
+    ch.query = slow  # type: ignore[method-assign]
+    me.renew_if_due()
+    assert me.held and me.last_renew == sent
 
 
 # -- the factory ------------------------------------------------------------------
@@ -302,24 +388,38 @@ def test_factory_uses_the_keeper_lock_when_the_table_is_created(lease_on, capsys
 
 
 @pytest.mark.parametrize(
-    "where", ["create", "insert"], ids=["no-keeper-table", "keeper-refuses-insert"]
+    "where", ["create", "insert"], ids=["no-keeper-table", "no-keeper-on-insert"]
 )
-def test_factory_falls_back_to_the_lease_table(lease_on, monkeypatch, capsys, where) -> None:
+def test_factory_refuses_a_server_without_keeper(lease_on, where) -> None:
     ch = FakeKeeper(Clock())
-    err = "Code: 999. DB::Exception: Cannot get ZooKeeper. (KEEPER_EXCEPTION)"
+    err = "Code: 36. DB::Exception: KeeperMap is disabled. (BAD_ARGUMENTS)"
     if where == "create":
         ch.create_error = err
     else:
         ch.insert_error = err
-    acquired: list[str] = []
-    monkeypatch.setattr(
-        MigrationLease, "acquire", lambda self: acquired.append("rmt") or "unleased"
-    )
-    lease = mig._acquire_lease(ch)
-    assert isinstance(lease, MigrationLease) and acquired == ["rmt"]
-    out = capsys.readouterr().out
-    assert out.count("using the lease table loom._migration_lease") == 1
+    with pytest.raises(KeeperRequired):
+        mig._acquire_lease(ch)
     assert ch.row is None
+
+
+def test_factory_refused_by_a_keeper_that_is_there_retries(lease_on, monkeypatch, capsys) -> None:
+    """A refusal other than "no Keeper" (a privilege) is not a missing Keeper:
+    the boot retries."""
+    ch = FakeKeeper(Clock())
+    ch.insert_error = "Code: 497. DB::Exception: not enough privileges. (ACCESS_DENIED)"
+    lease = mig._acquire_lease(ch)
+    assert lease.outcome == "timeout" and not lease.held
+    assert "ACCESS_DENIED" in capsys.readouterr().err
+
+
+def test_factory_gives_up_on_a_failing_keeper(lease_on, monkeypatch, capsys) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "boot_migrate_lease_wait_s", 0.0)
+    ch = FakeKeeper(Clock(), create_error="Code: 999. Cannot get ZooKeeper. (KEEPER_EXCEPTION)")
+    lease = mig._acquire_lease(ch)
+    assert lease.outcome == "timeout" and not lease.held
+    assert "Cannot get ZooKeeper" in capsys.readouterr().err
 
 
 def test_apply_stops_when_the_lock_is_lost_between_files(monkeypatch, tmp_path, capsys) -> None:
@@ -345,3 +445,86 @@ def test_apply_stops_when_the_lock_is_lost_between_files(monkeypatch, tmp_path, 
     assert mig._apply_pending(object(), files, dry=False, lease=Lost()) == 1  # type: ignore[arg-type]
     assert ran == ["1998_a.sql"]
     assert "migration lock lost" in capsys.readouterr().err
+
+
+def test_a_failed_key_release_still_lets_go() -> None:
+    clock, out = Clock(), []
+    ch = FakeKeeper(clock)
+    lock = _lock(ch, clock, "web:1:aa", out)
+    assert lock.acquire() == "held"
+    original = ch.command
+
+    def refuse_delete(sql: str, parameters=None, settings=None):
+        if " DELETE " in sql:
+            raise RuntimeError("Code: 210. DB::NetException: Connection refused")
+        return original(sql, parameters, settings)
+
+    ch.command = refuse_delete  # type: ignore[method-assign]
+    lock.release()  # the key expires by its TTL
+    assert not lock.held and any("release failed" in line for line in out)
+
+
+def test_describe_error_names_a_missing_lock_table() -> None:
+    from server.core.schema.migrate_lease import describe_error
+
+    assert describe_error(RuntimeError("Code: 60. UNKNOWN_TABLE")) == f"table {LOCK_TABLE} absent"
+    assert describe_error(ValueError("x")) == "ValueError: x"
+
+
+def test_a_refused_insert_or_takeover_raises_rather_than_counting_as_lost() -> None:
+    clock = Clock()
+    ch = FakeKeeper(clock)
+    ch.insert_error = "Code: 497. not enough privileges"
+    me = _lock(ch, clock, "web:1:aa", [])
+    with pytest.raises(RuntimeError, match="497"):
+        me._try_insert()
+
+    class Refusing(FakeKeeper):
+        def command(self, sql: str, parameters=None, settings=None):
+            if " UPDATE holder = " in sql:
+                raise RuntimeError("Code: 497. not enough privileges")
+            return super().command(sql, parameters, settings)
+
+    ch = Refusing(clock)
+    ch.seed("dead:1:zz", renewed_s=-1000)
+    with pytest.raises(RuntimeError, match="497"):
+        _lock(ch, clock, "web:1:aa", [])._try_takeover("dead:1:zz")
+
+
+def test_a_key_released_between_the_insert_and_the_read_is_a_lost_round() -> None:
+    clock = Clock()
+
+    class Vanishing(FakeKeeper):
+        reads = 0
+
+        def query(self, sql: str, parameters=None, settings=None):
+            self.reads += 1
+            if self.reads == 1:  # the holder before the insert
+                self.seed("other:1:bb", renewed_s=0)
+                return SimpleNamespace(result_rows=[])
+            self.row = None  # released before the read after the failed insert
+            return super().query(sql, parameters, settings)
+
+    assert _lock(Vanishing(clock), clock, "web:1:aa", [])._attempt() == (False, None)
+
+
+def test_peek_free_reads_the_key_once() -> None:
+    clock = Clock()
+    ch = FakeKeeper(clock)
+    me = _lock(ch, clock, "web:1:aa", [])
+    assert me.peek_free()
+    ch.seed("other:1:bb", renewed_s=0)
+    assert not me.peek_free()
+    ch.seed("web:1:aa", renewed_s=0)
+    assert me.peek_free()
+    ch.seed("other:1:bb", renewed_s=-1000)
+    assert me.peek_free()  # stale
+
+
+def test_a_lock_not_held_neither_renews_nor_starts_a_heartbeat() -> None:
+    clock = Clock()
+    ch = FakeKeeper(clock)
+    me = _lock(ch, clock, "web:1:aa", [])
+    me.renew_if_due()
+    me.start_heartbeat(lambda: pytest.fail("no heartbeat for a lock not held"))
+    assert ch.commands == []

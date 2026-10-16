@@ -251,20 +251,29 @@ def test_dev_jwt_secret_with_auth_on_is_a_warn(monkeypatch: pytest.MonkeyPatch) 
     assert "dev_jwt_secret" not in _codes(collect_problems(s_off, HealthState(env={})))
 
 
-def test_dev_sealing_secret_under_a_key_map_is_a_warn(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_keyring_key_does_not_hide_the_dev_root_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The root secret seals every keyring key, so a dev root secret is the
+    one warning even while a keyring key signs."""
+    from datetime import datetime
+
+    from server.auth import keyring
+
+    monkeypatch.setattr(
+        keyring,
+        "_view",
+        keyring._View(
+            loaded=True, keys={"k1": keyring.SigningKey("k1", "HS256", "s" * 40, "", datetime.min)}
+        ),
+    )
     s = _settings(
         monkeypatch,
         LOOM_EMBEDDING_MODEL="fake-ngram-1024",
         LOOM_LLM_PROVIDER="fake",
         LOOM_AUTH_REQUIRED="true",
         LOOM_JWT_SECRET=DEV_JWT_SECRET,
-        LOOM_JWT_SECRETS_JSON='{"k1": "' + "s" * 40 + '"}',
-        LOOM_JWT_ACTIVE_KID="k1",
     )
     codes = _codes(collect_problems(s, HealthState(env={})))
-    assert "dev_jwt_secret" not in codes
-    p = _by_code(collect_problems(s, HealthState(env={})), "dev_sealing_secret")
-    assert p.severity == "warn" and "LOOM_JWT_SECRET" in p.fix
+    assert "dev_jwt_secret" in codes and "dev_sealing_secret" not in codes
 
 
 def test_empty_jwt_secret_is_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -331,11 +340,24 @@ def test_worker_lease_absent_is_info_and_explains_off_by_design(
     assert p.severity == "info" and p.source == "workers"
     assert "LOOM_BACKGROUND_WORKERS=off" in p.message
     assert derive_status(True, [p]) == "ok"
-    auto = _settings(monkeypatch, LOOM_EMBEDDING_MODEL="fake-ngram-1024", LOOM_LLM_PROVIDER="fake")
+    auto = _settings(
+        monkeypatch,
+        LOOM_EMBEDDING_MODEL="fake-ngram-1024",
+        LOOM_LLM_PROVIDER="fake",
+        LOOM_DEPLOYMENT="1",
+    )
     p2 = _by_code(
         collect_problems(auto, HealthState(worker_lease_held=False, env={})), "workers_lease_absent"
     )
     assert "another process" in p2.message
+    branch = _settings(
+        monkeypatch, LOOM_EMBEDDING_MODEL="fake-ngram-1024", LOOM_LLM_PROVIDER="fake"
+    )
+    p3 = _by_code(
+        collect_problems(branch, HealthState(worker_lease_held=False, env={})),
+        "workers_lease_absent",
+    )
+    assert "outside the deployment" in p3.message
     assert "workers_lease_absent" not in _codes(
         collect_problems(auto, HealthState(worker_lease_held=True, env={}))
     )
@@ -619,46 +641,28 @@ def test_allow_insecure_downgrades_the_bind_problems_to_warn(
     assert _by_code(problems, "insecure_bind_dev_secret").severity == "warn"
 
 
-def test_run_ids_without_keeper_claims_are_an_info_problem(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_participants_a_reconfiguration_would_wait_on_are_a_warn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     s = _settings(monkeypatch)
-
-    def codes(atomic: bool | None) -> list[str]:
-        problems = collect_problems(s, HealthState(run_claims_atomic=atomic))
-        return [p.code for p in problems if p.code == "run_claims_not_atomic"]
-
-    assert codes(None) == codes(True) == []
-    found = [
-        p
-        for p in collect_problems(s, HealthState(run_claims_atomic=False))
-        if p.code == "run_claims_not_atomic"
-    ]
-    assert [p.severity for p in found] == ["info"]
+    assert "provider_participants_stale" not in _codes(collect_problems(s, HealthState()))
+    assert "provider_participants_stale" not in _codes(
+        collect_problems(s, HealthState(stale_participants=()))
+    )
+    stale = ({"participant_id": "p-1", "reason": "queries_running", "heartbeat_at": "x"},)
+    found = _by_code(
+        collect_problems(s, HealthState(stale_participants=stale)), "provider_participants_stale"
+    )
+    assert found.severity == "warn" and "p-1 (queries_running)" in found.message
+    assert "loom participant retire" in found.fix
 
 
-def test_sign_in_without_keeper_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_full_sign_in_table_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
     from server.observability.problems import HealthState, _oauth_claim_problems
 
     on = _settings(monkeypatch, LOOM_OAUTH_ENABLED="true")
-    assert _oauth_claim_problems(on, HealthState(oauth_signin_keeper=True)) == []
-    assert _oauth_claim_problems(on, HealthState(oauth_signin_keeper=None)) == []
+    assert _oauth_claim_problems(on, HealthState()) == []
     off = _settings(monkeypatch, LOOM_OAUTH_ENABLED="false", LOOM_AUTH_REQUIRED="false")
-    assert _oauth_claim_problems(off, HealthState(oauth_signin_keeper=False)) == []
-    (problem,) = _oauth_claim_problems(on, HealthState(oauth_signin_keeper=False))
-    assert (
-        problem.code == "oauth_signin_needs_keeper" and "034_oauth_signin_state.sql" in problem.fix
-    )
-    (full,) = _oauth_claim_problems(
-        on, HealthState(oauth_signin_keeper=True, oauth_signin_state_full=True)
-    )
+    assert _oauth_claim_problems(off, HealthState(oauth_signin_state_full=True)) == []
+    (full,) = _oauth_claim_problems(on, HealthState(oauth_signin_state_full=True))
     assert full.code == "oauth_signin_state_full"
-
-
-def test_grant_changes_without_keeper_claims_are_a_warning(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def codes(atomic: bool | None) -> list[str]:
-        problems = collect_problems(_settings(monkeypatch), HealthState(grant_claims_atomic=atomic))
-        return [p.severity for p in problems if p.code == "grant_changes_not_atomic"]
-
-    assert codes(None) == codes(True) == []
-    assert codes(False) == ["warn"]

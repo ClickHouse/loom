@@ -34,13 +34,13 @@ async def test_registration_reports_what_it_registered(monkeypatch, caplog) -> N
     assert any("qa namespaces registered" in r.message for r in caplog.records)
 
 
-def test_lifespan_registers_on_lease_retry_too() -> None:
-    # the retry callback in the lifespan schedules the same registration the
-    # boot path awaits: the source names both call sites (no closure to import)
+def test_lifespan_registers_when_the_lease_is_acquired_later_too() -> None:
+    # the lease loop's callback schedules the same registration the boot path
+    # awaits: the source names both call sites (no closure to import)
     boot_src = open(b.__file__).read()
     assert "await boot.register_tracker_namespaces(ch)" in open(m.__file__).read()
     assert boot_src.count("_spawn_boot_task(register_tracker_namespaces(ch)") == 1
-    assert "retry_until_held(" in boot_src and "_on_lease_acquired" in boot_src
+    assert "keep_lease(" in boot_src and "_on_acquired" in boot_src
 
 
 @pytest.mark.asyncio

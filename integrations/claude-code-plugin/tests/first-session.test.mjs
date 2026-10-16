@@ -18,7 +18,7 @@ const SIGNED = {
   org: "dev",
   subject: "sa:agent-alice-box-claude-code-1234",
   claim_code: "SECRET-CODE",
-  claim_url: "https://loom.example/me",
+  claim_url: "https://loom.example/",
 };
 
 test("planSignup: token present or LOOM_AUTO_SIGNUP=off never signs up; otherwise it runs", () => {
@@ -63,7 +63,7 @@ test("created: token to config.json (0600, merged), claim code to claim file (06
   assert.equal(r.claimPath, path.join(dir, `claim-${SIGNED.namespace}.txt`));
   const claim = fs.readFileSync(r.claimPath, "utf8");
   assert.match(claim, /SECRET-CODE/);
-  assert.match(claim, /https:\/\/loom\.example\/me/);
+  assert.match(claim, /https:\/\/loom\.example\//);
   assert.equal(fs.statSync(r.claimPath).mode & 0o777, 0o600);
   const notice = renderFirstSessionNotice(r, "https://loom.example");
   assert.match(notice, /agent-alice-box-claude-code/);
@@ -91,7 +91,10 @@ test("404 → unavailable (hand instructions), 429 → rate_limited, 500 → err
     assert.equal(r.status, want);
     assert.equal(fs.existsSync(configPath), false);
   }
-  assert.match(renderFirstSessionNotice({ status: "unavailable" }, "https://loom.example"), /\/me → Setup/);
+  assert.match(
+    renderFirstSessionNotice({ status: "unavailable" }, "https://loom.example"),
+    /https:\/\/loom\.example\/ \(Settings → Tokens\)/,
+  );
   assert.equal(renderFirstSessionNotice({ status: "off" }, "x"), "");
 });
 

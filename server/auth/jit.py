@@ -13,6 +13,7 @@ import time
 from typing import Any
 
 from server.auth import login
+from server.core import leases
 from server.core.ch import get_client
 from server.core.naming import SSO_NAMESPACE_PREFIX
 
@@ -93,6 +94,8 @@ async def _ever_granted(org: str, account: dict[str, Any]) -> bool:
 # random suffixes.
 _JIT_SUFFIX_TRIES = 5
 _JIT_RANDOM_TRIES = 5
+# How long a sign-in waits for another sign-up of the same email to finish.
+_JIT_WAIT_S = 10.0
 
 
 class _Name(enum.Enum):
@@ -112,7 +115,7 @@ async def jit_provision_for_email(email: str) -> login.Identity | None:
     active account there does not resolve (the cross-org guard), or when no
     free name is found.
     """
-    from server.auth.self_signup import claim_lock
+    from server.auth.self_signup import CLAIM_TTL_S, email_claim
     from server.settings import settings as _settings
 
     if not _settings.oidc_jit_provision:
@@ -130,16 +133,21 @@ async def jit_provision_for_email(email: str) -> login.Identity | None:
     slug = "".join(c if c.isalnum() else "-" for c in local).strip("-")[:40] or "user"
     base = f"{SSO_NAMESPACE_PREFIX}{slug}-{hashlib.sha256(ident.encode()).hexdigest()[:8]}"
     org = _settings.oidc_jit_org
-    # One sign-up per email at a time in this process, as self-signup does:
-    # a second sign-in waits and finds the account the first wrote.
-    async with claim_lock(org, "email:" + ident):
-        try:
+    # One sign-up per email at a time on any replica, under self-signup's claim of
+    # the email: a second sign-in waits and finds the account the first wrote.
+    try:
+        async with leases.holding(
+            email_claim(org, ident), ttl_s=CLAIM_TTL_S, wait_s=_JIT_WAIT_S
+        ) as held:
+            if not held:
+                log.warning("oidc jit: sign-up of %r in %s still running elsewhere", ident, org)
+                raise login.SignInUnavailable
             return await _provision_jit(org, ident, base)
-        except login.SignInUnavailable:
-            raise
-        except Exception as e:  # a read or write that failed: retryable, as any sign-in's
-            log.error("oidc jit: sign-up of %r in %s failed: %s", ident, org, e, exc_info=True)
-            raise login.SignInUnavailable from e
+    except login.SignInUnavailable:
+        raise
+    except Exception as e:  # a read or write that failed or ran out of time: retryable
+        log.error("oidc jit: sign-up of %r in %s failed: %s", ident, org, e, exc_info=True)
+        raise login.SignInUnavailable from e
 
 
 async def finish_unfinished_account(email: str) -> None:
@@ -153,13 +161,13 @@ async def finish_unfinished_account(email: str) -> None:
     org, ident = _settings.oidc_jit_org, email.strip().lower()
     try:
         await _finish_provisioning(org, await _accounts_naming(org, ident))
-    except Exception as e:  # a read or write that failed: retryable, as any sign-in's
+    except Exception as e:  # a read or write that failed or ran out of time: retryable
         log.error("oidc jit: finishing %r in %s failed: %s", ident, org, e, exc_info=True)
         raise login.SignInUnavailable from e
 
 
 async def _provision_jit(org: str, ident: str, base: str) -> login.Identity | None:
-    """`jit_provision_for_email` past its gates, under the email's lock."""
+    """`jit_provision_for_email` past its gates, under the email's claim."""
     from server.auth.self_signup import provision_account
     from server.observability import audit
 

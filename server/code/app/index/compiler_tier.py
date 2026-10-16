@@ -19,7 +19,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
-from server.code.app.index.entry_lock import EntryLockHeld, entry_lock
+from server.code.app.index.entry_lock import EntryLockHeld, check_held, entry_lock
 from server.code.app.index.gitrepo import is_local_remote, upload_pack_args
 from server.code.app.index.producer_inference import worker_owns
 from server.code.app.index.sandbox import run_job, sandbox_available
@@ -77,6 +77,13 @@ async def run_tier[R: TierResult](
     from server.code.domain.index.repos import configured_repos
     from server.code.store.index import CodeRepo
 
+    async def run_entry(repo: CodeRepo, cfg: RepoConfig) -> None:
+        # The watermark reset is one of the entry's writes: under its lock too.
+        try:
+            await run_repo(repo, cfg, result)
+        except BaseUnknown as e:
+            await restart_full(repo, cfg, watermark, e, result.errors)
+
     # Recorded so /v1/admin/workers.status shows last_run_at / outcome and a
     # stalled tier is diagnosable without the cron log.
     with record_pass(worker) as rec:
@@ -89,18 +96,17 @@ async def run_tier[R: TierResult](
                 continue
             result.repos_checked += 1
             pass_context.set_namespace(cfg.namespace)  # Where a cut pass stopped
+            pass_context.check_stop()
             try:
                 if entry_locked:
                     async with entry_lock(cfg.org, cfg.namespace, wait=False):
-                        await run_repo(repo, cfg, result)
+                        await run_entry(repo, cfg)
                 else:
-                    await run_repo(repo, cfg, result)
+                    await run_entry(repo, cfg)
             except EntryLockHeld as held:
                 reason = f"{cfg.namespace}: entry lock held (full pass running)"
                 logger.warning("%s: %s — skipped (%s)", worker, reason, held.path)
                 result.skipped.append(reason)
-            except BaseUnknown as e:
-                await restart_full(repo, cfg, watermark, e, result.errors)
             except Exception as e:
                 logger.exception("%s: %s failed", worker, cfg.namespace)
                 result.errors.append(f"{cfg.namespace}: {type(e).__name__}: {e}")
@@ -180,7 +186,8 @@ def resolve_checkout(cfg: RepoConfig, producer: str) -> tuple[Path, Path, str | 
     if not bare.exists():
         return checkout, bare, f"bare clone missing at {bare}"
     if not checkout.exists() and (cfg.source == "registry" or producer != "clang"):
-        # An empty repository is enough: the tier fetches the target from the mirror.
+        # The checkout follows the lease: a new leader (or a Repositories-page entry)
+        # starts from an empty repository, and the tier fetches the target from the mirror.
         # An operator's scip-clang entry needs its configured build tree, so a missing
         # one is reported instead.
         from server.code.app.index.gitrepo import auth_env
@@ -209,6 +216,7 @@ async def restart_full(
     """Clear a tier's watermark after `BaseUnknown`, so its next run is a
     full index (which also retires rows the new index no longer emits),
     instead of retrying a window that can never be diffed."""
+    check_held()
     await repo.set_state(
         cfg.org, cfg.namespace, watermark_key, "", detail=f"base unknown: {err}"[:500]
     )
