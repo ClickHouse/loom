@@ -898,11 +898,13 @@ async def apply_refines(
 
         tracker = RetirementTracker(refuses_retirement)
         try:
+            # Read-your-writes: a lagging replica's row would be rebuilt over a revision.
             n = await supersede_duplicates(
                 org,
                 victims,
                 ch=ch or get_client(),
                 skip=tracker.skip,
+                strong=True,
                 on_written=tracker.written,
                 on_unconfirmed=tracker.unconfirmed,
             )

@@ -163,6 +163,8 @@ def _fake_supersede(monkeypatch, stored: dict[str, str] | set[str], *, fail: str
     async def supersede(
         org, victims, *, ch=None, skip=None, strong=False, on_written=None, on_unconfirmed=None
     ):
+        # A lagging replica's row would be rebuilt over a revision at a higher version.
+        assert strong, "the retirement reads read-your-writes"
         rows = [
             SimpleNamespace(memory_id=v["memory_id"], status=statuses[v["memory_id"]], pinned=False)
             for v in victims
@@ -672,7 +674,10 @@ async def _value_updates(
 
     wrote: list[str] = []
 
-    async def write(org, ids, update, *, ch=None, skip=None, on_written=None, on_unconfirmed=None):
+    async def write(
+        org, ids, update, *, ch=None, skip=None, strong=False, on_written=None, on_unconfirmed=None
+    ):
+        assert strong, "the retirement reads read-your-writes"
         found = [
             SimpleNamespace(
                 **{

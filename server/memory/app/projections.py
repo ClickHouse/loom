@@ -1549,11 +1549,13 @@ async def _retire_memories_behind_repairs(
     # The tracker also refuses a row retired since the read (it is not re-pointed).
     tracker = RetirementTracker(refuses_retirement)
     try:
+        # Read-your-writes: a lagging replica's row would be rebuilt over a revision.
         n = await supersede_duplicates(
             input.org,
             victims,
             ch=ch,
             skip=tracker.skip,
+            strong=True,
             on_written=tracker.written,
             on_unconfirmed=tracker.unconfirmed,
         )

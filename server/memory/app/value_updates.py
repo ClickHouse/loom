@@ -514,6 +514,9 @@ async def link_value_updates(
                     _supersession_update(ln.newer_id, inv),
                     ch=ch,
                     skip=_skip,
+                    # Read-your-writes: a lagging replica's row would be rebuilt over a
+                    # revision.
+                    strong=True,
                     on_written=_written,
                     on_unconfirmed=_unconfirmed,
                 )

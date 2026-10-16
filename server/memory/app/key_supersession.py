@@ -535,11 +535,13 @@ async def supersede_same_key_rows(
         # The tracker also refuses a row retired since the read (it is not re-pointed).
         tracker = RetirementTracker(lock.refuses_retirement)
         try:
+            # Read-your-writes: a lagging replica's row would be rebuilt over a revision.
             n = await memory_repo.supersede_duplicates(
                 org,
                 victims,
                 ch=ch,
                 skip=tracker.skip,
+                strong=True,
                 on_written=tracker.written,
                 on_unconfirmed=tracker.unconfirmed,
             )
