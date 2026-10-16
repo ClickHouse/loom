@@ -707,28 +707,15 @@ async def handle_memory_temporal_status(
         store.cutoff(input.org, input.namespace, None),
         store.watermark(input.org, input.namespace),
     )
-    kind = await _publisher_kind()
     blockers = []
-    if kind == "none":
-        blockers.append(
-            "no Keeper: set LOOM_MEMORY_TEMPORAL_PUBLISHER=process when exactly one "
-            "process writes memory"
-        )
     if int(row.get("broken_at") or 0):
         blockers.append(f"integrity break at sequence {row['broken_at']}")
     any_commit = int(row.get("n") or 0) > 0
     return MemoryTemporalStatusOutput(
         namespace=input.namespace,
-        publisher=kind,
         head_seq=int(row.get("head") or 0) if any_commit else 0,
         projection_seq=wm,
         first_recorded_at=row.get("first_at") if any_commit else None,
         integrity_break_at=int(row.get("broken_at") or 0),
         write_blockers=blockers,
     )
-
-
-async def _publisher_kind() -> str:
-    if settings.memory_temporal_publisher != "auto":
-        return settings.memory_temporal_publisher
-    return "keeper" if await publisher._locks.has_keeper() else "none"

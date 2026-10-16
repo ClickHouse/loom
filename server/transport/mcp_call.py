@@ -163,17 +163,8 @@ def _forbidden_result(
 ) -> dict[str, Any]:
     """A role-check refusal. On a code/tracker index it says how to get in
     and that retrying elsewhere will not help."""
-    from server.core import read_replica
     from server.transport import access_refusal as ar
 
-    if isinstance(err, read_replica.ReplicaRefusal):
-        text = str(err)
-        refusal = {"error": text, "code": gates.ROLE_REFUSAL_CODE, "reason": read_replica.REASON}
-        return {
-            "content": [{"type": "text", "text": text}],
-            "isError": True,
-            "structuredContent": {**refusal, "retry": False},
-        }
     if ar.is_plane_op(op.name) and ns:
         return ar.mcp_result(ar.refusal(str(getattr(auth, "subject", "") or ""), org or "", ns))
     msg = f"role check failed for {op.name}: {err}"
@@ -513,7 +504,8 @@ async def _idempotency_gate(
     call: _AdmittedCall, name: str, client_key: str
 ) -> tuple[dict[str, Any] | None, Scope | None, str | None]:
     """The replay decision (`gates.idempotency_check`) for the call's key,
-    rendered: a response ends the call (IDEMPOTENT_CONFLICT, or the cached
+    rendered: a response ends the call (IDEMPOTENT_CONFLICT or
+    IDEMPOTENT_IN_PROGRESS, or the cached
     result replayed); otherwise the scope and hash ride to the post-handler
     rows. The validated input is hashed as HTTP hashes it; a run the session
     stamped is not part of what the caller asked."""
@@ -527,16 +519,15 @@ async def _idempotency_gate(
         unset=("run_id",) if call.stamped_run else (),
     )
     if replay.conflict:
+        code = "IDEMPOTENT_IN_PROGRESS" if replay.in_progress else "IDEMPOTENT_CONFLICT"
         _emit_mcp_event(
-            op.name,
-            arguments,
-            0,
-            success=False,
-            error_code="IDEMPOTENT_CONFLICT",
-            request_id=request_id,
+            op.name, arguments, 0, success=False, error_code=code, request_id=request_id
         )
         msg = "Idempotency key reused with different tool arguments."
-        body = {"error": msg, "code": "IDEMPOTENT_CONFLICT"}
+        body: dict[str, Any] = {"error": msg, "code": code}
+        if replay.in_progress:
+            msg = gates.IN_PROGRESS_MESSAGE
+            body = {"error": msg, "code": code, "in_progress": True, "retry_after_s": 1}
         return (
             _ok(
                 req_id,

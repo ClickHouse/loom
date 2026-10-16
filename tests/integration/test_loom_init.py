@@ -98,20 +98,19 @@ def test_init_minted_token_decodes_with_server_secret(
         line.split("=", 1) for line in (tmp_path / ".env").read_text().strip().splitlines()
     )["LOOM_API_KEY"]
 
-    # Loom signs with HS256 by default and RS256 when configured (the
-    # production posture for federated sign-in). Pick the right verifier
-    # key based on the env's active algorithm.
-    if settings.jwt_algorithm == "RS256":
-        pub_keys = settings.jwt_public_key_map()
-        if not pub_keys:
-            pytest.skip("RS256 mode but no public keys configured for verification")
-        key = next(iter(pub_keys.values()))
-    else:
-        key = settings.jwt_secret
+    # The root secret signs as kid `default` until a key in loom.signing_keys
+    # activates; this process has not loaded that keyring.
+    from server.auth import keyring
+
+    header = pyjwt.get_unverified_header(token)
+    keys = keyring.verification_keys(header.get("kid", keyring.ROOT_KID), header["alg"])
+    if not keys:
+        pytest.skip(f"signed by keyring key {header.get('kid')!r}, not the root secret")
+    key = keys[0]
     decoded = pyjwt.decode(
         token,
         key,
-        algorithms=[settings.jwt_algorithm],
+        algorithms=[header["alg"]],
         audience=settings.jwt_audience,
         issuer=settings.jwt_issuer,
     )

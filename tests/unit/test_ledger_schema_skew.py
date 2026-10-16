@@ -153,6 +153,9 @@ async def test_a_migration_under_the_cache_is_picked_up_on_the_retry(
 
 
 async def test_non_ledger_tables_are_not_projected(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.core import rmt_carry
+
+    monkeypatch.setattr(rmt_carry, "carries", lambda _table: False)  # its own tests
     fake = _FakeAsync(["a"])
     c = _client(fake, monkeypatch)
     with pytest.raises(RuntimeError, match="No such column"):

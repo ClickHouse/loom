@@ -33,6 +33,7 @@ from server.code.app.common import (
 )
 from server.code.app.coverage import claim_tests, positive_control
 from server.code.app.index import gitrepo
+from server.code.app.index.mirrors import history_dir
 from server.code.app.settings import history_chunks
 from server.code.app.spans import code_span, set_code_span_attributes
 from server.code.app.ttl_cache import TtlCache
@@ -147,7 +148,7 @@ async def _from_mirror(src: Source, git_dir: str, base: str, head: str, *, max_b
 async def resolve_source(repo: CodeRepo, org: str, ns: str, cfg: Any | None, inp: Any) -> Source:
     src = Source(pr_number=int(inp.pr_number or 0), head_sha=(inp.head_sha or "").strip().lower())
     max_bytes = int(settings.code_conventions_diff_max_bytes)
-    git_dir = cfg.git_dir if cfg is not None else ""
+    git_dir, gap = await history_dir(cfg)
     if src.pr_number:
         row = await repo.pr_facts(org, ns, src.pr_number)
         if row:
@@ -177,7 +178,8 @@ async def resolve_source(repo: CodeRepo, org: str, ns: str, cfg: Any | None, inp
         return src
     if not git_dir:
         src.notes.append(
-            "no bare mirror configured for this namespace: diff-dependent rules are unknown"
+            f"{gap or 'no bare mirror configured for this namespace'}: "
+            "diff-dependent rules are unknown"
         )
         return src
     try:
@@ -442,7 +444,7 @@ async def _gather(
     wanted: set[str],
     has_diff_input: bool,
 ) -> Reads:
-    git_dir = cfg.git_dir if cfg is not None else ""
+    git_dir = (await history_dir(cfg))[0]
     branch = cfg.git_branch if cfg is not None else settings.code_git_branch
     rd = Reads(diff_known=bool(src.diff.files) or has_diff_input)
     if src.target_branch and src.target_branch != branch:

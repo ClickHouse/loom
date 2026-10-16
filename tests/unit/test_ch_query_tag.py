@@ -156,3 +156,10 @@ def test_tag_is_task_local() -> None:
         return seen
 
     assert sorted(asyncio.run(_run())) == ["memory.search a", "memory.set b"]
+
+
+def test_query_tag_tags_the_block_only() -> None:
+    ch_mod.set_query_tag("lifespan")
+    with ch_mod.query_tag("instances.heartbeat"):
+        assert ch_mod.current_query_tag() == "instances.heartbeat"
+    assert ch_mod.current_query_tag() == "lifespan"

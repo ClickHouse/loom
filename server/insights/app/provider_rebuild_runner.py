@@ -6,6 +6,7 @@ after an effect succeeds but before its checkpoint reaches ClickHouse.
 """
 
 import json
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from time import time_ns
 from typing import Any, Protocol
@@ -14,6 +15,8 @@ from uuid import UUID
 from server.insights.domain.provider_rebuild import REBUILD_TABLES
 from server.insights.domain.provider_rebuild_manifest import RebuildManifest
 from server.insights.store.provider_configuration import write_configuration
+
+Write = Callable[[dict[str, Any]], Awaitable[None]]
 
 _PHASES = ("drain", "snapshot", "rebuild", "verify", "publish", "cleanup", "activate")
 
@@ -80,7 +83,7 @@ def _progress(row: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _checkpoint(
-    row: dict[str, Any], progress: dict[str, Any], state: str, error: str = ""
+    write: Write, row: dict[str, Any], progress: dict[str, Any], state: str, error: str = ""
 ) -> dict[str, Any]:
     updated = {
         **row,
@@ -89,7 +92,7 @@ async def _checkpoint(
         "error_code": error,
         "version": max(time_ns(), int(row["version"]) + 1),
     }
-    await write_configuration(updated)
+    await write(updated)
     return updated
 
 
@@ -153,8 +156,12 @@ async def _advance(config_id: UUID, progress: dict[str, Any], backend: RebuildBa
     return True
 
 
-async def run_rebuild_step(row: dict[str, Any], backend: RebuildBackend) -> dict[str, Any]:
+async def run_rebuild_step(
+    row: dict[str, Any], backend: RebuildBackend, *, write: Write | None = None
+) -> dict[str, Any]:
     """Run at most one bounded step; failed jobs require an explicit retry.
+    `write` stores each checkpoint (`write_configuration`; the coordinator's
+    checks its lock first).
 
     Persist failures with a fixed code, never provider response text or source
     data. Storage-write errors propagate without overwriting an ambiguous
@@ -162,18 +169,19 @@ async def run_rebuild_step(row: dict[str, Any], backend: RebuildBackend) -> dict
     """
     if row["state"] not in ("queued", "rebuilding", "validating"):
         return row
+    write = write or write_configuration
     progress = _progress(row)
     if row["state"] == "queued":
-        return await _checkpoint(row, progress, "rebuilding")
+        return await _checkpoint(write, row, progress, "rebuilding")
     phase = progress["phase"]
     try:
         advanced = await _advance(UUID(str(row["config_id"])), progress, backend)
     except Exception:  # noqa: BLE001 — retain the last cursor and expose no provider/source secrets
-        return await _checkpoint(row, _progress(row), "failed", f"rebuild_{phase}_failed")
+        return await _checkpoint(write, row, _progress(row), "failed", f"rebuild_{phase}_failed")
     if not advanced:
         return row
     if phase == "activate":
         state = "environment" if progress.get("action") == "environment" else "active"
     else:
         state = "validating" if progress["phase"] == "verify" else "rebuilding"
-    return await _checkpoint(row, progress, state)
+    return await _checkpoint(write, row, progress, state)

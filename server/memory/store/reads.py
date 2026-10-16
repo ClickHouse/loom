@@ -102,7 +102,7 @@ async def get_by_key(
     }
     # Wildcard agent ⇒ namespace-wide lookup, matching how memory.list /
     # memory.search treat `*` ("drop the per-agent filter"). Used by the
-    # /me search re-fetch to hydrate a hit whose writer agent the caller
+    # dashboard search re-fetch to hydrate a hit whose writer agent the caller
     # doesn't know. Ambiguity across agents sharing a key is resolved to the
     # most-recently-written row.
     if identity.agent == "*":
@@ -635,7 +635,7 @@ async def list_by_namespace(
     """
     ch = ch or _default_client()
     # Wildcard `"*"` on any identity-tuple axis drops that axis from WHERE
-    # (the /me dashboard's "everything in this namespace" view); exact-match
+    # (the dashboard's "everything in this namespace" view); exact-match
     # is the default so agent reads stay isolated to their own slice.
     where = [
         "org = {org:String}",

@@ -21,6 +21,12 @@ log = logging.getLogger(__name__)
 
 _seen: Final[set[tuple[str, str]]] = set()
 _MAX_CACHE = 100_000
+# The claim outlives the read and the two inserts; a dead holder's is taken over.
+CLAIM_TTL_S = 30
+
+
+class PersonalNamespaceBusy(Exception):
+    """Another process is provisioning this name right now; the next request retries."""
 
 
 def derive_personal_slug(sub: str) -> str:
@@ -54,7 +60,8 @@ async def ensure_personal_namespace(
 
     Returns the resolved namespace name on success (whether created or
     pre-existing), ``None`` only in the pathological case where every
-    candidate is owned by someone else.
+    candidate is owned by someone else. Raises PersonalNamespaceBusy while
+    another process holds a candidate's claim.
     """
     base = derive_personal_slug(sub)
     candidates = [base]
@@ -62,7 +69,42 @@ async def ensure_personal_namespace(
         sub_hash = hashlib.sha1(sub.encode("utf-8")).hexdigest()[:6]
         candidates.append(f"{base}-{sub_hash}")
 
+    from server.core import leases
+
     for cand in candidates:
+        # One claimant per name across replicas; while another holds it (likely
+        # this subject's own concurrent first request) nothing is decided here.
+        async with leases.holding(f"personal-ns:{org}:{cand}", ttl_s=CLAIM_TTL_S, ch=ch) as held:
+            if not held:
+                raise PersonalNamespaceBusy(cand)
+            owner = await _owner(ch, org, cand)
+            if owner is None:
+                from server.auth.self_signup import provision_account
+
+                await provision_account(
+                    org=org,
+                    namespace=cand,
+                    subject=sub,
+                    contact_email="",
+                    description="Auto-claimed personal namespace.",
+                    ch=ch,
+                )
+                log.info(
+                    "auto-claimed personal namespace %s/%s for subject=%s",
+                    org,
+                    cand,
+                    sub,
+                )
+                return cand
+        if owner == sub:
+            return cand
+    return None
+
+
+async def _owner(ch: Any, org: str, namespace: str) -> str | None:
+    from server.core.ch import sequential_reads
+
+    with sequential_reads():  # a row another replica just provisioned
         row = await ch.query_one(
             """
             SELECT toString(ifNull(owner_email, '')) AS owner
@@ -70,29 +112,9 @@ async def ensure_personal_namespace(
             WHERE org = {org:String} AND namespace = {ns:String}
             LIMIT 1
             """,
-            params={"org": org, "ns": cand},
+            params={"org": org, "ns": namespace},
         )
-        if row is None:
-            from server.auth.self_signup import provision_account
-
-            await provision_account(
-                org=org,
-                namespace=cand,
-                subject=sub,
-                contact_email="",
-                description="Auto-claimed personal namespace.",
-                ch=ch,
-            )
-            log.info(
-                "auto-claimed personal namespace %s/%s for subject=%s",
-                org,
-                cand,
-                sub,
-            )
-            return cand
-        if (row.get("owner") or "") == sub:
-            return cand
-    return None
+    return None if row is None else str(row.get("owner") or "")
 
 
 async def ensure_personal_namespace_cached(
@@ -151,6 +173,8 @@ async def ensure_personal_namespace_cached(
         if owned is None:
             await ensure_personal_namespace(ch, org, subject)
         _seen.add(key)
+    except PersonalNamespaceBusy:
+        return  # another request is provisioning it; not cached, so the next one checks
     except Exception:
         log.warning(
             "ensure_personal_namespace_cached failed for org=%s subject=%s",

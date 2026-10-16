@@ -23,9 +23,16 @@ pytestmark = pytest.mark.skipif(
 )
 
 # Stands in for .venv/bin/python: `-m server.cli code <cmd>` answers per
-# command; `entries` lists the configured repositories.
+# command; `entries` lists the configured repositories; `entry-lock` takes
+# `$STUB_LOCK_DIR/<namespace>.lock` (exit 75 when held) and runs the command.
 _PYTHON = """#!/usr/bin/env bash
 case "$4" in
+  entry-lock)
+    ns=$8
+    shift 9
+    exec 7>"$STUB_LOCK_DIR/$ns.lock"
+    flock -n 7 || exit 75
+    "$@" ;;
   entries)
     [ -n "${STUB_ENTRIES_FAIL:-}" ] && { echo "error: stub" >&2; exit 1; }
     printf '%s\\n' "$STUB_ENTRIES" ;;
@@ -56,6 +63,7 @@ def _root(tmp_path: Path, entries: list[str]) -> tuple[Path, dict[str, str]]:
         "PATH": os.environ["PATH"],
         "LOOM_ROOT": str(root),
         "STUB_ENTRIES": "\n".join(entries),
+        "STUB_LOCK_DIR": str(tmp_path),
     }
     return root, env
 
@@ -96,9 +104,9 @@ def test_delta_step_timeout_ends_a_hung_step(tmp_path: Path) -> None:
 
 
 def test_delta_skips_only_the_entry_a_full_pass_holds(tmp_path: Path) -> None:
-    held = tmp_path / "a.lock"
+    held = tmp_path / "code-a.lock"
     root, env = _root(
-        tmp_path, [f"acme code-a checkout {held}", f"acme code-b checkout {tmp_path}/b.lock"]
+        tmp_path, [f"acme code-a checkout {held}", f"acme code-b checkout {tmp_path}/code-b.lock"]
     )
     with held.open("w") as fh:
         fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)

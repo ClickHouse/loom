@@ -196,8 +196,9 @@ async def test_cache_hit_short_circuits_handler(control_plane_url: str, ch_clien
 
 
 @pytest.mark.asyncio
-async def test_replay_works_for_reads(control_plane_url: str) -> None:
-    """Idempotency applies to read ops too — memory.get with same key replays."""
+async def test_reads_are_not_replayed(control_plane_url: str) -> None:
+    """A read-only op runs every time, whatever Idempotency-Key it carries: a replay
+    would serve a stale answer and its claim would cost every read a Keeper write."""
     ns = f"idem-{uuid.uuid4().hex[:8]}"
     set_body = {
         "org": "test",
@@ -208,23 +209,12 @@ async def test_replay_works_for_reads(control_plane_url: str) -> None:
         "value": 1,
     }
     await _post(control_plane_url, "/v1/memory.set", set_body)
-
     get_body = {"org": "test", "namespace": ns, "agent": "t", "memory_key": "k"}
-
-    # The seeded row must be readable before the first get caches found=True.
-    async def _found():
-        r = await _post(control_plane_url, "/v1/memory.get", get_body)
-        return r if (r.status_code == 200 and r.json().get("found") is True) else None
-
-    await eventually(_found, description="seeded memory row to be readable")
-
     k = str(uuid.uuid4())
-    r1 = await _post(control_plane_url, "/v1/memory.get", get_body, k)
-    assert r1.status_code == 200 and r1.json()["found"] is True
-
-    r2 = await _wait_cached(control_plane_url, "/v1/memory.get", get_body, k)
-    assert r2.status_code == 200
-    assert r2.headers.get("X-Idempotent-Replay") == "true"
+    for _ in range(2):
+        r = await _post(control_plane_url, "/v1/memory.get", get_body, k)
+        assert r.status_code == 200
+        assert r.headers.get("X-Idempotent-Replay") is None
 
 
 @pytest.mark.asyncio
@@ -242,7 +232,7 @@ async def test_expired_entry_treated_as_miss(control_plane_url: str, ch_client) 
     k = str(uuid.uuid4())
 
     # Pre-seed an EXPIRED cache row for this key (intentionally past expires_at)
-    past = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=1)
+    past = datetime.now(UTC) - timedelta(hours=1)  # aware: the driver reads naive as local
     from server.core.idempotency import hash_body
 
     h = hash_body(body)

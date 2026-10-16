@@ -28,7 +28,9 @@ def test_bulk_set_names_memory_set_instead() -> None:
 def test_unlock_says_only_the_owner_unlocks() -> None:
     body = _call("memory.unlock")["structuredContent"]
     assert (
-        body["code"] == "OP_NOT_ON_MCP" and "user" in body["instead"] and "/me" in body["instead"]
+        body["code"] == "OP_NOT_ON_MCP"
+        and "user" in body["instead"]
+        and "dashboard" in body["instead"]
     )
 
 

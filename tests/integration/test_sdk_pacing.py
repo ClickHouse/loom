@@ -101,16 +101,26 @@ async def test_pacing_off_still_throws_on_429(control_plane_url: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_pacing_endpoint_with_no_headers_is_safe(control_plane_url: str) -> None:
+async def test_pacing_endpoint_with_no_headers_is_safe(
+    control_plane_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """If a path returns no X-RateLimit-* headers (e.g. /v1/health is GET,
     not affected), the pacing transport must not crash. We can't hit /health
     through Agent.knowledge.add directly, but we can confirm an unfamiliar
     path is gracefully ignored by hitting a fresh op with pacing on — the
     first call has no prior state to consult, so it should sleep zero."""
     from loom import Agent
+    from loom.transport import Transport
 
+    waits: list[float] = []
+    pace = Transport._pace_sleep_s
+
+    def _recorded(self: Transport, op_path: str) -> float:
+        waits.append(pace(self, op_path))
+        return waits[-1]
+
+    monkeypatch.setattr(Transport, "_pace_sleep_s", _recorded)
     ns = f"fresh-{uuid.uuid4().hex[:6]}"
-    t0 = time.monotonic()
     async with Agent(
         org="test",
         namespace=ns,
@@ -119,6 +129,6 @@ async def test_pacing_endpoint_with_no_headers_is_safe(control_plane_url: str) -
         pacing=True,
     ) as a:
         await a.memory.set("k1", {"v": 1}, memory_type="semantic")
-    elapsed = time.monotonic() - t0
-    # First call with no prior rate state: zero pre-flight sleep
-    assert elapsed < 1.0, f"first call shouldn't pace; got {elapsed:.2f}s"
+    # First call with no prior rate state: zero pre-flight sleep. The pacing
+    # decision itself, not the call's wall time (which includes the server's).
+    assert waits and all(w == 0 for w in waits), waits

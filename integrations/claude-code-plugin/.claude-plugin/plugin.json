@@ -20,7 +20,7 @@
       "type": "string",
       "title": "Loom token (JWT)",
       "sensitive": true,
-      "description": "A writer token from /me \u2192 Setup, `loom mint-token`, or `loom init --agent`. Leave empty to use $LOOM_API_KEY, ~/.loom/config.json or ~/.loom/token."
+      "description": "A writer token from Settings \u2192 Tokens in the dashboard, `loom mint-token`, or `loom init --agent`. Leave empty to use $LOOM_API_KEY, ~/.loom/config.json or ~/.loom/token."
     },
     "toolset": {
       "type": "string",

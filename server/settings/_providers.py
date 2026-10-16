@@ -59,6 +59,9 @@ class ProviderSettings(ModelSettings):
     # defaults (tuned for text-embedding-3-small) — re-bench after an embedder
     # change. Fake embedders and probe failures always use the scalars.
     adaptive_thresholds: bool = True
+    # Seconds between each replica's re-read of the shared calibration
+    # (loom.embedder_calibration), so every replica serves the same gates.
+    calibration_refresh_seconds: float = 60.0
 
     # "openai" | "anthropic" | "fake"; "" = infer from LOOM_LLM_MODEL's name
     # (gpt*/o1*/o3*/o4*/chatgpt* → openai, claude* → anthropic, fake* → fake), else from the key
@@ -75,8 +78,7 @@ class ProviderSettings(ModelSettings):
     # "nothing set"). Read through `llm_provider_source()`; not an env var.
     _llm_provider_source: str = PrivateAttr(default="LOOM_LLM_PROVIDER")
     # Fields the env left unset and load filled in (the LLM pair, a local
-    # model's width). Assigning them marks them set, but they are not the env's
-    # choice: a read-replica takes the main Loom's values over them.
+    # model's width): assigning them marks them set, but they are not the env's.
     _inferred_fields: frozenset[str] = PrivateAttr(default=frozenset())
 
     @model_validator(mode="after")
@@ -113,8 +115,7 @@ class ProviderSettings(ModelSettings):
                 f"{', '.join(DEFAULT_MODEL_BY_PROVIDER)} (or leave empty to infer "
                 "from LOOM_LLM_MODEL or the API key present)"
             )
-        # The pair moves together: an env that names either keeps both, so a
-        # replica with its own model never gets the main Loom's provider.
+        # The pair moves together: an env that names either set both.
         pair = frozenset({"llm_provider", "llm_model"})
         inferred = pair if not (pair & self.model_fields_set) else frozenset()
         resolved = resolve_llm_provider(self.llm_provider, self.llm_model)
@@ -126,13 +127,8 @@ class ProviderSettings(ModelSettings):
 
     def env_fields_set(self) -> frozenset[str]:
         """The fields this process's env (or constructor) set, without those
-        load inferred — what a read-replica keeps over the main Loom's
-        published settings."""
+        load inferred."""
         return frozenset(self.model_fields_set) - self._inferred_fields
-
-    def adopt_published_llm(self) -> None:
-        """Say the LLM pair came from the main Loom, for the boot log and doctor."""
-        self._llm_provider_source = "the main Loom's published settings"
 
     def llm_provider_inferred(self) -> bool:
         """True when LOOM_LLM_PROVIDER was unset and the provider came from

@@ -76,15 +76,15 @@ terms) and tags its queries `worker.<name>` in `log_comment`.
 `LOOM_BACKGROUND_WORKERS` decides whether a process starts the supervisor
 (`server/workers/leader.py`):
 
-| Value            | Behaviour                                                                                                                                                                         |
-| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `auto` (default) | The first process on the host to take an advisory `flock` on `LOOM_SUPERVISOR_LOCK_PATH` runs the supervisor; the others skip it and retry every `LOOM_SUPERVISOR_LEASE_RETRY_S`. |
-| `on`             | Always run the supervisor (a single-process container, or a dedicated workers container).                                                                                         |
-| `off`            | Never run it (a pure web replica).                                                                                                                                                |
+| Value            | Behaviour                                                                                                                                                                                         |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `auto` (default) | The process of the deployment that holds the `workers_supervisor` lease (a Keeper key in `loom._migration_lock`) runs the supervisor; the others contend for it and take it over once it expires. |
+| `on`             | Always run the supervisor (a single-process container, or a dedicated workers container).                                                                                                         |
+| `off`            | Never run it (a pure web replica).                                                                                                                                                                |
 
-The lock is per host and held by the kernel for the life of the file
-descriptor, so `uvicorn --workers N` runs one copy of every worker, not N, and
-a leader that dies releases the lock with no lease table to expire.
+One lease for the whole deployment, so N replicas with `uvicorn --workers N`
+each run one copy of every worker between them, not one per process. A leader
+that dies leaves its key to expire after `LOOM_SUPERVISOR_LEASE_TTL_S`.
 
 The shipped compose files split the two roles into containers from one image.
 `dev/docker-compose.cloud.yml` runs the `loom` service (container
@@ -214,14 +214,16 @@ adding its row.
 | `code_scip_py_delta` | Python compiler-tier deltas per merge. | `LOOM_CODE_SCIP_PY_DELTA_ENABLED` | True | `LOOM_CODE_SCIP_PY_DELTA_INTERVAL_SECONDS` | 600 |
 | `code_scip_ts_delta` | Per-merge compiler-tier freshness for TypeScript. | `LOOM_CODE_SCIP_TS_DELTA_ENABLED` | True | `LOOM_CODE_SCIP_TS_DELTA_INTERVAL_SECONDS` | 600 |
 | `code_summary` | Weekly LLM file/module summary cards for code.map orientation. | `LOOM_CODE_SUMMARY_ENABLED` | False | `LOOM_CODE_SUMMARY_INTERVAL_SECONDS` | 604800 |
+| `conflict_sweep` | Re-judge deferred conflict checks lost with their process. | always on |  | `server.memory.workers.conflict_sweep.INTERVAL_SECONDS` |  |
 | `conversation_titler` | Conversation-titler worker. | `LOOM_CONVERSATION_TITLER_ENABLED` | True | `LOOM_CONVERSATION_TITLER_INTERVAL_SECONDS` | 1800 |
+| `document_blob_gc` | Document-original sweep: `loom.document_blobs` rows no live document names. | `LOOM_DOCUMENT_BLOB_GC_ENABLED` | True | `LOOM_DOCUMENT_BLOB_GC_INTERVAL_SECONDS` | 3600 |
 | `embedding_worker` | Embedding recovery worker. | `LOOM_EMBEDDING_WORKER_ENABLED` | True | `LOOM_EMBEDDING_WORKER_INTERVAL_SECONDS` | 5 |
 | `entity_communities` | Entity-communities worker (default-off). | `LOOM_ENTITY_COMMUNITIES_ENABLED` | False | `LOOM_ENTITY_COMMUNITIES_INTERVAL_SECONDS` | 21600 |
 | `entity_extractor` | Entity extraction worker. | `LOOM_ENTITY_EXTRACT_ENABLED` | True | `LOOM_ENTITY_EXTRACT_INTERVAL_SECONDS` | 60 |
 | `erasure_reclaim` | Erasure reclaim worker: the bytes of purged rows leave the disk. | `LOOM_ERASURE_RECLAIM_ENABLED` | True | `LOOM_ERASURE_RECLAIM_INTERVAL_SECONDS` | 3600 |
 | `erasure_recovery` | Erasure Saga recovery worker. | `LOOM_ERASURE_RECOVERY_ENABLED` | True | `LOOM_ERASURE_RECOVERY_INTERVAL_SECONDS` | 60 |
 | `extraction_queue` | Replays deferred `memory.set_from_messages` requests. | `LOOM_EXTRACTION_QUEUE_ENABLED` | True | `LOOM_EXTRACTION_QUEUE_INTERVAL_SECONDS` | 15 |
-| `jwt_revocation_refresh` | Token revocation, backed by `loom.revoked_tokens`. | always on |  | `LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` | 30.0 |
+| `keeper_sweep` | Delete the KeeperMap keys a process died holding (`server.core.leases.DEAD_KEYS`): leases and claims an hour past their expiry, and graph projection slots a day old. | always on |  | `server.workers.keeper_sweep.INTERVAL_SECONDS` |  |
 | `mcp_session_run_sweep` | MCP session run sweeper. | always on |  | `server.tasks.workers.session_run_sweep.INTERVAL_SECONDS` |  |
 | `memory_code_links` | Code link pass: link the memories written since the last pass to the code they name (and, on the first pass or after falling behind the queue, the ones written before), then follow every… | `LOOM_MEMORY_CODE_LINKS_ENABLED` | True | `LOOM_MEMORY_CODE_LINKS_INTERVAL_SECONDS` | 60 |
 | `memory_expiry_sweep` | Memory expiry sweep worker. | `LOOM_MEMORY_EXPIRY_SWEEP_ENABLED` | True | `LOOM_MEMORY_EXPIRY_SWEEP_INTERVAL_SECONDS` | 300 |

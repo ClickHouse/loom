@@ -42,7 +42,7 @@ export function isAuthDisabled(): boolean {
 }
 
 // The namespace an auth-disabled deployment serves (LOOM_DEFAULT_NAMESPACE,
-// injected by /me's boot snippet). "local" is the fallback for a server that
+// injected by the dashboard's boot snippet). "local" is the fallback for a server that
 // predates the setting, or for `npm run dev` against the static globals.
 const _DEFAULT_NAMESPACE: string = window.__LOOM_DEFAULT_NAMESPACE || "local";
 
@@ -289,7 +289,7 @@ export async function listMemories(
     },
     opts.signal,
   );
-  // Profile sections have their own /me/profile view — exclude from the
+  // Profile sections have their own /profile view — exclude from the
   // generic Memories list by default. Pass include_profile=true to opt in.
   if (!opts.include_profile) {
     return {

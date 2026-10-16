@@ -4,8 +4,10 @@ uncertain inserts, durable retry identity, strict-mode fencing."""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import itertools
 import json
+import types
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -104,9 +106,6 @@ class Journal:
             and (r["agent"], r["user_id"], r["session_id"], r["memory_key"]) in set(keys)
         ]
 
-    async def alone(self, *_a, **_k):
-        return False
-
     async def restated(self, org, ns, heads, **_):
         out: dict = {}
         for h in heads:
@@ -187,7 +186,6 @@ def journal(monkeypatch: pytest.MonkeyPatch) -> Journal:
         "withdraw_commits": j.withdraw,
         "repair_namespace": j.repair,
         "mark_published": j.publish_mark,
-        "foreign_publisher": j.alone,
         "restated_claims": j.restated,
     }.items():
         monkeypatch.setattr(store, name, fn)
@@ -207,12 +205,11 @@ def journal(monkeypatch: pytest.MonkeyPatch) -> Journal:
     monkeypatch.setattr(store, "landed_late", on_time)
     monkeypatch.setattr(store, "server_now", clock)
 
-    async def no_keeper() -> bool:
-        return False
+    @contextlib.asynccontextmanager
+    async def held_lease(name: str, **_k: Any) -> Any:
+        yield types.SimpleNamespace(held=True)
 
-    monkeypatch.setattr(pub._locks, "has_keeper", no_keeper)
-    monkeypatch.setattr(pub.settings, "memory_temporal_publisher", "process")
-    monkeypatch.setattr(pub, "_serving", True)
+    monkeypatch.setattr(pub._locks, "lease", held_lease)
     return j
 
 
@@ -289,11 +286,18 @@ def test_an_insert_that_never_lands_fails_the_write(journal: Journal, monkeypatc
     assert journal.commits == []
 
 
-def test_a_write_needs_a_cross_process_publisher_or_a_declared_single_writer(
+def test_a_namespace_another_process_is_publishing_answers_busy(
     journal: Journal, monkeypatch
 ) -> None:
-    monkeypatch.setattr(pub.settings, "memory_temporal_publisher", "auto")
-    with pytest.raises(TemporalUnavailableError, match="cross-process"):
+    from server.core.leases import LeaseBusy
+
+    @contextlib.asynccontextmanager
+    async def busy(name: str, **_k: Any) -> Any:
+        raise LeaseBusy(name)
+        yield
+
+    monkeypatch.setattr(pub._locks, "lease", busy)
+    with pytest.raises(TemporalUnavailableError, match="busy"):
         run(pub.publish_rows([mrow('"A"')]))
 
 

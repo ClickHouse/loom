@@ -27,6 +27,8 @@ from server.memory.api.models_crud import MemoryGetInput, MemoryGetOutput, Memor
 from server.memory.domain.search_types import hit_sort_key
 from server.memory.store.dedup import CanonicalRow
 
+_NOW = datetime(2026, 1, 1, 12, 0, 0)
+
 # ------------------------------------------------------------------ (a) list sort_by=score
 
 
@@ -148,7 +150,7 @@ def settle_env(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
             raise RuntimeError("judge down")
         return e.result
 
-    async def _apply(ident: Any, result: Any, *, memory_id: str, cfg: Any = None) -> str:
+    async def _apply(ident: Any, result: Any, *, memory_id: str, cfg: Any = None, **_: Any) -> str:
         e.applied.append((memory_id, result.verdict))
         return str(result.verdict)
 
@@ -168,7 +170,9 @@ async def test_the_settle_writes_one_ledger_row_under_the_writes_request_id(sett
     settle_env.result = SimpleNamespace(
         verdict="clear", existing_memory_id=None, duplicate_of_id=None
     )
-    verdict = await cd.settle(_ident(), object(), memory_id="m-1", request_id="req-1")
+    verdict = await cd.settle(
+        _ident(), object(), memory_id="m-1", version=1, created_at=_NOW, request_id="req-1"
+    )
     assert verdict == "clear"
     ev = settle_env.emitter.events[-1]
     assert ev.operation == cd.SETTLE_OPERATION == "memory.set.settle"
@@ -189,18 +193,24 @@ async def test_a_settled_duplicate_names_its_peer_and_a_failed_settle_says_so(se
     settle_env.result = SimpleNamespace(
         verdict="duplicate", existing_memory_id=None, duplicate_of_id="p-9"
     )
-    await cd.settle(_ident(), object(), memory_id="m-2", request_id="req-2")
+    await cd.settle(
+        _ident(), object(), memory_id="m-2", version=1, created_at=_NOW, request_id="req-2"
+    )
     ev = settle_env.emitter.events[-1]
     assert ev.args["out_conflict_verdict"] == "duplicate" and ev.args["out_duplicate_of"] == "p-9"
 
     settle_env.result = SimpleNamespace(
         verdict="merge", existing_memory_id="p-3", duplicate_of_id=None
     )
-    await cd.settle(_ident(), object(), memory_id="m-3", request_id="req-3")
+    await cd.settle(
+        _ident(), object(), memory_id="m-3", version=1, created_at=_NOW, request_id="req-3"
+    )
     assert settle_env.emitter.events[-1].args["out_duplicate_of"] == "p-3"
 
     settle_env.raise_ = True
-    verdict = await cd.settle(_ident(), object(), memory_id="m-4", request_id="req-4")
+    verdict = await cd.settle(
+        _ident(), object(), memory_id="m-4", version=1, created_at=_NOW, request_id="req-4"
+    )
     ev = settle_env.emitter.events[-1]
     assert verdict == "error" and ev.success is False and ev.error_code == "SETTLE_FAILED"
     assert ev.args["out_conflict_verdict"] == "error" and ev.request_id == "req-4"
@@ -218,7 +228,7 @@ async def test_schedule_settle_captures_the_requests_id_for_the_row(settle_env) 
     pending = SimpleNamespace(verdict="pending", pending_judge=object())
     token = request_id_var.set("req-from-context")
     try:
-        task = cd.schedule_settle(_ident(), pending, memory_id="m-5")
+        task = cd.schedule_settle(_ident(), pending, memory_id="m-5", version=1, created_at=_NOW)
     finally:
         request_id_var.reset(token)
     assert task is not None and cd.is_pending("m-5")
@@ -227,7 +237,11 @@ async def test_schedule_settle_captures_the_requests_id_for_the_row(settle_env) 
     assert ev.request_id == "req-from-context" and ev.args["out_conflict_verdict"] == "clear"
     assert (
         cd.schedule_settle(
-            _ident(), SimpleNamespace(verdict="clear", pending_judge=None), memory_id="x"
+            _ident(),
+            SimpleNamespace(verdict="clear", pending_judge=None),
+            memory_id="x",
+            version=1,
+            created_at=_NOW,
         )
         is None
     )

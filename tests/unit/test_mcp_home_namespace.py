@@ -1,6 +1,6 @@
 """An unaddressed MCP call never lands in a QA/code plane.
 
-Even when the owner's saved /me default is a QA namespace (`qa-clickhouse`)
+Even when the owner's saved dashboard default is a QA namespace (`qa-clickhouse`)
 and the grant ranking puts an admin grant on a QA namespace first, an MCP
 `memory.set` / `profile.append` / `working_memory.set` / `knowledge.add` with
 no namespace writes to the owner's memory namespace (`alice`), not the shared

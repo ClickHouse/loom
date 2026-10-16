@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import time
-from datetime import timedelta
 
-from server.core.datetimes import utc_now as _now
 from server.tasks.api.models_task import (
     InboxCount,
     TaskCountsInput,
@@ -26,7 +24,6 @@ from server.tasks.app.common import (
     _invalid,
     _load_readable_inbox,
     _loads,
-    _naive,
     _payload,
     _readable,
 )
@@ -137,7 +134,7 @@ async def handle_task_updates(input: TaskUpdatesInput) -> TaskUpdatesOutput:
         rows = await repo.events_since(
             input.org,
             since_seq=input.since_seq,
-            watermark=_naive(_now() - timedelta(seconds=task_cursors.LAG_SECONDS)) or _now(),
+            lag_s=task_cursors.LAG_SECONDS,
             inbox=input.inbox,
             from_subject=subject,
             limit=input.limit,

@@ -39,6 +39,7 @@ async def write_versions_by_ids(
     *,
     ch: _CHClient | None = None,
     skip: Callable[[MemoryRow], bool] | None = None,
+    judged: bool = False,
 ) -> int:
     """Write new RMT versions for live rows addressed by memory_id.
 
@@ -47,7 +48,9 @@ async def write_versions_by_ids(
     one, and it carries every persisted column forward via
     build_memory_version_row. This is the preferred replacement for
     in-place status flips on `loom.memory`. A row `skip(existing)` answers
-    True for is left as it is.
+    True for is left as it is. `judged`: the rows land a deferred verdict on the
+    write it judged (`conflicts.judged_write`), and the status mirror copies only
+    that write's vector rows (`mirror_status_to_embeddings(judged=True)`).
     """
 
     if not memory_ids:
@@ -58,7 +61,7 @@ async def write_versions_by_ids(
         existing = await get_by_id(mid, org=org, ch=ch, scope=WHOLE_NAMESPACE)
         if existing is not None:
             heads.append(existing)
-    written, _ = await write_versions_of_rows(heads, update, ch=ch, skip=skip)
+    written, _ = await write_versions_of_rows(heads, update, ch=ch, skip=skip, judged=judged)
     return written
 
 
@@ -68,6 +71,7 @@ async def write_versions_of_rows(
     *,
     ch: _CHClient | None = None,
     skip: Callable[[MemoryRow], bool] | None = None,
+    judged: bool = False,
 ) -> tuple[int, int]:
     """`write_versions_by_ids` for heads already read. Returns (version rows the
     journal kept, embedding rows mirrored); a row it left out (a retry the key
@@ -78,7 +82,11 @@ async def write_versions_of_rows(
     # reads: the pool filters and penalises on memory_embeddings.status, so without
     # the mirror it would keep admitting superseded and unpenalised conflicted rows.
     status_changes = [r for r in kept if r.get("status") and r.get("status") != "active"]
-    mirrored = await mirror_status_to_embeddings(status_changes, ch=ch) if status_changes else 0
+    mirrored = (
+        await mirror_status_to_embeddings(status_changes, ch=ch, judged=judged)
+        if status_changes
+        else 0
+    )
     return len(kept), mirrored
 
 

@@ -1,4 +1,4 @@
-.PHONY: bootstrap dev dev-cloud down down-all migrate migrate-status migrate-dry schema-dump schema-check bench-matrix server frontend-build frontend-dev init onboard test test-unit test-integration test-unit-cov ingest bench bench-quick bench-algorithm-gate bench-quality-gate bench-code-intel-dry bench-code-portability-dry bench-code-intel bench-code-legs bench-clickgap-replay lint format format-check typecheck mypy-gate install clean bench-clickgap-golden
+.PHONY: bootstrap dev dev-cloud down down-all migrate migrate-status migrate-dry schema-dump schema-check bench-matrix server frontend-build frontend-dev init onboard test test-unit test-integration test-mixed-version test-unit-cov ingest bench bench-quick bench-algorithm-gate bench-quality-gate bench-code-intel-dry bench-code-portability-dry bench-code-intel bench-code-legs bench-clickgap-replay lint format format-check typecheck mypy-gate install clean bench-clickgap-golden
 
 # Interpreter for the python-invoking targets: the local .venv, which CI also
 # builds from uv.lock (`uv sync --locked`).
@@ -32,7 +32,7 @@ bootstrap:
 dev: bootstrap
 	LOOM_BUILD_COMMIT="$$(git rev-parse --short HEAD 2>/dev/null || echo unknown)" \
 		docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml --profile bundled up -d --build
-	@echo "✓ Loom:        http://localhost:7777/me"
+	@echo "✓ Loom:        http://localhost:7777/"
 	@ch_port=$$(docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml --profile bundled port clickhouse 8123 2>/dev/null | cut -d: -f2); \
 	echo "✓ ClickHouse:  http://localhost:$${ch_port:-8123} (user=loom, pwd=loomdev)"
 	@echo "  Migrations applied automatically by the Loom server on boot (FastAPI lifespan)."
@@ -43,7 +43,7 @@ dev: bootstrap
 dev-cloud: bootstrap
 	LOOM_BUILD_COMMIT="$$(git rev-parse --short HEAD 2>/dev/null || echo unknown)" \
 		docker compose --env-file .env -f dev/docker-compose.cloud.yml up -d --build
-	@echo "✓ Loom:        http://localhost:7777/me  (upstreams from .env)"
+	@echo "✓ Loom:        http://localhost:7777/  (upstreams from .env)"
 
 # bootstrap: --env-file .env below is a hard error if .env doesn't exist yet
 # (unlike compose's own silent-if-absent default lookup), so these targets
@@ -92,15 +92,18 @@ bench-matrix:
 # and spans carry. Override: `LOOM_INSTANCE_LABEL=dev:me:7777 make server`.
 # Binds LOOM_BIND_HOST (loopback by default); forwarded headers are honoured
 # only from LOOM_TRUSTED_PROXIES.
+# A dev server is outside any deployment, where `auto` runs no workers: it runs its
+# own (`on`) unless LOOM_BACKGROUND_WORKERS says otherwise.
 server:
 	LOOM_INSTANCE_LABEL="$${LOOM_INSTANCE_LABEL:-dev:make-server:7777}" \
+	LOOM_BACKGROUND_WORKERS="$${LOOM_BACKGROUND_WORKERS:-on}" \
 	LOOM_BIND_HOST="$${LOOM_BIND_HOST:-127.0.0.1}" \
 		uvicorn server.main:app --host "$${LOOM_BIND_HOST:-127.0.0.1}" --port 7777 --reload \
 		--loop "$${LOOM_UVICORN_LOOP:-asyncio}" --forwarded-allow-ips "$${LOOM_TRUSTED_PROXIES:-127.0.0.1}" --timeout-graceful-shutdown 10
 
-# Build the /me React/Vite dashboard. Output lands in frontend/dist/
+# Build the React/Vite dashboard. Output lands in frontend/dist/
 # which the server picks up automatically. Required before `make server`
-# if you want the dashboard; without it, /me returns 503.
+# if you want the dashboard; without it, dashboard pages return 503.
 frontend-build:
 	cd frontend && npm install && npm run build
 
@@ -136,6 +139,12 @@ test-unit:
 
 test-integration:
 	$(PYTHON) -m pytest tests/integration -v
+
+# Builds N-1 (BASE, default the merge base with origin/main) and N side by side
+# on one throwaway ClickHouse (docker); skips without docker (REQUIRE=1 fails
+# instead).
+test-mixed-version:
+	$(PYTHON) scripts/gates/mixed_version.py $(if $(BASE),--base $(BASE),) $(if $(REQUIRE),--require,)
 
 # Unit suite + coverage (mirrors the CI `unit` job). Fails under the floor.
 test-unit-cov:

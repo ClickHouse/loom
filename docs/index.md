@@ -2,7 +2,7 @@
 
 Loom is a memory, document and code-index server for AI agents, stored in
 one ClickHouse database. Agents and people reach it over MCP, HTTP, the Python and
-TypeScript SDKs, and the `/me` dashboard. This page lists every page in reading order.
+TypeScript SDKs, and the dashboard. This page lists every page in reading order.
 
 ## Start here
 
@@ -35,7 +35,7 @@ TypeScript SDKs, and the `/me` dashboard. This page lists every page in reading 
   [Monitoring](operations/monitoring.md) · [Maintenance](operations/maintenance.md) ·
   [Troubleshooting](operations/troubleshooting.md) ·
   [Code-index operations](operations/code-index-operations.md) ·
-  [Read-replicas](operations/read-replicas.md): more Looms on the same brain
+  [Running N replicas](operations/replicas.md): identical Looms behind one URL
 
 ## 3. Connect agents
 
@@ -121,7 +121,8 @@ client sees one the server no longer reads.
 [Code-index architecture](architecture/code-index-architecture.md) ·
 [LLM and embeddings](architecture/llm-architecture.md) ·
 [Security](architecture/security.md) ·
-[Failure and recovery](architecture/failure-and-recovery.md)
+[Failure and recovery](architecture/failure-and-recovery.md) ·
+[Rolling upgrades](architecture/rolling-upgrades.md)
 
 ## Benchmarks
 

@@ -10,9 +10,11 @@ or:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import functools
 import logging
 import os
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -27,12 +29,14 @@ from server.auth.public_url import (
     origin_matches_host,
     same_origin,
 )
+from server.core import readiness as _readiness
 from server.core.ch import get_client, probe_reader_user
 from server.core.logging_config import configure_logging
+from server.insights.app.provider_barrier import participant_lifespan
+from server.memory.app import embedder_calibration
 from server.observability import get_emitter
 from server.operations.capabilities import operation_rows
 from server.settings import settings
-from server.tasks.store import runs as runs_store
 from server.transport import http as http_transport
 from server.transport import mcp as mcp_transport
 from server.wiring import wire
@@ -40,6 +44,54 @@ from server.wiring import wire
 # Install formatter before any uvicorn / module-level logging fires.
 configure_logging()
 wire()
+
+
+async def _shut_down(ch: Any, lease: Any, supervisor: Any, emitter: Any) -> None:
+    """The bounded part of a shutdown: the instance row's stop write and the drains
+    share one budget, and the final cleanup gets what they left unused, so the whole
+    runs inside the stop grace period whatever ClickHouse does."""
+    from server.core import instances as _instances
+    from server.insights.app.provider_barrier import SHUTDOWN_RETIRE_S
+
+    started = time.monotonic()
+    await _instances.stop(ch)
+    left = max(0.0, boot.SHUTDOWN_DRAIN_BUDGET_S - (time.monotonic() - started))
+    try:
+        await asyncio.wait_for(_shutdown_drains(lease, supervisor, emitter), timeout=left)
+    except TimeoutError:
+        logging.getLogger(__name__).warning(
+            "shutdown drains exceeded %.0f s; retiring anyway", boot.SHUTDOWN_DRAIN_BUDGET_S
+        )
+    unused = max(0.0, boot.SHUTDOWN_DRAIN_BUDGET_S - (time.monotonic() - started))
+    await boot.leave_deployment(ch, budget_s=SHUTDOWN_RETIRE_S + unused)
+
+
+async def _shutdown_drains(lease: Any, supervisor: Any, emitter: Any) -> None:
+    """The lifespan's shutdown drains, in order; it bounds them all together."""
+    from server.workers import leader as _leader
+
+    await _leader.shutdown(lease, supervisor)
+    # The service-side writes still in flight land while what they use is
+    # open: a deferred conflict judge calls the LLM over the shared HTTP
+    # pool and emits its settle row through the event emitter.
+    # MCP session runs still being begun land first, so the session-run
+    # sweep can close them (boot sits below the transport).
+    from server.transport import mcp_runs
+
+    with contextlib.suppress(TimeoutError):
+        await asyncio.wait_for(mcp_runs.drain_ledger_writes(), 5.0)
+    await boot.drain_writes()
+    # The judge emits a cost event and posts scores: it stops before the
+    # emitter and the score queue drain, and both before the HTTP clients close.
+    from server.observability import langfuse_scores, retrieval_judge
+
+    await retrieval_judge.stop()
+    await langfuse_scores.drain(timeout_s=5.0)
+    await emitter.stop()
+    _otel.shutdown()
+    from server.clients import _http as _http_clients
+
+    await _http_clients.aclose()
 
 
 @asynccontextmanager
@@ -54,19 +106,16 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     _instance_mod.require_instance_label(
         _instance_mod.instance_label(), deployment=bool(settings.deployment)
     )
-    from server.memory.app import temporal_publisher
+    from server.auth.jwt import require_no_key_map_env, require_real_signing_secret
+    from server.core.env_file import env_file_path
 
-    # This process is the server: the one that may publish memory without a Keeper
-    # when LOOM_MEMORY_TEMPORAL_PUBLISHER=process says it is the only writer.
-    temporal_publisher.serve()
-    from server.auth.jwt import require_real_signing_secret
+    require_no_key_map_env(env_file_path())
 
     require_real_signing_secret(
         deployment=bool(settings.deployment),
         instance_label=_instance_mod.instance_label() or "",
         auth_required=settings.auth_actually_required(),
         dev_secret=settings.jwt_secret_is_dev_default(),
-        dev_sealing_secret=settings.jwt_sealing_secret_is_dev_default(),
     )
     boot.require_safe_bind(
         bind_host=settings.bind_host,
@@ -79,27 +128,21 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     await boot.require_clickhouse_ready()
     ch = get_client()
     await ch.connect()
+    # What /v1/health/ready checks; each answers not-ready until its state loads.
+    boot.register_readiness_checks(ch)
 
     # Apply pending migrations on every boot, in the server's own lifespan, so
     # the migrations the server runs match the migrations its code expects.
-    # Idempotent — the ledger skips already-applied files.
-    #
-    # Under LOOM_WEB_WORKERS > 1 every worker process runs this step.
-    # Unserialised, all of them see the same pending file and race the ALTER:
-    # on SharedMergeTree the losers fail with ClickHouse code 517 ("replica
-    # doesn't catch up" / "previous mutation query is not finished yet"),
-    # uvicorn stops the parent and the container restarts. The lock below is
-    # host-local (the workers share one container), so they apply in turn and
-    # the later ones read "no pending migrations" from the ledger. Across
-    # containers (web + workers of one colour) the runner itself takes a lease
-    # row in loom._migration_lease before applying.
+    # Idempotent — the ledger skips already-applied files. Every process of the
+    # deployment runs this step; the runner takes the deployment's migration
+    # lock (a KeeperMap key) before applying, so they apply in turn and the
+    # later ones find nothing pending.
     from server.core.schema import migrate as _migrate_mod
 
     rc = await boot.run_fenced_boot_migrations(
         ch,
         # The preflight already ran above, before the first connect.
         functools.partial(_migrate_mod.main, check_server=False),
-        settings.boot_migrate_lock_path,
         enabled=bool(settings.boot_migrate),
         pending=_migrate_mod.pending_names,
     )
@@ -108,11 +151,24 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             f"schema migrations failed on boot (exit code {rc}); "
             f"refusing to start workers against an inconsistent schema"
         )
-    boot.require_replica_schema()
-    # A read-replica takes the main Loom's published settings (code
-    # repositories, tracker bindings, the embedding model) before anything
-    # below reads them.
-    replica_config_loop = await boot.start_replica_config(ch)
+    await boot.require_keeper(ch)
+    await boot.warn_newer_schema()
+    # Nothing here writes a column a migration just added while another process
+    # still carries its version writes by the older column lists.
+    from server.core import rmt_carry
+
+    await rmt_carry.await_acks(ch)
+    # This process's heartbeat row, and its check against the deployment's
+    # published configuration, before it serves.
+    from server.core import instances as _instances
+    from server.workers import leader as _leader
+
+    instances_loop = await _instances.start(
+        ch,
+        _leader.leads_deployment,
+        label=_instance_mod.instance_label() or "",
+        workers_lease=_leader.advertised_lease,
+    )
 
     from server.core.background import register_buffer_drainer
     from server.insights.app.provider_barrier import register_process
@@ -137,52 +193,58 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
         await ensure_default_namespace_cached()
 
-    from server.workers import leader as _leader
-    from server.workers.supervisor import get_supervisor
+    from server.workers import child as _workers_child
 
-    supervisor = get_supervisor()
-    # With `uvicorn --workers N` every process runs this
-    # lifespan; exactly one per host runs the background workers.
-    lease = _leader.decide_supervisor(settings.background_workers, settings.supervisor_lock_path)
+    # Every serving process runs this lifespan; one of the deployment's runs
+    # the background workers, the holder of the ClickHouse lease, in a child
+    # process of its own unless LOOM_WORKERS_PROCESS=inline.
+    lease = await _leader.decide_supervisor(settings.workers_mode())
+    supervisor = _workers_child.worker_runner(lease)
     _leader.set_current(lease)
     # Apply per-table retention overrides from LOOM_RETENTION_*_DAYS, if set —
-    # from the leader only, and only where the TTL differs.
+    # from the deployment's leader only, and only where the TTL differs.
     from server.core.model_work_gate import get_model_work_gate
     from server.storage import retention_overrides
 
     if not get_model_work_gate().closed:
         async with get_model_work_gate().admit():
-            await retention_overrides.apply(settings, ch=ch, leader=lease.held)
+            await retention_overrides.apply(settings, ch=ch, leader=_leader.leads_deployment())
     # The tracker namespaces are directory rows served live; the
     # leader gives each configured one its row (restricted where listed) at
     # boot, BEFORE any read, so the gate never sees a restricted namespace as
     # an unregistered standard one.
-    if lease.held:
+    if _leader.leads_deployment():
         await boot.register_tracker_namespaces(ch)
         boot.publish_deployment_config(ch)
-    # This process verifies tokens, so it loads the
-    # revoked set now and keeps it fresh itself unless the supervisor's
-    # jwt_revocation_refresh worker runs here.
-    revocation_loop = await boot.start_revocation(lease.held)
+    # This process verifies tokens: it loads the revoked set and the signing
+    # keyring now and keeps both fresh.
+    auth_loops = await boot.start_token_state()
+    overrides_loop = boot.start_runtime_overrides()
     await probe_reader_user(ch)
-    await runs_store.probe_claims(ch)
-    if settings.oauth_enabled:
-        from server.auth import oauth_claims
-
-        await oauth_claims.CLAIMS.probe(ch)
-    from server.auth import grant_claims
-
-    await grant_claims.CLAIMS.probe(ch)
     tracker_sources_loop = boot.start_tracker_sources_refresher(ch)
+    from server.code.app.index import repo_registry as _repo_registry
+
+    code_repos_loop = await _repo_registry.start_refresher(ch)
+    from server.code.app.index import mirrors as _mirrors
+
+    _mirrors.start_warmup()  # this host's git mirrors, in the background
+    boot.publish_frontend_assets(ch)
+    boot.mark_process_start(ch)
     await boot.probe_sandbox()
-    lease_retry: asyncio.Task[None] | None = None
+    # The tracker registry, the runtime overrides and this build's bundle
+    # load before the first request (bounded; readiness stays false until the
+    # first two do).
+    await boot.await_warm_up(
+        settings.boot_warmup_timeout_s,
+        ("tracker_registry", "runtime_overrides", "frontend_assets"),
+    )
     if lease.held:
         supervisor.start_all()
     else:
         logging.getLogger(__name__).info(
             "WorkerSupervisor: not started in pid %s — %s", os.getpid(), lease.reason
         )
-        lease_retry = boot.start_lease_retry(lease, supervisor, ch, revocation_loop)
+    lease_loop = boot.start_lease_loop(lease, supervisor, ch)
 
     if not get_model_work_gate().closed:
         await boot.provider_report()
@@ -190,42 +252,26 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         await boot.calibrate_similarity_gates()
 
     provider_refresh = asyncio.create_task(refresh_loop(), name="provider-configuration-refresh")
+    # SIGTERM: not ready first, the port closes LOOM_SHUTDOWN_READY_DELAY_S later.
+    boot.install_drain_on_sigterm()
 
     try:
         yield
     finally:
+        _readiness.begin_drain()
         provider_refresh.cancel()
         await asyncio.gather(provider_refresh, return_exceptions=True)
-        if lease_retry is not None and not lease_retry.done():
-            lease_retry.cancel()
-        if revocation_loop is not None and not revocation_loop.done():
-            revocation_loop.cancel()
+        if lease_loop is not None:
+            lease_loop.cancel()
+        for loop in (*auth_loops, overrides_loop):
+            loop.cancel()
         tracker_sources_loop.cancel()
-        if replica_config_loop is not None:
-            replica_config_loop.cancel()
+        code_repos_loop.cancel()
+        _mirrors.stop_warmup()
+        embedder_calibration.stop_refresh_loop()
+        instances_loop.cancel()
         boot.cancel_boot_tasks()
-        if lease.held:
-            await supervisor.stop_all(drain_timeout_s=10.0)
-        lease.release()
-        # The service-side writes still in flight land while what they use is
-        # open: a deferred conflict judge calls the LLM over the shared HTTP
-        # pool and emits its settle row through the event emitter.
-        await boot.drain_writes()
-        # The judge emits a cost event and posts scores: it stops before the
-        # emitter and the score queue drain, and both before the HTTP clients close.
-        from server.observability import langfuse_scores, retrieval_judge
-
-        await retrieval_judge.stop()
-        await langfuse_scores.drain(timeout_s=5.0)
-        await emitter.stop()
-        _otel.shutdown()
-        from server.clients import _http as _http_clients
-
-        await _http_clients.aclose()
-        from server.insights.app.provider_barrier import retire_process
-
-        await retire_process()
-        await ch.disconnect()
+        await _shut_down(ch, lease, supervisor, emitter)
 
 
 app = FastAPI(
@@ -235,7 +281,7 @@ app = FastAPI(
         "— backed by ClickHouse."
     ),
     version=__version__,
-    lifespan=lifespan,
+    lifespan=participant_lifespan(lifespan),
 )
 
 # Register the typed-error → JSON serializer: server.core.errors.LoomServerError
@@ -262,28 +308,27 @@ from server.transport.model_maintenance import ModelMaintenanceMiddleware  # noq
 app.add_middleware(ModelMaintenanceMiddleware)
 
 # gzip here (nginx does not gzip proxied bodies): the dashboard bundle and
-# JSON bodies above 1 KB. A year-long immutable cache for /me/assets/* — the
-# hash in the filename is the version — so a load does not re-validate them.
+# JSON bodies above 1 KB. A year-long immutable cache for content-hashed
+# /assets/* names — the hash is the version — so a load does not re-validate them.
 from starlette.middleware.gzip import GZipMiddleware  # noqa: E402
 
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
-@app.get("/", include_in_schema=False)
-async def root_dashboard_redirect() -> Response:
-    """Make the memorable server origin open the local dashboard."""
-    from fastapi.responses import RedirectResponse
-
-    return RedirectResponse(url="/me", status_code=302)
-
-
 @app.middleware("http")
 async def _cache_and_nosniff_headers(request: Request, call_next: Any) -> Response:
     response: Response = await call_next(request)
-    if request.url.path.startswith("/me/assets/") and response.status_code == 200:
-        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    path = request.url.path
+    if path.startswith("/assets/") and response.status_code == 200:
+        from server.storage.frontend_assets import cache_control_for
+
+        response.headers["Cache-Control"] = cache_control_for(path)
     # No response is ever sniffed into a type it was not served as.
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    # Draining: the balancer's kept-alive connections close one response at a
+    # time, so none is still pooled here when the port closes.
+    if _readiness.draining():
+        response.headers["Connection"] = "close"
     return response
 
 
@@ -331,7 +376,7 @@ def _own_origin(origin: str, request: Request) -> bool:
 
 
 def _is_navigation(request: Request) -> bool:
-    """A top-level page load, such as following a link to /me from another site."""
+    """A top-level page load, such as following a link to the dashboard from another site."""
     return (
         request.method in ("GET", "HEAD")
         and request.headers.get("sec-fetch-mode") == "navigate"
@@ -408,8 +453,7 @@ app.include_router(_admin_router)
 app.include_router(_org_admin_router)
 app.include_router(_provider_router)
 
-# attach() mounts the StaticFiles assets dir before including the router so the
-# /me/{spa_path:path} catch-all doesn't swallow asset requests.
+# The caller API (/v1/me/*); the dashboard page itself attaches last, below.
 from server.identity.app import me_routes as _me_handlers  # noqa: E402
 
 _me_handlers.attach(app)
@@ -445,3 +489,10 @@ async def v1_openapi() -> dict[str, object]:
 async def list_operations() -> list[dict[str, object]]:
     """Discovery endpoint: list every operation the server knows about."""
     return operation_rows()
+
+
+# The dashboard's pages: only its views' first path segments, none of which an
+# API route uses (tests/unit/test_dashboard_routes.py).
+from server.identity.app import dashboard_routes as _dashboard  # noqa: E402
+
+_dashboard.attach(app)

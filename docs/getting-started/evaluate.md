@@ -7,12 +7,12 @@ published claim.
 
 ## Choose an evaluation
 
-| Decision                                        | Data                                                           | Providers                                              | Typical output                                                                |
-| ----------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------ | ----------------------------------------------------------------------------- |
-| Does Loom install and connect correctly?        | Four test facts and one document                               | Stock fake providers are enough                        | A fact survives a new session; source, history and audit rows appear in `/me` |
-| Is memory useful for our agent?                 | 25–50 real questions with expected memory keys                 | Real embedder; real LLM for extraction or `memory.ask` | recall@k, rank@1, abstention, answer accuracy, latency and cost               |
-| Is code intelligence useful for our repository? | Representative symbols, caller sets and issue-shaped questions | Real embedder; indexed repository                      | exact definitions, caller F1, file recall, abstention, tokens and latency     |
-| Can we reproduce a published result?            | The named public dataset and committed result artifact         | The pinned models or documented substitutes            | A comparable run with the same slice, reader, judge and search mode           |
+| Decision                                        | Data                                                           | Providers                                              | Typical output                                                                        |
+| ----------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------- |
+| Does Loom install and connect correctly?        | Four test facts and one document                               | Stock fake providers are enough                        | A fact survives a new session; source, history and audit rows appear in the dashboard |
+| Is memory useful for our agent?                 | 25–50 real questions with expected memory keys                 | Real embedder; real LLM for extraction or `memory.ask` | recall@k, rank@1, abstention, answer accuracy, latency and cost                       |
+| Is code intelligence useful for our repository? | Representative symbols, caller sets and issue-shaped questions | Real embedder; indexed repository                      | exact definitions, caller F1, file recall, abstention, tokens and latency             |
+| Can we reproduce a published result?            | The named public dataset and committed result artifact         | The pinned models or documented substitutes            | A comparable run with the same slice, reader, judge and search mode                   |
 
 Do not use the stock fake embedder or fake LLM to judge quality. They exist so the local
 stack can boot without credentials and integration tests can be deterministic.
@@ -44,7 +44,7 @@ quality.
 2. [Write and search a fact](quickstart.md#4-first-memory-over-http).
 3. [Connect a coding agent](connect-a-coding-agent.md), tell it a durable preference, open
    a fresh session and ask for that preference.
-4. Correct the fact, then confirm `/me` shows its source and version history.
+4. Correct the fact, then confirm the dashboard shows its source and version history.
 5. Run `loom demo` with a document and confirm the returned chunks cite that document
    ([document smoke test](quickstart.md#optional-ask-a-question-about-a-document)).
 

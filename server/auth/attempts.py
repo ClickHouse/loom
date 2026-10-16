@@ -1,58 +1,214 @@
 """Attempt limits for the unauthenticated auth routes — sign-up and password
 sign-in — which run before any token exists to rate-limit by.
 
-Known limit: in-process sliding windows. Each server process counts on its own,
-so N replicas or `--workers N` allow N× the limit; a shared counter (the
-rate-limit bucket file, or ClickHouse) is the upgrade if that ever matters.
+The attempts are rows of `loom.auth_attempts`, so every Loom process of the
+deployment counts the same ones. A key is stored as an HMAC keyed by the root
+secret, never as the email or address it is: a plain hash of an IPv4 address
+is reversed by hashing all of them.
+
+What a refused attempt costs is bounded per process: a key this process saw
+over its limit is refused without a query for `_KNOWN_OVER_S`, and at most
+`auth_attempts_concurrency` checks run at once (`slot`), so a burst waits or
+gets 429 instead of taking the ClickHouse pool every route shares.
 """
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import hmac
 import time
+from collections import OrderedDict
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
+from server.core.ch import sequential_reads
+from server.core.repo_base import _default_client
 
+TABLE = "loom.auth_attempts"
+# Async inserts that answer once flushed: the recount sees the row, and a
+# burst shares parts instead of writing one per attempt.
+_INSERT_SETTINGS = {"async_insert": 1, "wait_for_async_insert": 1}
+# Seconds a key seen over its limit is refused here without a query.
+_KNOWN_OVER_S = 10.0
+# Keys remembered at most; a spray of distinct keys must not grow it unbounded.
+_KNOWN_OVER_MAX = 10_000
+# Seconds a check waits for a free slot before it is refused.
+_SLOT_WAIT_S = 1.0
+
+
+class Busy(Exception):
+    """Every auth-check slot of this process stayed taken for `_SLOT_WAIT_S`."""
+
+
+@dataclass(frozen=True)
 class Attempts:
-    """At most `limit` recorded attempts per key within `window_s` seconds.
-    The key map is bounded: past `max_keys`, keys with no live attempt are
-    dropped."""
+    """At most `limit` attempts of `kind` per key within `window_s` seconds."""
 
-    def __init__(self, limit: int, window_s: float, *, max_keys: int = 10_000) -> None:
-        self.limit = limit
-        self.window_s = window_s
-        self.max_keys = max_keys
-        self._hits: dict[str, list[float]] = {}
+    kind: str
+    limit: int
+    window_s: int
 
-    def __len__(self) -> int:
-        return len(self._hits)
-
-    def clear(self) -> None:
-        self._hits.clear()
-
-    def _live(self, key: str, t: float) -> list[float]:
-        live = [x for x in self._hits.get(key, ()) if t - x < self.window_s]
-        if live:
-            self._hits[key] = live
-        else:
-            self._hits.pop(key, None)
-        return live
-
-    def blocked(self, key: str, *, now: float | None = None) -> bool:
-        return len(self._live(key, time.time() if now is None else now)) >= self.limit
-
-    def record(self, key: str, *, now: float | None = None) -> None:
-        t = time.time() if now is None else now
-        if len(self._hits) >= self.max_keys:
-            for k in [k for k, v in self._hits.items() if not v or t - v[-1] >= self.window_s]:
-                del self._hits[k]
-        self._hits[key] = [*self._live(key, t), t]
-
-    def allow(self, key: str, *, now: float | None = None) -> bool:
-        """Record an attempt unless the key is already at its limit."""
-        if self.blocked(key, now=now):
+    async def allow(self, key: str) -> bool:
+        """Admit an attempt that counts whatever its outcome (a sign-up). An
+        admitted one is recorded before its recount, so concurrent attempts
+        each count the others that landed first and at most `limit` are
+        admitted. A caller refused at the first count is not recorded, so one
+        that keeps retrying is let in again as its attempts age out; one
+        refused at the recount (it raced others past the first count) stays
+        recorded. A process too busy to check refuses."""
+        try:
+            async with slot():
+                return await _admit([(self, key)], released=False) is not None
+        except Busy:
             return False
-        self.record(key, now=now)
-        return True
+
+
+@dataclass(frozen=True)
+class Admission:
+    """An admitted attempt: its gates and the time its rows carry, which its
+    release repeats so the two leave the window together."""
+
+    gates: list[tuple[Attempts, str]]
+    at: datetime
+
+
+async def admit(gates: list[tuple[Attempts, str]]) -> Admission | None:
+    """Record one attempt that counts as a failure until `release`d (a
+    sign-in) under every (limit, key) and say whether it may go on. As in
+    `Attempts.allow`, the recount after the record bounds a concurrent
+    burst. One refused at the recount is released, so a burst that raced
+    past the first count does not lock the key longer. Run it in a `slot`."""
+    return await _admit(gates, released=True)
+
+
+async def release(admission: Admission) -> None:
+    """An admitted attempt that succeeded, or never reached its check."""
+    await _insert([(f"{g.kind}.ok", key) for g, key in admission.gates], admission.at)
+
+
+@asynccontextmanager
+async def slot() -> AsyncIterator[None]:
+    """One of this process's `auth_attempts_concurrency` auth checks; raises
+    Busy when none frees within `_SLOT_WAIT_S`."""
+    sem = _semaphore()
+    try:
+        await asyncio.wait_for(sem.acquire(), _SLOT_WAIT_S)
+    except TimeoutError as e:
+        raise Busy from e
+    try:
+        yield
+    finally:
+        sem.release()
+
+
+_sem: tuple[Any, asyncio.Semaphore] | None = None
+# (kind, key digest) → clock time until which it is known over its limit,
+# oldest first.
+_known_over: OrderedDict[tuple[str, str], float] = OrderedDict()
+
+
+def _semaphore() -> asyncio.Semaphore:
+    """The slots of the running event loop (a test runs several loops)."""
+    from server.settings import settings
+
+    global _sem
+    loop = asyncio.get_running_loop()
+    if _sem is None or _sem[0] is not loop:
+        _sem = (loop, asyncio.Semaphore(settings.auth_attempts_concurrency))
+    return _sem[1]
+
+
+def _clock() -> float:
+    return time.time()
+
+
+def _at() -> datetime:
+    """Now on the ClickHouse server's clock, as the keyring last measured it."""
+    from server.auth import keyring
+
+    return keyring.server_now()
+
+
+async def _admit(gates: list[tuple[Attempts, str]], *, released: bool) -> Admission | None:
+    """`released`: the gates count failures (attempts less their releases)."""
+    now = _clock()
+    if any(_known_over.get((g.kind, _digest(key)), 0.0) > now for g, key in gates):
+        return None
+    if _over(gates, await _counts(gates, released=released), with_this_one=False):
+        return None
+    admission = Admission(gates, _at())
+    await _insert([(g.kind, key) for g, key in gates], admission.at)
+    if not _over(gates, await _counts(gates, released=released), with_this_one=True):
+        return admission
+    if released:
+        await release(admission)
+    return None
+
+
+def _over(gates: list[tuple[Attempts, str]], counts: list[int], *, with_this_one: bool) -> bool:
+    """Whether any gate's count leaves no room for this attempt, and remember
+    each such key for `_KNOWN_OVER_S`."""
+    over = False
+    for n, (g, key) in zip(counts, gates, strict=True):
+        if n > g.limit or (n == g.limit and not with_this_one):
+            _remember_over((g.kind, _digest(key)))
+            over = True
+    return over
+
+
+def _remember_over(key: tuple[str, str]) -> None:
+    _known_over[key] = _clock() + _KNOWN_OVER_S
+    _known_over.move_to_end(key)
+    if len(_known_over) > _KNOWN_OVER_MAX:
+        _known_over.popitem(last=False)
+
+
+async def _counts(gates: list[tuple[Attempts, str]], *, released: bool) -> list[int]:
+    """Each gate's attempts in its window, less its `.ok` releases when
+    `released`."""
+    windows = {g.window_s for g, _ in gates}
+    if len(windows) != 1:
+        raise ValueError("limits counted together share one window")
+    kinds = [(g.kind, f"{g.kind}.ok") if released else (g.kind,) for g, _ in gates]
+    pairs = [(k, _digest(key)) for ks, (_, key) in zip(kinds, gates, strict=True) for k in ks]
+    # Sequential: on another replica a plain read may miss an acknowledged attempt.
+    with sequential_reads():
+        rows = await _default_client().query_all(
+            f"SELECT kind, key_sha256, count() AS n FROM {TABLE} "
+            "WHERE (kind, key_sha256) IN {pairs:Array(Tuple(String, String))} "
+            "AND at > now64(3) - toIntervalSecond({window:UInt32}) "
+            "GROUP BY kind, key_sha256",
+            params={"pairs": pairs, "window": windows.pop()},
+        )
+    # key_sha256 is a FixedString: the driver hands it back as bytes.
+    n = {(str(r["kind"]), _text(r["key_sha256"])): int(r["n"]) for r in rows}
+    return [
+        max(0, n.get((g.kind, _digest(key)), 0) - n.get((f"{g.kind}.ok", _digest(key)), 0))
+        for g, key in gates
+    ]
+
+
+async def _insert(kinds_keys: list[tuple[str, str]], at: datetime) -> None:
+    await _default_client().insert(
+        TABLE,
+        [{"kind": kind, "key_sha256": _digest(key), "at": at} for kind, key in kinds_keys],
+        settings=_INSERT_SETTINGS,
+    )
+
+
+def _text(v: Any) -> str:
+    return v.decode() if isinstance(v, bytes) else str(v)
+
+
+def _digest(key: str) -> str:
+    from server.settings import settings
+
+    secret = hashlib.sha256(b"loom.auth_attempts:" + str(settings.jwt_secret).encode()).digest()
+    return hmac.new(secret, key.encode(), hashlib.sha256).hexdigest()
 
 
 def client_address(request: Any) -> str:

@@ -59,9 +59,16 @@ def env(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         idempotent=True,
         budget_p99_ms=10_000,
         required_role=Role.VIEWER,
+        writes=True,
     )
 
+    running: set[str] = set()
+    checked: list[str] = []
+
     async def _check(key: str, body_hash: str) -> idempotency.CacheResult:
+        checked.append(key)
+        if key in running:
+            return idempotency.CacheResult(hit=None, conflict=True, in_progress=True)
         row = rows.get(key)
         if row is None:
             return idempotency.CacheResult(hit=None, conflict=False)
@@ -108,7 +115,14 @@ def env(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(mcp_outcome, "_emit_mcp_event", lambda *a, **k: None)
     app = FastAPI()
     app.include_router(http_mod.build_router())
-    return {"http": TestClient(app), "ran": ran, "alice": alice, "owners": owners}
+    return {
+        "http": TestClient(app),
+        "ran": ran,
+        "alice": alice,
+        "owners": owners,
+        "running": running,
+        "checked": checked,
+    }
 
 
 BODY = {"org": "o", "namespace": "n", "agent": "a", "text": "hi"}
@@ -168,3 +182,32 @@ def test_both_transports_stamp_the_same_key_and_owner(env: dict[str, Any]) -> No
         for k in ("k4", "k5")
     ]
     assert env["owners"] == want
+
+
+def test_a_key_still_running_is_a_retryable_answer_on_both_transports(
+    env: dict[str, Any],
+) -> None:
+    """A client that timed out and retries with its key waits for the first
+    answer instead of failing as if it had sent another body."""
+    env["running"].add(
+        idempotency.scoped_key("k5", org="o", subject="alice", operation="test.idem_across")
+    )
+    r = _http(env, BODY, "k5")
+    assert r.status_code == 503 and r.headers["Retry-After"] == "1"
+    assert r.json()["detail"]["code"] == "IDEMPOTENT_IN_PROGRESS"
+    out = _mcp(env, BODY, "k5")
+    assert out["isError"] is True
+    assert out["structuredContent"]["code"] == "IDEMPOTENT_IN_PROGRESS"
+    assert out["structuredContent"]["retry_after_s"] == 1
+    assert env["ran"] == []
+
+
+def test_a_read_only_op_keeps_no_replay(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No lookup and no in-progress claim: a read's retry just reads again."""
+    monkeypatch.setattr(Operation, "read_only", property(lambda op: True))
+    assert _http(env, BODY, "k6").status_code == 200
+    assert _mcp(env, BODY, "k6")["isError"] is False
+    assert env["checked"] == [] and env["owners"] == []
+    assert env["ran"] == ["hi", "hi"]

@@ -7,8 +7,9 @@
  * call before `RateLimited` surfaces; a read timeout is NOT retried (the server
  * may still be processing). The per-call timeout and the caller's `signal`
  * cover the whole exchange, body included, and every sleep between attempts:
- * an aborted signal sends nothing more. Idempotent ops get an `Idempotency-Key` unless the
- * caller supplied one; every call carries `X-Request-Id` so a failure can be
+ * an aborted signal sends nothing more. Idempotent ops that are not read-only
+ * get an `Idempotency-Key` unless the caller supplied one (the server keeps no
+ * replay of a read-only op); every call carries `X-Request-Id` so a failure can be
  * found in the server's ledger. Response `X-RateLimit-*` headers are read so
  * a client at the floor paces itself before the next request.
  *
@@ -222,7 +223,8 @@ export class Transport {
     const requestId = opts.requestId ?? randomId();
     headers["X-Request-Id"] = requestId;
     const spec = OP_BY_NAME[op as OpName];
-    const idem = opts.idempotencyKey ?? (spec?.idempotent ? randomId() : undefined);
+    // The server keeps no replay of a read-only op: its retry just runs again.
+    const idem = opts.idempotencyKey ?? (spec?.idempotent && !spec.readOnly ? randomId() : undefined);
     if (idem) headers["Idempotency-Key"] = idem;
     const sent = this.withConsumer(body);
     const payload = JSON.stringify(sent);
@@ -236,6 +238,7 @@ export class Transport {
       opts,
       policy,
       idempotent: spec?.idempotent === true,
+      deduplicated: spec?.idempotent === true && !spec.readOnly,
       startedAt: this.now(),
       sent: 0,
     };
@@ -366,7 +369,7 @@ export class Transport {
         if (isAbort(e)) {
           throwIfAborted(ctx, e);
           const err = new TimeoutError(`${op}: no response within ${timeoutMs} ms`, { op, cause: e, requestId });
-          const may = policy.retryTimeouts === "always" || (policy.retryTimeouts === "idempotent" && ctx.idempotent);
+          const may = policy.retryTimeouts === "always" || (policy.retryTimeouts === "idempotent" && ctx.deduplicated);
           if (may && (await retryAfter(attempt, `timed out after ${timeoutMs} ms`))) continue;
           throw err;
         }
@@ -465,7 +468,7 @@ const NEVER_RAN_CODES: ReadonlySet<string> = new Set(["AUTH_UNAVAILABLE"]);
  * 5xx answers to a deployment's configuration, which no retry changes: the
  * operator's fix is named in the error (and in /v1/health).
  */
-const CONFIGURATION_CODES: ReadonlySet<string> = new Set(["CODED_WIDTH_MISMATCH", "OVERRIDE_NOT_SHARED"]);
+const CONFIGURATION_CODES: ReadonlySet<string> = new Set(["CODED_WIDTH_MISMATCH"]);
 
 function neverRan(status: number, code: string): boolean {
   return status === 408 || NEVER_RAN_CODES.has(code);
@@ -479,6 +482,8 @@ interface AttemptContext {
   opts: CallOptions;
   policy: RetryPolicy;
   idempotent: boolean;
+  /** The server dedups its Idempotency-Key (idempotent, not read-only): a timeout may be retried. */
+  deduplicated: boolean;
   startedAt: number;
   /** HTTP attempts sent so far, across every 429 pacing round. */
   sent: number;

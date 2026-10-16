@@ -595,15 +595,6 @@
             ]
           }
         },
-        "embedding": {
-          "class": "EmbeddingOps",
-          "methods": {
-            "embed": [
-              "body",
-              "options"
-            ]
-          }
-        },
         "erasure": {
           "class": "ErasureOps",
           "methods": {
@@ -773,15 +764,6 @@
               "options"
             ],
             "review": [
-              "body",
-              "options"
-            ]
-          }
-        },
-        "llm": {
-          "class": "LlmOps",
-          "methods": {
-            "complete": [
               "body",
               "options"
             ]

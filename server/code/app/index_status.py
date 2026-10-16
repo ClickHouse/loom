@@ -253,9 +253,9 @@ async def _clone_lags(
 
 
 def published_lags(state: IndexState, marks: dict[str, str], clone_head: str) -> dict[str, int]:
-    """The lags the main Loom published in its status snapshot, for each watermark
-    whose commit (and the clone tip) are still the ones it counted from: what a
-    read-replica, which has no clone to count with, reports. -1 for the rest."""
+    """The lags another process published in its status snapshot, for each watermark
+    whose commit (and the clone tip) are still the ones it counted from: what a host
+    without the mirror reports. -1 for the rest."""
     out = dict.fromkeys(marks, -1)
     row = state.get(STATUS_SNAPSHOT_KEY)
     if not isinstance(row, dict) or not row.get("value"):
@@ -315,8 +315,11 @@ async def _repo_status(cfg: Any, *, state: IndexState | None = None) -> CodeInde
 
     # keyed by state key; -1 = unset watermark or unreadable clone
     lags: dict[str, int] = {"git_head": -1, **dict.fromkeys(WATERMARK_KEYS, -1)}
-    if settings.read_replica:
-        # No clone here: the main Loom's published counts, for the same commits.
+    from server.code.app.index.mirrors import present_dir
+
+    if not await present_dir(cfg):
+        # No mirror here (yet): the counts another process published, for the same
+        # commits, so every replica answers alike.
         clone_head = published_clone_head(state, cfg.git_branch)
         lags.update(published_lags(state, {k: val(k) for k in lags}, clone_head))
     else:
@@ -488,7 +491,6 @@ def _adhoc_repo(org: str, ns: str) -> Any:
     no repo entry (e.g. after LOOM_CODE_REPOS_JSON dropped it). Status still
     renders; lag reads as unknown because there is no clone to compare."""
     from server.code.domain.index.repos import RepoConfig
-    from server.settings import settings
 
     return RepoConfig(
         org=org,
@@ -575,7 +577,6 @@ async def handle_code_index_status(input: CodeIndexStatusInput) -> CodeIndexStat
     require_code_intel()
     org, ns = resolve_code_identity(input.org, input.namespace)
     cfg = repo_for_namespace(org, ns) or _adhoc_repo(org, ns)
-    from server.settings import settings
 
     # The same 30 s status `code.repos` serves, on
     # a copy — the fields below are this call's, not the cached row's.
@@ -601,13 +602,16 @@ async def handle_code_index_status(input: CodeIndexStatusInput) -> CodeIndexStat
         # this call's question, not the repository's).
         _fresh_heads(st, state)  # Never a cached head
         from server.code.app.index.commit_coverage import commit_coverage
+        from server.code.app.index.mirrors import history_dir
 
+        git_dir, gap = await history_dir(cfg)
         cov = await commit_coverage(
-            cfg.git_dir,
+            git_dir,
             input.commit,
             st.git_head,
             [t.model_dump() for t in st.compiler_tiers],
             paths=list(input.paths or []),
+            gap=gap,
         )
         st.commit_coverage = CodeCommitCoverage(**cov)
     brief = input.brief if input.brief is not None else bool(input.commit)
@@ -922,7 +926,6 @@ async def _coverage_cached(
 async def handle_code_coverage(input: CodeCoverageInput) -> CodeCoverageOutput:
     """Report how much of a repository the index covers at its head: per language, per tier, and the
     gaps."""
-    from server.settings import settings
 
     require_code_intel()
     org, ns = resolve_code_identity(input.org, input.namespace)

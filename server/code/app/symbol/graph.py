@@ -403,13 +403,14 @@ async def _floor_reads(
 
 
 def _not_found(input: CodeCallersInput, overlay: Any) -> str:
-    """The 404 of a seed neither the index nor the PR's overlay holds; on a
-    read-replica the caller sent no post-image to, says that is why."""
+    """The 404 of a seed neither the index nor the PR's overlay holds; on a host
+    without the mirror the caller sent no post-image to, says that is why."""
     msg = f"symbol not found: {input.name or input.symbol_id}"
-    if overlay is not None and overlay.reason == NO_GIT_MIRROR:
+    reason = str(getattr(overlay, "reason", "") or "")
+    if reason.startswith((NO_GIT_MIRROR, "no_git_history")):
         msg += (
-            f" (not in the index, and PR {input.pr_number} was not read: this read-replica"
-            " has no git mirror; send the PR's pr_files and pr_diff)"
+            f" (not in the index, and PR {input.pr_number} was not read: {reason};"
+            " send the PR's pr_files and pr_diff)"
         )
     return msg
 

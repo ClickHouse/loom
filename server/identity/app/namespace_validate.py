@@ -165,7 +165,7 @@ _CHECKS: dict[str, tuple[str, str, str]] = {
         "warning",
         "A write flagged as semantically colliding with an existing fact, "
         "still unresolved past conflict_age_seconds. Resolve it with "
-        "conflicts.resolve (keep / replace / allow) or in the /me Review queue.",
+        "conflicts.resolve (keep / replace / allow) or in the dashboard's Review queue.",
         f"""
         SELECT count() OVER () AS total, memory_key,
                dateDiff('day', updated_at, now()) AS age_days,
@@ -285,7 +285,7 @@ _CHECKS: dict[str, tuple[str, str, str]] = {
         "in the turns it cites (grounding = 'unresolved'): the "
         "quote is a paraphrase, so the fact's tie to its source is the model's "
         "word alone. A rising share means the extraction prompt is producing "
-        "paraphrase where it promises verbatim. Review the sample in /me; "
+        "paraphrase where it promises verbatim. Review the sample in the dashboard; "
         "memory.update_by_id the fact with the real quote, or tombstone it "
         "via memory.delete when the source does not support it.",
         f"""

@@ -6,7 +6,6 @@ each."""
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
@@ -18,6 +17,8 @@ from server.erasure.store import steps_graph as graph_steps
 from server.erasure.store import steps_ledgers as ledger_steps
 from server.erasure.store import steps_memory as memory_steps
 from server.erasure.store import steps_temporal as temporal_steps
+from server.erasure.store.mutations import namespaces_of
+from server.knowledge.app import originals
 from server.memory.app.code_links import queue_lease
 from server.workers.registry import DEADLINE_CAP_SECONDS
 
@@ -95,32 +96,29 @@ async def _step_delete_code_links_by_ns(org: str, namespace: _NS) -> int:
         return await memory_steps.delete_code_links_by_namespace(org, namespace)
 
 
+# how long the documents step waits for `loom blobs import` to give up a namespace's
+# originals claim, which it holds for one document at a time
+_ORIGINALS_WAIT_S = 60.0
+
+
 async def _step_tombstone_documents_by_ns(org: str, namespace: _NS) -> int:
     """Erase the namespace's uploaded originals, then supersede its
-    whole-document rows (a purge deletes them). The blobs go first: their
-    paths are read from these rows, which a purge removes. One step owns both,
-    so the census row for loom.documents — a live row or an unerased blob —
-    re-opens the step that clears either."""
-    await _step_erase_blobs_by_ns(org, namespace)
-    return await memory_steps.tombstone_documents_by_namespace(org, namespace)
+    whole-document rows (a purge deletes them). The originals go first, while
+    the rows their erasure is stamped on still exist. One step owns both, so
+    the census rows for loom.documents and loom.document_blobs re-open it.
+    Under the originals claim, so `loom blobs import` cannot store an original
+    of a document this step is erasing."""
+    async with originals.hold_originals(org, namespaces_of(namespace), wait_s=_ORIGINALS_WAIT_S):
+        await _step_erase_blobs_by_ns(org, namespace)
+        return await memory_steps.tombstone_documents_by_namespace(org, namespace)
 
 
 async def _step_erase_blobs_by_ns(org: str, namespace: _NS) -> int:
-    """Delete the original uploaded bytes from the BlobStore for every
-    document in the namespace(s), then stamp `blob_erased_at` so a resumed
-    pass re-scans only unstamped rows. Returns the number of document rows
-    stamped, not files unlinked — a re-upload of the same bytes shares a path."""
-    from server.storage.blob_store import get_store
-
-    paths = await memory_steps.unerased_blob_paths(org, namespace)
-    if not paths:
-        return 0
-    store = get_store()
-    # Unlinking is blocking file I/O: off the event loop, once for the batch.
-    # Best-effort per file; a missing one returns False, harmless.
-    await asyncio.to_thread(lambda: [store.delete(bp) for bp in paths if bp])
+    """Delete the uploaded originals of the namespace(s), then stamp
+    `blob_erased_at` on their documents. Returns the originals deleted."""
+    n = await memory_steps.delete_document_blobs_by_namespace(org, namespace)
     await memory_steps.stamp_blobs_erased(org, namespace)
-    return len(paths)
+    return n
 
 
 UserStep = tuple[str, Callable[[str, str], Awaitable[int]]]

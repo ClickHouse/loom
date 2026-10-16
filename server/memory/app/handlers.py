@@ -468,8 +468,8 @@ async def _handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
     async def code() -> list[CodeLink]:
         return await links_of(input.org, head_of(row)) if wants_code else []
 
-    successors, links = await asyncio.gather(
-        shown_successors(input.org, input.namespace, [row]), code()
+    successors, links, judge_pending = await asyncio.gather(
+        shown_successors(input.org, input.namespace, [row]), code(), _cd.row_pending(row)
     )
     return MemoryGetOutput(
         found=True,
@@ -500,7 +500,7 @@ async def _handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
         superseded_by=successors.get(str(row.memory_id), ""),
         duplicate_of=duplicate_of,
         conflict_verdict=_cd.verdict_from_row(
-            str(row.memory_id), getattr(row, "status", None), duplicate_of
+            str(row.memory_id), getattr(row, "status", None), duplicate_of, pending=judge_pending
         ),
         content_sha256=sha,
         tags=list(getattr(row, "tags", None) or []),

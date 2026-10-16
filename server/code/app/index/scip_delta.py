@@ -21,8 +21,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from server.code.app.index.entry_lock import check_held
 from server.code.domain.extract.treesitter import symbol_id
 from server.code.store.index import CodeRepo, build_row
+from server.workers import pass_context
 
 DELTA_VERSION = 1
 
@@ -221,13 +223,17 @@ async def apply_delta(repo: CodeRepo, org: str, ns: str, delta: ScipDelta) -> Sc
     files.extend(ScipFile(path=path, deleted=True) for path in delta.deleted_files)
     if _has_round_reads(repo):
         for start in range(0, len(files), APPLY_ROUND_FILES):
+            # A pass that lost its workers' lease writes no further round.
+            pass_context.check_stop()
             chunk = files[start : start + APPLY_ROUND_FILES]
             await _apply_round(repo, org, ns, delta.commit, chunk, stats)
     else:
         for f in files:
+            pass_context.check_stop()
             await _apply_file(repo, org, ns, delta.commit, f, stats)
             stats.files += 1
     if FEATURE_CTOR_CALLS in delta.features:
+        check_held()
         await repo.set_state(
             org,
             ns,
@@ -237,6 +243,12 @@ async def apply_delta(repo: CodeRepo, org: str, ns: str, delta: ScipDelta) -> Sc
         )
         stats.ctor_calls_recorded = True
     return stats
+
+
+async def _publish(repo: Any, table: str, rows: list[dict[str, Any]]) -> None:
+    """Insert index rows, unless the entry lease of the pass was lost."""
+    check_held()
+    await repo.insert_rows(table, rows)
 
 
 async def _apply_round(
@@ -276,9 +288,9 @@ async def _apply_round(
         )
         stats.files += 1
     if sink.symbols:
-        await repo.insert_rows("code_symbols", sink.symbols)
+        await _publish(repo, "code_symbols", sink.symbols)
     if sink.edges:
-        await repo.insert_rows("code_edges", sink.edges)
+        await _publish(repo, "code_edges", sink.edges)
 
 
 async def _apply_file(
@@ -352,7 +364,7 @@ async def _apply_file(
     if sink is not None:
         sink.symbols.extend(sym_rows + tombstones)
     else:
-        await repo.insert_rows("code_symbols", sym_rows + tombstones)
+        await _publish(repo, "code_symbols", sym_rows + tombstones)
 
     edge_rows = await _diff_edges(
         repo,
@@ -368,7 +380,7 @@ async def _apply_file(
     if sink is not None:
         sink.edges.extend(edge_rows)
     else:
-        await repo.insert_rows("code_edges", edge_rows)
+        await _publish(repo, "code_edges", edge_rows)
 
 
 async def _diff_edges(

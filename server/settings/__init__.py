@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import logging
 
-from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from server.core.env_file import env_file_path
@@ -32,7 +31,6 @@ from server.settings._namespaces import NamespaceSettings
 from server.settings._observability import ObservabilitySettings
 from server.settings._providers import ProviderSettings
 from server.settings._ratelimit import RateLimitSettings
-from server.settings._read_replica import ReadReplicaSettings, apply_read_replica_rules
 from server.settings._runtime import RuntimeSettings
 from server.settings._storage import StorageSettings
 from server.settings._tasks import TaskSettings
@@ -61,7 +59,6 @@ class Settings(
     NamespaceSettings,
     ErasureSettings,
     StorageSettings,
-    ReadReplicaSettings,
     BaseSettings,
 ):
     # hide_input_in_errors: a load error names the field and the rule it broke,
@@ -74,13 +71,6 @@ class Settings(
         validate_by_alias=True,
         hide_input_in_errors=True,
     )
-
-    @model_validator(mode="after")
-    def _check_read_replica(self) -> Settings:
-        """A read-replica's rules span areas (migrations, workers), so they run
-        on the composed object."""
-        apply_read_replica_rules(self)
-        return self
 
     def _mask(self, key: str, value: object) -> object:
         # Only the length, so an operator can confirm it is set: even a short

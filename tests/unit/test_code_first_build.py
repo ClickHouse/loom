@@ -174,6 +174,7 @@ class _Cfg:
     def __init__(self, namespace: str, branch: str) -> None:
         self.org, self.namespace, self.git_branch = ORG, namespace, branch
         self.git_dir, self.repo = "/mirror.git", "ClickHouse/ClickHouse"
+        self.git_remote = "https://github.com/ClickHouse/ClickHouse.git"
 
 
 def test_nearest_namespace_prefers_the_lowest_release_branch() -> None:
@@ -267,7 +268,10 @@ class _Git:
 
 @pytest.fixture
 def wired(monkeypatch):
+    from server.code.app.index import mirrors
+
     repo, git, src = _Repo(), _Git(), _Source()
+    monkeypatch.setattr(mirrors, "_present", lambda cfg: True)
     monkeypatch.setattr(h, "CodeRepo", lambda: repo)
     monkeypatch.setattr(h, "require_code_intel", lambda: None)
     monkeypatch.setattr(h, "schedule_code_trace", lambda **kw: None)
@@ -423,6 +427,17 @@ async def test_every_missing_input_is_a_named_cause(wired) -> None:
     out = await h.handle_code_first_build(CodeFirstBuildInput(org=ORG, namespace=NS, sha=MERGE))
     assert (out.verdict, out.causes, out.tracker_namespace) == ("unknown", ["tracker_unbound"], "")
     assert out.containing_branches == ["master"]  # the mirror still spoke
+
+
+@pytest.mark.asyncio
+async def test_a_host_without_the_mirror_names_the_gap_in_causes(wired, monkeypatch) -> None:
+    async def _cloning(cfg, op, *, head=""):
+        return "", "no_git_mirror: cloning o/code-r"
+
+    monkeypatch.setattr(h, "history_git_dir", _cloning)
+    out = await h.handle_code_first_build(CodeFirstBuildInput(org=ORG, namespace=NS, sha=MERGE))
+    assert not out.mirror_known
+    assert out.causes[-1] == "no_git_mirror: cloning o/code-r"
 
 
 @pytest.mark.asyncio

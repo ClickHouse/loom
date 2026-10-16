@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from server.memory.app import temporal_ops, temporal_reads
+from server.memory.app import temporal_reads
 from server.memory.domain.temporal_reads import Axes
 from server.memory.store import temporal as store
 from server.settings import settings
@@ -67,13 +67,6 @@ def test_a_token_ahead_of_the_head_waits_memory_temporal_read_wait_ms(monkeypatc
     cut = _run(temporal_reads.cutoff("o", "n", axes, read_token=encode_token({"n": 9})))
     assert (datetime.now(UTC) - t0).total_seconds() >= 0.1
     assert "read_token_not_ready" in cut.gaps
-
-
-def test_memory_temporal_publisher_names_the_serializer(monkeypatch) -> None:
-    monkeypatch.setattr(settings, "memory_temporal_publisher", "process")
-    assert _run(temporal_ops._publisher_kind()) == "process"
-    monkeypatch.setattr(settings, "memory_temporal_publisher", "keeper")
-    assert _run(temporal_ops._publisher_kind()) == "keeper"
 
 
 def test_memory_temporal_lock_wait_s_bounds_the_publisher_lock() -> None:

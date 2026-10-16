@@ -1,21 +1,22 @@
 # Backup and recovery
 
-A Loom backup is a ClickHouse backup plus the blob volume. All durable state is in
-ClickHouse except two directories:
+A Loom backup is a ClickHouse backup. All durable state is in ClickHouse, uploaded
+document originals (`loom.document_blobs`), token signing keys (`loom.signing_keys`) and
+admin runtime overrides (`loom.runtime_overrides`) included. Two things sit outside it:
 
-- the blob volume (`LOOM_BLOB_DIR`, default `var/blobs`): uploaded document originals,
-  content-addressed by SHA-256. Back it up with ClickHouse.
-- the code index's git mirrors under `var/code_repos`, which are rebuilt from their
-  remotes.
+- `LOOM_JWT_SECRET`, the root secret. It seals the stored credentials and the signing
+  keys, so a backup restored without it opens neither. Keep it with the env config.
+- the code index's git mirrors under `var/code_repos`, a cache of the remotes recorded in
+  ClickHouse. A host without a mirror clones it again.
 
 ## Choosing a backup
 
-| Method                                                                  | Covers                                                    | Consistent snapshot          | Use for                                                  |
-| ----------------------------------------------------------------------- | --------------------------------------------------------- | ---------------------------- | -------------------------------------------------------- |
-| ClickHouse Cloud backups                                                | every table of the service                                | yes (service-level)          | disaster recovery on Cloud                               |
-| `BACKUP DATABASE loom TO Disk(...)` / `S3(...)`, or `clickhouse-backup` | every `loom.*` table                                      | yes                          | disaster recovery on self-managed OSS                    |
-| `dev/backup_loom.py` portable dump                                      | the core tables only (below)                              | per table, not across tables | moving an org or namespace between clusters; cold copies |
-| `namespace.snapshot`                                                    | one namespace's curated memory, types, grants, audit tail | one call                     | copying or freezing a namespace through the API          |
+| Method                                                                  | Covers                                                    | Consistent snapshot          | Use for                                                 |
+| ----------------------------------------------------------------------- | --------------------------------------------------------- | ---------------------------- | ------------------------------------------------------- |
+| ClickHouse Cloud backups                                                | every table of the service                                | yes (service-level)          | disaster recovery on Cloud                              |
+| `BACKUP DATABASE loom TO Disk(...)` / `S3(...)`, or `clickhouse-backup` | every `loom.*` table                                      | yes                          | disaster recovery on self-managed OSS                   |
+| `dev/backup_loom.py` portable dump                                      | every Loom table (below)                                  | per table, not across tables | moving a deployment, an org or a namespace; cold copies |
+| `namespace.snapshot`                                                    | one namespace's curated memory, types, grants, audit tail | one call                     | copying or freezing a namespace through the API         |
 
 ## The portable dump
 
@@ -25,16 +26,67 @@ with the source database and, per table, the file, row count, byte size, SHA-256
 (`complete: false`); exit 2 means bad arguments, no ClickHouse target, or an out-dir
 that already holds a backup.
 
-It covers `namespaces`, `memory`, `memory_embeddings`, `documents`, `chunks`, `shared`,
-`erasure_requests`, `agent_events`, `audit_log` and `idempotency`, not every table in
-`schemas/schema.sql`. Derived tables (such as `agent_cost_rollup_daily`, which refills
-from `agent_events`) are not dumped. `--org` filters every table with an `org` column and
-skips `idempotency`, which has none: its cached responses belong to every org.
+It dumps every MergeTree-family table of the database, read from `system.tables`. It
+leaves out the migration runner's `_`-prefixed tables, `.inner` tables, the KeeperMap
+leases (live coordination, not data) and views, which `loom migrate` creates. The
+manifest's `backup_version` is 3. `--org` filters every table with an `org` column and
+skips the tables without one (`idempotency`, `signing_keys`, ...), which hold every org's
+rows.
 
 `dev/restore_loom.py` verifies every file against the manifest (size, row count,
 SHA-256), prints the plan, creates the target database and missing tables from the
-recorded `CREATE` statements, then inserts. Nothing is written before the insert step;
-`--dry-run` stops after the plan. It refuses:
+recorded `CREATE` statements, then loads each file into a staging copy of its table and
+attaches the staged parts to the table. An attach fires no materialized view, so a
+restored row is not copied again into a table the backup also restores (`memory_versions`
+would otherwise hold every version twice), and the views keep running for the writes of a
+live database. Restore into a database `loom migrate` prepared (the views exist) or into a
+scratch database (tables are created from the recorded DDL). The insert runs with
+`optimize_on_insert = 0`, so every dumped row lands, duplicates of a
+`ReplacingMergeTree` key included, and the table collapses them at its own merges.
+Each table prints `… attaching <table>` before its attach and `✓` after it: if a run
+is cut off, its last line names the table it was in; check that table's count before a
+rerun with `--into-nonempty`, which would append it again.
+
+The manifest records each insert-fired materialized view's source and target table.
+Because an attach fires no view, restore refuses a selection that holds one end of a
+view without the other: `memory` without `memory_versions` (and
+`memory_code_link_queue`) would leave `memory.history`, `memory.redact` and
+`namespace.rollback` blind to the restored versions, and `code_term_freq` without
+`code_chunks` would be filled again when the code is re-ingested. No view joins `documents`
+and `document_blobs`, but restore refuses one without the other too: documents without
+their originals answer 410 on every download, and originals without their documents are
+what the originals sweep deletes. Both tools take `documents` before every other table,
+so with `--into-live` and workers running, the sweep never sees a restored original
+before the document that names it. Select both ends, or pass `--allow-view-split` when
+the target already holds the rows. `dev/backup_loom.py
+--exclude t1,t2` leaves out tables a pass rebuilds, together with every table a view
+fills from them (`code_chunks` takes `code_term_freq` and `code_doc_stats` with it);
+`restore_loom.py --exclude` leaves tables of a backup out.
+
+Document originals (`document_blobs`) are binary. The dump writes them as raw bytes and
+sets `output_format_json_validate_utf8 = 0` itself, so a profile that validates UTF-8
+cannot replace them; a binary original takes about 1.6 times its size in the dump.
+
+The staging copy repeats its table's engine, except that a replicated engine in a
+database that is not `Replicated` becomes its local form with the same parameters (a
+copy would claim the table's Keeper path again); the attach then replicates the parts.
+A replicated table the restore creates keeps its recorded Keeper path only in the
+backup's own database, and only once nothing replicates on that path any more (it refuses
+while live replicas remain). In another database it gets an independent one: the server's
+`default_replica_path` under a fresh UUID, or the database's own in a Replicated database.
+It refuses when the server lacks the macros that default needs.
+Each run names its staging tables `_restore_<run id>_<table>` and prints the run id
+first, and each drops only its own. Restores into one database (say, two orgs) run one
+at a time: a run claims `default._loom_restore_lock_<db>` (waiting up to five minutes
+for another run's claim), looks at the target again, and applies the refusals below to
+what the previous run left, so a second restore of the same scope refuses instead of
+attaching rows that fold into the first's. The claim is a table in `default`, so on a
+self-managed cluster it only orders runs through the same server: point every restore
+at one. A run that crashed leaves its staging tables and its claim behind;
+`restore_loom.py --database <db> --drop-staging <run id>` drops them, once no process of
+that run is left.
+Nothing is written before the insert step; `--dry-run` stops after the
+plan. It refuses:
 
 - the live database (`loom`, or the database the server config names) without
   `--into-live`;
@@ -51,13 +103,17 @@ environment or `.env`, each overridable by `--host`, `--port`, `--user`, `--data
 python dev/backup_loom.py --out-dir ./backups/$(date +%F) [--org acme] [--tables memory,namespaces]
 python dev/restore_loom.py --in-dir ./backups/<date> --database loom_restore --dry-run
 python dev/restore_loom.py --in-dir ./backups/<date> --database loom_restore --skip-idempotency
+python dev/restore_loom.py --in-dir ./backups/<date> --into-live \
+  --tables memory,memory_versions,memory_code_link_queue   # one end of a view needs the other
 ./scripts/ops/backup_drill.sh [--full-restore]   # round-trip check into a scratch database
 ```
 
 `scripts/ops/backup_drill.sh` dumps the live database to a temporary directory and
 checks the manifest against a row-count snapshot. With `--full-restore` it restores into
 a scratch database `<db>_drill`, compares every table's row count, and drops the scratch
-database on exit. It only reads the live database. Run the drill on a schedule.
+database on exit. A table that collapses rows of one key (`ReplacingMergeTree`,
+`AggregatingMergeTree`, ...) may merge in the scratch database right after its attach;
+fewer rows there is a warning once a merge has run, and a failure otherwise. It only reads the live database. Run the drill on a schedule.
 
 The dump is per table, not a snapshot across tables. Use it to move data between
 clusters, not for disaster recovery.
@@ -134,9 +190,39 @@ known-good commit instead.
 > `docker builder prune` and `docker image prune`. Never name a throwaway container
 > `loom-blue` or `loom-green`: removing it by name removes a colour.
 
-After a rollback, the rolled-forward colour keeps running until you stop it
-(`docker stop -t 45 loom-<colour> loom-<colour>-workers`); the workers lease moves to the
-rolled-back colour within `LOOM_SUPERVISOR_LEASE_RETRY_S` of that stop.
+After a rollback, the rolled-forward colour's web container keeps running until you stop
+it (`docker stop -t 75 loom-<colour>`, as the rollback prints). Its workers container was
+already stopped before the swap, so the workers lease is with the rolled-back colour; only
+when that colour has no workers container does the rolled-forward one keep running them.
+
+## Moving a deployment
+
+A new Loom process pointed at the same ClickHouse, or at a moved or restored one, gets
+back every feature. Carry three things:
+
+- ClickHouse: the same service, a copy with its Keeper state, or a `dev/backup_loom.py`
+  dump restored into a ClickHouse that `loom migrate` prepared;
+- the env config (`.env` or the container environment);
+- `LOOM_JWT_SECRET`. Without it no token verifies, and the stored credentials and
+  signing keys do not open.
+
+Everything else comes back from ClickHouse: document originals, signing keys, runtime
+overrides, the supervisor lease, revocations, sign-in attempt counts and graph-walk
+invalidation marks. Git mirrors re-clone from their recorded remotes on the next ingest
+pass, or on the first history read on the new host. A deployment from a build that kept
+document originals on disk moves them once with `loom blobs import <dir> --apply`
+([upgrades](./upgrades.md#from-a-build-that-kept-state-on-the-host)).
+
+Bounded exceptions:
+
+- The events stream (budget violations) is drained on `SIGTERM`. A `SIGKILL` or OOM loses
+  at most one flush interval of that telemetry, never audit or memory rows.
+- Provider reconfiguration recovers from a dead process by its expired heartbeat. A
+  process of an older build never expires: once it is confirmed gone, retire it with
+  `loom participant retire --participant <id> --yes`
+  ([provider reconfiguration](../architecture/provider-reconfiguration.md)).
+- Rate-limit bucket fill is per host. It refills in seconds, so a new host starts with
+  full buckets.
 
 ## Related
 

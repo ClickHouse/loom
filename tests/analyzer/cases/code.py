@@ -348,6 +348,7 @@ async def _point_readers(ch: RecordingCH, c: dict[str, Any]) -> None:
     # fetches heads for, the rows the worker fills, the carry-forward read, and
     # the one row an open brief takes its title from
     await repo.open_pr_numbers(ORG, NS, limit=100)
+    await repo.open_pr_heads(ORG, NS, limit=100)
     await repo.open_prs_for_head_fill(ORG, NS, limit=10)
     await repo.pr_heads_by_number(ORG, NS, [1, 2])
     await repo.gh_pr_head(ORG, NS, 1)

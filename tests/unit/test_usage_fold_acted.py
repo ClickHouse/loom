@@ -17,6 +17,8 @@ import pytest
 
 from server.memory.workers import usage_fold
 from server.memory.workers.usage_fold import (
+    ACTED_CREDITS_SQL,
+    ACTED_CREDITS_TABLE,
     ACTED_STATEMENT,
     UsageFoldResult,
     acted_pass,
@@ -32,16 +34,28 @@ class StubCH:
         self.query_all_calls: list[tuple[str, dict[str, Any]]] = []
         self.query_all_returns: list[list[dict[str, Any]]] = []
         self.inserted: list[tuple[str, list[dict[str, Any]]]] = []
+        # The committed credit marks, answered to the credits read.
+        self.credits: list[dict[str, Any]] = []
+        self.credit_reads: list[dict[str, Any]] = []
 
     async def query_one(self, sql, params=None):
         self.query_one_calls.append((sql, params or {}))
         return self.query_one_returns.pop(0) if self.query_one_returns else None
 
     async def query_all(self, sql, params=None):
+        if sql == ACTED_CREDITS_SQL:
+            self.credit_reads.append(params or {})
+            return [
+                c for c in self.credits if c["first_write"] > params["since"].replace(tzinfo=None)
+            ]
         self.query_all_calls.append((sql, params or {}))
         return self.query_all_returns.pop(0) if self.query_all_returns else []
 
     async def insert(self, table, rows, settings=None):
+        if table == ACTED_CREDITS_TABLE:
+            assert settings == {"async_insert": 0, "wait_for_async_insert": 1}
+            self.credits.extend(rows)
+            return
         self.inserted.append((table, rows))
 
     async def execute(self, sql, params=None):
@@ -194,6 +208,79 @@ def test_the_lag_window_is_reread_but_pairs_are_credited_once(events) -> None:
     assert usage_fold.current_acted_watermark() == later + timedelta(seconds=60) - timedelta(
         seconds=usage_fold.ACTED_WRITE_LAG_SECONDS
     )
+
+
+def test_a_new_leader_rereading_the_window_credits_nothing_twice(events) -> None:
+    """The credited pairs live in ClickHouse, not the leader's memory: a cold
+    start (another replica taking the lease) re-reads the lag window and
+    emits nothing for the pairs the old leader already credited."""
+    ch = StubCH()
+    ch.query_one_returns.append(None)
+    ch.query_all_returns.append([_acted_row("k1")])
+    ch.query_all_returns.append(_id_rows("k1"))
+    asyncio.run(acted_pass(ch, now=T0))
+    assert [c["pair_sha256"] for c in ch.credits] == [
+        usage_fold._pair_sha256(("o", "n", "r1", "k1"))
+    ]
+    assert set(ch.credits[0]) == {"pair_sha256", "first_write"}
+    # New leader: process state gone, the table is not.
+    usage_fold.reset_watermark()
+    ch.query_one_returns.append({"last": (T0 + timedelta(seconds=5)).replace(tzinfo=None)})
+    ch.query_all_returns.append([_acted_row("k1"), _acted_row("k9")])
+    ch.query_all_returns.append(_id_rows("k9"))
+    res = asyncio.run(acted_pass(ch, now=T0 + timedelta(seconds=30)))
+    assert res.acted_emitted == 1
+    assert [e["memory_id"] for e in events] == ["id-k1", "id-k9"]
+    assert len(ch.credits) == 2
+
+
+def test_a_new_leader_on_a_lagging_replica_credits_nothing_twice(events) -> None:
+    """The old leader's marks are committed but not yet on the replica the new
+    leader reads from: only a sequentially consistent read sees them."""
+    from server.core.ch import sequential_reads_active
+
+    class Lagging(StubCH):
+        async def query_all(self, sql, params=None):
+            if sql == ACTED_CREDITS_SQL and not sequential_reads_active():
+                return []
+            return await super().query_all(sql, params)
+
+    ch = Lagging()
+    ch.query_one_returns.append(None)
+    ch.query_all_returns.append([_acted_row("k1")])
+    ch.query_all_returns.append(_id_rows("k1"))
+    asyncio.run(acted_pass(ch, now=T0))
+    usage_fold.reset_watermark()  # the lease moves: the new leader's memory is empty
+    ch.query_one_returns.append({"last": (T0 + timedelta(seconds=5)).replace(tzinfo=None)})
+    ch.query_all_returns.append([_acted_row("k1")])
+    ch.query_all_returns.append(_id_rows("k1"))
+    res = asyncio.run(acted_pass(ch, now=T0 + timedelta(seconds=30)))
+    assert res.acted_emitted == 0
+    assert [e["memory_id"] for e in events] == ["id-k1"]
+
+
+def test_a_schema_without_the_credits_table_still_credits(events) -> None:
+    class NoTable(StubCH):
+        async def query_all(self, sql, params=None):
+            if sql == ACTED_CREDITS_SQL:
+                raise RuntimeError("Code: 60. Unknown table")
+            return await super().query_all(sql, params)
+
+        async def insert(self, table, rows, settings=None):
+            if table == ACTED_CREDITS_TABLE:
+                raise RuntimeError("Code: 60. Unknown table")
+            await super().insert(table, rows, settings)
+
+    ch = NoTable()
+    ch.query_one_returns.append(None)
+    ch.query_all_returns.append([_acted_row("k1")])
+    ch.query_all_returns.append(_id_rows("k1"))
+    res = asyncio.run(acted_pass(ch, now=T0))
+    assert res.acted_emitted == 1
+    # ...and the in-process set still dedups the re-read window.
+    ch.query_all_returns.append([_acted_row("k1")])
+    res = asyncio.run(acted_pass(ch, now=T0 + timedelta(seconds=60)))
+    assert len(events) == 1
 
 
 def test_a_full_page_holds_the_watermark_at_the_last_credited_write(events, monkeypatch) -> None:

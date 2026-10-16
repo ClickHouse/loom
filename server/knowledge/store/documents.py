@@ -7,6 +7,7 @@ collapses to the latest version of each doc.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any, TypedDict, cast
 
@@ -101,30 +102,79 @@ async def get_one(
     return _hydrate(row) if row else None
 
 
-async def blob_shared_by_another_document(
-    org: str,
-    namespace: str,
-    blob_path: str,
-    source_uri: str,
+# A document that still serves its original: a write without fresh bytes carries
+# such a row's original forward, and the sweep keeps every original one names.
+LIVE_ORIGINAL_SQL = "blob_path != '' AND superseded_at IS NULL AND blob_erased_at IS NULL"
+
+
+def serves_original(row: DocumentRow | None) -> bool:
+    """`LIVE_ORIGINAL_SQL` for a row already read."""
+    return (
+        row is not None
+        and bool(row.blob_path)
+        and row.superseded_at is None
+        and row.blob_erased_at is None
+    )
+
+
+# A pre-033 original: its `blob_path` names a file on the old blob directory.
+LEGACY_BLOB_PATH = "position(blob_path, '/') > 0"
+
+
+def is_legacy_blob_path(blob_path: str) -> bool:
+    """`LEGACY_BLOB_PATH` for one value."""
+    return "/" in blob_path
+
+
+# The sha256 a `blob_path` names: a legacy path ends in it, so once `loom blobs
+# import` stored the bytes, a row still naming the file reads them from ClickHouse.
+ORIGINAL_SHA_SQL = "splitByChar('/', blob_path)[-1]"
+
+
+def original_sha(blob_path: str) -> str:
+    """`ORIGINAL_SHA_SQL` for one value."""
+    return blob_path.rsplit("/", 1)[-1]
+
+
+async def stamp_legacy_originals_gone(
+    deleted: list[str] | None,
+    missing: Sequence[tuple[str, str, str]] = (),
     *,
     ch: _CHClient | None = None,
-) -> bool:
-    """True when a live document other than `source_uri` points at `blob_path`.
-    Blobs are content-addressed per namespace, so two documents with the same
-    bytes share one file."""
+) -> None:
+    """Stamp `blob_erased_at` on the rows whose original is a file of the old blob
+    directory that is gone: the deleted and erased documents' rows naming one of
+    the files `loom blobs import` deleted here (`deleted`; None = every such row,
+    `--accept-missing`), and the live rows of `missing`, (org, namespace, sha)
+    with no file and no stored original, given up with `--accept-missing`. Erasure leaves
+    these rows unstamped (it cannot delete the file), so the census counts them
+    until this runs. Awaited: the caller reports done."""
+    from server.core.repo_base import param_slices
+
     ch = ch or _default_client()
-    row = await ch.query_one(
-        """
-        SELECT 1 AS hit
-        FROM loom.documents FINAL
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND blob_path = {bp:String} AND source_uri != {uri:String}
-          AND superseded_at IS NULL
-        LIMIT 1
-        """,
-        params={"org": org, "ns": namespace, "bp": blob_path, "uri": source_uri},
+    sql = (
+        "ALTER TABLE loom.documents UPDATE blob_erased_at = {now:DateTime} "
+        f"WHERE {LEGACY_BLOB_PATH} AND blob_erased_at IS NULL"
     )
-    return row is not None
+    # A literal, not now(): a replicated mutation must be deterministic.
+    now = datetime.now(UTC).replace(tzinfo=None)
+    by_sha = f" AND {ORIGINAL_SHA_SQL} IN {{shas:Array(String)}} SETTINGS mutations_sync = 2"
+    if deleted is None:
+        await ch.execute(
+            sql + " AND superseded_at IS NOT NULL SETTINGS mutations_sync = 2", params={"now": now}
+        )
+    else:
+        for part in param_slices(sorted(set(deleted))):
+            await ch.execute(
+                sql + " AND superseded_at IS NOT NULL" + by_sha, params={"now": now, "shas": part}
+            )
+    live = (
+        sql + " AND superseded_at IS NULL AND (org, namespace, "
+        f"{ORIGINAL_SHA_SQL}) IN {{keys:Array(Tuple(String, String, String))}}"
+        " SETTINGS mutations_sync = 2"
+    )
+    for part in param_slices(sorted(set(missing))):
+        await ch.execute(live, params={"now": now, "keys": part})
 
 
 async def get_many_by_uris(

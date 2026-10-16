@@ -89,7 +89,7 @@ Check `build_commit` and the boot log before trusting a measurement against it.
 
 ## The dashboard
 
-The server serves `frontend/dist/` at `/me` and answers 503 there until it is built. `/v1/admin/*` works either way.
+The server serves `frontend/dist/` at `/` and answers 503 on dashboard pages until it is built. `/v1/admin/*` works either way.
 
 ```bash
 make frontend-build   # npm install && npm run build (tsc -b + vite build) into frontend/dist/
@@ -98,7 +98,7 @@ npm --prefix frontend run test    # vitest (unit, component, axe)
 npm --prefix frontend run e2e     # Playwright specs in frontend/e2e/
 ```
 
-Open `/me` and paste a token (`loom mint-token … --save` writes `~/.loom/token`), or use it without one in `single-user` mode.
+Open `http://localhost:7777/` and paste a token (`loom mint-token … --save` writes `~/.loom/token`), or use it without one in `single-user` mode.
 
 ## Fake providers
 

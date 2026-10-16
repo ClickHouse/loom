@@ -1,26 +1,18 @@
 """loom.namespace_write_marks — when a namespace's planes last moved.
 
-One row per (org, namespace, plane), kept at the max write time. The
-ClickHouse client feeds an in-process buffer after every INSERT into a plane
-table (`observe_insert`); the buffer flushes as one INSERT every
-`namespace_write_marks_flush_interval_s`, rather than one part per source
-insert.
-
-`last_writes` answers "has anything been written to these namespaces since
-T" with one primary-key read, folding in this process's unflushed marks so a
-process reads its own writes at once; another process sees them after the
-flush (at most the interval, five seconds by default — the precision cost of
-the buffer, against one part per write). `bump` records a write no INSERT
-into a plane table carries (a mutation, such as an erasure). The org-wide
-sentinel namespace `*` marks writes whose namespace is not known at the call
-site; every reader folds it in.
+One row per (org, namespace, plane), kept at the max write time, fed by the
+ClickHouse client after every INSERT into a plane table and flushed from an
+in-process buffer; `last_writes` reads them. Where the server has a Keeper, a namespace's
+last write is also one key of `loom.namespace_write_keys`, for read-your-writes on
+any replica (`written_within`).
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
+from functools import partial
 from typing import Any
 
 from server.core.background import TaskSet
@@ -45,6 +37,8 @@ PLANE_BY_TABLE: dict[str, str] = {
 _pending: dict[tuple[str, str, str], datetime] = {}
 _timer: asyncio.TimerHandle | None = None
 _inflight = TaskSet()
+# The timer's flush in flight: one at a time.
+_flush_task: asyncio.Task[int] | None = None
 
 
 def _interval_s() -> float:
@@ -71,6 +65,8 @@ def observe_insert(table: str, rows: list[dict[str, Any]]) -> None:
             continue
         seen.add((org, ns))
         touch(org, ns, plane, at=now)
+    for org, ns in seen:
+        _land_key_before_answer(org, ns)
 
 
 def touch(org: str, namespace: str, plane: str, *, at: datetime | None = None) -> None:
@@ -95,10 +91,12 @@ def _arm() -> None:
 
 
 def _fire() -> None:
-    global _timer
+    global _timer, _flush_task
     _timer = None
+    if _flush_task is not None and not _flush_task.done():
+        return  # the flush in flight re-arms when it is done
     try:
-        _inflight.spawn(_timed_flush(), name="loom-write-marks-flush", detached=True)
+        _flush_task = _inflight.spawn(_timed_flush(), name="loom-write-marks-flush", detached=True)
     except RuntimeError:
         return
 
@@ -112,7 +110,10 @@ async def _timed_flush() -> int:
     from server.core.ch import set_query_tag
 
     set_query_tag(FLUSH_QUERY_TAG)
-    return await flush_now()
+    n = await flush_now()
+    if _pending:
+        _arm()  # the marks touched while this flush was in flight
+    return n
 
 
 async def flush_now(*, ch: _CHClient | None = None) -> int:
@@ -132,7 +133,9 @@ async def flush_now(*, ch: _CHClient | None = None) -> int:
     ]
     try:
         ch = ch or _default_client()
-        await ch.insert(TABLE, rows)
+        # Batched server-side with every other process's marks: one part per
+        # busy interval, not one per flush.
+        await ch.insert(TABLE, rows, settings={"async_insert": 1, "wait_for_async_insert": 1})
     except Exception as e:  # noqa: BLE001 — telemetry-grade write; the marks stay buffered
         log.warning("namespace_write_marks flush failed (non-fatal, %d rows): %s", len(rows), e)
         _arm()
@@ -143,13 +146,83 @@ async def flush_now(*, ch: _CHClient | None = None) -> int:
     return len(rows)
 
 
+RESTART_PLANE = "restart"
+
+
+async def mark_process_start(*, ch: _CHClient | None = None) -> None:
+    """Move the all-orgs mark: a predecessor that crashed took its unflushed
+    marks with it. Committed; a failure is logged (the next start retries)."""
+    from server.core.ch import query_tag_var
+
+    ch = ch or _default_client()
+    row = {
+        "org": ORG_WIDE,
+        "namespace": ORG_WIDE,
+        "plane": RESTART_PLANE,
+        "last_write": naive_utc_now(),
+    }
+    tag = query_tag_var.set("namespace_write_marks.process_start")
+    try:
+        await ch.insert(TABLE, [row], settings={"async_insert": 0, "wait_for_async_insert": 1})
+    except Exception as e:  # noqa: BLE001 — a missed start mark never blocks boot
+        log.warning("namespace_write_marks: process-start mark failed (non-fatal): %s", e)
+    finally:
+        query_tag_var.reset(tag)
+
+
+KEYS_TABLE = "loom.namespace_write_keys"
+KEY_QUERY_TAG = "namespace_write_marks.key"
+_SEP = "\x1f"
+_KEY_INSERT = f"INSERT INTO {KEYS_TABLE} (key) SETTINGS async_insert = 0 VALUES ({{key:String}})"
+_KEYS_READ = (
+    f"SELECT count() AS n FROM {KEYS_TABLE} WHERE key IN {{keys:Array(String)}} "
+    "AND last_write >= now64(3) - toIntervalMillisecond({ms:UInt32})"
+)
+# How long an answer waits for its write's key; a slower key lands detached.
+KEY_WAIT_S = 1.0
+
+
+def _key(org: str, namespace: str) -> str:
+    return f"{org}{_SEP}{namespace or ORG_WIDE}"
+
+
+def _land_key_before_answer(org: str, namespace: str) -> None:
+    """Set the key now, beside the rest of the request, and have the answer wait for
+    it (at most `KEY_WAIT_S`): the caller's next read, on any replica, sees it
+    (`written_within`) and reads with sequential consistency. Once per namespace per
+    request."""
+    from server.core import request_tail
+
+    step = f"{KEY_QUERY_TAG}:{_key(org, namespace)}"
+    if not request_tail.active() or request_tail.deferred(step):
+        return
+    task = _inflight.spawn(land_key(org, namespace), name="loom-write-key", detached=True)
+    request_tail.defer_once(step, partial(asyncio.wait, [task], timeout=KEY_WAIT_S))
+
+
+async def land_key(org: str, namespace: str, *, ch: _CHClient | None = None) -> None:
+    """(org, namespace) was written now, by the server's clock: its key is set (it
+    overwrites the last one). Best-effort."""
+    from server.core.ch import query_tag_var
+
+    tag = query_tag_var.set(KEY_QUERY_TAG)
+    try:
+        ch = ch or _default_client()
+        await ch.execute(_KEY_INSERT, {"key": _key(org, namespace)})
+    except Exception as e:  # noqa: BLE001 — a lost key only skips one sequential read
+        log.warning("namespace write key not set (%s/%s): %s", org, namespace, e)
+    finally:
+        query_tag_var.reset(tag)
+
+
 def pending() -> dict[tuple[str, str, str], datetime]:
     return dict(_pending)
 
 
 def _reset_for_tests() -> None:
-    global _timer
+    global _timer, _flush_task
     _pending.clear()
+    _flush_task = None
     if _timer is not None:
         _timer.cancel()
         _timer = None
@@ -163,8 +236,17 @@ async def last_writes(
 ) -> dict[str, datetime]:
     """namespace → latest write across its planes, for the namespaces asked
     plus the org-wide sentinel. A namespace absent from the result has no
-    recorded write since the marks began. This process's unflushed marks
-    are folded in."""
+    recorded write since the marks began.
+
+    This process's unflushed marks are folded in, so it reads its own writes at
+    once; another process sees them after the flush (at most
+    `namespace_write_marks_flush_interval_s`, against one part per write). `bump`
+    records a write no plane-table INSERT carries (a mutation, such as an erasure).
+    The org-wide sentinel namespace `*` marks writes whose namespace is not known at
+    the call site. A process that dies loses its unflushed marks, so every writing
+    process moves the all-orgs mark (`*`, `*`) when it starts (`mark_process_start`),
+    and that is folded in too: no precedent proven unmoved before a lost mark is
+    served after its replacement boots."""
     if not namespaces:
         return {}
     ch = ch or _default_client()
@@ -173,7 +255,8 @@ async def last_writes(
         f"""
         SELECT namespace, max(last_write) AS last_write
         FROM {TABLE}
-        WHERE org = {{org:String}} AND namespace IN {{nss:Array(String)}}
+        WHERE (org = {{org:String}} AND namespace IN {{nss:Array(String)}})
+           OR (org = '{ORG_WIDE}' AND namespace = '{ORG_WIDE}')
         GROUP BY namespace
         """,
         params={"org": org, "nss": wanted},
@@ -191,6 +274,27 @@ async def last_writes(
         if ts is not None and (p_ns not in out or ts > out[p_ns]):
             out[p_ns] = ts
     return out
+
+
+async def written_within(
+    org: str, namespace: str, window_s: float, *, ch: _CHClient | None = None
+) -> bool:
+    """Whether (org, namespace) or its org-wide sentinel was written within the last
+    `window_s` seconds, by this process (its unflushed marks) or any process.
+
+    The caller's next request may land on any replica. Each write sets its
+    namespace's key, stamped by the server's clock, beside the request, and the
+    answer waits for it (at most `KEY_WAIT_S`): one Keeper write, no part."""
+    since = naive_utc_now() - timedelta(seconds=window_s)
+    for (p_org, p_ns, _plane), at in _pending.items():
+        if p_org == org and p_ns in (namespace, ORG_WIDE) and at >= since:
+            return True
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        _KEYS_READ,
+        {"keys": [_key(org, namespace), _key(org, ORG_WIDE)], "ms": int(window_s * 1000)},
+    )
+    return bool(row and int(row.get("n") or 0) > 0)
 
 
 async def blacklist_updated_at(*, ch: _CHClient | None = None) -> datetime | None:
@@ -225,3 +329,4 @@ async def bump(
         )
     except Exception as e:  # noqa: BLE001 — telemetry-grade write
         log.warning("namespace_write_marks bump failed (%s/%s/%s): %s", org, namespace, plane, e)
+    await land_key(org, namespace, ch=ch)

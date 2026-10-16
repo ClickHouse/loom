@@ -26,7 +26,7 @@ function collectErrors(page: Page): string[] {
 test("the Patterns toggle is absent when the namespace has no QA binding", async ({ page }) => {
   const calls = await installApi(page);
   const errors = collectErrors(page);
-  await page.goto("/me/graph");
+  await page.goto("/graph");
   await expect(page.getByRole("heading", { name: "Pick an entity to walk from" })).toBeVisible();
   await expect.poll(() => calls.qa.filter((c) => c.op === "binding").length).toBe(1);
   expect(calls.qa[0]).toMatchObject({ op: "binding", namespace: "bench" });
@@ -35,7 +35,7 @@ test("the Patterns toggle is absent when the namespace has no QA binding", async
   // A deep link into the mode on an unbound namespace keeps the mode and
   // offers the tracker sources the caller reads — no board, no grid, and no silent drop
   // to the walk.
-  await page.goto("/me/graph?mode=patterns");
+  await page.goto("/graph?mode=patterns");
   await expect(page.getByRole("heading", { name: "Which tracker source?" })).toBeVisible();
   await expect(page.getByRole("grid")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Pick an entity to walk from" })).toHaveCount(0);
@@ -47,7 +47,7 @@ test("on a bound namespace the toggle opens the board, the grid roves focus, a c
 }) => {
   const calls = await installApi(page, { trackerBound: true });
   const errors = collectErrors(page);
-  await page.goto("/me/graph");
+  await page.goto("/graph");
   const toggle = page.getByRole("button", { name: "Patterns" });
   await expect(toggle).toBeVisible();
   await expect(toggle).toHaveAttribute("aria-pressed", "false");
@@ -139,7 +139,7 @@ test("a deep link naming an issue opens on its tracker graph, and picking an iss
 }) => {
   const calls = await installApi(page, { trackerBound: true });
   const errors = collectErrors(page);
-  await page.goto("/me/graph?mode=patterns&component=MergeTree&severity=medium&issue=97288");
+  await page.goto("/graph?mode=patterns&component=MergeTree&severity=medium&issue=97288");
   const graphTab = page.getByRole("tab", { name: /tracker graph/ });
   await expect(graphTab).toHaveAttribute("aria-selected", "true");
   const svg = page.locator("svg.tracker-graph-svg");
@@ -166,7 +166,7 @@ test("on a restricted tracker namespace a cell's incidents and escalations are s
 }) => {
   const calls = await installApi(page, { trackerRestricted: true });
   const errors = collectErrors(page);
-  await page.goto("/me/graph?mode=patterns&component=MergeTree&severity=medium");
+  await page.goto("/graph?mode=patterns&component=MergeTree&severity=medium");
   const facets = page.getByRole("complementary", { name: "Facets" });
   await expect(facets.getByText("tracker-bench-private")).toBeVisible();
   await expect(facets.getByText("restricted", { exact: true })).toBeVisible();
@@ -202,7 +202,7 @@ test("a deep link to 119601 draws 116490 below as a related issue — not a dupl
 }) => {
   const calls = await installApi(page, { trackerBound: true });
   const errors = collectErrors(page);
-  await page.goto("/me/graph?mode=patterns&issue=119601");
+  await page.goto("/graph?mode=patterns&issue=119601");
   const svg = page.locator("svg.tracker-graph-svg");
   await expect(svg).toBeVisible();
   // The fixture graph relates 116490 to 119601 (`related_to`); the picture draws it below
@@ -238,7 +238,7 @@ test.describe("under a coarse pointer", () => {
   test("every board cell is at least 44 px tall and the mouse layout is not", async ({ page }) => {
     await installApi(page, { trackerBound: true });
     const errors = collectErrors(page);
-    await page.goto("/me/graph?mode=patterns");
+    await page.goto("/graph?mode=patterns");
     expect(await page.evaluate(() => matchMedia("(pointer: coarse)").matches)).toBe(true);
     const cells = page.getByRole("grid").locator("[data-cell]");
     await expect(cells).toHaveCount(5);

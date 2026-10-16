@@ -30,14 +30,37 @@ participant to acknowledge the same configuration ID after requests, worker
 passes, registered finite child tasks and buffered writes have drained. A newborn
 loads either the pending closed gate or the committed replacement before serving.
 
-Each bounded rebuild step holds the shared configuration Keeper key. It cannot be
-taken over merely because its TTL or a heartbeat expired. A stopped local owner
-can be recovered only by acquiring its existing kernel-held proof file on the
-persistent blob volume and confirming no residual ClickHouse queries, mutations
-or asynchronous inserts. Missing files and unreachable remote owners prove
-nothing: they keep the transition blocked. Do not delete the proof files or use
-an ephemeral blob volume. A lost remote host requires operator fencing and
-recovery; automatic timeout-based takeover would allow a paused writer to resume.
+Each participant writes its row every 10 s from a thread of its own, and every
+ClickHouse client it opens names its id in the User-Agent. A participant counts as
+stopped only once it retired itself (a graceful shutdown), a later process on its
+host proved it gone, or an operator retired it. An expired heartbeat is no proof: a
+paused process can hold admitted work outside ClickHouse and write it with the old
+configuration once it resumes, so the transition waits for it to beat again and
+drain. Each row carries its host name, kernel boot, container id (Docker's, or a
+Kubernetes pod's and container name), pid namespace, pid and start time; every 10 s
+each process retires the participants of its own host and boot whose pid no longer
+runs that process, or that ran in its own container before the container restarted
+into a new pid namespace, once no query of theirs runs. That covers a killed process
+whose container or worker restarts in place; two containers that share a host name
+(host networking, two containers of one pod) never retire each other. An operator who confirmed its
+process is gone retires it with `loom participant retire --participant <id> --yes`,
+which refuses one whose heartbeat is fresh or whose queries still run. The workers
+leader's `/v1/health` lists every participant a transition would wait on as
+`provider_participants_stale` (`heartbeat_expired`, `queries_running`, or
+`no_heartbeat` for a row from a build without heartbeats).
+`system.processes` is read over `clusterAllReplicas(LOOM_CH_CLUSTER)`; a server
+without that cluster answers for itself, and any other failure of the read
+counts the participant as running.
+
+Each bounded rebuild step holds the shared configuration Keeper key, renewed every
+20 s (TTL 60 s). A contender takes over an expired key only when its holder's
+participant counts as stopped; an elapsed TTL alone is no proof. `loom
+provider-lock clear --holder <holder>` frees a key whose holder never expires, and
+refuses while the holder renews, heartbeats or has a query running. Boot migrations
+never run under this key: a boot holds it only to check that no rebuild is
+unfinished, after enrolling, so a reconfiguration started while it migrates waits
+for it. A participant frozen for over 60 s may count as stopped; it re-enrolls with
+its next heartbeat and closes its gate on its next refresh.
 
 The first coordinator checkpoint freezes endpoint/model identity and valid
 configured prefix widths. Restarting does not adopt changed prefix settings.

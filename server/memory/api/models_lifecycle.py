@@ -149,7 +149,7 @@ class MemoryCopyToInput(BaseModel):
     The user-facing counterpart to memory.cross_promote (which is operator-only:
     ADMIN on both ends, addressed by UUID). Here ANY user may copy a memory they
     can READ into any namespace they can WRITE — no ADMIN — and it is addressed
-    by (namespace, memory_key), the way the /me UI holds a memory. Non-destructive:
+    by (namespace, memory_key), the way the dashboard holds a memory. Non-destructive:
     the source stays; the target records cross_promoted_from_* lineage and is
     re-embedded by the target namespace's own embedding_worker.
     """

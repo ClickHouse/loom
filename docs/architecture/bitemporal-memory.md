@@ -206,13 +206,9 @@ the `loom.memory` row (the current-state projection) are written after it.
 - **Receipts:** a write's output carries `commit_seq` and a `read_token`.
 
 The journal is authoritative from a namespace's first write; there is no
-journal-less mode. This trades automatic write failover for a tractable model:
-memory writes need a Keeper, or an operator's declaration that one process writes
-memory (`LOOM_MEMORY_TEMPORAL_PUBLISHER=process`). Without a Keeper only the server
-process publishes: the CLI and any second process are refused, and process mode
-refuses writes when `web_workers` is above 1 (each web process would allocate the
-same sequences). A separate workers container is a second writer too: process mode
-is for one server process in all; anything larger runs with a Keeper.
+journal-less mode. A namespace's commits are serialized by a deployment-wide lease
+(Loom requires a Keeper), so every process and host of a deployment, the CLI
+included, publishes to one sequence.
 
 A batch that spans namespaces commits each in turn, and the current-state insert
 runs after them. If a later step fails, the committed beliefs stand. Retrying with

@@ -33,6 +33,8 @@ from server.tracker.app import patch_history as ph
 from server.tracker.domain import backport as bp
 from server.tracker.domain import patch_presence as pp
 
+pytestmark = pytest.mark.usefixtures("mirror_here")
+
 ORG, NS, QA = "clickhouse", "code-clickhouse", "tracker-clickhouse"
 BRANCHES = {f"code-clickhouse-26-{i}": f"26.{i}" for i in range(1, 9)}
 SRC = "src/DataTypes/IDataType.cpp"

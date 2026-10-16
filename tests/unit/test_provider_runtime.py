@@ -9,13 +9,13 @@ from uuid import uuid4
 import pytest
 
 from server.core.background import TaskSet
+from server.core.embedding_space import fingerprint as embedding_space_fingerprint
 from server.core.model_work_gate import ModelWorkGate
 from server.core.provider_keys import install_provider_keys, provider_key, saved_key_presence
 from server.insights.api.models_provider_setup import ProviderSetupInput
 from server.insights.app import provider_runtime as runtime
 from server.insights.domain.provider_rebuild import REBUILD_TABLES
 from server.insights.domain.provider_rebuild_manifest import RebuildManifest, RebuildTablePlan
-from server.insights.domain.provider_serving_policy import embedding_space_fingerprint
 from server.observability.problems import HealthState, collect_problems
 
 

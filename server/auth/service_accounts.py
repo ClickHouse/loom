@@ -4,7 +4,7 @@ creator's grants.
 A service-account token (`sa:` subject) carries no grants of its own. Its
 `loom.service_accounts` row names who created it and whether it inherits
 that creator's live grants (`inherit_creator_grants`: true for a token
-minted from the /me setup flow, false for an agent-signup token). The gate
+minted from the dashboard's Settings, false for an agent-signup token). The gate
 and every namespace listing read this one row through `sa_creator`, so
 they agree on what the token may read.
 """

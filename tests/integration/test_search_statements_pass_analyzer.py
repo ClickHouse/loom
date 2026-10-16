@@ -734,7 +734,7 @@ def test_patch_part_probe_and_reemit_reads_pass_the_analyzer(ch_client) -> None:
     assert got.result_rows[0][0] == 0  # the CI table has no patch parts
     ch_client.query(
         "EXPLAIN QUERY TREE SELECT * FROM loom.memory_embeddings FINAL PREWHERE "
-        + M._EMB_KEY_PREWHERE
+        + M.EMB_KEY_PREWHERE
         + " WHERE tombstoned_at IS NULL",
         parameters={"org": "o", "ns": "n", "a": "a", "u": "u", "s": "s", "k": "k"},
     )

@@ -569,7 +569,7 @@ Resolve one duplicate pair.
 
 ## `memory.delete`
 
-WHAT: Tombstone a memory by key (14-day recovery via /me).
+WHAT: Tombstone a memory by key (14-day recovery in the dashboard).
 
 `POST /v1/memory.delete` · MCP `loom_memory_delete` · role `writer` · idempotent · audited
 
@@ -2234,7 +2234,6 @@ What changed for one key.
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `namespace` | `str` | The namespace the op reads or writes. |
-| `publisher` | `str` | keeper \| process: who serializes the namespace's commits in this deployment. |
 | `head_seq` | `int` |  |
 | `projection_seq` | `int` | Highest sequence the assertion projection has applied with no gap below. |
 | `first_recorded_at` | `datetime \| None` |  |

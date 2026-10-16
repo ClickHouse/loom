@@ -150,13 +150,15 @@ def test_every_code_symbols_writer_goes_through_the_funnel_the_view_watches() ->
             if re.search(r"insert\(\s*['\"]loom\.code_symbol(s|_names)['\"]", text):
                 offenders.append(str(p.relative_to(ROOT)))
     assert offenders == [], offenders
-    # every `"code_symbols"` write site is an insert_rows/build_row/tombstone_of call
+    # every `"code_symbols"` write site is an insert_rows/build_row/tombstone_of call,
+    # or scip_delta's `_publish`, which checks the entry lease and calls insert_rows
     for rel in ("server/code/app/index/ingest.py", "server/code/app/index/scip_delta.py"):
         text = (ROOT / rel).read_text()
         for m in re.finditer(r'"code_symbols"', text):
             line = text[text.rfind("\n", 0, m.start()) + 1 : text.find("\n", m.end())]
             assert re.search(
-                r"insert_rows\(|build_row\(|tombstone_of\(|moved_of\(|^\s*\"code_symbols\",$", line
+                r"insert_rows\(|_publish\(|build_row\(|tombstone_of\(|moved_of\(|^\s*\"code_symbols\",$",
+                line,
             ), (
                 rel,
                 line.strip(),

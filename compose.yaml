@@ -59,7 +59,7 @@ services:
     restart: unless-stopped
     # Uvicorn waits LOOM_GRACEFUL_SHUTDOWN_S (10 s) for in-flight requests, then
     # the lifespan drains run; Docker's default 10 s would kill them mid-drain.
-    stop_grace_period: 45s
+    stop_grace_period: 75s
     depends_on:
       clickhouse:
         condition: service_healthy
@@ -102,12 +102,14 @@ services:
           "CMD",
           "python",
           "-c",
-          "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:7777/v1/health',timeout=3).status==200 else 1)",
+          "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:7777/v1/health/ready',timeout=3).status==200 else 1)",
         ]
       interval: 10s
       timeout: 5s
       retries: 12
-      start_period: 45s
+      # Readiness, not liveness. A boot can wait up to 900 s on another
+      # process's migration lease before it applies or finds nothing pending.
+      start_period: 900s
 
 volumes:
   loom-ch-data:

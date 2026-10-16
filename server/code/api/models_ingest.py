@@ -65,6 +65,10 @@ class CodeScipIngestInput(_CodeIdentity):
     # picks the watermark key the batch advances, '' = the C++ key `scip_commit`.
     producer: str = ""
     payload: str  # one part of the JSON-encoded ScipDelta
+    # The holder of the entry's lease the delta was built under (`loom code entry-lock`
+    # hands it to its command); when set, the part is refused unless that holder still
+    # holds the lease. '' = unfenced (CI pushes).
+    entry_lease_holder: str = Field(default="", max_length=200)
 
     # The applied batch's commit becomes a tier watermark, which later
     # bounds `git log` / `rev-list` windows.

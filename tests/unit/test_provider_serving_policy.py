@@ -4,10 +4,8 @@ import json
 
 import pytest
 
-from server.insights.domain.provider_serving_policy import (
-    embedding_space_fingerprint,
-    serving_vector_settings,
-)
+from server.core.embedding_space import fingerprint as embedding_space_fingerprint
+from server.insights.domain.provider_serving_policy import serving_vector_settings
 
 
 def test_new_labels_route_to_rebuilt_prefixes_and_keep_the_enabled_width():

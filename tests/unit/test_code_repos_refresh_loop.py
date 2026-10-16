@@ -1,0 +1,57 @@
+"""Every process re-reads loom.code_repos on a timer, so a restriction set on one
+replica reaches a replica that serves none of the ops that refresh it."""
+
+from __future__ import annotations
+
+import asyncio
+from typing import Any
+
+import pytest
+
+from server.code.app.index import repo_registry
+from server.code.domain.index.repos import registry_repos
+from server.settings import settings
+
+
+class _Repo:
+    rows: list[dict[str, Any]] = []
+
+    def __init__(self, ch: Any = None) -> None:
+        pass
+
+    async def active_code_repos(self) -> list[dict[str, Any]]:
+        return list(self.rows)
+
+
+def _row(classification: str) -> dict[str, Any]:
+    return {
+        "org": "acme",
+        "namespace": "code-widgets",
+        "repo": "acme/widgets",
+        "branch": "main",
+        "classification": classification,
+    }
+
+
+def test_a_new_restriction_reaches_an_idle_replica(monkeypatch: pytest.MonkeyPatch) -> None:
+    import server.code.store.index as store
+
+    monkeypatch.setattr(store, "CodeRepo", _Repo)
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    monkeypatch.setattr(settings, "code_repos_refresh_seconds", 1)
+    repo_registry.reset_for_tests()
+    _Repo.rows = [_row("standard")]
+
+    async def _go() -> list[str]:
+        task = await repo_registry.start_refresher()
+        seen = [c.classification for c in registry_repos()]
+        _Repo.rows = [_row("restricted")]  # set_access on another replica
+        await asyncio.sleep(1.3)  # no op on this one refreshes it
+        seen += [c.classification for c in registry_repos()]
+        task.cancel()
+        return seen
+
+    try:
+        assert asyncio.run(_go()) == ["standard", "restricted"]
+    finally:
+        repo_registry.reset_for_tests()

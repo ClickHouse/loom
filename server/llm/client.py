@@ -84,25 +84,12 @@ def _key_absent(provider: str) -> bool:
     return bool(env) and not provider_key(provider)
 
 
-def llm_via_main(provider: str) -> bool:
-    """Whether this process sends `provider`'s calls to the main Loom: a
-    read-replica that knows the main Loom's URL and has no key for it."""
-    from server.settings import settings
-
-    return (
-        bool(settings.read_replica)
-        and bool(str(settings.read_replica_main_url).strip())
-        and _key_absent(provider)
-    )
-
-
 def provider_key_missing(provider: str) -> bool:
     """True when a keyed provider's API key is absent — the condition under
-    which `_build_llm_client` silently falls back to the fake client (never
-    on a replica that completes through the main Loom). Diagnostics (doctor,
-    the /me degraded banner) use this so the fallback is visible instead of
-    silent."""
-    return _key_absent(provider) and not llm_via_main(provider)
+    which `_build_llm_client` silently falls back to the fake client.
+    Diagnostics (doctor, the dashboard's degraded banner) use this so the fallback is
+    visible instead of silent."""
+    return _key_absent(provider)
 
 
 _cached: LLMClient | None = None
@@ -117,10 +104,6 @@ def _build_llm_client(provider: str, model: str, *, fake_label: str, warn: str) 
     """
     import logging
 
-    if llm_via_main(provider):
-        from server.llm.main_loom import MainLoomLLMClient
-
-        return MainLoomLLMClient(provider=provider, model=model)
     if provider_key_missing(provider):
         logging.getLogger(__name__).warning(warn)
         from server.llm.fake import FakeLLMClient

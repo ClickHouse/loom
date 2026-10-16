@@ -22,6 +22,7 @@ backoff, the failure tracking, and the lifecycle.
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import time
 import zlib
@@ -30,7 +31,7 @@ from typing import Any
 
 from server.core.model_work_gate import get_model_work_gate
 from server.observability.traffic_class import bind_background
-from server.workers import pass_context, status_store
+from server.workers import leader, pass_context, status_store
 from server.workers.registry import (
     FIRST_PASS_DUE_TIMEOUT_SECONDS,
     WorkerSpec,
@@ -52,6 +53,54 @@ _ALERT_THRESHOLD = 3
 _PARTIAL_RETRY_SECONDS = 3600.0
 
 
+def _record_cancelled(spec: WorkerSpec, started: float, ctx: Any, state: Any, streak: int) -> None:
+    """The status row of a pass stopped before it finished."""
+    _record_status_row(
+        spec.name,
+        started=started,
+        success=False,
+        partial=ctx,
+        spec=spec,
+        state=state,
+        streak=streak,
+        cancelled=True,
+    )
+
+
+def _report_failure(
+    spec: WorkerSpec, exc: Exception, ctx: Any, started: float, deadline: float, streak: int
+) -> None:
+    """Publish and log a failed pass: the streak and partial gauges, the error, and
+    the DEGRADED line once the streak reaches the alert threshold."""
+    # The DEGRADED line below is a log; this is the alertable form.
+    _publish_streak(spec.name, streak)
+    _publish_partial(spec.name, ctx.count)
+    duration_ms = int((time.monotonic() - started) * 1000)
+    if isinstance(exc, TimeoutError):
+        log.error(
+            "%s: pass exceeded its deadline of %.0fs and was cancelled "
+            "(consecutive_failures=%d, duration_ms=%d)",
+            spec.name,
+            deadline,
+            streak,
+            duration_ms,
+        )
+    else:
+        log.exception(
+            "%s: pass failed (consecutive_failures=%d, duration_ms=%d)",
+            spec.name,
+            streak,
+            duration_ms,
+        )
+    if streak >= _ALERT_THRESHOLD:
+        log.error(
+            "%s: DEGRADED — %d consecutive failures. Check upstream "
+            "(ClickHouse, Langfuse, external API) and operator dashboard.",
+            spec.name,
+            streak,
+        )
+
+
 class WorkerSupervisor:
     """Spawns one supervised task per worker spec; manages shutdown."""
 
@@ -61,10 +110,18 @@ class WorkerSupervisor:
         self._workers: list[WorkerSpec] = []
 
     def start_all(self) -> None:
-        """Boot all enabled workers. Idempotent — second call is a no-op."""
-        if self._tasks:
-            log.warning("WorkerSupervisor.start_all called twice; ignoring")
-            return
+        """Boot all enabled workers. Idempotent: a worker whose task still runs
+        (one that did not drain when a lost lease stopped them) is not started
+        a second time; it starts again once that task ends."""
+        self._tasks = [t for t in self._tasks if not t.done()]
+        running = {t.get_name(): t for t in self._tasks}
+        if running:
+            log.warning(
+                "WorkerSupervisor: %d workers still running; each restarts when it ends",
+                len(running),
+            )
+        # A supervisor stopped by a lost lease starts again when it is regained.
+        self._stopping.clear()
 
         self._workers = enabled_workers()
         if not self._workers:
@@ -77,15 +134,30 @@ class WorkerSupervisor:
             [w.name for w in self._workers],
         )
         for spec in self._workers:
-            # Seed the gauges at 0 for every supervised worker so "no series"
-            # means "not supervised", never "has not failed yet".
-            _publish_streak(spec.name, 0)
-            _publish_partial(spec.name, 0)
-            task = asyncio.create_task(
-                self._supervise_as_background(spec),
-                name=f"loom-worker:{spec.name}",
-            )
-            self._tasks.append(task)
+            old = running.get(_task_name(spec))
+            if old is not None:
+                old.add_done_callback(functools.partial(self._restart, spec))
+                continue
+            self._spawn(spec)
+
+    def _spawn(self, spec: WorkerSpec) -> None:
+        # Seed the gauges at 0 for every supervised worker so "no series"
+        # means "not supervised", never "has not failed yet".
+        _publish_streak(spec.name, 0)
+        _publish_partial(spec.name, 0)
+        task = asyncio.create_task(self._supervise_as_background(spec), name=_task_name(spec))
+        self._tasks.append(task)
+
+    def _restart(self, spec: WorkerSpec, _ended: asyncio.Task[None]) -> None:
+        """A worker that was still cancelling when the supervisor started
+        again: start it now, unless the supervisor stopped meanwhile."""
+        if self._stopping.is_set():
+            return
+        self._tasks = [t for t in self._tasks if not t.done()]
+        if any(t.get_name() == _task_name(spec) for t in self._tasks):
+            return
+        log.info("WorkerSupervisor: %s drained late; starting it", spec.name)
+        self._spawn(spec)
 
     async def stop_all(self, drain_timeout_s: float = 10.0) -> None:
         """Cancel every supervised task and wait (bounded) for graceful exit.
@@ -116,7 +188,8 @@ class WorkerSupervisor:
             )
         # The last pass of a stopping colour reaches the store.
         await status_store.drain()
-        self._tasks.clear()
+        # One that did not drain stays tracked: a restart must not run it twice.
+        self._tasks = [t for t in self._tasks if not t.done()]
 
     def status(self) -> list[dict[str, object]]:
         """Snapshot for `/v1/admin/workers.status`. Reads from the existing
@@ -171,6 +244,12 @@ class WorkerSupervisor:
                 pass
 
         while not self._stopping.is_set():
+            if not _lease_fresh():
+                # A holder that missed its renewals (a pause, a stalled
+                # network) starts nothing until it renews: another process
+                # may hold the lease by now. Its lease loop stops or resumes us.
+                await self._sleep_or_drain(_STALE_LEASE_RECHECK_SECONDS)
+                continue
             started = time.monotonic()
             # A pass is a paid operation like a request. The
             # accumulator bound here is what the pass's LLM / embedder calls
@@ -206,6 +285,11 @@ class WorkerSupervisor:
                         spec, ctx, partial=bool(ctx.count), streak=consecutive_failures
                     )
                 )
+            except pass_context.PassStopped:
+                # The pass saw a stop or a stale lease between batches. Recorded
+                # like a cancel; the loop top waits until the lease is fresh.
+                log.warning("%s: pass stopped (lease not fresh); no further writes", spec.name)
+                _record_cancelled(spec, started, ctx, state, consecutive_failures)
             except asyncio.CancelledError:
                 log.info("%s: cancelled, exiting supervised loop", spec.name)
                 # The store says the colour stopped mid-pass.
@@ -213,18 +297,9 @@ class WorkerSupervisor:
                 # write a `cancelled` row that repeats the previous pass's
                 # counts with the sleep as its duration.
                 if in_pass:
-                    _record_status_row(
-                        spec.name,
-                        started=started,
-                        success=False,
-                        partial=ctx,
-                        spec=spec,
-                        state=state,
-                        streak=consecutive_failures,
-                        cancelled=True,
-                    )
+                    _record_cancelled(spec, started, ctx, state, consecutive_failures)
                 raise
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — a failed pass must not end the loop
                 consecutive_failures += 1
                 _finish_pass(
                     spec.name,
@@ -239,33 +314,7 @@ class WorkerSupervisor:
                     streak=consecutive_failures,
                     deadline=deadline if isinstance(exc, TimeoutError) else 0.0,
                 )
-                # The DEGRADED line below is a log; this is the alertable form.
-                _publish_streak(spec.name, consecutive_failures)
-                _publish_partial(spec.name, ctx.count)
-                duration_ms = int((time.monotonic() - started) * 1000)
-                if isinstance(exc, TimeoutError):
-                    log.error(
-                        "%s: pass exceeded its deadline of %.0fs and was cancelled "
-                        "(consecutive_failures=%d, duration_ms=%d)",
-                        spec.name,
-                        deadline,
-                        consecutive_failures,
-                        duration_ms,
-                    )
-                else:
-                    log.exception(
-                        "%s: pass failed (consecutive_failures=%d, duration_ms=%d)",
-                        spec.name,
-                        consecutive_failures,
-                        duration_ms,
-                    )
-                if consecutive_failures >= _ALERT_THRESHOLD:
-                    log.error(
-                        "%s: DEGRADED — %d consecutive failures. Check upstream "
-                        "(ClickHouse, Langfuse, external API) and operator dashboard.",
-                        spec.name,
-                        consecutive_failures,
-                    )
+                _report_failure(spec, exc, ctx, started, deadline, consecutive_failures)
                 backoff = min(
                     _BACKOFF_CAP_SECONDS,
                     _BACKOFF_BASE_SECONDS * (2 ** (consecutive_failures - 1)),
@@ -276,6 +325,9 @@ class WorkerSupervisor:
                 # its first namespace every few minutes.
                 await self._sleep_or_drain(failure_hold_seconds(spec, exc, backoff))
             finally:
+                # Work of this pass still running (a thread, a cut at the
+                # deadline) stops at its next check_stop().
+                ctx.stopped.set()
                 pass_context.clear()
 
     async def _sleep_or_drain(self, seconds: float) -> None:
@@ -284,6 +336,20 @@ class WorkerSupervisor:
             await asyncio.wait_for(self._stopping.wait(), timeout=seconds)
         except TimeoutError:
             pass  # normal — interval elapsed without a stop signal
+
+
+def _task_name(spec: WorkerSpec) -> str:
+    return f"loom-worker:{spec.name}"
+
+
+_STALE_LEASE_RECHECK_SECONDS = 1.0
+
+
+def _lease_fresh() -> bool:
+    """The supervisor lease was renewed recently enough to start a pass
+    (always, outside `auto`, or with no lease set)."""
+    lease = leader.current()
+    return lease is None or lease.fresh()
 
 
 async def first_pass_is_due(spec: WorkerSpec) -> bool:

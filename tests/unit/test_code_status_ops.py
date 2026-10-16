@@ -1,5 +1,5 @@
 """code.index_status freshness fields, code.repos per-entry authz, and the
-code-namespace directory registration — the backend of the /me Code section."""
+code-namespace directory registration — the backend of the dashboard's Repositories page."""
 
 from __future__ import annotations
 
@@ -173,6 +173,9 @@ def _fakes(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(gitrepo, "head_sha", _FakeGit.head_sha)
     monkeypatch.setattr(gitrepo, "commit_count_between", _FakeGit.commit_count_between)
+    from server.code.app.index import mirrors
+
+    monkeypatch.setattr(mirrors, "_present", lambda cfg: True)  # the fake git's
 
 
 @pytest.mark.asyncio
@@ -368,8 +371,12 @@ async def test_refresh_writes_last_refresh_breadcrumb(monkeypatch: pytest.Monkey
     async def _pass(org: str = "", namespace: str = "") -> CodeIngestResult:
         return CodeIngestResult()
 
+    async def _no_lease(org: str, ns: str) -> None:
+        return None
+
     monkeypatch.setattr(refresh_mod, "CodeRepo", _R)
     monkeypatch.setattr(refresh_mod, "_REFRESH_LOCKS", {})
+    monkeypatch.setattr(refresh_mod, "_take_lease", _no_lease)
     monkeypatch.setattr(worker_mod, "run_pass", _pass)
     out = await refresh_mod.handle_code_refresh(
         CodeRefreshInput(agent="ci-bot", expected_head="d" * 40, wait=True)
@@ -532,7 +539,7 @@ async def test_a_commit_question_gets_the_compact_answer_by_default(
     from server.code.api.models_status import CodeIndexStatusInput
     from server.code.app.index import commit_coverage as cc
 
-    async def _cov(git_dir, commit, head, tiers, paths=None):
+    async def _cov(git_dir, commit, head, tiers, paths=None, gap=""):
         return {
             "commit": commit,
             "in_mirror": True,

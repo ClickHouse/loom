@@ -13,9 +13,8 @@ request's context, so its statements carry the request's `log_comment`); the
 set holds the live tasks of the running loop, and `drain()` at shutdown lets
 them land before the ClickHouse client goes away. A task scheduled with a
 `scope` (org, namespace) can be waited on by a read of that namespace in the
-same process (`settle`), and is marked in flight for the server's other
-processes (`server/memory/app/graph_write_marks.py`), so a caller that writes and then
-reads what the write projects sees its own projection wherever the read lands.
+same process (`settle`); the other processes see a graph projection in flight
+through `server/memory/app/graph_write_marks.py`.
 """
 
 from __future__ import annotations
@@ -55,12 +54,6 @@ def schedule(
     if scope is not None:
         _SCOPES[task] = scope
         task.add_done_callback(_forget_scope)
-        # The other processes of the server see it in flight too.
-        from server.memory.app.graph_write_marks import marks as _graph_marks
-
-        token = _graph_marks().begin_pending(*scope)
-        if token is not None:
-            task.add_done_callback(lambda _t: _graph_marks().end_pending(token))
     task.add_done_callback(_note_failure)
     return task
 

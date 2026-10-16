@@ -870,25 +870,6 @@ async def memory_heads(
     )
 
 
-async def foreign_publisher(
-    org: str, namespace: str, publisher_id: str, since: datetime, *, ch: _CHClient | None = None
-) -> bool:
-    """Is another publisher writing the namespace now: a commit of its since `since`,
-    within the last SETTLE_S and after this publisher's own last one? (A process
-    that stopped while this one started ages out; a live sibling does not.)"""
-    ch = ch or _default_client()
-    row = await ch.query_one(
-        "SELECT toUnixTimestamp64Micro(maxIf(recorded_at, publisher_id != {me:String})) AS theirs, "
-        "toUnixTimestamp64Micro(maxIf(recorded_at, publisher_id = {me:String})) AS mine, "
-        f"toUnixTimestamp64Micro(now64(6) - INTERVAL {SETTLE_S} SECOND) AS recent "
-        f"FROM {COMMITS} WHERE org = {{org:String}} AND namespace = {{ns:String}} "
-        "AND recorded_at >= {since:DateTime64(6, 'UTC')}",
-        params={"org": org, "ns": namespace, "since": since, "me": publisher_id},
-    )
-    theirs, mine, recent = (int((row or {}).get(k) or 0) for k in ("theirs", "mine", "recent"))
-    return theirs > max(mine, recent)
-
-
 async def version_row(
     org: str,
     namespace: str,

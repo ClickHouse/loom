@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Required, TypedDict, Unpack
 
+from server.core import readiness
 from server.settings import settings
 
 logger = logging.getLogger("loom.code_index.sandbox")
@@ -173,6 +174,18 @@ def sandbox_state() -> bool | None:
     """The probe's answer if this process has probed, else None (no probe here:
     `/v1/health` must not spawn processes)."""
     return _available
+
+
+def readiness_check() -> readiness.CheckResult:
+    """With LOOM_CODE_SANDBOX_REQUIRED, ready once the probe found a sandbox."""
+    if not settings.code_sandbox_required:
+        return readiness.CheckResult(True)
+    refusal = layout_refusal()
+    if refusal:
+        return readiness.CheckResult(False, refusal[:300])
+    if _available is None:
+        return readiness.CheckResult(False, "sandbox probe not finished")
+    return readiness.result(_available, "LOOM_CODE_SANDBOX_REQUIRED and no sandbox here")
 
 
 def _probe() -> bool:

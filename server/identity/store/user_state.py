@@ -1,4 +1,4 @@
-"""Repository for loom.user_state: a /me user's saved choices."""
+"""Repository for loom.user_state: a dashboard user's saved choices."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from server.core.repo_base import _CHClient, _default_client
 
 
 async def saved_default_namespace(org: str, subject: str, *, ch: _CHClient | None = None) -> str:
-    """The namespace the user picked in the /me switcher, "" when none."""
+    """The namespace the user picked in the dashboard's switcher, "" when none."""
     ch = ch or _default_client()
     row = await ch.query_one(
         """

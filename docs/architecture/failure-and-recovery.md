@@ -17,7 +17,7 @@ are in [troubleshooting](../operations/troubleshooting.md).
 | Unsupported settings | A replica that rejects the quantized-codes read setting makes the client drop it for the process and retry.                                                                                                                   |
 | Point reads          | Reads after the caller's own write use sequential consistency; a miss right after a write re-reads once (`LOOM_CH_READ_YOUR_WRITES`); a search on a namespace written within 20 s reads sequentially.                         |
 | Schema skew          | A statement naming a table a pending migration would create is refused with 503 `SCHEMA_PENDING` (below).                                                                                                                     |
-| Op idempotency       | Ops declared `idempotent` accept `Idempotency-Key` (HTTP) or `_idempotency_key` (MCP). The answer is kept in `loom.idempotency` for 24 hours, keyed on org, subject, op and key. Two replicas racing on one key can both run. |
+| Op idempotency       | Ops declared `idempotent` accept `Idempotency-Key` (HTTP) or `_idempotency_key` (MCP). The answer is kept in `loom.idempotency` for 24 hours, keyed on org, subject, op and key. A duplicate while the first runs gets a 409. |
 | Primary write        | The fact row and its vector row are awaited committed inserts. A failure fails the request.                                                                                                                                   |
 | Projections          | Graph, chunks, evidence and supersession side tables fail open and are repaired by workers.                                                                                                                                   |
 | Telemetry            | `agent_events` and the events stream are batched and never fail a request. A crash can lose the unflushed queue.                                                                                                              |
@@ -42,12 +42,12 @@ it.
 Cross-table writes are not transactional. The fact and its vector land together; derived
 data catches up:
 
-| Derived data                  | Catches up                                                                                                                                                                                  |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| BM25 statistics               | Refreshable views every minute; search reads a live tail, so ranking stays exact (`LOOM_MEMORY_SEARCH_BM25_LIVE_TAIL`).                                                                     |
-| Usage counters, reinforcement | One `usage_fold` pass (every 300 s).                                                                                                                                                        |
-| Temporal assertion projection | Inline after the journal commit; on a failure readers reduce the journal tail and the `memory_temporal_projection` worker replays it ([bi-temporal memory](bitemporal-memory.md)).          |
-| Entity-graph projection       | Shortly after the response. A `facts.traverse` of the same namespace waits for it, across every process that shares the write marks (`LOOM_GRAPH_WRITE_MARKS_DIR`), else within the writer. |
+| Derived data                  | Catches up                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| BM25 statistics               | Refreshable views every minute; search reads a live tail, so ranking stays exact (`LOOM_MEMORY_SEARCH_BM25_LIVE_TAIL`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| Usage counters, reinforcement | One `usage_fold` pass (every 300 s).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Temporal assertion projection | Inline after the journal commit; on a failure readers reduce the journal tail and the `memory_temporal_projection` worker replays it ([bi-temporal memory](bitemporal-memory.md)).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Entity-graph projection       | Shortly after the response. A `facts.traverse` of the same namespace that starts after the response waits for it (at most 3 s) on every process of the deployment: each projection in flight is recorded in `loom.graph_projections` (Keeper keys where the server has a Keeper), and its end records the namespace's graph write before clearing it, on the server's clock. A process that dies mid-projection leaves its record for at most 15 s: each process waits it out once (3 s), and until the record goes stale, walks of that namespace there are read fresh, never served from or kept in the memo. Past 32 projections of one namespace at once, the extra ones are not waited on; each counts as a graph write before its `memory.set` answers and again at its end. |
 
 **Why not transactions:** ClickHouse has none across tables, and emulating them adds a
 round trip and a failure mode to every write. A durable primary pair plus idempotent repair
@@ -141,7 +141,7 @@ the audit insert, boot calibration, the embedding caches and every telemetry wri
 
 | Down                  | What happens                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ClickHouse            | `/v1/health` answers 503 (the only case). Requests fail with `OVERLOADED`, `BACKEND_TIMEOUT` or a 500 carrying the request id. Tokens verify on the last revocation snapshot. Workers fail their passes and back off.                                                                                                                                                                                                                                 |
+| ClickHouse            | `/v1/health` and `/v1/health/ready` answer 503; `/v1/health/live` stays 200. Requests fail with `OVERLOADED`, `BACKEND_TIMEOUT` or a 500 carrying the request id. Tokens verify on the last revocation snapshot. Workers fail their passes and back off.                                                                                                                                                                                              |
 | Embedding provider    | `memory.set` and `memory.bulk_set` fail: no fact is stored without its vector. Paths that can wait (`memory.promote`, conversation turns, chunk embeds) store a stub for `embedding_worker`. `memory.search` fails with 503 `EMBED_TIMEOUT` unless the query's vector is in the embedding cache. A hung provider sets no health flag (the log shows `query embed exceeded`); one that answers errors shows `provider_failing:<name>` on `/v1/health`. |
 | Embedding key missing | The process serves the fake embedder, with an error log and a `problems` entry; searches match only rows written under the fake model.                                                                                                                                                                                                                                                                                                                |
 | LLM provider          | Each call retries (four attempts). Fail-open stages (HyDE, rerank, the extraction verifier, titles) are skipped; extraction and `memory.ask` synthesis have no substitute. `LOOM_LLM_FALLBACK_MODEL` hands an outage to a second model.                                                                                                                                                                                                               |
@@ -161,6 +161,37 @@ The old colour is stopped, not removed, and its image tagged `loom:prev`.
 (`tests/unit/test_migrations_additive.py`), so the previous build runs against the newer
 schema. See [upgrades](../operations/upgrades.md).
 
+## A replica that dies mid-migration or mid-reconfiguration
+
+Every process is a provider participant: one row in `loom._provider_participants`, written
+every 10 s from a thread of its own, and a User-Agent naming its id on every ClickHouse
+query it sends. A participant counts as stopped when it retired, or when its last heartbeat
+is older than 60 s (server clock) and `system.processes` shows no query of its own on any
+node. Nothing else counts: an unreachable process is not a stopped one.
+
+- **Killed mid-migration.** Migrations hold the migration lock only (`ttl_s`, renewed while
+  they apply), never the provider lock, which a boot holds just to check that no rebuild is
+  unfinished. A second container takes the migration lock over once it expired and applies
+  what is left.
+- **Killed holding the provider lock** (a rebuild step, a saved configuration). The key's
+  TTL is 60 s, renewed every 20 s; a contender takes it over once it expired and the
+  holder's participant counts as stopped. `loom provider-lock clear --holder <holder>`
+  frees one whose holder never expires (an older build without heartbeats).
+- **Killed mid-reconfiguration.** The transition waits on a participant whose heartbeat
+  expired, since a paused process may resume with admitted work, until a process on
+  its host proves it gone (its container restarted, or its pid exited) and retires it.
+  The workers leader
+  deletes the rows of participants retired a day ago and lists, once a minute, those a
+  transition would wait on as `provider_participants_stale` in its `/v1/health`. Retire
+  one by hand with `loom participant retire --participant <id> --yes` once its process
+  is confirmed gone; the command refuses a participant whose heartbeat is fresh or whose
+  queries still run.
+- **A boot that fails after enrolling** retires its row; a crash-looping container leaves
+  none behind.
+
+A process frozen past its heartbeat (a stopped container, a VM pause) holds the
+transition until it resumes and drains, or an operator retires it.
+
 ## Data-loss boundaries
 
 - **Acknowledged writes.** A successful `memory.set` has committed both its rows.
@@ -172,10 +203,15 @@ schema. See [upgrades](../operations/upgrades.md).
 - **After-response projections** lost in a crash are rebuilt by the repair workers.
 - **ClickHouse OSS single node.** No replication and no point-in-time recovery. ClickHouse
   Cloud, or a replicated OSS cluster, is the production path. Back up with ClickHouse
-  `BACKUP` or native backups; `dev/backup_loom.py` moves a namespace, it is not disaster
-  recovery. See [backup and recovery](../operations/backup-and-recovery.md).
-- **Files outside ClickHouse.** Document originals (`LOOM_BLOB_DIR`) and code mirrors live
-  on volumes. Mirrors can be re-cloned; originals need the volume's backup.
+  `BACKUP` or native backups; `dev/backup_loom.py` moves a deployment, an org or a
+  namespace, it is not disaster recovery. See [backup and recovery](../operations/backup-and-recovery.md).
+- **Files outside ClickHouse.** Document originals are in ClickHouse
+  (`loom.document_blobs`). Code mirrors live on a volume and re-clone from the remote
+  ClickHouse records on a host without them. Provider reconfiguration keeps nothing on
+  the host ([provider reconfiguration](provider-reconfiguration.md)).
+- **A move to another host or ClickHouse.** Carry ClickHouse, the env config and
+  `LOOM_JWT_SECRET`; everything else comes back
+  ([moving a deployment](../operations/backup-and-recovery.md#moving-a-deployment)).
 
 ## Capacity
 
@@ -185,25 +221,30 @@ past the Python tier is ClickHouse capacity. The workers do not scale by replica
 supervisor runs them. Procedures are in [deployment](../operations/deployment.md) and
 [performance tuning](../guides/performance-tuning.md).
 
-| Tier                   | Scales by                                                  | Bounded by                                                                |
-| ---------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------- |
-| Web (HTTP, MCP, `/me`) | More containers behind a load balancer; `LOOM_WEB_WORKERS` | Python CPU per process; the per-process pool; per-replica rate limits     |
-| Background workers     | One supervisor per deployment; a larger workers container  | Pass duration against interval; provider quota for LLM and embedding work |
-| Retrieval and storage  | ClickHouse compute, memory and storage                     | Rows scanned per tenant read; merge pressure under ingest                 |
-| Providers              | Provider quota and batch sizes                             | Provider rate limits; `loom.embed.pending` shows the embedding backlog    |
+| Tier                       | Scales by                                                  | Bounded by                                                                |
+| -------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------- |
+| Web (HTTP, MCP, dashboard) | More containers behind a load balancer; `LOOM_WEB_WORKERS` | Python CPU per process; the per-process pool; per-replica rate limits     |
+| Background workers         | One supervisor per deployment; a larger workers container  | Pass duration against interval; provider quota for LLM and embedding work |
+| Retrieval and storage      | ClickHouse compute, memory and storage                     | Rows scanned per tenant read; merge pressure under ingest                 |
+| Providers                  | Provider quota and batch sizes                             | Provider rate limits; `loom.embed.pending` shows the embedding backlog    |
 
 ### Web tier
 
 | Knob                             | Effect                                                                                                                                                                                                                                       |
 | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| More web replicas                | N web containers behind a load balancer, all with `LOOM_BACKGROUND_WORKERS=off`.                                                                                                                                                             |
+| More web replicas                | N identical replicas behind a load balancer, all with `LOOM_BACKGROUND_WORKERS=auto`.                                                                                                                                                        |
 | `LOOM_WEB_WORKERS`               | uvicorn processes per container; unset, the image starts one per CPU the container may use, at most one per GiB of memory and at most 8. Each process runs its Python on one core; the local embedder gives each an equal share of the CPUs. |
-| `LOOM_REPLICA_COUNT`             | Divides each rate-limit bucket by N, because buckets are per replica (below).                                                                                                                                                                |
+| `LOOM_REPLICA_COUNT`             | Floor of the replica count that divides each rate-limit bucket (the live serving `loom.instances` rows, below).                                                                                                                              |
 | `LOOM_LATENCY_BUDGET_MULTIPLIER` | Scales every op's `budget_p99_ms` before a budget violation fires (default 1.0).                                                                                                                                                             |
 
-A new replica needs no warm-up beyond loading its revocation snapshot. Read-your-writes
-across processes is handled by ClickHouse (committed inserts, sequential re-reads), not
-process affinity.
+A new replica serves once `/v1/health/ready` answers 200: ClickHouse answers, no
+migration is pending, the revocation snapshot and signing keyring are loaded and fresh,
+the tracker registry and runtime overrides have loaded once (boot waits up to
+`LOOM_BOOT_WARMUP_TIMEOUT_S` for both), the similarity calibration is adopted, its
+configuration matches the deployment's, and the sandbox runs where it is required. On
+SIGTERM it answers 503 there and keeps serving for `LOOM_SHUTDOWN_READY_DELAY_S` before
+its port closes. Read-your-writes across processes is handled by ClickHouse (committed
+inserts, sequential re-reads), not process affinity.
 
 ### ClickHouse client
 
@@ -252,8 +293,10 @@ pass every bucket, and a refusal decrements none.
 
 These are the namespace-tier defaults (`DEFAULT_LIMITS`, `op_class_for`):
 
-- **Per replica.** Buckets live in the process or host, so N replicas admit N times the
-  limit unless `LOOM_REPLICA_COUNT=N`. The sum is approximate.
+- **Per replica.** Buckets live in the process or host. Each replica holds the limit
+  divided by the hosts with a live serving `loom.instances` row, so the replicas' sum
+  approximates the limit. `LOOM_REPLICA_COUNT` is the floor of that count, and the count
+  while the rows cannot be read.
 - **Within a host.** With `LOOM_WEB_WORKERS > 1`, processes share one bucket table in a
   memory-mapped file (`LOOM_RATELIMIT_SHARED=auto`, `LOOM_RATELIMIT_SHARED_PATH`,
   `LOOM_RATELIMIT_SHARED_SLOTS`). `/v1/health` reports `ratelimit.backend`.
@@ -264,13 +307,75 @@ every request's path to protect the database.
 
 ### Background workers
 
-The lease is a host-local file lock (`LOOM_SUPERVISOR_LOCK_PATH`), so:
+One supervisor runs per deployment. In `auto` mode every process of the deployment
+(`LOOM_DEPLOYMENT=1`) contends for one lease in ClickHouse: key `workers_supervisor` in
+the Keeper lock table `loom._migration_lock` (strict KeeperMap). Outside the deployment
+(an iso or branch server on the same ClickHouse) `auto` runs no workers and the boot log
+says so; `on` runs them there, but only the deployment's holder does the leader's work
+(retention ALTERs, tracker namespace rows, the published configuration, the provider
+participant sweep).
+Expiry is judged on the ClickHouse server's clock. With T = `LOOM_SUPERVISOR_LEASE_TTL_S`
+(default 30 s, at least 24):
 
-- Run exactly one workers container per deployment. With several hosts, set
-  `LOOM_BACKGROUND_WORKERS=off` on all but one; two hosts in `auto` each elect a leader.
+| Step   | When                                                                         | Why                                                                                         |
+| ------ | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Renew  | every T/6; a failed renewal is retried every T/12                            | Several failures fit before the holder gives up                                             |
+| Lose   | T/2 after the last renewal that landed was sent                              | Measured from the send, so the server's stamp is never earlier                              |
+| Stop   | at that deadline, even while a renewal call is still blocked                 | A hung call cannot keep the workers running; each call is sent once, timeout max(1, T/24) s |
+| Drain  | up to T/6, so the workers are stopped by 2T/3                                | A workers child still running then is killed                                                |
+| Expiry | T after the server stamped the last renewal; then another process takes over | T/3 of margin after the drain                                                               |
+
+A holder that missed its renewals starts no new pass until it renews (a paused process
+resuming does not run one beside the new holder), and one whose Keeper key still names it
+takes the lease back at once instead of waiting out the TTL. A holder that finds the lease
+taken stops its workers; when the holder dies, another process takes over after T. A
+process that becomes the holder after boot does the leader's boot work too (tracker
+namespace rows, published settings, `LOOM_RETENTION_*_DAYS`).
+
+Stopping the workers cancels each pass at its next `await`. Work the cancel cannot reach
+(a thread such as the PageRank or community computation, a pass that resumes after a
+pause before its lease loop runs) stops at the pass's next `pass_context.check_stop()`,
+which the long loops call between batches: the ingest legs, the SCIP delta rounds,
+`code_pr_history`, `code_graph_stats` and `entity_communities`. It raises once the pass
+was stopped or the lease is no longer fresh, so the pass sends no further write. There
+are no fencing tokens: a statement already sent still lands.
+
+A process stands aside (the holder stops its workers and gives the key up; a contender
+does not ask) while:
+
+- it drains after SIGTERM, so another process takes over during its ready delay;
+- its configuration differs from the deployment's published one (it is not ready, and
+  could write vectors in the wrong space or sign with the wrong root);
+- a live `loom.instances` row of a newer build contends for the same lease.
+
+The last is the rolling-upgrade hand-over. Each row carries its build's schema version
+(its last migration number) and the lease it contends for right now: none while that
+process drains, has drifted or gave the lease up, so such a row never makes an older
+build yield. The hand-over fires only when the schema versions differ, so a code-only
+release never hands over: the old holder keeps the workers until it stops. Once no
+newer build is live (a rollback), the older one contends again. A process whose workers
+child keeps failing to start gives the lease up for five minutes (below).
+
+So:
+
+- Several hosts can run in `auto`; one of them runs the workers. `on` skips the election.
 - A second copy of the maintenance workers wastes ClickHouse work; a second copy of the LLM
   workers doubles their scans and spend.
-- Keep workers out of the web containers (`dev/docker-compose.cloud.yml`).
+- The holder runs the workers in a child process (`LOOM_WORKERS_PROCESS=child`), so a
+  long pass does not share the event loop that serves its requests (passes on the
+  serving loop roughly doubled request p90: `memory.get` 148 ms against 74–79 ms during
+  a `code_ingest` pass). The child runs the
+  supervisor and what its workers use (the ClickHouse client, the provider configuration,
+  the event emitter, the tracker and repository registries), not the serving lifespan.
+  It reads the lease deadline from its parent every second; the deadline stops moving
+  once the lease is not fresh. The child is gone by that deadline plus T/6: it exits by
+  itself then, its parent kills it then, and the kernel kills it when the parent dies
+  (`PR_SET_PDEATHSIG`). The child's event loop beats to its parent every second, and
+  `/v1/health` shows a child with no beat for 15 s as not alive. A draining process
+  (SIGTERM) stops its workers, inline or in a child, and gives the lease up while it
+  still serves. A child that exits within 60 s of starting five times in a row makes its
+  process give the lease up and report `workers_lease_given_up`; another process takes
+  the workers, and this one asks again five minutes later.
 
 Worker work is not partitioned across processes. A worker keeps up through bounded passes:
 a batch or time budget per pass (for example `embedding_worker` embeds up to 100 stubs;
@@ -330,9 +435,17 @@ The metrics are described in [monitoring](../operations/monitoring.md).
 
 ### Known limits
 
-- **One worker leader per host.** Multi-host deployments pin the workers to one host.
-- **Per-replica rate limits** are approximate; the sign-in and sign-up limits are per
-  process with no division.
+- **One worker leader per deployment.** Worker passes are not spread across hosts.
+- **Per-replica rate limits** are approximate: bucket fill is per host. The sign-in and
+  sign-up attempt limits are counted across every process in `loom.auth_attempts`.
+- **Check-then-insert across replicas** (a sign-up's name and email, a personal
+  namespace, an OAuth code or refresh token, an idempotency key in flight) runs under a
+  deployment-wide claim, a strict KeeperMap key in `loom._migration_lock`, with the
+  check read sequentially. A second
+  contender gets a 409; a claim store that cannot answer is a 503 (an idempotency key
+  then runs as a plain miss).
+- **Events-stream telemetry** (budget violations) is drained on `SIGTERM`; a `SIGKILL` or
+  OOM loses at most one flush interval of it, never audit or memory rows.
 - **Namespace size drives read latency**, because vector reads are exact scans.
 - **Single-node ClickHouse OSS** has no replication and no failover.
 

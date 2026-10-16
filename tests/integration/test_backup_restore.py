@@ -103,6 +103,9 @@ async def test_round_trip_preserves_rows(
         "memory",
         "--skip-idempotency",
         "--into-live",
+        # memory_versions still holds these versions (only memory was deleted),
+        # so restoring memory without it is the split the flag is for.
+        "--allow-view-split",
     )
     assert r.returncode == 0, r.stderr
 
@@ -125,10 +128,10 @@ async def test_backup_empty_org_safe(tmp_path: Path) -> None:
     )
     assert r.returncode == 0, r.stderr
     manifest = json.loads((out / "manifest.json").read_text())
-    # Org-scoped tables should be 0 rows for an org that never existed.
-    # `idempotency` has no `org` column and is backed up unfiltered, so skip.
+    # Org-scoped tables should be 0 rows for an org that never existed; a
+    # table without an `org` column is skipped by an org backup.
     for entry in manifest["tables"]:
-        if "error" in entry or entry["name"] == "idempotency":
+        if "error" in entry or "skipped" in entry:
             continue
         assert entry["rows"] == 0, f"{entry['name']} had {entry['rows']} rows"
 

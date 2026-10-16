@@ -1,6 +1,6 @@
-"""The lifespan's boot and shutdown steps: the serialised boot migration, the
+"""The lifespan's boot and shutdown steps: the fenced boot migration, the
 leader's tracker namespace rows, the one-shot boot tasks, the revocation
-snapshot, the supervisor lease retry, the provider report, the vector
+snapshot and signing keyring, the supervisor lease loop, the provider report, the vector
 capability probes, the similarity-gate calibration and the write drain before
 the ClickHouse client closes. `server.main.lifespan` runs them in order."""
 
@@ -8,40 +8,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Callable, Coroutine
 from typing import Any
 
 from server.core.background import register_deferred_task
 from server.settings import settings
-
-
-def run_boot_migrations_serialised(migrate: Callable[[list[str]], int], lock_path: str) -> int:
-    """Run `migrate([])` while holding an exclusive fcntl lock on `lock_path`.
-
-    Sibling worker processes block until the holder releases, then run the
-    same idempotent step and find nothing pending. The lock is advisory and
-    host-local: it serialises processes that share a filesystem (the web
-    workers of one container), which is exactly the population that races.
-    If the lock file cannot be opened the step runs unserialised.
-    """
-    import fcntl
-
-    try:
-        fh = open(lock_path, "a+")
-    except OSError as e:
-        logging.getLogger("loom.boot").warning(
-            "boot migrate lock unavailable (%s): running unserialised", e
-        )
-        return migrate([])
-    try:
-        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
-        try:
-            return migrate([])
-        finally:
-            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
-    finally:
-        fh.close()
-
 
 # What a process that skipped the boot step is serving without — the pending migration files
 # named at boot, carried by /v1/health.
@@ -50,14 +22,14 @@ SKIPPED_PENDING_MIGRATIONS: tuple[str, ...] = ()
 
 def run_boot_migrations_if_enabled(
     migrate: Callable[[list[str]], int],
-    lock_path: str,
     *,
     enabled: bool = True,
     pending: Callable[[], list[str]] | None = None,
 ) -> int:
     """The boot-migration step behind `LOOM_BOOT_MIGRATE`.
 
-    Enabled: `run_boot_migrations_serialised`. Disabled: apply nothing and
+    Enabled: `migrate([])`, which takes the deployment's migration lock
+    (`server.core.schema.migrate_lease`) before applying. Disabled: apply nothing and
     return 0 — the process serves whatever schema the service has. The
     switch exists for processes that share a ClickHouse service with the
     deployment but run a branch's code (isolated A/B servers), so a branch's
@@ -73,7 +45,7 @@ def run_boot_migrations_if_enabled(
     global SKIPPED_PENDING_MIGRATIONS
     if enabled:
         SKIPPED_PENDING_MIGRATIONS = ()
-        return run_boot_migrations_serialised(migrate, lock_path)
+        return migrate([])
     names: list[str] = []
     if pending is not None:
         try:
@@ -143,53 +115,62 @@ def require_safe_bind(
         )
 
 
-def require_replica_schema() -> None:
-    """A read-replica runs against the schema the main Loom applies. A build
-    that expects a migration the service lacks would fail on every path that
-    reads what it adds, so it does not start: upgrade the main Loom first."""
-    if settings.read_replica and SKIPPED_PENDING_MIGRATIONS:
-        raise RuntimeError(
-            "this read-replica's build expects migrations the shared ClickHouse has not "
-            f"applied ({', '.join(SKIPPED_PENDING_MIGRATIONS)}); upgrade the main Loom first"
+async def warn_newer_schema() -> list[str]:
+    """Log one WARNING naming the ledger's migrations this build does not
+    carry: an older build booting on a newer schema (a rolling upgrade's N-1,
+    or a rollback). It serves, under the N-1/N rules of
+    docs/architecture/rolling-upgrades.md. Returns the files."""
+    from server.core.schema.status import schema_status
+
+    status = await schema_status(ttl_s=0.0)
+    newer = list(status.get("ledger_only") or [])
+    if newer:
+        logging.getLogger(__name__).warning(
+            "schema is newer than this build: %d applied migration(s) this build does not "
+            "carry (%s); serving as the older build of a rolling upgrade",
+            len(newer),
+            ", ".join(newer),
         )
-
-
-async def start_replica_config(ch: Any) -> asyncio.Task[None] | None:
-    """A read-replica takes the main Loom's published settings before it loads
-    providers or serves, then re-reads them on a timer, and checks on a timer
-    that the main Loom answers. None on the main Loom."""
-    if not settings.read_replica:
-        return None
-    from server.core import deployment_config
-
-    await deployment_config.load(ch, boot=True)
-    loops = [deployment_config.refresh_loop(ch)]
-    if str(settings.read_replica_main_url).strip():
-        from server.clients import main_loom
-
-        # Whether the main Loom answers, for /v1/health (`replica.main`).
-        loops.append(main_loom.probe_loop())
-    return asyncio.create_task(_run_together(*loops), name="loom-replica-deployment-config")
-
-
-async def _run_together(*loops: Coroutine[Any, Any, Any]) -> None:
-    """The replica's loops under one task, so shutdown's one cancel stops them all."""
-    await asyncio.gather(*loops)
+    return newer
 
 
 def publish_deployment_config(ch: Any) -> None:
-    """The deployment's workers leader publishes its settings for read-replicas.
-    A branch or A/B server on the same service (no LOOM_DEPLOYMENT) never does:
-    its env is not the deployment's."""
-    if settings.read_replica or not settings.deployment:
+    """The deployment's workers leader publishes its configuration, which every
+    process checks itself against (`server.core.deployment_config`). A branch
+    or A/B server on the same service (no LOOM_DEPLOYMENT) never does: its env
+    is not the deployment's."""
+    if not settings.deployment:
         return
-    from server.core import deployment_config
-    from server.observability.instance import instance_label
+    from server.core import instances
 
-    _spawn_boot_task(
-        deployment_config.publish(ch, published_by=instance_label() or ""),
-        name="loom-deployment-config",
+    _spawn_boot_task(instances.publish_config(ch), name="loom-deployment-config")
+
+
+def publish_frontend_assets(ch: Any) -> None:
+    """Every writing replica shares its dashboard bundle, so a page from another
+    build finds its `/assets/*` here during a rolling upgrade. Boot waits for
+    the first round (`await_warm_up`)."""
+    from server.core.paths import FRONTEND_DIST
+    from server.observability.instance import instance_label
+    from server.storage import frontend_assets
+
+    _spawn_boot_loop(
+        frontend_assets.publish_loop(
+            FRONTEND_DIST / "assets",
+            published_by=instance_label() or "",
+            ch=ch,
+            first_done=_warm_event("frontend_assets"),
+        ),
+        name="loom-frontend-assets",
     )
+
+
+def mark_process_start(ch: Any) -> None:
+    """A writing process moves the all-orgs write mark at start: one that died
+    lost its buffered marks, and a precedent must not outlive them."""
+    from server.core import namespace_write_marks
+
+    _spawn_boot_task(namespace_write_marks.mark_process_start(ch=ch), name="loom-write-marks-start")
 
 
 async def register_tracker_namespaces(ch: Any) -> None:
@@ -227,7 +208,7 @@ async def require_clickhouse_ready() -> None:
     try:
         server = await asyncio.to_thread(
             preflight.require_ready,
-            need=preflight.needed_at_boot(),
+            need="server",
             migrates=settings.boot_migrate,
         )
     except preflight.PreflightError as e:
@@ -238,10 +219,20 @@ async def require_clickhouse_ready() -> None:
         logging.getLogger(__name__).warning("ClickHouse preflight: %s", warning)
 
 
+async def require_keeper(ch: Any) -> None:
+    """Refuse to serve without a ClickHouse Keeper: every lease and claim is a key of
+    the KeeperMap table `loom._migration_lock`, which the migrator creates."""
+    from server.core.leases import ENGINE_SQL
+    from server.core.schema.migrate_lease import KeeperRequired
+
+    row = await ch.query_one(ENGINE_SQL, {"table": "_migration_lock"})
+    if row is None or row.get("engine") != "KeeperMap":
+        raise KeeperRequired("loom._migration_lock is not a KeeperMap table")
+
+
 async def run_fenced_boot_migrations(
     ch: Any,
     migrate: Callable[[list[str]], int],
-    lock_path: str,
     *,
     enabled: bool,
     pending: Callable[[], list[str]],
@@ -249,7 +240,7 @@ async def run_fenced_boot_migrations(
     """`_fenced_boot_migrations`, then forget the schema state this process
     cached before it: a sibling worker may have applied the migrations while
     this one waited, and the no-op paths return without touching the ledger."""
-    rc = await _fenced_boot_migrations(ch, migrate, lock_path, enabled=enabled, pending=pending)
+    rc = await _fenced_boot_migrations(ch, migrate, enabled=enabled, pending=pending)
     if rc == 0:
         from server.core.schema.status import reset_cache
 
@@ -260,7 +251,6 @@ async def run_fenced_boot_migrations(
 async def _fenced_boot_migrations(
     ch: Any,
     migrate: Callable[[list[str]], int],
-    lock_path: str,
     *,
     enabled: bool,
     pending: Callable[[], list[str]],
@@ -272,7 +262,7 @@ async def _fenced_boot_migrations(
     an upgrade's migrations to tables being replaced underneath it.
     """
     if not enabled:
-        return run_boot_migrations_if_enabled(migrate, lock_path, enabled=False, pending=pending)
+        return run_boot_migrations_if_enabled(migrate, enabled=False, pending=pending)
     if not pending():
         # A no-op restart performs no DDL and needs no provider Keeper lock.
         # In particular, never turn an advisory/fail-open ledger probe into
@@ -285,44 +275,40 @@ async def _fenced_boot_migrations(
     if exists is None or type(exists.get("n")) is not int or exists["n"] not in (0, 1):
         raise RuntimeError("Cannot establish provider configuration schema before boot DDL")
     if exists["n"] == 0:
-        return run_boot_migrations_if_enabled(migrate, lock_path, enabled=True, pending=pending)
-    keeper = await ch.query_one(
-        "SELECT count() AS n FROM system.tables "
-        "WHERE database='loom' AND name='_migration_lock' AND engine='KeeperMap'"
-    )
-    if not (keeper and keeper.get("n")):
-        # No Keeper: the runner never made its KeeperMap lock, so the provider
-        # lock (a key in it) could never be held and no configuration was ever
-        # published. There is no rebuild to fence against.
-        return run_boot_migrations_if_enabled(migrate, lock_path, enabled=True, pending=pending)
+        return run_boot_migrations_if_enabled(migrate, enabled=True, pending=pending)
+    from server.insights.app.provider_barrier import enroll_before_migrations
     from server.insights.domain.provider_setup import pending_configuration
     from server.insights.store.provider_configuration import configurations
     from server.insights.store.provider_lock import configuration_lock
 
-    # A sibling holds the lock while its migrations run, so wait as long as for
-    # the migration lease: failing to start would stop the whole server
-    # (uvicorn exits when one worker fails to start).
-    log = logging.getLogger(__name__)
-    async with configuration_lock(
-        wait_s=settings.boot_migrate_lease_wait_s,
-        out=lambda m: log.info(m.strip(" ·")),
-    ):
+    # Enrolled, a reconfiguration activated after the check waits for this
+    # process; the migrations then run under the migrate lease alone. A boot
+    # waits for the lock as long as for that lease: one web worker failing to
+    # start stops the whole server (uvicorn).
+    await enroll_before_migrations(ch)
+    async with configuration_lock(wait_s=settings.boot_migrate_lease_wait_s):
         if pending_configuration(await configurations(ch=ch)) is not None:
             raise RuntimeError("Finish the provider rebuild before applying schema migrations")
-        return run_boot_migrations_if_enabled(migrate, lock_path, enabled=True, pending=pending)
+    return run_boot_migrations_if_enabled(migrate, enabled=True, pending=pending)
 
 
-# One-shot boot tasks nobody awaits. The loop holds only a weak reference to
+# Boot tasks and loops nobody awaits. The loop holds only a weak reference to
 # a task, so each is kept here until it finishes, and shutdown cancels what is
 # still running before the ClickHouse client closes under it.
 _BOOT_TASKS: set[asyncio.Task[Any]] = set()
 
 
 def _spawn_boot_task(coro: Coroutine[Any, Any, Any], *, name: str) -> None:
+    register_deferred_task(_spawn_boot_loop(coro, name=name))
+
+
+def _spawn_boot_loop(coro: Coroutine[Any, Any, Any], *, name: str) -> asyncio.Task[Any]:
+    """A task that runs for the process's life: cancelled at shutdown, never
+    registered as deferred, since a model transition's drain waits for those."""
     task = asyncio.get_running_loop().create_task(coro, name=name)
-    register_deferred_task(task)
     _BOOT_TASKS.add(task)
     task.add_done_callback(_BOOT_TASKS.discard)
+    return task
 
 
 def cancel_boot_tasks() -> None:
@@ -330,11 +316,38 @@ def cancel_boot_tasks() -> None:
         task.cancel()
 
 
+# The first attempts of the boot loops, which boot awaits before serving.
+_WARM: dict[str, asyncio.Event] = {}
+
+
+def _warm_event(name: str) -> asyncio.Event:
+    return _WARM.setdefault(name, asyncio.Event())
+
+
+async def await_warm_up(timeout_s: float, names: tuple[str, ...]) -> list[str]:
+    """Wait (at most `timeout_s` in all) for the first load attempt of each
+    loop in `names`; returns the ones still pending. A load that failed or
+    timed out does not fail boot: readiness stays false until it lands."""
+    events = [_warm_event(n) for n in names]
+    try:
+        await asyncio.wait_for(asyncio.gather(*(e.wait() for e in events)), timeout=timeout_s)
+    except TimeoutError:
+        pass
+    late = [n for n, e in zip(names, events, strict=True) if not e.is_set()]
+    if late:
+        logging.getLogger(__name__).warning(
+            "boot warm-up: %s not loaded within %.0f s; not ready until they are",
+            ", ".join(late),
+            timeout_s,
+        )
+    return late
+
+
 async def probe_sandbox() -> None:
     """Probe the repository-job sandbox before serving. `/v1/health` reports only what
     this process has probed, and a stack with no repositories never runs a repository
     job that would probe it, so the first answer would say nothing."""
-    if settings.code_ingest_enabled:
+    if settings.code_ingest_enabled or settings.code_sandbox_required:
         from server.code.app.index.sandbox import sandbox_available
 
         await asyncio.to_thread(sandbox_available)
@@ -354,7 +367,10 @@ def start_tracker_sources_refresher(ch: Any) -> asyncio.Task[None]:
         from server.tracker.app import registry_sources
 
         set_query_tag("tracker.sources_refresh")  # its own task: the tag stays in it
-        await registry_sources.refresh_db_sources(force=True, ch=ch)
+        try:
+            await registry_sources.refresh_db_sources(force=True, ch=ch)
+        finally:
+            _warm_event("tracker_registry").set()
         from server.tracker.app import contract
 
         # Its own task, so a slow tracker never delays a refresh
@@ -414,14 +430,15 @@ async def calibrate_similarity_gates() -> None:
     (`LOOM_ADAPTIVE_THRESHOLDS`, on by default). Off: warn when a real
     embedder other than the one the scalar gates were tuned for is in use,
     since those gates are then miscalibrated and recall can silently regress.
-    Never fails boot; the scalar gates apply."""
+    Never fails boot; the scalar gates apply. On: adopt the shared
+    calibration (probing only when none exists) and keep it refreshed."""
     from server.memory.app import embedder_calibration
 
     log = logging.getLogger("loom.boot")
     try:
         if settings.adaptive_thresholds:
-            calibration = await embedder_calibration.calibrate_embedder()
-            embedder_calibration.set_calibration(calibration)
+            await embedder_calibration.adopt_or_probe()
+            embedder_calibration.start_refresh_loop()
             return
         model = settings.embedding_model
         if "fake" not in model.lower() and model != _SCALAR_GATES_MODEL:
@@ -440,46 +457,91 @@ async def calibrate_similarity_gates() -> None:
         log.warning("calibration failed (%s); falling back to scalar settings", e)
 
 
-async def start_revocation(lease_held: bool) -> asyncio.Task[None] | None:
-    """Every process that verifies tokens loads the
-    revocation snapshot at boot; one that does not hold the supervisor lease
-    (the web tier under LOOM_BACKGROUND_WORKERS=off, the non-leader uvicorn
-    workers) also refreshes it on the worker's cadence, because the
-    supervisor's jwt_revocation_refresh runs only where the lease is held;
-    without it a non-leader process would accept a revoked token."""
-    from server.auth import revocation
+async def start_token_state() -> list[asyncio.Task[None]]:
+    """Every process that verifies tokens loads the revocation snapshot and
+    the signing keyring at boot and re-reads both on their cadence."""
+    from server.auth import keyring, revocation
+    from server.core.ch import query_tag
 
-    await revocation.load_at_boot()
-    if lease_held:
-        return None
-    return revocation.start_refresh_loop(settings.jwt_revocation_cache_ttl_seconds)
+    with query_tag("revocation.refresh"):
+        await revocation.load_at_boot()
+    with query_tag("auth.keyring_refresh"):
+        await keyring.refresh()
+    return [
+        revocation.start_refresh_loop(settings.jwt_revocation_cache_ttl_seconds),
+        keyring.start_refresh_loop(),
+    ]
 
 
-def start_lease_retry(
-    lease: Any, supervisor: Any, ch: Any, revocation_loop: asyncio.Task[None] | None
-) -> asyncio.Task[None] | None:
-    """In `auto` mode keep trying for the lease so the workers
-    follow the lock when its holder exits (the old colour of a blue/green
-    deploy, a sibling process that died without a respawn). Returns the
-    retry task, or None outside `auto`."""
-    if settings.background_workers.strip().lower() != "auto":
+# Set once the runtime overrides were adopted in this process (readiness).
+_OVERRIDES_ADOPTED = False
+
+
+def start_runtime_overrides() -> asyncio.Task[None]:
+    """Every process adopts the deployment's runtime rate-limit and
+    latency-budget overrides (loom.runtime_overrides) now and on a timer."""
+    from server.core import runtime_overrides
+    from server.core.ratelimit import get_limiter
+    from server.observability.budgets import get_overrides
+
+    async def _loop() -> None:
+        global _OVERRIDES_ADOPTED
+        from server.core.ch import set_query_tag
+
+        set_query_tag("runtime_overrides.refresh")
+        while True:
+            try:
+                snapshot = await runtime_overrides.load()
+                get_limiter().adopt(snapshot)
+                get_overrides().adopt(snapshot)
+                _OVERRIDES_ADOPTED = True
+            except Exception as e:  # noqa: BLE001 — keep the overrides already adopted; retry
+                logging.getLogger(__name__).warning("runtime overrides not adopted: %s", e)
+            finally:
+                _warm_event("runtime_overrides").set()
+            await asyncio.sleep(max(1.0, float(settings.runtime_overrides_refresh_seconds)))
+
+    return asyncio.create_task(_loop(), name="loom-runtime-overrides")
+
+
+def _overrides_ready() -> Any:
+    from server.core import readiness
+
+    return readiness.result(_OVERRIDES_ADOPTED, "runtime overrides not loaded")
+
+
+async def _apply_retention_overrides(ch: Any) -> None:
+    """LOOM_RETENTION_*_DAYS, applied by a process that became the leader
+    after boot (the boot leader applies them in the lifespan)."""
+    from server.core.model_work_gate import get_model_work_gate
+    from server.storage import retention_overrides
+
+    if get_model_work_gate().closed:
+        return
+    async with get_model_work_gate().admit():
+        await retention_overrides.apply(settings, ch=ch, leader=bool(settings.deployment))
+
+
+def start_lease_loop(lease: Any, supervisor: Any, ch: Any) -> asyncio.Task[None] | None:
+    """In `auto` mode keep the supervisor lease: the workers start where it is
+    acquired (another process's holder died or exited) and stop where it is
+    lost. Returns the loop task, or None outside `auto`."""
+    if lease.mode != "auto":
         return None
     from server.workers import leader as _leader
 
-    def _on_lease_acquired() -> None:
-        # The leader's boot duties follow the lease — under blue/green the new
-        # colour acquires it here, after the old colour exits, not at boot;
-        # the QA directory rows must be written by whoever holds it.
+    def _on_acquired() -> None:
+        # The leader's boot duties follow the lease.
         supervisor.start_all()
-        # The supervisor's jwt_revocation_refresh worker takes over.
-        if revocation_loop is not None and not revocation_loop.done():
-            revocation_loop.cancel()
         _spawn_boot_task(register_tracker_namespaces(ch), name="loom-tracker-namespaces")
+        _spawn_boot_task(_apply_retention_overrides(ch), name="loom-retention-overrides")
         publish_deployment_config(ch)
 
+    async def _on_lost() -> None:
+        await supervisor.stop_all(drain_timeout_s=_leader.drain_timeout_s())
+
     return asyncio.create_task(
-        _leader.retry_until_held(lease, settings.supervisor_lease_retry_s, _on_lease_acquired),
-        name="loom-supervisor-lease-retry",
+        _leader.keep_lease(lease, _on_acquired, _on_lost), name="loom-supervisor-lease"
     )
 
 
@@ -508,6 +570,16 @@ async def drain_writes() -> None:
     from server.memory.app import after_write as _after_write
 
     await _after_write.drain(timeout_s=10.0)
+    # The ends of the graph projections just drained: one left pending holds every
+    # walk of its namespace on every process for its full wait.
+    from server.memory.app import graph_write_marks as _graph_marks
+
+    await _graph_marks.drain(timeout_s=5.0)
+    # Buffered usage labels (used / harm / acted), some recorded by the side
+    # effects just drained.
+    from server.memory.store import usage as _usage
+
+    await _usage.drain()
     # Coalesced blacklist hit counts.
     from server.memory.app import blacklist_guard as _blacklist
 
@@ -522,3 +594,113 @@ async def drain_writes() -> None:
     from server.core import namespace_write_marks as _marks
 
     await _marks.flush_now()
+
+
+# --- readiness, drain and the workers process ---------------------------------
+
+# The lifespan's shutdown drains (supervisor, write drains, judge, scores,
+# emitter, HTTP pool) together get at most this; participant retirement and
+# the client close run after it whatever happened. With the ready delay and
+# uvicorn's graceful timeout it sizes `stop_grace_period` (docs/operations/deployment.md).
+SHUTDOWN_DRAIN_BUDGET_S = 40.0
+
+
+# Of the final cleanup's budget, what retirement leaves for the withdrawal and the
+# client close.
+_CLOSE_S = 2.0
+
+
+async def leave_deployment(ch: Any, *, budget_s: float) -> None:
+    """The last of a shutdown, under one deadline: retire the provider participant
+    (settling cut-off writes while it retries), withdraw the carry acknowledgement,
+    close the client. Past the deadline the acknowledgement and the participant row
+    are left to expire, never waited on."""
+    from server.core import rmt_carry
+    from server.insights.app.provider_barrier import retire_at_shutdown
+
+    deadline = time.monotonic() + budget_s
+    await retire_at_shutdown(ch, budget_s=max(0.0, budget_s - _CLOSE_S))
+    for step in (rmt_carry.withdraw, _disconnect):
+        try:
+            async with asyncio.timeout(max(0.0, deadline - time.monotonic())):
+                await step(ch)
+        except Exception as e:  # noqa: BLE001 — the process exits either way
+            logging.getLogger(__name__).warning("shutdown: %s cut off (%s)", step.__name__, e)
+
+
+async def _disconnect(ch: Any) -> None:
+    await ch.disconnect()
+
+
+def register_readiness_checks(ch: Any) -> None:
+    """The checks `/v1/health/ready` runs (server/core/readiness.py). Each
+    module that keeps a piece of warm-up state owns its check; ClickHouse and
+    the ledger are cached."""
+    from server.auth import keyring, revocation
+    from server.code.app.index import mirrors, sandbox
+    from server.core import deployment_config, model_work_gate, readiness
+    from server.memory.app import embedder_calibration
+    from server.tracker.app import registry_sources
+
+    async def _clickhouse() -> readiness.CheckResult:
+        row = await ch.query_one("SELECT 1 AS one")
+        return readiness.result(bool(row and row.get("one") == 1), "SELECT 1 did not answer 1")
+
+    async def _migrations() -> readiness.CheckResult:
+        from server.core.schema.status import schema_status
+
+        pending = SKIPPED_PENDING_MIGRATIONS or (await schema_status()).get("pending") or ()
+        return readiness.result(not pending, "pending: " + ", ".join(map(str, pending)))
+
+    readiness.register("clickhouse", _clickhouse, ttl_s=2.0)
+    readiness.register("migrations", _migrations, ttl_s=5.0)
+    readiness.register("revocation", revocation.readiness_check)
+    readiness.register("keyring", keyring.readiness_check)
+    readiness.register("tracker_registry", registry_sources.readiness_check)
+    readiness.register("runtime_overrides", _overrides_ready)
+    readiness.register("calibration", embedder_calibration.readiness_check)
+    readiness.register("config_drift", deployment_config.readiness_check)
+    readiness.register("sandbox", sandbox.readiness_check)
+    # Reported, not required: a provider rebuild closes the gate on every
+    # replica at once, and an LB with no ready backend would cut off the
+    # /v1/admin/models routes that finish it (the middleware keeps them open).
+    readiness.register("model_work_gate", model_work_gate.readiness_check, required=False)
+    if settings.ready_requires_mirrors:
+        readiness.register("mirrors", mirrors.readiness_check, ttl_s=5.0)
+
+
+def install_drain_on_sigterm() -> bool:
+    """Put a not-ready phase in front of uvicorn's stop. The first SIGTERM
+    marks the process draining (`/v1/health/ready` answers 503, responses
+    close their connection, and the lease loop stops the workers and gives
+    the lease up: `server/workers/leader.py`); uvicorn gets the signal
+    `LOOM_SHUTDOWN_READY_DELAY_S` later and only then closes the port. A
+    second SIGTERM or a SIGINT stops at once. Installed only over the handler
+    of a `uvicorn.Server` (not in the workers child, not under a test client)."""
+    import signal
+    import threading
+
+    import uvicorn
+
+    from server.core import readiness
+
+    if threading.current_thread() is not threading.main_thread():
+        return False
+    prev = signal.getsignal(signal.SIGTERM)
+    if not callable(prev) or not isinstance(getattr(prev, "__self__", None), uvicorn.Server):
+        return False
+    loop = asyncio.get_running_loop()
+    delay = float(settings.shutdown_ready_delay_s)
+    log = logging.getLogger("loom.boot")
+
+    def _handler(sig: int, frame: Any) -> None:
+        already = readiness.draining()
+        readiness.begin_drain()
+        if already or delay <= 0:
+            prev(sig, frame)
+            return
+        log.info("SIGTERM: not ready; serving %.0f s more before stopping", delay)
+        loop.call_soon_threadsafe(loop.call_later, delay, prev, sig, frame)
+
+    signal.signal(signal.SIGTERM, _handler)
+    return True

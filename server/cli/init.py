@@ -6,7 +6,7 @@ hooks, the SDK and every `loom` subcommand look for one (`~/.loom/token`,
 0600) and the server URL + namespace + org where the coding-agent plugins
 look (`~/.loom/config.json`, 0600), then print the two facts the operator of
 the bot needs: how the bot connects, and the one-time claim code a person
-uses to take ownership of the namespace at /me (the ordinary login: namespace
+uses to take ownership of the namespace in the dashboard (the ordinary login: namespace
 name + code).
 
 Every HTTP call goes through `_post_json` so the unit tests swap it
@@ -81,7 +81,7 @@ def connect_lines(out: dict[str, Any], *, base_url: str, token_path: str, config
     ns, org = out["namespace"], out["org"]
     agent = ns[len("agent-") :] or ns
     mcp_url = f"{base_url}/mcp?toolset=coding"
-    claim_url = out.get("claim_url") or f"{base_url}/me"
+    claim_url = out.get("claim_url") or f"{base_url}/"
     lines = [
         f"✓ signed up: {org}/{ns} (subject {out['subject']})",
         f"  token   → {token_path} (0600); url, namespace, org → {config_path}",
@@ -103,14 +103,14 @@ def connect_lines(out: dict[str, Any], *, base_url: str, token_path: str, config
     if out.get("expires_at"):
         lines.append(
             f"  Token expires {out['expires_at']}; re-run `loom init --agent` before then "
-            "or mint via /me."
+            "or mint one in the dashboard."
         )
     return "\n".join(lines)
 
 
 def _cmd_init(args: argparse.Namespace) -> int:
     if not args.agent:
-        print("loom init: pass --agent NAME (a person signs up at /me).", file=sys.stderr)
+        print("loom init: pass --agent NAME (a person signs up in the dashboard).", file=sys.stderr)
         return 2
     base_url = str(args.server_url).rstrip("/")
     body: dict[str, Any] = {"name": args.agent, "purpose": args.purpose or ""}
@@ -153,7 +153,7 @@ _INIT_HELP = (
     "Create an identity on a Loom server. `--agent NAME` signs an agent up by "
     "itself (server needs LOOM_SELF_SIGNUP=open): mints a writer token on a fresh "
     "agent-<slug> namespace, saves it to ~/.loom/token, and prints the one-time "
-    "code a person uses at /me to claim the namespace."
+    "code a person uses in the dashboard to claim the namespace."
 )
 
 

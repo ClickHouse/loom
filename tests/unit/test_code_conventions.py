@@ -15,7 +15,7 @@ from server.operations.base import Role
 from server.operations.registry import OPERATIONS_BY_NAME
 
 # The scalar code repository these tests model (none is configured by default).
-pytestmark = pytest.mark.usefixtures("scalar_code_repo")
+pytestmark = pytest.mark.usefixtures("mirror_here", "scalar_code_repo")
 
 ORG, NS = "clickhouse", "code-clickhouse"
 

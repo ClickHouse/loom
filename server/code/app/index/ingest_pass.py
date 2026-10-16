@@ -30,14 +30,7 @@ from server.code.app.index.pass_budget import (
     pass_budget,
     rotate_to,
 )
-from server.code.app.index.pass_fetch import (
-    _FETCHED_THIS_PASS,
-    _publish_clone_head,
-    fetch_extra_branches,
-    fetch_missing_merges,
-    fetch_pr_heads,
-    prefetch_mirrors,
-)
+from server.code.app.index.pass_fetch import _publish_clone_head, fetch_entry, prefetch_mirrors
 from server.code.app.index.pass_stream import ingest_oldest_first
 from server.settings import settings
 from server.workers import pass_context
@@ -343,31 +336,28 @@ async def _run_repo(
     self_service = cfg.source == "registry"
     repo = CodeRepo()
     if not await asyncio.to_thread(os.path.isdir, git_dir):
-        if not self_service:
-            result.note = f"git dir {git_dir} missing — run `loom code init` first"
+        if not cfg.git_remote:
+            result.note = f"git dir {git_dir} missing and the entry names no remote"
             return None
-        # A person added this repository; the worker clones it.
-        from server.code.app.index.bootstrap import clone_if_missing
+        # The mirror is a cache of the remote: a new host (or a moved deployment)
+        # clones it again, in the background, so the pass goes on to the next entry.
+        from server.code.app.index.bootstrap import clone_in_background
 
-        if not await clone_if_missing(cfg, repo):
-            result.errors.append(f"{cfg.label}: clone failed (retrying next pass)")
+        present, failed = await clone_in_background(cfg, repo)
+        if failed:
+            result.errors.append(f"{cfg.label}: clone failed (retrying): {failed}")
+        if not present:
+            result.note = f"{cfg.label}: cloning into {git_dir}"
             return None
 
-    # Directory row so the namespace shows up (kind=code) in /me. Once per
+    # Directory row so the namespace shows up (kind=code) in the dashboard. Once per
     # process per repo; failures are logged, never fatal.
     from server.code.app.index.registry import ensure_registered
 
     await ensure_registered(cfg)
 
-    try:
-        if (git_dir, cfg.git_branch) not in _FETCHED_THIS_PASS:
-            await gitrepo.fetch(git_dir, cfg.git_remote, cfg.git_branch, token=cfg.github_token)
-    except gitrepo.GitError as e:
-        result.errors.append(f"fetch: {e}")
+    if not await fetch_entry(cfg, git_dir, repo, result):
         return None  # watermark unmoved; supervisor backoff handles cadence
-    await fetch_extra_branches(cfg, git_dir, result)
-    await fetch_missing_merges(cfg, git_dir, repo, result)
-    await fetch_pr_heads(cfg, git_dir, repo, result)
 
     head = await gitrepo.head_sha(git_dir, cfg.git_branch)
     # The clone's tip is published beside the

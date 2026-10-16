@@ -25,7 +25,6 @@ import json
 import logging
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
-from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -185,7 +184,6 @@ async def task_watch(
     generator assumes authorization is done."""
     from server.auth.context import set_current_auth
     from server.core.ch import set_query_tag
-    from server.tasks.app.common import _naive
     from server.tasks.store import repo as repo
 
     # Not a registry op, so no transport tags this route's reads; the stream's
@@ -198,11 +196,10 @@ async def task_watch(
     )
 
     async def read(cursor: int) -> list[TaskEventRow]:
-        watermark = _naive(datetime.now(UTC) - timedelta(seconds=task_cursors.LAG_SECONDS))
         return await repo.events_since(
             org,
             since_seq=cursor,
-            watermark=watermark or datetime.now(UTC),
+            lag_s=task_cursors.LAG_SECONDS,
             inbox=inbox_filter,
             from_subject=subject,
             limit=READ_LIMIT,

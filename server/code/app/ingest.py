@@ -5,10 +5,12 @@ merge trigger (refresh) that tells loom "new code, index it now"."""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import logging
 import uuid
 from datetime import UTC, datetime
+from urllib.parse import quote
 
 from server.code.api.models_ingest import (
     CodeRefreshInput,
@@ -22,8 +24,9 @@ from server.code.app.common import invalidate_index_as_of, require_code_intel, r
 from server.code.app.spans import set_code_span_attributes
 from server.code.domain.index.blame_range import sha_text
 from server.code.store.index import CodeRepo
+from server.core import leases
 from server.core.background import TaskSet
-from server.core.errors import NotFoundError, ValidationError
+from server.core.errors import LoomServerError, NotFoundError, ValidationError
 from server.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -31,6 +34,23 @@ logger = logging.getLogger(__name__)
 
 _REFRESH_LOCKS: dict[tuple[str, str], asyncio.Lock] = {}
 _REFRESH_TASKS = TaskSet()
+# A refresh holds the namespace's lease while it runs, so CI calls that land on
+# different replicas run one pass, not one each; a dead holder's lease expires.
+_LEASE_TTL_S = 120
+
+
+async def _take_lease(org: str, ns: str) -> leases.Lease | None:
+    """The namespace's deployment-wide refresh lease; None when ClickHouse cannot be
+    asked (the process lock alone). LeaseBusy when another process holds it."""
+    name = f"code_refresh:{quote(org, safe='')}/{quote(ns, safe='')}"
+    try:
+        lease = await leases.take(name, ttl_s=_LEASE_TTL_S)
+    except leases.LeaseUnavailable as e:
+        logger.warning("code.refresh lease %s: %s", name, e.__cause__ or e)
+        return None
+    if lease is None:
+        raise leases.LeaseBusy(name)
+    return lease
 
 
 async def handle_code_refresh(input: CodeRefreshInput) -> CodeRefreshOutput:
@@ -40,9 +60,10 @@ async def handle_code_refresh(input: CodeRefreshInput) -> CodeRefreshOutput:
     op is the fast path a merge-queue CI job calls right after pushing, so
     agents see the new code in seconds instead of waiting out the poll
     interval. Runs the SAME ingest pass the worker runs (same watermark,
-    same idempotent upserts), scoped to the addressed namespace, under a
-    per-namespace single-flight lock — concurrent triggers for one
-    namespace coalesce, and a trigger racing the poller is harmless.
+    same idempotent upserts), scoped to the addressed namespace, under the
+    namespace's lease across every replica — concurrent triggers for one
+    namespace coalesce wherever they land, and a trigger racing the poller is
+    harmless. A mirror this host lacks is cloned in the background, not in the pass.
 
     Only a CONFIGURED namespace can be refreshed: the addressed identity
     must match a repo entry (scalar config or LOOM_CODE_REPOS_JSON), else
@@ -77,28 +98,44 @@ async def handle_code_refresh(input: CodeRefreshInput) -> CodeRefreshOutput:
     )
 
     lock = _REFRESH_LOCKS.setdefault((org, ns), asyncio.Lock())
-    if lock.locked():
+    try:
+        # A fast answer for a pass already running here, not exclusion: two triggers
+        # can both get past it; the lease, or without one the lock, orders them.
+        if lock.locked():
+            raise leases.LeaseBusy(f"code_refresh:{org}/{ns}")
+        lease = await _take_lease(org, ns)
+    except leases.LeaseBusy:
         return CodeRefreshOutput(
             triggered=False,
             already_running=True,
             head_before=head_before,
         )
 
+    async def _pass() -> None:
+        result = await run_pass(org, ns)
+        # The freshness envelope (as_of, 30 s cache) must not lag its own refresh.
+        invalidate_index_as_of(org, ns)
+        logger.info(
+            "code.refresh(%s/%s): ingested %d commit(s), head %s",
+            org,
+            ns,
+            result.commits,
+            result.head[:12],
+        )
+
     async def _one_pass() -> None:
-        async with lock:
-            try:
-                result = await run_pass(org, ns)
-                # The freshness envelope (as_of, 30 s cache) must not lag its own refresh.
-                invalidate_index_as_of(org, ns)
-                logger.info(
-                    "code.refresh(%s/%s): ingested %d commit(s), head %s",
-                    org,
-                    ns,
-                    result.commits,
-                    result.head[:12],
-                )
-            except Exception:
-                logger.exception("code.refresh: ingest pass failed")
+        # Renewed (and released) from before the lock wait, so a pass cancelled
+        # while it waits gives the lease up too.
+        held: contextlib.AbstractAsyncContextManager[object] = (
+            lease.renewed() if lease is not None else contextlib.nullcontext()
+        )
+        try:
+            async with held, lock:
+                await _pass()
+        except leases.LeaseLost:
+            logger.warning("code.refresh(%s/%s): lease lost; the pass stopped", org, ns)
+        except Exception:
+            logger.exception("code.refresh: ingest pass failed")
 
     if input.wait:
         await asyncio.wait_for(_one_pass(), timeout=input.wait_timeout_seconds)
@@ -118,6 +155,22 @@ async def handle_code_refresh(input: CodeRefreshInput) -> CodeRefreshOutput:
     )
 
 
+class EntryLeaseNotHeld(LoomServerError):
+    """The pass that built this upload no longer holds its entry's lease:
+    another pass may be indexing the entry, so its batch must not complete."""
+
+    code = "ENTRY_LEASE_NOT_HELD"
+    status_code = 409
+
+
+async def _require_entry_lease(org: str, ns: str, holder: str) -> None:
+    from server.code.app.index.entry_lock import entry_lease_name
+
+    name = entry_lease_name(org, ns)
+    if not await leases.held_by(name, holder):
+        raise EntryLeaseNotHeld(f"{holder} no longer holds {name}; the upload is refused")
+
+
 async def handle_code_scip_ingest(input: CodeScipIngestInput) -> CodeScipIngestOutput:
     """Accept one part of a SCIP index upload (compiler-tier symbols and references) for a batch."""
     require_code_intel()
@@ -134,6 +187,9 @@ async def handle_code_scip_ingest(input: CodeScipIngestInput) -> CodeScipIngestO
         )
     if not (0 <= input.seq < input.total_parts):
         raise ValidationError(f"seq {input.seq} outside [0, {input.total_parts})")
+
+    if input.entry_lease_holder:
+        await _require_entry_lease(org, ns, input.entry_lease_holder)
 
     repo = CodeRepo()
     payload_hash = hashlib.sha256(input.payload.encode("utf-8")).hexdigest()

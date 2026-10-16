@@ -553,8 +553,6 @@ class MemoryTemporalStatusInput(BaseModel):
 
 class MemoryTemporalStatusOutput(BaseModel):
     namespace: str
-    # keeper | process: who serializes the namespace's commits in this deployment.
-    publisher: str
     head_seq: int = 0
     # Highest sequence the assertion projection has applied with no gap below.
     projection_seq: int = 0

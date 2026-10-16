@@ -186,7 +186,7 @@ class ProfileClient:
                   by label.
           scope:  "namespace" (default — read sections written by any
                   agent in the namespace, so a persona authored via
-                  /me/profile reaches every MCP client) or "this_agent"
+                  the dashboard's Profile page reaches every MCP client) or "this_agent"
                   (restrict to sections the calling agent wrote).
           read_scope: how far the render reaches across users. "own_user" /
                   "own_session" render only this user's (session's) sections

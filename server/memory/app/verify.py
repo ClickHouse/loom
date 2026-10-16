@@ -16,8 +16,9 @@ Rules, all enforced here rather than trusted from the body:
     re-done), and a row it cannot reach by id reads as not found.
   * A new ReplacingMergeTree version row is written through
     `build_memory_version_row`, carrying every column forward; the three
-    attestation columns and `content_sha256` are the only deltas. Nothing on
-    loom.memory_embeddings changes: search does not filter on attestation.
+    attestation columns and `content_sha256` are the only deltas. The
+    embeddings' `verified` ranking mirror follows after the answer; the orphan
+    reconcile pass heals it when that write was lost.
   * Idempotent: re-verifying a live attestation by the same actor, or
     revoking a row that has none, writes nothing.
 """
@@ -227,8 +228,8 @@ def _schedule_mirror(row: MemoryRow, *, verified: bool) -> None:
 async def _mirror_verified_to_embeddings(row: MemoryRow, *, verified: bool) -> None:
     """Re-emit the key's live embedding rows with `verified` set so trust-aware ranking
     sees the attestation: every column and the stored vectors carried (no re-embed).
-    Best-effort: the attestation on loom.memory is the source of truth; a miss here only
-    delays the ranking signal until the next embedding write."""
+    Best-effort: the attestation on loom.memory is the source of truth; a miss here
+    (a crash, a failed insert) is healed by orphan_vector_reconcile's drift step."""
     import server.memory.store as memory_repo
     from server.memory.domain.memory_types import is_embedded
 

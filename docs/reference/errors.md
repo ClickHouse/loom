@@ -119,6 +119,7 @@ deduplicates; a `Retry-After` honoured up to 60 s. Each op's kind is in the
 | `PRECONDITION_FAILED`               | 409  | `if_match_sha256` does not match the live row: another writer changed it.                                                                                                                               | `detail.current_sha256` is the live hash. Re-read if your change depends on the new value, then resend with that hash; no separate read is needed to retry a blind overwrite.                                                                                                                                                                                         |
 | `PINNED_CONFLICT`                   | 409  | `memory.set` on a key, or close to a fact, that is pinned. A write that does not pin never replaces a pinned memory. `detail.pinned_blocker_id` names the blocking row.                                 | Change it with `memory.update` (keeps the pin) or `memory.pin` (re-pins), or store the new fact under its own key.                                                                                                                                                                                                                                                    |
 | `IDEMPOTENT_CONFLICT`               | 409  | An `Idempotency-Key` (or MCP `_idempotency_key`) reused with a different body for the same op and caller.                                                                                               | Use a new key per distinct request. Resending the original body with the old key replays the stored answer.                                                                                                                                                                                                                                                           |
+| `IDEMPOTENT_IN_PROGRESS`            | 503  | The first request with this `Idempotency-Key` still runs (on any replica).                                                                                                                              | Retry after `Retry-After` with the same key and body; the SDKs do. The retry gets the first request's answer.                                                                                                                                                                                                                                                         |
 | `BLACKLISTED`                       | 422  | The value matches a refuse pattern registered with `blacklist.add` (`pattern_id`, `scope`, `reason`).                                                                                                   | Do not retry the value. If the pattern is wrong, an admin removes it (`blacklist.remove`).                                                                                                                                                                                                                                                                            |
 | `LOCKED`                            | 423  | The row carries a `memory.lock` that refuses this write.                                                                                                                                                | Wait for `lock_until` to pass, or have a namespace admin release it with `memory.unlock`.                                                                                                                                                                                                                                                                             |
 | `RATE_LIMITED`                      | 429  | A namespace, org or actor token bucket is empty for the op's class.                                                                                                                                     | Wait `Retry-After`. Sustained 429s mean the caller needs pacing or a batch op (`memory.bulk_set`); limits are in [HTTP API](./http-api.md#rate-limits).                                                                                                                                                                                                               |
@@ -360,6 +361,10 @@ HTTP 503, raised as `server.core.errors.EmbedTimeoutError`. 503 — the query em
 
 Raised in `server/memory/store/record_query.py`.
 
+#### `ENTRY_LEASE_NOT_HELD`
+
+HTTP 409, raised as `server.code.app.ingest.EntryLeaseNotHeld`. The pass that built this upload no longer holds its entry's lease: another pass may be indexing the entry, so its batch must not complete.
+
 #### `ENUM_VIOLATION`
 
 Raised in `server/memory/domain/record_values.py`.
@@ -402,7 +407,7 @@ Raised in `server/tracker/app/sources.py`.
 
 #### `IDEMPOTENT_CONFLICT`
 
-Raised in `server/transport/http.py`, `server/transport/mcp_call.py`. What to do: [common errors](#common-errors-and-what-to-do).
+Raised in `server/transport/http.py`. What to do: [common errors](#common-errors-and-what-to-do).
 
 #### `IDENTITY_INCOMPLETE`
 
@@ -516,6 +521,10 @@ Raised in `server/identity/app/me_setup.py`.
 
 Raised in `server/knowledge/app/conversations.py`.
 
+#### `NO_SIGNING_KEY`
+
+HTTP 503, raised as `server.auth.keyring.NoSigningKey`. Kid `default` is retired (or the root secret signs neither HS256 nor RS256) and no keyring key is active here: nothing can be signed until an operator acts, so it carries no Retry-After.
+
 #### `OP_NOT_ON_MCP`
 
 Raised in `server/transport/mcp_op.py`.
@@ -528,9 +537,9 @@ Raised in `server/transport/mcp_auth.py`.
 
 HTTP 503, raised as `server.core.errors.OverloadedError`. 503 — too busy, retry: every pooled ClickHouse connection was busy past `ch_pool_wait_ms`, or a sibling held an override's lock past its wait. What to do: [common errors](#common-errors-and-what-to-do).
 
-#### `OVERRIDE_NOT_SHARED`
+#### `OVERRIDE_NOT_STORED`
 
-HTTP 503, raised as `server.core.errors.OverrideNotSharedError`. 503 — a runtime override (budget or rate limit) could not be shared with the server's other web processes, so none of them took it.
+HTTP 409, raised as `server.core.runtime_overrides.OverrideNotStoredError`. 409 — ClickHouse refused to store the override (a read-only user, for example), so no process changed; the server log has the reason.
 
 #### `PINNED_CONFLICT`
 
@@ -628,7 +637,15 @@ Raised in `server/auth/self_signup.py`.
 
 Raised in `server/memory/app/promote.py`.
 
+#### `SIGNUP_IN_PROGRESS`
+
+Raised in `server/auth/self_signup.py`.
+
 #### `SIGNUP_ORG_FIXED`
+
+Raised in `server/auth/self_signup.py`.
+
+#### `SIGNUP_UNAVAILABLE`
 
 Raised in `server/auth/self_signup.py`.
 

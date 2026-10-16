@@ -33,7 +33,6 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from server.clients.main_loom import forward
 from server.code.api.models_verify import CodeVerifyCitationsOutput
 from server.code.app.common import (
     index_as_of,
@@ -45,6 +44,7 @@ from server.code.app.common import (
 )
 from server.code.app.index import gitrepo
 from server.code.app.index import pr_overlay as po
+from server.code.app.index.mirrors import history_dir
 from server.code.app.index.sql_names import combinator_stems, registration_classes
 from server.code.app.spans import code_span, set_code_span_attributes, span_attrs
 from server.code.domain.index import citations as cit
@@ -539,16 +539,18 @@ async def _mirror_leg(
     return out
 
 
+def _no_mirror(leg: dict[str, Any]) -> bool:
+    """The leg did not run: this host has no mirror to run it on (`mirrors.history_dir`)."""
+    return str(leg.get("error") or "").startswith(("no_git_mirror", "no_git_history"))
+
+
 def _note(ex: cit.Extraction, at: dict[str, Any], pr: dict[str, Any] | None = None) -> str:
     parts = [
         "path, number and name checks are exact against the index head; "
         "'line inside a unit' is a lower bound (symbol and chunk spans are floors)",
     ]
-    if pr and pr.get("error") == po.NO_GIT_MIRROR:
-        parts.append(
-            "this read-replica has no git mirror and the request sent no pr_diff; "
-            "in_pr_diff is unknown"
-        )
+    if pr and _no_mirror(pr):
+        parts.append(f"{pr['error']} and the request sent no pr_diff; in_pr_diff is unknown")
     elif pr and pr.get("source") == "posted":
         parts.append("in_pr_diff compares cited lines with the hunks of the pr_diff sent")
     elif pr and not pr.get("merge_sha"):
@@ -562,10 +564,9 @@ def _note(ex: cit.Extraction, at: dict[str, Any], pr: dict[str, Any] | None = No
             "definition span is read at the index head, so it answers unknown when its file "
             "changed since the merge and no hunk meets the span"
         )
-    if at.get("error") == po.NO_GIT_MIRROR:
+    if _no_mirror(at):
         parts.append(
-            f"at_commit {at['requested']!r} was not checked: this read-replica has no git "
-            "mirror; head checks only"
+            f"at_commit {at['requested']!r} was not checked ({at['error']}); head checks only"
         )
     elif at.get("requested") and not at.get("known"):
         parts.append(
@@ -846,7 +847,7 @@ async def _git_legs(
     """The mirror reads a request may run, on one shared budget: the PR's
     merge commit (which becomes the default `at_commit`), the at_commit
     leg, the registration-string grep, the PR-diff leg. (at_commit, pr_diff)."""
-    git_dir = (cfg.git_dir if cfg is not None else "") or default_git_dir()
+    git_dir, gap = await history_dir(cfg) if cfg is not None else (default_git_dir(), "")
     head = str(as_of.get("commit") or "")
     budget = _GitBudget()
     pr: dict[str, Any] = {}
@@ -858,16 +859,16 @@ async def _git_legs(
         with code_span("verify_citations.pr_diff") as sp:
             pr = _posted_pr_leg(img, cits)
             span_attrs(sp, results=pr.get("in_diff", 0))
-    elif pr_number and not settings.read_replica:
+    elif pr_number and not gap:
         pr = await _merge_sha_of(repo, org, namespaces, git_dir, head, pr_number, budget)
         at_commit = at_commit or str(pr.get("merge_sha") or "")
     elif pr_number:
-        pr = {**_pr_summary(pr_number), "error": po.NO_GIT_MIRROR}
+        pr = {**_pr_summary(pr_number), "error": gap}
     at: dict[str, Any] = {}
-    if settings.read_replica:
-        # No mirror here: the commit and registration legs are not run, and say so.
+    if gap:
+        # No mirror here (yet): the commit and registration legs are not run, and say so.
         if at_commit:
-            at = {"requested": at_commit, "known": False, "error": po.NO_GIT_MIRROR}
+            at = {"requested": at_commit, "known": False, "error": gap}
         return at, pr
     if at_commit:
         with code_span("verify_citations.mirror") as sp:
@@ -889,9 +890,6 @@ async def handle_code_verify_citations(input: Any) -> Any:
     from server.code.domain.index.repos import repo_for_namespace
 
     require_code_intel()
-    forwarded = await forward("code.verify_citations", input, CodeVerifyCitationsOutput)
-    if forwarded is not None:
-        return forwarded
     started = time.monotonic()
     org, ns = resolve_code_identity(input.org, input.namespace)
     repo = CodeRepo()

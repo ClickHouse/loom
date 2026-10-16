@@ -131,7 +131,7 @@ def _refuse_loosening(
         exc.detail["message"] = (  # type: ignore[index]
             f"memory.lock refused: {input.memory_key!r} is already locked "
             f"{previous}; a WRITER may only tighten a lock. "
-            "Only the user can loosen it (the memory's Lock control at /me); "
+            "Only the user can loosen it (the memory's Lock control in the dashboard); "
             "ask them rather than looking for another route or credential."
         )
         raise exc

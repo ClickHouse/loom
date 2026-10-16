@@ -20,6 +20,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from tests.unit.claims_fake import memory_claims
 from tests.unit.oauth_store_fake import MemoryOAuthStore
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -41,6 +42,12 @@ def _signing_key():
     """A throwaway RSA keypair; inject the public key as the IdP signing key."""
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     return key, key.public_key()
+
+
+@pytest.fixture(autouse=True)
+def _claims_in_memory(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A JIT sign-up's email claim, without a lock table in the fake."""
+    memory_claims(monkeypatch)
 
 
 @pytest.fixture(autouse=True)

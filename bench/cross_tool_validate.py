@@ -42,6 +42,7 @@ import httpx
 
 # The repo root on the path for in-process token minting.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from server.auth import keyring
 from server.auth.jwt import mint_token
 
 MIN_TOP3_RECALL = 0.8
@@ -106,6 +107,7 @@ class QueryResult:
 def _token(*, subject: str, role: str, org: str, namespace: str, service_account: bool) -> str:
     """A one-hour JWT scoped to the one namespace. The agent dimension is the
     `agent` field of each request body, not a claim."""
+    keyring.load_for_offline_mint()
     return mint_token(
         subject=subject,
         org=org,

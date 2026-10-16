@@ -121,7 +121,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "also reads the caller's own memory namespaces (up to the "
         "fan-out cap). Results carry their source namespace.\n\n"
         "Results are point-in-time. RE-CALL on repeat questions — the "
-        "user may have updated memories via /me or another agent "
+        "user may have updated memories in the dashboard or another agent "
         "between turns. Don't reuse a previous answer.\n\n"
         "Don't pass `memory_type` on the first call — most memories "
         "land as `semantic` regardless of intent; filtering by type "
@@ -183,7 +183,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "entry to those fields."
     ),
     "memory.delete": (
-        "WHAT: Tombstone a memory by key (14-day recovery via /me). The row is "
+        "WHAT: Tombstone a memory by key (14-day recovery in the dashboard). The row is "
         "found across every agent and session in the namespace; "
         "`found: false` = no live row — `tombstoned: false` is never success.\n"
         "WHEN: Explicit user request — 'forget that I…', 'delete X in Loom'.\n"

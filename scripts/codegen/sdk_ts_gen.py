@@ -225,6 +225,7 @@ def build() -> str:
         '  readonly maturity: "stable" | "experimental" | "";',
         "  readonly budgetP99Ms: number;",
         "  readonly audit: boolean;",
+        "  readonly readOnly: boolean;",
         "}",
         "",
         "export type OpName =",
@@ -253,6 +254,7 @@ def build() -> str:
                 f"maturity: {json.dumps(f.maturity)}",
                 f"budgetP99Ms: {f.budget_p99_ms}",
                 f"audit: {_ts_bool(f.audit)}",
+                f"readOnly: {_ts_bool(f.read_only)}",
             ]
         )
         lines.append(f"  {{ {fields} }},")

@@ -92,7 +92,7 @@ def _as(monkeypatch, subject: str, *, admin: bool) -> None:
 
 
 async def test_a_reader_sees_only_the_rows_stamped_for_it(monkeypatch):
-    """The filter is the server-stamped actor, whatever `agent` the body names; the /me
+    """The filter is the server-stamped actor, whatever `agent` the body names; the dashboard's
     history page (no agent) still shows the person their own searches."""
     from server.auth.context import set_current_auth
 

@@ -1335,6 +1335,8 @@ def upload(
                     "payload": part,
                     "org": org,
                     "namespace": namespace,
+                    # Set by `loom code entry-lock`: refused once its lease moved.
+                    "entry_lease_holder": os.environ.get("LOOM_ENTRY_LEASE_HOLDER", ""),
                 },
             )
             r.raise_for_status()

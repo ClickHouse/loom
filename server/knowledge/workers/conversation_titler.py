@@ -3,7 +3,7 @@
 LLM-generates a short title for *untitled* conversation threads — those built
 by `conversation.append` without a prior `conversation.create`, so they have no
 `loom.conversation_threads` metadata row. The title lands on a fresh metadata
-row and surfaces in the `/me` Sessions list (cards lead with the title), turning
+row and surfaces in the dashboard's Conversations list (cards lead with the title), turning
 a raw thread_id into something readable.
 
 On by default (`conversation_titler_enabled`), gated per-namespace by

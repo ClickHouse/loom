@@ -250,7 +250,7 @@ async def _deliver_inbox(
     rows = await repo.events_since(
         org,
         since_seq=last_seq,
-        watermark=_naive(now - timedelta(seconds=task_cursors.LAG_SECONDS)),
+        lag_s=task_cursors.LAG_SECONDS,
         inbox=inbox,
         limit=BATCH_LIMIT,
     )

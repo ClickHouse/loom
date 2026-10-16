@@ -103,7 +103,7 @@ describe("SourcePicker", () => {
     listTrackerSources.mockResolvedValue({ sources: [source("tracker-a", [ns("tracker-a-main", false)])] });
     render(<SourcePicker org="acme" current="personal-me" />);
     expect(await screen.findByText(/read no tracker namespace yet/)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Repositories" })).toHaveAttribute("href", "/me/repositories");
+    expect(screen.getByRole("link", { name: "Repositories" })).toHaveAttribute("href", "/repositories");
     expect(setIdentity).not.toHaveBeenCalled();
   });
 });

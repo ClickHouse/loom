@@ -171,6 +171,67 @@ def test_apply_path_is_unchanged_by_the_report(monkeypatch, mig_dir: Path, capsy
     assert ch.inserts[0][1][0][0] == "020_pending.sql"
 
 
+# ---- renumbered files ---------------------------------------------------
+
+
+def test_a_ledger_row_with_a_repo_files_checksum_is_a_rename_not_ledger_only(
+    mig_dir: Path,
+) -> None:
+    """A branch migration renumbered past main's after it ran: the old row's
+    checksum is the new file's, so the ledger is clean and the new name is
+    recorded without running again."""
+    pending = (mig_dir / "020_pending.sql").read_text()
+    applied = {
+        "000_init.sql": _sha((mig_dir / "000_init.sql").read_text()),
+        "010_two.sql": _sha((mig_dir / "010_two.sql").read_text()),
+        "019_pending.sql": _sha(pending),
+    }
+    rep = _migrate.ledger_report(applied, _files(mig_dir))
+    assert rep.renamed == (("019_pending.sql", "020_pending.sql"),)
+    assert rep.ledger_only == () and rep.clean
+    # An edited file under the old name is not the same text: still ledger-only.
+    applied["019_pending.sql"] = _sha(pending + "-- edited\n")
+    rep = _migrate.ledger_report(applied, _files(mig_dir))
+    assert rep.renamed == () and rep.ledger_only == ("019_pending.sql",)
+
+
+def test_the_renamed_file_is_recorded_without_running(monkeypatch, mig_dir: Path, capsys) -> None:
+    ch = _CH(
+        {
+            "000_init.sql": _sha((mig_dir / "000_init.sql").read_text()),
+            "010_two.sql": _sha((mig_dir / "010_two.sql").read_text()),
+            "019_pending.sql": _sha((mig_dir / "020_pending.sql").read_text()),
+        }
+    )
+    monkeypatch.setattr(_migrate, "_codec_supported", lambda ch: False)
+    assert _main(monkeypatch, ch, mig_dir, "--dry-run", "--strict") == 0
+    rc = _main(monkeypatch, ch, mig_dir)
+    out = capsys.readouterr().out
+    assert rc == 0 and "020_pending.sql: already ran under an older name" in out
+    assert ch.commands == []  # nothing ran
+    assert ch.inserts[0][1][0][0] == "020_pending.sql"
+
+
+def test_a_repeated_text_is_matched_to_its_own_copy_by_name(monkeypatch, mig_dir: Path) -> None:
+    """Two files share a text on purpose (a second backfill pass). The repeat ran
+    under its branch number: that row is the repeat's, not the first copy's, so
+    the repeat is recorded and nothing runs twice."""
+    repeated = (mig_dir / "010_two.sql").read_text()
+    (mig_dir / "030_two_again.sql").write_text(repeated)
+    ledger = {
+        "000_init.sql": _sha((mig_dir / "000_init.sql").read_text()),
+        "010_two.sql": _sha(repeated),
+        "020_pending.sql": _sha((mig_dir / "020_pending.sql").read_text()),
+        "029_two_again.sql": _sha(repeated),
+    }
+    rep = _migrate.ledger_report(ledger, _files(mig_dir))
+    assert rep.renamed == (("029_two_again.sql", "030_two_again.sql"),) and rep.clean
+    ch = _CH(ledger)
+    monkeypatch.setattr(_migrate, "_codec_supported", lambda ch: False)
+    assert _main(monkeypatch, ch, mig_dir) == 0
+    assert ch.commands == [] and [i[1][0][0] for i in ch.inserts] == ["030_two_again.sql"]
+
+
 # ---- baselines ----------------------------------------------------------
 
 

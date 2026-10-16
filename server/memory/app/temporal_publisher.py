@@ -33,9 +33,9 @@ from server.core.errors import (
     TemporalUnavailableError,
     ValidationError,
 )
+from server.core.leases import LeaseBusy, LeaseLost, default_holder
 from server.core.logging_config import request_id_var
 from server.core.repo_base import _CHClient, _default_client
-from server.core.schema.migrate_lease import default_holder
 from server.erasure.app import fence
 from server.memory.app.temporal_reads import columns_of, erased
 from server.memory.app.temporal_rows import (
@@ -1473,69 +1473,29 @@ async def _retried_commits(b: _Batch, ch: _CHClient) -> dict[Ident, list[dict[st
 
 @asynccontextmanager
 async def namespace_lock(org: str, ns: str) -> AsyncIterator[Callable[[], Awaitable[bool]]]:
-    """Hold the namespace's publisher lock; yields a check that it is still held.
-    Publication takes it, and so does anything that must see no commit land
-    between a check and its change (a redaction). Without a Keeper, only a server
-    process declared the single writer may publish: the CLI and any second process
-    would allocate the same sequences."""
+    """Hold the namespace's publisher lease, deployment-wide; yields a check that it
+    is still held. Publication takes it, and so does anything that must see no commit
+    land between a check and its change (a redaction)."""
     name = f"memory_temporal/{org}\x1f{ns}"
-    mode = settings.memory_temporal_publisher
-    keeper = mode == "keeper" or (mode == "auto" and await _locks.has_keeper())
-    # Process mode is one writer in all: never with sibling web processes.
-    if not keeper and not (mode == "process" and _serving and settings.web_workers == 1):
-        raise TemporalUnavailableError(
-            "memory writes need a cross-process publisher: run with a Keeper, or declare "
-            "LOOM_MEMORY_TEMPORAL_PUBLISHER=process on a single server process "
-            "(LOOM_WEB_WORKERS=1, no separate workers container) that writes memory",
-            retry_after_s=None,
-        )
     async with AsyncExitStack() as stack:
-        # Only taking the lock maps to "busy": a refusal from inside the section
+        # Only taking the lease maps to "busy": a refusal from inside the section
         # (an erasure fence, a stale revision) keeps its own error.
         try:
-            await stack.enter_async_context(_locks.hold_name(name, keeper_required=keeper))
-        except PreconditionFailedError as e:
+            lease = await stack.enter_async_context(_locks.lease(name))
+        except LeaseBusy as e:
             raise TemporalUnavailableError(
                 f"namespace {ns!r} publisher is busy; retry", retry_after_s=1
             ) from e
         except BackendUnavailableError as e:
             raise TemporalUnavailableError(f"namespace {ns!r} publisher lock unavailable") from e
 
-        if not keeper and await store.foreign_publisher(org, ns, PUBLISHER_ID, await _started()):
-            # Process mode means one writer in all; another one has committed here.
-            raise TemporalUnavailableError(
-                f"namespace {ns!r}: another process publishes memory without a Keeper; "
-                "run one server process, or a Keeper"
-            )
-
         async def still_held() -> bool:
-            return not keeper or await _locks.still_held(name)
+            return bool(lease.held)
 
-        yield still_held
-
-
-_serving = False
-# When this process started publishing, on ClickHouse's clock (the one commits are
-# stamped with): a commit by another publisher since then means a second writer in
-# process mode.
-_STARTED: datetime | None = None
-# When this process started, on its own clock (`serve`); `_started` moves it onto
-# ClickHouse's once, so siblings started together see each other's commits.
-_BOOTED = datetime.now(UTC)
-
-
-async def _started() -> datetime:
-    global _STARTED
-    if _STARTED is None:
-        _STARTED = _BOOTED + (await store.server_now() - datetime.now(UTC))
-    return _STARTED
-
-
-def serve() -> None:
-    """Mark this process as the server: the one that may publish without a Keeper."""
-    global _serving, _BOOTED
-    _serving = True
-    _BOOTED = datetime.now(UTC)
+        try:
+            yield still_held
+        except LeaseLost as e:
+            raise TemporalUnavailableError(f"namespace {ns!r} publisher lease lost; retry") from e
 
 
 async def _served(

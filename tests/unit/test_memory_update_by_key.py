@@ -92,6 +92,11 @@ def wired(monkeypatch: pytest.MonkeyPatch):
 
         monkeypatch.setattr("server.memory.store.get_by_id", _get_by_id)
 
+        # The conditional write's key lock, held in process memory.
+        from tests.unit.claims_fake import memory_claims
+
+        memory_claims(monkeypatch)
+
         async def _enforce(**_: Any) -> None:
             return None
 

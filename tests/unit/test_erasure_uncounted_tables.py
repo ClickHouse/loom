@@ -108,10 +108,6 @@ def test_the_agent_runs_step_drops_the_runs_claims_too() -> None:
     asyncio.run(ledger_steps.delete_agent_runs_by_user("o", "alice", ch=ch))
     assert _tables(ch) == ["loom.agent_run_claims", "loom.agent_runs"]
     assert all("user_id = {uid:String}" in sql for sql, _ in ch.commands)
-    # No Keeper, no claims table: only the runs.
-    ch = _StubCH(count=0)
-    asyncio.run(ledger_steps.delete_agent_runs_by_user("o", "alice", ch=ch))
-    assert _tables(ch) == []
 
 
 def test_curation_step_tombstones_three_tables() -> None:

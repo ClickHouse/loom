@@ -44,6 +44,7 @@ from typing import TYPE_CHECKING
 
 from server.core.ch_errors import error_code as _error_code
 from server.core.hashing import sha256_text as _checksum
+from server.core.leases import LOCK_TABLE
 from server.core.paths import MIGRATIONS_DIR
 from server.core.schema import table_rebuild
 from server.core.schema.journal import (
@@ -54,11 +55,11 @@ from server.core.schema.journal import (
     through_target,
 )
 from server.core.schema.migrate_lease import (
-    LEASE_TABLE,
-    LOCK_TABLE,
+    NO_KEEPER_CODES,
     KeeperLock,
+    KeeperRequired,
+    KeeperUnavailable,
     LeaseConfig,
-    MigrationLease,
     bootstrap_keeper_lock,
 )
 
@@ -66,10 +67,20 @@ if TYPE_CHECKING:
     from clickhouse_connect.driver.client import Client
 
 
-def client(*, receive_timeout_s: int | None = None) -> Client:
+def client(
+    *,
+    receive_timeout_s: int | None = None,
+    connect_timeout_s: int = 10,
+    retries: bool = True,
+    session: bool = True,
+) -> Client:
     """A client on the `LOOM_CH_*` settings. `receive_timeout_s` replaces the
     default read timeout for a caller whose single statement runs longer (the
-    vector rebuild's copy)."""
+    vector rebuild's copy) or must fail fast (the supervisor lease).
+    `retries=False` sends each statement once: a lease call's time is bounded
+    by its two timeouts, not by the driver's retries of them. `session=False`
+    sends no session id: a call that timed out here but still runs on the
+    server would otherwise lock the session, and the next call fails (373)."""
     import clickhouse_connect
     from clickhouse_connect import common as _cc_common
 
@@ -81,18 +92,25 @@ def client(*, receive_timeout_s: int | None = None) -> Client:
 
     from server.core.ch_target import connection_kwargs
 
-    ch = clickhouse_connect.get_client(
+    c = clickhouse_connect.get_client(
         **connection_kwargs(),
         # A statement waits for its mutation on every replica; the read
         # timeout must outlast that wait, which the runner bounds itself.
         send_receive_timeout=receive_timeout_s
         or max(300, int(settings.migrate_mutation_wait_s) + 60),
+        connect_timeout=connect_timeout_s,
+        query_retries=2 if retries else 0,
+        autogenerate_session_id=session,
         # UTC whatever the server's <timezone>, as server.core.ch pins it.
         settings={"session_timezone": "UTC"},
         tz_source="server",
     )
-    ch.server_tz = UTC
-    return ch
+    from clickhouse_connect.driver.httpclient import HttpClient
+
+    c.server_tz = UTC
+    if not retries and isinstance(c, HttpClient):
+        c.http_retries = 0
+    return c
 
 
 def _reads_loom_table(stmt: str) -> bool:
@@ -341,6 +359,12 @@ class LedgerReport:
     cannot see them because there is no file to hash. `drift`: applied files
     whose text no longer hashes to the recorded checksum. `stranded`:
     baselines this ledger holds only part of (see `journal.LedgerClasses`).
+    `renamed`: (old, new) for a ledger row whose recorded checksum is a repo
+    file's under another name — the same text renumbered after it ran (a
+    branch migration renumbered past main's). Not ledger-only: a pending
+    `new` is recorded without running, since its statements already ran.
+    Only a renumber counts (same text, same name after the number), so a text
+    repeated under another name runs again.
     """
 
     pending: tuple[str, ...]
@@ -349,10 +373,15 @@ class LedgerReport:
     baselined: tuple[str, ...] = ()
     superseded: tuple[str, ...] = ()
     stranded: tuple[str, ...] = ()
+    renamed: tuple[tuple[str, str], ...] = ()
 
     @property
     def clean(self) -> bool:
         return not self.ledger_only and not self.drift and not self.stranded
+
+
+def _unnumbered(name: str) -> str:
+    return re.sub(r"^\d+_", "", name)
 
 
 def ledger_report(applied: dict[str, str], files: list[Path]) -> LedgerReport:
@@ -363,9 +392,21 @@ def ledger_report(applied: dict[str, str], files: list[Path]) -> LedgerReport:
         for name, f in by_name.items()
         if name in applied and applied[name] and _checksum(f.read_text()) != applied[name]
     )
+    # A renumber keeps the text and the name after the number: a text repeated on
+    # purpose under another name is not taken for the copy that ran.
+    by_key: dict[tuple[str, str], str] = {}
+    for f in files:
+        by_key.setdefault((_checksum(f.read_text()), _unnumbered(f.name)), f.name)
+    renamed = tuple(
+        (old, by_key[(applied[old], _unnumbered(old))])
+        for old in classes.ledger_only
+        if applied.get(old) and (applied[old], _unnumbered(old)) in by_key
+    )
+    gone = {old for old, _new in renamed}
     return LedgerReport(
         pending=classes.pending + classes.baselined,
-        ledger_only=classes.ledger_only,
+        ledger_only=tuple(n for n in classes.ledger_only if n not in gone),
+        renamed=renamed,
         drift=drift,
         baselined=classes.baselined,
         superseded=classes.superseded,
@@ -398,6 +439,8 @@ def print_ledger_report(report: LedgerReport, *, applied_count: int, file_count:
     )
     for name in report.baselined:
         print(f"  · {name}: a baseline this ledger already covers — recorded without running")
+    for old, new in report.renamed:
+        print(f"  · {old} is {new} under an earlier name (same SHA-256)")
     for name in report.stranded:
         print(
             f"  ✗ {name}: this ledger holds only part of what the baseline replaces — apply "
@@ -418,8 +461,7 @@ def _tolerated_errors(sql: str) -> set[int]:
     """Error codes a migration file declares survivable, one per directive line
     `-- loom: tolerate-error <code>`. A statement the server rejects with one
     of them is reported and skipped, and the file still records as applied.
-    For DDL only some servers accept, such as a KeeperMap table on a server
-    without a Keeper."""
+    For DDL only some servers accept."""
     return {int(m.group(1)) for m in _TOLERATE_RE.finditer(sql)}
 
 
@@ -640,41 +682,47 @@ def _lease_config() -> LeaseConfig:
     return LeaseConfig(
         ttl_s=int(_s.boot_migrate_lease_ttl_s),
         wait_s=float(_s.boot_migrate_lease_wait_s),
-        settle_s=float(_s.boot_migrate_lease_settle_s),
     )
 
 
-Lease = KeeperLock | MigrationLease
+Lease = KeeperLock
+
+
+def _heartbeat_client(cfg: LeaseConfig) -> Client:
+    """The migration lock heartbeat's own client: no session and no retries, each
+    call bounded well inside the time left before the lock counts as lost."""
+    short = max(1, int(cfg.lose_after / 4))
+    return client(receive_timeout_s=short, connect_timeout_s=short, retries=False, session=False)
 
 
 def _acquire_lease(ch: Client) -> Lease:
-    """Take the cross-container lock before applying: the KeeperMap lock, or
-    the lease table where the server has no Keeper. The lock's `outcome` is
-    `held`, `timeout` or `unleased` (no table yet: proceed unleased)."""
+    """Take the cross-container KeeperMap lock before applying. The lock's
+    `outcome` is `held` or `timeout`; KeeperRequired on a server without a Keeper."""
     cfg = _lease_config()
     from server.settings import settings as _s
 
     commit = str(_s.build_commit)
-    why = bootstrap_keeper_lock(ch)
-    lease: Lease | None = None
-    if why is None:
-        lock = KeeperLock(ch, cfg=cfg, build_commit=commit)
-        if lock.acquire() == "unleased":
-            why = lock.error
-        else:
-            lease = lock
-            print(f"  · migration lock: KeeperMap {LOCK_TABLE}")
-            lock.start_heartbeat(client)
-    if lease is None:
-        print(f"  · migration lock: {why}; using the lease table {LEASE_TABLE}")
-        lease = MigrationLease(ch, cfg=cfg, build_commit=commit)
-        lease.acquire()
-    if lease.held:
-        print(
-            f"  · migration lease held as {lease.holder}"
-            + (f" after waiting {lease.waited_s:.1f} s" if lease.waited_s >= 1 else "")
-        )
-    return lease
+    lock = KeeperLock(ch, cfg=cfg, build_commit=commit)
+    try:
+        bootstrap_keeper_lock(ch, wait_s=cfg.wait_s, poll_s=cfg.poll_s)
+    except KeeperUnavailable as e:
+        print(f"  · migration lock: {e}", file=sys.stderr)  # the boot retries
+        lock.outcome, lock.waited_s = "timeout", cfg.wait_s
+        return lock
+    if lock.acquire() == "unleased":
+        if lock.error_code in NO_KEEPER_CODES:
+            raise KeeperRequired(lock.error)
+        # A refusal from the Keeper (a privilege, a bad argument): the boot retries.
+        print(f"  · migration lock: {lock.error}", file=sys.stderr)
+        lock.outcome, lock.waited_s = "timeout", cfg.wait_s
+        return lock
+    print(f"  · migration lock: KeeperMap {LOCK_TABLE}")
+    lock.start_heartbeat(lambda: _heartbeat_client(cfg))
+    print(
+        f"  · migration lock held as {lock.holder}"
+        + (f" after waiting {lock.waited_s:.1f} s" if lock.waited_s >= 1 else "")
+    )
+    return lock
 
 
 def _run_file(
@@ -706,9 +754,11 @@ def _apply_pending(
     dry: bool,
     lease: Lease | None,
     baselined: frozenset[str] = frozenset(),
+    renamed: frozenset[str] = frozenset(),
 ) -> int:
     """Apply `to_apply` in order, recording each; 1 on the first failure. A
-    file in `baselined` is recorded without running."""
+    file in `baselined` or `renamed` (its text already ran under an older
+    name) is recorded without running."""
     from server.core.schema.vector_codec_ddl import creates_coded_table
 
     # Probe NLP support once: it decides whether the NLP experimental flag is
@@ -728,6 +778,11 @@ def _apply_pending(
     for f in to_apply:
         if f.name in baselined:
             print(f"  ≡ {f.name}: baseline of a schema this database already has — recorded")
+            if not dry:
+                _record(ch, f.name, _checksum(f.read_text()))
+            continue
+        if f.name in renamed:
+            print(f"  ≡ {f.name}: already ran under an older name (same SHA-256) — recorded")
             if not dry:
                 _record(ch, f.name, _checksum(f.read_text()))
             continue
@@ -761,11 +816,10 @@ def _apply_under_lease(ch: Client, files: list[Path], to_apply: list[Path]) -> i
     waited — then apply what is still pending and release."""
     for f in to_apply:
         if f.name == LEASE_MIGRATION:
-            # On a fresh database the lease table does not exist yet. Its
-            # CREATE IF NOT EXISTS depends on nothing: run it first,
-            # unrecorded, so this very run is leased; it is applied again in
-            # order below (a no-op) and recorded then.
-            print(f"  · {f.name} is pending: creating the lease table first so this run is leased")
+            # On a fresh database the ledger does not exist yet. Its CREATE IF
+            # NOT EXISTS depends on nothing: run it first, unrecorded; it is
+            # applied again in order below (a no-op) and recorded then.
+            print(f"  · {f.name} is pending: creating the migrator's tables first")
             _apply_file(ch, f, dry=False)
     lease = _acquire_lease(ch)
     if lease.outcome == "timeout":
@@ -793,8 +847,15 @@ def _apply_under_lease(ch: Client, files: list[Path], to_apply: list[Path]) -> i
                 reset_cache()
                 return 0
             to_apply = still
-        baselined = frozenset(ledger_report(applied, files).baselined)
-        rc = _apply_pending(ch, to_apply, dry=False, lease=lease, baselined=baselined)
+        report = ledger_report(applied, files)
+        rc = _apply_pending(
+            ch,
+            to_apply,
+            dry=False,
+            lease=lease,
+            baselined=frozenset(report.baselined),
+            renamed=frozenset(new for _old, new in report.renamed),
+        )
         if rc == 0:
             # Migration statements use the same CH client whose schema guard
             # may have cached an unreadable/missing ledger before
@@ -854,16 +915,6 @@ def main(argv: list[str] | None = None, *, check_server: bool = True) -> int:
     )
     args = p.parse_args(argv)
 
-    from server.settings import settings as _settings
-
-    if _settings.read_replica and not (args.status or args.dry_run):
-        print(
-            "  ✗ LOOM_READ_REPLICA=true: the main Loom applies the shared schema; "
-            "--status and --dry-run still read it",
-            file=sys.stderr,
-        )
-        return 2
-
     mig_dir = Path(args.migrations_dir)
     if not mig_dir.is_dir():
         print(f"  ✗ migrations directory not found: {mig_dir}", file=sys.stderr)
@@ -918,16 +969,24 @@ def main(argv: list[str] | None = None, *, check_server: bool = True) -> int:
     print(f"  {len(to_apply)} migration(s) to apply" + ("  [dry-run]" if args.dry_run else ""))
     if args.dry_run:
         rc = _apply_pending(
-            ch, to_apply, dry=True, lease=None, baselined=frozenset(report.baselined)
+            ch,
+            to_apply,
+            dry=True,
+            lease=None,
+            baselined=frozenset(report.baselined),
+            renamed=frozenset(new for _old, new in report.renamed),
         )
         if rc != 0:
             return rc
         print(f"  dry-run — {len(to_apply)} pending, nothing applied")
         return 0 if (report.clean or not args.strict) else 1
-    # The apply path is serialised across containers by the KeeperMap lock
-    # (or the lease table without a Keeper); the file lock in
+    # The apply path is serialised across containers by the KeeperMap lock; the file lock in
     # server/main.py stays the intra-container fast path.
-    return _apply_under_lease(ch, files, to_apply)
+    try:
+        return _apply_under_lease(ch, files, to_apply)
+    except KeeperRequired as e:
+        print(f"  ✗ {e}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

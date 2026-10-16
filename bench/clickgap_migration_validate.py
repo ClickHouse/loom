@@ -68,6 +68,7 @@ import httpx
 # Add server to path for direct token minting (matches the other benches).
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from bench._gate import measurement_fields
+from server.auth import keyring
 from server.auth.jwt import mint_token
 from server.cli.import_clickgap import _clickgap_memory_type
 from server.memory.domain.memory_types import is_searchable_type
@@ -164,6 +165,7 @@ def _kendall_tau(order: list[int]) -> float | None:
 
 
 def _token(org: str, namespace: str) -> str:
+    keyring.load_for_offline_mint()
     return mint_token(
         subject="clickgap-migration-validate",
         org=org,

@@ -148,8 +148,6 @@ _TOKENS = {f"tok-{r.name.lower()}": _principal(r) for r in Role} | {"tok-rival":
 # or a `from_org`), so the handler is the org boundary, and the test that
 # holds it there.
 _ORG_CHECKED_IN_HANDLER = {
-    "embedding.embed": "test_replica_embeds_via_main::test_the_main_loom_refuses_every_other_caller",
-    "llm.complete": "test_replica_llm_via_main::test_the_main_loom_refuses_every_other_llm_caller",
     "erasure.status": "test_transport_security::test_erasure_status_foreign_org_token_is_not_found",
     "memory.cross_promote": "test_cross_promote_source_scope::test_another_orgs_admin_cannot_cross_promote",
     "memory.copy_to": "test_cross_promote_source_scope::test_another_orgs_admin_cannot_copy_into_or_out_of_an_org",

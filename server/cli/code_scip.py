@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
+import math
 import sys
 import time
 from pathlib import Path
@@ -66,6 +68,7 @@ async def _scip_apply_only(
     apply resumes here without paying the index step again."""
     import json as _json
 
+    from server.code.app.index.entry_lock import check_held
     from server.code.app.index.scip_delta import ScipDelta, apply_delta
     from server.code.workers.scip_apply import watermark_key_for
 
@@ -82,6 +85,7 @@ async def _scip_apply_only(
     # scip-full runs scip-clang only, so its delta moves the C++ watermark, also
     # where clang is an extra tier beside the entry's own.
     key = watermark_key_for("clang")
+    check_held()
     await repo.set_state(org, ns, key, delta.commit)
     print(f"applied: {stats.model_dump()}")
     print(f"{key} -> {delta.commit[:12]}")
@@ -90,7 +94,12 @@ async def _scip_apply_only(
 
 
 async def _scip_full(args: argparse.Namespace) -> int:
-    from server.code.app.index.entry_lock import EntryLockHeld, entry_lock
+    from server.code.app.index.entry_lock import (
+        EntryLockHeld,
+        EntryLockLost,
+        EntryLockUnavailable,
+        entry_lock,
+    )
     from server.core.ch import get_client
 
     await get_client().connect()
@@ -115,8 +124,15 @@ async def _scip_full(args: argparse.Namespace) -> int:
             return await _scip_full_locked(args, org, ns, cfg)
     except EntryLockHeld as held:
         print(f"entry lock held by a delta ({held.path}) — waiting…")
-    async with entry_lock(org, ns, wait=True):
-        return await _scip_full_locked(args, org, ns, cfg)
+    except (EntryLockUnavailable, EntryLockLost) as e:
+        print(f"entry lock: {e}", file=sys.stderr)
+        return 1
+    try:
+        async with entry_lock(org, ns, wait=True):
+            return await _scip_full_locked(args, org, ns, cfg)
+    except (EntryLockHeld, EntryLockUnavailable, EntryLockLost) as e:  # waited the 4 h out
+        print(f"entry lock: {e}", file=sys.stderr)
+        return 1
 
 
 async def _scip_full_locked(args: argparse.Namespace, org: str, ns: str, cfg: Any) -> int:
@@ -124,6 +140,7 @@ async def _scip_full_locked(args: argparse.Namespace, org: str, ns: str, cfg: An
     import json as _json
     import tempfile
 
+    from server.code.app.index.entry_lock import check_held
     from server.code.app.index.scip_delta import ScipDelta, apply_delta
     from server.code.domain.index.repos import checkout_for
     from server.code.store.index import CodeRepo
@@ -183,6 +200,7 @@ async def _scip_full_locked(args: argparse.Namespace, org: str, ns: str, cfg: An
 
     stats = await apply_delta(repo, org, ns, delta)
     key = watermark_key_for("clang")
+    check_held()
     await repo.set_state(org, ns, key, git_head)
     print(f"applied: {stats.model_dump()}")
     print(f"{key} -> {git_head[:12]}")
@@ -226,6 +244,75 @@ async def _run_full_harness(
         return 124
     sys.stdout.write(out)
     return rc
+
+
+# `entry-lock` exits with this when another pass holds the entry (EX_TEMPFAIL).
+ENTRY_HELD_EXIT = 75
+# How long the command gets to exit after SIGTERM before SIGKILL.
+_ENTRY_STOP_GRACE_S = 30.0
+
+
+async def _entry_locked(args: argparse.Namespace) -> int:
+    """`loom code entry-lock`: run the command under the entry's lock (this
+    host's file and the deployment's lease), non-blocking. ENTRY_HELD_EXIT when
+    another pass holds the entry, 3 when the lease is lost mid-run (the command's
+    process group is killed then)."""
+    from server.code.app.index.entry_lock import (
+        HOLDER_ENV,
+        EntryLockHeld,
+        EntryLockLost,
+        current_holder,
+        entry_lock,
+    )
+
+    command = args.command[1:] if args.command[:1] == ["--"] else list(args.command)
+    if not command:
+        print("entry-lock: no command after --", file=sys.stderr)
+        return 2
+    org, ns = _identity(args)
+    try:
+        async with entry_lock(org, ns, wait=False):
+            # Its uploads name the holder, so the server refuses them once the lease moved.
+            return await _run_while_held(command, env={HOLDER_ENV: current_holder()})
+    except EntryLockHeld:
+        print(f"entry-lock {org}/{ns}: held by another pass")
+        return ENTRY_HELD_EXIT
+    except EntryLockLost:
+        print(f"entry-lock {org}/{ns}: lease lost; the command was killed", file=sys.stderr)
+        return 3
+    except Exception as e:  # noqa: BLE001 — a lock that could not be asked is a failed step, not a skip
+        print(f"entry-lock {org}/{ns}: {type(e).__name__}: {e}", file=sys.stderr)
+        return 1
+
+
+async def _run_while_held(command: list[str], *, env: dict[str, str] | None = None) -> int:
+    """Run `command` in its own process group to its end. A cancellation (the lease
+    was lost) kills the whole group at once; SIGTERM to this process (the cron's
+    timeout) sends the group SIGTERM, then SIGKILL after _ENTRY_STOP_GRACE_S."""
+    import os
+    import signal
+
+    from server.code.app.index.gitrepo import communicate_or_kill
+
+    proc = await asyncio.create_subprocess_exec(
+        *command, start_new_session=True, env={**os.environ, **(env or {})}
+    )
+    run = asyncio.ensure_future(communicate_or_kill(proc, timeout_s=math.inf, group=True))
+    term = asyncio.Event()
+    with contextlib.suppress(NotImplementedError):
+        asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, term.set)
+    stopping = asyncio.ensure_future(term.wait())
+    try:
+        await asyncio.wait({run, stopping}, return_when=asyncio.FIRST_COMPLETED)
+        if not run.done():
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(proc.pid, signal.SIGTERM)
+            await asyncio.wait({run}, timeout=_ENTRY_STOP_GRACE_S)
+    finally:
+        stopping.cancel()
+        run.cancel()  # still running: communicate_or_kill SIGKILLs the group
+        await asyncio.gather(run, return_exceptions=True)
+    return int(proc.returncode or 0)
 
 
 async def _entries(args: argparse.Namespace) -> int:

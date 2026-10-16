@@ -1,7 +1,7 @@
 """An unaddressed MCP call's default is a namespace the token
 can WRITE, and a scoped token's default is one it claims.
 
-A saved /me switcher pick on a namespace the subject only views, or one a
+A saved dashboard switcher pick on a namespace the subject only views, or one a
 scoped token does not claim, must not become the default: every unaddressed
 read would answer FORBIDDEN, or land on a viewer-only plane."""
 

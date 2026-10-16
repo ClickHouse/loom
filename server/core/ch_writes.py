@@ -22,14 +22,23 @@ def normalize_insert_settings(extra: dict[str, Any] | None) -> dict[str, Any] | 
     return out
 
 
+# Bytes of a str or bytes value the token reads.
+_PREFIX = 64
+
+
 def _token_feed(h: Any, v: Any) -> None:
-    # Vectors are thousands of floats per row: their length and a prefix
-    # identify the batch as well as the whole would, at a fraction of the cost.
+    # The batch's nonce already makes the token unique, so a long value is fed
+    # as its length and a prefix: vectors (thousands of floats per row), and
+    # text or bytes (an uploaded original can be megabytes).
     if isinstance(v, (list, tuple)):
         h.update(f"[{len(v)}".encode())
         for x in v[:4]:
             h.update(repr(x).encode())
         h.update(b"]")
+    elif isinstance(v, (str, bytes, bytearray)):
+        head = v[:_PREFIX]
+        h.update(f"{type(v).__name__}{len(v)}:".encode())
+        h.update(head.encode() if isinstance(head, str) else bytes(head))
     else:
         h.update(repr(v).encode())
 

@@ -146,14 +146,15 @@ def _set_next(verdict: str, peers: list[Any], *, repeated_merge: bool = False) -
 
 
 async def _project_set_entities_fail_open(
-    input: MemorySetInput, *, wait_visible: bool = False
+    input: MemorySetInput, *, wait_visible: bool = False, ents: list[str] | None = None
 ) -> None:
     """Deterministic LLM-free entity-graph projection for a committed
     `memory.set`. A point write carries no `entities` column, so without
     this it stays invisible to the graph until a bulk path or the
     entity_extractor worker re-extracts it. Fail-open: any error logs a
     warning and the write still succeeds. `wait_visible` (the projection
-    beside the response) returns only once its edges are readable.
+    beside the response) returns only once its edges are readable. `ents`: the
+    entities the caller already extracted.
     """
     try:
         from server.memory.app.extract.handler import project_memory_set_entities
@@ -163,6 +164,7 @@ async def _project_set_entities_fail_open(
             memory_key=input.memory_key,
             value=input.value,
             wait_visible=wait_visible,
+            ents=ents,
         )
     except Exception as e:  # noqa: BLE001 — a projection; the write stands
         log.warning("memory.set entity projection failed (non-fatal): %s", e)
@@ -685,6 +687,9 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
         # defaulted to `active` while loom.memory holds a `duplicate` verdict, the search
         # pool would keep serving the duplicate.
         status=str(memory_row.get("status") or "active"),
+        # The pending mark while a deferred judge is owed: every replica reads it.
+        conflict_checked_at=_cd.checked_at_for(conflict_result),
+        content_sha256=str(memory_row.get("content_sha256") or ""),
         # The memory row's version, not one drawn now: a newer write's retire or fence
         # outranks this vector even when its embedding arrives late.
         version=int(memory_row["version"]),
@@ -719,7 +724,15 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
     embedding_row["version"] = w.version  # the stamped version, as its insert carried it
     # Its version was drawn when the write began: a slow write indexes its own BM25 stats.
     await memory_repo.index_late_rows([embedding_row], ch=ch)
-    _cd.schedule_settle(input, conflict_result, memory_id=memory_id, cfg=_cfg)
+    _cd.schedule_settle(
+        input,
+        conflict_result,
+        memory_id=memory_id,
+        version=int(memory_row["version"]),
+        created_at=embedding_row["created_at"],
+        content_sha256=embedding_row["content_sha256"],
+        cfg=_cfg,
+    )
 
     # Post-insert (so the new row's UUID exists for the cross-link): flag
     # both the new row and every close-but-different peer as conflicted.
@@ -865,13 +878,23 @@ async def _set_post_insert(
             log.warning("memory.set: audit emit failed (non-fatal): %s", e)
 
     tail = [_supersession(), _audit()]
-    # Nothing waits on this task but a read of the same namespace (`after_write.settle`),
-    # so its edges wait for their flush: once it is done, they are readable.
-    after_write.schedule(
-        _project_set_entities_fail_open(input, wait_visible=True),
-        name="loom-set-entities",
-        scope=(input.org, input.namespace),
-    )
+    from server.memory.app.entity_projections import set_entities_for_projection
+
+    # A write with fewer than two entities projects no edge: no task, no mark.
+    ents = set_entities_for_projection(input, input.value)
+    if len(ents) >= 2:
+        from server.memory.app import graph_write_marks
+
+        # Nothing waits on this task but a read of the same namespace (`after_write.settle`),
+        # so its edges wait for their flush: once it is done, they are readable.
+        task = after_write.schedule(
+            _project_set_entities_fail_open(input, wait_visible=True, ents=ents),
+            name="loom-set-entities",
+            scope=(input.org, input.namespace),
+        )
+        # In flight for every process before this write answers: a walk on another
+        # process waits for these edges.
+        tail.append(graph_write_marks.track(input.org, input.namespace, task))
     with traced("memory.set.post_insert", concurrent=len(tail)):
         await asyncio.gather(*tail)
 

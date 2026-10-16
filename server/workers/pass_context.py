@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import contextvars
 import logging
+import threading
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -58,6 +59,10 @@ class PassContext:
     # reads it here, never from the registry, whose outcome may be an
     # earlier pass's.
     outcome: dict[str, Any] | None = None
+    # Set when the supervisor stopped this pass (cancelled, or cut at its
+    # deadline): code of the pass still running, in a thread or past a
+    # swallowed cancel, sees it at its next `check_stop()`.
+    stopped: threading.Event = field(default_factory=threading.Event)
 
     def note_failure(self, exc: BaseException, what: str = "") -> None:
         self.count += 1
@@ -85,6 +90,34 @@ def begin(worker: str, *, resume_cursor: str = "") -> PassContext:
     ctx = PassContext(worker=worker, resume_cursor=str(resume_cursor or "")[:MAX_CURSOR])
     _current.set(ctx)
     return ctx
+
+
+class PassStopped(BaseException):
+    """The pass was stopped, or the supervisor lease is no longer fresh: no
+    further write. A BaseException, like a cancel, so a leg's `except
+    Exception` does not carry on past it."""
+
+
+def stop_requested() -> bool:
+    """Inside a supervised pass: the supervisor stopped it, or this process's
+    lease has gone stale (a pause, a stalled network) and another may hold it
+    by now. Thread-safe, no ClickHouse call. False outside a pass."""
+    ctx = _current.get()
+    if ctx is None:
+        return False
+    if ctx.stopped.is_set():
+        return True
+    from server.workers import leader
+
+    lease = leader.current()
+    return lease is not None and not lease.fresh()
+
+
+def check_stop() -> None:
+    """Raise `PassStopped` when `stop_requested()`. Called between batches of a
+    long pass, in its threads too (`asyncio.to_thread` carries the context)."""
+    if stop_requested():
+        raise PassStopped
 
 
 def current() -> PassContext | None:

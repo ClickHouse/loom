@@ -126,7 +126,6 @@ const ERROR_CODE_PREFIXES: Record<string, string> = {
   BACKEND_UNAVAILABLE: "Loom's database is unreachable — try again shortly.",
   SCHEMA_PENDING: "Loom is mid-upgrade — a table this needs isn't ready yet.",
   CODED_WIDTH_MISMATCH: "The embedding model's width doesn't match the vector tables — see Settings → Models & keys.",
-  OVERRIDE_NOT_SHARED: "The override couldn't reach Loom's other processes, so none took it.",
   SELF_SIGNUP_DISABLED: "Sign-up is off on this instance. Ask your operator.",
   INTERNAL_ERROR: "Loom hit an internal error.",
 };
@@ -200,7 +199,7 @@ export function timeOfDay(iso: string): string {
 /** Map agent sentinels to human-readable labels. `*` is the wildcard
  *  Loom uses for cross-agent search (SPA cross-agent listMemories,
  *  fan-out memory.search). `-` is the placeholder when a caller
- *  didn't pass an agent field (admin / /me/* endpoints, unauth
+ *  didn't pass an agent field (admin / caller-API endpoints, unauth
  *  requests). Returns the raw value for any other agent. */
 export function displayAgent(agent: string | null | undefined): string {
   if (!agent) return "—";
@@ -212,7 +211,7 @@ export function displayAgent(agent: string | null | undefined): string {
 export const SENTINEL_AGENTS = new Set(["*", "-"]);
 
 /** Service-account subjects are minted as `sa:<client>-<6 hex>` (see
- *  server/identity/app/me_routes.py). Nobody should read that string on a card:
+ *  server/identity/app/me_service_accounts.py). Nobody should read that string on a card:
  *  `sa:reporter-a1b2c3` → "Reporter bot". Human subjects (emails, the self-signup
  *  `personal-*` form) come back unchanged. */
 export function isServiceSubject(subject: string | null | undefined): boolean {

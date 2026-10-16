@@ -58,7 +58,8 @@ async def _flush_usage_buffer_now(ch: _CHClient | None = None) -> None:
         await ch.insert(
             "loom.memory_usage_events",
             batch,
-            settings={"async_insert": 1, "wait_for_async_insert": 0},
+            # wait=1: a rejected insert raises here and is re-queued, not lost unseen.
+            settings={"async_insert": 1, "wait_for_async_insert": 1},
         )
     except Exception as e:  # noqa: BLE001 — requeue on any flush failure
         # Re-queue on failure, but bounded: drop rather than OOM if CH stays down.
@@ -70,6 +71,12 @@ async def _flush_usage_buffer_now(ch: _CHClient | None = None) -> None:
         async with _USAGE_BUFFER_LOCK:
             if len(_USAGE_BUFFER) + len(batch) <= _USAGE_BUFFER_MAX * 10:
                 _USAGE_BUFFER = batch + _USAGE_BUFFER
+
+
+async def drain() -> None:
+    """Shutdown: the buffered labels land before the ClickHouse client goes
+    (`boot.drain_writes`); the flush loop's own cancel-path flush runs too late."""
+    await _flush_usage_buffer_now()
 
 
 # The flush loop runs in a detached (empty) context; the tag names its inserts

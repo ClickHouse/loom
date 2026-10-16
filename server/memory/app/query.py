@@ -779,7 +779,7 @@ async def _handle_memory_bulk_get(
     canonical = await _canonical_keys_for_rows(input.org, input.namespace, rows)
     successors = await shown_successors(input.org, input.namespace, rows)
     # Same read shape as memory.get so a bulk reader (the OKF exporter, the
-    # /me preload) sees identity, lifecycle and attestation without N gets.
+    # dashboard preload) sees identity, lifecycle and attestation without N gets.
     results: dict[str, MemoryGetOutput] = {}
     for r in rows:
         sha = _row_content_sha256(r)

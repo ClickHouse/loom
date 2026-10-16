@@ -65,6 +65,7 @@ budget is spent.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import time
 from dataclasses import dataclass
@@ -164,11 +165,13 @@ class UsageFoldResult:
 def reset_watermark() -> None:
     """Reset the process-local watermarks (boot state). Test hook."""
     global _watermark, _watermark_derived, _acted_watermark, _acted_watermark_derived
+    global _credits_warned
     _watermark = _EPOCH
     _watermark_derived = False
     _acted_watermark = _EPOCH
     _acted_watermark_derived = False
     _acted_recent.clear()
+    _credits_warned = False
 
 
 def current_watermark() -> datetime:
@@ -581,9 +584,11 @@ async def _fold_batch(ch: _CHClient, cfg: UsageFoldConfig, result: UsageFoldResu
 #
 # The watermark is on the write's created_at, process-local like the fold's;
 # on a cold start it is the last `acted` event's time (else a day back). The
-# statement re-reads a lag window each pass and the pairs emitted inside it
-# are remembered, so an insert that became visible late is still credited
-# and nothing is credited twice.
+# statement re-reads a lag window each pass, so an insert that became visible
+# late is still credited. The pairs credited are committed to
+# loom.usage_acted_credits before their events, so a new leader re-reading the
+# window credits none of them twice (the in-process set covers a schema
+# without that table).
 
 # How far back a run's exposures are read for the writes of one pass: a
 # session can be shown a key hours before it acts on it.
@@ -598,6 +603,14 @@ _acted_watermark: datetime = _EPOCH
 _acted_watermark_derived: bool = False
 # (org, namespace, run_id, key) credited inside the current lag window.
 _acted_recent: set[tuple[str, str, str, str]] = set()
+_credits_warned = False
+
+ACTED_CREDITS_TABLE = "loom.usage_acted_credits"
+ACTED_CREDITS_SQL = """
+SELECT toString(pair_sha256) AS pair_sha256
+FROM loom.usage_acted_credits
+WHERE first_write > {since:DateTime}
+"""
 
 ACTED_STATEMENT = """
 WITH
@@ -673,6 +686,52 @@ async def _derive_acted_watermark(ch: _CHClient, now: datetime) -> datetime:
     return last - timedelta(seconds=ACTED_WRITE_LAG_SECONDS)
 
 
+def _warn_credits_once(what: str, e: BaseException) -> None:
+    global _credits_warned
+    if not _credits_warned:
+        _credits_warned = True
+        log.warning(
+            "usage fold: %s %s failed (%s); `acted` dedup is process-local until it works",
+            what,
+            ACTED_CREDITS_TABLE,
+            e,
+        )
+
+
+def _pair_sha256(pair: tuple[str, str, str, str]) -> str:
+    """A credit mark names its (org, namespace, run, key) by hash only, so the
+    table holds no memory content for the erasure saga to chase."""
+    return hashlib.sha256("\x00".join(pair).encode()).hexdigest()
+
+
+async def _credited_pairs(ch: _CHClient, since: datetime) -> set[str]:
+    """The pair hashes some leader already credited for writes past `since`. Read
+    sequentially consistent: a new leader may reach a replica that has not seen
+    the marks its predecessor committed."""
+    from server.core.ch import sequential_reads
+
+    try:
+        with sequential_reads():
+            rows = await ch.query_all(ACTED_CREDITS_SQL, params={"since": since})
+    except Exception as e:  # noqa: BLE001 — a schema without the table falls back to memory
+        _warn_credits_once("read of", e)
+        return set()
+    return {str(r["pair_sha256"]) for r in rows}
+
+
+async def _record_credits(ch: _CHClient, marks: list[dict[str, Any]]) -> None:
+    """Commit the credit marks before the (buffered) events: a leader that
+    dies in between loses a credit rather than giving it twice."""
+    try:
+        await ch.insert(
+            ACTED_CREDITS_TABLE,
+            marks,
+            settings={"async_insert": 0, "wait_for_async_insert": 1},
+        )
+    except Exception as e:  # noqa: BLE001 — the credit still goes out, deduped in-process
+        _warn_credits_once("insert into", e)
+
+
 async def acted_pass(
     ch: _CHClient,
     result: UsageFoldResult | None = None,
@@ -699,17 +758,29 @@ async def acted_pass(
         },
     )
     result.acted_candidates += len(rows)
+    credited = await _credited_pairs(ch, since) if rows else set()
     seen_now: set[tuple[str, str, str, str]] = set()
     by_org_agent: dict[tuple[str, str], dict[str, list[str]]] = {}
+    marks: list[dict[str, Any]] = []
     for r in rows:
         pair = (str(r["org"]), str(r["namespace"]), str(r["run_id"]), str(r["acted_key"]))
         seen_now.add(pair)
-        if pair in _acted_recent:
+        digest = _pair_sha256(pair)
+        if pair in _acted_recent or digest in credited:
             continue
+        credited.add(digest)
+        marks.append(
+            {
+                "pair_sha256": digest,
+                "first_write": _utc(r.get("first_write")).replace(tzinfo=None),
+            }
+        )
         bucket = by_org_agent.setdefault((pair[0], str(r.get("agent") or "")), {})
         keys = bucket.setdefault(pair[1], [])
         if pair[3] not in keys:
             keys.append(pair[3])
+    if marks:
+        await _record_credits(ch, marks)
     if by_org_agent:
         from server.memory.store.usage import record_usage_for_keys
 
