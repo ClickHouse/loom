@@ -2267,6 +2267,70 @@ async def test_a_value_a_retirement_ended_ends_at_the_retirement(ch, org) -> Non
     assert ended == retired
 
 
+async def test_a_value_a_by_id_tombstone_ended_ends_at_the_tombstone(ch, org) -> None:
+    # A by-id tombstone (a conflict's losing side, a blacklist sweep) keeps the row's
+    # updated_at and stamps only tombstoned_at.
+    from server.memory import store as M
+    from server.memory.app.entity_projections import value_ended_at
+
+    row = _row(org, "s1", "User lives in London", None)
+    await M.insert_memory_versions([row], ch=ch)
+    await asyncio.sleep(1.1)  # the tombstone a second after the write
+    when = naive_utc_now().replace(microsecond=0)
+    assert await M.tombstone_cascade_by_ids(org, [str(row["memory_id"])], when=when, ch=ch)
+    ended = await value_ended_at(org, NS, str(row["memory_id"]), row["content_sha256"], ch=ch)
+    assert ended == when
+
+
+async def _restored_dependent(ch: Any, org: str) -> dict[str, Any]:
+    """A summary tombstoned with its last source (tombstoned_at and invalid_at both
+    stamped), then restored."""
+    from server.memory import store as M
+    from server.memory.api.models_crud import MemoryRestoreInput
+    from server.memory.app.restore import handle_memory_restore
+
+    row = _row(org, "s1", "User lives in London", None, tags=["consolidated", "src:gone"])
+    await M.insert_memory_versions([row], ch=ch)
+    assert await M.downgrade_consolidated_dependents(org, NS, "gone", ch=ch) == (1, 0)
+    restore = MemoryRestoreInput(
+        org=org, namespace=NS, agent="bot", user_id=USER, session_id="s1", memory_key=KEY
+    )
+    assert (await handle_memory_restore(restore)).restored
+    return row
+
+
+async def test_a_restored_tombstone_is_not_left_retired(ch, org) -> None:
+    from server.memory import store as M
+
+    row = await _restored_dependent(ch, org)
+    head = await M.get_by_id(
+        str(row["memory_id"]), org=org, ch=ch, strong=True, scope=WHOLE_NAMESPACE
+    )
+    assert head.tombstoned_at is None and head.invalid_at is None
+
+
+async def test_a_value_revised_after_a_restore_ends_at_the_revision(ch, org) -> None:
+    # The tombstone's invalid_at must not date the end of a value the row held again.
+    from server.memory.api.models_crud import MemoryUpdateByIdInput
+    from server.memory.app.entity_projections import value_ended_at
+    from server.memory.app.update import handle_memory_update_by_id
+
+    row = await _restored_dependent(ch, org)
+    await asyncio.sleep(1.1)  # the revision a second after the tombstone
+    revised = await handle_memory_update_by_id(
+        MemoryUpdateByIdInput(org=org, memory_id=str(row["memory_id"]), value="User lives in Rome")
+    )
+    assert revised.updated
+    (version,) = await ch.query_all(
+        "SELECT updated_at FROM loom.memory_versions"
+        " WHERE org = {org:String} AND version = {v:UInt64}"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org, "v": revised.new_version},
+    )
+    ended = await value_ended_at(org, NS, str(row["memory_id"]), row["content_sha256"], ch=ch)
+    assert ended == version["updated_at"]
+
+
 @pytest.mark.parametrize(
     "extra",
     [

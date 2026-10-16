@@ -448,7 +448,8 @@ A revision writes its new value's edges before that close: `memory.set` waits fo
 entity projection when it revises a row (a first write projects beside the response, and
 only while its row still holds that value: if a revision or retirement lands while it
 runs, it ends the edges it wrote that no live row names, at the moment the row stopped
-holding that value (read from `loom.memory_versions`), not when the cleanup runs; when that
+holding that value (read from `loom.memory_versions`: a tombstone's or retirement's
+stamp, else the next write), not when the cleanup runs; when that
 cleanup fails, the row, value and that moment are recorded (`entity_edges_close`) for
 `projection_repair`), and `memory.update_by_id` and
 `memory.update` project a changed value's edges the same way (a failure is recorded for

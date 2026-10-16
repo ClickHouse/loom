@@ -489,8 +489,11 @@ async def value_ended_at(
     version history. Now when the history has none."""
     row = await ch.query_one(
         f"""
-        -- A retirement keeps the row's updated_at and stamps invalid_at.
-        SELECT argMinOrNull(ifNull(invalid_at, updated_at), version) AS ended
+        -- A tombstone or retirement can keep the row's updated_at. A tombstoned_at here is
+        -- fresh (the holders had none); an invalid_at older than the write is stale.
+        SELECT argMinOrNull(
+            coalesce(tombstoned_at, greatest(updated_at, ifNull(invalid_at, updated_at))),
+            version) AS ended
         FROM loom.memory_versions
         WHERE org = {{org:String}} AND namespace = {{ns:String}} AND memory_id = {{id:UUID}}
           AND version > (

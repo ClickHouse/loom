@@ -193,6 +193,16 @@ def _attested(row: MemoryRow) -> bool:
     return state in ("human", "process")
 
 
+def _invalid_at_after_restore(existing: MemoryRow) -> datetime | None:
+    """A tombstone that also stamped invalid_at (a summary that lost its last source)
+    stamped both at once: undoing it clears both. A retirement (`superseded`) keeps
+    its stamp, even one deleted in the same second."""
+    retired = existing.status == "superseded"
+    if not retired and existing.invalid_at == existing.tombstoned_at:
+        return None
+    return existing.invalid_at
+
+
 async def _restore_embedding_mirror(
     ch: Any, input: Any, existing: MemoryRow, memory_type: str
 ) -> None:
@@ -278,7 +288,7 @@ async def _restore_embedding_mirror(
             temporal_confidence=getattr(existing, "temporal_confidence", 0.0),
             valid_at=existing.valid_at,
             valid_to=existing.valid_to,
-            invalid_at=existing.invalid_at,
+            invalid_at=_invalid_at_after_restore(existing),
             source_class=existing.source_class,
             verified=1 if _attested(existing) else 0,
             # Must match the loom.memory restore row's cleared
@@ -387,6 +397,7 @@ async def handle_memory_restore(input: MemoryRestoreInput) -> MemoryRestoreOutpu
         version=new_version,
         updated_at=memory_repo.written_now(),
         tombstoned_at=None,
+        invalid_at=_invalid_at_after_restore(existing),
         expires_at=None,
     )
     await insert_memory_versions([restore_row], ch=ch)
