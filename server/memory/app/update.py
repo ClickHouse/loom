@@ -27,7 +27,7 @@ from server.memory.api.models_crud import (
 )
 from server.memory.app import conflict_deferred as _cd
 from server.memory.app import provenance as app_provenance
-from server.memory.app.entity_projections import project_stated_relations
+from server.memory.app.entity_projections import project_revised_edges, project_stated_relations
 from server.memory.app.high_fence import fence_high
 from server.memory.domain import lock as _lock
 from server.memory.domain.embed_text import _build_embed_text, key_axis_text
@@ -701,6 +701,8 @@ async def _write_revision(
 
     # Same-key supersession, exactly as memory.set runs it after its insert.
     await _revision_supersession(input.org, existing, serialized_value, ch, cfg.policy)
+    if new_sha != existing.content_sha256:
+        await project_revised_edges(memory_row, new_value, op=op, ch=ch)
     await project_stated_relations(
         memory_row, new_value, input.relations, revised=True, op=op, ch=ch
     )

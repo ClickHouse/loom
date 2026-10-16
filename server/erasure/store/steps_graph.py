@@ -40,6 +40,7 @@ _LINK_TABLES_DELETE = (
     ("loom.entity_triple_memories", USER_PARENT_KEYS),
     ("loom.entity_triple_rows", UID),
     ("loom.entity_edge_memories", USER_PARENT_KEYS),
+    ("loom.entity_edge_rows", UID),
 )
 # The entity graph itself: edges and triples carry the namespace's subjects,
 # relations and objects verbatim and have no soft-delete column (invalidation

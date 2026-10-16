@@ -1195,7 +1195,15 @@ class _Graph:
             # Live rows with no row link, of a key a triple is linked to.
             linked = {link[0] for link in self.links}
             return [
-                {"value": row["value"], "subject": s, "relation": r, "object": o}
+                {
+                    "id": row["id"],
+                    "sha": row["content_sha256"],
+                    "updated_at": None,
+                    "value": row["value"],
+                    "subject": s,
+                    "relation": r,
+                    "object": o,
+                }
                 for row in self.rows.values()
                 if self._holds(row) and row["id"] not in linked
                 for s, r, o, key in sorted(self.provenance)
@@ -1209,6 +1217,7 @@ class _Graph:
                     "current": live[i]["content_sha256"],
                     "sha": h,
                     "value": live[i]["value"],
+                    "updated_at": None,
                     "inferred": inf,
                     "subject": s,
                     "relation": r,
@@ -1839,15 +1848,11 @@ async def test_a_fallback_marker_closed_in_the_same_second_gets_a_marker_of_its_
     async def reopen(input, ids, *, ch, restore_id, restored_at, adapter_name, **_kw):
         restated.append((restore_id, adapter_name))
 
-    async def all_held(org, namespace, triples, *, ch, rows=None):
-        return frozenset(triples)
-
-    async def one_row(org, namespace, triples, *, ch):
-        return {"m1": "sha"}
+    async def all_held_by_one_row(org, namespace, triples, *, ch, rows=None):
+        return {t: {entity_projections.Holder("m1", "sha", closed)} for t in triples}
 
     monkeypatch.setattr(graph_undo, "reopen_held_facts", reopen)
-    monkeypatch.setattr(entity_projections, "stated_by_live_rows", all_held)
-    monkeypatch.setattr(entity_projections, "_rows_linking", one_row)
+    monkeypatch.setattr(entity_projections, "live_holders", all_held_by_one_row)
     inp = SimpleNamespace(org="o", namespace="ns", agent="a")
     await entity_projections._keep_one_current(inp, list(stored), ch=None)
     stored.append(paris(closed.replace(microsecond=5)))  # the marker, closed again

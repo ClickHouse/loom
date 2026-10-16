@@ -155,7 +155,7 @@ def _set_next(
 
 
 async def _project_set_entities_fail_open(
-    input: MemorySetInput, *, wait_visible: bool = False
+    input: MemorySetInput, *, memory_id: str, wait_visible: bool = False
 ) -> None:
     """Deterministic LLM-free entity-graph projection for a committed
     `memory.set`. A point write carries no `entities` column, so without
@@ -172,6 +172,7 @@ async def _project_set_entities_fail_open(
             memory_key=input.memory_key,
             value=input.value,
             wait_visible=wait_visible,
+            memory_id=memory_id,
         )
     except Exception as e:  # noqa: BLE001 — a projection; the write stands
         log.warning("memory.set entity projection failed (non-fatal): %s", e)
@@ -261,7 +262,7 @@ async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
                 [(memory_repo.embedding_key(memory_row), int(memory_row["version"]))], ch=ch
             )
     if memory_row.get("sensitivity") != "high":  # a high row's text stays out of the graph
-        await _project_set_entities_fail_open(input)
+        await _project_set_entities_fail_open(input, memory_id=memory_id)
     await project_stated_relations(
         memory_row,
         input.value,
@@ -822,7 +823,7 @@ async def _set_post_insert(
     # Nothing waits on this task but a read of the same namespace (`after_write.settle`),
     # so its edges wait for their flush: once it is done, they are readable.
     after_write.schedule(
-        _project_set_entities_fail_open(input, wait_visible=True),
+        _project_set_entities_fail_open(input, memory_id=memory_id, wait_visible=True),
         name="loom-set-entities",
         scope=(input.org, input.namespace),
     )

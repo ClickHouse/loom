@@ -3042,6 +3042,35 @@ async def test_a_users_row_links_are_erased_after_their_memory_row_is_gone(ch, o
     assert rows == [{"user_id": "u2"}]
 
 
+async def test_a_users_edge_row_links_are_erased(ch, org) -> None:
+    # As the triple links: found by the writer they carry, not by their row.
+    import uuid
+
+    from server.erasure.store.census import residue_census
+    from server.erasure.store.steps_graph import delete_graph_links_by_user
+
+    link = {
+        "org": org,
+        "namespace": NS,
+        "memory_id": str(uuid.uuid4()),
+        "user_id": USER,
+        "content_sha256": "0" * 64,
+        "entity_a": "alice",
+        "entity_b": "paris",
+    }
+    theirs = {**link, "memory_id": str(uuid.uuid4()), "user_id": "u2"}
+    await ch.insert("loom.entity_edge_rows", [link, theirs])
+    assert (await residue_census(org, "user_id", USER, ch=ch))["loom.entity_edge_rows"] == 1
+    await delete_graph_links_by_user(org, USER, ch=ch)
+    assert (await residue_census(org, "user_id", USER, ch=ch))["loom.entity_edge_rows"] == 0
+    rows = await ch.query_all(
+        "SELECT user_id FROM loom.entity_edge_rows WHERE org = {org:String}"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert rows == [{"user_id": "u2"}]
+
+
 async def test_a_replay_projects_nothing_for_a_value_revised_since(ch, org) -> None:
     # London's projection failed; the row was then revised to Berlin. The replay
     # finds the row no longer holds London and leaves Berlin current.
@@ -3465,6 +3494,35 @@ async def _row_saying(ch: Any, org: str, value: str) -> dict[str, Any]:
         params={"org": org, "value": json.dumps(value)},
     )
     return row
+
+
+async def test_a_fallback_asks_only_the_rows_holding_the_value(ch, org, monkeypatch) -> None:
+    # A jazz row was linked to Paris for a value it no longer has. London's row drops
+    # London: Paris is stated again through the row that says it, not the jazz row.
+    from server.memory import store as M
+    from server.memory.app import graph_undo
+    from server.memory.app.projections import triple_row_link
+
+    london = await _london_undone_over_paris(ch, org, "live_in")
+    paris = await _row_saying(ch, org, "I live in Paris")
+    jazz = _row(org, "s3", "I like jazz", datetime(2026, 5, 1), memory_key="k3")
+    await M.insert_memory_versions([jazz], ch=ch)
+    old = triple_row_link(
+        org, NS, str(jazz["memory_id"]), "0" * 64, ("user", "live_in", "paris"), user_id=USER
+    )
+    await ch.insert("loom.entity_triple_rows", [old])
+    reopen, asked = graph_undo.reopen_held_facts, []
+
+    async def _asked(input: Any, ids: list[str], **kw: Any) -> None:
+        if kw.get("adapter_name") == "row-fallback":
+            asked.append(ids)
+        await reopen(input, ids, **kw)
+
+    monkeypatch.setattr(graph_undo, "reopen_held_facts", _asked)
+    await _revise("memory.update_by_id", org, london, "I like Rome", (("user", "like", "rome"),))
+    await _mutations_done(ch, org)
+    assert asked == [[paris["memory_id"]]]
+    assert await _open_cities(ch, org, {"paris", "rome"}) == {"paris", "rome"}
 
 
 async def test_a_fallback_leaves_out_a_row_revised_before_its_markers_land(
@@ -4236,6 +4294,16 @@ async def _mentions(ch: Any, org: str, row: dict[str, Any], *entities: str) -> N
     await write_entity_edges(write, [result], ch=ch, entity_map={}, wait_visible=True)
 
 
+async def _walks_to(org: str, entity: str, *, seed: str = "alice") -> bool:
+    """Whether one unlabelled hop from `seed` reaches `entity`, waiting up to two
+    seconds for it."""
+    for _ in range(10):
+        if entity in await _walked(org, [entity], labeled=False, seed=seed):
+            return True
+        await asyncio.sleep(0.2)
+    return False
+
+
 async def test_a_dropped_facts_edge_stays_open_while_another_row_names_both(ch, org) -> None:
     # A trip row names Alice and London and states no relation. London's row is
     # revised away: its fact ends, the trip row's edge does not.
@@ -4250,7 +4318,7 @@ async def test_a_dropped_facts_edge_stays_open_while_another_row_names_both(ch, 
     await _mutations_done(ch, org)
     await asyncio.sleep(1.1)  # the walk counts an edge ended this second as current
     assert await _walked(org, [], labeled=True, seed="alice") == []
-    assert await _walked(org, ["london"], labeled=False, seed="alice") == ["london"]
+    assert await _walks_to(org, "london")
 
 
 async def test_a_dropped_facts_edge_stays_open_while_the_same_key_in_another_session_names_both(
@@ -4266,7 +4334,7 @@ async def test_a_dropped_facts_edge_stays_open_while_the_same_key_in_another_ses
     await _revise("memory.update_by_id", org, london, "Alice likes Rome")
     await _mutations_done(ch, org)
     await asyncio.sleep(1.1)  # the walk counts an edge ended this second as current
-    assert await _walked(org, ["london"], labeled=False, seed="alice") == ["london"]
+    assert await _walks_to(org, "london")
 
 
 async def test_a_key_that_no_longer_names_both_keeps_no_edge_open(ch, org) -> None:
@@ -4283,7 +4351,85 @@ async def test_a_key_that_no_longer_names_both_keeps_no_edge_open(ch, org) -> No
     await _mutations_done(ch, org)
     await asyncio.sleep(1.1)  # the walk counts an edge ended this second as current
     assert await _walked(org, [], labeled=True, seed="alice") == []
-    assert await _walked(org, [], labeled=False, seed="alice") == []
+    # The revisions' own edges (jazz, blues) are walked; Paris is not.
+    assert "paris" not in await _walked(org, [], labeled=False, seed="alice")
+
+
+@pytest.mark.parametrize(
+    ("city", "trip_value"),
+    [("new york city", "Alice's trip to NYC"), ("北京市", "Alice去北京市旅行")],
+)
+async def test_a_dropped_facts_edge_stays_open_while_a_row_states_the_pair_in_other_words(
+    ch, org, city, trip_value
+) -> None:
+    # The trip row's entities are Alice and the city, though its text spells the city
+    # another way, or with no space around it. The city's row is revised away: the
+    # trip row still states the pair, so the edge stays open.
+    liked = await _stated(ch, org, "s1", f"Alice likes {city}", ("alice", "like", city))
+    trip = await _stated(ch, org, "s2", trip_value, extracted=False, memory_key="trip")
+    await _mentions(ch, org, liked, "alice", city)
+    await _mentions(ch, org, trip, "alice", city)
+    await _revise("memory.update_by_id", org, liked, "Alice likes Rome")
+    await _mutations_done(ch, org)
+    await asyncio.sleep(1.1)  # the walk counts an edge ended this second as current
+    assert await _walks_to(org, city)
+
+
+@pytest.mark.parametrize("path", ["memory.update_by_id", "memory.set"])
+async def test_a_revision_that_still_names_the_pair_keeps_its_edge(
+    ch, org, path, monkeypatch
+) -> None:
+    # No other row names Alice and London. The revision drops the fact but its new
+    # value names both: its own edge stays open.
+    from server.memory.app import after_write, entity_projections
+
+    close = entity_projections.close_dropped_facts
+
+    async def after_the_projection(input: Any, ids: list[str], *, ch: Any) -> None:
+        # memory.set projects its edges beside the response: here they land first.
+        await after_write.settle(input.org, input.namespace, timeout_s=10)
+        await close(input, ids, ch=ch)
+
+    monkeypatch.setattr(entity_projections, "close_dropped_facts", after_the_projection)
+    london = await _stated(ch, org, "s1", "Alice likes London", ("alice", "like", "london"))
+    await _mentions(ch, org, london, "alice", "london")
+    await _revise(path, org, london, "Alice took a trip to London")
+    await _mutations_done(ch, org)
+    await asyncio.sleep(1.1)  # the walk counts an edge ended this second as current
+    assert await _walks_to(org, "london")
+
+
+async def test_a_row_naming_the_pair_while_its_edge_ends_keeps_it_open(ch, org) -> None:
+    # The trip row's edge lands after the close checked the pair and before its UPDATE:
+    # the check after the UPDATE finds the row's link and opens the edge again.
+    from server.memory.app.projections import end_edges, entity_edge_row
+
+    trip = await _stated(
+        ch, org, "s2", "Alice's trip to London", extracted=False, memory_key="trip"
+    )
+    edge = entity_edge_row(org, NS, "alice", "london", last_seen=naive_utc_now())
+    await ch.insert("loom.entity_edges", [edge], settings={"wait_for_async_insert": 1})
+
+    class _Racing:
+        """`ch`, with the trip row written right after the first read."""
+
+        def __init__(self) -> None:
+            self.reads = 0
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(ch, name)
+
+        async def query_all(self, *a: Any, **k: Any) -> Any:
+            found = await ch.query_all(*a, **k)
+            self.reads += 1
+            if self.reads == 1:
+                await _mentions(ch, org, trip, "alice", "london")
+            return found
+
+    await end_edges(_Racing(), org=org, namespace=NS, ends=[("alice", "london", naive_utc_now())])
+    await _mutations_done(ch, org)
+    await asyncio.sleep(1.1)  # the walk counts an edge ended this second as current
+    assert await _walks_to(org, "london")
 
 
 async def test_a_fact_that_ended_keeps_no_edge_of_a_dropped_one_open(ch, org) -> None:

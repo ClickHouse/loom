@@ -368,6 +368,7 @@ async def project_memory_set_entities(
     value: Any,
     ch: Any = None,
     wait_visible: bool = False,
+    memory_id: str = "",
 ) -> int:
     """Fail-open entity projection for a single `memory.set`.
 
@@ -375,7 +376,8 @@ async def project_memory_set_entities(
     for the same pairing / cap / window / insert path as the bulk write.
     Returns the count of distinct candidates projected (0 when <2).
     `wait_visible` is for the projection that runs beside the response: its
-    edges are readable once it returns.
+    edges are readable once it returns. With `memory_id`, the edges are linked
+    to that row and its value (`entity_edge_rows`).
     """
     from server.observability.otel import traced
 
@@ -403,12 +405,42 @@ async def project_memory_set_entities(
                 )
             ],
         )
-    result = _BulkSetResult(memory_key=memory_key, version=0)
+    result = _BulkSetResult(memory_key=memory_key, version=0, memory_id=memory_id)
     with traced("entities.write_edges", entities=len(ents)):
         await write_entity_edges(
             bulk_like, [result], ch=ch or get_client(), wait_visible=wait_visible
         )
     return len(ents)
+
+
+async def project_revised_edges(row: Mapping[str, Any], value: Any, *, op: str, ch: Any) -> None:
+    """The co-occurrence edges a revision's new `value` names, linked to its `row` (the
+    `loom.memory` row holding it), as `memory.set` projects them. Written before the
+    close of what the revision dropped, so an edge its new value still names stays
+    open. A 'high' row's text stays out of the graph. Fail-open: a failed write is
+    recorded for the projection repair to replay."""
+    if row.get("sensitivity") == "high":
+        return
+    scope = SimpleNamespace(tags=row.get("tags"), source_trace=row.get("source_trace", ""))
+    ents = set_entities_for_projection(scope, value)
+    if len(ents) < 2:
+        return
+    write, results = _as_bulk_write(row, value, [])
+    entry = write.entries[0].model_copy(update={"entities": ents})
+    write = write.model_copy(update={"entries": [entry]})
+    try:
+        await write_entity_edges(write, results, ch=ch, wait_visible=True)
+    except Exception as e:  # noqa: BLE001 — a projection; the write stands
+        log.warning("%s: edges projection failed (recorded for repair): %s", op, e)
+        await record_input_projection_failure(
+            write,
+            projection="entity_edges",
+            error=e,
+            memory_keys=[results[0].memory_key],
+            payload=bulk_projection_payload(write, results, error=e),
+            source_operation=op,
+            source_resource_id=f"{op}:{results[0].memory_id}",
+        )
 
 
 async def project_stated_relations(
@@ -537,12 +569,11 @@ async def close_dropped_facts(input: Any, ids: list[str], *, ch: Any) -> None:
     if opened:
         await _write_follow_plan(input, tfr.FollowPlan(closes=sorted(opened), inserts=[]), ch=ch)
     await end_triples_now(ch, org=input.org, namespace=input.namespace, triples=gone)
-    await _after_the_close(input, ids, gone, held, ch=ch)
+    await _after_the_close(input, gone, held, ch=ch)
 
 
 async def _after_the_close(
     input: Any,
-    changed: list[str],
     gone: list[tfr.Triple],
     held: frozenset[tfr.Triple],
     *,
@@ -551,9 +582,8 @@ async def _after_the_close(
     """End the edges of the `gone` facts and keep one value current for each
     single-valued relation they touch, from one read of the triples.
 
-    changed: ids of the rows revised or retired.
-    gone: the facts those rows no longer keep, closed now or before (a replay
-        finds the close already landed and still checks).
+    gone: the facts the rows revised or retired no longer keep, closed now or before
+        (a replay finds the close already landed and still checks).
     held: the facts the caller found a live row still holds."""
     from server.identity.app.namespace_ontology import load_relation_cardinality
     from server.memory.domain.graph_quality import is_single_valued_relation
@@ -577,7 +607,7 @@ async def _after_the_close(
         params={"org": input.org, "ns": input.namespace, "names": names, "single": single},
     )
     between = [r for r in rows if r["subject"] in names and r["object"] in names]
-    await _close_dropped_edges(input, changed, gone, held, between, ch=ch)
+    await _close_dropped_edges(input, gone, held, between, ch=ch)
     await _keep_one_current(
         input, [r for r in rows if (r["subject"], r["relation"]) in single], ch=ch
     )
@@ -585,7 +615,6 @@ async def _after_the_close(
 
 async def _close_dropped_edges(
     input: Any,
-    changed: list[str],
     gone: list[tfr.Triple],
     held: frozenset[tfr.Triple],
     rows: list[Mapping[str, Any]],
@@ -593,16 +622,16 @@ async def _close_dropped_edges(
     ch: Any,
 ) -> None:
     """End the edges of the `gone` facts with them (`tfr.edge_ends`), unless a live row
-    still holds another fact between the same two entities, or a live row other than
-    the `changed` ones names both (`end_edges`). `rows` are the stored triples between
-    the entities; only those neither in `gone` nor `held` are asked about."""
+    still holds another fact between the same two entities, or a live row's current
+    value names both (`end_edges`). `rows` are the stored triples between the
+    entities; only those neither in `gone` nor `held` are asked about."""
     known = set(gone) | held
     others = sorted(
         {(str(r["subject"]), str(r["relation"]), str(r["object"])) for r in rows} - known
     )
     held = held | await stated_by_live_rows(input.org, input.namespace, others, ch=ch)
     ends = tfr.edge_ends(gone, held, rows, naive_utc_now())
-    await end_edges(ch, org=input.org, namespace=input.namespace, ends=ends, changed=changed)
+    await end_edges(ch, org=input.org, namespace=input.namespace, ends=ends)
 
 
 async def _keep_one_current(input: Any, rows: list[Mapping[str, Any]], *, ch: Any) -> None:
@@ -646,7 +675,7 @@ async def _keep_one_current(input: Any, rows: list[Mapping[str, Any]], *, ch: An
     ]
     if not closed:
         return
-    held = await stated_by_live_rows(
+    held = await live_holders(
         input.org,
         input.namespace,
         sorted({(r["subject"], r["relation"], r["object"]) for r in closed}),
@@ -680,7 +709,11 @@ async def _keep_one_current(input: Any, rows: list[Mapping[str, Any]], *, ch: An
     # the close it answered is another row, and needs a marker of its own.
     restore_id = uuid.uuid5(uuid.NAMESPACE_OID, repr((back, str(restored_at)))).hex
     facts = frozenset(t[:3] for t in back)
-    hashes = await _rows_linking(input.org, input.namespace, sorted(facts), ch=ch)
+    # Only rows found holding a value stated again, newest first: a value many rows link
+    # would have each of them read again by the Undo's check.
+    holders = {h for f in facts for h in held[f]}
+    latest_first = sorted(holders, key=lambda h: (h.updated_at, h.id), reverse=True)
+    hashes = {h.id: h.sha for h in latest_first[:_FALLBACK_ROWS]}
     await graph_undo.reopen_held_facts(
         input,
         sorted(hashes),
@@ -691,6 +724,11 @@ async def _keep_one_current(input: Any, rows: list[Mapping[str, Any]], *, ch: An
         facts=facts,
         adapter_name="row-fallback",
     )
+
+
+# The rows a fallback asks to state a value again: one is enough, and a few more keep
+# it from failing when the newest is revised meanwhile.
+_FALLBACK_ROWS = 8
 
 
 async def _finish_fallback_repairs(input: Any, rows: list[Mapping[str, Any]], *, ch: Any) -> None:
@@ -1000,7 +1038,7 @@ async def follow_row_supersessions(
         stated_ends_only=True,
         ends=plan.ends,
     )
-    await _after_the_close(input, losers, gone, held, ch=ch)
+    await _after_the_close(input, gone, held, ch=ch)
     if closed or inserted:
         log.info(
             "triples follow rows: of %d pair(s), closed %d and wrote %d successor triple(s)",
@@ -1233,6 +1271,14 @@ async def rows_holding(
     return {str(r["id"]) for r in found}
 
 
+class Holder(NamedTuple):
+    """A live row holding a fact: its id, current `content_sha256` and last write."""
+
+    id: str
+    sha: str
+    updated_at: datetime
+
+
 async def stated_by_live_rows(
     org: str,
     namespace: str,
@@ -1245,8 +1291,20 @@ async def stated_by_live_rows(
     stated for its current value, or carried from a value it was revised from
     (`tfr.carried`). `rows` (ids) limits the rows asked; without it, rows that predate
     row links count too (`held_by_unlinked_rows`)."""
+    return frozenset(await live_holders(org, namespace, triples, ch=ch, rows=rows))
+
+
+async def live_holders(
+    org: str,
+    namespace: str,
+    triples: list[tfr.Triple],
+    *,
+    ch: Any,
+    rows: list[str] | None = None,
+) -> dict[tfr.Triple, set[Holder]]:
+    """`stated_by_live_rows`, with the rows holding each triple."""
     if not triples:
-        return frozenset()
+        return {}
     only_rows = "AND memory_id IN {rows:Array(UUID)}" if rows is not None else ""
     found = await ch.query_all(
         f"""
@@ -1259,10 +1317,11 @@ async def stated_by_live_rows(
         )
         SELECT toString(l.memory_id) AS id, toString(m.content_sha256) AS current,
                toString(l.content_sha256) AS sha, m.value AS value,
+               m.updated_at AS updated_at,
                l.subject AS subject, l.relation AS relation, l.object AS object
         FROM links AS l
         INNER JOIN (
-            SELECT memory_id, content_sha256, value
+            SELECT memory_id, content_sha256, value, updated_at
             FROM loom.memory FINAL
             WHERE org = {{org:String}} AND namespace = {{ns:String}}
               AND memory_id IN (SELECT memory_id FROM links)
@@ -1274,25 +1333,35 @@ async def stated_by_live_rows(
     )
     # A link to the row's current value holds; one to a value the row was revised
     # from is judged against the value it has now.
-    held = set()
+    held: dict[tfr.Triple, set[Holder]] = {}
     heads: dict[str, dict[str, Any]] = {}
     hashes: dict[str, dict[tfr.Triple, set[str]]] = {}
     for f in found:
         triple = (str(f["subject"]), str(f["relation"]), str(f["object"]))
+        mid = str(f["id"])
         if f["sha"] == f["current"]:
-            held.add(triple)
+            held.setdefault(triple, set()).add(Holder(mid, str(f["current"]), f["updated_at"]))
         else:
-            mid = str(f["id"])
-            heads[mid] = {"id": mid, "content_sha256": f["current"], "value": f["value"]}
+            heads[mid] = {
+                "id": mid,
+                "content_sha256": f["current"],
+                "value": f["value"],
+                "updated_at": f["updated_at"],
+            }
             hashes.setdefault(mid, {}).setdefault(triple, set()).add(str(f["sha"]))
-    held_triples = frozenset(held)
     if rows is None:
-        held_triples |= await held_by_unlinked_rows(org, namespace, triples, ch=ch)
+        for triple, holders in (await _unlinked_holders(org, namespace, triples, ch=ch)).items():
+            held.setdefault(triple, set()).update(holders)
     if not heads:
-        return held_triples
+        return held
     stated_now = await _stated_links(org, namespace, list(heads.values()), ch=ch)
     holds = await _carried_by(org, namespace, list(heads.values()), stated_now, hashes, ch=ch)
-    return held_triples.union(*holds.values())
+    for mid, carried in holds.items():
+        head = heads[mid]
+        for triple in carried:
+            holder = Holder(mid, str(head["content_sha256"]), head["updated_at"])
+            held.setdefault(triple, set()).add(holder)
+    return held
 
 
 # The migration that started linking rows to triples: a value first written before it
@@ -1314,6 +1383,18 @@ async def held_by_unlinked_rows(
     (`tfr.still_states`). A value written since with no link stated no fact, and holds
     none. With `rows` (ids) and no `triples`: what those rows hold of every triple
     their keys are linked to."""
+    return frozenset(await _unlinked_holders(org, namespace, triples, ch=ch, rows=rows))
+
+
+async def _unlinked_holders(
+    org: str,
+    namespace: str,
+    triples: list[tfr.Triple] | None,
+    *,
+    ch: Any,
+    rows: list[str] | None = None,
+) -> dict[tfr.Triple, set[Holder]]:
+    """`held_by_unlinked_rows`, with the rows holding each triple."""
     if triples is None:
         # The triples of the rows' keys, as the follow matched them by text.
         wanted = """memory_key IN (
@@ -1332,7 +1413,7 @@ async def held_by_unlinked_rows(
               AND {wanted}
         ),
         live AS (
-            SELECT memory_id, memory_key, value
+            SELECT memory_id, memory_key, value, content_sha256, updated_at
             FROM loom.memory FINAL
             WHERE org = {{org:String}} AND namespace = {{ns:String}}
               AND memory_key IN (SELECT memory_key FROM keyed)
@@ -1355,8 +1436,9 @@ async def held_by_unlinked_rows(
                   )
               )
         )
-        SELECT l.value AS value, k.subject AS subject, k.relation AS relation,
-               k.object AS object
+        SELECT toString(l.memory_id) AS id, toString(l.content_sha256) AS sha,
+               l.updated_at AS updated_at, l.value AS value,
+               k.subject AS subject, k.relation AS relation, k.object AS object
         FROM keyed AS k
         INNER JOIN live AS l ON k.memory_key = l.memory_key
         WHERE l.memory_id NOT IN (
@@ -1374,12 +1456,13 @@ async def held_by_unlinked_rows(
             "row_links": _ROW_LINKS_MIGRATION,
         },
     )
-    held = set()
+    held: dict[tfr.Triple, set[Holder]] = {}
     for f in found:
         triple = (str(f["subject"]), str(f["relation"]), str(f["object"]))
         if tfr.still_states(_text(f["value"]), triple):
-            held.add(triple)
-    return frozenset(held)
+            holder = Holder(str(f["id"]), str(f["sha"]), f["updated_at"])
+            held.setdefault(triple, set()).add(holder)
+    return held
 
 
 async def _stated_links(

@@ -160,7 +160,7 @@ async def test_entity_edges_use_namespace_canonical_resolution() -> None:
 
     await write_entity_edges(
         bulk,
-        [type("Result", (), {"memory_key": "northwind_private"})()],
+        [type("Result", (), {"memory_key": "northwind_private", "memory_id": ""})()],
         ch=ch,
         entity_map={"northwind ai": "northwindai"},
     )
@@ -1196,15 +1196,11 @@ async def test_end_edges_reads_only_the_live_rows_that_link_the_pairs() -> None:
     from server.memory.app.projections import end_edges
 
     ch = StubCH()
-    await end_edges(
-        ch,
-        org="clickhouse",
-        namespace="agent-memory",
-        ends=[("alice", "london", _T)],
-        changed=[],
-    )
+    await end_edges(ch, org="clickhouse", namespace="agent-memory", ends=[("alice", "london", _T)])
     sql, params = ch.query_all_calls[0]
-    live = " ".join(sql.split("FROM loom.memory FINAL", 1)[1].split())
-    assert "memory_key IN ( SELECT memory_key FROM loom.entity_edge_memories" in live
-    assert "(entity_a, entity_b) IN {pairs:Array(Tuple(String, String))}" in live
+    reads = [" ".join(r.split())[:200] for r in sql.split("FROM loom.memory FINAL")[1:]]
+    # The rows linked to the pairs, and the legacy rows of the keys linked to them.
+    assert len(reads) == 2
+    assert any("memory_id IN (SELECT memory_id FROM rowed)" in r for r in reads)
+    assert any("memory_key IN (SELECT memory_key FROM keyed)" in r for r in reads)
     assert params["pairs"] == [("alice", "london")]

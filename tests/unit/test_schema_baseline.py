@@ -94,6 +94,7 @@ def test_the_journal_files() -> None:
         "034_projection_failure_abandoned.sql",
         "035_entity_triple_seen_at.sql",
         "036_graph_restore_id.sql",
+        "037_entity_edge_rows.sql",
     ]
 
 

@@ -131,6 +131,11 @@ def wired(monkeypatch: pytest.MonkeyPatch):
         async def _emb_rows(rows: list[dict[str, Any]], **_: Any) -> None:
             calls.embedding_rows.extend(rows)
 
+        async def _no_edges(*_: Any, **__: Any) -> None:
+            return None
+
+        # The new value's edges are the integration tests' to check.
+        monkeypatch.setattr("server.memory.app.update.project_revised_edges", _no_edges)
         monkeypatch.setattr(cf, "check_on_commit", _check)
         monkeypatch.setattr(cf, "mark_peers_conflicted", _mark)
         monkeypatch.setattr(cf, "apply_refines", _refines)

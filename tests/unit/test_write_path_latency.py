@@ -116,7 +116,10 @@ async def test_set_returns_before_its_entity_projection_lands(post_insert) -> No
     await asyncio.wait_for(_post_insert(), timeout=1.0)  # the projection is still blocked
     assert seen["scheduled"] == ["loom-set-entities"]
     # Scoped to its namespace, so a walk there waits for it; its edges wait for their flush.
-    assert seen["scope"] == ("o", "n") and seen["project_kw"] == {"wait_visible": True}
+    assert seen["scope"] == ("o", "n") and seen["project_kw"] == {
+        "memory_id": "m1",
+        "wait_visible": True,
+    }
     assert "entities" not in seen["order"]
     assert {"supersede", "audit"} <= set(seen["order"])
     # The audit row is the write's receipt: hashes, never the value.

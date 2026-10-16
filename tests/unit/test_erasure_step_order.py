@@ -165,6 +165,7 @@ USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
             (D, "loom.entity_triple_memories"),
             (D, "loom.entity_triple_rows"),
             (D, "loom.entity_edge_memories"),
+            (D, "loom.entity_edge_rows"),
         ),
     ),
     ("llm_response_cache.delete", ((D, "loom.llm_response_cache"),)),
@@ -223,6 +224,7 @@ NS_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
             (D, "loom.entity_triple_memories"),
             (D, "loom.entity_triple_rows"),
             (D, "loom.entity_edge_memories"),
+            (D, "loom.entity_edge_rows"),
         ),
     ),
     (
@@ -308,6 +310,7 @@ NS_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
             (D, "loom.entity_triple_memories"),
             (D, "loom.entity_triple_rows"),
             (D, "loom.entity_edge_memories"),
+            (D, "loom.entity_edge_rows"),
         ),
     ),
     (

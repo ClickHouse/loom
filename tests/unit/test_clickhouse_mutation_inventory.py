@@ -21,7 +21,7 @@ _EXPECTED_MUTATIONS = Counter(
     {
         # The contradiction repair's edge close, and end_edges, which ends a dropped
         # fact's edge with its triples (only when no live row keeps the pair).
-        ("server/memory/app/projections.py", "entity_edges", "UPDATE"): 2,
+        ("server/memory/app/projections.py", "entity_edges", "UPDATE"): 3,
         # One folded UPDATE per table per write (close_triples serves
         # both the deterministic repair and the LLM judgement), and
         # reopen_triples, which undoes a follow's close for a triple a row

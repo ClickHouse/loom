@@ -11,7 +11,7 @@ it. Use it for questions vector search cannot answer, such as "what is connected
 
 | Table                                                                    | Holds                                                                                                                                   |
 | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `loom.entity_edges` (+ `entity_edge_memories`)                           | One row per co-occurrence observation (`co_occur = 1`); readers sum per pair. Source key per pair.                                      |
+| `loom.entity_edges` (+ `entity_edge_memories`, `entity_edge_rows`)       | One row per co-occurrence observation (`co_occur = 1`); readers sum per pair. Source key per pair, and the row and value that named it. |
 | `loom.entity_triples` (+ `entity_triple_memories`, `entity_triple_rows`) | Typed triples with `confidence` and the extractor model as `adapter_name`. Source key per triple, and the row and value that stated it. |
 | `loom.entity_degree`                                                     | Each entity's total co-occurrence degree (`SummingMergeTree`); the hub rules read it.                                                   |
 | `loom.entity_canonical_map`                                              | Mention text → canonical entity.                                                                                                        |

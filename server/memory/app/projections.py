@@ -106,18 +106,20 @@ async def write_entity_edges(
     wait_visible: bool = False,
     dedup_token: str = "",
 ) -> None:
-    """Emit pairwise entity edges + edge-to-memory rows per entry.
+    """Emit pairwise entity edges + edge-to-memory rows per entry, and the row links
+    (`entity_edge_rows`) of an entry whose result names its row.
 
-    Per memory with N entities, emits C(N, 2) canonical pairs
-    (entity_a <= entity_b lexically), capped at _MAX_PAIRS_PER_MEMORY.
-    Always-on side effect of writes; read-side (search_mode=graph) is opt-in.
-    Fail-open. `wait_visible` acks only once the async-insert buffer has
-    flushed, so the rows are readable when the call returns: for a caller off
-    the response path, which pays nothing for the wait.
+        Per memory with N entities, emits C(N, 2) canonical pairs
+        (entity_a <= entity_b lexically), capped at _MAX_PAIRS_PER_MEMORY.
+        Always-on side effect of writes; read-side (search_mode=graph) is opt-in.
+        Fail-open. `wait_visible` acks only once the async-insert buffer has
+        flushed, so the rows are readable when the call returns: for a caller off
+        the response path, which pays nothing for the wait.
     """
     now = naive_utc_now()
     edges: list[dict[str, Any]] = []
     edge_memories: list[dict[str, Any]] = []
+    edge_rows: list[dict[str, Any]] = []
     _MAX_PAIRS_PER_MEMORY = 100
     if entity_map is None:
         entity_map = await resolve_projection_entity_map(
@@ -204,6 +206,10 @@ async def write_entity_edges(
                         "seen_at": now,
                     }
                 )
+                if result.memory_id:
+                    edge_rows.append(
+                        edge_row_link(input, result.memory_id, value_sha256(entry), (a, b))
+                    )
                 pair_count += 1
 
     if not edges:
@@ -217,6 +223,11 @@ async def write_entity_edges(
     from server.observability.otel import traced as _traced
 
     with _traced("ch.insert.entity_edges", pairs=len(edges)):
+        # The row links land before the edges: a close that ends an edge looks for them
+        # once its UPDATE is queued (`end_edges`). Synchronous; a replay's repeat
+        # collapses in the ReplacingMergeTree.
+        if edge_rows:
+            await ch.insert("loom.entity_edge_rows", edge_rows)
         await asyncio.gather(
             ch.insert(
                 "loom.entity_edges",
@@ -263,6 +274,22 @@ def entity_edge_row(
         "valid_to": valid_to,
         "invalid_at": None,
         "restore_id": restore_id,
+    }
+
+
+def edge_row_link(
+    input: Any, memory_id: str, content_sha256: str, pair: tuple[str, str]
+) -> dict[str, Any]:
+    """The `entity_edge_rows` row saying the row `memory_id` of `input`'s writer,
+    holding the value `content_sha256` hashes, named both entities of `pair`."""
+    return {
+        "org": input.org,
+        "namespace": input.namespace,
+        "memory_id": memory_id,
+        "user_id": input.user_id,
+        "content_sha256": content_sha256,
+        "entity_a": pair[0],
+        "entity_b": pair[1],
     }
 
 
@@ -1004,25 +1031,88 @@ async def end_triples_now(
     _graph_marks().note_write(org, namespace)
 
 
+# Each edge's own end in the parallel arrays `end_edges` passes, and the valid_to it
+# writes: never before the edge starts.
+_EDGE_END = (
+    "arrayElement({ends:Array(DateTime)},"
+    " indexOf({pairs:Array(Tuple(String, String))}, (entity_a, entity_b)))"
+)
+_EDGE_CLOSED_VALID_TO = f"greatest({_EDGE_END}, ifNull(valid_from, {_EDGE_END}))"
+_OPEN_EDGES_WHERE = f"""org = {{org:String}} AND namespace = {{ns:String}}
+          AND (entity_a, entity_b) IN {{pairs:Array(Tuple(String, String))}}
+          AND invalid_at IS NULL AND (valid_to IS NULL OR valid_to > {_EDGE_END})"""
+
+
+# The migration that started linking rows to edges: a value first written before it
+# was applied has no edge links of its own.
+_EDGE_ROW_LINKS_MIGRATION = "037_entity_edge_rows.sql"
+
+# The pairs of {pairs} a live row still names: its current value has a link to the
+# pair, or it is a row whose value was first written before rows were linked to
+# edges, with no link for that value, of a key linked to the pair (a legacy row's
+# text is not read: it keeps the edge, as its key link did).
+_HELD_PAIRS_CTES = f"""
+    rowed AS (
+        SELECT memory_id, content_sha256, entity_a, entity_b FROM loom.entity_edge_rows
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND (entity_a, entity_b) IN {{pairs:Array(Tuple(String, String))}}
+    ),
+    keyed AS (
+        SELECT memory_key, entity_a, entity_b FROM loom.entity_edge_memories
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND (entity_a, entity_b) IN {{pairs:Array(Tuple(String, String))}}
+    ),
+    keyed_ids AS (
+        SELECT memory_id FROM loom.memory
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND memory_key IN (SELECT memory_key FROM keyed)
+    ),
+    legacy AS (
+        SELECT memory_key FROM loom.memory FINAL
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND memory_key IN (SELECT memory_key FROM keyed)
+          AND {GRAPH_HOLDER_SQL}
+          AND (memory_id, content_sha256) NOT IN (
+              SELECT memory_id, content_sha256 FROM loom.entity_edge_rows
+              WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                AND memory_id IN (SELECT memory_id FROM keyed_ids))
+          -- A pin, a lock or an Undo writes the same value again and keeps it a legacy row.
+          AND (memory_id, content_sha256) NOT IN (
+              SELECT memory_id, content_sha256 FROM loom.memory_versions
+              WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                AND memory_id IN (SELECT memory_id FROM keyed_ids)
+              GROUP BY memory_id, content_sha256
+              HAVING min(updated_at) >= (
+                  SELECT min(applied_at) FROM loom._migrations
+                  WHERE filename = {{edge_links:String}}))
+    ),
+    held AS (
+        SELECT entity_a, entity_b FROM rowed
+        WHERE (memory_id, content_sha256) IN (
+            SELECT memory_id, content_sha256 FROM loom.memory FINAL
+            WHERE org = {{org:String}} AND namespace = {{ns:String}}
+              AND memory_id IN (SELECT memory_id FROM rowed)
+              AND {GRAPH_HOLDER_SQL})
+        UNION ALL
+        SELECT entity_a, entity_b FROM keyed WHERE memory_key IN (SELECT memory_key FROM legacy)
+    )"""
+
+
 async def end_edges(
     ch: Any,
     *,
     org: str,
     namespace: str,
     ends: list[tuple[str, str, datetime]],
-    changed: list[str],
 ) -> None:
     """End each edge (entity_a, entity_b, end) still valid after its `end`, as a close
-    ends a triple, unless a live row other than the `changed` ones (ids) still names
-    both entities: its key linked to the pair (`entity_edge_memories`) and its
-    current value naming them (`tfr.still_names_both`), as the edge is its
-    co-occurrence too. No `invalid_at`: the edge walk never walks a retired edge, and
-    the fact did hold until then. One read, and an UPDATE only when it finds an edge to
-    end."""
-    from server.memory.domain import triples_follow_rows as tfr
-    from server.memory.domain.triple_provenance import carrier_text
-    from server.memory.store.rows import parse_memory_value
-
+    ends a triple, unless a live row still names both entities: its current value has
+    a link to the pair (`entity_edge_rows`), the revised or retired rows included, as
+    the edge is its co-occurrence too. A row written before rows were linked to edges
+    keeps it through its key's link (`entity_edge_memories`). No `invalid_at`: the edge
+    walk never walks a retired edge, and the fact did hold until then. One read, and
+    an UPDATE only when it finds an edge to end, then a check for a row written
+    meanwhile (`reopen_held_edges`)."""
     if not ends:
         return
     params = {
@@ -1030,67 +1120,66 @@ async def end_edges(
         "ns": namespace,
         "pairs": [(a, b) for a, b, _end in ends],
         "ends": [end.replace(microsecond=0) for _a, _b, end in ends],
-        "changed": changed,
+        "edge_links": _EDGE_ROW_LINKS_MIGRATION,
     }
-    end = (
-        "arrayElement({ends:Array(DateTime)},"
-        " indexOf({pairs:Array(Tuple(String, String))}, (entity_a, entity_b)))"
-    )
-    where = f"""org = {{org:String}} AND namespace = {{ns:String}}
-          AND (entity_a, entity_b) IN {{pairs:Array(Tuple(String, String))}}
-          AND invalid_at IS NULL AND (valid_to IS NULL OR valid_to > {end})"""
-    # A link names a key, not the row or value it came from: each live row of a
-    # linked key but the changed ones is read for what its value names now.
     found = await ch.query_all(
         f"""
-        SELECT e.entity_a AS entity_a, e.entity_b AS entity_b, groupArray(k.value) AS values
-        FROM (SELECT DISTINCT entity_a, entity_b FROM loom.entity_edges WHERE {where}) AS e
-        LEFT JOIN (
-            SELECT DISTINCT l.entity_a AS entity_a, l.entity_b AS entity_b, m.value AS value
-            FROM loom.entity_edge_memories AS l
-            INNER JOIN (
-                SELECT memory_key, value FROM loom.memory FINAL
-                WHERE org = {{org:String}} AND namespace = {{ns:String}}
-                  -- Only the keys that link a pair, not the whole namespace.
-                  AND memory_key IN (
-                      SELECT memory_key FROM loom.entity_edge_memories
-                      WHERE org = {{org:String}} AND namespace = {{ns:String}}
-                        AND (entity_a, entity_b) IN {{pairs:Array(Tuple(String, String))}})
-                  AND memory_id NOT IN {{changed:Array(UUID)}}
-                  AND {GRAPH_HOLDER_SQL}
-            ) AS m ON l.memory_key = m.memory_key
-            WHERE l.org = {{org:String}} AND l.namespace = {{ns:String}}
-              AND (l.entity_a, l.entity_b) IN {{pairs:Array(Tuple(String, String))}}
-        ) AS k ON e.entity_a = k.entity_a AND e.entity_b = k.entity_b
-        GROUP BY e.entity_a, e.entity_b
+        WITH {_HELD_PAIRS_CTES}
+        SELECT DISTINCT entity_a, entity_b FROM loom.entity_edges
+        WHERE {_OPEN_EDGES_WHERE}
+          AND (entity_a, entity_b) NOT IN (SELECT entity_a, entity_b FROM held)
         SETTINGS select_sequential_consistency = 1
         """,
         params=params,
     )
-    # An edge with no linked row has one empty value, which names nothing.
-    ending = [
-        (str(r["entity_a"]), str(r["entity_b"]))
-        for r in found
-        if not any(
-            tfr.still_names_both(
-                carrier_text(parse_memory_value(v)), str(r["entity_a"]), str(r["entity_b"])
-            )
-            for v in r["values"]
-        )
-    ]
+    ending = sorted((str(r["entity_a"]), str(r["entity_b"])) for r in found)
     if not ending:
         return
     await ch.execute(
         f"""
         ALTER TABLE loom.entity_edges
-        UPDATE valid_to = greatest({end}, ifNull(valid_from, {end}))
-        WHERE {where} AND (entity_a, entity_b) IN {{ending:Array(Tuple(String, String))}}
+        UPDATE valid_to = {_EDGE_CLOSED_VALID_TO}
+        WHERE {_OPEN_EDGES_WHERE}
+          AND (entity_a, entity_b) IN {{ending:Array(Tuple(String, String))}}
         """,
         params={**params, "ending": ending},
     )
     from server.memory.app.graph_write_marks import marks as _graph_marks
 
     _graph_marks().note_write(org, namespace)
+    await reopen_held_edges(ch, params=params, ending=ending)
+
+
+async def reopen_held_edges(
+    ch: Any, *, params: dict[str, Any], ending: list[tuple[str, str]]
+) -> None:
+    """Undo `end_edges`'s UPDATE (its `params`) for the `ending` pairs a live row names
+    now. A row written while the close ran may name a pair it ended: every writer
+    lands an edge's row links first, so once the UPDATE is queued they are found here.
+    Mutations run in order, so this one lands after the close."""
+    held = await ch.query_all(
+        f"""
+        WITH {_HELD_PAIRS_CTES}
+        SELECT DISTINCT entity_a, entity_b FROM held
+        SETTINGS select_sequential_consistency = 1
+        """,
+        params={**params, "pairs": ending},
+    )
+    if not held:
+        return
+    await ch.execute(
+        f"""
+        ALTER TABLE loom.entity_edges
+        UPDATE valid_to = NULL
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND (entity_a, entity_b) IN {{held:Array(Tuple(String, String))}}
+          AND invalid_at IS NULL AND valid_to = {_EDGE_CLOSED_VALID_TO}
+        """,
+        params={**params, "held": sorted((str(r["entity_a"]), str(r["entity_b"])) for r in held)},
+    )
+    from server.memory.app.graph_write_marks import marks as _graph_marks
+
+    _graph_marks().note_write(params["org"], params["ns"])
 
 
 async def open_triples_among(
