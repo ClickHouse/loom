@@ -29,6 +29,7 @@ from server.core.schema import preflight
 
 DEFAULT_READER = "loom_reader"
 _PASSWORD_PLACEHOLDER = "'<LOOM_CH_PASSWORD>'"
+PROFILE_DIFFERS = "its profile does not match the current caps and constraints"
 # Names go into the SQL between backticks; anything else is refused.
 _NAME = re.compile(r"^[A-Za-z0-9_.@-]+$")
 
@@ -153,7 +154,7 @@ def reader_status(reader: str) -> tuple[bool | None, str]:
     if name != reader:
         return True, f"its login lands as {name!r}, not {reader!r}"
     if actual != profile:
-        return True, "its profile does not match the current caps and constraints"
+        return True, PROFILE_DIFFERS
     if grants != [f"GRANT SELECT ON {preflight.DATABASE}.* TO {reader}"]:
         return True, f"its grants are not SELECT on {preflight.DATABASE}.* alone"
     return True, ""
@@ -294,11 +295,14 @@ def _ensure_reader(ch: Any, user: str, reader: str) -> bool:
     if not logged_in:
         return _refuse(f"{reader} exists but does not accept LOOM_CH_PASSWORD. {drop_hint}")
     print(f"· {reader}: {problem}; rebuilding it")
-    print(
-        "  then recreate Loom (`docker compose up -d --force-recreate loom`) so its "
-        "sessions use the new caps; caller-shaped reads fail on the bounds until then"
-    )
-    return _create_reader(ch, user, reader, fresh=False)
+    if not _create_reader(ch, user, reader, fresh=False):
+        return False
+    if problem == PROFILE_DIFFERS:
+        print(
+            "  recreate Loom (`docker compose up -d --force-recreate loom`) so its sessions "
+            "use the new caps: if a cap was lowered, caller-shaped reads fail until then"
+        )
+    return True
 
 
 def _create_reader(ch: Any, user: str, reader: str, *, fresh: bool) -> bool:
@@ -308,11 +312,11 @@ def _create_reader(ch: Any, user: str, reader: str, *, fresh: bool) -> bool:
     try:
         for stmt in reader_sql(reader, _quote(settings.ch_password)):
             ch.command(stmt)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — every refusal is one line, not a traceback
         if fresh:
             _drop_reader(ch, reader)
         if error_code(e) != preflight.ACCESS_DENIED:
-            raise
+            return _refuse(f"could not create {reader}: {str(e).splitlines()[0][:200]}")
         _refuse(f"{user!r} may not create the reader or grant it SELECT on {preflight.DATABASE}.*")
         _print_admin_sql(user, reader)
         return False

@@ -840,3 +840,30 @@ def test_ch_setup_says_a_missing_refresh_grant_and_how_to_give_it(
     monkeypatch.setattr(ch_setup, "reader_status", lambda reader: (True, ""))
     assert ch_setup._set_up(NoRefresh(), "loom_app", "loom_reader") == 0
     assert "GRANT SYSTEM REFRESH VIEW ON loom.* TO `loom_app`" in capsys.readouterr().out
+
+
+def test_a_reader_rebuilt_for_new_caps_says_to_recreate_loom(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(ch_setup, "reader_objects", lambda ch, r: "user")
+    monkeypatch.setattr(ch_setup, "reader_status", lambda r: (True, ch_setup.PROFILE_DIFFERS))
+    assert ch_setup._set_up(FakeCH(), "loom", "loom_reader") == 0
+    assert "--force-recreate loom" in capsys.readouterr().out
+    # Rebuilt for its grants, the caps are unchanged: nothing to recreate.
+    monkeypatch.setattr(ch_setup, "reader_status", lambda r: (True, "its grants are wider"))
+    assert ch_setup._set_up(FakeCH(), "loom", "loom_reader") == 0
+    assert "--force-recreate" not in capsys.readouterr().out
+
+
+def test_a_reader_the_server_rejects_is_one_line_not_a_traceback(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    class Rejects(FakeCH):
+        def command(self, sql: str, **kwargs: Any) -> Any:
+            if sql.startswith("CREATE SETTINGS PROFILE"):
+                raise RuntimeError("Code: 70. DB::Exception: Cannot convert. (CANNOT_CONVERT_TYPE)")
+            return super().command(sql, **kwargs)
+
+    monkeypatch.setattr(ch_setup, "reader_objects", lambda ch, r: "")
+    assert ch_setup._set_up(Rejects(), "loom", "loom_reader") == 1
+    assert "could not create loom_reader: Code: 70." in capsys.readouterr().err

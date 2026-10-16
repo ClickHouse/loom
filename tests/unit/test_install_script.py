@@ -367,7 +367,7 @@ def test_the_health_check_polls_where_loom_is_published(
     assert result.returncode == 0, result.stderr
     assert f"http://{polled}:28977/v1/health" in seen.read_text()
     assert f"Dashboard: http://{polled}:28977/me" in result.stdout
-    assert "--profile bundled down" in result.stdout  # a default install is bundled
+    assert "--profile bundled down" in result.stdout
 
 
 def test_a_prepared_install_on_an_outside_clickhouse_names_ch_setup(install) -> None:

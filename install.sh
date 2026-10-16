@@ -340,11 +340,8 @@ while [ "$attempt" -lt 90 ]; do
     printf 'Dashboard: http://%s:%s/me\n' "$host" "$port"
     printf 'Files:     %s\n' "$INSTALL_DIR"
     printf 'Logs:      docker compose --project-directory %s logs -f loom\n' "$INSTALL_DIR"
-    case ",$(get_env COMPOSE_PROFILES)," in
-      *,bundled,*) stop="--profile bundled down" ;;
-      *) stop="down" ;;
-    esac
-    printf 'Stop:      docker compose --project-directory %s %s\n' "$INSTALL_DIR" "$stop"
+    # --profile bundled also stops a bundled server left from before a switch.
+    printf 'Stop:      docker compose --project-directory %s --profile bundled down\n' "$INSTALL_DIR"
     exit 0
   fi
   attempt=$((attempt + 1))
