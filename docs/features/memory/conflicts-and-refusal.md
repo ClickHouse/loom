@@ -165,7 +165,7 @@ since". The Undo holds the key's write lock from its read of the row to its inse
 as a conditional write (`if_match_sha256`) does: a conditional revision made meanwhile
 lands first and the Undo shows "Changed since", or waits for the Undo. An
 unconditional write takes no lock, and the later of the two wins. When another
-conditional write holds the lock past its wait, the Undo answers 412 ("another
+conditional write holds the lock past its wait, the Undo answers 409 PRECONDITION_FAILED ("another
 conditional write to this key is still running; re-read and retry"). An Undo opens again the
 graph facts the restored row still holds (see the
 [entity graph](../entity-graph.md)). To mark rows
