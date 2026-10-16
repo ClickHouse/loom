@@ -265,6 +265,9 @@ ASKED = (
     "git push --force-with-lease",
     "git push origin br --force-with-lease",
     "PYTHONPATH=x .venv/bin/python bench/longmemeval.py --repeats 3",
+    ".venv/bin/python ./bench/locomo_qa.py",
+    "/w/.venv/bin/python /w/bench/locomo_qa.py --repeats 3",
+    "python3 bench/locomo_qa.py",
 )
 NOT_DENIED = (
     "git push -u origin HEAD",
@@ -278,11 +281,16 @@ NOT_DENIED = (
     "docker rm -f ch-my-branch",
     "git show abc:redeploy.sh",
     "git diff origin/main...HEAD -- redeploy.sh",
+    "git log -p -- ./redeploy.sh",
+    "cat ./redeploy.sh",
+    "bash redeploy.sh --status",
+    "sh redeploy.sh --status",
 )
 # Reads of files whose execution asks first: a reviewer in the background cannot answer.
 NOT_ASKED = (
     "git show abc:bench/locomo_qa.py",
     "git diff origin/main...HEAD -- bench/longmemeval.py",
+    "git log --grep=python -- bench/locomo_qa.py",
 )
 
 

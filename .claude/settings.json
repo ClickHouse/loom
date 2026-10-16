@@ -60,10 +60,12 @@
       "Bash(gh issue close*)",
       "Bash(gh api *)",
       "Bash(make bench*)",
-      "Bash(*python* bench/*.py*)",
       "Bash(git push --force-with-lease*)",
       "Bash(git push *--force-with-lease*)",
-      "Bash(*-m bench.*)"
+      "Bash(*-m bench.*)",
+      "Bash(*python bench/*.py*)",
+      "Bash(*python3 bench/*.py*)",
+      "Bash(*python */bench/*.py*)"
     ],
     "deny": [
       "Bash(git stash:*)",
@@ -136,15 +138,17 @@
       "Bash(git push * -fv*)",
       "Bash(git push *:main *)",
       "Bash(./redeploy.sh)",
-      "Bash(*/redeploy.sh)",
-      "Bash(bash *redeploy.sh)",
       "Bash(./redeploy.sh --force*)",
-      "Bash(*/redeploy.sh --force*)",
-      "Bash(bash *redeploy.sh --force*)",
       "Bash(./redeploy.sh --rollback*)",
-      "Bash(*/redeploy.sh --rollback*)",
+      "Bash(/*redeploy.sh)",
+      "Bash(/*redeploy.sh --force*)",
+      "Bash(/*redeploy.sh --rollback*)",
+      "Bash(bash *redeploy.sh)",
+      "Bash(bash *redeploy.sh --force*)",
       "Bash(bash *redeploy.sh --rollback*)",
-      "Bash(sh *redeploy.sh*)"
+      "Bash(sh *redeploy.sh)",
+      "Bash(sh *redeploy.sh --force*)",
+      "Bash(sh *redeploy.sh --rollback*)"
     ]
   }
 }
