@@ -181,8 +181,8 @@ _CALL: contextvars.ContextVar[_Call | None] = contextvars.ContextVar("loom_call"
 # The server never saw these: safe to retry under `retry_connection_errors`.
 _CONNECTION_ERRORS = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
 # The server may still be processing these: retried only when the policy says
-# so (by default, only for registry-idempotent ops, whose Idempotency-Key the
-# server dedups on).
+# so (by default, only for an op whose Idempotency-Key the server dedups on:
+# idempotent and not read-only, so a timed-out `memory.ask` is not run twice).
 _TIMEOUT_ERRORS = (httpx.ReadTimeout, httpx.WriteTimeout)
 # The server answered but the response broke off: it may have acted.
 _CUT_OFF_ERRORS = (httpx.ReadError, httpx.RemoteProtocolError, httpx.DecodingError)
@@ -193,7 +193,7 @@ _CUT_OFF_ERRORS = (httpx.ReadError, httpx.RemoteProtocolError, httpx.DecodingErr
 _NEVER_RAN_CODES = frozenset({"AUTH_UNAVAILABLE"})
 # 5xx answers to a deployment's configuration, which no retry changes: the
 # operator's fix is named in the error (and in /v1/health).
-_CONFIGURATION_CODES = frozenset({"CODED_WIDTH_MISMATCH", "OVERRIDE_NOT_SHARED"})
+_CONFIGURATION_CODES = frozenset({"CODED_WIDTH_MISMATCH"})
 
 
 def _never_ran(status: int, code: str) -> bool:
@@ -383,8 +383,9 @@ class Transport:
         Args:
             op_path: Operation path appended to the base URL.
             payload: JSON request body.
-            idempotency_key: Sent as the Idempotency-Key header; a UUID is
-                generated when omitted.
+            idempotency_key: Sent as the Idempotency-Key header; when omitted,
+                a UUID is generated for an op the server replays (any but a
+                read-only one).
             timeout_s: Per-call override of the Transport's default timeout,
                 for ops that legitimately run longer than the default.
             request_id: Sent as `X-Request-Id`; a UUID is generated when
@@ -403,9 +404,10 @@ class Transport:
             LoomError: Any other failure, after the policy's retries.
         """
         headers: dict[str, str] = {}
-        if idempotency_key is None:
+        if idempotency_key is None and _replayed(op_path):
             idempotency_key = str(uuid.uuid4())
-        headers["Idempotency-Key"] = idempotency_key
+        if idempotency_key is not None:
+            headers["Idempotency-Key"] = idempotency_key
         headers["X-Request-Id"] = request_id or str(uuid.uuid4())
         payload = self.with_consumer(payload)
         if self.before_post is not None:
@@ -507,6 +509,7 @@ class Transport:
             request_kwargs["timeout"] = httpx.Timeout(timeout_s)
         request_id = headers.get("X-Request-Id", "")
         idempotent = _op_is_idempotent(op_path)
+        deduplicated = idempotent and _replayed(op_path)
         slept_s = 0.0
         attempt = 0
         while True:
@@ -536,7 +539,7 @@ class Transport:
                 slept_s += await self._backoff(op_path, policy, attempt, delay, why, request_id)
                 continue
             except _TIMEOUT_ERRORS as e:
-                allowed = policy.retries_timeout(idempotent=idempotent)
+                allowed = policy.retries_timeout(idempotent=deduplicated)
                 delay = self._retry_delay(op_path, policy, attempt, slept_s, allowed=allowed)
                 if delay is None:
                     raise unreachable_error(self.base_url, e, request_id=request_id) from e
@@ -690,6 +693,15 @@ def _json_object(op_path: str, resp: httpx.Response, request_id: str) -> dict[st
     err.request_id = request_id
     err.detail = {"message": resp.text[:200]}
     raise err
+
+
+def _replayed(op_path: str) -> bool:
+    """Whether the server keeps a replay of the op behind `/v1/<op>`: any but
+    a read-only one (an op this SDK does not know included)."""
+    from loom.ops import spec  # generated; imported lazily to keep import time low
+
+    s = spec(op_path.rsplit("/", 1)[-1])
+    return s is None or not s.read_only
 
 
 def _op_is_idempotent(op_path: str) -> bool:

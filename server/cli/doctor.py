@@ -34,13 +34,7 @@ def dev_jwt_secret_warning() -> str | None:
     if not settings.auth_actually_required():
         return None
     if not settings.jwt_secret_is_dev_default():
-        if not settings.jwt_sealing_secret_is_dev_default():
-            return None
-        return (
-            f"LOOM_JWT_SECRET is the dev default ({DEV_JWT_SECRET!r}): tokens are signed "
-            "with LOOM_JWT_SECRETS_JSON, but stored credentials are sealed with it. "
-            "Set LOOM_JWT_SECRET before storing any."
-        )
+        return None
     return (
         f"LOOM_JWT_SECRET is the dev default ({DEV_JWT_SECRET!r}) with auth on — "
         "anyone who has read this repo can mint tokens this server accepts. "
@@ -196,7 +190,7 @@ def _doctor_preflight_check() -> tuple[str, str, str]:
 
     try:
         server = preflight.require_ready(
-            need=preflight.needed_at_boot(),
+            need="server",
             create_database=False,
             migrates=settings.boot_migrate,
         )
@@ -216,6 +210,205 @@ def _doctor_preflight_check() -> tuple[str, str, str]:
             f"ClickHouse {server.version}, database {preflight.DATABASE} and its grants in place",
         )
     return ("clickhouse_preflight", WARN, f"ClickHouse {server.version}: " + "; ".join(warnings))
+
+
+def _doctor_keyring_check(settings: Any) -> tuple[str, str, str]:
+    """The `signing_keyring` doctor line, read with this host's root secret:
+    the kid that signs, kids that do not unseal here, and whether the
+    keyring was recorded under another root (`server.auth.keyring`)."""
+    from datetime import datetime
+
+    from server.auth import keyring
+
+    try:
+        rows = _doctor_ch_query(settings, keyring.READ_SQL + " FORMAT JSONEachRow", {})
+    except Exception as e:  # noqa: BLE001 — a doctor line must never crash the doctor
+        return ("signing_keyring", WARN, f"could not read loom.signing_keys: {e}")
+    for r in rows:
+        r["activate_at"] = datetime.fromisoformat(r["activate_at"])
+        r["server_now"] = datetime.fromisoformat(r["server_now"])
+        r["retired"] = bool(int(r["retired"]))
+    st = keyring.status(rows)
+    problems = []
+    if st["root_row"] == "other":
+        problems.append("LOOM_JWT_SECRET here is not the root the keyring was recorded under")
+    if st["unsealable"]:
+        problems.append(f"{', '.join(st['unsealable'])} do not unseal with this LOOM_JWT_SECRET")
+    if not st["signing_kid"]:
+        why = (
+            "'default' is retired"
+            if any(r["kid"] == keyring.ROOT_KID and r["retired"] for r in rows)
+            else "LOOM_JWT_SECRET is neither an HMAC secret nor an RSA private key,"
+        )
+        problems.append(f"no key signs: {why} and no other key is active")
+    if problems:
+        return ("signing_keyring", WARN, "; ".join(problems))
+    return ("signing_keyring", PASS, f"signs as {st['signing_kid']}; {len(rows)} row(s)")
+
+
+def _doctor_legacy_blobs_check(settings: Any) -> tuple[str, str, str]:
+    """The `legacy_blobs` doctor line: documents whose original is still a file of
+    the old blob directory. Erasure cannot verify those until `loom blobs import`
+    has moved or deleted them."""
+    from server.knowledge.store.documents import LEGACY_BLOB_PATH
+
+    sql = (
+        "SELECT count() AS n FROM loom.documents FINAL "
+        f"WHERE {LEGACY_BLOB_PATH} AND blob_erased_at IS NULL FORMAT JSONEachRow"
+    )
+    try:
+        rows = _doctor_ch_query(settings, sql, {})
+    except Exception as e:  # noqa: BLE001 — a doctor line must never crash the doctor
+        return ("legacy_blobs", WARN, f"could not read loom.documents: {e}")
+    n = int(rows[0]["n"]) if rows else 0
+    # Files the rows no longer show: another host's import or an older erasure
+    # stamped or deleted their rows while the files stayed on this host.
+    from pathlib import Path
+
+    from server.cli.portability import _legacy_files
+
+    files = len(_legacy_files(Path(settings.blob_dir)))
+    if n or files:
+        return (
+            "legacy_blobs",
+            WARN,
+            f"{n} document(s) still on the old blob directory, {files} old-layout file(s) "
+            "in this host's LOOM_BLOB_DIR; run `loom blobs import` on every host that holds one",
+        )
+    return ("legacy_blobs", PASS, "every original is in loom.document_blobs")
+
+
+# The attempt kinds keyed by the caller's address (`server.auth.attempts.client_address`).
+_ADDRESS_KINDS = ("login.address", "signup.human", "signup.agent")
+# Fewer address-keyed attempts than this in the window is too little to judge by.
+_PROXY_MIN_ATTEMPTS = 20
+_LOOPBACK = ("127.0.0.1", "::1")
+
+
+def _doctor_trusted_proxies_check(settings: Any) -> tuple[str, str, str]:
+    """The `trusted_proxies` doctor line: WARN when LOOM_TRUSTED_PROXIES is the
+    default and the last day's address-keyed attempts all came from one
+    non-loopback peer, which is a load balancer whose X-Forwarded-For is ignored:
+    every client then shares one sign-in and sign-up limit."""
+    from server.auth.attempts import _digest
+
+    trusted = str(settings.trusted_proxies).strip()
+    if trusted != "127.0.0.1":
+        return ("trusted_proxies", PASS, f"LOOM_TRUSTED_PROXIES={trusted}")
+    sql = (
+        "SELECT sum(c) AS n, max(c) AS top_n, argMax(k, c) AS top FROM ("
+        "SELECT key_sha256 AS k, count() AS c FROM loom.auth_attempts "
+        "WHERE kind IN {kinds:Array(String)} AND at > now64(3) - toIntervalHour(24) "
+        "GROUP BY k) FORMAT JSONEachRow"
+    )
+    try:
+        rows = _doctor_ch_query(settings, sql, {"kinds": list(_ADDRESS_KINDS)})
+    except Exception as e:  # noqa: BLE001 — a doctor line must never crash the doctor
+        return ("trusted_proxies", WARN, f"could not read loom.auth_attempts: {e}")
+    row = rows[0] if rows else {}
+    n, top_n = int(row.get("n") or 0), int(row.get("top_n") or 0)
+    top = str(row.get("top") or "")
+    if n < _PROXY_MIN_ATTEMPTS or top_n < n or top in {_digest(a) for a in _LOOPBACK}:
+        return ("trusted_proxies", PASS, f"default; {n} address-keyed attempt(s) in 24 h")
+    return (
+        "trusted_proxies",
+        WARN,
+        f"all {n} sign-in/sign-up attempts in 24 h came from one non-loopback address while "
+        "LOOM_TRUSTED_PROXIES is the default: behind a load balancer every client shares its "
+        "limits. Set LOOM_TRUSTED_PROXIES to the balancer's addresses or CIDRs.",
+    )
+
+
+def _doctor_keeper_check(settings: Any) -> tuple[str, str, str]:
+    """The `keeper` doctor line: FAIL without a ClickHouse Keeper (Loom's leases and
+    claims are KeeperMap keys), WARN before `loom migrate` made the lock table or
+    when `graph_projections` is not the KeeperMap table its migration makes."""
+    from server.core.schema.migrate_lease import KeeperRequired
+
+    sql = (
+        "SELECT database, name, engine FROM system.tables WHERE "
+        "(database = 'loom' AND name IN ('graph_projections', '_migration_lock')) "
+        "OR (database = 'system' AND name = 'zookeeper_connection') FORMAT JSONEachRow"
+    )
+    try:
+        rows = _doctor_ch_query(settings, sql, {})
+    except Exception as e:  # noqa: BLE001 — a doctor line must never crash the doctor
+        return ("keeper", WARN, f"could not read system.tables: {e}")
+    tables = {(str(r.get("database")), str(r.get("name"))): str(r.get("engine")) for r in rows}
+    if ("system", "zookeeper_connection") not in tables:
+        return ("keeper", FAIL, str(KeeperRequired("the server has no Keeper configured")))
+    if ("loom", "_migration_lock") not in tables:
+        return (
+            "keeper",
+            WARN,
+            "Keeper present; loom._migration_lock is missing: run `loom migrate`",
+        )
+    engine = tables.get(("loom", "graph_projections"))
+    if engine is not None and engine != "KeeperMap":
+        return (
+            "keeper",
+            WARN,
+            f"loom.graph_projections is a {engine} (a part per memory.set): drop it and run "
+            "the KeeperMap statement of 034_graph_projections.sql",
+        )
+    return ("keeper", PASS, "Keeper present; leases and claims are KeeperMap keys")
+
+
+# Tables whose guarantees rest on a sequentially consistent read seeing every
+# acknowledged insert: the sign-in/sign-up limits and the single signing-key retire.
+_SEQUENTIAL_TABLES = ("auth_attempts", "signing_keys")
+
+
+def _doctor_replica_consistency_check(settings: Any) -> tuple[str, str, str]:
+    """The `replica_consistency` doctor line: WARN on a self-managed
+    ReplicatedMergeTree cluster with more than one replica of those tables. A
+    sequential read there waits only for inserts written with `insert_quorum`,
+    which Loom's async inserts cannot use, so a recount or a retire on one
+    replica can miss another's write. SharedMergeTree and one server are exact."""
+    sql = (
+        "SELECT table, total_replicas FROM system.replicas WHERE database = 'loom' "
+        "AND table IN {tables:Array(String)} AND total_replicas > 1 AND table IN ("
+        "SELECT name FROM system.tables WHERE database = 'loom' "
+        "AND engine LIKE 'Replicated%') FORMAT JSONEachRow"
+    )
+    try:
+        rows = _doctor_ch_query(settings, sql, {"tables": list(_SEQUENTIAL_TABLES)})
+    except Exception as e:  # noqa: BLE001 — a doctor line must never crash the doctor
+        return ("replica_consistency", WARN, f"could not read system.replicas: {e}")
+    if not rows:
+        return ("replica_consistency", PASS, "sequential reads see every acknowledged insert")
+    tables = ", ".join(f"loom.{r['table']} ({r['total_replicas']} replicas)" for r in rows)
+    return (
+        "replica_consistency",
+        WARN,
+        f"{tables}: a sign-in limit or a signing-key retire read on one replica can miss "
+        "another's write. Send every Loom process to one replica.",
+    )
+
+
+def _doctor_ch_read_checks(settings: Any | None) -> list[tuple[str, str, str]]:
+    """The doctor lines that read ClickHouse; skipped (`settings` None) when it
+    did not answer."""
+    if settings is None:
+        return [
+            (name, PASS, "skipped (ClickHouse not reachable)")
+            for name in (
+                "otel_erasure_index",
+                "signing_keyring",
+                "legacy_blobs",
+                "trusted_proxies",
+                "keeper",
+                "replica_consistency",
+            )
+        ]
+    return [
+        _doctor_otel_erasure_index_check(settings),
+        _doctor_keyring_check(settings),
+        _doctor_legacy_blobs_check(settings),
+        _doctor_trusted_proxies_check(settings),
+        _doctor_keeper_check(settings),
+        _doctor_replica_consistency_check(settings),
+    ]
 
 
 _GRADE_BY_SEVERITY = {"error": FAIL, "warn": WARN, "info": PASS}
@@ -257,30 +450,12 @@ def _doctor_reader_probe(settings: Any) -> tuple[str, str]:
     return "ok", ""
 
 
-def _doctor_keeper_table(settings: Any, table_sql: str) -> bool | None:
-    """Whether the KeeperMap table `table_sql` asks for exists here (run.begin's
-    run id claims, /oauth/token's exchange claims, the grant change claims); None
-    when ClickHouse does not answer (`clickhouse_reachable` says so)."""
-    from server.core.schema.migrate_lease import is_keeper_table
-
-    if not settings.ch_host:
-        return None
-    try:
-        rows = _doctor_ch_query(settings, table_sql + " FORMAT JSONEachRow", {})
-    except Exception:  # noqa: BLE001 — a doctor line must never crash the doctor
-        return None
-    return is_keeper_table(rows[0] if rows else None)
-
-
 def _doctor_problems() -> list[Any]:
     """The shared problem list as the doctor sees it: settings
     only — no probed dim, breaker, lease or ledger before boot. Empty when
     settings do not load (the `settings_load` check already says so)."""
     try:
-        from server.auth.grant_claims import CLAIMS as GRANT_CLAIMS
-        from server.auth.oauth_claims import CLAIMS as OAUTH_CLAIMS
         from server.code.app.index.sandbox import layout_refusal, sandbox_available
-        from server.core.schema.migrate_lease import RUN_CLAIMS_TABLE_SQL
         from server.observability.problems import HealthState, Problem, collect_problems
         from server.settings import settings
 
@@ -292,14 +467,6 @@ def _doctor_problems() -> list[Any]:
                 repo_sandbox_refusal=layout_refusal(),
                 ch_reader_ok={"ok": True, "failing": False}.get(status),
                 ch_reader_error=detail if status == "failing" else "",
-                run_claims_atomic=_doctor_keeper_table(settings, RUN_CLAIMS_TABLE_SQL),
-                # Only with OAuth on, the one place the answer is used: no query otherwise.
-                oauth_claims_atomic=(
-                    _doctor_keeper_table(settings, OAUTH_CLAIMS.table_sql)
-                    if settings.oauth_enabled
-                    else None
-                ),
-                grant_claims_atomic=_doctor_keeper_table(settings, GRANT_CLAIMS.table_sql),
             ),
         )
         if status == "not_probed" and detail:
@@ -324,7 +491,16 @@ def _problem_checks(problems: list[Any]) -> list[tuple[str, str, str]]:
 def _run_doctor_checks() -> list[tuple[str, str, str]]:
     """The live checks (Python, settings, JWT, ClickHouse, LLM) followed
     by the shared problem list, as (name, grade, detail)."""
-    return _run_live_checks() + _problem_checks(_doctor_problems())
+    return _run_live_checks() + _code_mirror_checks() + _problem_checks(_doctor_problems())
+
+
+def _code_mirror_checks() -> list[tuple[str, str, str]]:
+    try:
+        from server.code.app.index.mirrors import doctor_checks
+
+        return doctor_checks()
+    except Exception as e:  # noqa: BLE001 — a doctor line must never crash the doctor
+        return [("code_mirrors", WARN, f"not checked: {type(e).__name__}: {e}")]
 
 
 def _run_live_checks() -> list[tuple[str, str, str]]:
@@ -372,13 +548,13 @@ def _run_live_checks() -> list[tuple[str, str, str]]:
         )
 
     # 3. JWT secret. FAIL when empty even if auth_required is off — the secret
-    # is needed for `loom mint-token` and the /me/setup flow. WARN when it is
+    # is needed for `loom mint-token` and the dashboard's token minting. WARN when it is
     # the checked-in dev default with auth on: the server
     # boots and works, and anyone with the repo can mint tokens it accepts.
     if not jwt_secret_present:
         jwt_grade, jwt_detail = (
             FAIL,
-            "LOOM_JWT_SECRET is empty — `loom mint-token` and /me/setup will fail",
+            "LOOM_JWT_SECRET is empty — `loom mint-token` and minting in the dashboard will fail",
         )
     elif settings_ok and (dev_warning := dev_jwt_secret_warning()):
         jwt_grade, jwt_detail = WARN, dev_warning
@@ -400,11 +576,8 @@ def _run_live_checks() -> list[tuple[str, str, str]]:
         else ("clickhouse_preflight", WARN, "skipped (ClickHouse not reachable)")
     )
 
-    # 4b. OTel erasure index: only once ClickHouse answered.
-    if settings_ok and ch_ok:
-        checks.append(_doctor_otel_erasure_index_check(settings))
-    else:
-        checks.append(("otel_erasure_index", PASS, "skipped (ClickHouse not reachable)"))
+    # 4b. The OTel erasure index and the signing keyring: only once ClickHouse answered.
+    checks += _doctor_ch_read_checks(settings if settings_ok and ch_ok else None)
 
     # 5. LLM provider resolution: what extraction runs on and
     # what decided it; WARN when the provider was inferred (or named) but its

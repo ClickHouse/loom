@@ -19,7 +19,7 @@ We acknowledge within five business days. After triage we agree a disclosure win
 - The control plane (`server/`) — auth, RBAC, JWT validation, idempotency, per-row audit hashing, erasure cascade.
 - The Python SDK (`sdk/python/loom/`).
 - Wire protocol surface (HTTP/JSON + MCP).
-- The `/me` dashboard (token handling, XSS, CSRF).
+- The dashboard (token handling, XSS, CSRF).
 - Default deployment artefacts in `dev/` and `Dockerfile`.
 
 ## What's out of scope
@@ -33,7 +33,7 @@ We acknowledge within five business days. After triage we agree a disclosure win
 
 The defaults in `.env.example` are for local development and **must not** be reused in any deployment reachable by untrusted clients:
 
-- `LOOM_AUTH_REQUIRED=true` and a real `LOOM_JWT_SECRET` (or RS256 key pair) — the dev secret is published in the repo.
+- `LOOM_AUTH_REQUIRED=true` and a real `LOOM_JWT_SECRET` — the dev secret is published in the repo. It is the root secret: it signs as kid `default` and seals every stored credential and signing key, so keep it with the deployment's config.
 - `LOOM_CH_PASSWORD` — never `loomdev`.
 - Place the control plane behind a TLS-terminating ingress; the `/v1/*` surface is not designed to face the open internet without one.
 - Rotate ClickHouse credentials on a schedule that matches your org's policy.
@@ -68,24 +68,24 @@ Memory that encodes something about a person shapes what the agent retrieves and
 
 ### JWT TTL and rotation
 
-Tokens minted by the `loom mint-token` CLI and `dev/loom_init.py` carry **no `exp` claim** unless you pass a TTL — they are indefinite. The `/me` **Settings → Tokens** form pre-fills a 90-day TTL; clear the field for an indefinite token. This is a deliberate choice: forcing rotation on every personal-use OSS deployment is friction with no security gain when the user controls both ends.
+Tokens minted by the `loom mint-token` CLI and `dev/loom_init.py` carry **no `exp` claim** unless you pass a TTL — they are indefinite. The dashboard's **Settings → Tokens** form pre-fills a 90-day TTL; clear the field for an indefinite token. This is a deliberate choice: forcing rotation on every personal-use OSS deployment is friction with no security gain when the user controls both ends.
 
 Opt in to expiry per call when you actually want it:
 
 ```bash
-# From /me Settings → Tokens: pick a TTL in days when minting a token (blank = indefinite).
+# From Settings → Tokens in the dashboard: pick a TTL in days when minting a token (blank = indefinite).
 # From the CLI (inside the Docker container):
 docker exec loom-server loom mint-token --subject alice --org acme --namespaces personal-alice --ttl-days 90
 python dev/loom_init.py --namespace eng-tooling --agent dev-laptop --ttl-days 30
 ```
 
-To invalidate every in-flight token at once — what you'd do after a leak or when off-boarding everyone — **rotate the signing kid**:
+To invalidate every in-flight token at once — what you'd do after a leak or when off-boarding everyone — **rotate the signing key**:
 
-1. Pick a new kid name (e.g. `prod-2026-q3`).
-2. Generate a fresh secret (`python -c 'import secrets; print(secrets.token_urlsafe(32))'`).
-3. Update `LOOM_JWT_SECRETS_JSON` to map the new kid to the new secret. Keep the old kid present _only_ if you want a grace window for old tokens to keep working.
-4. Set `LOOM_JWT_ACTIVE_KID` to the new kid. New tokens are signed under the new key.
-5. Restart the control plane. Old tokens signed under the now-removed kid will fail verification with `AUTH_INVALID`.
+1. `loom signing-key rotate` (add `--algorithm RS256` for an RSA key). The new key is written to `loom.signing_keys`, sealed with `LOOM_JWT_SECRET`, and starts signing `--activate-in` seconds later (300 by default; at least twice the slowest process's `LOOM_JWT_KEYRING_REFRESH_SECONDS`, which every process records in `loom.keyring_readers`), once every process has loaded it. No restart.
+2. Re-mint the tokens you want to keep.
+3. `loom signing-key retire <kid>` for each old kid (`loom signing-key list` shows them; `default` is the root secret's). Tokens signed under a retired kid fail verification with `AUTH_INVALID` within one refresh interval.
+
+If `LOOM_JWT_SECRET` itself leaked, replace it on every Loom process of the deployment, then run `loom signing-key record-root` once with the new value: until then every process reports `keyring_root_mismatch` in `/v1/health`, and `loom signing-key rotate` / `retire` and `loom mint-token` refuse to run. Replacing the root re-keys everything: tokens it signed, every signing key and every stored credential sealed with it stop opening; re-mint tokens (`loom signing-key rotate` for a new keyring key if you used one) and enter the credentials again.
 
 To invalidate one specific token while leaving others alone, run `loom revoke-token --jti <id>` (every minted token carries a `jti`, printed by `loom mint-token`; `--subject <sub>` revokes every token of a subject); it writes `loom.revoked_tokens` through `server/auth/revocation.py`. The check always runs: every replica polls the revocation list every `LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` (default 30s), and `server/auth/jwt.py` calls `is_revoked()` on every request. Until a replica's first load of the list succeeds it answers 503 `AUTH_UNAVAILABLE` (with `Retry-After`) rather than admit a token it cannot check.
 

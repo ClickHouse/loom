@@ -10,6 +10,7 @@ way.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
@@ -20,6 +21,16 @@ from server.observability.events import AgentEvent, get_emitter
 # The mentor hint the current response carries (`out_hint_code`); the
 # transports set it per call, '' when none.
 _hint_code_var: ContextVar[str] = ContextVar("loom_mentor_hint", default="")
+
+
+# Takes an event the request must commit before it answers (the policy witness,
+# installed by the transports); None or False: the event is queued.
+_event_hold: Callable[[AgentEvent], bool] | None = None
+
+
+def set_event_hold(hold: Callable[[AgentEvent], bool] | None) -> None:
+    global _event_hold
+    _event_hold = hold
 
 
 def set_hint_context(code: str) -> None:
@@ -207,39 +218,39 @@ def emit_agent_event(
     if attribution["consumer_source"]:
         args["consumer_source"] = attribution["consumer_source"]
 
-    get_emitter().emit(
-        AgentEvent(
-            ts=datetime.now(UTC),
-            trace_id=trace_id,
-            org=identity["org"],
-            namespace=identity["namespace"],
-            agent=identity["agent"],
-            user_id=identity["user_id"],
-            session_id=identity["session_id"],
-            run_id=run_id,
-            operation=op_name,
-            request_id=request_id,
-            latency_ms=latency_ms,
-            success=success,
-            error_code=error_code,
-            memory_key=memory_key,
-            impersonated_by=impersonated_by,
-            subject=subject,
-            kind=kind,
-            args=args,
-            upstream_cost_usd=(acc.cost_usd if acc else 0.0),
-            embedding_tokens=(acc.embed_tokens if acc else 0),
-            input_tokens=(acc.llm_input_tokens if acc else 0),
-            output_tokens=(acc.llm_output_tokens if acc else 0),
-            model=(acc.dominant_model() if acc else ""),
-            llm_calls=(acc.llm_calls if acc else 0),
-            consumer=attribution["consumer"],
-            # What the agent has to read, from the result both
-            # transports already hand this function; 0 on failure.
-            response_tokens=(response_tokens_of(result) if success else 0),
-            traffic_class=attribution["traffic_class"],
-        )
+    event = AgentEvent(
+        ts=datetime.now(UTC),
+        trace_id=trace_id,
+        org=identity["org"],
+        namespace=identity["namespace"],
+        agent=identity["agent"],
+        user_id=identity["user_id"],
+        session_id=identity["session_id"],
+        run_id=run_id,
+        operation=op_name,
+        request_id=request_id,
+        latency_ms=latency_ms,
+        success=success,
+        error_code=error_code,
+        memory_key=memory_key,
+        impersonated_by=impersonated_by,
+        subject=subject,
+        kind=kind,
+        args=args,
+        upstream_cost_usd=(acc.cost_usd if acc else 0.0),
+        embedding_tokens=(acc.embed_tokens if acc else 0),
+        input_tokens=(acc.llm_input_tokens if acc else 0),
+        output_tokens=(acc.llm_output_tokens if acc else 0),
+        model=(acc.dominant_model() if acc else ""),
+        llm_calls=(acc.llm_calls if acc else 0),
+        consumer=attribution["consumer"],
+        # What the agent has to read, from the result both
+        # transports already hand this function; 0 on failure.
+        response_tokens=(response_tokens_of(result) if success else 0),
+        traffic_class=attribution["traffic_class"],
     )
+    if _event_hold is None or not _event_hold(event):
+        get_emitter().emit(event)
     # Same numbers as OTel counters, so spend trends live beside latency and
     # retrieval quality instead of only in agent_events. Both transports reach
     # here, so this covers HTTP and MCP in one place. Never raises.

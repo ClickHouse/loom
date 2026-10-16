@@ -33,10 +33,14 @@ def _ways_in(subject: str, namespace: str) -> str:
     if subject.startswith("sa:agent-"):
         return (
             "this is the machine's self-signup token, which has no grants of its own: claim "
-            "the namespace at /me with the code in ~/.loom/claim-*.txt so it acts as you, or "
+            "the namespace in the dashboard with the code in ~/.loom/claim-*.txt so it acts "
+            "as you, or "
             "save a token for your user (`loom mint-token --save`)"
         )
-    return f"request access to {namespace!r} at /me → Discover, or ask its admin for a grant"
+    return (
+        f"request access to {namespace!r} from the dashboard's Spaces page, "
+        "or ask its admin for a grant"
+    )
 
 
 def refusal(subject: str, org: str, namespace: str) -> dict[str, Any]:

@@ -40,7 +40,9 @@ def loom_server(
     name: str,
     env: Mapping[str, str],
     *,
-    ready_timeout: float = 20.0,
+    # Above the carry barrier's 30 s: a boot waits that long for a process (this
+    # suite's own) whose write was cut off before it acknowledged.
+    ready_timeout: float = 45.0,
     log_level: str = "warning",
     port: int | None = None,
 ) -> Iterator[str]:

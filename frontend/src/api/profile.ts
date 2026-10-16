@@ -126,7 +126,7 @@ export interface ProfileActivityEntry {
 }
 
 /** Which MCP clients have read the namespace's profile recently?
- *  Answers the /me/profile trust question "is my agent actually picking
+ *  Answers the Profile page's trust question "is my agent actually picking
  *  this up?". Reads from loom.agent_events where operation IN
  *  ('loom_activate', 'profile.render'), one row per agent ordered by
  *  recency. Default lookback 7 days; 30 max server-side. */

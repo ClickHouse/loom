@@ -370,6 +370,8 @@ jobs:
       LOOM_CH_SECURE: "false"
       LOOM_AUTH_REQUIRED: "false"
       LOOM_JWT_SECRET: ci-only-jwt-secret
+      # Overrides reach every web process within one refresh; the tests wait it out.
+      LOOM_RUNTIME_OVERRIDES_REFRESH_SECONDS: "1"
       LOOM_BASE_URL: http://localhost:7777
       LOOM_EMBEDDING_MODEL: fake-ngram-1024
       LOOM_LLM_PROVIDER: fake
@@ -490,6 +492,40 @@ jobs:
           path: |
             server.log
             server-auth.log
+
+  mixed-version:
+    name: builds N-1 and N on one ClickHouse
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # The gate builds each build's dashboard bundle.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        id: python
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install Loom from uv.lock
+        run: |
+          uv sync --locked --python "${{ steps.python.outputs.python-path }}" --extra dev --extra code
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      # On main the base is the previous commit; on a pull request, the merge base.
+      - name: Mixed-version gate
+        run: >-
+          python scripts/gates/mixed_version.py --require
+          --base ${{ github.event_name == 'pull_request' && 'origin/main' || 'HEAD~1' }}
 
   sdk-typescript:
     name: typescript sdk (generated types in sync, lint, tsc, vitest, dist)

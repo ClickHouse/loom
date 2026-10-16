@@ -144,10 +144,16 @@ def record_exposure(
         except Exception as e:  # noqa: BLE001 — telemetry never fails a read
             log.warning("exposure-ledger write failed (non-fatal): %s", e)
 
+    from server.identity.app.policy_witness import hold_exposure
     from server.memory.app import after_write
 
-    # No running loop (sync caller / unit test): built, not written.
-    after_write.schedule(_bg(), name="memory.exposure_ledger")
+    def _schedule() -> None:
+        # No running loop (sync caller / unit test): built, not written.
+        after_write.schedule(_bg(), name="memory.exposure_ledger")
+
+    # A breadth rule counts this row: committed before the answer instead.
+    if not hold_exposure(row, _schedule):
+        _schedule()
     return row
 
 

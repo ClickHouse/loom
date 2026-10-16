@@ -15,6 +15,8 @@ from server.code.app.ttl_cache import clear_all
 from server.code.domain.index.repos import RepoConfig
 from server.settings import settings
 
+pytestmark = pytest.mark.usefixtures("mirror_here")
+
 CFG = RepoConfig(
     org="clickhouse",
     namespace="code-clickhouse",

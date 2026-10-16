@@ -65,7 +65,7 @@ describe("Setup's MCP home namespace", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
-    window.history.replaceState(null, "", "/me/settings");
+    window.history.replaceState(null, "", "/settings");
     resetNamespaceRoleCache();
     vi.stubGlobal(
       "fetch",

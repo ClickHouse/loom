@@ -8,7 +8,7 @@ import { MAIN } from "../layout/Sidebar";
 
 describe("graph as a drill-down", () => {
   beforeEach(() => {
-    history.replaceState(null, "", "/me/memories?stray=1");
+    history.replaceState(null, "", "/memories?stray=1");
     useStore.setState({ view: "memories" });
   });
 
@@ -18,14 +18,14 @@ describe("graph as a drill-down", () => {
   });
 
   it("builds the seed walk href, lower-cased and encoded", () => {
-    expect(graphSeedHref("ClickHouse Cloud")).toBe("/me/graph?seed=clickhouse+cloud");
-    expect(graphSeedHref("  ")).toBe("/me/graph");
+    expect(graphSeedHref("ClickHouse Cloud")).toBe("/graph?seed=clickhouse+cloud");
+    expect(graphSeedHref("  ")).toBe("/graph");
   });
 
   it("opens the Explorer on the entity in place, carrying only the seed", () => {
     openGraphAt("Alice");
     expect(useStore.getState().view).toBe("graph");
-    expect(window.location.pathname).toBe("/me/graph");
+    expect(window.location.pathname).toBe("/graph");
     const q = new URLSearchParams(window.location.search);
     expect(q.get("seed")).toBe("alice");
     expect(q.get("stray")).toBeNull();

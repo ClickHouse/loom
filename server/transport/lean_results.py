@@ -162,7 +162,7 @@ def lean_pack(payload: Any) -> Any:
 
 
 # A membership row's value when it says nothing (nearly every row is active,
-# not inherited and private). The model reads what differs; /me (HTTP) keeps
+# not inherited and private). The model reads what differs; the dashboard (HTTP) keeps
 # the whole row.
 _MEMBERSHIP_DEFAULTS: dict[str, Any] = {
     "status": "active",

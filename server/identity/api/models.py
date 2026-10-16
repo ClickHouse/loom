@@ -16,7 +16,7 @@ from server.operations.base import GrantRoleStr
 VisibilityStr = Literal["private", "public"]
 # What lives in the namespace. 'memory' is the agent-memory default; 'code'
 # marks one indexed repo@branch of the code-intelligence plane (read-only
-# reference data, surfaced in the /me Code section, hidden from memory views);
+# reference data, surfaced in the dashboard's Repositories page, hidden from memory views);
 # 'bench' is a throwaway harness namespace: memory-shaped in
 # every view, and the namespace_gc worker erases it once idle.
 NamespaceKindStr = Literal["memory", "code", "bench"]

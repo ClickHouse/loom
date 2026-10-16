@@ -17,6 +17,8 @@ from server.tracker.domain.errors import TrackerUnavailable
 from server.tracker.store.source import contract_reports as reports
 from tests.unit.test_tracker_source import ORG, PUB, REPO, _cfg, _Upstream  # noqa: F401
 
+pytestmark = pytest.mark.usefixtures("mirror_here")
+
 
 def _pr(n: int, **kw: Any) -> dict[str, Any]:
     base = {

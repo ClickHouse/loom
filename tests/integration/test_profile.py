@@ -293,9 +293,8 @@ async def test_memory_search_excludes_profile_by_default(agent) -> None:
                 [0.0] * settings.embedding_dim,
                 1.0,
                 None,
-                __import__("datetime")
-                .datetime.now(__import__("datetime").timezone.utc)
-                .replace(tzinfo=None),
+                # Aware: the driver takes a naive datetime as the host's local time.
+                __import__("datetime").datetime.now(__import__("datetime").timezone.utc),
             ]
         ],
         column_names=[

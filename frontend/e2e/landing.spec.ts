@@ -15,7 +15,7 @@ import {
 // on its first reachable code or tracker namespace, and makes no memory.* request; an
 // explicit path always wins — no deep link is redirected to Setup; a memory view on such
 // a token renders its own empty state; the memory-only fixture lands on Settings. The
-// API is answered locally (fixtures.ts). Bare `/me` is visited as `/me/`: `vite preview`
+// API is answered locally (fixtures.ts). Bare `/` is visited as `/`: `vite preview`
 // serves only the base path with its slash, and `pathnameView` reads both as bare.
 
 const SHOTS = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "../e2e-screenshots");
@@ -40,13 +40,13 @@ const CODE_TRACKER_ONLY = {
   savedNamespace: null,
 } as const;
 
-test("bare /me with a code+QA-only token lands on Repositories, picker on the code namespace, zero memory.* requests", async ({
+test("bare / with a code+QA-only token lands on Repositories, picker on the code namespace, zero memory.* requests", async ({
   page,
 }) => {
   const calls = await installApi(page, CODE_TRACKER_ONLY);
   const errors = collectErrors(page);
-  await page.goto("/me/");
-  await expect(page).toHaveURL(/\/me\/repositories$/);
+  await page.goto("/");
+  await expect(page).toHaveURL(/\/repositories$/);
   await expect(page.getByRole("heading", { name: "Repositories", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Settings", exact: true })).toHaveCount(0);
   const picker = page.getByRole("button", { name: `Namespace: ${CODE_NS}` });
@@ -71,10 +71,10 @@ test("bare /me with a code+QA-only token lands on Repositories, picker on the co
   expect(errors).toEqual([]);
 });
 
-test("bare /me honours a saved QA pick: Repositories with the picker on it", async ({ page }) => {
+test("bare / honours a saved QA pick: Repositories with the picker on it", async ({ page }) => {
   const calls = await installApi(page, { ...CODE_TRACKER_ONLY, savedNamespace: TRACKER_PUBLIC_NS });
-  await page.goto("/me/");
-  await expect(page).toHaveURL(/\/me\/repositories$/);
+  await page.goto("/");
+  await expect(page).toHaveURL(/\/repositories$/);
   await expect(page.getByRole("button", { name: `Namespace: ${TRACKER_PUBLIC_NS}` })).toBeVisible();
   expect(calls.memory).toEqual([]);
 });
@@ -82,8 +82,8 @@ test("bare /me honours a saved QA pick: Repositories with the picker on it", asy
 test("a deep link into Patterns mode with a code+QA-only token stays on the graph", async ({ page }) => {
   const calls = await installApi(page, { ...CODE_TRACKER_ONLY, trackerBound: true });
   const errors = collectErrors(page);
-  await page.goto("/me/graph?mode=patterns");
-  await expect(page).toHaveURL(/\/me\/graph\?mode=patterns$/);
+  await page.goto("/graph?mode=patterns");
+  await expect(page).toHaveURL(/\/graph\?mode=patterns$/);
   await expect(page.getByRole("heading", { name: "Settings", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: `Namespace: ${CODE_NS}` })).toBeVisible();
   await expect(page.getByRole("grid")).toBeVisible();
@@ -95,15 +95,15 @@ test("a deep link into Patterns mode with a code+QA-only token stays on the grap
   expect(errors).toEqual([]);
 });
 
-test("/me/repositories with a memory-only token stays on Repositories", async ({ page }) => {
+test("/repositories with a memory-only token stays on Repositories", async ({ page }) => {
   await installApi(page);
-  await page.goto("/me/repositories");
-  await expect(page).toHaveURL(/\/me\/repositories$/);
+  await page.goto("/repositories");
+  await expect(page).toHaveURL(/\/repositories$/);
   await expect(page.getByRole("heading", { name: "Repositories", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: `Namespace: ${NAMESPACE}` })).toBeVisible();
 });
 
-test("/me/memories with a code-only token stays on Memories with its empty state and zero memory.* requests", async ({
+test("/memories with a code-only token stays on Memories with its empty state and zero memory.* requests", async ({
   page,
 }) => {
   const calls = await installApi(page, {
@@ -113,8 +113,8 @@ test("/me/memories with a code-only token stays on Memories with its empty state
     savedNamespace: null,
   });
   const errors = collectErrors(page);
-  await page.goto("/me/memories");
-  await expect(page).toHaveURL(/\/me\/memories$/);
+  await page.goto("/memories");
+  await expect(page).toHaveURL(/\/memories$/);
   await expect(page.getByRole("heading", { name: "Memories", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "No memory namespace to read" })).toBeVisible();
   await expect(page.getByText("No namespace selected")).toBeVisible();
@@ -128,19 +128,19 @@ test("a memory view on a picked code namespace names the kind and offers Reposit
   page,
 }) => {
   const calls = await installApi(page, { ...CODE_TRACKER_ONLY, savedNamespace: CODE_NS });
-  await page.goto("/me/memories");
+  await page.goto("/memories");
   await expect(page.getByRole("heading", { name: `${CODE_NS} is a repository index` })).toBeVisible();
   // The ScopeBadge names the namespace with its kind.
   await expect(page.locator("#main").getByText(CODE_NS, { exact: true }).locator("..")).toContainText("code");
   await page.getByRole("button", { name: "Open Repositories" }).click();
-  await expect(page).toHaveURL(/\/me\/repositories$/);
+  await expect(page).toHaveURL(/\/repositories$/);
   await expect(page.getByRole("heading", { name: "Repositories", exact: true })).toBeVisible();
   expect(calls.memory).toEqual([]);
 });
 
-test("the memory-only fixture lands on Settings on bare /me", async ({ page }) => {
+test("the memory-only fixture lands on Settings on bare /", async ({ page }) => {
   await installApi(page);
-  await page.goto("/me/");
+  await page.goto("/");
   await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: `Namespace: ${NAMESPACE}` })).toBeVisible();
   await expect(page.getByRole("status").filter({ hasText: "No namespace selected" })).toHaveCount(0);
@@ -150,7 +150,7 @@ test("a token that reaches nothing lands on Setup with the join-or-grant notice 
   page,
 }) => {
   const calls = await installApi(page, { viewer: true, claims: [], mine: [], savedNamespace: null });
-  await page.goto("/me/");
+  await page.goto("/");
   await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
   const notice = page.getByRole("status").filter({ hasText: "No namespace selected" });
   await expect(notice).toBeVisible();
@@ -160,7 +160,7 @@ test("a token that reaches nothing lands on Setup with the join-or-grant notice 
   await expect(notice).not.toContainText("memory namespace");
   await shot(page, "18-landing-nothing-reachable-setup");
   await notice.getByRole("button", { name: "Open Repositories" }).click();
-  await expect(page).toHaveURL(/\/me\/repositories$/);
+  await expect(page).toHaveURL(/\/repositories$/);
   await expect(page.getByRole("heading", { name: "Repositories", exact: true })).toBeVisible();
   expect(calls.memory).toEqual([]);
 });

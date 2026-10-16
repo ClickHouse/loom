@@ -17,7 +17,7 @@ from datetime import datetime
 from typing import Any
 
 from server.core.ch import sequential_reads
-from server.core.schema.migrate_lease import RUN_CLAIMS_TABLE_SQL, is_keeper_table, key_exists
+from server.core.leases import key_exists
 from server.identity.domain.read_scope import ReadFilters, scope_and
 from server.observability import degradations, provider_health
 from server.tasks.store.rows import RunLedgerRow
@@ -105,9 +105,6 @@ async def insert_runs(ch: Any, rows: list[RunLedgerRow]) -> None:
 
 # ---------------------------------------------------------------- run id claims
 
-# Whether loom.agent_run_claims exists here (its migration ran on a server with a
-# Keeper): None until the boot probe or the first run.begin asks.
-_claims_atomic: bool | None = None
 # A Keeper error is logged once per kind of failure, then only noted.
 _keeper_errors_logged: set[str] = set()
 
@@ -124,34 +121,12 @@ class RunClaim:
 
 
 class NoClaim(enum.Enum):
-    """Why claim_run holds no claim. UNAVAILABLE: no claims table here, or Keeper
-    failed, so nothing keeps two users' first begins apart. RELEASED: the key was
+    """Why claim_run holds no claim. UNAVAILABLE: Keeper failed, so nothing keeps
+    two users' first begins apart. RELEASED: the key was
     taken and dropped again, so its holder's row is already written."""
 
     UNAVAILABLE = "unavailable"
     RELEASED = "released"
-
-
-def claims_atomic() -> bool | None:
-    """Whether run ids are claimed in Keeper here; None = not asked yet."""
-    return _claims_atomic
-
-
-async def _claims_available(ch: Any) -> bool:
-    global _claims_atomic
-    if _claims_atomic is None:
-        _claims_atomic = is_keeper_table(await ch.query_one(RUN_CLAIMS_TABLE_SQL))
-        if not _claims_atomic:
-            log.info("run.begin: no loom.agent_run_claims (no Keeper); run ids are not claimed")
-    return _claims_atomic
-
-
-async def probe_claims(ch: Any) -> None:
-    """At boot, so /v1/health names `run_claims_not_atomic` before any run.begin."""
-    try:
-        await _claims_available(ch)
-    except Exception as e:  # noqa: BLE001 — a failed probe leaves it to the first run.begin
-        log.warning("run claims: could not read system.tables: %s", e)
 
 
 def _keeper_failed(e: BaseException, what: str = "Keeper claim failed") -> None:
@@ -170,13 +145,6 @@ async def claim_run(
     """Claim (org, ns, run_id) for this user and session, or read the claim that
     already holds it. NoClaim says why there is none."""
     key = json.dumps([org, ns, run_id])
-    try:
-        available = await _claims_available(ch)
-    except Exception as e:  # noqa: BLE001 — an unknown claims table falls back to the row check
-        _keeper_failed(e, "could not read system.tables for the claims table")
-        return NoClaim.UNAVAILABLE
-    if not available:
-        return NoClaim.UNAVAILABLE
     try:
         await ch.execute(
             "INSERT INTO loom.agent_run_claims "
@@ -225,8 +193,6 @@ async def delete_claim(ch: Any, org: str, ns: str, run_id: str) -> None:
     itself keeps other users off the id. A Keeper key drop, not a part mutation.
     Best effort: a claim left behind only sends other users to a fresh id."""
     try:
-        if not await _claims_available(ch):
-            return
         await ch.execute(
             "ALTER TABLE loom.agent_run_claims DELETE WHERE claim_key = {k:String}",
             params={"k": json.dumps([org, ns, run_id])},

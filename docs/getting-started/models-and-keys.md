@@ -74,8 +74,8 @@ it does not reload an edited `.env` file. Changing the embedding space requires 
 For dashboard embedding changes, Loom queues that rebuild automatically and keeps
 data-plane requests paused until verification, publication and cleanup finish.
 Models & keys shows the phase and progress; a failed job stays paused and offers
-retry from its saved cursor. Keep the ClickHouse and blob volumes, and the original
-`LOOM_JWT_SECRET`, when recreating containers. Rebuilds make provider calls and may
+retry from its saved cursor. Keep the ClickHouse volume and the original
+`LOOM_JWT_SECRET`, which seals the stored provider keys, when recreating containers. Rebuilds make provider calls and may
 take time and incur fees proportional to the indexed content. The rebuild publishes
 to local MergeTree tables only. The first embedding choice on an install with no
 stored vectors, such as a fresh install leaving the placeholder models, switches

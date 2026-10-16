@@ -358,6 +358,20 @@ def _create_reader(ch: Any, user: str, reader: str, *, fresh: bool) -> bool:
     return True
 
 
+# `loom ch-setup`'s exit status when the server has no Keeper: the installer
+# offers the bundled ClickHouse instead.
+NO_KEEPER_EXIT = 3
+KEEPER_HOWTO = """  Give that server a Keeper, then run this again:
+  - one server: copy deploy/clickhouse-config/keeper.xml (an embedded single-node
+    Keeper) into its config.d/ and restart it;
+  - a Keeper you already run: add to its config.d/ a file naming it, and restart:
+      <clickhouse>
+        <zookeeper><node><host>KEEPER_HOST</host><port>9181</port></node></zookeeper>
+        <keeper_map_path_prefix>/keeper_map_tables</keeper_map_path_prefix>
+      </clickhouse>
+  ClickHouse Cloud has one already; the bundled ClickHouse runs the embedded one."""
+
+
 def _set_up(ch: Any, user: str, reader: str | None) -> int:
     from server.settings import settings
 
@@ -366,6 +380,9 @@ def _set_up(ch: Any, user: str, reader: str | None) -> int:
     except preflight.PreflightError as e:
         # The admin SQL follows, so the pointer to it is left out.
         print(f"✗ {e.reason}", file=sys.stderr)
+        if e.no_keeper:
+            print(KEEPER_HOWTO, file=sys.stderr)
+            return NO_KEEPER_EXIT
         if e.needs_admin:
             _print_admin_sql(user, reader)
         return 1
@@ -390,15 +407,7 @@ def _set_up(ch: Any, user: str, reader: str | None) -> int:
     elif not settings.ch_reader_user:
         print(f"  set LOOM_CH_READER_USER={reader} so caller-shaped reads run as it")
 
-    print(
-        "· Keeper: "
-        + (
-            "present"
-            if server.keeper
-            else "absent; leases, run ids, OAuth exchanges and grant changes use the "
-            "fallbacks (docs/operations/deployment.md)"
-        )
-    )
+    print("· Keeper: present")
     print(
         "· lightweight UPDATE: "
         + ("on" if server.lightweight_updates else "off; Loom uses mutations")

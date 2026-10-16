@@ -80,6 +80,9 @@ async def test_note_restricted_access_writes_one_row(monkeypatch) -> None:
         return "hash"
 
     monkeypatch.setattr("server.observability.audit.emit", _emit)
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "restricted_audit_inline", False)
     auth = AuthInfo(
         subject="sa:clickgap",
         org=ORG,
@@ -135,6 +138,9 @@ async def test_note_restricted_access_never_raises(monkeypatch) -> None:
         raise RuntimeError("ledger down")
 
     monkeypatch.setattr("server.observability.audit.emit", _fail)
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "restricted_audit_inline", False)
     auth = AuthInfo(
         subject="a@x", org=ORG, namespaces=(NS,), roles=(Role.VIEWER,), is_service_account=False
     )
@@ -147,8 +153,6 @@ async def test_note_restricted_access_never_raises(monkeypatch) -> None:
     )
     assert await ra.drain() == 1  # swallowed, logged; nothing raised
     # the inline mode surfaces the same failure as "no row", never a raise
-    from server.settings import settings
-
     monkeypatch.setattr(settings, "restricted_audit_inline", True)
     assert (
         await ra.note_restricted_access(
@@ -160,8 +164,8 @@ async def test_note_restricted_access_never_raises(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_inline_mode_commits_the_row_before_answering(monkeypatch) -> None:
-    """`restricted_audit_inline` waits for the audit insert, for a deployment
-    that wants the row committed before the handler runs."""
+    """`restricted_audit_inline` (the default) waits for the audit insert, so a
+    killed process never loses a row for a read it answered."""
     rows = []
 
     async def _emit(event_type, **kw):
@@ -180,3 +184,9 @@ async def test_inline_mode_commits_the_row_before_answering(monkeypatch) -> None
         auth, op="code.search", org=ORG, namespace=NS, transport="http"
     )
     assert rows == ["namespace.restricted_access"] and await ra.drain() == 0
+
+
+def test_audit_rows_are_inline_by_default() -> None:
+    from server.settings import Settings
+
+    assert Settings.model_fields["restricted_audit_inline"].default is True

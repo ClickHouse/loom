@@ -98,7 +98,7 @@ def test_namespace_register_input_accepts_tag_registry() -> None:
 
 
 def test_memory_search_input_auto_touch_defaults_true() -> None:
-    """Default is ON so the /me Inspector's "Last recalled" field
+    """Default is ON so the dashboard Inspector's "Last recalled" field
     populates without callers having to opt in. Callers explicitly
     wanting telemetry-free search can still pass auto_touch=False."""
     from server.memory.api.models_search import MemorySearchInput

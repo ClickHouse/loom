@@ -31,7 +31,7 @@ class _CH:
 
 
 @pytest.fixture()
-def ch(monkeypatch: pytest.MonkeyPatch) -> _CH:
+def ch(monkeypatch: pytest.MonkeyPatch, auth_attempts: Any) -> _CH:
     from server.settings import settings
 
     monkeypatch.setattr(settings, "self_signup", "open")
@@ -41,8 +41,6 @@ def ch(monkeypatch: pytest.MonkeyPatch) -> _CH:
     monkeypatch.setattr(revocation, "_loaded", True)
     fake = _CH()
     monkeypatch.setattr(ss, "get_client", lambda: fake)
-    ss._agent_signups.clear()
-    ss._human_signups.clear()
     return fake
 
 
@@ -167,7 +165,7 @@ def test_concurrent_claims_of_one_name_admit_one(monkeypatch: pytest.MonkeyPatch
 
 def test_concurrent_claims_of_one_email_admit_one(monkeypatch: pytest.MonkeyPatch, ch: _CH) -> None:
     """Two names, one email: the EMAIL_IN_USE check and the insert run under
-    one lock per email, so the second claim sees the first account."""
+    the email's claim, so the second sign-up is refused."""
     emails: set[str] = set()
 
     class _RacyCH(_CH):
@@ -194,4 +192,14 @@ def test_concurrent_claims_of_one_email_admit_one(monkeypatch: pytest.MonkeyPatc
 
     results = asyncio.run(both())
     refused = [r for r in results if isinstance(r, HTTPException)]
-    assert len(refused) == 1 and refused[0].detail["code"] == "EMAIL_IN_USE"  # type: ignore[index]
+    # The second claim finds the email's claim held, or the first account.
+    assert len(refused) == 1
+    assert refused[0].detail["code"] in ("SIGNUP_IN_PROGRESS", "EMAIL_IN_USE")  # type: ignore[index]
+
+
+@pytest.fixture(autouse=True)
+def _claims_in_memory(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The deployment-wide claims, without a lock table in the fake."""
+    from tests.unit.claims_fake import memory_claims
+
+    memory_claims(monkeypatch)

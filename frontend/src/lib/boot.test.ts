@@ -120,13 +120,13 @@ describe("login link token", () => {
   afterEach(() => history.replaceState(null, "", "/"));
 
   it("takes a #token= fragment and scrubs it from the address bar", () => {
-    history.replaceState(null, "", "/me/setup?tab=a#token=abc.def%2Eghi");
+    history.replaceState(null, "", "/setup?tab=a#token=abc.def%2Eghi");
     expect(takeLinkToken()).toBe("abc.def.ghi");
-    expect(window.location.pathname + window.location.search + window.location.hash).toBe("/me/setup?tab=a");
+    expect(window.location.pathname + window.location.search + window.location.hash).toBe("/setup?tab=a");
   });
 
   it("never takes a ?token= query, and removes it anyway", () => {
-    history.replaceState(null, "", "/me?token=leaked.jwt.value&tab=a#memories");
+    history.replaceState(null, "", "/?token=leaked.jwt.value&tab=a#memories");
     expect(takeLinkToken()).toBeNull();
     expect(window.location.search).toBe("?tab=a");
     expect(window.location.hash).toBe("#memories");
@@ -134,7 +134,7 @@ describe("login link token", () => {
   });
 
   it("leaves a URL without a token alone", () => {
-    history.replaceState(null, "", "/me/library?q=x#y");
+    history.replaceState(null, "", "/library?q=x#y");
     expect(takeLinkToken()).toBeNull();
     expect(window.location.search + window.location.hash).toBe("?q=x#y");
   });

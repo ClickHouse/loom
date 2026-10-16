@@ -145,7 +145,7 @@ class MemoryGetOutput(ProjectedRow):
     # imported | external; '' when not found.
     source_class: str = ""
     # Writer agent of the resolved row. Surfaced so a cross-agent read
-    # (agent="*") can tell callers which agent owns the row — the /me search
+    # (agent="*") can tell callers which agent owns the row — the dashboard's search
     # re-fetch needs it to render + re-open a hit found outside the preload.
     agent: str = ""
     # Lifecycle state from loom.memory.status.

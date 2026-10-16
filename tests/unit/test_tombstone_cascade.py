@@ -60,7 +60,7 @@ def cascade_spy(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             spy["versions"].append(str(r["memory_id"]))
             spy["overrides"].append(r)
 
-    async def fake_mirror(built: list[dict[str, Any]], *, ch: Any = None) -> int:
+    async def fake_mirror(built: list[dict[str, Any]], *, ch: Any = None, **_: Any) -> int:
         for r in built:
             spy["mirrored"].append(
                 tuple(
@@ -210,8 +210,12 @@ class _FakeCH:
     """Answers the orphan scan with `rows`, and the entity_vectors read with one
     live row per key; records what gets inserted."""
 
-    def __init__(self, rows: list[dict[str, Any]]) -> None:
+    def __init__(
+        self, rows: list[dict[str, Any]], drift: list[dict[str, Any]] | None = None
+    ) -> None:
         self.rows = rows
+        self.drift = drift or []
+        self.drift_params: list[dict[str, Any]] = []
         self.entity_reads: list[dict[str, Any]] = []
         self.inserted: list[tuple[str, list[dict[str, Any]]]] = []
 
@@ -221,6 +225,9 @@ class _FakeCH:
         if "LEFT ANTI JOIN" in sql:
             assert params and params["limit"] >= 1
             return self.rows
+        if "e.vmin != m.attested" in sql:
+            self.drift_params.append(dict(params or {}))
+            return self.drift
         assert "FROM loom.entity_vectors FINAL" in sql and params
         self.entity_reads.append(dict(params))
         return [
@@ -306,6 +313,8 @@ async def test_reconcile_pass_keeps_entity_vectors_a_newer_write_created(
     async def read(sql, params=None):
         if "LEFT ANTI JOIN" in sql:
             return ch.rows
+        if "e.vmin != m.attested" in sql:
+            return []
         base = {"org": "o", "namespace": "n1", "agent": "a", "user_id": "-", "memory_key": "k1"}
         return [
             {
@@ -339,6 +348,54 @@ async def test_a_failed_embeddings_reemit_leaves_the_entity_vectors_for_the_next
     res = await w.run_pass(ch=ch)
     assert res.identities_healed == 0 and ch.entity_reads == [] and ch.inserted == []
     assert len(res.errors) == 1 and "insert timed out" in res.errors[0]
+
+
+@pytest.mark.asyncio
+async def test_a_lost_verify_mirror_is_healed_at_the_pass_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """memory.verify mirrors `verified` after its answer; a replica that dies in
+    between leaves the ranking signal wrong until this pass re-emits it."""
+    from server.memory.workers import orphan_vector_reconcile as w
+    from server.settings import settings
+
+    batches: list[list[tuple[tuple[str, ...], dict[str, Any]]]] = []
+
+    async def fake_reemit(items, *, ch=None, batch=500):
+        batches.append(list(items))
+        return len(items)
+
+    monkeypatch.setattr(memory_repo, "reemit_embedding_rows_for_keys", fake_reemit)
+    monkeypatch.setattr(memory_repo, "next_version", lambda: 1_785_542_400 * 1_000_000_000)
+    ident = {"org": "o", "agent": "a", "user_id": "-", "session_id": "s", "namespace": "n"}
+    ch = _FakeCH(
+        [],
+        drift=[
+            {**ident, "memory_key": "k1", "attested": 1},
+            {**ident, "memory_key": "k2", "attested": 0},
+        ],
+    )
+    res = await w.run_pass(ch=ch)
+    assert not res.errors and res.verified_healed == 2
+    ((items),) = [b for b in batches if b]
+    v = 1_785_542_400 * 1_000_000_000
+    assert items == [
+        (("o", "n", "a", "-", "s", "k1"), {"verified": 1, "version": v}),
+        (("o", "n", "a", "-", "s", "k2"), {"verified": 0, "version": v}),
+    ]
+    # Memory rows younger than the grace may have a mirror in flight.
+    grace = settings.orphan_vector_reconcile_grace_seconds
+    assert ch.drift_params[0]["cutoff"] == v - grace * 1_000_000_000
+
+
+def test_verified_drift_scan_compares_the_mirror_to_the_attestation() -> None:
+    from server.memory.store.sql import attested_sql
+    from server.memory.workers.orphan_vector_reconcile import verified_drift_sql
+
+    sql = verified_drift_sql()
+    assert attested_sql() in sql
+    assert "loom.memory_embeddings FINAL" in sql and "loom.memory FINAL" in sql
+    assert "version < {cutoff:UInt64}" in sql and "{limit:UInt32}" in sql
 
 
 @pytest.mark.asyncio

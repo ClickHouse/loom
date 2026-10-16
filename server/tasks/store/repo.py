@@ -10,12 +10,8 @@ Five tables, one shape each:
 * ``loom.tasks`` — the current row per task, same discipline.
 * ``loom.task_events`` — append-only; the audit trail, the activity feed and
   the cursor senders read.
-* ``loom.task_leases`` (KeeperMap) or ``loom.task_claims`` (append-only
-  MergeTree) — where a claim is arbitrated. :class:`KeeperLeases` is a
-  compare-and-swap under ``keeper_map_strict_mode``; :class:`LogLeases` is
-  the fallback for a server without a Keeper (first writer per fence wins,
-  decided by ``argMin`` under sequential consistency). ``lease_backend()``
-  picks one at first use and caches it.
+* ``loom.task_leases`` (KeeperMap) — where a claim is arbitrated:
+  :class:`KeeperLeases` is a compare-and-swap under ``keeper_map_strict_mode``.
 
 Handlers own the state machine; this module owns the statements.
 """
@@ -30,7 +26,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, cast
 
-from server.core.datetimes import utc_now as now_utc
 from server.core.grant_sql import LIVE_GRANT
 from server.core.repo_base import _CHClient, _default_client
 from server.tasks.store.rows import (
@@ -107,12 +102,27 @@ def next_version() -> UInt64:
     return v
 
 
+async def server_version(floor: int = 0, *, ch: _CHClient | None = None) -> UInt64:
+    """A task version / event ``seq`` from the ClickHouse server's clock, in
+    ``next_version``'s microseconds, above ``floor`` (the row's current
+    version, so the new row wins under FINAL) and every one this process
+    stamped. Event cursors order by it: replicas whose clocks disagree would
+    otherwise stamp a later event below a cursor that already passed it."""
+    global _last_server_version
+    ch = ch or _default_client()
+    row = await ch.query_one("SELECT toUnixTimestamp64Micro(now64(6)) AS v")
+    v = max(int((row or {})["v"]), int(floor) + 1, _last_server_version + 1)
+    _last_server_version = v
+    return v
+
+
 # JSON numbers a JavaScript client keeps exact.
 JS_SAFE_INTEGER = 2**53 - 1
 
 
 UInt64 = int
 _last_version: int = 0
+_last_server_version: int = 0
 
 
 def _projection(fields: list[str] | None, all_cols: str, allowed: tuple[str, ...]) -> str:
@@ -531,21 +541,26 @@ async def events_since(
     org: str,
     *,
     since_seq: int,
-    watermark: datetime,
+    lag_s: int,
     inbox: str | None = None,
     from_subject: str | None = None,
     limit: int = 200,
     ch: _CHClient | None = None,
 ) -> list[TaskEventRow]:
-    """The cursor read. ``seq`` is a microsecond version assigned by the
-    writing process; ``watermark`` (now minus a few seconds) keeps a row that
-    is still landing on another replica from being skipped for ever."""
+    """The cursor read. ``seq`` and ``ts`` are stamped from the server's clock
+    (``server_version``); only rows older than ``lag_s`` by the server's clock
+    are served, so a row still landing on another replica is not skipped for
+    ever. Sequentially consistent: every acknowledged insert is in the read."""
     ch = ch or _default_client()
-    where = ["org = {org:String}", "seq > {since:UInt64}", "ts <= {wm:DateTime64(3)}"]
+    where = [
+        "org = {org:String}",
+        "seq > {since:UInt64}",
+        "ts <= now64(3) - toIntervalSecond({lag:Int32})",
+    ]
     params: dict[str, Any] = {
         "org": org,
         "since": int(since_seq),
-        "wm": watermark,
+        "lag": int(lag_s),
         "limit": int(limit),
     }
     if inbox:
@@ -558,7 +573,7 @@ async def events_since(
         "list[TaskEventRow]",
         await ch.query_all(
             f"SELECT {EVENT_COLS} FROM loom.task_events WHERE {' AND '.join(where)} "
-            "ORDER BY seq LIMIT {limit:UInt32}",
+            "ORDER BY seq LIMIT {limit:UInt32} SETTINGS select_sequential_consistency = 1",
             params=params,
         ),
     )
@@ -721,88 +736,14 @@ class KeeperLeases:
         )
 
 
-class LogLeases:
-    """Claims arbitrated by an append-only log when no Keeper is available.
-
-    Every claimer inserts one row for the fence it targets, then reads the
-    earliest row for that fence under sequential consistency; the earliest
-    writer owns the task. Slower to tell the loser (two round trips) and the
-    window relies on the read seeing every committed part, which is what the
-    setting provides. Heartbeats and releases need no arbitration: the tasks
-    projection carries the lease, gated on the fence by the handler.
-    """
-
-    name = "log"
-
-    def __init__(self, ch: _CHClient | None = None) -> None:
-        self._ch = ch
-
-    @property
-    def ch(self) -> _CHClient:
-        return self._ch or _default_client()
-
-    async def ensure_row(self, task_id: str, org: str, inbox: str, fence: int) -> None:
-        return None
-
-    async def try_claim(
-        self, task_id: str, claimant: str, *, expected_fence: int, lease_until: datetime
-    ) -> ClaimResult:
-        target = int(expected_fence) + 1
-        await self.ch.insert(
-            "loom.task_claims",
-            [
-                {
-                    "task_id": task_id,
-                    "fence": target,
-                    "claimant": claimant,
-                    "claim_ts": now_utc(),
-                    "claim_id": str(uuid.uuid4()),
-                }
-            ],
-            settings={"async_insert": 0, "wait_for_async_insert": 1},
-        )
-        row = await self.ch.query_one(
-            "SELECT argMin(claimant, (claim_ts, claim_id)) AS winner FROM loom.task_claims "
-            "WHERE task_id = {tid:String} AND fence = {fence:UInt32} "
-            "SETTINGS select_sequential_consistency = 1",
-            params={"tid": task_id, "fence": target},
-        )
-        winner = str(row["winner"]) if row and row.get("winner") is not None else ""
-        return ClaimResult(winner == claimant, target, winner)
-
-    async def set_owner(
-        self, task_id: str, *, fence: int, owner: str, lease_until: datetime, status: str
-    ) -> bool:
-        return True
-
-    async def delete(self, task_id: str) -> None:
-        return None
+_backend: KeeperLeases | None = None
 
 
-_backend: KeeperLeases | LogLeases | None = None
-
-
-async def lease_backend(*, ch: _CHClient | None = None) -> KeeperLeases | LogLeases:
-    """The arbitration backend: Keeper when ``loom.task_leases`` exists (its
-    migration ran on a server with a Keeper), the append-only log otherwise. Settings can
-    pin either; the answer is cached for the process."""
+async def lease_backend(*, ch: _CHClient | None = None) -> KeeperLeases:
+    """The arbitration backend (``loom.task_leases`` in Keeper), cached for the process."""
     global _backend
-    if _backend is not None:
-        return _backend
-    from server.settings import settings
-
-    pinned = settings.task_lease_backend
-    if pinned == "keeper":
+    if _backend is None:
         _backend = KeeperLeases(ch)
-    elif pinned == "log":
-        _backend = LogLeases(ch)
-    else:
-        client = ch or _default_client()
-        row = await client.query_one(
-            "SELECT engine FROM system.tables WHERE database = 'loom' AND name = 'task_leases'"
-        )
-        _backend = KeeperLeases(ch) if row and row.get("engine") == "KeeperMap" else LogLeases(ch)
-    log.info("task lease backend: %s", _backend.name)
     return _backend
 
 

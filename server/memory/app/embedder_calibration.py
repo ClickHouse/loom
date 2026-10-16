@@ -22,14 +22,18 @@ failures return None, so gates fall through to the scalar settings.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import math
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, fields
 from datetime import UTC, datetime
 from typing import Any
 
+from server.core import readiness
 from server.memory.store.rows import next_version
+from server.settings import settings
 
 log = logging.getLogger(__name__)
 
@@ -376,17 +380,27 @@ async def calibrate_embedder(
     return result
 
 
-# Cluster-wide singleton — populated by main.py lifespan from the
-# module-level corpus. Used when no per-namespace override exists.
+# Cluster-wide singleton: adopted from loom.embedder_calibration (or probed
+# when no row exists) at boot and kept in step with that row by the refresh
+# loop. Used when no per-namespace override exists.
 _calibration: CalibrationResult | None = None
+# "shared" (adopted from, or published to, loom.embedder_calibration),
+# "probe" (this process's own probe; no shared row readable) or "".
+_calibration_source = ""
+_calibration_hash = ""
+# The shared-row read failed for a reason other than "no row" (table missing,
+# CH down): one WARNING per process, then the local probe serves.
+_shared_read_warned = False
 
 # Per-namespace overrides, populated lazily by get_namespace_calibration.
 _ns_overrides: dict[tuple[str, str], CalibrationResult | None] = {}
-# A None answer (no row yet, or a failed read) is cached only this long, so a
-# transient ClickHouse error, or a calibration another process wrote since,
-# is not hidden until restart; a found row stays until clear_ns_overrides().
+# Every answer is cached only this long — a None (no row yet, or a failed
+# read) and a found row alike — so code.calibrate run on another replica, or a
+# transient ClickHouse error, reaches this process within a minute.
 _NS_NEGATIVE_TTL_S = 60.0
+_NS_TTL_S = 60.0
 _ns_negative_at: dict[tuple[str, str], float] = {}
+_ns_found_at: dict[tuple[str, str], float] = {}
 
 
 def get_calibration() -> CalibrationResult | None:
@@ -394,18 +408,208 @@ def get_calibration() -> CalibrationResult | None:
     return _calibration
 
 
-def set_calibration(c: CalibrationResult | None) -> None:
-    """Test hook + lifespan hook for setting the cluster-wide singleton."""
-    global _calibration
+def set_calibration(c: CalibrationResult | None, *, source: str = "probe") -> None:
+    """Set the cluster-wide singleton (`source` says where it came from)."""
+    global _calibration, _calibration_source, _calibration_hash
     _calibration = c
+    _calibration_source = source if c is not None else ""
+    _calibration_hash = calibration_hash(c) if c is not None else ""
+
+
+def calibration_hash(c: CalibrationResult) -> str:
+    """A short digest of every field: equal on two replicas iff they serve
+    the same gates."""
+    blob = json.dumps(asdict(c), sort_keys=True, default=str)
+    return hashlib.sha256(blob.encode()).hexdigest()[:16]
+
+
+def current_calibration_hash() -> str:
+    return _calibration_hash
+
+
+def calibration_source() -> str:
+    return _calibration_source
+
+
+def calibration_applies() -> bool:
+    """Whether adaptive gates are meant to serve: on, with a real embedder."""
+    if not settings.adaptive_thresholds:
+        return False
+    return "fake" not in _served_model().lower()
+
+
+def calibration_ready() -> bool:
+    """Cheap and sync, for readiness: True when the gates this replica serves
+    are the ones it should — adaptive off or a fake embedder (scalars are
+    right), or a calibration loaded. False only while adaptive gates apply and
+    neither the shared row nor a probe has produced one."""
+    return _calibration is not None or not calibration_applies()
+
+
+def readiness_check() -> readiness.CheckResult:
+    return readiness.result(calibration_ready(), "similarity calibration not adopted")
+
+
+def _served_model() -> str:
+    try:
+        from server.embedding.embedder import get_embedder
+
+        return str(get_embedder().model_name)
+    except Exception:  # noqa: BLE001 — no embedder: the configured name stands in
+        return str(settings.embedding_model)
+
+
+def shared_key(model: str) -> str:
+    """The shared calibration's key: `model` and its embedding space's
+    fingerprint, so the same label at another width or endpoint is probed, not
+    adopted. A row keyed by the model alone (an earlier build's) is never read."""
+    from server.core import embedding_space
+
+    values = {**settings.model_dump(include=set(embedding_space.FIELDS)), "embedding_model": model}
+    space = embedding_space.fingerprint(*embedding_space.public_identity(values))
+    return f"{model}@{space[:16]}"
+
+
+def calibration_from_payload(payload: str) -> CalibrationResult | None:
+    """A CalibrationResult from a stored payload: unknown keys dropped, absent
+    defaulted fields defaulted; None when a required field is missing."""
+    try:
+        data = json.loads(payload)
+        known = {f.name for f in fields(CalibrationResult)}
+        return CalibrationResult(**{k: v for k, v in data.items() if k in known})
+    except (TypeError, ValueError):
+        log.warning("calibration: unreadable shared payload; ignoring it")
+        return None
+
+
+async def _read_shared(model: str) -> tuple[CalibrationResult | None, bool]:
+    """(the shared row's calibration or None, whether the table was readable)."""
+    global _shared_read_warned
+    from server.memory.store.calibration import fetch_global_calibration
+
+    try:
+        row = await fetch_global_calibration(shared_key(model))
+    except Exception as e:  # noqa: BLE001 — no shared row readable: the local probe serves
+        if not _shared_read_warned:
+            _shared_read_warned = True
+            log.warning(
+                "calibration: loom.embedder_calibration unreadable (%s); this replica "
+                "probes on its own and may serve gates other replicas do not",
+                e,
+            )
+        return None, False
+    if not row:
+        return None, True
+    c = calibration_from_payload(str(row["thresholds_json"]))
+    if c is not None and c.embedder_model != model:
+        return None, True
+    return c, True
+
+
+async def publish_calibration(c: CalibrationResult) -> bool:
+    """Write `c` as the shared calibration for its embedder. False (logged)
+    when the write fails; the caller keeps serving `c` either way."""
+    from server.memory.store.calibration import write_global_calibration
+    from server.observability.instance import instance_label
+
+    try:
+        await write_global_calibration(
+            {
+                "embedder_model": shared_key(c.embedder_model),
+                "thresholds_json": json.dumps(asdict(c), sort_keys=True),
+                "calibration_hash": calibration_hash(c),
+                "calibrated_by": instance_label(),
+                "version": next_version(),
+            }
+        )
+    except Exception as e:  # noqa: BLE001 — the probed result still serves locally
+        log.warning("calibration: could not publish the shared calibration (%s)", e)
+        return False
+    return True
+
+
+async def adopt_or_probe() -> CalibrationResult | None:
+    """Boot (and an embedder switch): adopt the shared calibration of the
+    served embedder; probe only when there is none, and publish the probe
+    when the table is readable and empty (the first replica to boot)."""
+    if not calibration_applies():
+        set_calibration(None)
+        return None
+    shared, readable = await _read_shared(_served_model())
+    if shared is not None:
+        set_calibration(shared, source="shared")
+        return shared
+    c = await calibrate_embedder()
+    published = c is not None and readable and await publish_calibration(c)
+    set_calibration(c, source="shared" if published else "probe")
+    return c
+
+
+async def refresh_shared() -> None:
+    """One refresh tick: adopt the shared row when its hash differs from what
+    this replica serves; with no row and no calibration (a failed boot probe),
+    probe again. Never raises."""
+    try:
+        if not calibration_applies():
+            return
+        shared, readable = await _read_shared(_served_model())
+        if shared is not None:
+            if calibration_hash(shared) != _calibration_hash:
+                log.info(
+                    "calibration: adopting the shared calibration %s (was %s)",
+                    calibration_hash(shared),
+                    _calibration_hash or "none",
+                )
+                set_calibration(shared, source="shared")
+            return
+        if _calibration is None or (readable and _calibration_source == "probe"):
+            # A replica whose boot probe failed retries; one that probed while
+            # the table was unreadable publishes once it can.
+            c = _calibration or await calibrate_embedder()
+            published = c is not None and readable and await publish_calibration(c)
+            set_calibration(c, source="shared" if published else "probe")
+    except Exception as e:  # noqa: BLE001 — a refresh tick keeps the current calibration
+        log.warning("calibration: refresh failed (%s); the current calibration stays", e)
+
+
+_refresh_task: asyncio.Task[None] | None = None
+
+
+def start_refresh_loop() -> asyncio.Task[None]:
+    """Every replica re-reads the shared calibration each
+    `calibration_refresh_seconds` (idempotent: one loop per process).
+    Ticks are skipped while a model transition holds admission."""
+    global _refresh_task
+    if _refresh_task is not None and not _refresh_task.done():
+        return _refresh_task
+
+    async def _loop() -> None:
+        from server.core.ch import set_query_tag
+        from server.core.model_work_gate import get_model_work_gate
+
+        set_query_tag("calibration.refresh")
+        while True:
+            await asyncio.sleep(max(5.0, float(settings.calibration_refresh_seconds)))
+            if not get_model_work_gate().closed:
+                await refresh_shared()
+
+    _refresh_task = asyncio.get_running_loop().create_task(_loop(), name="loom-calibration-refresh")
+    return _refresh_task
+
+
+def stop_refresh_loop() -> None:
+    global _refresh_task
+    if _refresh_task is not None:
+        _refresh_task.cancel()
+        _refresh_task = None
 
 
 def clear_ns_overrides() -> None:
-    """Test hook + recalibration-worker hook to drop the per-NS cache
-    so the next read fetches fresh from CH."""
+    """Drop the per-NS cache so the next read fetches fresh from CH."""
     global _ns_overrides
     _ns_overrides = {}
     _ns_negative_at.clear()
+    _ns_found_at.clear()
 
 
 def namespace_calibration_row(org: str, namespace: str, c: CalibrationResult) -> dict[str, Any]:
@@ -450,15 +654,16 @@ async def persist_namespace_calibration(org: str, namespace: str, c: Calibration
 async def get_namespace_calibration(org: str, namespace: str) -> CalibrationResult | None:
     """Per-namespace calibration override from
     `loom.namespace_calibration_result`, else None (caller falls through
-    to the cluster-wide `get_calibration()`). Cached per-process;
-    `clear_ns_overrides()` drops the cache.
+    to the cluster-wide `get_calibration()`). Cached per process for
+    `_NS_TTL_S`, so a row written on another replica serves here within it.
     """
     key = (org, namespace)
     if key in _ns_overrides:
         cached = _ns_overrides[key]
         if cached is not None:
-            return cached
-        if time.monotonic() - _ns_negative_at.get(key, 0.0) < _NS_NEGATIVE_TTL_S:
+            if time.monotonic() - _ns_found_at.get(key, 0.0) < _NS_TTL_S:
+                return cached
+        elif time.monotonic() - _ns_negative_at.get(key, 0.0) < _NS_NEGATIVE_TTL_S:
             return None
 
     try:
@@ -514,6 +719,7 @@ async def get_namespace_calibration(org: str, namespace: str) -> CalibrationResu
         is_fake=False,
     )
     _ns_overrides[key] = result
+    _ns_found_at[key] = time.monotonic()
     return result
 
 

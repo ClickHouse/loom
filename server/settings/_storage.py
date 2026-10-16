@@ -1,4 +1,4 @@
-"""Storage: document blobs, per-table retention and warm-tier moves."""
+"""Storage: the legacy blob directory, per-table retention and warm-tier moves."""
 
 from __future__ import annotations
 
@@ -6,12 +6,26 @@ from pydantic import BaseModel
 
 
 class StorageSettings(BaseModel):
-    # ---- document blobs ----
-    # Directory that holds uploaded document originals, content-addressed as
-    # {org}/{namespace}/{sha256[:2]}/{sha256}; knowledge.download serves from
-    # it and erasure deletes from it. A relative path resolves from the
-    # server's working directory.
+    # ---- host directory ----
+    # Where an earlier build kept uploaded document originals on this host.
+    # Nothing writes here now (originals live in loom.document_blobs); the
+    # repository-job sandbox still hides it until `loom blobs import` has moved
+    # what it holds. A relative path resolves from the server's working directory.
     blob_dir: str = "var/blobs"
+
+    # ---- document originals (loom.document_blobs) ----
+    # The sweep that deletes originals no live document points at: those of
+    # deleted and re-uploaded documents, and of documents that retention
+    # (retention_documents_days, a namespace's retention_days) aged out, so the
+    # bytes leave with their rows.
+    document_blob_gc_enabled: bool = True
+    # Seconds between sweeps.
+    document_blob_gc_interval_seconds: int = 3600
+    # Seconds an original must have gone unwritten before the sweep may remove
+    # it. A write stores its original before the document row that names it, so
+    # a younger original may belong to a write still in flight. Erasure ignores
+    # it and deletes every original of its scope.
+    document_blob_min_age_seconds: int = 3600
 
     # ---- retention and tiering ----
     # Opt-in retention/tiering, applied as idempotent ALTER TABLE MODIFY TTL by

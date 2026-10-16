@@ -1,6 +1,6 @@
 """The dashboard reports its own paint.
 
-`ui.vitals` is a dashboard-only operation the /me shell posts once per page
+`ui.vitals` is a dashboard-only operation the dashboard shell posts once per page
 view; the ledger row the transport writes is the record, and the view's
 fields ride as identifier-class args. Hidden from the MCP listing.
 """

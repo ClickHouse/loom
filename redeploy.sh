@@ -7,7 +7,7 @@
 # dev/docker-compose.colour.yml that share .env, the blob and code volumes,
 # and the rate-limit table. A redeploy builds and boots the IDLE colour while
 # the active one keeps serving, waits until its /v1/health says
-# status=ok and schema.pending=[] (boot migrations done — every migration is
+# status=ok, readiness.ready and schema.pending=[] (boot migrations done — every migration is
 # additive, so the old colour keeps serving through them), rewrites the
 # upstream, reloads nginx (new workers inherit the listening socket; nothing
 # is refused), then stops the old colour (SIGTERM, uvicorn drains ≤ 10 s,
@@ -69,6 +69,26 @@ workers_health() { docker inspect -f '{{.State.Health.Status}}' "loom-$1-workers
 workers_lease() {
   docker exec "loom-$1-workers" python -c "import os, json, urllib.request; print(json.load(urllib.request.urlopen('http://127.0.0.1:'+os.environ['PORT']+'/v1/health?include=workers', timeout=5))['workers_leader']['reason'])" 2>/dev/null || echo unreadable
 }
+# A build from before the lease moved to ClickHouse elects by a file lock.
+# Every compose file of those builds set LOOM_SUPERVISOR_LOCK_PATH and none
+# since does. Read from the container's config, not its health: a busy old
+# container that answers slowly still counts.
+elects_by_file_lock() {
+  docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "loom-$1-workers" 2>/dev/null \
+    | grep -q '^LOOM_SUPERVISOR_LOCK_PATH='
+}
+# Workers this script stopped and must start again if it exits before the new
+# colour's took over: "<colour to restart> <colour whose workers to stop>".
+RESTORE_WORKERS=""
+restore_workers() {
+  [[ -n "$RESTORE_WORKERS" ]] || return 0
+  local back stop
+  read -r back stop <<<"$RESTORE_WORKERS"
+  echo "==> restoring the workers: stopping loom-$stop-workers, starting loom-$back-workers"
+  docker stop -t 75 "loom-$stop-workers" >/dev/null 2>&1 || true
+  docker start "loom-$back-workers" >/dev/null || echo "!!! could not start loom-$back-workers — start it by hand"
+}
+trap 'rc=$?; ((rc == 0)) || restore_workers' EXIT
 wait_workers() {
   # The workers container answers health without the lease (the old colour
   # holds it until it stops); healthy is enough to swap.
@@ -115,13 +135,14 @@ reload_proxy() {
 }
 
 wait_ready() {
-  # status=ok AND schema.pending=[] — the boot migrations have run and the
-  # colour serves the schema this build expects.
-  local colour=$1 port=${PORT_OF[$1]} deadline=$((SECONDS + READY_TIMEOUT_S)) body
-  echo "==> waiting for loom-$colour on 127.0.0.1:$port (status=ok, schema.pending=[])"
+  # status=ok, readiness.ready (what /v1/health/ready answers: keys loaded,
+  # config matches the deployment's, warm-up done) and schema.pending=[]. A
+  # build from before readiness carries no `readiness` and is judged on the rest.
+  local colour=$1 port=${PORT_OF[$1]} deadline=$((SECONDS + READY_TIMEOUT_S)) body=""
+  echo "==> waiting for loom-$colour on 127.0.0.1:$port (status=ok, readiness.ready, schema.pending=[])"
   while ((SECONDS < deadline)); do
     body=$(curl -fsS --max-time 3 "http://127.0.0.1:$port/v1/health" 2>/dev/null || true)
-    if [[ -n "$body" ]] && echo "$body" | jq -e '.status=="ok" and .ch_ok==true and (.schema.pending|type)=="array" and (.schema.pending|length)==0' >/dev/null 2>&1; then
+    if [[ -n "$body" ]] && echo "$body" | jq -e '.status=="ok" and .ch_ok==true and (.readiness == null or .readiness.ready == true) and (.schema.pending|type)=="array" and (.schema.pending|length)==0' >/dev/null 2>&1; then
       echo "    ready: $(echo "$body" | jq -c '{build_commit, status, providers_degraded, embedding_dim_mismatch, schema: {pending: .schema.pending, ledger_only: .schema.ledger_only}, ratelimit: .ratelimit.backend}')"
       echo "$body" | jq -e '.providers_degraded==false and .embedding_dim_mismatch==false' >/dev/null \
         || {
@@ -133,6 +154,7 @@ wait_ready() {
     sleep 2
   done
   echo "!!! loom-$colour did not become ready within ${READY_TIMEOUT_S}s"
+  [[ -n "$body" ]] && echo "    readiness: $(echo "$body" | jq -c '.readiness.failing // "n/a"' 2>/dev/null)"
   docker logs --tail 60 "loom-$colour" 2>&1 | sed 's/^/    /' || true
   return 1
 }
@@ -216,18 +238,27 @@ rollback() {
       exit 1
       ;;
   esac
+  # The current colour's workers stop first: a previous colour built before
+  # the lease moved to ClickHouse elects by a file lock and would run its
+  # workers beside them. Any colour's take the lease when it is released.
   case "$(container_state "$prev-workers")" in
-    running) ;;
-    exited | created)
-      echo "==> starting loom-$prev-workers"
-      docker start "loom-$prev-workers" >/dev/null
+    running | exited | created)
+      if [[ "$(container_state "$active-workers")" == "running" ]]; then
+        echo "==> stopping loom-$active-workers (the lease moves to loom-$prev-workers)"
+        docker stop -t 75 "loom-$active-workers" >/dev/null
+        RESTORE_WORKERS="$active $prev"
+      fi
+      if [[ "$(container_state "$prev-workers")" != "running" ]]; then
+        echo "==> starting loom-$prev-workers"
+        docker start "loom-$prev-workers" >/dev/null
+      fi
       ;;
-    *) echo "!!! no loom-$prev-workers container — the rolled-back colour runs without background workers" ;;
+    *) echo "!!! no loom-$prev-workers container — loom-$active-workers keeps running the background workers" ;;
   esac
   wait_ready "$prev" || exit 1
   swap_to "$prev" || exit 1
-  echo "==> loom-$active is still running; stop it when the rollback is confirmed: docker stop -t 45 loom-$active loom-$active-workers"
-  echo "    (the workers lease moves to loom-$prev-workers within LOOM_SUPERVISOR_LEASE_RETRY_S of that stop)"
+  RESTORE_WORKERS=""
+  echo "==> loom-$active is still running; stop it when the rollback is confirmed: docker stop -t 75 loom-$active"
   record_deploy "$prev" ""
 }
 
@@ -359,10 +390,28 @@ fi
 
 # ---- build + boot the idle colour ------------------------------------------
 
-echo "==> building and starting loom-$idle (CH untouched, data preserved; the old colour keeps serving)"
-LOOM_COLOUR=$idle LOOM_COLOUR_PORT=$idle_port \
-  LOOM_BUILD_COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)" \
-  docker compose -p "loom-$idle" --env-file .env -f "$COLOUR_COMPOSE" up -d --build --force-recreate
+colour_compose() {
+  LOOM_COLOUR=$idle LOOM_COLOUR_PORT=$idle_port \
+    LOOM_BUILD_COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)" \
+    docker compose -p "loom-$idle" --env-file .env -f "$COLOUR_COMPOSE" "$@"
+}
+
+echo "==> building loom-$idle (the old colour keeps serving)"
+colour_compose build
+
+# A colour built before the supervisor lease moved to ClickHouse elects its
+# workers by a file lock the new build does not see: both would run them. Its
+# workers stop just before the new colour boots, and start again if this
+# script exits before the swap (the trap above).
+if [[ -n "$active" && "$(container_state "$active-workers")" == "running" ]] \
+  && elects_by_file_lock "$active"; then
+  echo "==> loom-$active-workers elects by file lock (an older build): stopping it first"
+  docker stop -t 75 "loom-$active-workers" >/dev/null
+  RESTORE_WORKERS="$active $idle"
+fi
+
+echo "==> starting loom-$idle (CH untouched, data preserved; the old colour keeps serving)"
+colour_compose up -d --no-build --force-recreate
 
 wait_ready "$idle" || {
   echo "!!! loom-$idle is not healthy; the proxy still points at loom-${active:-nothing}. Inspect: docker logs loom-$idle"
@@ -382,6 +431,8 @@ dev/sandbox_probe.sh "$idle" || {
 
 ensure_proxy "$idle"
 swap_to "$idle" || exit 1
+# The new colour serves and its workers run: nothing to restore from here on.
+RESTORE_WORKERS=""
 
 # ---- retire the old colour ------------------------------------------------------
 
@@ -392,15 +443,15 @@ if [[ -n "$active" ]]; then
     echo "==> tagged the previous build's image loom:prev ($(colour_build "$active"))"
   fi
   # SIGTERM: uvicorn stops accepting, drains in-flight requests ≤ 10 s, the
-  # lifespan drains run; stop_grace_period 45s leaves room.
+  # lifespan drains run; -t 75 matches the compose stop_grace_period.
   # The container is kept (stopped) so --rollback can start it in seconds.
   echo "==> stopping loom-$active (graceful; kept for --rollback)"
-  docker stop -t 45 "loom-$active" >/dev/null
+  docker stop -t 75 "loom-$active" >/dev/null
   # The old colour's workers container holds the supervisor
   # lease until it stops; the new colour's takes it within one retry.
   if [[ "$(container_state "$active-workers")" == "running" ]]; then
     echo "==> stopping loom-$active-workers (the lease moves to loom-$idle-workers)"
-    docker stop -t 45 "loom-$active-workers" >/dev/null
+    docker stop -t 75 "loom-$active-workers" >/dev/null
     for _ in $(seq 1 10); do
       lease=$(workers_lease "$idle")
       [[ "$lease" == holds* ]] && break

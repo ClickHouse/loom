@@ -2,7 +2,7 @@
 
 It is read once (`index_error=stats.error`); if a parse failure only logged
 and returned a bodiless ParsedFile, `code_files.index_error` would be '' for
-every file and `code.index_errors`, `code.coverage.files_errored` and the /me
+every file and `code.index_errors`, `code.coverage.files_errored` and the dashboard's
 Health tile would be structurally empty. These tests drive
 `ingest_file` through each failure path with a stub repo and check the error
 reaches the persisted file row, bounded.

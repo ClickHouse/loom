@@ -22,7 +22,7 @@ function fontPreload(): Plugin {
           if (!base.endsWith(".woff2") || !PRELOADED_FONTS.some((re) => re.test(base))) continue;
           tags.push({
             tag: "link",
-            attrs: { rel: "preload", as: "font", type: "font/woff2", crossorigin: "", href: `/me/${fileName}` },
+            attrs: { rel: "preload", as: "font", type: "font/woff2", crossorigin: "", href: `/${fileName}` },
             injectTo: "head" as const,
           });
         }
@@ -32,10 +32,10 @@ function fontPreload(): Plugin {
   };
 }
 
-// Build for /me sub-path so HTML and asset URLs are absolute under /me/.
+// Served at the server root, so HTML and asset URLs are absolute under /.
 // In dev (`npm run dev`), proxy API calls to the Loom server on :7777.
 export default defineConfig({
-  base: "/me/",
+  base: "/",
   plugins: [react(), tailwindcss(), fontPreload()],
   build: {
     outDir: "dist",

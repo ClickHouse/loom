@@ -174,7 +174,7 @@ describe("Tasks page", () => {
     vi.clearAllMocks();
     resetNamespaceRoleCache();
     localStorage.clear();
-    window.history.replaceState(null, "", "/me/tasks");
+    window.history.replaceState(null, "", "/tasks");
     // Defaults again: a test that sets a lasting implementation must not leak.
     vi.mocked(listInboxes).mockImplementation(async () => [INBOX]);
     vi.mocked(listTasks).mockImplementation(async () => ({ tasks: ROWS, truncated: false }));

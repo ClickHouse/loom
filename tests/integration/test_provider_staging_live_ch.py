@@ -7,7 +7,7 @@ from uuid import uuid4
 import pytest
 
 from server.core.repo_base import _default_client
-from server.insights.app.provider_rebuild_page import rebuild_snapshot_page
+from server.insights.app.provider_rebuild_page import PAGE_SIZE, rebuild_snapshot_page
 from server.insights.domain.provider_rebuild import REBUILD_TABLES
 from server.insights.store.provider_prepared import prepare_live_table
 from server.insights.store.provider_staging import (
@@ -25,6 +25,53 @@ from server.insights.store.provider_verify import (
     verify_live_key_uniqueness,
     verify_reembedded_target,
 )
+
+# More than two pages, so a rebuild that stops after one is caught.
+_SEEDED = 2 * PAGE_SIZE + 5
+# Columns a re-embed never changes: the rebuilt row must carry them as snapshotted.
+_PRESERVED = ("org", "namespace", "memory_key", "content_excerpt", "content_sha256", "created_at")
+
+
+def _width():
+    """The install's vector width: coded tables (26.8+) hold no other."""
+    from server.settings import settings
+
+    return int(settings.embedding_dim)
+
+
+async def _seed(client, namespace):
+    from server.memory.store.rows import build_embedding_row
+    from server.settings import settings
+
+    rows = [
+        build_embedding_row(
+            org="staging-test",
+            namespace=namespace,
+            agent="a",
+            memory_key=f"k{i:03d}",
+            content_sha256=f"{i:064x}",
+            content_excerpt=f"staged row {i}",
+            embedding=[1.0] + [0.0] * (settings.embedding_dim - 1),
+            memory_key_embedding=[1.0] + [0.0] * (settings.embedding_dim - 1),
+            embedding_model="seed-model",
+        )
+        for i in range(_SEEDED)
+    ]
+    await client.insert("loom.memory_embeddings", rows, settings={"async_insert": 0})
+
+
+async def _rebuild_all(names, schema, identity, target_uuid, client):
+    """Every page of the snapshot, as the coordinator steps through it."""
+    cursor = written = 0
+    while True:
+        checkpoint = await rebuild_snapshot_page(
+            names, schema, identity, target_uuid, "a" * 64, _TestEmbedder(), after=cursor, ch=client
+        )
+        written += checkpoint.rows_written
+        cursor = checkpoint.cursor
+        if checkpoint.done:
+            return written
+
 
 _OPT_IN = "Set LOOM_PROVIDER_STAGING_LIVE_TEST=1 for a disposable, freshly migrated database"
 
@@ -59,7 +106,10 @@ async def test_snapshot_sql_and_cursor_on_live_clickhouse(table):
     identity = None
     target_uuid = None
     prepared_uuid = None
+    seeded_ns = f"staging-{names.job_id.hex[:12]}"
     try:
+        if table == "memory_embeddings":
+            await _seed(client, seeded_ns)
         schema = await source_schema(names, ch=client)
         identity = await create_snapshot(names, schema, ch=client)
         incomplete = identity
@@ -92,7 +142,7 @@ async def test_snapshot_sql_and_cursor_on_live_clickhouse(table):
             target_uuid,
             "a" * 64,
             expected_rows=len(staged),
-            dimensions=8,
+            dimensions=_width(),
             ch=client,
         )
         assert (
@@ -103,7 +153,7 @@ async def test_snapshot_sql_and_cursor_on_live_clickhouse(table):
                 target_uuid,
                 "a" * 64,
                 expected_rows=len(staged),
-                dimensions=8,
+                dimensions=_width(),
                 ch=client,
             )
             == prepared_uuid
@@ -122,22 +172,26 @@ async def test_snapshot_sql_and_cursor_on_live_clickhouse(table):
         assert (
             await snapshot_page(names, schema, identity, after=0, limit=2, ch=client) == first_page
         )
-        if table == "memory_embeddings" and first_page:
-            checkpoint = await rebuild_snapshot_page(
-                names,
-                schema,
-                identity,
-                target_uuid,
-                "a" * 64,
-                _TestEmbedder(),
-                after=0,
-                ch=client,
-            )
-            assert checkpoint.rows_written >= len(first_page)
+        if table == "memory_embeddings":
+            snapshotted = (
+                await client.query_one(f"SELECT count() AS n FROM loom.{names.snapshot}")
+            )["n"]
+            assert snapshotted >= _SEEDED
+            written = await _rebuild_all(names, schema, identity, target_uuid, client)
+            assert written == snapshotted
             regenerated = await client.query_all(
                 f"SELECT embedding_model, length(embedding) AS dim FROM loom.{names.target} FINAL"
             )
-            assert len(regenerated) == checkpoint.rows_written
+            assert len(regenerated) == written
+            cols = ", ".join(_PRESERVED)
+            ordered = "WHERE namespace = {ns:String} ORDER BY _loom_rebuild_ordinal"
+            rebuilt = await client.query_all(
+                f"SELECT {cols} FROM loom.{names.target} FINAL {ordered}", {"ns": seeded_ns}
+            )
+            source = await client.query_all(
+                f"SELECT {cols} FROM loom.{names.snapshot} {ordered}", {"ns": seeded_ns}
+            )
+            assert len(rebuilt) == _SEEDED and rebuilt == source
             assert all(row["embedding_model"] == "rebuild-page-test" for row in regenerated)
             assert all(row["dim"] in (0, 3) for row in regenerated)
             assert (
@@ -151,7 +205,7 @@ async def test_snapshot_sql_and_cursor_on_live_clickhouse(table):
                     dimensions=3,
                     ch=client,
                 )
-                == checkpoint.rows_written
+                == written
             )
             with pytest.raises(ValueError, match="failed verification"):
                 await verify_reembedded_target(
@@ -181,16 +235,7 @@ async def test_snapshot_sql_and_cursor_on_live_clickhouse(table):
                     dimensions=3,
                     ch=client,
                 )
-            await rebuild_snapshot_page(
-                names,
-                schema,
-                identity,
-                target_uuid,
-                "a" * 64,
-                _TestEmbedder(),
-                after=0,
-                ch=client,
-            )
+            assert await _rebuild_all(names, schema, identity, target_uuid, client) == written
             # Deliberately corrupt only this test's disposable staging table.
             await client.execute(
                 f"INSERT INTO loom.{names.target} SELECT * REPLACE "
@@ -255,6 +300,12 @@ async def test_snapshot_sql_and_cursor_on_live_clickhouse(table):
             )
             if current is not None and str(current["uuid"]) == str(identity):
                 await client.execute(f"DROP TABLE loom.{names.snapshot} SYNC")
+        if table == "memory_embeddings":
+            await client.execute(
+                "ALTER TABLE loom.memory_embeddings DELETE WHERE namespace = {ns:String} "
+                "SETTINGS mutations_sync = 2",
+                {"ns": seeded_ns},
+            )
         await client.disconnect()
 
 

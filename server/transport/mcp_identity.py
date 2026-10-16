@@ -213,7 +213,7 @@ def saved_pick_ok(
     org: str,
     claimed: list[str],
 ) -> bool:
-    """The /me switcher pick is honoured as the default only when it is a
+    """The dashboard switcher pick is honoured as the default only when it is a
     memory plane, the caller holds a WRITE grant there (a viewer pick is where
     the user was looking, not where writes go), and a scoped token claims it
     (its claim list is authoritative)."""
@@ -382,7 +382,7 @@ async def _caller_defaults(
 
         subs = await subject_aliases(org, subject, ch=ch)
         kinds = await _kinds_or_empty(org)  # only a memory plane is a home
-        # Priority 1: caller's explicit pick in /me's switcher. Validated
+        # Priority 1: caller's explicit pick in the dashboard's switcher. Validated
         # against current grants before trust — a stale saved default
         # (grant since revoked) must not keep coming back.
         saved_ns = await caller_defaults.saved_default(org, user_state_subject, ch=ch)

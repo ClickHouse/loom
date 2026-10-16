@@ -45,7 +45,7 @@ class _Req:
 
 
 @pytest.fixture()
-def _open(monkeypatch: pytest.MonkeyPatch) -> _FakeCH:
+def _open(monkeypatch: pytest.MonkeyPatch, auth_attempts: Any) -> _FakeCH:
     from server.settings import settings
 
     monkeypatch.setattr(settings, "self_signup", "open")
@@ -53,7 +53,6 @@ def _open(monkeypatch: pytest.MonkeyPatch) -> _FakeCH:
     monkeypatch.setattr(settings, "self_signup_org", "dev")
     fake = _FakeCH()
     monkeypatch.setattr(ss, "get_client", lambda: fake)
-    ss._agent_signups.clear()
     return fake
 
 
@@ -68,13 +67,15 @@ def test_agent_namespace_slugs_and_refuses_the_unusable() -> None:
     assert ss.agent_namespace("") is None
 
 
-def test_rate_limit_is_five_per_address_per_hour() -> None:
-    ss._agent_signups.clear()
-    for i in range(5):
-        assert ss._agent_signups.allow("1.2.3.4", now=1000.0 + i)
-    assert not ss._agent_signups.allow("1.2.3.4", now=1010.0)
-    assert ss._agent_signups.allow("5.6.7.8", now=1010.0)  # another address
-    assert ss._agent_signups.allow("1.2.3.4", now=1000.0 + 3601)  # the window slid
+@pytest.mark.asyncio
+async def test_rate_limit_is_five_per_address_per_hour(auth_attempts: Any) -> None:
+    for _ in range(5):
+        assert await ss._agent_signups.allow("1.2.3.4")
+        auth_attempts.now += 1
+    assert not await ss._agent_signups.allow("1.2.3.4")
+    assert await ss._agent_signups.allow("5.6.7.8")  # another address
+    auth_attempts.now += 3600 - 4
+    assert await ss._agent_signups.allow("1.2.3.4")  # the window slid
 
 
 def _address_seen(peer: str, xff: str, trusted: str) -> str:
@@ -112,12 +113,18 @@ def test_without_a_proxy_the_peer_is_the_address() -> None:
     )
 
 
-def test_the_tracked_addresses_are_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
-    ss._agent_signups.clear()
-    monkeypatch.setattr(ss._agent_signups, "max_keys", 50)
-    for i in range(200):
-        ss._agent_signups.allow(f"10.0.{i // 256}.{i % 256}", now=float(i * 3600))
-    assert len(ss._agent_signups) <= 51
+@pytest.mark.asyncio
+async def test_every_process_counts_the_same_attempts(auth_attempts: Any) -> None:
+    """The limit is rows of loom.auth_attempts, not a process's memory: a
+    limiter built elsewhere (another process) sees the attempts this one
+    recorded, and another kind's limit does not."""
+    from server.auth.attempts import Attempts
+
+    for _ in range(ss.AGENT_SIGNUPS_PER_HOUR):
+        assert await ss._agent_signups.allow("1.2.3.4")
+    elsewhere = Attempts("signup.agent", ss.AGENT_SIGNUPS_PER_HOUR, 3600)
+    assert not await elsewhere.allow("1.2.3.4")
+    assert await ss._human_signups.allow("1.2.3.4")
 
 
 # ---- the route ----
@@ -136,7 +143,7 @@ async def test_signup_provisions_the_account_shape_and_returns_a_writer_sa_token
     assert out.namespace == "agent-nightly-triage" and out.org == "dev"
     assert re.fullmatch(r"sa:agent-nightly-triage-[0-9a-f]{6}", out.subject)
     assert len(out.claim_code) >= 20
-    assert out.claim_url == "http://loom.test:7777/me"
+    assert out.claim_url == "http://loom.test:7777/"
 
     claims = verify_token(out.token)
     assert claims.subject == out.subject and claims.org == "dev"
@@ -235,7 +242,7 @@ def test_cli_saves_token_and_config_and_prints_the_claim_once(
             "org": "dev",
             "subject": "sa:agent-nightly-abc123",
             "claim_code": "CLAIM-CODE-1",
-            "claim_url": "https://h/me",
+            "claim_url": "https://h/",
             "expires_at": None,
         }
 
@@ -389,7 +396,7 @@ def test_post_json_answers_a_read_timeout_and_a_non_json_body(monkeypatch) -> No
 
 @pytest.mark.asyncio
 async def test_single_user_signup_returns_the_default_identity_with_nothing_to_claim(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, auth_attempts: Any
 ) -> None:
     from server.settings import settings
 
@@ -400,7 +407,6 @@ async def test_single_user_signup_returns_the_default_identity_with_nothing_to_c
     fake = _FakeCH()
     monkeypatch.setattr(ss, "get_client", lambda: fake)
 
-    ss._agent_signups.clear()
     for _ in range(ss.AGENT_SIGNUPS_PER_HOUR):
         await _signup(fake)
     out = await _signup(fake, ttl_days=30)
@@ -409,3 +415,11 @@ async def test_single_user_signup_returns_the_default_identity_with_nothing_to_c
     assert list(claims.namespaces) == ["local"] and claims.is_service_account is False
     assert [r.name.lower() for r in claims.roles] == ["writer"]
     assert fake.inserts == []
+
+
+@pytest.fixture(autouse=True)
+def _claims_in_memory(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The deployment-wide claims, without a lock table in the fake."""
+    from tests.unit.claims_fake import memory_claims
+
+    memory_claims(monkeypatch)

@@ -22,6 +22,8 @@ from server.code.domain.index.repos import RepoConfig
 from server.code.workers.scip_apply import watermark_key_for
 from server.settings import settings
 
+pytestmark = pytest.mark.usefixtures("mirror_here")
+
 TIP = "c" * 40
 TS_HEAD = "e" * 40
 STALE_CPP = "3" * 40

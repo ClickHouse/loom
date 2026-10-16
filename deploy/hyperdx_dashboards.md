@@ -309,7 +309,7 @@ GROUP BY op, transport HAVING calls > 0 ORDER BY calls DESC
 ```
 
 Expect `grants.list` / `namespace.list_mine` / `cost.budget_status` to dominate —
-that is the `/me` dashboard polling, not user traffic. Filter them out when
+that is the dashboard polling, not user traffic. Filter them out when
 looking at real usage.
 
 ### System state — the single-stat row
@@ -725,7 +725,7 @@ What the tiles answer, in the order they sit on the board:
 | ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Fast-tier index age, compiler-tier age (C++, Python), PR-cursor age | Is the index current, per namespace?                                                          | `loom.code.index_age_seconds`, `loom.code.scip_age_seconds`, `loom.code.scip_py_age_seconds`, `loom.code.pr_cursor_age_seconds` gauges, attribute `loom.namespace`       |
 | Tier lag (s), by namespace and tier                                 | Has every tier reached new merges, and since when not?                                        | `loom.code.tier_lag_seconds{tier}`: age of the oldest commit the tier has not reached; alert "code tier lag" at 1800 s                                                   |
-| Files the indexer could not process                                 | Is anything being dropped at ingest?                                                          | `loom.code.files_errored` gauge; the same number `code.coverage` and the /me Health tab show                                                                             |
+| Files the indexer could not process                                 | Is anything being dropped at ingest?                                                          | `loom.code.files_errored` gauge; the same number `code.coverage` and the dashboard's Health page show                                                                    |
 | Code ops per 5 min; p50/p95/p99 per op                              | Who is calling what, and is each op inside its `budget_p99_ms`?                               | root spans with `loom.operation LIKE 'code.%'`                                                                                                                           |
 | Where code.callers spends its time                                  | Which leg is slow: resolve, dispatch, edge walk?                                              | child spans `code.<op>.<leg>`                                                                                                                                            |
 | Failed code requests                                                | 4xx/5xx by op and status                                                                      | `http.status_code` on root spans (and `loom.requests{success=false}` once the HTTP transport records failures)                                                           |

@@ -43,6 +43,9 @@ _known: Final[set[tuple[str, str]]] = set()
 _MAX_CACHE = 200_000
 
 AUTO_REGISTER_TAG = "auto-registered"
+# `updated_at`, the table's version column, of an auto-registered row. Aware: the
+# driver encodes a naive datetime as host-local time.
+AUTO_ROW_VERSION = datetime(1970, 1, 1, 0, 0, 1, tzinfo=UTC)
 _MISSING = ("", "-", "*")
 
 
@@ -102,15 +105,18 @@ async def ensure_registered(
             from server.core.ch import get_client
 
             ch = get_client()
-        existing = await ch.query_one(
-            """
-            SELECT 1 AS present
-            FROM loom.namespaces
-            WHERE org = {org:String} AND namespace = {ns:String}
-            LIMIT 1
-            """,
-            params={"org": org, "ns": namespace},
-        )
+        from server.core.ch import sequential_reads
+
+        with sequential_reads():  # a row `namespace.register` just wrote on another replica
+            existing = await ch.query_one(
+                """
+                SELECT 1 AS present
+                FROM loom.namespaces
+                WHERE org = {org:String} AND namespace = {ns:String}
+                LIMIT 1
+                """,
+                params={"org": org, "ns": namespace},
+            )
         if existing is not None:
             _remember(org, namespace)
             return False
@@ -132,6 +138,10 @@ async def ensure_registered(
             None,
             now,
         )
+        # The lowest version: under FINAL any explicit row (a register, a restriction)
+        # wins over this one, even one written a moment earlier on another replica
+        # that this read could not see yet.
+        row["updated_at"] = AUTO_ROW_VERSION
         await ch.insert("loom.namespaces", [row])
         _remember(org, namespace)
         from server.identity.app.traffic_class_registry import note_registered

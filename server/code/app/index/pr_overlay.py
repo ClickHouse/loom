@@ -13,7 +13,7 @@ so an added function is a seed and a caller inside the PR is an edge.
 The post-image comes from one of two places. A caller holding the PR's
 checkout sends it (`pr_files` / `pr_diff`, set for the request by
 `reads_post_image`): then no git is read, so any Loom on the service answers,
-a read-replica with no mirror included. Otherwise it is `refs/pull/N/head` on
+one with no mirror (yet) included. Otherwise it is `refs/pull/N/head` on
 the bare mirror, diffed against its merge-base with the entry's branch.
 
 Nothing is written. The read paths merge the overlay's rows over the index's
@@ -34,7 +34,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from server.code.app.ttl_cache import TtlCache
-from server.settings import settings
 
 logger = logging.getLogger("loom.code_index.pr_overlay")
 
@@ -51,7 +50,8 @@ _HUNK_RE = re.compile(r"@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 HEAD_NOT_IN_MIRROR = "head_not_in_mirror"
 NO_REPO = "no_repo_entry"
 NO_MERGE_BASE = "no_merge_base"
-# A Loom with no git mirror (a read-replica) and no post-image in the request.
+# A Loom with no git mirror (still cloning, or LOOM_GIT_HISTORY=none) and no post-image
+# in the request.
 NO_GIT_MIRROR = "no_git_mirror"
 # `overlay_head_sha` of a post-image sent without its head commit.
 POSTED_PREFIX = "posted:"
@@ -644,8 +644,8 @@ async def _index_head(repo: Any, org: str, ns: str) -> str:
 async def overlay_for_namespace(repo: Any, org: str, ns: str, pr_number: int) -> PrOverlay:
     """The overlay through the namespace's repo entry (mirror, branch,
     indexed prefixes): the request's posted post-image when it sent one, else
-    the mirror's. `no_repo_entry` when the namespace has none, `no_git_mirror`
-    on a read-replica the caller sent nothing to."""
+    the mirror's. `no_repo_entry` when the namespace has none, `no_git_mirror: …`
+    (`mirrors.history_dir`) on a host without the mirror the caller sent nothing to."""
     from server.code.domain.index.repos import repo_for_namespace
 
     cfg = repo_for_namespace(org, ns)
@@ -654,13 +654,16 @@ async def overlay_for_namespace(repo: Any, org: str, ns: str, pr_number: int) ->
     img = posted(pr_number)
     if img is not None:
         return await load_posted_overlay(repo, org, ns, img, path_prefixes=tuple(cfg.path_prefixes))
-    if settings.read_replica:
-        return PrOverlay(pr_number=int(pr_number), reason=NO_GIT_MIRROR)
+    from server.code.app.index.mirrors import history_dir
+
+    git_dir, gap = await history_dir(cfg)
+    if gap:
+        return PrOverlay(pr_number=int(pr_number), reason=gap)
     return await load_pr_overlay(
         repo,
         org,
         ns,
-        git_dir=cfg.git_dir,
+        git_dir=git_dir,
         pr_number=pr_number,
         branch=cfg.git_branch,
         path_prefixes=tuple(cfg.path_prefixes),

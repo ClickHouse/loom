@@ -17,7 +17,7 @@ from __future__ import annotations
 from fastapi import HTTPException
 
 from server.auth.context import quota_key_for
-from server.auth.jwt import AuthInfo, RevocationUnavailable, TokenError, verify_token
+from server.auth.jwt import AuthInfo, AuthUnavailable, TokenError, verify_token
 from server.core.ch import set_quota_key
 
 
@@ -54,7 +54,7 @@ def verify_bearer(token: str) -> AuthInfo:
     outside the op registry draw the caller's bucket too."""
     try:
         info = verify_token(token)
-    except RevocationUnavailable as e:
+    except AuthUnavailable as e:
         raise HTTPException(
             status_code=503,
             detail={"code": "AUTH_UNAVAILABLE", "message": str(e)},

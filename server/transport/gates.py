@@ -112,11 +112,7 @@ async def authorize(
 ) -> None:
     """The role + namespace gate for an authenticated call, fail closed, then
     what an admitted call leaves (restricted-access audit, first-write
-    registration). No-op without a principal (auth off). A read-replica first
-    refuses the ops that run on the main Loom's host (`server.core.read_replica`)."""
-    from server.core.read_replica import refuse_host_work
-
-    refuse_host_work(op.name)
+    registration). No-op without a principal (auth off)."""
     if auth is None:
         return
     from server.auth.authz import scope_flags
@@ -363,13 +359,15 @@ def tenant_slot(auth: AuthInfo | None, target: Target | None) -> Iterator[None]:
 class Replay:
     """The idempotency decision for one admitted call. `scope` and
     `body_hash` ride to the row stored after the handler (None: no key, or
-    the op is not idempotent); `conflict` means the key was used with other
+    the op is not idempotent or read-only); `conflict` means the key was used with other
     arguments, and `hit` is the stored answer to replay."""
 
     scope: Scope | None = None
     body_hash: str | None = None
     conflict: bool = False
     hit: CacheHit | None = None
+    # With `conflict`: a request with this key is still running (not other arguments).
+    in_progress: bool = False
 
 
 async def idempotency_check(
@@ -382,11 +380,13 @@ async def idempotency_check(
     unset: tuple[str, ...] = (),
 ) -> Replay:
     """For an idempotent op sent with a key, once the call is admitted: the
+    replay cache holds nothing for a read-only op (its retry just reads
+    again), so it costs no lookup and no in-progress claim. Otherwise the
     key scoped to the verified caller (an anonymous call to the target's org)
     and the op, the validated input's hash — `unset` names fields the
     transport filled for the caller — and what the replay cache holds for
     them. The cache fails open (a failed read is a miss)."""
-    if not op.idempotent or not client_key:
+    if not op.idempotent or op.read_only or not client_key:
         return Replay()
     from server.core import idempotency
 
@@ -398,7 +398,16 @@ async def idempotency_check(
     )
     body_hash = idempotency.request_hash(input_obj, unset=unset)
     cached = await idempotency.check(scope.key, body_hash)
-    return Replay(scope=scope, body_hash=body_hash, conflict=cached.conflict, hit=cached.hit)
+    return Replay(
+        scope=scope,
+        body_hash=body_hash,
+        conflict=cached.conflict,
+        hit=cached.hit,
+        in_progress=cached.in_progress,
+    )
+
+
+IN_PROGRESS_MESSAGE = "a request with this idempotency key is still running; retry once it answers"
 
 
 def retry_after_s(rl: CheckResult) -> int:

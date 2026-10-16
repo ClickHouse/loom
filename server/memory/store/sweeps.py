@@ -212,7 +212,7 @@ async def find_embedding_stubs(
                reinforcement_count, last_reinforced_at,
                mentioned_at, source_resource_id, status, confidence,
                memory_key_embedding, memory_key_embedding_dim,
-               source_class, verified, conflict_checked_at,
+               source_class, verified, conflict_checked_at, content_sha256,
                version
         FROM loom.memory_embeddings FINAL
         WHERE (org, namespace, agent, user_id, session_id, scope,
@@ -248,7 +248,7 @@ _EMBEDDING_MIRROR_COLUMNS = f"""m.org, m.namespace, m.agent, m.user_id, m.sessio
                m.mentioned_at, m.source_resource_id, m.status, m.confidence,
                m.source_class, m.invalid_at,
                toUInt8({attested_sql("m.")}) AS verified,
-               m.created_at"""
+               m.content_sha256, m.created_at"""
 
 
 async def find_memories_to_reindex(

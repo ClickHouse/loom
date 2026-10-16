@@ -1,11 +1,13 @@
 """Server-side idempotency cache backed by `loom.idempotency`.
 
-Best-effort, not cluster-consistent: two requests with the same
-Idempotency-Key racing on different replicas both miss and execute the
-handler (ReplacingMergeTree dedupes the stored rows, so later replays
-are correct). That's fine for the idempotent ops that use this cache —
-the second write overwrites with identical content. Ops declared
-`idempotent=False` bypass it.
+The lookup reads with sequential consistency, so a retry landing on another
+replica sees an answer stored a moment ago. A miss takes the key's deployment-wide
+in-progress claim (`server.core.leases`) until the request has answered, by which
+time the answer is stored: a duplicate arriving meanwhile, on any replica, is
+answered IDEMPOTENT_IN_PROGRESS (retry after a moment) instead of running the
+handler twice. The cache fails open — a failed read, or a claim store
+that cannot answer, is a plain miss. Ops declared `idempotent=False` and read-only
+ops bypass it.
 
 A stored answer belongs to whoever caused it: the row key
 is `scoped_key` over the caller's org, subject, the operation and the
@@ -17,14 +19,18 @@ never reaches an anonymous caller, another tenant or another operation.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from functools import partial
 from typing import Any
 
-from server.core.ch import get_client
+from server.core import leases
+from server.core.background import TaskSet
+from server.core.ch import get_client, own_write_reads
 from server.core.datetimes import naive_utc_now
 
 log = logging.getLogger(__name__)
@@ -42,10 +48,18 @@ class CacheHit:
 @dataclass(frozen=True)
 class CacheResult:
     """Result of `check()`. At most one of `hit` / `conflict` is set;
-    a fresh miss is `(hit=None, conflict=False)`."""
+    a fresh miss is `(hit=None, conflict=False)`. `in_progress` (with
+    `conflict`): a request with this key is still running."""
 
     hit: CacheHit | None
     conflict: bool
+    in_progress: bool = False
+
+
+# The in-progress claim is renewed while the handler runs; a holder that dies
+# frees the key after this.
+IN_PROGRESS_TTL_S = 60
+_releases = TaskSet()
 
 
 def hash_body(body: Any) -> str:
@@ -106,25 +120,91 @@ def _to_str(v: Any) -> str:
 
 
 async def check(idempotency_key: str, body_hash: str) -> CacheResult:
-    """Lookup the cache. Returns (hit, conflict) tuple semantics."""
+    """Lookup the cache. Returns (hit, conflict) tuple semantics.
+
+    Inside a request, the key's in-progress claim is taken while the stored answer
+    is read, and held until the request has answered. Held elsewhere: the other
+    request may have stored its answer since, so the row is read once more before
+    answering IDEMPOTENT_IN_PROGRESS."""
+    claiming = asyncio.ensure_future(_claim(idempotency_key))
     try:
-        row = await get_client().query_one(
-            "SELECT body_hash, status_code, response_body, response_headers, expires_at "
-            "FROM loom.idempotency FINAL WHERE idempotency_key = {k:String}",
-            params={"k": idempotency_key},
-        )
+        with own_write_reads():  # an answer another replica stored a moment ago
+            row = await _stored(idempotency_key)
+    except asyncio.CancelledError:
+        _drop(claiming)
+        raise
     except Exception:  # the cache fails open: a failed read is a miss
         log.exception("idempotency.check failed; treating as miss")
-        return CacheResult(hit=None, conflict=False)
+        row = None
+    found = _result(row, body_hash) if row is not None else None
+    free, claim = await claiming
+    if found is not None:
+        if claim is not None:
+            await _release_beside_answer(claim)  # a replay runs no handler
+        return found
+    if claim is not None:
+        from server.core import request_tail
 
-    if row is None:
+        request_tail.defer(partial(_release_beside_answer, claim))
+    if free:
         return CacheResult(hit=None, conflict=False)
+    try:
+        with own_write_reads():
+            row = await _stored(idempotency_key)
+    except Exception:  # noqa: BLE001 — the other request still runs: refused below
+        row = None
+    found = _result(row, body_hash) if row is not None else None
+    return found or CacheResult(hit=None, conflict=True, in_progress=True)
 
+
+async def _stored(idempotency_key: str) -> dict[str, Any] | None:
+    return await get_client().query_one(
+        "SELECT body_hash, status_code, response_body, response_headers, expires_at "
+        "FROM loom.idempotency FINAL WHERE idempotency_key = {k:String}",
+        params={"k": idempotency_key},
+    )
+
+
+async def _claim(idempotency_key: str) -> tuple[bool, leases.Lease | None]:
+    """(free, claim): whether no other request holds the key, and the claim taken
+    for this one. Only inside a request; a claim store that cannot answer is free."""
+    from server.core import request_tail
+
+    if not request_tail.active():
+        return True, None
+    try:
+        # The client's key is a fresh UUID: inserted without reading it first.
+        claim = await leases.take(
+            f"idem:{idempotency_key}", ttl_s=IN_PROGRESS_TTL_S, renew=True, expect_free=True
+        )
+    except Exception:  # noqa: BLE001 — the cache fails open: no claim is a plain miss
+        log.warning("idempotency: in-progress claim unavailable; treating as miss")
+        return True, None
+    return claim is not None, claim
+
+
+def _drop(claiming: asyncio.Future[tuple[bool, leases.Lease | None]]) -> None:
+    """A check cancelled during its read gives its claim up (a cancelled take releases
+    what it may have written)."""
+    if not claiming.done():
+        claiming.cancel()
+    elif not claiming.cancelled() and (claim := claiming.result()[1]) is not None:
+        _releases.spawn(claim.release(), name="loom-idempotency-release")
+
+
+async def _release_beside_answer(claim: leases.Lease) -> None:
+    """The answer is stored when the tail runs, and a duplicate reads it before the
+    claim: the release need not hold the answer back."""
+    _releases.spawn(claim.release(), name="loom-idempotency-release")
+
+
+def _result(row: dict[str, Any], body_hash: str) -> CacheResult | None:
+    """The stored row's verdict; None when it has expired (a miss)."""
     # CH returns naive datetimes; we normalize to naive on write.
     now_naive = naive_utc_now()
     expires_at = row["expires_at"]
     if isinstance(expires_at, datetime) and expires_at < now_naive:
-        return CacheResult(hit=None, conflict=False)
+        return None
 
     stored_body_hash = _to_str(row["body_hash"])
     if stored_body_hash != body_hash:

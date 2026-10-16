@@ -178,17 +178,6 @@ class EmbedTimeoutError(LoomServerError):
     status_code = 503
 
 
-class OverrideNotSharedError(LoomServerError):
-    """503 — a runtime override (budget or rate limit) could not be shared with
-    the server's other web processes, so none of them took it. No
-    `Retry-After`: the fix is the runtime directory's (permissions, space, or
-    none private enough), and the next update tries again; the server log
-    says what failed."""
-
-    code = "OVERRIDE_NOT_SHARED"
-    status_code = 503
-
-
 class CodedWidthMismatchError(LoomServerError):
     """503 — a vector in the write is not the width its `Quantized` column was
     created at, so ClickHouse would refuse the insert. `memory.set`, `bulk_set`,

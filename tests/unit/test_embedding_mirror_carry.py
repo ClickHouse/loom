@@ -22,6 +22,7 @@ MIRRORED: tuple[str, ...] = (
     "source_class",
     "verified",
     "conflict_checked_at",
+    "content_sha256",
     "status",
     "confidence",
     "reinforcement_count",
@@ -55,6 +56,7 @@ def _stub() -> dict[str, object]:
         "source_class": "extracted",
         "verified": 1,
         "conflict_checked_at": "2026-09-12 10:00:00",
+        "content_sha256": "c" * 64,
         "status": "active",
         "confidence": 0.7,
         "reinforcement_count": 4,
@@ -66,6 +68,7 @@ def test_carry_signals_keeps_provenance_attestation_and_conflict_stamp():
     assert carried["source_class"] == "extracted"
     assert carried["verified"] == 1
     assert carried["conflict_checked_at"] == "2026-09-12 10:00:00"
+    assert carried["content_sha256"] == "c" * 64
     assert carried["status"] == "active" and carried["confidence"] == 0.7
 
 
@@ -95,7 +98,7 @@ def _function_body(fn_name: str) -> str:
 
 def test_stub_and_orphan_selects_read_the_columns_the_carry_needs():
     stub_select = _function_body("find_embedding_stubs")
-    for col in ("source_class", "verified", "conflict_checked_at"):
+    for col in ("source_class", "verified", "conflict_checked_at", "content_sha256"):
         assert re.search(rf"\b{col}\b", stub_select), f"find_embedding_stubs omits {col}"
     from server.memory.store.sweeps import _EMBEDDING_MIRROR_COLUMNS
 
@@ -104,4 +107,5 @@ def test_stub_and_orphan_selects_read_the_columns_the_carry_needs():
     for fn in ("find_memories_without_embedding_rows", "find_memories_to_reindex"):
         assert "_EMBEDDING_MIRROR_COLUMNS" in _function_body(fn), fn
     assert "m.source_class" in _EMBEDDING_MIRROR_COLUMNS
+    assert "m.content_sha256" in _EMBEDDING_MIRROR_COLUMNS
     assert re.search(r"\) AS verified\b", _EMBEDDING_MIRROR_COLUMNS)

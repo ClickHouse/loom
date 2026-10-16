@@ -858,7 +858,7 @@ class MemoryAggregateOutput(BaseModel):
 
 class MemorySearchTraceInput(MemorySearchInput):
     """Same shape as memory.search; returns the per-candidate scoring
-    breakdown instead of just the top-k. Use this in /me Recall Lab
+    breakdown instead of just the top-k. Use this in the dashboard's Recall Lab
     or any "why did this row rank where it did" debugging."""
 
 

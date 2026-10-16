@@ -8,7 +8,6 @@ from collections.abc import Sequence
 from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
-from server.core.schema.migrate_lease import RUN_CLAIMS_TABLE_SQL, is_keeper_table
 from server.erasure.store import mutations as erasure_mutations
 from server.erasure.store.mutations import delete_scoped, namespaces_of, tombstone_scoped
 from server.erasure.store.predicates import NS_EQ, NS_IN, UID
@@ -228,11 +227,8 @@ async def _delete_run_claims(
     org: str, scope_where: str, params: dict[str, Any], ch: _CHClient | None
 ) -> None:
     """agent_run_claims: the run ids and user ids of runs not yet closed. KeeperMap,
-    so a key drop rather than a part mutation (never in system.mutations), and
-    absent on a server without a Keeper."""
+    so a key drop rather than a part mutation (never in system.mutations)."""
     ch = ch or _default_client()
-    if not is_keeper_table(await ch.query_one(RUN_CLAIMS_TABLE_SQL)):
-        return
     await erasure_mutations.run_keeper_delete(
         "loom.agent_run_claims",
         where=f"org = {{org:String}} AND {scope_where}",

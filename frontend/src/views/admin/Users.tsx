@@ -133,7 +133,7 @@ export function Users() {
         <EmptyState
           icon={UsersIcon}
           title="No accounts yet"
-          description="When users sign up at /me or get granted on a namespace, they'll appear here."
+          description="When users sign up in the dashboard or get granted on a namespace, they'll appear here."
         />
       )}
       {!error && data !== null && data.users.length > 0 && (

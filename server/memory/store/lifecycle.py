@@ -37,6 +37,7 @@ async def write_versions_by_ids(
     *,
     ch: _CHClient | None = None,
     skip: Callable[[MemoryRow], bool] | None = None,
+    judged: bool = False,
 ) -> int:
     """Write new RMT versions for live rows addressed by memory_id.
 
@@ -45,7 +46,9 @@ async def write_versions_by_ids(
     one, and it carries every persisted column forward via
     build_memory_version_row. This is the preferred replacement for
     in-place status flips on `loom.memory`. A row `skip(existing)` answers
-    True for is left as it is.
+    True for is left as it is. `judged`: the rows land a deferred verdict on the
+    write it judged (`conflicts.judged_write`), and the status mirror copies only
+    that write's vector rows (`mirror_status_to_embeddings(judged=True)`).
     """
 
     if not memory_ids:
@@ -73,7 +76,7 @@ async def write_versions_by_ids(
         # admitting superseded and unpenalised conflicted rows.
         status_changes = [r for r in rows if r.get("status") and r.get("status") != "active"]
         if status_changes:
-            await mirror_status_to_embeddings(status_changes, ch=ch)
+            await mirror_status_to_embeddings(status_changes, ch=ch, judged=judged)
     return len(rows)
 
 

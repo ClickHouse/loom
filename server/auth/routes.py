@@ -11,8 +11,7 @@ import jwt as pyjwt
 from fastapi import APIRouter, HTTPException, Request
 
 from server.auth.bearer import bearer_token
-from server.auth.jwt import RevocationUnavailable, TokenError, verify_token
-from server.settings import settings
+from server.auth.jwt import AuthUnavailable, TokenError, verify_token
 
 auth_router = APIRouter()
 
@@ -21,12 +20,11 @@ auth_router = APIRouter()
 async def v1_jwks() -> dict[str, object]:
     """JWKS (JSON Web Key Set) for RS256 verifiers.
 
-    Returns one JWK per kid in the configured public key map. External
-    services verify Loom-issued tokens without holding any private
-    material. Empty when running HS256 (the default).
+    One JWK per RS256 key in the signing keyring (`loom signing-key rotate
+    --algorithm RS256`), so external services verify Loom-issued tokens
+    without holding any private material. Empty while every key is HS256.
     """
-    if settings.jwt_algorithm != "RS256":
-        return {"keys": []}
+    from server.auth import keyring
 
     try:
         from cryptography.hazmat.primitives import serialization
@@ -39,7 +37,7 @@ async def v1_jwks() -> dict[str, object]:
         return base64.urlsafe_b64encode(b).rstrip(b"=").decode("ascii")
 
     keys: list[dict[str, object]] = []
-    for kid, pem in settings.jwt_public_key_map().items():
+    for kid, pem in keyring.public_keys().items():
         try:
             pub = serialization.load_pem_public_key(pem.encode())
             # JWKS publishes only RSA signing keys (kty=RSA below); narrow so the
@@ -81,7 +79,7 @@ async def whoami(request: Request) -> dict[str, object]:
         return {"authenticated": False}
     try:
         info = verify_token(token)
-    except RevocationUnavailable as e:
+    except AuthUnavailable as e:
         # Transient: the token may be fine. authenticated=false would make the SPA
         # drop it, so answer 503 and let the client retry.
         raise HTTPException(

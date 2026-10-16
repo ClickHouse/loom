@@ -255,6 +255,7 @@ def build() -> str:
         "    maturity: str",
         "    budget_p99_ms: int",
         "    audit: bool",
+        "    read_only: bool",
         "",
         "",
         "OpName = Literal[",
@@ -275,7 +276,7 @@ def build() -> str:
             f"    {json.dumps(f.name)}: OpSpec({json.dumps(f.name)}, "
             f"{json.dumps(in_name)}, {json.dumps(body_name)}, "
             f"{json.dumps(out_name)}, {f.idempotent}, {json.dumps(f.role)}, "
-            f"{json.dumps(f.maturity)}, {f.budget_p99_ms}, {f.audit}),"
+            f"{json.dumps(f.maturity)}, {f.budget_p99_ms}, {f.audit}, {f.read_only}),"
         )
     out += [
         "}",

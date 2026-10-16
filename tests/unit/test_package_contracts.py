@@ -53,6 +53,7 @@ CORE_IO = (
     "server.core.ratelimit_shared",
     "server.core.namespace_write_marks",
     "server.core.hosts",
+    "server.core.leases",
 )
 
 

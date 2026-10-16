@@ -76,26 +76,6 @@ async def main(org: str) -> None:
 asyncio.run(main(sys.argv[1]))
 """
 
-LEASE_RENEWAL = """
-import sys
-from server.core.schema.migrate import client
-from server.core.schema.migrate_lease import LEASE_NAME, LEASE_TABLE, LeaseConfig, MigrationLease
-
-ch = client()
-lease = MigrationLease(ch, cfg=LeaseConfig(settle_s=0, wait_s=5), holder=sys.argv[1], out=lambda _: None)
-lease.acquire()
-first = lease._acquired_at
-lease.release()  # re-inserts the row with the acquired_at it read back
-row = ch.query(
-    f"SELECT acquired_at FROM {LEASE_TABLE} FINAL WHERE name = {{n:String}} AND holder = {{h:String}}",
-    parameters={"n": LEASE_NAME, "h": sys.argv[1]},
-).result_rows[0]
-print(first is not None and row[0] == first)
-ch.command(
-    f"DELETE FROM {LEASE_TABLE} WHERE holder = {{h:String}}", parameters={"h": sys.argv[1]}
-)
-"""
-
 ZONES = ["America/Los_Angeles", "UTC", "Asia/Kolkata"]
 
 
@@ -164,10 +144,3 @@ async def org() -> Any:
 async def test_a_thread_is_stored_created_now_in_any_host_zone(org: str, zone: str) -> None:
     lag = int((await _run_in(zone, CONVERSATION, org)).split()[-1])
     assert abs(lag) < 60  # an offset would be hours
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("zone", ZONES)
-async def test_a_lease_renewal_keeps_its_queue_position_in_any_host_zone(zone: str) -> None:
-    out = await _run_in(zone, LEASE_RENEWAL, f"tz-test-{uuid.uuid4().hex[:8]}")
-    assert out.split()[-1] == "True"

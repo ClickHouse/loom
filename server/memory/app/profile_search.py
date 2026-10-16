@@ -351,6 +351,7 @@ async def queue_profile_reembed(
                 embedding_dim=0,
                 embedding=[],  # the insert pads it to the column's width
                 created_at=r.get("created_at"),
+                content_sha256=str(r.get("content_sha256") or ""),
             )
             for r in rows
         ]

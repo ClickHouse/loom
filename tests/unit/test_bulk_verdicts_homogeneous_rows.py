@@ -40,9 +40,11 @@ def test_verdicts_never_change_the_key_set() -> None:
 
 
 @pytest.mark.asyncio
-async def test_insert_names_a_heterogeneous_batch() -> None:
+async def test_insert_names_a_heterogeneous_batch(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.core import rmt_carry
     from server.core.ch import CHClient
 
+    monkeypatch.setattr(rmt_carry, "carries", lambda _table: False)  # its own tests
     ch = CHClient.__new__(CHClient)
     with pytest.raises(ValueError) as ei:
         await ch.insert("loom.memory", [{"a": 1, "b": 2}, {"a": 1}])

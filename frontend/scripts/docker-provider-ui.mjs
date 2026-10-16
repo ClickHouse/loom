@@ -6,7 +6,7 @@ const browser = await chromium.launch();
 try {
   const page = await browser.newPage();
   page.setDefaultTimeout(30_000);
-  await page.goto(`${base}/me/settings`);
+  await page.goto(`${base}/settings`);
   await page.getByRole("tab", { name: "Models & keys", exact: true }).click();
   let endpoint;
   let button;

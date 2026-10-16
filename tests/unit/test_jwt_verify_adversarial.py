@@ -11,6 +11,7 @@ import hashlib
 import hmac
 import json
 import time
+from datetime import datetime
 from typing import Any
 
 import jwt
@@ -18,7 +19,7 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from server.auth import revocation
+from server.auth import keyring, revocation
 from server.auth.jwt import TokenError, mint_token, verify_token
 from server.settings import settings
 
@@ -41,20 +42,22 @@ def _pem_pair() -> tuple[str, str]:
 _PRIVATE, _PUBLIC = _pem_pair()
 
 
+def _key(algorithm: str, secret: str, public_pem: str = "") -> dict[str, keyring.SigningKey]:
+    return {"k1": keyring.SigningKey("k1", algorithm, secret, public_pem, datetime.min)}
+
+
 @pytest.fixture(autouse=True)
 def _hs256(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(revocation, "_loaded", True)
-    monkeypatch.setattr(settings, "jwt_algorithm", "HS256")
-    monkeypatch.setattr(settings, "jwt_secrets_json", json.dumps({"k1": _SECRET}))
-    monkeypatch.setattr(settings, "jwt_active_kid", "k1")
+    monkeypatch.setattr(keyring, "_view", keyring._View(loaded=True, keys=_key("HS256", _SECRET)))
     monkeypatch.setattr(settings, "jwt_public_keys_json", "")
     monkeypatch.setattr(settings, "jwt_trusted_issuers", "")
 
 
 def _rs256(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, "jwt_algorithm", "RS256")
-    monkeypatch.setattr(settings, "jwt_secrets_json", json.dumps({"k1": _PRIVATE}))
-    monkeypatch.setattr(settings, "jwt_public_keys_json", json.dumps({"k1": _PUBLIC}))
+    monkeypatch.setattr(
+        keyring, "_view", keyring._View(loaded=True, keys=_key("RS256", _PRIVATE, _PUBLIC))
+    )
 
 
 def _claims(**over: Any) -> dict[str, Any]:
@@ -95,18 +98,18 @@ def test_a_well_formed_token_verifies() -> None:
 
 def test_alg_none_is_refused() -> None:
     unsigned = jwt.encode(_claims(), None, algorithm="none")
-    assert "not in accepted set" in _refused(unsigned)
+    assert "is not one of" in _refused(unsigned)
 
 
 def test_an_hs256_token_under_rs256_is_refused_not_a_500(monkeypatch: pytest.MonkeyPatch) -> None:
     _rs256(monkeypatch)
     # Signed with the only public material an attacker has: the public key.
-    assert "not in accepted set" in _refused(_hs(_claims(), key=_PUBLIC))
+    assert "has no HS256 key" in _refused(_hs(_claims(), key=_PUBLIC))
 
 
 def test_rs256_is_refused_where_no_public_key_is_configured() -> None:
     token = jwt.encode(_claims(), _PRIVATE, algorithm="RS256", headers={"kid": "k1"})
-    assert "not in accepted set" in _refused(token)
+    assert "has no RS256 key" in _refused(token)
 
 
 def test_a_gateway_rs256_token_verifies_beside_hs256(monkeypatch: pytest.MonkeyPatch) -> None:

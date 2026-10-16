@@ -24,6 +24,7 @@ from datetime import datetime
 from typing import Any, Protocol
 
 from server.core.datetimes import naive_utc_now
+from server.workers import pass_context
 
 log = logging.getLogger(__name__)
 
@@ -119,7 +120,7 @@ class EntityCommunitiesConfig:
     namespace_filter: str | None = None
     # A namespace whose graph was walked (facts.traverse / facts.related / facts.path /
     # namespace.taxonomy in loom.agent_events within walked_days) joins the
-    # consolidation_enabled set — the /me Graph view and the Explorer's community facet
+    # consolidation_enabled set — the dashboard's Graph view and the Explorer's community facet
     # read communities for any namespace a user walks, not only the consolidation
     # opt-ins. 0 = the opt-ins only.
     walked_days: int = 14
@@ -323,6 +324,7 @@ async def run_entity_communities(
     result = EntityCommunitiesResult()
     now = naive_utc_now()
     for org, ns in await _namespaces_with_edges(ch, cfg):
+        pass_context.check_stop()
         raw = await _edges(ch, org, ns, cfg)
         if len(raw) > cfg.max_edges_per_namespace:
             # Keep the strongest max_edges pairs (the read is
@@ -343,6 +345,7 @@ async def run_entity_communities(
         # serving requests and other workers. Only this coroutine touches
         # `result`, and it is suspended while the thread writes to it.
         rows, comms = await asyncio.to_thread(_partition, org, ns, edges, cfg, result, now)
+        pass_context.check_stop()  # the thread ran on past a lost lease
         if not rows:
             continue
         await ch.insert(TABLE, rows, settings={"async_insert": 0, "wait_for_async_insert": 1})
@@ -378,6 +381,7 @@ def _partition(
     used = start
     hubs: list[str] = []
     while True:
+        pass_context.check_stop()  # in the thread: a stopped pass partitions no further
         kept, new_hubs = drop_hubs(edges, fraction)
         if fraction > start and len(new_hubs) == len(hubs):
             break  # the step dropped no further hub: the partition is the same

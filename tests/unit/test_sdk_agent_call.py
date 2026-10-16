@@ -71,6 +71,8 @@ async def test_call_sends_no_key_for_non_idempotent_or_unknown_ops() -> None:
     assert t.calls[0][2] is None
     await a.call("memory.newer_than_this_sdk", {"x": 1})
     assert t.calls[1][0] == "/v1/memory.newer_than_this_sdk" and t.calls[1][2] is None
+    await a.call("memory.get", {"memory_key": "k"})  # read-only: the server keeps no replay
+    assert t.calls[2][2] is None
 
 
 async def test_probe_reports_missing_ops_fields_and_unknown_server_ops() -> None:

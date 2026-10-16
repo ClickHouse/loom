@@ -31,7 +31,7 @@ from pydantic import AliasChoices, AliasPath, BaseModel
 TRANSPORT_KEYS: frozenset[str] = frozenset(
     {"consumer", "traffic_class", "explain", "_idempotency_key", "idempotency_key"}
 )
-# The identity tuple (and the run a call joins). The SDKs and the /me client
+# The identity tuple (and the run a call joins). The SDKs and the dashboard client
 # send it on every call whatever the op takes, so naming them on each answer
 # would be noise, not a lost write.
 IDENTITY_KEYS: frozenset[str] = frozenset(

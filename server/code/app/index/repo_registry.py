@@ -6,7 +6,8 @@ person adds a repository (or a branch of one) from the Repositories page,
 becomes its first maintainer, and the ingest worker clones and indexes it.
 ``configured_repos()`` stays synchronous — it is on the authz hot path — so
 this module keeps an in-process snapshot refreshed by ``refresh_db_repos``
-(boot, every ingest pass, every code.repos call, and at once after an add).
+(boot and every ``code_repos_refresh_seconds`` on every process, every ingest
+pass, every code.repos call, and at once after an add).
 
 A private remote's token is stored encrypted (Fernet keyed from the JWT
 secret with a domain separator) and never returned over the wire.
@@ -14,6 +15,7 @@ secret with a domain separator) and never returned over the wire.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -146,6 +148,23 @@ async def refresh_db_repos(*, force: bool = False, ch: Any | None = None) -> lis
             "code_repos: refresh failed, keeping %d entries: %s", len(registry_repos()), e
         )
     return registry_repos()
+
+
+async def start_refresher(ch: Any | None = None) -> asyncio.Task[None]:
+    """Every process loads the registry before it serves and re-reads it every
+    ``code_repos_refresh_seconds``, so an added repository or a new restriction
+    reaches every replica within that time, whichever ops it serves."""
+    await refresh_db_repos(force=True, ch=ch)
+
+    async def _loop() -> None:
+        from server.core.ch import set_query_tag
+
+        set_query_tag("code.repos_refresh")
+        while True:
+            await asyncio.sleep(max(1.0, float(settings.code_repos_refresh_seconds)))
+            await refresh_db_repos(force=True, ch=ch)  # never raises
+
+    return asyncio.create_task(_loop(), name="loom-code-repos-refresh")
 
 
 def reset_for_tests() -> None:

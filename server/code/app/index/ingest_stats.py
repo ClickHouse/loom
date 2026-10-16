@@ -77,7 +77,7 @@ def error_text(stage: str, exc: BaseException) -> str:
     """Bounded `stage: ExcClass: message` for `code_files.index_error`.
 
     Bounded because the column is read back verbatim by `code.index_errors`
-    and the /me Health tile, and a RecursionError's message (or a parser's
+    and the dashboard's Health tile, and a RecursionError's message (or a parser's
     dump of the offending source) is not something to store per file.
     """
     msg = str(exc).replace("\n", " ").strip()

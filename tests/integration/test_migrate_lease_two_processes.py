@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from server.core.schema.migrate_lease import LEASE_TABLE, LOCK_TABLE
+from server.core.leases import LOCK_TABLE
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("LOOM_CH_HOST"),
@@ -41,10 +41,10 @@ def _run(mig_dir: str, log_path: str, barrier) -> None:
 def test_two_concurrent_runs_apply_a_non_idempotent_migration_once(ch_client, tmp_path) -> None:
     from server.core.schema import migrate as mig
 
-    lease_rows = ch_client.query(
-        "SELECT count() FROM system.tables WHERE database = 'loom' AND name = '_migration_lease'"
+    ledger_rows = ch_client.query(
+        "SELECT count() FROM system.tables WHERE database = 'loom' AND name = '_migrations'"
     ).result_rows
-    assert lease_rows and lease_rows[0][0] == 1, "000_migrations.sql not applied on this service"
+    assert ledger_rows and ledger_rows[0][0] == 1, "000_migrations.sql not applied on this service"
 
     tag = uuid.uuid4().hex[:8]
     table = f"loom._itest_lease_{tag}"
@@ -71,11 +71,10 @@ def test_two_concurrent_runs_apply_a_non_idempotent_migration_once(ch_client, tm
         appliers = [o for o in outs if f"→ {name}" in o and f"✓ {name}" in o]
         waiters = [o for o in outs if "applied by another process while this one waited" in o]
         assert len(appliers) == 1 and len(waiters) == 1, outs
-        # The waiter may have seen the holder ("migration lease: held by …")
-        # or, when the applier finished inside the waiter's settle interval,
-        # held the lease itself and found the ledger complete: both are the
-        # property — one applier, one process that applied nothing.
-        assert "migration lease held as" in waiters[0], waiters[0]
+        # The waiter may have seen the holder, or held the lock itself after the
+        # applier finished and found the ledger complete: both are the property —
+        # one applier, one process that applied nothing.
+        assert "migration lock held as" in waiters[0], waiters[0]
 
         # The non-idempotent statement ran once.
         rows = ch_client.query(f"SELECT count() FROM {table}").result_rows
@@ -89,20 +88,12 @@ def test_two_concurrent_runs_apply_a_non_idempotent_migration_once(ch_client, tm
         assert ledger[0][0] == 1, ledger
         assert name in mig.applied_migrations(ch_client)
 
-        # Both contenders released: the KeeperMap key is gone, or (no Keeper)
-        # every lease row is marked released.
-        if any("migration lock: KeeperMap" in o for o in outs):
-            assert all("migration lock: KeeperMap" in o for o in outs), outs
-            held = ch_client.query(
-                f"SELECT holder FROM {LOCK_TABLE} WHERE name = 'boot_migrate'"
-            ).result_rows
-            assert held == [], held
-        else:
-            lease = ch_client.query(
-                f"SELECT holder, released FROM {LEASE_TABLE} FINAL "
-                "WHERE name = 'boot_migrate' AND renewed_at > now64(3) - INTERVAL 5 MINUTE"
-            ).result_rows
-            assert lease and all(bool(r[1]) for r in lease), lease
+        # Both contenders released: the KeeperMap key is gone.
+        assert all("migration lock: KeeperMap" in o for o in outs), outs
+        held = ch_client.query(
+            f"SELECT holder FROM {LOCK_TABLE} WHERE name = 'boot_migrate'"
+        ).result_rows
+        assert held == [], held
     finally:
         for p in procs:
             if p.is_alive():

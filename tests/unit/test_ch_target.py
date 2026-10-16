@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from server.core import ch_target
+from server.core.provider_process import participant_tag, process_identity
 from server.settings import settings
 
 
@@ -47,6 +48,7 @@ def test_kwargs_name_the_configured_target(monkeypatch: pytest.MonkeyPatch) -> N
         "password": "p",
         "database": "loomdb",
         "secure": False,
+        "client_name": participant_tag(process_identity()),
     }
     assert ch_target.connection_kwargs(database="default")["database"] == "default"
 

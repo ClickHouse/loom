@@ -4,13 +4,14 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 
 import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
 import server.auth.revocation as rev
-from server.auth import routes
+from server.auth import keyring, routes
 from server.auth.jwt import RevocationUnavailable, mint_token
 from server.settings import settings
 
@@ -45,17 +46,35 @@ def _ec_pem() -> str:
     )
 
 
+def _keyring(monkeypatch: pytest.MonkeyPatch, keys: dict[str, tuple[str, str]]) -> None:
+    """kid → (algorithm, public PEM) as the keyring loaded them."""
+    loaded = {
+        k: keyring.SigningKey(k, alg, "private", pem, datetime.min)
+        for k, (alg, pem) in keys.items()
+    }
+    monkeypatch.setattr(keyring, "_view", keyring._View(loaded=True, keys=loaded))
+
+
 def test_jwks_is_empty_under_hs256(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, "jwt_algorithm", "HS256")
+    """HS256 keys have no public half, and a gateway's keys are not Loom's to publish."""
+    _keyring(monkeypatch, {"h1": ("HS256", "")})
+    monkeypatch.setattr(settings, "jwt_public_keys_json", json.dumps({"gw": _rsa_pem()}))
     assert _client().get("/v1/.well-known/jwks.json").json() == {"keys": []}
 
 
 def test_jwks_lists_one_rsa_key_per_kid_and_skips_the_rest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    keys = {"k1": _rsa_pem(), "k2": _rsa_pem(), "ec": _ec_pem(), "bad": "not a pem"}
-    monkeypatch.setattr(settings, "jwt_algorithm", "RS256")
-    monkeypatch.setattr(settings, "jwt_public_keys_json", json.dumps(keys))
+    _keyring(
+        monkeypatch,
+        {
+            "k1": ("RS256", _rsa_pem()),
+            "k2": ("RS256", _rsa_pem()),
+            "ec": ("RS256", _ec_pem()),
+            "bad": ("RS256", "not a pem"),
+            "h1": ("HS256", ""),
+        },
+    )
     body = _client().get("/v1/.well-known/jwks.json").json()
     assert [k["kid"] for k in body["keys"]] == ["k1", "k2"]
     for k in body["keys"]:

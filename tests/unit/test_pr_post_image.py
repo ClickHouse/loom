@@ -1,6 +1,7 @@
 """An open PR's post-image sent by its caller (`pr_files` / `pr_diff`): the
-overlay parses it with no git read, so a Loom without a mirror (a read-replica)
-answers the PR-aware reads; a replica the caller sent nothing to says so."""
+overlay parses it with no git read, so a Loom without a mirror (still cloning it,
+or LOOM_GIT_HISTORY=none) answers the PR-aware reads; one the caller sent nothing to
+says so."""
 
 from __future__ import annotations
 
@@ -13,6 +14,7 @@ import pytest
 from server.code.api.models_symbol import CodeCallersInput, CodeImpactInput
 from server.code.app.index import gitrepo
 from server.code.app.index import pr_overlay as po
+from server.code.app.index.mirrors import NO_GIT_HISTORY
 from server.settings import settings
 
 PATH = "src/Storages/MergeTreeData.cpp"
@@ -115,10 +117,10 @@ def test_the_post_image_is_the_requests_for_nested_reads() -> None:
     assert po.posted(8) is None
 
 
-def test_overlay_for_namespace_reads_the_post_image_on_a_replica(
+def test_overlay_for_namespace_reads_the_post_image_without_history(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(settings, "read_replica", True)
+    monkeypatch.setattr(settings, "git_history", "none")
 
     @po.reads_post_image
     async def read(inp: Any) -> po.PrOverlay:
@@ -127,7 +129,7 @@ def test_overlay_for_namespace_reads_the_post_image_on_a_replica(
     sent = asyncio.run(read(CodeImpactInput(pr_number=7, pr_files={PATH: POST}, pr_diff=DIFF)))
     assert sent.ok and [s.name for s in sent.added] == ["checkPartsLimit"]
     nothing = asyncio.run(read(CodeImpactInput(pr_number=7)))
-    assert not nothing.ok and nothing.reason == po.NO_GIT_MIRROR
+    assert not nothing.ok and nothing.reason == NO_GIT_HISTORY
 
 
 def test_a_repeated_post_image_parses_once(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -172,15 +174,15 @@ class _BriefRepo:
         self.inserted.append((table, rows))
 
 
-@pytest.mark.parametrize("replica", [False, True])
+@pytest.mark.parametrize("history", ["local", "none"])
 def test_an_open_brief_builds_from_the_post_image_and_is_never_stored(
-    monkeypatch: pytest.MonkeyPatch, replica: bool
+    monkeypatch: pytest.MonkeyPatch, history: str
 ) -> None:
     from server.code.api.models_review import CodeReviewBriefInput
     from server.code.app import review_brief as h
     from server.code.app.index import review_brief_build
 
-    monkeypatch.setattr(settings, "read_replica", replica)
+    monkeypatch.setattr(settings, "git_history", history)
     monkeypatch.setattr(h, "require_code_intel", lambda: None)
     monkeypatch.setattr(h, "resolve_code_identity", lambda o, n: ("acme", "code-ch"))
     monkeypatch.setattr(h, "schedule_code_trace", lambda **kw: None)
@@ -213,20 +215,20 @@ def test_an_open_brief_builds_from_the_post_image_and_is_never_stored(
     assert out.overlay is True and out.overlay_head_sha == "cd" * 20
 
 
-def test_an_open_brief_on_a_replica_without_a_post_image_says_why(
+def test_an_open_brief_without_history_or_a_post_image_says_why(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from server.code.api.models_review import CodeReviewBriefInput
     from server.code.app import review_brief as h
 
-    monkeypatch.setattr(settings, "read_replica", True)
+    monkeypatch.setattr(settings, "git_history", "none")
     monkeypatch.setattr(h, "require_code_intel", lambda: None)
     monkeypatch.setattr(h, "resolve_code_identity", lambda o, n: ("acme", "code-ch"))
     monkeypatch.setattr(h, "schedule_code_trace", lambda **kw: None)
     monkeypatch.setattr(h, "set_code_span_attributes", lambda **kw: None)
     monkeypatch.setattr(h, "CodeRepo", _BriefRepo)
     out = asyncio.run(h.handle_code_review_brief(CodeReviewBriefInput(pr_number=7, open=True)))
-    assert out.source == "missing" and out.overlay_note == po.NO_GIT_MIRROR
+    assert out.source == "missing" and out.overlay_note == NO_GIT_HISTORY
 
 
 # ---- code.verify_citations -----------------------------------------------------
@@ -248,7 +250,7 @@ def test_in_pr_diff_reads_the_posted_diff() -> None:
 # ---- freshness on a replica ----------------------------------------------------
 
 
-def test_a_replica_reports_the_main_looms_published_lags() -> None:
+def test_a_host_without_the_mirror_reports_the_published_lags() -> None:
     import json
     from datetime import UTC, datetime
 
@@ -267,7 +269,7 @@ def test_a_replica_reports_the_main_looms_published_lags() -> None:
         "scip_commit": 5,
         "scip_commit_py": -1,
     }
-    # the clone moved or the head moved since the main Loom counted: unknown
+    # the clone moved or the head moved since the publisher counted: unknown
     assert published_lags(state, marks, "newer")["git_head"] == -1
     assert published_lags(state, {**marks, "git_head": "h2"}, "tip")["git_head"] == -1
 
@@ -275,13 +277,13 @@ def test_a_replica_reports_the_main_looms_published_lags() -> None:
 # ---- code.blame_range ----------------------------------------------------------
 
 
-def test_blame_on_a_replica_says_there_is_no_git_history(
+def test_blame_without_history_says_there_is_no_git_history(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from server.code.api.models_history import CodeBlameRangeInput
     from server.code.app import blame
 
-    monkeypatch.setattr(settings, "read_replica", True)
+    monkeypatch.setattr(settings, "git_history", "none")
     monkeypatch.setattr(blame, "require_code_intel", lambda: None)
     monkeypatch.setattr(blame, "resolve_code_identity", lambda o, n: ("acme", "code-ch"))
     monkeypatch.setattr(blame, "repo_siblings", lambda o, n: (None, []))
@@ -296,30 +298,27 @@ def test_blame_on_a_replica_says_there_is_no_git_history(
 # ---- code.index_status(commit=) ------------------------------------------------
 
 
-@pytest.mark.parametrize("replica", [False, True])
-def test_coverage_of_the_indexed_commit_needs_no_git(
-    monkeypatch: pytest.MonkeyPatch, replica: bool
-) -> None:
+@pytest.mark.parametrize("git_dir", ["/no/mirror", ""])
+def test_coverage_of_the_indexed_commit_needs_no_git(git_dir: str) -> None:
     from server.code.app.index import commit_coverage as cc
 
-    monkeypatch.setattr(settings, "read_replica", replica)
     cc.reset()
     head = "a" * 40
     tiers = [{"label": "C++", "watermark_key": "scip_commit", "commit": head}]
-    out = asyncio.run(cc.commit_coverage("/no/mirror", head, head, tiers))
+    out = asyncio.run(cc.commit_coverage(git_dir, head, head, tiers))
     assert out["ready"] is True and out["commits_since"] == 0
     assert out["tiers"][0]["covered"] is True
 
 
-def test_coverage_on_a_replica_says_it_did_not_check(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_coverage_without_the_mirror_says_it_did_not_check() -> None:
     from server.code.app.index import commit_coverage as cc
 
-    monkeypatch.setattr(settings, "read_replica", True)
     cc.reset()
     tiers = [{"label": "C++", "watermark_key": "scip_commit", "commit": "b" * 40}]
-    out = asyncio.run(cc.commit_coverage("/no/mirror", "a" * 40, "b" * 40, tiers))
+    gap = "no_git_mirror: cloning acme/code-ch"
+    out = asyncio.run(cc.commit_coverage("", "a" * 40, "b" * 40, tiers, gap=gap))
     assert out["ready"] is False and out["tiers"][0]["covered"] is None
-    assert out["waiting_on"] == ["commit not checked: this read-replica has no git mirror"]
+    assert out["waiting_on"] == [f"commit not checked: {gap}"]
 
 
 # ---- a later push of the same PR -----------------------------------------------

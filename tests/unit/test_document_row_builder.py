@@ -151,16 +151,12 @@ def test_delete_tombstones_carry_every_column(monkeypatch) -> None:
     async def _get_many(*a, **kw):
         return [doc]
 
-    async def _not_shared(*a, **kw):
-        return True
-
     monkeypatch.setattr(knowledge_repo, "count_active_for_doc", _count)
     monkeypatch.setattr(knowledge_repo, "count_active_by_uri", _counts)
     monkeypatch.setattr(knowledge_repo, "mark_doc_superseded", _noop)
     monkeypatch.setattr(knowledge_repo, "mark_docs_superseded", _noop)
     monkeypatch.setattr(documents_repo, "get_one", _get_one)
     monkeypatch.setattr(documents_repo, "get_many_by_uris", _get_many)
-    monkeypatch.setattr(documents_repo, "blob_shared_by_another_document", _not_shared)
 
     asyncio.run(
         kh.handle_knowledge_delete(KnowledgeDeleteInput(org="o", namespace="n", source_uri="doc-a"))

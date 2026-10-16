@@ -26,7 +26,7 @@ def test_credentials_stay_out_of_repr_and_in_the_payload() -> None:
             org="o",
             subject="sa:agent-n-abc123",
             claim_code=_CANARY + "-code",
-            claim_url="https://loom.example/me",
+            claim_url="https://loom.example/",
         ),
     ]
     for m in models:

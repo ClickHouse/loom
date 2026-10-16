@@ -17,6 +17,8 @@ from server.code.api.models_review import CodeReviewBriefInput
 from server.code.app.index import review_brief as rb
 from server.code.app.index import review_brief_build, review_brief_sources
 
+pytestmark = pytest.mark.usefixtures("mirror_here")
+
 ORG, NS = "clickhouse", "code-clickhouse"
 SHA = "1e93c0a25f177d3a971668e058745a6e8bfe3e2c"
 PARENT = "b41b780feecc85780bebca041acda03358719a79"

@@ -16,7 +16,7 @@
 secrets.json
 
 # ============================================================
-# Frontend (React/Vite dashboard at /me) — node deps + build output
+# Frontend (React/Vite dashboard served at /) — node deps + build output
 # ============================================================
 frontend/node_modules/
 frontend/dist/

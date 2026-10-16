@@ -8,7 +8,7 @@ import runsSource from "./Runs.tsx?raw";
 
 // The Runs page asks run.list for a field list and the server blanks every field it does
 // not name. A row that reads a field the list does not name (say `memories_used`) crashes
-// `/me/runs` for every viewer with "Cannot read properties of undefined (reading
+// `/runs` for every viewer with "Cannot read properties of undefined (reading
 // 'length')". Two guards: the request names every field the row reads, and a row
 // tolerates a projected list field anyway.
 

@@ -30,6 +30,8 @@ from tests.unit.test_code_review_brief_sections import (
     _tracker_not_bound,
 )
 
+pytestmark = pytest.mark.usefixtures("mirror_here")
+
 MIRROR_SHA = "05c3edcab4349bcf1ff155e32ac74dc321edea0c"
 
 

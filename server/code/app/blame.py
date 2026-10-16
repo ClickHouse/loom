@@ -36,7 +36,6 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, cast
 
-from server.clients.main_loom import forward
 from server.code.api.models_history import CodeBlameRangeOutput
 from server.code.app.common import (
     new_trace_run_id,
@@ -44,7 +43,8 @@ from server.code.app.common import (
     resolve_code_identity,
     schedule_code_trace,
 )
-from server.code.app.index import gitrepo, merge_shas
+from server.code.app.index import gitrepo, merge_shas, mirrors
+from server.code.app.index.bootstrap import history_enabled
 from server.code.app.spans import code_span, set_code_span_attributes
 from server.code.app.ttl_cache import TtlCache
 from server.code.domain.index import blame_introduced as intro
@@ -83,10 +83,7 @@ def reset_cache_for_tests() -> None:
     _WIDE_LOCKS.clear()
 
 
-NO_GIT_HISTORY = (
-    "no git history on this read-replica: blame reads the main Loom's git mirror; "
-    "run git blame in a checkout"
-)
+NO_GIT_HISTORY = f"{mirrors.NO_GIT_HISTORY}: run git blame in a checkout"
 
 
 @dataclass
@@ -131,6 +128,14 @@ def repo_siblings(org: str, ns: str) -> tuple[Any, list[Any]]:
     if mine is None:
         return None, []
     return mine, [c for c in cfgs if c.org == org and c.git_dir == mine.git_dir]
+
+
+async def history_git_dir(cfg: Any, op: str, *, head: str = "") -> tuple[str, str]:
+    """`mirrors.history_dir` for a read of `op`, the scalar entry's mirror when no
+    entry indexes the namespace."""
+    if cfg is None:
+        return default_git_dir(), ""
+    return await mirrors.history_dir(cfg, op=op, head=head)
 
 
 async def _namespace_head(repo: CodeRepo, org: str, ns: str) -> str:
@@ -196,14 +201,22 @@ async def _branch_points(git_dir: str) -> list[tuple[str, int, str]]:
 
 
 async def _resolve_window(
-    repo: CodeRepo, org: str, ns: str, git_dir: str, cfg: Any, siblings: list[Any], inp: Any
+    repo: CodeRepo,
+    org: str,
+    ns: str,
+    git_dir: str,
+    cfg: Any,
+    siblings: list[Any],
+    inp: Any,
+    head: str | None = None,
 ) -> Window:
+    """The blame window; `head`, when read already, is the namespace's indexed head."""
     w = Window(from_ref=inp.from_sha or inp.from_version, to_ref=inp.to_sha or inp.to_version)
     if w.to_ref:
         w.to_sha, src = await _resolve_ref(repo, org, git_dir, siblings, w.to_ref)
         w.sources["to"] = src
     else:
-        w.to_sha = await _namespace_head(repo, org, ns)
+        w.to_sha = head if head is not None else await _namespace_head(repo, org, ns)
         w.sources["to"] = "namespace_head"
         if not w.to_sha and cfg is not None:
             try:
@@ -661,13 +674,17 @@ async def _introduced_stage(
 
 async def handle_code_blame_range(input: Any) -> Any:
     require_code_intel()
-    if (forwarded := await forward("code.blame_range", input, CodeBlameRangeOutput)) is not None:
-        return forwarded
     started = time.monotonic()
     org, ns = resolve_code_identity(input.org, input.namespace)
     repo = CodeRepo()
     cfg, siblings = repo_siblings(org, ns)
-    git_dir = (cfg.git_dir if cfg is not None else "") or default_git_dir()
+    # the window's default end is the indexed head: read once, for both
+    head = (
+        await _namespace_head(repo, org, ns)
+        if cfg is not None and not (input.to_sha or input.to_version)
+        else None
+    )
+    git_dir, gap = await history_git_dir(cfg, "code.blame_range", head=head or "")
     gh_repo = (cfg.repo if cfg is not None else "") or settings.code_repo
     path = input.path.strip().lstrip("/")
     start, end, truncated = br.clamp_range(input.start_line, input.end_line)
@@ -675,11 +692,12 @@ async def handle_code_blame_range(input: Any) -> Any:
     introduced = stage == intro.STAGE_INTRODUCED
     stage_leg = IntroducedLeg(stage=stage)
     with code_span("blame_range.window"):
-        if settings.read_replica:
-            # Blame reads full git history, which only the main Loom's mirror holds.
+        if not history_enabled():
             w = Window(error=NO_GIT_HISTORY)
+        elif gap:
+            w = Window(error=gap)
         else:
-            w = await _resolve_window(repo, org, ns, git_dir, cfg, siblings, input)
+            w = await _resolve_window(repo, org, ns, git_dir, cfg, siblings, input, head)
     trace_run_id = new_trace_run_id()
     if not w.ok:
         return _finish(

@@ -341,6 +341,7 @@ async def project_memory_set_entities(
     value: Any,
     ch: Any = None,
     wait_visible: bool = False,
+    ents: list[str] | None = None,
 ) -> int:
     """Fail-open entity projection for a single `memory.set`.
 
@@ -348,12 +349,14 @@ async def project_memory_set_entities(
     for the same pairing / cap / window / insert path as the bulk write.
     Returns the count of distinct candidates projected (0 when <2).
     `wait_visible` is for the projection that runs beside the response: its
-    edges are readable once it returns.
+    edges are readable once it returns. `ents`: the caller's own
+    `set_entities_for_projection(input, value)`, not mined again.
     """
     from server.observability.otel import traced
 
-    with traced("entities.extract"):
-        ents = set_entities_for_projection(input, value)
+    if ents is None:
+        with traced("entities.extract"):
+            ents = set_entities_for_projection(input, value)
     if len(ents) < 2:
         # <2 entities = no co-occurrence pair. Lone nodes come from the
         # bulk/worker path; edges are what point-writes were missing.

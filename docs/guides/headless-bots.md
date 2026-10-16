@@ -21,7 +21,7 @@ loom init --agent nightly-triage --server-url https://<loom> --purpose "Files th
 2. Grants a service-account subject `writer` on it.
 3. Writes the token to `~/.loom/token` (mode 0600) and the URL, namespace and org to
    `~/.loom/config.json` (`--token-path` and `--config-path` move them).
-4. Prints a one-time claim code. A person later signs in at `/me` with the namespace name
+4. Prints a one-time claim code. A person later signs in to the dashboard with the namespace name
    and that code to become its admin; the bot's token keeps working.
 
 `--ttl-days` sets the token lifetime (default 365). `--org` picks an org other than the

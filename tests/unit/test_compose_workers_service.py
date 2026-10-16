@@ -1,8 +1,8 @@
 """The cloud compose runs the background workers in their own
 container. The web service is a pure web tier (`LOOM_BACKGROUND_WORKERS=off`),
-the worker service runs one process with the supervisor forced on and no
-published port, both come from one image and share the flock volume, and
-every compose deployment says so with `LOOM_DEPLOYMENT=1`. Parses the files
+the worker service runs one process that contends for the supervisor lease and no
+published port, both come from one image, and every compose deployment says
+so with `LOOM_DEPLOYMENT=1`. Parses the files
 as YAML (merge keys included) — no docker needed."""
 
 from __future__ import annotations
@@ -49,16 +49,11 @@ def test_web_tier_runs_no_workers_and_the_worker_service_runs_only_them() -> Non
     d = _load(CLOUD)
     web, workers = _env(d["services"]["loom"]), _env(d["services"]["loom-workers"])
     assert web["LOOM_BACKGROUND_WORKERS"] == "off"
-    assert workers["LOOM_BACKGROUND_WORKERS"] == "on"
+    # auto, not on: a second host running this file must not run a second supervisor.
+    assert workers["LOOM_BACKGROUND_WORKERS"] == "auto"
     assert workers["LOOM_WEB_WORKERS"] == "1"
     # The operator's count from .env, else one process.
     assert web["LOOM_WEB_WORKERS"] == "${LOOM_WEB_WORKERS:-1}"
-
-
-def test_the_read_replica_keeps_one_process_unless_env_names_a_count() -> None:
-    d = _load(ROOT / "dev" / "docker-compose.read-replica.yml")
-    (replica,) = d["services"].values()
-    assert _env(replica)["LOOM_WEB_WORKERS"] == "${LOOM_WEB_WORKERS:-1}"
 
 
 def test_worker_service_publishes_no_port_and_healthchecks_its_own() -> None:
@@ -88,17 +83,16 @@ def test_a_workers_container_runs_the_stdlib_loop(path: Path, service: str) -> N
     assert "--loop $${LOOM_UVICORN_LOOP:-asyncio} " in workers["command"][-1]
 
 
-def test_both_services_share_the_flock_volume_and_the_data_mounts() -> None:
+def test_both_services_share_the_data_mounts_and_take_no_lock_path() -> None:
     d = _load(CLOUD)
     web, workers = d["services"]["loom"], d["services"]["loom-workers"]
     assert set(web["volumes"]) == set(workers["volumes"])
-    assert "loom-run:/app/var/run" in web["volumes"]
     assert "loom-blob-data:/app/var/blobs" in web["volumes"]
     assert "../var/code_repos:/app/var/code_repos" in web["volumes"]
-    assert set(d["volumes"]) == {"loom-blob-data", "loom-run"}
+    assert set(d["volumes"]) == {"loom-blob-data"}
     for svc in (web, workers):
-        assert _env(svc)["LOOM_SUPERVISOR_LOCK_PATH"] == "/app/var/run/supervisor.lock"
-        assert svc["stop_grace_period"] == "45s"
+        assert "LOOM_SUPERVISOR_LOCK_PATH" not in _env(svc)  # the lease is in ClickHouse
+        assert svc["stop_grace_period"] == "75s"
         assert svc["ulimits"]["nofile"] == {"soft": 65536, "hard": 65536}
         assert svc["env_file"] == ["../.env"]
 
@@ -122,8 +116,8 @@ def test_every_compose_deployment_says_it_is_the_deployment(path: Path) -> None:
 
 def test_each_colour_is_a_web_tier_and_a_workers_container() -> None:
     """The blue/green colour carries the same split: the web service is off,
-    the workers service contends for the shared lock (auto — the old colour's
-    holds it through the overlap, and the lock retry hands it over), one
+    the workers service contends for the ClickHouse lease (auto — the old
+    colour's holds it through the overlap and hands it over on exit), one
     process, no published port, same image."""
     d = _load(COLOUR)
     assert set(d["services"]) == {"loom", "workers"}
@@ -137,11 +131,6 @@ def test_each_colour_is_a_web_tier_and_a_workers_container() -> None:
     assert wenv["LOOM_WEB_WORKERS"] == "1"
     assert env["LOOM_WEB_WORKERS"] == "${LOOM_WEB_WORKERS:-1}"
     assert "ports" not in workers and web["ports"]
-    assert (
-        wenv["LOOM_SUPERVISOR_LOCK_PATH"]
-        == env["LOOM_SUPERVISOR_LOCK_PATH"]
-        == "/app/var/shared/supervisor.lock"
-    )
     assert "LOOM_RATELIMIT_SHARED_PATH" in env and "LOOM_RATELIMIT_SHARED_PATH" not in wenv
     assert set(web["volumes"]) == set(workers["volumes"])
     assert env["LOOM_INSTANCE_LABEL"] == "deploy:web:${LOOM_COLOUR}"
@@ -151,7 +140,7 @@ def test_each_colour_is_a_web_tier_and_a_workers_container() -> None:
 def test_redeploy_retires_and_rolls_back_the_workers_container_with_its_colour() -> None:
     sh = (ROOT / "redeploy.sh").read_text(encoding="utf-8")
     assert 'wait_workers "$idle"' in sh
-    assert 'docker stop -t 45 "loom-$active-workers"' in sh
+    assert 'docker stop -t 75 "loom-$active-workers"' in sh
     assert 'docker start "loom-$prev-workers"' in sh
 
 
@@ -183,3 +172,12 @@ def test_launch_paths_outside_compose_carry_a_label() -> None:
     )
     assert 'setdefault("LOOM_INSTANCE_LABEL"' in cli
     assert "LOOM_INSTANCE_LABEL" in (ROOT / ".env.example").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(("path", "service"), [(CLOUD, "loom-workers"), (COLOUR, "workers")])
+def test_a_workers_container_does_not_count_as_a_replica(path: Path, service: str) -> None:
+    """The rate limiter divides by the hosts that serve traffic: a workers
+    container behind no load balancer says it serves none."""
+    services = _load(path)["services"]
+    assert _env(services[service])["LOOM_SERVES_TRAFFIC"] == "false"
+    assert "LOOM_SERVES_TRAFFIC" not in _env(services["loom"])

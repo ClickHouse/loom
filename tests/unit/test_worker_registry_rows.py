@@ -86,16 +86,6 @@ def _row(name: str) -> registry._Worker:
     return next(w for w in _ROWS if w.name == name)
 
 
-def test_the_revocation_refresh_is_the_always_on_worker() -> None:
-    """Revoked tokens are refused on every replica only while this worker
-    reloads the list, so no switch turns it off; its cadence is the cache TTL."""
-    row = _row("jwt_revocation_refresh")
-    assert row.enabled is None
-    assert row.module == "server.auth.revocation" and row.pass_attr == "refresh"
-    assert row.interval == "jwt_revocation_cache_ttl_seconds" and not row.interval_in_module
-    assert callable(getattr(importlib.import_module(row.module), row.pass_attr))
-
-
 def test_the_memory_expiry_sweep_row() -> None:
     row = _row("memory_expiry_sweep")
     assert row.module == "server.memory.workers.expiry_sweep"

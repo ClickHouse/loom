@@ -19,6 +19,8 @@ from server.core.errors import ValidationError
 from server.tracker.domain import bisect as bi
 from tests.unit.test_code_bisect import NS, QA, _Source, wired  # noqa: F401 — fixture reuse
 
+pytestmark = pytest.mark.usefixtures("mirror_here")
+
 ORG = "clickhouse"
 PR = {
     "repo": "ClickHouse/ClickHouse",

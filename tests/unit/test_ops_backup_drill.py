@@ -1,6 +1,6 @@
 """scripts/ops/backup_drill.sh against a fake curl and fake backup and restore
 tools: the password never reaches an argv, an incomplete manifest, a failed
-table or a drifted table list fails the drill, and --full-restore restores
+table or a dump that leaves out a table the server lists fails the drill, and --full-restore restores
 into the scratch database only, compares its counts with the manifest, maps
 the restore's exit codes and drops the scratch database on every exit."""
 
@@ -22,6 +22,8 @@ printf '%s\\n' "$*" >>"$DRILL_ARGV"
 cat >>"$DRILL_STDIN"
 case "$*" in
   *version*) echo 26.8 ;;
+  *'system.parts'*) echo "${DRILL_MERGED:-0}" ;;
+  *'FROM system.tables'*) printf '%s\n' $DRILL_SERVER_TABLES ;;
   *'count() FROM `loom_drill`'*) echo "${DRILL_RESTORED:-2}" ;;
   *) echo 2 ;;
 esac
@@ -75,6 +77,7 @@ def _drill(box: Path, *args: str, **env: str) -> subprocess.CompletedProcess[str
         "DRILL_STDIN": str(box / "stdin"),
         "DRILL_RESTORE_ARGV": str(box / "restore_argv"),
         "DRILL_TABLES": " ".join(TABLES),
+        "DRILL_SERVER_TABLES": " ".join(TABLES),
         **env,
     }
     return subprocess.run(
@@ -100,7 +103,7 @@ def test_a_table_the_backup_failed_fails_the_drill(sandbox: Path) -> None:
     assert r.returncode == 1 and "recorded errors for: audit_log" in r.stderr
 
 
-def test_a_table_list_that_drifted_from_the_dump_fails_the_drill(sandbox: Path) -> None:
+def test_a_dump_missing_a_server_table_fails_the_drill(sandbox: Path) -> None:
     r = _drill(sandbox, DRILL_TABLES=" ".join(TABLES[:-1]))
     assert r.returncode == 1 and "manifest lists" in r.stderr
 
@@ -150,3 +153,11 @@ def test_a_failed_restore_is_named_and_the_scratch_database_dropped(
 def test_an_unknown_argument_changes_nothing(sandbox: Path) -> None:
     r = _drill(sandbox, "--bogus")
     assert r.returncode == 1 and not (sandbox / "argv").exists()
+
+
+def test_fewer_rows_after_a_merge_in_the_scratch_database_is_a_warning(sandbox: Path) -> None:
+    """A collapsing table may merge right after its attach; with no merge it
+    must hold every dumped row (optimize_on_insert = 0 in the restore)."""
+    r = _drill(sandbox, "--full-restore", DRILL_RESTORED="1", DRILL_MERGED="1")
+    assert r.returncode == 0, r.stderr
+    assert "collapsed by a merge after the attach" in r.stdout

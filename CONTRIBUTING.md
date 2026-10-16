@@ -64,7 +64,7 @@ make server
 # → http://localhost:7777
 ```
 
-This runs the same server as the Docker image, with `--reload` and without a supervisor ([deployment](./docs/operations/deployment.md)). The `/me` dashboard returns 503 until you run `npm --prefix frontend run build`. Admin ops stay reachable at `/v1/admin/*` either way.
+This runs the same server as the Docker image, with `--reload` and without a supervisor ([deployment](./docs/operations/deployment.md)). The dashboard returns 503 until you run `npm --prefix frontend run build`. Admin ops stay reachable at `/v1/admin/*` either way.
 
 For Loom and ClickHouse together, use the dev compose stack:
 

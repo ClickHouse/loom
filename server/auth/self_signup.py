@@ -23,7 +23,8 @@ import json
 import re
 import secrets
 import time
-from contextlib import AbstractAsyncContextManager
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
@@ -34,10 +35,9 @@ from server.auth.attempts import Attempts, client_address
 from server.auth.jwt import mint_token
 from server.auth.login import platform_roles
 from server.auth.passwords import hash_password_off_loop
-from server.core import grant_cache
-from server.core.ch import get_client
+from server.core import grant_cache, leases
+from server.core.ch import get_client, sequential_reads
 from server.core.datetimes import naive_utc_now_seconds
-from server.core.keyed_locks import KeyedLocks
 from server.settings import settings
 
 router = APIRouter()
@@ -162,13 +162,11 @@ async def self_signup(input: SelfSignupInput, request: Request) -> SelfSignupOut
     _signup_gate()
     org = signup_org(input.org)
     namespace = _claimable_namespace(input.namespace)
-    if not _human_signups.allow(client_address(request)):
+    if not await _human_signups.allow(client_address(request)):
         raise _rate_limited(f"at most {HUMAN_SIGNUPS_PER_HOUR} sign-ups per address per hour")
-    # Name lock first, then the email's: one fixed order, so two claims never
-    # wait on each other's second lock. The email lock makes EMAIL_IN_USE's
-    # check-then-insert exclusive within this process too.
-    email_key = "email:" + (input.email or "").strip().lower()
-    async with claim_lock(org, namespace), claim_lock(org, email_key):
+    # The name's claim, then the email's: each check-then-insert runs under its
+    # deployment-wide claim, so a second sign-up on any replica is refused.
+    async with _claimed(name_claim(org, namespace)), _claimed(email_claim(org, input.email)):
         return await _claim_account(input, org, namespace)
 
 
@@ -180,6 +178,13 @@ async def _claim_account(input: SelfSignupInput, org: str, namespace: str) -> Se
     # same `sub`, effectively impersonating the original claimer. The
     # operator can release a stuck claim via `loom claim-release`.
     ch = get_client()
+    with sequential_reads():  # an account another replica just provisioned
+        return await _claim_checked(input, org, namespace, subject, ch)
+
+
+async def _claim_checked(
+    input: SelfSignupInput, org: str, namespace: str, subject: str, ch: Any
+) -> SelfSignupOutput:
     existing = await ch.query_one(
         """
         SELECT toString(ifNull(owner_email, '')) AS owner
@@ -323,18 +328,11 @@ HUMAN_SIGNUPS_PER_HOUR = 20
 _AGENT_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,55}$")
 # Sign-ups per address per hour; the trust boundary is reachability, and a
 # hardened deployment fronts this with a gateway, as the module docstring says.
-_agent_signups = Attempts(AGENT_SIGNUPS_PER_HOUR, 3600)
-_human_signups = Attempts(HUMAN_SIGNUPS_PER_HOUR, 3600)
-# Known limit: per-process locks per claimed name and per signup email — close
-# the first-claim and EMAIL_IN_USE check-then-insert races inside one server
-# process; replicas or `--workers N` still race (ClickHouse has no
-# insert-if-absent), so a shared claim store (a KeeperMap key under
-# keeper_map_strict_mode, as the migration lock uses) is the upgrade. Password
-# sign-in picks the row the password verifies, so a raced duplicate email
-# cannot sign one account into the other. OIDC JIT sign-up takes the same
-# per-email key (`jit.jit_provision_for_email`); self-signup is closed when
-# OIDC is the login provider, so the two never race for a name.
-_claim_locks = KeyedLocks()
+_agent_signups = Attempts("signup.agent", AGENT_SIGNUPS_PER_HOUR, 3600)
+_human_signups = Attempts("signup.human", HUMAN_SIGNUPS_PER_HOUR, 3600)
+# A claim outlives the check, the password hash and the inserts with room to spare;
+# a holder that dies is taken over after it.
+CLAIM_TTL_S = 60
 
 
 def agent_namespace(name: str) -> str | None:
@@ -347,10 +345,39 @@ def agent_namespace(name: str) -> str | None:
     return f"{AGENT_NAMESPACE_PREFIX}{slug}"
 
 
-def claim_lock(org: str, namespace: str) -> AbstractAsyncContextManager[None]:
-    """The lock a claim of (org, namespace) holds from its existence check to
-    its insert."""
-    return _claim_locks.hold((org, namespace))
+def name_claim(org: str, namespace: str) -> str:
+    return f"signup:{org}:{namespace}"
+
+
+def email_claim(org: str, email: str) -> str:
+    # Hashed: the claim store is no place for an address.
+    digest = hashlib.sha256((email or "").strip().lower().encode()).hexdigest()[:32]
+    return f"signup-email:{org}:{digest}"
+
+
+@asynccontextmanager
+async def _claimed(name: str) -> AsyncIterator[None]:
+    """Hold the deployment-wide claim `name` from the existence check to the insert;
+    409 SIGNUP_IN_PROGRESS while another sign-up holds it, 503 when the work ran
+    past its bound (`leases.holding`)."""
+    try:
+        async with leases.holding(name, ttl_s=CLAIM_TTL_S) as held:
+            if not held:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "SIGNUP_IN_PROGRESS",
+                        "message": "another sign-up for this name or email is running; "
+                        "retry in a moment",
+                    },
+                )
+            yield
+    except leases.ClaimExpired as e:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "SIGNUP_UNAVAILABLE", "message": "sign-up timed out; retry"},
+            headers={"Retry-After": "5"},
+        ) from e
 
 
 def _rate_limited(message: str) -> HTTPException:
@@ -389,7 +416,7 @@ async def agent_signup(input: AgentSignupInput, request: Request) -> AgentSignup
     the namespace's owner identity is the namespace name, its password is a
     one-time claim code — grants a service-account subject `writer` on it,
     and returns that subject's token plus the claim code. A person claims the
-    namespace later by signing in at /me with the namespace name and the
+    namespace later by signing in to the dashboard with the namespace name and the
     code (the ordinary login route), which makes them its admin; the agent's
     token keeps working. First-claim-wins on the name, like the human route.
     """
@@ -397,7 +424,7 @@ async def agent_signup(input: AgentSignupInput, request: Request) -> AgentSignup
         # Creates nothing, so the per-address limit does not apply.
         return await _single_user_agent(input, request)
     _signup_gate()
-    if not _agent_signups.allow(client_address(request)):
+    if not await _agent_signups.allow(client_address(request)):
         raise _rate_limited(f"at most {AGENT_SIGNUPS_PER_HOUR} agent sign-ups per address per hour")
     namespace = agent_namespace(input.name)
     if namespace is None:
@@ -409,8 +436,9 @@ async def agent_signup(input: AgentSignupInput, request: Request) -> AgentSignup
             },
         )
     org = signup_org(input.org)
-    async with claim_lock(org, namespace):
-        return await _provision_agent(input, request, org, namespace)
+    async with _claimed(name_claim(org, namespace)):
+        with sequential_reads():
+            return await _provision_agent(input, request, org, namespace)
 
 
 async def _single_user_agent(input: AgentSignupInput, request: Request) -> AgentSignupOutput:
@@ -435,7 +463,7 @@ async def _single_user_agent(input: AgentSignupInput, request: Request) -> Agent
         org=org,
         subject=_SINGLE_USER_SUBJECT,
         claim_code="",
-        claim_url=f"{_base_url(request)}/me",
+        claim_url=f"{_base_url(request)}/",
         expires_at=naive_utc_now_seconds() + timedelta(seconds=ttl_seconds)
         if ttl_seconds is not None
         else None,
@@ -538,7 +566,7 @@ async def _provision_agent(
         org=org,
         subject=sa_subject,
         claim_code=claim_code,
-        claim_url=f"{_base_url(request)}/me",
+        claim_url=f"{_base_url(request)}/",
         expires_at=expires_at,
     )
 

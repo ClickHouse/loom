@@ -39,8 +39,7 @@ def test_non_secret_fields_stay_readable() -> None:
     "bad",
     [
         {"default_namespace": "personal-x", "auth_required": False},  # model-level check
-        {"jwt_secrets_json": '{"k1": "s"}', "jwt_active_kid": "nope"},  # model-level check
-        {"jwt_secrets_json": "{not json"},  # field read by a model-level check
+        {"jwt_revocation_max_stale_seconds": 5, "jwt_revocation_cache_ttl_seconds": 30},
         {"ch_port": "not-a-port"},  # field-level type error
     ],
 )

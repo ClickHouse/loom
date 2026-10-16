@@ -182,7 +182,7 @@ export function Conversations() {
 
   // `/` focuses search anywhere on Conversations (not while typing or inside the
   // thread dialog). Same shortcut as Recall/Recent for muscle-memory consistency
-  // across /me.
+  // across the dashboard.
   const keys = useMemo(
     () => ({
       "/": () => {

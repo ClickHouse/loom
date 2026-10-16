@@ -103,6 +103,35 @@ class CodeSettings(BaseModel):
     # Seconds a bare clone may take before the worker gives up for the pass
     # and retries next pass.
     code_bootstrap_clone_timeout_s: float = 1800.0
+    # Whether a history read (blame_range, bisect, first_build, lesson checks) on a
+    # host without a repository's mirror clones it there in the background. On:
+    # every serving host keeps its own full copy of every mirror it is asked about.
+    # Off: such a host answers `no_git_mirror` and only the worker's host clones.
+    code_history_clone_on_read: bool = True
+    # Where git-history reads (blame, citation commit checks, PR history, commit
+    # coverage) come from. local = this host's mirrors; none = an edge host with
+    # no mirrors: those reads answer without history.
+    git_history: Literal["local", "none"] = "local"
+    # Every serving process clones the configured entries' mirrors it lacks at boot,
+    # in the background (code/app/index/mirrors.py): a history read answers
+    # `no_git_mirror: cloning <entry>` until its mirror is there. A full bare clone per
+    # host, again on every new disk: keep code_repos_root on a volume that outlives a
+    # rollout. Off: a mirror is cloned only when a read asks for it.
+    code_mirror_warmup: bool = True
+    # Clones the warm-up runs at once on one host (each after a random wait), so N
+    # replicas starting together do not all clone from the remote at once.
+    code_mirror_warmup_concurrency: int = 2
+    # Seconds between this host's fetches of its mirrors and sweeps of the mirrors,
+    # checkouts and lock files no active entry names. A round fetches only the branch
+    # tips, open PR heads and ledger merges the leader's pass recorded in ClickHouse
+    # that the mirror lacks: nothing when it is current. 0 = no fetch loop and no sweep.
+    code_mirror_fetch_interval_s: float = 300.0
+    # Hours between `git gc` runs of each mirror on this host (low CPU and IO
+    # priority, only with room for a second copy plus the margin below). 0 = never.
+    code_mirror_gc_interval_h: float = 168.0
+    # Free disk, in GB, a mirror's gc must leave beyond the mirror's own size; without
+    # it the gc waits another interval.
+    code_mirror_gc_margin_gb: float = 5.0
     # rlimits for each process of a sandboxed repository job (clone, fetch,
     # dependency install, compiler-tier harness; code/app/index/sandbox.py).
     # They bound each process, not a job's total (max_pids aside): there is no cgroup.

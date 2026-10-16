@@ -9,22 +9,24 @@ Markdown and says which path answered in
 the blob; a missing document still 404s.
 
 The route lives on the real app; `documents_repo.get_one` and the blob
-store are monkey-patched, so no ClickHouse or disk is touched.
+store are monkey-patched, so no ClickHouse is touched.
 """
 
 from __future__ import annotations
 
-import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
+from server.knowledge.app import download_routes
 from server.knowledge.domain.documents import text_download_filename
+from server.knowledge.store import blobs as blob_store
 from server.knowledge.store import documents as documents_repo
 from server.knowledge.store.documents import DocumentRow
-from server.storage import blob_store
 
 TEXT = "# Alert digest\n\nDisk 91% on node-3.\n\n## Actions\n\n- page the on-call\n"
 
@@ -42,27 +44,6 @@ def _row(**over: Any) -> DocumentRow:
     }
     base.update(over)
     return DocumentRow(**base)
-
-
-def _on_event_loop() -> bool:
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return False
-    return True
-
-
-class _Store:
-    def __init__(self, blobs: dict[str, bytes]) -> None:
-        self.blobs = blobs
-
-    def read(self, blob_path: str) -> bytes:
-        # The read is file I/O: it runs in a worker thread, never on the loop.
-        assert not _on_event_loop()
-        try:
-            return self.blobs[blob_path]
-        except KeyError as e:
-            raise FileNotFoundError(blob_path) from e
 
 
 @pytest.fixture
@@ -84,7 +65,35 @@ def _serve(
         return row
 
     monkeypatch.setattr(documents_repo, "get_one", fake_get_one)
-    monkeypatch.setattr(blob_store, "get_store", lambda: _Store(blobs or {}))
+
+    async def fake_size(org: str, namespace: str, sha: str, **_: Any) -> int | None:
+        data = (blobs or {}).get(sha)
+        return None if data is None else len(data)
+
+    @asynccontextmanager
+    async def fake_stream(org: str, namespace: str, sha: str, **_: Any) -> AsyncIterator[Any]:
+        data = (blobs or {}).get(sha, b"")
+
+        async def chunks() -> AsyncIterator[bytes]:
+            for i in range(0, len(data), 5):  # in pieces, as the HTTP response arrives
+                yield data[i : i + 5]
+
+        opened.append(sha)
+        try:
+            yield chunks()
+        finally:
+            closed.append(sha)
+
+    async def fake_read(org: str, namespace: str, sha: str, **_: Any) -> bytes:
+        return (blobs or {}).get(sha, b"")
+
+    monkeypatch.setattr(blob_store, "size", fake_size)
+    monkeypatch.setattr(blob_store, "read", fake_read)
+    monkeypatch.setattr(blob_store, "stream", fake_stream)
+
+
+opened: list[str] = []
+closed: list[str] = []
 
 
 URL = "/v1/knowledge.download?org=acme&namespace=team-alerts&source_uri=agents/alert-digest-2026-09-19.json"
@@ -132,12 +141,12 @@ def test_document_with_a_blob_still_serves_the_blob(
     _serve(
         monkeypatch,
         _row(
-            blob_path="acme/team-alerts/abc.pdf",
+            blob_path="a" * 64,
             blob_size=len(pdf),
             blob_content_type="application/pdf",
             original_filename="digest.pdf",
         ),
-        {"acme/team-alerts/abc.pdf": pdf},
+        {"a" * 64: pdf},
     )
     r = client.get(URL)
     assert r.status_code == 200
@@ -148,10 +157,98 @@ def test_document_with_a_blob_still_serves_the_blob(
 
 
 def test_blob_gone_is_still_410(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    _serve(monkeypatch, _row(blob_path="acme/team-alerts/missing.pdf", blob_size=3), {})
+    _serve(monkeypatch, _row(blob_path="c" * 64, blob_size=3), {})
     r = client.get(URL)
     assert r.status_code == 410
     assert r.json()["detail"]["code"] == "BLOB_GONE"
+
+
+def test_a_legacy_path_is_410_naming_the_import(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _serve(monkeypatch, _row(blob_path="acme/team-alerts/ab/" + "a" * 64, blob_size=3), {})
+    r = client.get(URL)
+    assert r.status_code == 410
+    assert "loom blobs import" in r.json()["detail"]["message"]
+
+
+def test_a_legacy_path_whose_original_was_imported_serves_it(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An edit that read the row before `loom blobs import` writes the old path
+    back; the path ends in the sha the import stored the bytes under."""
+    _serve(
+        monkeypatch,
+        _row(blob_path="acme/team-alerts/aa/" + "a" * 64, blob_size=3),
+        {"a" * 64: b"abc"},
+    )
+    r = client.get(URL)
+    assert r.status_code == 200 and r.content == b"abc"
+
+
+def test_a_large_blob_streams_in_chunks_and_closes_its_stream(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data = bytes(range(256)) * 4
+    monkeypatch.setattr(download_routes, "_BUFFER_MAX_BYTES", 100)
+    _serve(monkeypatch, _row(blob_path="d" * 64, blob_content_type="image/png"), {"d" * 64: data})
+    opened.clear()
+    closed.clear()
+    r = client.get(URL, headers={"Accept-Encoding": "identity"})
+    assert r.status_code == 200 and r.content == data
+    assert r.headers["content-length"] == str(len(data))
+    assert opened == closed == ["d" * 64]
+
+
+def test_a_small_blob_is_read_whole_before_the_answer_starts(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No ClickHouse connection waits on the client reading the body."""
+    data = bytes(range(256)) * 4
+    _serve(monkeypatch, _row(blob_path="d" * 64), {"d" * 64: data})
+    opened.clear()
+    r = client.get(URL)
+    assert r.status_code == 200 and r.content == data
+    assert r.headers["x-loom-download-source"] == "blob"
+    assert opened == []
+
+
+@pytest.mark.parametrize("buffer_max", [100, 10_000])
+def test_an_original_deleted_after_its_size_was_read_is_410(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, buffer_max: int
+) -> None:
+    data = b"x" * 1000
+    store = {"e" * 64: data}
+    _serve(monkeypatch, _row(blob_path="e" * 64), store)
+    size = blob_store.size
+
+    async def size_then_delete(*a: Any, **k: Any) -> int | None:
+        n = await size(*a, **k)
+        store.clear()
+        return n
+
+    monkeypatch.setattr(blob_store, "size", size_then_delete)
+    monkeypatch.setattr(download_routes, "_BUFFER_MAX_BYTES", buffer_max)
+    r = client.get(URL)
+    assert r.status_code == 410 and r.json()["detail"]["code"] == "BLOB_GONE"
+
+
+def test_an_original_this_replica_has_not_seen_is_read_again_sequentially(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An upload through another replica that has not reached this one is not a 410."""
+    from server.core.ch import sequential_reads_active
+
+    data = b"%PDF-1.7 fresh"
+    _serve(monkeypatch, _row(blob_path="f" * 64), {"f" * 64: data})
+    size = blob_store.size
+
+    async def lagging_size(*a: Any, **k: Any) -> int | None:
+        return await size(*a, **k) if sequential_reads_active() else None
+
+    monkeypatch.setattr(blob_store, "size", lagging_size)
+    r = client.get(URL)
+    assert r.status_code == 200 and r.content == data
 
 
 def _auth_on(monkeypatch: pytest.MonkeyPatch) -> TestClient:

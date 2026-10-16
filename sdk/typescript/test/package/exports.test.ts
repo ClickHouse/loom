@@ -32,6 +32,7 @@ const ROOT_EXPORTS = [
   "GENERATED_OP_COUNT",
   "INVALID_RESPONSE_CODE",
   "IdempotentConflict",
+  "IdempotentInProgress",
   "LOG_LEVELS",
   "LOOM_TOOL_SPECS",
   "LoomClient",

@@ -19,6 +19,7 @@ from server.code.api.models_history import CodeBlameRangeInput
 from server.code.app.index.gitrepo import GitError
 from server.code.domain.index import blame_introduced as intro
 from server.code.domain.index import blame_range as br
+from tests.unit.test_code_blame_range import mirror_on_disk
 
 ORG, NS, QA = "clickhouse", "code-clickhouse", "tracker-clickhouse"
 PATH = "src/Storages/MergeTree/MergeTreeData.cpp"
@@ -322,6 +323,7 @@ class _Cfg:
     def __init__(self, namespace: str, branch: str) -> None:
         self.org, self.namespace, self.git_branch = ORG, namespace, branch
         self.git_dir, self.repo = GIT, "ClickHouse/ClickHouse"
+        self.git_remote = "https://github.com/ClickHouse/ClickHouse.git"
 
 
 class _Repo:
@@ -421,8 +423,9 @@ def _row(n: int, title: str, sha: str, merged: datetime, **extra: Any) -> dict[s
 
 
 @pytest.fixture
-def wired(monkeypatch):
+def wired(monkeypatch, tmp_path):
     h.reset_cache_for_tests()
+    mirror_on_disk(monkeypatch, tmp_path)
     repo, git = _Repo(), _Git()
     monkeypatch.setattr(h, "CodeRepo", lambda: repo)
     monkeypatch.setattr(h, "require_code_intel", lambda: None)

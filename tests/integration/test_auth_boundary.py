@@ -2,8 +2,8 @@
 
 The suite-wide server runs with auth off, and the in-process transport tests
 (test_auth) exercise the gate without a socket. This module starts a private
-server with LOOM_AUTH_REQUIRED=true and its own issuer, audience, kid and
-secret, then sends every malformed, expired, mis-issued or mis-signed
+server with LOOM_AUTH_REQUIRED=true and its own issuer, audience and root
+secret (kid `default`), then sends every malformed, expired, mis-issued or mis-signed
 credential shape. Each must answer 401 and never echo the credential. A valid
 token for the same body answers 200, so each refusal is the gate and not a
 malformed call.
@@ -27,7 +27,7 @@ from tests.integration._resources import unique_org
 from tests.integration._spawn import loom_server
 
 _SECRET = secrets.token_urlsafe(48)
-_KID = "it-boundary"
+_KID = "default"
 _ISS, _AUD = "it-boundary-issuer", "it-boundary-audience"
 ORG = unique_org("auth-boundary")
 NS = f"ab-{uuid.uuid4().hex[:6]}"
@@ -38,8 +38,6 @@ def auth_server(control_plane_url: str) -> Iterator[str]:
     env = {
         "LOOM_AUTH_REQUIRED": "true",
         "LOOM_JWT_SECRET": _SECRET,
-        "LOOM_JWT_SECRETS_JSON": "",
-        "LOOM_JWT_ACTIVE_KID": _KID,
         "LOOM_JWT_ISSUER": _ISS,
         "LOOM_JWT_AUDIENCE": _AUD,
         "LOOM_JWT_PUBLIC_KEYS_JSON": "",

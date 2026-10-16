@@ -105,7 +105,7 @@ describe("boot order", () => {
     useStore.setState({ authed: true, whoami: null, myNamespaces: null, identity: null, view: "setup" });
     // jsdom has no scrollTo; the shell resets the main scroll on a view change
     Element.prototype.scrollTo = vi.fn();
-    window.history.replaceState(null, "", "/me/memories");
+    window.history.replaceState(null, "", "/memories");
     localStorage.setItem("loom_token_v1", jwt({ sub: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"] }));
     // a returning visitor: the last membership answer said `team` is a memory namespace
     localStorage.setItem("loom_kinds_v1", JSON.stringify({ [NS]: "memory", joined: "memory" }));
@@ -302,7 +302,7 @@ describe("login link", () => {
   });
 
   it("stores nothing from a ?token= query and scrubs it from the URL", async () => {
-    window.history.replaceState(null, "", "/me/memories?token=query.jwt.value");
+    window.history.replaceState(null, "", "/memories?token=query.jwt.value");
     render(<App />);
     await settle();
     expect(stored).toEqual([]);
@@ -310,7 +310,7 @@ describe("login link", () => {
   });
 
   it("stores a #token= fragment and scrubs it", async () => {
-    window.history.replaceState(null, "", "/me/memories#token=frag.jwt.value");
+    window.history.replaceState(null, "", "/memories#token=frag.jwt.value");
     render(<App />);
     await settle();
     expect(stored).toEqual(["frag.jwt.value"]);

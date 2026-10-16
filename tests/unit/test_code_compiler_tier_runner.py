@@ -91,7 +91,10 @@ async def test_an_operator_scip_clang_entry_without_its_build_tree_is_skipped(
     worker, module, watermark = TIERS[0]
     w = importlib.import_module(module)
     (tmp_path / "repo.git").mkdir()
-    result, ctx = await _run(w, _Cfg(tmp_path), _repo(watermark), owns=True)
+    (tmp_path / "a-file").write_text("")  # the checkout cannot be created under it
+    cfg = _Cfg(tmp_path)
+    cfg.scip_checkout_dir = str(tmp_path / "a-file" / "checkout")
+    result, ctx = await _run(w, cfg, _repo(watermark), owns=True)
     assert result.repos_checked == 1 and not result.errors and ctx.count == 0
     assert len(result.skipped) == 1
     assert result.skipped[0].startswith("code-x: ") and "checkout missing at" in result.skipped[0]

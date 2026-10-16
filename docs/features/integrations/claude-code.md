@@ -56,8 +56,8 @@ Every option is optional; Claude Code asks once, and an empty answer falls back 
   when no other token exists (`LOOM_API_KEY`, `config.json`, `~/.loom/token`).
 - **No credential at all.** On a server with `LOOM_SELF_SIGNUP=open`, the first session
   signs the machine up: token to `~/.loom/config.json`, a claim code to
-  `~/.loom/claim-<namespace>.txt`, and the primer says how to claim the namespace at
-  `/me`. `LOOM_AUTO_SIGNUP=off` disables this. Otherwise the primer says how to get a token.
+  `~/.loom/claim-<namespace>.txt`, and the primer says how to claim the namespace in
+  the dashboard. `LOOM_AUTO_SIGNUP=off` disables this. Otherwise the primer says how to get a token.
 - **One MCP entry only.** Do not add a user-scope `loom` entry as well: every tool would
   be listed twice, and that copy carries no code scope.
 
@@ -254,7 +254,7 @@ Bash tool respectively.
 
 ## Checking it works
 
-- After a few tool calls, the dashboard (`/me`) shows the session's observations and,
+- After a few tool calls, the dashboard shows the session's observations and,
   with logging on, its conversation. `run.get` on `cc-<session_id>` replays the run.
 - `/loom:loom-status` runs `bin/loom-client-status.mjs` from the plugin: the server it
   would call, whether the token is accepted and can write the namespace, and capture

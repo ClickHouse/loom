@@ -3,7 +3,7 @@
 memory.set is the autonomous-mode path (Claude-judged; default `pinned=False`).
 memory.pin is the explicit-mode path (user-driven; forces `pinned=True`).
 Both write to `loom.memory`; only the `pinned` column differs. The
-/me dashboard renders a PINNED badge on the explicit ones.
+dashboard renders a PINNED badge on the explicit ones.
 """
 
 from __future__ import annotations

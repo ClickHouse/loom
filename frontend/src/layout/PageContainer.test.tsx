@@ -2,7 +2,7 @@ import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { PageContainer } from "./PageContainer";
 
-// Every /me page uses the full width of the content column; the wrapper carries no
+// Every dashboard page uses the full width of the content column; the wrapper carries no
 // max-width and no centring, only the gutters.
 
 describe("PageContainer", () => {

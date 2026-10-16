@@ -22,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import hash_text
+from server.core.rmt_carry import register
 
 
 class Identity(BaseModel):
@@ -523,6 +524,8 @@ EMBEDDING_PERSISTED_COLS: dict[str, Any] = {
     "run_id": "-",
     "entities": [],
     "conflict_checked_at": None,
+    # The content_sha256 of the write this row mirrors; '' on rows written before 038.
+    "content_sha256": "",
     "tags": [],
     "status": "active",
     "confidence": 1.0,
@@ -807,3 +810,24 @@ def reemit_version(row: dict[str, Any]) -> int:
     - a retire with no causing row (a reconcile or a sweep) uses one next_version()
       drawn before its scan."""
     return int(row.get("version") or 0) + 1
+
+
+# A version row carries any column of the live table these builders do not
+# write (server/core/rmt_carry.py). Keys are the tables' ORDER BY.
+_IDENTITY = ("org", "namespace", "agent", "user_id")
+register("loom.memory", key=(*_IDENTITY, "session_id", "memory_key"), columns=MEMORY_PERSISTED_COLS)
+register(
+    "loom.memory_embeddings",
+    key=(*_IDENTITY, "session_id", "scope", "embedding_model", "memory_key"),
+    columns=EMBEDDING_PERSISTED_COLS,
+)
+register(
+    "loom.session_summaries",
+    key=(*_IDENTITY, "session_id", "embedding_model"),
+    columns=SESSION_SUMMARY_PERSISTED_COLS,
+)
+register(
+    "loom.entity_summaries",
+    key=(*_IDENTITY, "entity", "embedding_model"),
+    columns=ENTITY_SUMMARY_PERSISTED_COLS,
+)

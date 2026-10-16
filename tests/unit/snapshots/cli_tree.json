@@ -2093,6 +2093,98 @@
           }
          ]
         },
+        "entry-lock": {
+         "prog": "loom code entry-lock",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.code:_cmd_entry_lock"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": [
+            "command"
+           ]
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "org",
+            "namespace"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--org"
+           ],
+           "dest": "org",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "default: LOOM_CODE_ORG",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--namespace"
+           ],
+           "dest": "namespace",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "default: LOOM_CODE_NAMESPACE",
+           "metavar": null
+          },
+          {
+           "option_strings": [],
+           "dest": "command",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": "...",
+           "type": null,
+           "required": false,
+           "help": "-- <command> [args…]",
+           "metavar": null
+          }
+         ]
+        },
         "scip-delta": {
          "prog": "loom code scip-delta",
          "usage": null,
@@ -3118,6 +3210,7 @@
         "answers-purge": "loom code answers-purge",
         "scip-full": "loom code scip-full",
         "scip-lock-path": "loom code scip-lock-path",
+        "entry-lock": "loom code entry-lock",
         "scip-delta": "loom code scip-delta",
         "entries": "loom code entries",
         "warm": "loom code warm",
@@ -3204,6 +3297,11 @@
          "dest": "scip-lock-path",
          "help": "Print the entry's compiler-tier lock file (for `flock` in a host script: a full pass and a delta never work on one entry at once).",
          "metavar": "scip-lock-path"
+        },
+        {
+         "dest": "entry-lock",
+         "help": "Run a command under the entry's compiler-tier lock (this host's file and the deployment's lease): exit 75 when another pass holds it, 3 when the lease is lost mid-run (the command is stopped).",
+         "metavar": "entry-lock"
         },
         {
          "dest": "scip-delta",
@@ -4280,8 +4378,8 @@
       }
      ]
     },
-    "read-replica": {
-     "prog": "loom read-replica",
+    "participant": {
+     "prog": "loom participant",
      "usage": null,
      "description": null,
      "epilog": null,
@@ -4294,7 +4392,7 @@
        "title": "positional arguments",
        "description": null,
        "dests": [
-        "read_replica_cmd"
+        "participant_cmd"
        ]
       },
       {
@@ -4325,7 +4423,7 @@
       },
       {
        "option_strings": [],
-       "dest": "read_replica_cmd",
+       "dest": "participant_cmd",
        "action": "_SubParsersAction",
        "default": null,
        "const": null,
@@ -4337,7 +4435,7 @@
        "metavar": null,
        "subcommands": {
         "retire": {
-         "prog": "loom read-replica retire",
+         "prog": "loom participant retire",
          "usage": null,
          "description": null,
          "epilog": null,
@@ -4345,7 +4443,7 @@
          "add_help": true,
          "allow_abbrev": true,
          "defaults": {
-          "func": "server.cli.read_replica:_cmd_retire"
+          "func": "server.cli.participant:_cmd_retire"
          },
          "groups": [
           {
@@ -4415,13 +4513,891 @@
         }
        },
        "aliases_of": {
-        "retire": "loom read-replica retire"
+        "retire": "loom participant retire"
        },
        "choices_help": [
         {
          "dest": "retire",
-         "help": "Retire the provider participant of a read-replica whose process died without shutting down (its id is in that replica's /v1/health).",
+         "help": "Retire the provider participant of a process that died without shutting down (its id is `participant_id` in that process's /v1/health).",
          "metavar": "retire"
+        }
+       ]
+      }
+     ]
+    },
+    "deployment": {
+     "prog": "loom deployment",
+     "usage": null,
+     "description": null,
+     "epilog": null,
+     "formatter_class": "argparse:HelpFormatter",
+     "add_help": true,
+     "allow_abbrev": true,
+     "defaults": {},
+     "groups": [
+      {
+       "title": "positional arguments",
+       "description": null,
+       "dests": [
+        "deployment_cmd"
+       ]
+      },
+      {
+       "title": "options",
+       "description": null,
+       "dests": [
+        "help"
+       ]
+      }
+     ],
+     "mutually_exclusive": [],
+     "arguments": [
+      {
+       "option_strings": [
+        "-h",
+        "--help"
+       ],
+       "dest": "help",
+       "action": "_HelpAction",
+       "default": "==SUPPRESS==",
+       "const": null,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "show this help message and exit",
+       "metavar": null
+      },
+      {
+       "option_strings": [],
+       "dest": "deployment_cmd",
+       "action": "_SubParsersAction",
+       "default": null,
+       "const": null,
+       "choices": null,
+       "nargs": "A...",
+       "type": null,
+       "required": true,
+       "help": null,
+       "metavar": null,
+       "subcommands": {
+        "publish": {
+         "prog": "loom deployment publish",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.deployment:_cmd_publish"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "yes"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--yes"
+           ],
+           "dest": "yes",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Replace what must match",
+           "metavar": null
+          }
+         ]
+        }
+       },
+       "aliases_of": {
+        "publish": "loom deployment publish"
+       },
+       "choices_help": [
+        {
+         "dest": "publish",
+         "help": "Publish this env's configuration as the deployment's, replacing its root secret or LOOM_EMBEDDING_MODEL/DIM on purpose.",
+         "metavar": "publish"
+        }
+       ]
+      }
+     ]
+    },
+    "signing-key": {
+     "prog": "loom signing-key",
+     "usage": null,
+     "description": null,
+     "epilog": null,
+     "formatter_class": "argparse:HelpFormatter",
+     "add_help": true,
+     "allow_abbrev": true,
+     "defaults": {
+      "func": "server.cli.portability:_cmd_signing_key"
+     },
+     "groups": [
+      {
+       "title": "positional arguments",
+       "description": null,
+       "dests": [
+        "signing_cmd"
+       ]
+      },
+      {
+       "title": "options",
+       "description": null,
+       "dests": [
+        "help"
+       ]
+      }
+     ],
+     "mutually_exclusive": [],
+     "arguments": [
+      {
+       "option_strings": [
+        "-h",
+        "--help"
+       ],
+       "dest": "help",
+       "action": "_HelpAction",
+       "default": "==SUPPRESS==",
+       "const": null,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "show this help message and exit",
+       "metavar": null
+      },
+      {
+       "option_strings": [],
+       "dest": "signing_cmd",
+       "action": "_SubParsersAction",
+       "default": null,
+       "const": null,
+       "choices": null,
+       "nargs": "A...",
+       "type": null,
+       "required": true,
+       "help": null,
+       "metavar": null,
+       "subcommands": {
+        "rotate": {
+         "prog": "loom signing-key rotate",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {},
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "algorithm",
+            "activate_in"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--algorithm"
+           ],
+           "dest": "algorithm",
+           "action": "_StoreAction",
+           "default": "HS256",
+           "const": null,
+           "choices": [
+            "HS256",
+            "RS256"
+           ],
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--activate-in"
+           ],
+           "dest": "activate_in",
+           "action": "_StoreAction",
+           "default": 300.0,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": "builtins:float",
+           "required": false,
+           "help": "seconds until it signs; at least twice the servers' LOOM_JWT_KEYRING_REFRESH_SECONDS (default 300)",
+           "metavar": null
+          }
+         ]
+        },
+        "import": {
+         "prog": "loom signing-key import",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {},
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "map_env",
+            "active",
+            "algorithm",
+            "activate_in"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--map-env"
+           ],
+           "dest": "map_env",
+           "action": "_StoreAction",
+           "default": "LOOM_JWT_SECRETS_JSON",
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "env var with the map",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--active"
+           ],
+           "dest": "active",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "the kid that signs new tokens",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--algorithm"
+           ],
+           "dest": "algorithm",
+           "action": "_StoreAction",
+           "default": "HS256",
+           "const": null,
+           "choices": [
+            "HS256",
+            "RS256"
+           ],
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--activate-in"
+           ],
+           "dest": "activate_in",
+           "action": "_StoreAction",
+           "default": 0.0,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": "builtins:float",
+           "required": false,
+           "help": "seconds until --active signs (default 0: run before the new build serves, while every old process already holds the key). Once new-build processes serve, at least twice their LOOM_JWT_KEYRING_REFRESH_SECONDS (refused otherwise)",
+           "metavar": null
+          }
+         ]
+        },
+        "retire": {
+         "prog": "loom signing-key retire",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {},
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": [
+            "kid"
+           ]
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [],
+           "dest": "kid",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": null,
+           "metavar": null
+          }
+         ]
+        },
+        "record-root": {
+         "prog": "loom signing-key record-root",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {},
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          }
+         ]
+        },
+        "list": {
+         "prog": "loom signing-key list",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {},
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          }
+         ]
+        }
+       },
+       "aliases_of": {
+        "rotate": "loom signing-key rotate",
+        "import": "loom signing-key import",
+        "retire": "loom signing-key retire",
+        "record-root": "loom signing-key record-root",
+        "list": "loom signing-key list"
+       },
+       "choices_help": [
+        {
+         "dest": "rotate",
+         "help": "Add a key; it signs once every process has loaded it.",
+         "metavar": "rotate"
+        },
+        {
+         "dest": "import",
+         "help": "Copy a kid -> key map (the former LOOM_JWT_SECRETS_JSON, else {--active: LOOM_JWT_SECRET}) into the keyring, so the tokens it signed keep verifying; --active signs from now. Under RS256 the map's 'default' is stored as 'default-rs256', which verifies and signs as the old 'default'.",
+         "metavar": "import"
+        },
+        {
+         "dest": "retire",
+         "help": "Stop a key (or 'default') verifying tokens.",
+         "metavar": "retire"
+        },
+        {
+         "dest": "record-root",
+         "help": "Record this LOOM_JWT_SECRET as the deployment's root secret, after replacing it on purpose (keys sealed under the old one stay unusable).",
+         "metavar": "record-root"
+        },
+        {
+         "dest": "list",
+         "help": "List the keys.",
+         "metavar": "list"
+        }
+       ]
+      }
+     ]
+    },
+    "blobs": {
+     "prog": "loom blobs",
+     "usage": null,
+     "description": null,
+     "epilog": null,
+     "formatter_class": "argparse:HelpFormatter",
+     "add_help": true,
+     "allow_abbrev": true,
+     "defaults": {},
+     "groups": [
+      {
+       "title": "positional arguments",
+       "description": null,
+       "dests": [
+        "blobs_cmd"
+       ]
+      },
+      {
+       "title": "options",
+       "description": null,
+       "dests": [
+        "help"
+       ]
+      }
+     ],
+     "mutually_exclusive": [],
+     "arguments": [
+      {
+       "option_strings": [
+        "-h",
+        "--help"
+       ],
+       "dest": "help",
+       "action": "_HelpAction",
+       "default": "==SUPPRESS==",
+       "const": null,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "show this help message and exit",
+       "metavar": null
+      },
+      {
+       "option_strings": [],
+       "dest": "blobs_cmd",
+       "action": "_SubParsersAction",
+       "default": null,
+       "const": null,
+       "choices": null,
+       "nargs": "A...",
+       "type": null,
+       "required": true,
+       "help": null,
+       "metavar": null,
+       "subcommands": {
+        "import": {
+         "prog": "loom blobs import",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "dry_run": true,
+          "apply_gated": true,
+          "func": "server.cli.portability:_cmd_blobs_import"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": [
+            "blob_dir"
+           ]
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "dry_run",
+            "dry_run",
+            "accept_missing"
+           ]
+          }
+         ],
+         "mutually_exclusive": [
+          {
+           "required": false,
+           "dests": [
+            "dry_run",
+            "dry_run"
+           ]
+          }
+         ],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [],
+           "dest": "blob_dir",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "The old blob directory, e.g. var/blobs",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--apply"
+           ],
+           "dest": "dry_run",
+           "action": "_StoreFalseAction",
+           "default": true,
+           "const": false,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "store the originals and repoint the documents (default: dry run)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--dry-run"
+           ],
+           "dest": "dry_run",
+           "action": "_StoreTrueAction",
+           "default": true,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "report what --apply would write, write nothing (the default)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--accept-missing"
+           ],
+           "dest": "accept_missing",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "give up the live documents whose file is missing or corrupt: stamp them like the rest instead of exiting 1. Run the import on every host that held a blob directory first; a file a live document names is kept either way",
+           "metavar": null
+          }
+         ]
+        }
+       },
+       "aliases_of": {
+        "import": "loom blobs import"
+       },
+       "choices_help": [
+        {
+         "dest": "import",
+         "help": "Move the originals of a filesystem blob directory (the old LOOM_BLOB_DIR) into ClickHouse.",
+         "metavar": "import"
+        }
+       ]
+      }
+     ]
+    },
+    "provider-lock": {
+     "prog": "loom provider-lock",
+     "usage": null,
+     "description": null,
+     "epilog": null,
+     "formatter_class": "argparse:HelpFormatter",
+     "add_help": true,
+     "allow_abbrev": true,
+     "defaults": {},
+     "groups": [
+      {
+       "title": "positional arguments",
+       "description": null,
+       "dests": [
+        "provider_lock_cmd"
+       ]
+      },
+      {
+       "title": "options",
+       "description": null,
+       "dests": [
+        "help"
+       ]
+      }
+     ],
+     "mutually_exclusive": [],
+     "arguments": [
+      {
+       "option_strings": [
+        "-h",
+        "--help"
+       ],
+       "dest": "help",
+       "action": "_HelpAction",
+       "default": "==SUPPRESS==",
+       "const": null,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "show this help message and exit",
+       "metavar": null
+      },
+      {
+       "option_strings": [],
+       "dest": "provider_lock_cmd",
+       "action": "_SubParsersAction",
+       "default": null,
+       "const": null,
+       "choices": null,
+       "nargs": "A...",
+       "type": null,
+       "required": true,
+       "help": null,
+       "metavar": null,
+       "subcommands": {
+        "clear": {
+         "prog": "loom provider-lock clear",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.provider_lock:_cmd_clear"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "holder"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--holder"
+           ],
+           "dest": "holder",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "The holder the lock names (`holder` in loom._migration_lock, name = 'provider_configuration')",
+           "metavar": null
+          }
+         ]
+        }
+       },
+       "aliases_of": {
+        "clear": "loom provider-lock clear"
+       },
+       "choices_help": [
+        {
+         "dest": "clear",
+         "help": "Free the provider configuration lock of a holder whose process stopped (refused while it renews, heartbeats or has a query running).",
+         "metavar": "clear"
         }
        ]
       }
@@ -10289,7 +11265,11 @@
     "up": "loom up",
     "down": "loom down",
     "ch-setup": "loom ch-setup",
-    "read-replica": "loom read-replica",
+    "participant": "loom participant",
+    "deployment": "loom deployment",
+    "signing-key": "loom signing-key",
+    "blobs": "loom blobs",
+    "provider-lock": "loom provider-lock",
     "reembed": "loom reembed",
     "reextract": "loom reextract",
     "deploy-delta": "loom deploy-delta",
@@ -10369,9 +11349,29 @@
      "metavar": "ch-setup"
     },
     {
-     "dest": "read-replica",
-     "help": "Read-replicas: more Looms on the same ClickHouse.",
-     "metavar": "read-replica"
+     "dest": "participant",
+     "help": "The Loom processes a provider change waits for.",
+     "metavar": "participant"
+    },
+    {
+     "dest": "deployment",
+     "help": "The configuration every replica checks itself against.",
+     "metavar": "deployment"
+    },
+    {
+     "dest": "signing-key",
+     "help": "The token signing keys beside LOOM_JWT_SECRET, kept in ClickHouse.",
+     "metavar": "signing-key"
+    },
+    {
+     "dest": "blobs",
+     "help": "Uploaded document originals.",
+     "metavar": "blobs"
+    },
+    {
+     "dest": "provider-lock",
+     "help": "The provider configuration lock.",
+     "metavar": "provider-lock"
     },
     {
      "dest": "reembed",
@@ -10560,12 +11560,12 @@
     },
     {
      "dest": "init",
-     "help": "Create an identity on a Loom server. `--agent NAME` signs an agent up by itself (server needs LOOM_SELF_SIGNUP=open): mints a writer token on a fresh agent-<slug> namespace, saves it to ~/.loom/token, and prints the one-time code a person uses at /me to claim the namespace.",
+     "help": "Create an identity on a Loom server. `--agent NAME` signs an agent up by itself (server needs LOOM_SELF_SIGNUP=open): mints a writer token on a fresh agent-<slug> namespace, saves it to ~/.loom/token, and prints the one-time code a person uses in the dashboard to claim the namespace.",
      "metavar": "init"
     },
     {
      "dest": "ingest-transcript",
-     "help": "Pipe a chat-history file (markdown / JSON) into Loom's conversation table as one thread. Generic ingest for tools without an MCP integration (Aider, Continue.dev, JetBrains AI, anything else): export the chat → run this command → the thread shows in /me Sessions.",
+     "help": "Pipe a chat-history file (markdown / JSON) into Loom's conversation table as one thread. Generic ingest for tools without an MCP integration (Aider, Continue.dev, JetBrains AI, anything else): export the chat → run this command → the thread shows in the dashboard's Conversations.",
      "metavar": "ingest-transcript"
     },
     {

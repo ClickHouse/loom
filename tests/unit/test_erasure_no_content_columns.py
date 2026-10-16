@@ -25,6 +25,8 @@ _CONTENT_SHAPED = re.compile(
 # table -> {column: why it is not subject content}
 _REVIEWED: dict[str, dict[str, str]] = {
     "loom.blacklist": {"reason": "the admin's reason for a refusal pattern"},
+    "loom.runtime_overrides": {"value": "a rate limit or latency budget as JSON numbers"},
+    "loom.frontend_assets": {"body": "the dashboard's own built JS, CSS and fonts"},
     "loom.categories": {"summary": "operator-authored taxonomy text"},
     "loom.code_answers": {
         "question": "a question about the public code record",

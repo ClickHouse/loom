@@ -28,7 +28,7 @@ import type { View } from "./state";
  * name.
  *
  * A token that names ONLY code and/or QA namespaces — a QA team, a reviewer, a code-index
- * service account — is a real persona, not a misconfiguration. On bare `/me` it lands on
+ * service account — is a real persona, not a misconfiguration. On the bare root it lands on
  * Repositories (`landingTarget`) with the picker on its first reachable code or tracker
  * namespace (code before qa, alphabetical within); only a token that reaches nothing
  * lands on Setup. An explicit path always wins (`deepLinkNamespace`): a deep link keeps
@@ -147,7 +147,7 @@ export function referenceNamespaces(claims: readonly string[], mine: readonly My
     .filter((ns, i, all) => all.indexOf(ns) === i);
 }
 
-/** Where bare `/me` lands. `view` is null when the default-namespace chain found a memory
+/** Where the bare root lands. `view` is null when the default-namespace chain found a memory
  *  namespace — the caller keeps its own default view for that case. */
 interface LandingTarget {
   view: "code" | "setup" | null;

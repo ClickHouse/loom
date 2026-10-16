@@ -4,6 +4,7 @@ ships it off — and the knob to turn that off exists."""
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -58,7 +59,24 @@ async def test_keepalive_timeout_reaches_the_connector(monkeypatch: pytest.Monke
     monkeypatch.setattr(settings, "ch_keepalive_timeout", 7.5)
     await ch_mod.CHClient().connect()
     assert captured["keepalive_timeout"] == 7.5
-    assert captured["connector_limit"] == settings.ch_pool_maxsize
+    # Streaming reads have connections of their own beside the pool.
+    assert captured["connector_limit"] == settings.ch_pool_maxsize + ch_mod.STREAM_SLOTS
+
+
+@pytest.mark.asyncio
+async def test_an_unbounded_pool_leaves_the_connector_unbounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    async def _fake_get_async_client(**kw: Any) -> Any:
+        captured.update(kw)
+        return SimpleNamespace()
+
+    monkeypatch.setattr(ch_mod.clickhouse_connect, "get_async_client", _fake_get_async_client)
+    monkeypatch.setattr(settings, "ch_pool_maxsize", 0)
+    await ch_mod.CHClient().connect()
+    assert captured["connector_limit"] == captured["connector_limit_per_host"] == 0
 
 
 def test_committed_idiom_passes_through_and_fire_and_forget_turns_dedup_off() -> None:

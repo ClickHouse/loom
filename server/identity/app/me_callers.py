@@ -127,7 +127,7 @@ async def subject_aliases_of(org: str, subject: str) -> list[str]:
 
 
 def caller_identity(request: Request, *, prefer_bearer_in_dev: bool = False) -> tuple[str, str]:
-    """(subject, org) for a /me caller, tolerant of dev mode.
+    """(subject, org) for a caller-API caller, tolerant of dev mode.
 
     Auth-on: verify the bearer (401 if missing/invalid). Auth-off: a synthetic
     single-user identity, unless a self-minted bearer is present and

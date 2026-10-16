@@ -4,7 +4,7 @@ loom.conflict_allowlist.
 Conflict semantics: when memory.set writes a row that's
 semantically close to an existing row in the same scope, both get
 `status='conflicted'` and link to each other via `conflict_with`.
-Operators resolve via /me Conflicts; the three decisions are
+Operators resolve in the dashboard's Review queue; the three decisions are
 `revise` (target wins), `contract` (target loses), `allow`
 (both legit; remember the pair via loom.conflict_allowlist).
 

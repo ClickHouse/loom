@@ -18,7 +18,7 @@ from dataclasses import dataclass
 
 from fastapi import HTTPException
 
-from server.core.ch import get_client
+from server.core.ch import get_client, sequential_reads
 from server.memory.store import blacklist as _repo
 from server.settings import settings
 
@@ -137,7 +137,8 @@ _lock = threading.Lock()
 
 
 async def _current_version() -> tuple[int, int]:
-    return await _repo.version_watermark(ch=get_client())
+    with sequential_reads():  # a bump another replica just wrote
+        return await _repo.version_watermark(ch=get_client())
 
 
 async def _bump_version(updated_by: str = "") -> None:
@@ -180,9 +181,11 @@ async def _refresh_cache() -> None:
     # The watermark is read BEFORE the rows: add/remove writes its pattern row
     # and then bumps, so a bump this read missed moves the watermark past the
     # cached one and the next check refreshes; one it saw was preceded by a
-    # row write the read below sees.
-    new_version = await _current_version()
-    rows = await _repo.active_patterns(ch=get_client())
+    # row write the read below sees. Both read with sequential consistency: on a
+    # lagging replica the rows could otherwise predate the watermark they follow.
+    with sequential_reads():
+        new_version = await _current_version()
+        rows = await _repo.active_patterns(ch=get_client())
     new_cache: list[BlacklistPattern] = []
     for r in rows:
         pattern_type = r["pattern_type"]
