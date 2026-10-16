@@ -610,6 +610,61 @@ async def test_a_replayed_triples_insert_is_dated_at_the_write(monkeypatch) -> N
     assert repaired == [arrived]
 
 
+class _KeyLinkFailsCH(_GraphCH):
+    """The triples land; the key-link insert beside them fails."""
+
+    async def insert(self, table, rows, settings=None):
+        if table == "loom.entity_triple_memories":
+            raise RuntimeError("insert timed out")
+        await super().insert(table, rows, settings)
+
+
+@pytest.mark.parametrize("resolved", [{}, {"bob": "robert"}])
+async def test_a_failed_triples_insert_replays_the_names_the_write_resolved(
+    monkeypatch, resolved
+) -> None:
+    # The triples may have landed: the replay names them as the write did, even when
+    # the write resolved no name ({}), not as names resolve by the replay.
+    import json
+
+    from server.memory.app import projections
+    from server.memory.app.projection_errors import bulk_projection_payload
+
+    def resolve_as(names):
+        async def resolve(input, entity_texts, *, ch):
+            return names
+
+        return resolve
+
+    monkeypatch.setattr(projections, "resolve_projection_entity_map", resolve_as(resolved))
+    failure = _graph_failure("entity_triples")
+    write = projections.MemoryBulkSetInput(
+        org="o", namespace="n", agent="a", entries=failure.payload["entries"]
+    )
+    results = [projections._BulkSetResult(**r) for r in failure.payload["results"]]
+    with pytest.raises(Exception) as raised:
+        await projections.write_entity_triples(write, results, ch=_KeyLinkFailsCH())
+    payload = json.loads(json.dumps(bulk_projection_payload(write, results, error=raised.value)))
+    assert payload["triples_entity_map"] == resolved
+
+    objects: list = []
+
+    class _Recording(_GraphCH):
+        async def insert(self, table, rows, settings=None):
+            if table == "loom.entity_triples":
+                objects.extend(r["object"] for r in rows)
+            await super().insert(table, rows, settings)
+
+    async def repair(input, triples, *, ch, at):
+        return []
+
+    monkeypatch.setattr(projections, "_repair_contradictory_triples", repair)
+    monkeypatch.setattr(projections, "resolve_projection_entity_map", resolve_as({"bob": "bobby"}))
+    failure.payload.update(payload)
+    assert (await retry_projection_failure(failure, ch=_Recording())).resolved
+    assert objects == [resolved.get("bob", "bob")]
+
+
 async def test_an_insert_failure_recorded_without_its_arrival_replays_as_it_did(
     monkeypatch,
 ) -> None:

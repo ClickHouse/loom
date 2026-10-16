@@ -390,7 +390,9 @@ the value it was written or stated for (`carried`):
   row revised since, whose revision reconciles its facts, so the revised value is never
   dated at the Undo. A failed triple write records when it arrived: a replay of a failed
   insert inserts the triples seen at that arrival, not at its own clock, so an older
-  value replayed after a newer one lands behind it instead of closing it. A failed
+  value replayed after a newer one lands behind it instead of closing it. Some of its
+  triples may have landed before the insert failed, so it also records what the write
+  resolved its names to (none is recorded too), and the replay names them so. A failed
   interval repair records the triple write for replay too; when the triples landed before the repair failed, the replay does not insert them
   again, never repairs as of the replay's own clock, and names their entities as the
   write resolved them (the failure records those resolutions), not as they resolve by

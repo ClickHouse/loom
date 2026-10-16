@@ -33,11 +33,13 @@ TRIPLES_ENTITY_MAP = "triples_entity_map"
 
 class TriplesInsertFailed(Exception):
     """A write's triples, dated at `arrived_at`, failed to insert. The replay inserts
-    them dated at that arrival, not at its own clock."""
+    them dated at that arrival, not at its own clock. Some may have landed, so the
+    replay names them by `entity_map`, as `TriplesRepairFailed` does."""
 
     def __init__(self, arrived_at: datetime, cause: BaseException) -> None:
         super().__init__(f"triples insert failed: {type(cause).__name__}: {cause}")
         self.arrived_at = arrived_at
+        self.entity_map: dict[str, str] = {}
 
 
 class TriplesRepairFailed(Exception):
@@ -110,8 +112,9 @@ def bulk_projection_payload(
 ) -> dict[str, Any]:
     """What a replay of a bulk write's projection needs, the writer's read scope
     included: a replay runs outside the request, and retires only within it. A triples
-    `error` records when the write arrived; one after the triples landed also records
-    the closes the repair had made, so the replay only finishes their repair."""
+    `error` records when the write arrived and what it resolved its names to; one after
+    the triples landed also records the closes the repair had made, so the replay only
+    finishes their repair."""
     entries: list[dict[str, Any]] = []
     for entry in list(getattr(input, "entries", []) or []):
         if hasattr(entry, "model_dump"):
@@ -134,6 +137,7 @@ def bulk_projection_payload(
     }
     if isinstance(error, TriplesInsertFailed):
         payload[TRIPLES_ARRIVED_AT] = error.arrived_at.isoformat()
+        payload[TRIPLES_ENTITY_MAP] = dict(error.entity_map)
     if isinstance(error, TriplesRepairFailed):
         payload.update(repair_failure_payload(error))
     return payload

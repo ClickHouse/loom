@@ -1373,6 +1373,61 @@ async def test_a_revision_whose_links_fail_to_write_still_holds_its_successor(
     assert await _listed(org, "favourite_city", {"london", "rome"}) == {"london", "rome"}
 
 
+async def test_a_replayed_insert_names_its_triples_as_the_write_resolved_them(
+    ch, org, monkeypatch
+) -> None:
+    # London's triple lands, its key links fail; London then resolves to another name.
+    # The replay must repair the London that landed, so Paris closes.
+    from server.core import ch as ch_mod
+    from server.memory.app import projections
+    from server.memory.app.projection_errors import (
+        TriplesInsertFailed,
+        bulk_projection_payload,
+        record_input_projection_failure,
+    )
+    from server.memory.app.projection_failures import retry_projection_failure
+
+    live = ("user", "live_in")
+    await _stated(ch, org, "s1", "I live in Paris", (*live, "paris"))
+    _row, write, results = await _row_and_write(
+        ch, org, "s2", "I live in London", [(*live, "london")], memory_key="k2"
+    )
+    names: dict[str, str] = {}
+
+    async def resolve(input: Any, entity_texts: list[str], *, ch: Any) -> dict[str, str]:
+        return names
+
+    client = ch_mod.get_client()
+    insert, landed = client.insert, asyncio.Event()
+
+    async def links_fail(table: str, rows: Any, **kw: Any) -> Any:
+        if table == "loom.entity_triple_memories":
+            await landed.wait()
+            raise ConnectionError("transient")
+        out = await insert(table, rows, **kw)
+        if table == "loom.entity_triples":
+            landed.set()
+        return out
+
+    monkeypatch.setattr(projections, "resolve_projection_entity_map", resolve)
+    monkeypatch.setattr(client, "insert", links_fail)
+    with pytest.raises(TriplesInsertFailed) as raised:
+        await projections.write_entity_triples(write, results, ch=ch)
+    monkeypatch.setattr(client, "insert", insert)
+    await record_input_projection_failure(
+        write,
+        projection="entity_triples",
+        error=raised.value,
+        payload=bulk_projection_payload(write, results, error=raised.value),
+        source_operation="memory.bulk_set",
+    )
+    failure = await _recorded_reconcile(ch, org, "entity_triples")
+    names["london"] = "london city"
+    assert (await retry_projection_failure(failure, ch=ch)).resolved
+    await _mutations_done(ch, org)
+    assert await _open_cities(ch, org, {"london"}) == {"london"}
+
+
 @pytest.mark.parametrize(("copies", "want"), [(1, {"rome"}), (2, {"london", "rome"})])
 async def test_a_successor_is_judged_by_an_unredacted_copy_of_its_value(
     ch, org, copies, want
@@ -3345,11 +3400,12 @@ def _undo_of(winner: dict[str, Any]) -> Any:
     )
 
 
-async def _recorded_reconcile(ch: Any, org: str) -> Any:
-    from server.memory.app.projection_failures import TRIPLES_RECONCILE, list_projection_failures
+async def _recorded_reconcile(ch: Any, org: str, projection: str = "triples_reconcile") -> Any:
+    """The org's one recorded failure of `projection`, waiting for it to land."""
+    from server.memory.app.projection_failures import list_projection_failures
 
     for _ in range(100):
-        failures = await list_projection_failures(org=org, projection=TRIPLES_RECONCILE, ch=ch)
+        failures = await list_projection_failures(org=org, projection=projection, ch=ch)
         if failures:
             break
         await asyncio.sleep(0.1)

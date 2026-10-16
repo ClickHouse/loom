@@ -517,7 +517,9 @@ async def write_entity_triples(
                 triples, triple_memories, triple_rows, dedup_token=dedup_token, ch=ch
             )
         except Exception as e:
-            raise TriplesInsertFailed(arrived, e) from e
+            failed = TriplesInsertFailed(arrived, e)
+            failed.entity_map = resolved_names
+            raise failed from e
 
     try:
         await _repair_triples(
