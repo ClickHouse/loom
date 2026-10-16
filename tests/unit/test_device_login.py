@@ -192,6 +192,11 @@ def test_an_unknown_device_code_is_an_invalid_grant() -> None:
     assert _error(_poll(_client(), "made-up")) == "invalid_grant"
 
 
+def test_an_unknown_device_code_takes_no_poll_slot() -> None:
+    assert _error(_poll(_client(), "made-up")) == "invalid_grant"
+    assert len(device._polls) == 0
+
+
 def test_a_device_code_for_another_client_is_refused() -> None:
     c = _client()
     r = c.post(

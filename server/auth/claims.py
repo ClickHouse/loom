@@ -2,8 +2,9 @@
 
 Whatever a sign-in spends or moves lives here, one key each, in
 loom.oauth_signin_state (KeeperMap, schemas/migrations/033_oauth_signin_state.sql): a
-code, an identity provider round trip in flight, a device grant, and the
-current refresh token of each session. Every change is a compare-and-set
+code, a device grant, a single-use mark per identity provider callback the
+provider vouched for, an MCP approval awaiting its click, and the current
+refresh token of each session. Every change is a compare-and-set
 (`swap`): a strict-mode KeeperMap write that Keeper applies only while the key
 still holds the value the request read. Of two requests spending one
 credential exactly one wins, however slow either is and whichever ClickHouse

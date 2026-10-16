@@ -347,8 +347,6 @@ async def device_code_grant(f: dict[str, str]) -> dict[str, Any]:
     if f.get("client_id") != DEVICE_CLIENT_ID:
         raise oauth.OAuthError("invalid_client")
     device_code = f.get("device_code", "")
-    if not _polls.allow(token_id(device_code)):
-        raise oauth.OAuthError("slow_down")
     try:
         device = await oauth.store.take_device(device_code)
     except CodeReplayed as e:
@@ -358,6 +356,9 @@ async def device_code_grant(f: dict[str, str]) -> dict[str, Any]:
     if device["exp"] < int(time.time()):
         raise oauth.OAuthError("expired_token")
     if device["status"] == "pending":
+        # Counted only for a real grant, so made-up codes take no slot.
+        if not _polls.allow(device["id"]):
+            raise oauth.OAuthError("slow_down")
         raise oauth.OAuthError("authorization_pending")
     if device["status"] != "approved":
         raise oauth.OAuthError("access_denied")

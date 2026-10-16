@@ -1,8 +1,8 @@
 -- Sign-in state that changes once, kept in ClickHouse Keeper.
 --
--- One key per credential a sign-in spends or moves (a code, an identity
--- provider round trip in flight, a device grant) and per session (which
--- refresh token is its current one). server/auth/claims.py changes a value
+-- One key per credential a sign-in spends or moves (a code, a device grant,
+-- a single-use mark per identity provider callback, an MCP approval awaiting
+-- its click) and per session (which refresh token is its current one). server/auth/claims.py changes a value
 -- only by a strict-mode compare-and-set, so of two requests spending one
 -- credential exactly one wins. Each key carries its credential's expiry and is
 -- swept soon after it; the key limit caps what a flood of unauthenticated

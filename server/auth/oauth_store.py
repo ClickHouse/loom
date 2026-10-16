@@ -1,9 +1,10 @@
 """Where OAuth state lives.
 
 What a sign-in spends or moves once is kept in Keeper (claims.py), changed only
-by compare-and-set: a code, an identity provider round trip in flight
-(`pending`), a device grant, and which refresh token is each session's current
-one (`family:<id>`). Of two requests spending the same credential exactly one
+by compare-and-set: a code, a device grant, a single-use mark per
+identity provider callback the provider vouched for (`callback:<state>`), an MCP
+approval awaiting its click (`pending`), and which refresh token is each
+session's current one (`family:<id>`). Of two requests spending the same credential exactly one
 wins. The rest is in `loom.oauth_state` (ClickHouse): registered clients,
 refresh tokens' grants (written before the token is handed out, read with
 sequential consistency) and owed revocations.
