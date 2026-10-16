@@ -607,9 +607,11 @@ async def _close_dropped_edges(
 async def _keep_one_current(input: Any, rows: list[Mapping[str, Any]], *, ch: Any) -> None:
     """One value of a single-valued relation stays current, never neither. For each
     relation of `rows` (the stored triples of the relations a close touched) with no
-    value valid now, the newest value a live row still holds is stated again from now,
-    as an Undo states it, edge included: London undone over Paris, then revised away,
-    gives Paris back from then on."""
+    value valid now, the newest value a live row still holds is stated again from the
+    relation's last close, as an Undo states it, edge included: London undone over
+    Paris, then revised away, gives Paris back from then on. It goes through the Undo's
+    `reopen_held_facts` with the rows holding it, so a row revised meanwhile is left
+    to its revision."""
     from server.memory.app import graph_undo
     from server.memory.domain.graph_quality import observation_key
 
@@ -663,18 +665,57 @@ async def _keep_one_current(input: Any, rows: list[Mapping[str, Any]], *, ch: An
     )
     if not back:
         return
+    # Stated as of the relations' last close, which a replay reads back as it is: every
+    # attempt dates its edge and triple markers alike.
+    restated = {(s, r) for s, r, *_ in back}
+    restored_at = max(
+        r["invalid_at"]
+        for r in rows
+        if (r["subject"], r["relation"]) in restated and r["invalid_at"] is not None
+    )
     # Named by the closes it answers, so a replay finds the markers an attempt wrote.
     # The row's own seen_at (microseconds) too: a marker closed again in the second of
     # the close it answered is another row, and needs a marker of its own.
-    restore_id = uuid.uuid5(uuid.NAMESPACE_OID, repr(back)).hex
-    await graph_undo.restate_facts(
+    restore_id = uuid.uuid5(uuid.NAMESPACE_OID, repr((back, str(restored_at)))).hex
+    facts = frozenset(t[:3] for t in back)
+    hashes = await _rows_linking(input.org, input.namespace, sorted(facts), ch=ch)
+    await graph_undo.reopen_held_facts(
         input,
-        frozenset(t[:3] for t in back),
+        sorted(hashes),
         ch=ch,
         restore_id=restore_id,
-        restored_at=now,
+        restored_at=restored_at,
+        hashes=hashes,
+        facts=facts,
         adapter_name="row-fallback",
     )
+
+
+async def _rows_linking(
+    org: str, namespace: str, triples: list[tfr.Triple], *, ch: Any
+) -> dict[str, str]:
+    """The live rows linked to `triples`, by their own link or their key's (a row
+    written before rows were linked), with each one's current `content_sha256`."""
+    found = await ch.query_all(
+        f"""
+        SELECT toString(memory_id) AS id, toString(content_sha256) AS sha
+        FROM loom.memory FINAL
+        WHERE org = {{org:String}} AND namespace = {{ns:String}} AND {GRAPH_HOLDER_SQL}
+          AND (memory_id IN (
+                  SELECT memory_id FROM loom.entity_triple_rows
+                  WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                    AND (subject, relation, object) IN
+                        {{triples:Array(Tuple(String, String, String))}})
+               OR memory_key IN (
+                  SELECT memory_key FROM loom.entity_triple_memories
+                  WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                    AND (subject, relation, object) IN
+                        {{triples:Array(Tuple(String, String, String))}}))
+        SETTINGS select_sequential_consistency = 1
+        """,
+        params={"org": org, "ns": namespace, "triples": triples},
+    )
+    return {str(r["id"]): str(r["sha"]) for r in found}
 
 
 def _as_bulk_write(

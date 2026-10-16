@@ -3422,6 +3422,76 @@ async def test_a_recovered_value_starts_at_the_revision_and_walks_on_both_planes
     assert await _walked(org, ["london"], labeled=False, as_of=between) == ["london"]
 
 
+async def _row_saying(ch: Any, org: str, value: str) -> dict[str, Any]:
+    (row,) = await ch.query_all(
+        "SELECT toString(memory_id) AS memory_id FROM loom.memory FINAL"
+        " WHERE org = {org:String} AND value = {value:String}",
+        params={"org": org, "value": json.dumps(value)},
+    )
+    return row
+
+
+async def test_a_fallback_leaves_out_a_row_revised_before_its_markers_land(
+    ch, org, monkeypatch
+) -> None:
+    # London's row is revised away and Paris is picked to be current again; before its
+    # markers land, the Paris row is revised to jazz. No live row says Paris.
+    from server.memory.app import graph_undo
+
+    london = await _london_undone_over_paris(ch, org, "live_in")
+    paris = await _row_saying(ch, org, "I live in Paris")
+    restate = graph_undo.restate_facts
+
+    async def _paris_revised_first(*a: Any, **k: Any) -> Any:
+        monkeypatch.setattr(graph_undo, "restate_facts", restate)
+        await _revise("memory.update_by_id", org, paris, "I like jazz", (("user", "like", "jazz"),))
+        return await restate(*a, **k)
+
+    monkeypatch.setattr(graph_undo, "restate_facts", _paris_revised_first)
+    await _revise("memory.update_by_id", org, london, "I like Rome", (("user", "like", "rome"),))
+    await _mutations_done(ch, org)
+    want = {("like", "rome"), ("like", "jazz")}
+    assert await _open_facts(ch, org, want) == want
+
+
+async def test_a_replayed_fallback_dates_its_triple_as_its_edge(ch, org, monkeypatch) -> None:
+    # The fallback's edge marker lands and its triple marker fails. Replayed later, the
+    # triple starts when the edge does, so both walks agree in between.
+    from server.core import ch as ch_mod
+    from server.memory.app import entity_projections
+    from server.memory.app.projection_failures import retry_projection_failure
+
+    london = await _london_undone_over_paris(ch, org, "live_in")
+    await _edges_like_triples(ch, org)
+    client = ch_mod.get_client()
+    insert = client.insert
+
+    async def _triples_fail(table: str, rows: Any, **kw: Any) -> Any:
+        if table == "loom.entity_triples" and rows[0]["adapter_name"] == "row-fallback":
+            raise ConnectionError("transient")
+        return await insert(table, rows, **kw)
+
+    monkeypatch.setattr(client, "insert", _triples_fail)
+    await _revise("memory.update_by_id", org, london, "I like Rome", (("user", "like", "rome"),))
+    monkeypatch.setattr(client, "insert", insert)
+    failure = await _recorded_reconcile(ch, org)
+    later = naive_utc_now() + timedelta(seconds=30)
+    monkeypatch.setattr(entity_projections, "naive_utc_now", lambda: later)
+    assert (await retry_projection_failure(failure, ch=ch)).resolved
+    await _mutations_done(ch, org)
+    starts = await ch.query_all(
+        "SELECT 'triple' AS plane, valid_from FROM loom.entity_triples"
+        " WHERE org = {org:String} AND adapter_name = 'row-fallback'"
+        " UNION ALL SELECT 'edge', valid_from FROM loom.entity_edges"
+        " WHERE org = {org:String} AND restore_id IN (SELECT restore_id"
+        " FROM loom.entity_triples WHERE org = {org:String} AND adapter_name = 'row-fallback')"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert sorted(r["plane"] for r in starts) == ["edge", "triple"]
+    assert len({r["valid_from"] for r in starts}) == 1
+
+
 async def test_a_retired_rows_edge_ends_with_its_triple(ch, org) -> None:
     # London's row retires behind Paris's: both walks reach Paris only. A favourite
     # city may have many values, so Paris's own write does not close London.

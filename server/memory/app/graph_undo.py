@@ -58,19 +58,25 @@ async def reopen_held_facts(
     restore_id: str,
     restored_at: datetime,
     hashes: Mapping[str, str] | None = None,
+    facts: frozenset[Any] | None = None,
+    adapter_name: str = "row-restore",
 ) -> None:
     """Open again the facts the rows `ids` hold now: an Undo brings a retired row's
     facts back. An Undo is an assertion made at the restore, so each fact gets a new
     observation starting then, repaired like any other value; no row retires.
     `restore_id` names this Undo's markers, so a replay with the same id and
     `restored_at` finds and restates them. With `hashes` (id to the `content_sha256`
-    restored), only the rows still holding that value are read."""
+    restored), only the rows still holding that value are read. With `facts`, only
+    those are opened: a fallback (`entity_projections._keep_one_current`) opens one
+    value, labelled `row-fallback` by `adapter_name`."""
     if hashes:
         ids = sorted(i for i in ids if i in hashes)
     asked = ids
     held: frozenset[Any] = frozenset()
     while ids:
         held = await _held_now(input, ids, ch=ch)
+        if facts is not None:
+            held &= facts
         if not hashes:
             break
         # Checked after the read: a row revised since the restore, even while this
@@ -82,7 +88,14 @@ async def reopen_held_facts(
             break
         ids = still
     if ids and held:
-        await restate_facts(input, held, ch=ch, restore_id=restore_id, restored_at=restored_at)
+        await restate_facts(
+            input,
+            held,
+            ch=ch,
+            restore_id=restore_id,
+            restored_at=restored_at,
+            adapter_name=adapter_name,
+        )
     if hashes and asked:
         # A row revised after the check above ran its own close before these markers
         # landed, or before an earlier attempt's did: close what it no longer holds now.
@@ -104,9 +117,7 @@ async def restate_facts(
     adapter_name: str = "row-restore",
 ) -> None:
     """Write the markers for the facts `held`, stated again at `restored_at`, and repair
-    them. An Undo writes them, and so does a revision that leaves a relation with no
-    current value (`entity_projections._keep_one_current`), whose markers are labelled
-    `row-fallback` by `adapter_name`."""
+    them, for `reopen_held_facts`."""
     from server.identity.app.namespace_ontology import load_relation_cardinality
 
     now = restored_at.replace(microsecond=0)  # as the DateTime columns store it
