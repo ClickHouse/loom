@@ -24,6 +24,7 @@ Each `.claude/rules/<area>.md` holds the traps for the files its `paths:` frontm
 | `providers` | LLM and embedder providers |
 | `plugins` | the coding-agent plugins and their hooks |
 | `frontend` | the dashboard |
+| `helm` | the Kubernetes chart |
 | `tests` | unit and integration tests |
 | `docs` | documentation pages |
 | `bench` | benchmark harnesses and results |
@@ -38,7 +39,7 @@ These hold in every area; a change to one needs a design rationale in the PR bod
 - **Builds N-1 and N serve side by side** on N's schema during a rolling upgrade, and nothing replica-wide lives outside ClickHouse ([rolling upgrades](docs/architecture/rolling-upgrades.md)).
 - **Loom deletes only what its writer asked to delete**, and every table that can hold memory content is covered by erasure (`memory-plane` rule).
 - **Security paths fail closed**: an unloaded revocation list, a missing grant or an unverifiable token refuses.
-- **No compatibility code**: a replaced internal path is deleted in the same change, with no shim or mode. What a running build N-1 needs follows the rolling-upgrade rules, and a removed wire field is served and named in `ignored_args`; the PR body names the break.
+- **No compatibility code**: a replaced internal path is deleted in the same change, with no shim, fallback, rollout mode for data that does not exist yet, or doc describing the old way. What a running build N-1 needs follows the rolling-upgrade rules, and a removed wire field is served and named in `ignored_args`; the PR body names the break.
 - A broad except says why: `except Exception as e:  # noqa: BLE001 — <what must not fail>`. A loop outside the transports, the worker supervisor and the CLI calls `set_query_tag(...)`.
 
 ## Commands

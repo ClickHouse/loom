@@ -20,6 +20,12 @@ The design, its invariants and the code paths are in [memory architecture](../..
 - `memory.set` / `memory.update_by_id` honour `if_match_sha256`; the current hash rides `memory.get` / `memory.get_by_id`.
 - Working memory (`working_memory.*`) is not embedded or ranked; a durable fact goes through `memory.set`.
 
+## Bi-temporal memory
+
+- `loom.memory_temporal_commits` is the authority ([bi-temporal memory](../../docs/architecture/bitemporal-memory.md)): every `insert_memory_versions` batch is journaled first by the namespace publisher (`server/memory/app/temporal_publisher.py`, registered in `server/wiring.py`). A new memory writer that bypasses `insert_memory_versions` publishes through the publisher.
+- Nothing takes a row out of service in place: `memory.clear` and `memory.reject` write versioned rows through the same path, and `memory.amend` makes a bounded correction.
+- Reads take `valid_as_of` / `known_as_of` ([reads](../../docs/architecture/bitemporal-memory.md#reads)).
+
 ## Ranking
 
 - Change a similarity gate or rank weight only with a paired benchmark (`loom-bench`). With adaptive thresholds on (the default), the gates come from the embedder's own distribution at boot (`server/memory/app/embedder_calibration.py`); the scalar settings are the fallback.

@@ -19,7 +19,8 @@ Find the row for the change, read its guide before the first edit, and finish it
 | Code-index language | [adding-language-support](../../../docs/development/adding-language-support.md) | stay outside the extractor stamp; backfill plan in the PR |
 | CLI command or flag | [code-generation](../../../docs/development/code-generation.md) | `LOOM_UPDATE_CLI_SNAPSHOT=1` snapshot; `python -m scripts.codegen.docs_reference` |
 | Plugin hook or skill | [integrations](../../../integrations/claude-code-plugin/README.md) | edit `integrations/claude-code-plugin/`, then `python -m scripts.codegen.agent_plugin_sync`; bump both plugin manifests to a version no other open PR uses |
-| Dashboard | [local-development](../../../docs/development/local-development.md#the-dashboard) | `npm --prefix frontend run test`, `npm --prefix frontend run build`, bundle budget |
+| Dashboard | [dashboard-design](../../../docs/development/dashboard-design.md), [local-development](../../../docs/development/local-development.md#the-dashboard) | `npm --prefix frontend run test`, `npm --prefix frontend run build`, bundle budget, `make lint` (Biome's accessibility rules) |
+| Helm chart | [kubernetes](../../../docs/operations/kubernetes.md) | `helm lint --strict` and `kubeconform` on both overlays; a renamed setting the chart sets by name (`loom.config`) |
 | Docs | [documentation-style](../../../docs/development/documentation-style.md) | regenerate generated pages; never hand-edit them |
 
 ## Before the first edit
