@@ -92,7 +92,12 @@
       "Bash(docker * dev/docker-compose.proxy.yml* stop*)",
       "Bash(docker * dev/docker-compose.proxy.yml* rm*)",
       "Bash(docker * dev/docker-compose.proxy.yml* restart*)",
-      "Bash(docker * dev/docker-compose.proxy.yml* kill*)"
+      "Bash(docker * dev/docker-compose.proxy.yml* kill*)",
+      "Bash(git push *:heads/main*)",
+      "Bash(git push --mirror*)",
+      "Bash(git push * --mirror*)",
+      "Bash(git push --all*)",
+      "Bash(git push * --all*)"
     ]
   }
 }
