@@ -14,8 +14,10 @@ from server.memory.api.models_crud import (
     MemoryRestoreInput,
     MemoryRestoreOutput,
 )
+from server.memory.app.entity_projections import holds_graph_facts
 from server.memory.app.provenance import writer_actor
 from server.memory.domain.excerpt import build_excerpt
+from server.memory.domain.temporal_sql import SERVED_STATUSES
 from server.memory.store import key_write_lock
 from server.memory.store.inserts import insert_memory_versions
 from server.memory.store.rows import next_version
@@ -137,7 +139,7 @@ async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryResto
 async def _status_before_retirement(row: MemoryRow, *, ch: Any) -> str:
     """`conflicted` for a row retired while under review when a peer is still
     conflicted and lists it back; `duplicate` for a retired duplicate whose
-    original is still live; `active` otherwise."""
+    original is still served; `active` otherwise."""
     import server.memory.store as memory_repo
 
     found = await ch.query_all(
@@ -160,7 +162,12 @@ async def _status_before_retirement(row: MemoryRow, *, ch: Any) -> str:
         original = await memory_repo.get_by_id(
             row.duplicate_of, org=row.org, ch=ch, scope=WHOLE_NAMESPACE, fresh=True, strong=True
         )
-        if original is not None and original.status != "superseded":
+        # Reads only stand the original in for it while it is served and not ended.
+        if (
+            original is not None
+            and original.status in SERVED_STATUSES
+            and holds_graph_facts(original.model_dump())
+        ):
             return "duplicate"
         return "active"
     if was != "conflicted":
