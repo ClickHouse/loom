@@ -1,29 +1,111 @@
-# Loom — orientation for coding agents that read AGENTS.md
+# Loom — instructions for coding agents
 
-The project memory for this repository is `CLAUDE.md` at the repo root. Read
-it first: repo layout, the wire-op registry, identity tuple, belief-revision
-lens, the ReplacingMergeTree write-path rule, provider defaults, and the
-`make lint` / `make test-unit` gate. Everything below is the short form.
+Loom is a memory, knowledge, and observability data plane for AI agents, built on ClickHouse. This file is the project's one instruction file for every coding agent (Claude Code reads it through `CLAUDE.md`, Codex and Cursor read it directly). `make ingest FILE=AGENTS.md TAGS=loom,project-memory` loads it into the knowledge plane for cross-session recall.
 
-- `server/` is the FastAPI control plane, one package per domain
-  (`docs/architecture/server-layout.md` is the map); ops are declared in
-  `server/<domain>/api/ops*.py` and flattened by `server/operations/registry.py`;
-  HTTP and MCP transports iterate that registry. `sdk/python` and `sdk/typescript` are generated from it
-  (`scripts/codegen/sdk_py_gen.py`, `scripts/codegen/sdk_py_client_gen.py`, `scripts/codegen/sdk_ts_gen.py`; CI runs `--check`).
-- Migrations are numbered SQL under `schemas/migrations/`; after changing
-  one, `make schema-dump` and commit `schemas/schema.sql`.
-- The pull request description carries the why of a change. A design that
-  outlives the PR goes into the matching doc under `docs/`, written as the
-  current behaviour, not as history.
-- The two coding-agent plugins share their hook scripts: edit
-  `integrations/claude-code-plugin/`, then `python scripts/codegen/agent_plugin_sync.py`.
-- Settings are `server/settings/_<area>.py` mixins; read them as
-  `settings.<field>` (never `getattr` with a default); a new field's comment
-  says what it controls and what its values mean.
-- Workers are rows in `server/workers/registry.py::_WORKERS`.
-- The code index's extractor modules (`extractor_stamp.EXTRACTOR_MODULES`)
-  carry the index's version stamp: a change to their code re-runs that stage
-  over every indexed repository. Comments and docstrings are not part of the stamp.
-- `make format`, `make lint`, `make typecheck` and `make test-unit` before
-  committing; each runs what CI runs. Tests skip, never hard-fail, when an
-  env var is missing.
+## Repo orientation
+
+- `server/` — FastAPI control plane. Package responsibilities and which way imports point are in `docs/architecture/server-layout.md`.
+  - One package per product plane — `memory/`, `code/`, `tracker/`, `knowledge/`, `erasure/`, `tasks/`, `identity/`, `insights/` — each with `api/` (wire models and `Operation` declarations), `app/` (handlers and orchestration), `domain/` (pure logic, no I/O), `store/` (every ClickHouse statement and row builder for its tables) and `workers/` (its background loops). `docs/architecture/server-layout.md` is the map; `tests/unit/test_package_contracts.py` enforces which layer may import which (`package_contract_allowlist.txt` lists today's exceptions and only shrinks).
+  - `core/` holds cross-cutting infrastructure (`ch.py` the one ClickHouse client, `errors`, budgets, idempotency, `paths.py` for files the server ships, `schema/` for migrations). `operations/` is the registry core: `base.py` (`Operation`, `Role`, `grant_rank`) and `registry.py` (`ALL_OPERATIONS`, `OPERATIONS_BY_NAME`; `len(server.operations.registry.ALL_OPERATIONS)` counts the ops).
+  - `transport/` exposes HTTP and MCP. `http.py` serves `POST /v1/{op}` (the bearer check of the non-registry routes is `server/auth/bearer.py`); `mcp.py` routes JSON-RPC (`mcp_auth.py` reads the bearer from the `Authorization` header only); `gates.py` is the admission sequence both transports run (authz target, authorize, traffic class, rate limit); `mcp_primer.py` renders the primer and answers `prompts/*` / `resources/*`; the toolsets and curated rosters live in `server/operations/toolsets.py`, `mcp_config.py` holds the MCP constants and envelope helpers; `mcp_schemas`, `mcp_tools`, `mcp_identity` and `mcp_descriptions` build the listing; `_common.py` binds the request and records budget violations and op audits. Nothing below the transport imports it (`tests/unit/test_transport_layering.py`).
+  - `observability/` — `ledger.py::emit_agent_event` writes the per-request `loom.agent_events` row; the events stream, audit rows, OpenTelemetry and Langfuse export live beside it. `server/observability/budgets.py` resolves each op's latency budget (`effective_budget_ms`, with runtime and per-consumer overrides).
+  - `auth/` (`jwt.py` mint/verify, `authz.py` role + namespace gate, `context.py` the per-request identity), `settings/` (one mixin per area), `workers/` (`registry.py` + `supervisor.py`), `embedding/` and `llm/` (pluggable providers), `clients/` (outbound HTTP: the shared pool, GitHub), `storage/` (blob store, retention TTL clauses), `cli/` (the `loom` command, `app.py`).
+- `sdk/python/loom/` — Python SDK: client modules + `Agent` + `errors`, re-exported in `__init__.py`. Published as `clickhouse-loom`.
+- `frontend/src/` — React `/me` dashboard (Vite + Tailwind). Served from `frontend/dist/` at `/me`; 503 if not built.
+- `schemas/migrations/` — numbered SQL, applied in numeric order by `loom migrate` (a merged file is never edited or deleted: the production ledger checks every hash). After a migration change run `make schema-dump` to regenerate `schemas/schema.sql` (canonical state); `make schema-check` verifies they match. Read `schema.sql` to understand the current shape; don't hand-edit it.
+- `dev/` — operator ingest CLI, onboarding, backup/restore, docker-compose stacks.
+- `docs/` — the documentation set; `docs/index.md` maps it (getting started, concepts, features, architecture, reference, guides, operations, benchmarks, development). `docs/reference/` is mostly generated (`scripts/codegen/settings_reference.py`, `scripts/codegen/docs_reference.py`).
+
+## Conventions that aren't obvious
+
+- **Wire op registration** lives in a domain's `server/<domain>/api/`: Pydantic wire models in `models_<group>.py` (they import no handler), the `Operation` declarations and the module-level `OPERATIONS` list in `ops_<group>.py`, which `server/operations/registry.py` imports. Adding an op: define `Input`/`Output` models, write the handler in `server/<domain>/app/` (it imports the models at module top), declare the `Operation`, append to the list. HTTP + MCP transports iterate the registry.
+- **Ops addressed by an org-wide id** (`memory.get_by_id`, `update_by_id`, `redact`: `(org, memory_id)` only) get no namespace from the transport, so the handler calls `authz.row_in_scope(org, row.namespace, role)` after the fetch and answers `found=False` on refusal — never a 403 that confirms the id exists. `tests/integration/test_cross_principal_leakage.py` probes every read op as another tenant with canary nonces and is the CI gate for this.
+- **Identity tuple on every row:** `(org, namespace, agent, user_id, session_id)` — first three required, rest default to `'-'`. Two more columns are stamped by the server, never read from the body: `actor` (`human:<subject>` / `process:<subject>`, kind from the token — `server.memory.app.provenance.writer_actor`) and `source_class` (`asserted | extracted | observed | derived | imported | external` — `server.memory.domain.provenance.source_class_for`; a request may only declare a downgrade to `derived`, `external` or `imported`). New write paths must set both.
+- **Content-hash precondition.** `memory.set` / `memory.update_by_id` take optional `if_match_sha256` for racing writers; the current hash rides `memory.get` / `memory.get_by_id` outputs.
+- **Belief-revision is the design lens** (not a code enum). Five operations cover the memory lifecycle: Expand (`memory.set`), Revise (`memory.update_by_id`), Contract (`memory.delete`), Reinforce (`memory.pin`), Refuse (`blacklist.add`). Anything in the memory plane that doesn't map to one of these is suspect.
+- **Conflict surfacing on `memory.set` and `memory.bulk_set`** (`set_from_messages` writes through bulk, and bulk gets the same four verdicts before its insert, plus one hash-only `memory.bulk_set` audit row per write). Writes semantically close to an existing memory (cosine ≥ the conflict threshold: calibrated from the embedder at boot when adaptive thresholds are on, else `LOOM_CONFLICT_THRESHOLD`, default 0.85) are flagged `status='conflicted'` and cross-linked via `conflict_with`; a canonical-form match merges. A close write against a pinned peer is rejected 409 PINNED_CONFLICT (`memory.pin` is a write-time invariant). Resolve via the `/me` Review queue or `conflicts.resolve(...)`; `allow` persists in `loom.conflict_allowlist`.
+- **Blacklist is "Refuse".** `blacklist.add(pattern, scope)` registers a substring/regex; matching writes get 422 BLACKLISTED on `memory.set`, and `sweep=true` tombstones existing matches. Cross-replica cache invalidation uses a 1-row CH version watermark (no Redis).
+- **Memory tool descriptions are LLM-judged, not regex.** Calling `memory.set`/`memory.pin` from a session is an intent decision, not syntax-matching (see `server/transport/mcp.py`).
+- **Provenance in ranking.** `memory_embeddings` carries `source_class` + `verified`; `LOOM_MEMORY_SEARCH_TRUST_WEIGHT` (default 0 = off) adds a bounded provenance term in the rank expression's correctness tail, and `memory.ask` keeps declared-`external`, unattested rows out of synthesis (`LOOM_MEMORY_ASK_EXCLUDE_UNVERIFIED_EXTERNAL`, default on). Hits expose both fields.
+- **`memory.search_trace`** mirrors `memory.search` but returns the per-component scoring breakdown (similarity, entity_boost, rank_score) for "why did this rank here" debugging.
+- **Category surface beyond vector search.** `memory.timeline` (temporal ordering via `coalesce(valid_at, created_at)` + window functions), `facts.traverse` (N-hop graph walk over `entity_edges`, one bounded query per hop), `procedure.add`/`match`/`list` (procedural plane on `memory_type='procedural'`), and `MemorySearchOutput.abstain` (explicit "I don't know" signal). Validity is valid-time only (not transaction-time) — not bi-temporal.
+- **Derived rows carry lineage.** Consolidation writes `memory_belief_sources` rows with `support_type='derived_from'` (evidence_id = source memory_id) for every canonical / dense output; `session_summaries.derived_from` lists the keys a digest compressed. `namespace.snapshot`/`restore` carry `version`, `content_sha256` and the attestation columns — a restore never strips `verified_by`.
+- **Working memory is not retrieval memory.** `working_memory.*` writes scratchpad blocks to `loom.working_memory`; `context.pack` loads them ahead of durable sections. Durable facts go through `memory.set` — working memory is not embedded or ranked.
+- **ReplacingMergeTree write paths MUST mirror every column.** `loom.memory` and `loom.shared` are `ReplacingMergeTree(version) FINAL`. Any handler writing a new version row (set, delete-tombstone, restore, touch, update_by_id, bulk_set, promote, demote) MUST carry every persisted column forward — omitting one silently zeros it for all readers under FINAL. Use the `build_memory_version_row` / `build_embedding_row` builders in `server/memory/store/rows.py` (single source of truth for the column set). When adding a column to these tables, update the builders and every projection that feeds them in the same change. `loom.memory` also has an append-only mirror, `loom.memory_versions`, filled by `memory_versions_mv` on every INSERT: a new `loom.memory` column must be added to that table AND to the view's SELECT in the same migration, or the history stops recording it (a unit test compares the two column lists). `memory.history`, `memory.redact` and `namespace.rollback` read the mirror — the RMT rows themselves are not a history, merges drop them.
+- **Adaptive similarity thresholds (`LOOM_ADAPTIVE_THRESHOLDS`, default on).** A boot probe (`server/memory/app/embedder_calibration.py`) derives the search similarity gates from the embedder's own cosine distribution, so swapping `LOOM_EMBEDDING_MODEL` doesn't silently miscalibrate recall. The scalar gates (`memory_search_min_similarity`, `_abstain_threshold`, `_hyde_fallback_threshold`, `_query_rewrite_threshold`) are the fallback for fake/dev embedders or when adaptivity is pinned off — in that case you own re-benching after an embedder change.
+- **Settings live in `server/settings/`**, one mixin per area (`_memory_search.py`, `_memory_ask.py`, `_code.py`, `_tracker.py`, …) composed into one `Settings`; env names are `LOOM_<FIELD>` as always. A new field goes in its area's file with a comment saying what it controls and what its values mean. The exception is a setting that names a model: every one lives in `_models.py`, one per job, so the models a deployment runs are changed in one place. Read a field as `settings.<field>` — `getattr(settings, "<field>", default)` fails `test_settings_attribute_access.py`, because the copied default drifts and hides the reader from anyone deleting the field.
+- **Retiring an experiment flag**: delete the setting and its branch, and a per-request field that carried it. Pre-1.0 there is no removed-field registry: a client that still sends the field is served, with the field named in `ignored_args`. Name it in the release notes.
+- **Workers are rows**, not code: `server/workers/registry.py::_WORKERS` holds one `_Worker(name, module, enabled, interval, …)` per background loop, imported lazily when enabled; `tests/unit/test_worker_registry_snapshot.py` pins the enabled set per settings profile.
+- **Extractor modules' code is the code index's version stamp**: a code change to a file in `extractor_stamp.EXTRACTOR_MODULES` (or a grammar in `STAMPED_GRAMMARS`) re-runs its stage (`STAGES`: chunk, symbol, edge, guard) for the language families it touches in every indexed namespace (hours of ingest). Lane parsers outside the stamp (TypeScript, Rust, Go, Java, …) don't move it; re-ingest their files with `loom code backfill --paths-file`. The stamp hashes code tokens only (`extractor_stamp.logic_tokens`), so comments and docstrings can be edited freely. They are excluded from formatting, which could rewrite string quotes; change their code only when the extraction itself changes.
+- **A broad except says why**: `except Exception as e:  # noqa: BLE001 — <what must not fail>`; BLE001 is enforced.
+- **Every ClickHouse query is attributed**: the transports, the worker supervisor and the CLI dispatcher (`cli.<cmd>`) set the `log_comment` tag; a query issued outside them logs `untagged:<module>.<function>` — a new background loop should `set_query_tag(...)` for itself.
+- **Foundational shapes are load-bearing.** Engine choice (ClickHouse), identity tuple, per-row content-hash audit (`server/observability/audit.py` — per-row hashing, NOT a chain), the five belief-revision operations. Changes here need a written design rationale in the PR and in the matching page under `docs/architecture/`, not just code.
+
+## LLM + embedder providers
+
+- Dev defaults are fake providers (no network/key) at Loom's standard 3072-vector width. Production sets `LOOM_EMBEDDING_MODEL=text-embedding-3-large` + `LOOM_LLM_MODEL=gpt-6-luna` via env/compose. **Run `make bench-quick` before changing either default.**
+- An Anthropic LLM provider exists (`server/llm/anthropic.py`, `LOOM_LLM_PROVIDER=anthropic` + `ANTHROPIC_API_KEY`) — opt-in; clear `make bench-quick` first. Embedder providers: OpenAI, Google Gemini (`gemini-embedding-001`, 3072-dim, `GEMINI_API_KEY`/`GOOGLE_API_KEY`), a local CPU embedder (`local`/`local:*`, quality-for-latency trade), and fakes. Switching the embedder changes the vector space — a full re-embed is required: Settings → Models & keys rebuilds the vector tables at the new width; `loom reembed` regenerates vectors from stored content and preserves metadata, but only at the width coded vector tables were created at.
+- **`LOOM_LLM_PROVIDER` is inferred when unset** (like the *embedder*, whose provider is inferred from `LOOM_EMBEDDING_MODEL`): from `LOOM_LLM_MODEL`'s name (`gpt*`/`o1`/`o3`/`o4`/`chatgpt*` → openai, `claude*` → anthropic, `fake*` → fake), else from the key present (`OPENAI_API_KEY` → openai + `gpt-6-luna`, `ANTHROPIC_API_KEY` → anthropic + `claude-haiku-4-5`), else fake. `Settings` resolves it once at load (`settings.llm_provider` is always concrete; `settings.llm_provider_inferred()` / `llm_provider_source()` say how), the boot log prints one INFO line, and `loom doctor`'s `llm_provider` line WARNs when the resolved provider's key is missing (the runtime then falls back to the fake client). An explicit value is never overridden — the stock `.env` pins `LOOM_LLM_PROVIDER=fake`, so a checked-in dev stack stays fake until you swap the provider block; `make bench-quick` defaults are unchanged.
+
+## Common tasks
+
+- Start the server — `make server` (binds `:7777`)
+- Apply migrations — `make migrate` (idempotent SHA-256 ledger)
+- Integration suite — `make test` (needs `LOOM_BASE_URL`); unit only — `make test-unit`
+- Lint — `make lint` (ruff, the function-length and secret gates, generated SDK tables, Codex plugin copies, configuration reference and reach manifest current); format — `make format` (ruff, Biome, Prettier, Taplo, shfmt; CI runs `make format-check`); types — `make typecheck` (the mypy ratchet)
+- Ingest a file into knowledge — `make ingest FILE=path TAGS=a,b`
+- Mint a JWT — `loom mint-token --subject <name> --org <org> --namespaces <ns> --roles writer`
+- Dashboard — open `/me` (password sign-in, a `#token=` link, proxy mode, or no auth in single-user mode)
+
+## Working in this codebase
+
+- `make format`, `make lint`, `make typecheck` and `make test-unit` before committing — each runs what CI runs.
+- Frontend build: `npm --prefix frontend run build`.
+- Tests skip cleanly when env is missing — use `os.environ.get(...) or pytest.skip(...)`, never hard-fail on `os.environ[...]`.
+- Commit messages describe *why*, not what. Use `await asyncio.sleep(...)` in async tests, never `time.sleep`.
+
+## What Loom is not
+
+- Not file-format aware in-server — `knowledge.add` takes `content: str`; PDF/Markdown/S3 ingestion is the operator CLI's job (`dev/loom_ingest.py`).
+- Not a GDPR-compliance guarantee — the erasure cascade and per-row audit hashing are engineering primitives. The federated erasure cascade (Langfuse / ClickStack) fails closed: a backend that can't confirm deletion records `failed` and the recovery worker retries idempotently; after `max_attempts` it's marked `failed` + `erasure.abandoned` for manual escalation. The saga's last step is a residue census over every substrate the read paths touch: any live row in scope fails the saga, and the terminal `erasure_requests` row carries `residue_count` / `residue` / `verified_at`. A new table that can hold memory content needs a saga step AND a census row — one `Substrate(...)` in `server/erasure/store/census.py::_CENSUS` naming its owner step per scope (a step without a census row goes in `STEP_ONLY_TABLES` with its reason, and a table that never holds memory content in `NO_MEMORY_CONTENT`; the registry test fails otherwise), and a resumed saga re-runs the owner of any table the last census found rows in. The audit log is per-row content-hashing plus hash-chained hourly checkpoints; every write that creates or changes memory leaves a hash-only row there (`memory.set` and `memory.bulk_set` alike), and `loom.audit.checkpoint_lag_windows` says how far behind the chain is.
+
+## Key reading order for a new contributor
+
+1. README — product surface + onboarding.
+2. `docs/architecture/system-overview.md` and `docs/architecture/clickhouse.md` — control-plane shape, ClickHouse layout, the design and its constraints.
+3. `server/operations/registry.py` — the wire-op registry; `docs/architecture/server-layout.md` — where every package and layer lives.
+4. `server/main.py` lifespan — how workers and transports are wired.
+5. The domain package for whatever you're touching: its `api/` models and ops, then the handler in `app/`.
+
+## How work lands
+
+These hold for every change, by a person or an agent. The skills under `.claude/skills/` (Codex reads the same files through `.agents/skills/`) carry the step-by-step versions.
+
+- **One task, one worktree, one branch from `origin/main`.** `git worktree add -b <branch> ../loom-<branch> origin/main`. Never check out, pull or reset `main` inside a linked worktree: the branch ref is shared with the primary checkout, so a deployment running from it sees changes it never pulled. Never `git stash`: the stash stack is shared by every worktree of the clone; set work aside with a WIP commit.
+- **Your own ClickHouse.** Integration tests and migrations run against a ClickHouse you started for this worktree and confirmed empty, never one you found listening on a port. Tests that need a server read `LOOM_CH_HOST` / `LOOM_BASE_URL` explicitly and skip without them.
+- **Run code from the worktree.** `python -m scripts.<pkg>.<module>`, not `python scripts/<pkg>/<module>.py`: a script run by path imports `server` from whatever checkout the virtualenv installed in editable mode. `python -c 'import server; print(server.__file__)'` says which.
+- **Every gate before the push**: `make format`, `make lint`, `make typecheck`, `make test-unit`; the integration suite when server behaviour changed. A failing gate is fixed at the source, never by loosening it.
+- **Pull requests**: the title says what is now true; the body fills `.github/PULL_REQUEST_TEMPLATE.md` and is public text, so it carries no host names, internal namespaces, people, wall-clock times or production counts. One concern per pull request, grouped by concern rather than split per file. Commits are signed off (`git commit -s`).
+- **Review starts at the push**, in parallel with CI, not after it. CI runs only on pull requests into `main`; "no checks" means a stacked base or a merge conflict.
+- **Merge** with `gh pr merge --squash`, only when every required check is green. After another pull request merges, a pull request that adds files the whole-tree gates scan (public copy, doc links, function length) re-runs CI on the new `main` before it merges.
+- **Benchmarks cost money and time**: never start a benchmark run nobody asked for. A result counts only when the treatment demonstrably ran and the paired delta clears the noise band ([methodology](docs/benchmarks/methodology.md#the-verdict)).
+- **Pre-1.0 there is no compatibility code.** A removed op, field or flag goes in the changelog entry and the release notes, not behind a shim.
+- **Code reads like expert code**: short comments that say why, no history ("previously", "new in"), no dates, people or ticket numbers.
+
+## Skills, rules and agents
+
+| Path | What | Loaded |
+| --- | --- | --- |
+| `.claude/skills/loom-dev-setup/` | worktree, virtualenv, a private ClickHouse, a server from source | on request |
+| `.claude/skills/loom-change/` | the recipe and gates for each kind of change (op, table, migration, setting, worker, plugin hook, frontend, docs) | when changing code |
+| `.claude/skills/loom-pre-push/` | the gates to run for the paths a diff touches | before a push |
+| `.claude/skills/loom-ship-pr/` | pull request body, push, review, CI watch, squash merge | when opening or landing a PR |
+| `.claude/skills/loom-review/` | Loom's review gates: the invariants a diff can break | reviewing a PR or diff |
+| `.claude/skills/loom-investigate-ci/` | a red CI job to its cause and fix | a failing check |
+| `.claude/skills/loom-bench/` | when and how to run a benchmark and report it | on request |
+| `.claude/skills/loom-deploy/` | blue/green deploy, rollback and checks with `redeploy.sh` | operators, on request only |
+| `.claude/rules/*.md` | per-area rules, each with the `paths:` it governs | Claude Code loads one when a matching file is read or edited; other agents read the one for the files they touch |
+| `.claude/agents/loom-reviewer.md` | a read-only reviewer that runs `loom-review` | after a push |
+
+`tests/unit/test_agent_instructions.py` checks their frontmatter, links and path globs.
+

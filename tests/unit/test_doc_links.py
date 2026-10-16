@@ -1,6 +1,7 @@
 """Every relative link in the Markdown docs resolves, anchors included.
 
-Covers the repo-root docs, docs/ and the integration READMEs; external URLs are not
+Covers the repo-root docs, docs/, the integration READMEs and the agent skills, rules
+and subagents under .claude/; external URLs are not
 fetched. An anchor is checked against the GitHub slugs of the target's headings.
 """
 
@@ -19,6 +20,9 @@ DOCS = sorted(
         *(ROOT / "integrations").glob("*/README.md"),
         ROOT / "integrations" / "README.md",
         ROOT / "sdk" / "python" / "README.md",
+        *(ROOT / ".claude" / "skills").glob("loom-*/**/*.md"),
+        *(ROOT / ".claude" / "rules").rglob("*.md"),
+        *(ROOT / ".claude" / "agents").glob("*.md"),
     }
 )
 LINK = re.compile(r"(?<!!)\[[^\]]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")

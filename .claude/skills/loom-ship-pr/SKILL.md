@@ -1,0 +1,70 @@
+---
+name: loom-ship-pr
+description: Open, push, review and land a Loom pull request — a public-safe title and body from the template, signed-off commits, the reviewer started at the push in parallel with CI, CI read from gh's JSON, and a squash merge once every check is green. Use when asked to "open a PR", "push this", "ship it", "land it", "merge", "update the PR", or when a change has passed loom-pre-push.
+argument-hint: "[pr-number]"
+---
+
+# Shipping a Loom pull request
+
+## 1. Commit
+
+```bash
+git add <paths>              # name them; never `git add -A` over untracked scratch files
+git commit -s -m "<what is now true>" -m "<why>"
+```
+
+The subject says what is now true, as `git log` reads it. Sign-off (`-s`) is required (DCO).
+
+## 2. Body
+
+Fill `.github/PULL_REQUEST_TEMPLATE.md` in order: linked issues, changelog category, changelog entry, Why, Scope and risk, Compatibility/rollout/rollback, Tests, AI assistance, checklist. Write it to a file and pass `--body-file`.
+
+The body is public. It carries:
+
+- the why, the design for a material change, alternatives and their cost;
+- every op or field added, changed or removed, and operator steps (or "none");
+- what you ran and what it showed, with the command that reproduces a measurement.
+
+It never carries host names, internal namespaces or repository names of a deployment, people, wall-clock times, production row counts or incident timelines. Evidence from a live deployment goes to the conversation with the requester, not into the PR.
+
+One concern per PR. A large task is a few PRs grouped by concern, not one per file: each needs CI and review, and the merge queue is the bottleneck.
+
+## 3. Push and open
+
+```bash
+git push -u origin HEAD
+gh pr create --base main --title "<subject>" --body-file /path/to/body.md
+```
+
+CI runs only on PRs into `main`. A stacked PR gets checks once retargeted (`gh pr edit <n> --base main`); a PR with a merge conflict gets none.
+
+## 4. Review at the push
+
+Start the review the moment the push lands — do not wait for CI. In Claude Code, launch the `loom-reviewer` subagent in the background with the PR number; elsewhere run the `loom-review` skill. Fix every confirmed finding with a new commit and push again; the review restarts on the new head.
+
+## 5. Read CI
+
+```bash
+gh pr checks <n> --watch --fail-fast
+gh pr view <n> --json statusCheckRollup --jq '.statusCheckRollup[] | "\(.conclusion // .status)\t\(.name)"'
+gh pr view <n> --json statusCheckRollup --jq '.statusCheckRollup | length > 0 and all(.[];
+  .status == "COMPLETED" and (.conclusion | IN("SUCCESS", "SKIPPED", "NEUTRAL")))'   # true = green
+```
+
+Gate on `jq`'s `all(...)` (an empty rollup is not green) and print the table; do not gate on `grep -v` over text output, whose exit code inverts on some grep implementations. A red job: `loom-investigate-ci`.
+
+## 6. Merge
+
+Only when the gate above prints `true`, the review has no open finding and the requester approved merging:
+
+```bash
+gh pr merge <n> --squash --delete-branch
+```
+
+- Squash-merge always. Never merge another author's PR for them.
+- If another PR merged after your last green run and yours adds files the whole-tree gates scan (any `.py`, `.md`, test or doc), rebase the branch on it (`gh pr update-branch <n> --rebase`) and wait for green again: two PRs green alone can be red together.
+- Two open PRs that bump the plugin to the same version: the second ships nothing. Re-bump before merging.
+
+## 7. After the merge
+
+Remove the worktree and the private ClickHouse (`git worktree remove`, `docker rm -f <your container>`). Deploying is a separate, explicit step (`loom-deploy`).

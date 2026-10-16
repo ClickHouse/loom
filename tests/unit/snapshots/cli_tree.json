@@ -10456,7 +10456,7 @@
        "nargs": null,
        "type": null,
        "required": false,
-       "help": "Document to ingest (default: CLAUDE.md at the checkout root).",
+       "help": "Document to ingest (default: AGENTS.md at the checkout root).",
        "metavar": null
       },
       {
@@ -10561,7 +10561,7 @@
        "nargs": null,
        "type": null,
        "required": false,
-       "help": "Checkout root holding CLAUDE.md and dev/loom_ingest.py (default: the package's checkout, then the cwd).",
+       "help": "Checkout root holding AGENTS.md and dev/loom_ingest.py (default: the package's checkout, then the cwd).",
        "metavar": null
       },
       {
@@ -11555,7 +11555,7 @@
     },
     {
      "dest": "demo",
-     "help": "The first five minutes: ingest this repo's CLAUDE.md (or --file) into the knowledge plane the way `make ingest` does, ask it a question, and print the answer with its evidence rows. On the stock fake-LLM stack it prints the top knowledge.search hits and says what a real answer needs.",
+     "help": "The first five minutes: ingest this repo's AGENTS.md (or --file) into the knowledge plane the way `make ingest` does, ask it a question, and print the answer with its evidence rows. On the stock fake-LLM stack it prints the top knowledge.search hits and says what a real answer needs.",
      "metavar": "demo"
     },
     {

@@ -154,6 +154,9 @@ BENCHMARK_NAMES = re.compile(r"LoCoMo|LOCOMO|Locomo|LongMemEval|MemoryAgentBench
 BENCHMARK_SCOPE = "server/"
 
 SCAN_DIRS = (
+    ".claude/skills",
+    ".claude/rules",
+    ".claude/agents",
     "server",
     "sdk",
     "docs",

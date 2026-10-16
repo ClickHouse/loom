@@ -151,17 +151,18 @@ var/
 
 # Third-party agent skills installed via `npx skills add`. They carry
 # executable instructions that run with full agent permissions, and this
-# is a public repo — keep other people's skill code out of it. Project
-# settings under .claude/ are deliberately NOT ignored, only skills.
-.claude/skills/
-# `npx skills add` puts the real skill payload here and symlinks
-# .claude/skills/<name> at it. It also drops a stray `agent/` copy and a
-# lockfile, so all four paths need ignoring.
-# third-party skills installed by `npx skills add` land here; the Codex
-# plugin marketplace (.agents/plugins/marketplace.json) is ours and tracked.
-.agents/skills/
+# is a public repo — keep other people's skill code out of it. Loom's own
+# development skills are named loom-* and tracked; `.agents/skills` is a
+# tracked symlink to `.claude/skills`, so Codex reads the same files.
+.claude/skills/*
+!.claude/skills/loom-*/
+# `npx skills add` also drops a stray `agent/` copy and a lockfile.
 agent/
 skills-lock.json
 
 # runtime data (mirrors, scip checkouts); iso launchers symlink it in
 /var
+
+# Per-user Claude Code state: agent worktrees and local permission overrides.
+.claude/worktrees/
+.claude/settings.local.json

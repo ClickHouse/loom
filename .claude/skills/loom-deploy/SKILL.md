@@ -1,0 +1,54 @@
+---
+name: loom-deploy
+description: Operator procedure for a blue/green Loom deployment with redeploy.sh — preflight, the swap, post-swap checks, and rollback. Use only when an operator explicitly asks to deploy, redeploy, roll back or check which build is serving.
+disable-model-invocation: true
+argument-hint: "[--status | --rollback]"
+---
+
+# Deploying Loom
+
+A deploy changes what every user of the deployment is served. Run it only on an explicit request, from the deployment's own checkout, and say what you are about to do before each step that changes state.
+
+## 1. Preflight
+
+```bash
+./redeploy.sh --status                         # which colour serves, which build, what is idle
+git status --short                              # tracked edits ship with the build: each one is a question
+git fetch -q origin main && git log --oneline HEAD..origin/main   # what this deploy brings
+LOOM_COLOUR=blue LOOM_COLOUR_PORT=7781 docker compose --env-file .env -f dev/docker-compose.colour.yml config -q   # a broken .env edit fails here, not mid-swap
+```
+
+- Another deploy in flight (an idle colour starting, a held lease, someone else's announced cut): wait. Two swaps at once can leave the proxy on a colour that is about to stop.
+- Read what the incoming commits change: new migrations (additive, applied at boot by the new colour while the old one serves), new settings that need `.env` values, a re-index the PR body announced, host cron scripts a move relocated.
+- Never start throwaway containers with the deployment's names (`loom-blue`, `loom-green`, `loom-proxy`, `loom-server`, `loom-*-workers`); a cleanup of the throwaway then stops production.
+
+## 2. Swap
+
+```bash
+./redeploy.sh            # builds and boots the idle colour, waits for status=ok and schema.pending=[], swaps the proxy, stops the old colour
+```
+
+The script refuses to swap when the new colour is unhealthy, a provider is degraded, or the embedding width does not match; read its last `!!!` line rather than forcing.
+
+## 3. After the swap
+
+```bash
+curl -s localhost:7777/v1/health | jq '{status, build_commit, schema: .schema.pending, providers_degraded}'
+docker logs --since 5m "loom-$(./redeploy.sh --status | awk '/\(serving\)/ {print $1}')" 2>&1 | grep -iE 'error|traceback' | tail
+```
+
+- `build_commit` is the commit you meant to deploy; the script fetched and fast-forwarded to `origin/main` itself and warned about any dirty tracked file it shipped.
+- Reinstall host cron scripts when the deploy moved what they call (`deploy/cron/`).
+- Watch error rate and p95 for the first minutes; a ClickHouse replica restarting at the same moment slows inserts without a code cause.
+
+## 4. Rollback
+
+```bash
+./redeploy.sh --rollback
+```
+
+The previous colour restarts on its previous image; no schema step, because migrations are additive ([upgrades](../../../docs/operations/upgrades.md#rollback)). Rows the new build wrote stay.
+
+## Reference
+
+[Deployment](../../../docs/operations/deployment.md#zero-downtime-pair), [upgrades](../../../docs/operations/upgrades.md), [troubleshooting](../../../docs/operations/troubleshooting.md).
