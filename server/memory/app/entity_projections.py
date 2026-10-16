@@ -416,14 +416,21 @@ async def project_memory_set_entities(
     result = _BulkSetResult(memory_key=memory_key, version=0, memory_id=memory_id)
     ch = ch or get_client()
     version = [(memory_id, content_sha256)]
+
+    async def still_held() -> bool:
+        held = await rows_holding(
+            input.org, input.namespace, version, ch=ch, holder_sql=NOT_RETIRED_SQL
+        )
+        return bool(held)
+
     # A revision that ran first closed what it dropped already: this value is not current.
-    if content_sha256 and not await rows_holding(input.org, input.namespace, version, ch=ch):
+    if content_sha256 and not await still_held():
         return 0
     with traced("entities.write_edges", entities=len(ents)):
         await write_entity_edges(bulk_like, [result], ch=ch, wait_visible=wait_visible)
     # Revised or retired while the edges were written: its close may have run before
     # they landed, so end the ones no live row names.
-    if content_sha256 and not await rows_holding(input.org, input.namespace, version, ch=ch):
+    if content_sha256 and not await still_held():
         await _end_edges_of(input, memory_id, content_sha256, ch=ch)
     return len(ents)
 
@@ -1222,11 +1229,25 @@ async def _carried_by(
     }
 
 
+# The first write's fence: the row was not deleted, retired or re-set as 'high'
+# (those keep the row's value, so the columns tell). No validity test: a
+# proposal or a fact dated in the past still gets its edges.
+NOT_RETIRED_SQL = (
+    "tombstoned_at IS NULL AND status NOT IN ('superseded', 'rejected', 'tombstoned')"
+    " AND sensitivity != 'high'"
+)
+
+
 async def rows_holding(
-    org: str, namespace: str, versions: list[tuple[str, str]], *, ch: Any
+    org: str,
+    namespace: str,
+    versions: list[tuple[str, str]],
+    *,
+    ch: Any,
+    holder_sql: str = GRAPH_HOLDER_SQL,
 ) -> set[str]:
     """Of `versions`, (memory_id, content_sha256) pairs, the ids of the rows whose
-    current value is still that version and may hold graph facts (`GRAPH_HOLDER_SQL`)."""
+    current value is still that version and may hold graph facts (`holder_sql`)."""
     if not versions:
         return set()
     found = await ch.query_all(
@@ -1235,7 +1256,7 @@ async def rows_holding(
         FROM loom.memory FINAL
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
           AND (memory_id, content_sha256) IN {{versions:Array(Tuple(UUID, String))}}
-          AND {GRAPH_HOLDER_SQL}
+          AND {holder_sql}
         SETTINGS select_sequential_consistency = 1
         """,
         params={"org": org, "ns": namespace, "versions": sorted(set(versions))},

@@ -2025,6 +2025,43 @@ async def test_a_projection_landing_after_a_revision_leaves_no_edge(
     assert "london" not in await _walked(org, ["jazz", "lif"], labeled=False, seed="alice")
 
 
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {},
+        {"proposed": True},
+        {"valid_at": datetime(2019, 1, 1), "valid_to": datetime(2020, 1, 1)},
+    ],
+    ids=["plain", "proposed", "closed-in-the-past"],
+)
+async def test_a_first_write_still_holding_its_value_projects_its_edge(ch, org, extra) -> None:
+    # The fence asks only whether the row still holds this value: a proposal
+    # or a fact dated in the past gets its edge, as an active row does.
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import after_write
+    from server.memory.app.write import handle_memory_set
+
+    out = await handle_memory_set(
+        MemorySetInput(
+            org=org,
+            namespace=NS,
+            agent="bot",
+            user_id=USER,
+            memory_key="alice",
+            value="Alice met Bob in Paris",
+            **extra,
+        )
+    )
+    await after_write.drain()
+    rows = await ch.query_all(
+        "SELECT count() AS n FROM loom.entity_edge_rows "
+        "WHERE org = {org:String} AND memory_id = {id:UUID} "
+        "SETTINGS select_sequential_consistency = 1",
+        params={"org": org, "id": str(out.memory_id)},
+    )
+    assert int(rows[0]["n"]) > 0
+
+
 async def test_an_undo_keeps_its_edge_open_past_another_relations_end(ch, org) -> None:
     # The pair's latest edge is a bounded work fact; the restored London is open-ended,
     # and so is its edge: past the work fact's end both walks still reach London.
