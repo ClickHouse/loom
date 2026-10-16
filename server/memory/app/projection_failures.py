@@ -544,7 +544,7 @@ async def _retry_triples_reconcile(failure: ProjectionFailureRow, *, ch: Any) ->
     from types import SimpleNamespace
 
     from server.memory.app.entity_projections import close_dropped_facts
-    from server.memory.app.graph_undo import reopen_held_facts, rows_still_holding
+    from server.memory.app.graph_undo import reopen_held_facts
 
     ids = [str(i) for i in failure.payload.get("memory_ids") or []]
     if not ids:
@@ -559,11 +559,9 @@ async def _retry_triples_reconcile(failure: ProjectionFailureRow, *, ch: Any) ->
             return "malformed_payload"
         # A row revised since the Undo is its revision's to reconcile, not the Undo's.
         hashes = failure.payload.get("content_sha256") or {}
-        if hashes:
-            ids = await rows_still_holding(failure.org, failure.namespace, hashes, ch=ch)
-            if not ids:
-                return ""
-        await reopen_held_facts(scope, ids, ch=ch, restored_at=restored_at, restore_id=restore_id)
+        await reopen_held_facts(
+            scope, ids, ch=ch, restored_at=restored_at, restore_id=restore_id, hashes=hashes
+        )
     else:
         await close_dropped_facts(scope, ids, ch=ch)
     return ""

@@ -1552,6 +1552,51 @@ async def test_an_undo_leaves_the_graph_to_a_revision_made_before_its_graph_step
     assert await _open_cities(ch, org, {"berlin"}) == {"berlin"}
 
 
+async def test_an_undo_leaves_the_graph_to_a_revision_made_while_its_graph_step_reads(
+    ch, org, monkeypatch
+) -> None:
+    # As above, but the revision lands while the graph step reads what the row holds.
+    from server.memory.api.models_crud import MemoryRestoreInput
+    from server.memory.app import graph_undo
+    from server.memory.app.restore import handle_memory_restore
+
+    live = ("user", "live_in")
+    london = await _stated(ch, org, "s1", "I currently live in London", (*live, "london"))
+    paris = await _stated(ch, org, "s2", "I currently live in Paris", (*live, "paris"))
+    await _follow_retirement(ch, org, london, paris)
+    linked, revised = graph_undo.linked_triples, []
+
+    async def revised_first(*args: Any, **kwargs: Any) -> Any:
+        if not revised:
+            revised.append(True)
+            await _revise("memory.update_by_id", org, london, "I live in Rome", ((*live, "rome"),))
+            await _stated(ch, org, "s3", "I moved to Berlin", (*live, "berlin"), memory_key="k3")
+            await _mutations_done(ch, org)
+        return await linked(*args, **kwargs)
+
+    monkeypatch.setattr(graph_undo, "linked_triples", revised_first)
+    out = await handle_memory_restore(
+        MemoryRestoreInput(
+            org=org,
+            namespace=NS,
+            agent="bot",
+            user_id=USER,
+            session_id="s1",
+            memory_key=KEY,
+            if_superseded_by=str(paris["memory_id"]),
+        )
+    )
+    assert out.restored and revised
+    await _mutations_done(ch, org)
+    # Nor does it assert the revised value at its own time: Rome was not stated then.
+    undone = await ch.query_all(
+        "SELECT object FROM loom.entity_triples WHERE org = {org:String} AND restore_id != ''",
+        params={"org": org},
+    )
+    assert undone == []
+    assert await _open_cities(ch, org, {"berlin"}) == {"berlin"}
+
+
 async def test_undo_makes_the_restored_value_current_and_retires_nothing(
     ch, org, monkeypatch
 ) -> None:

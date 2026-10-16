@@ -489,12 +489,8 @@ async def reconcile_row_facts(
             # Lazy: graph_undo reads row links through this module.
             from server.memory.app import graph_undo
 
-            if hashes:
-                ids = await graph_undo.rows_still_holding(input.org, input.namespace, hashes, ch=ch)
-                if not ids:
-                    return
             await graph_undo.reopen_held_facts(
-                input, ids, ch=ch, restored_at=restored_at, restore_id=restore_id
+                input, ids, ch=ch, restored_at=restored_at, restore_id=restore_id, hashes=hashes
             )
         else:
             await close_dropped_facts(input, ids, ch=ch)

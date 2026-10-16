@@ -37,6 +37,18 @@ async def rows_still_holding(
     return sorted(str(r["id"]) for r in rows if hashes.get(str(r["id"])) == str(r["sha"]))
 
 
+async def _held_now(input: Any, ids: list[str], *, ch: Any) -> frozenset[Any]:
+    """What the rows `ids` hold now. Only their own values: another row's claim keeps a
+    fact from closing, but never reopens one."""
+    linked = await linked_triples(input, ids, ch=ch)
+    held = await stated_by_live_rows(input.org, input.namespace, linked, ch=ch, rows=ids)
+    # A row written before rows were linked has no links: read what its value names of
+    # its key's facts (a single row that has links cannot be one).
+    if not (linked and len(ids) == 1):
+        held |= await held_by_unlinked_rows(input.org, input.namespace, None, ch=ch, rows=ids)
+    return held
+
+
 async def reopen_held_facts(
     input: Any,
     ids: list[str],
@@ -44,23 +56,31 @@ async def reopen_held_facts(
     ch: Any,
     restore_id: str,
     restored_at: datetime,
+    hashes: Mapping[str, str] | None = None,
 ) -> None:
     """Open again the facts the rows `ids` hold now: an Undo brings a retired row's
     facts back. An Undo is an assertion made at the restore, so each fact gets a new
     observation starting then, repaired like any other value; no row retires.
     `restore_id` names this Undo's markers, so a replay with the same id and
-    `restored_at` finds and restates them."""
+    `restored_at` finds and restates them. With `hashes` (id to the `content_sha256`
+    restored), only the rows still holding that value are read."""
     from server.identity.app.namespace_ontology import load_relation_cardinality
 
-    # Only what the restored rows' values hold now: another row's claim keeps a fact
-    # from closing, but never reopens one.
-    linked = await linked_triples(input, ids, ch=ch)
-    held = await stated_by_live_rows(input.org, input.namespace, linked, ch=ch, rows=ids)
-    # A row written before rows were linked has no links: read what its value names of
-    # its key's facts (a single row that has links cannot be one).
-    if not (linked and len(ids) == 1):
-        held |= await held_by_unlinked_rows(input.org, input.namespace, None, ch=ch, rows=ids)
-    if not held:
+    if hashes:
+        ids = sorted(i for i in ids if i in hashes)
+    while ids:
+        held = await _held_now(input, ids, ch=ch)
+        if not hashes:
+            break
+        # Checked after the read: a row revised since the restore, even while this
+        # read ran, is its revision's to reconcile, so it is dropped and the rest read again.
+        still = await rows_still_holding(
+            input.org, input.namespace, {i: hashes[i] for i in ids}, ch=ch
+        )
+        if still == ids:
+            break
+        ids = still
+    if not ids or not held:
         return
     now = restored_at.replace(microsecond=0)  # as the DateTime columns store it
     # On the fly: a retirement's closes are mutations, and a row they will close is
