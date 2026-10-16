@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Alert } from "@clickhouse/click-ui/Alert";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
@@ -35,6 +36,7 @@ import { useAbortableEffect } from "../../lib/hooks";
 import { PageContainer } from "../../layout/PageContainer";
 import { oneOf } from "../../lib/oneOf";
 import { isRecord } from "../../lib/guards";
+import { TipTarget } from "../../components/ui";
 
 /**
  * Policies — history rules over what an agent may do next.
@@ -288,20 +290,19 @@ export function Policies() {
                   { label: <span className="font-mono text-xs">{r.actions.join(", ")}</span>, overflowMode: "wrap" },
                   {
                     label: (
-                      <span className="font-mono text-xs" title={JSON.stringify(r.condition, null, 2)}>
-                        {summariseCondition(r.condition)}
-                      </span>
+                      <details className="font-mono text-xs">
+                        <summary className="cursor-pointer">{summariseCondition(r.condition)}</summary>
+                        <pre className="mt-1 whitespace-pre-wrap break-words">
+                          {JSON.stringify(r.condition, null, 2)}
+                        </pre>
+                      </details>
                     ),
+                    overflowMode: "wrap",
                   },
                   { label: <Bool v={r.enabled} /> },
                   {
-                    label: r.description ? (
-                      <span className="text-text-muted" title={r.description}>
-                        {r.description}
-                      </span>
-                    ) : (
-                      DASH
-                    ),
+                    label: r.description ? <span className="text-text-muted">{r.description}</span> : DASH,
+                    overflowMode: "wrap",
                   },
                   {
                     label: (
@@ -417,7 +418,7 @@ function AddRuleDialog({ open, onClose, onSaved }: { open: boolean; onClose: () 
           void submit();
         }}
       >
-        <div className="max-h-[60vh] overflow-y-auto space-y-3">
+        <div className="space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-[1fr_140px] gap-3">
             <TextField
               label="Policy ID"
@@ -469,11 +470,12 @@ function AddRuleDialog({ open, onClose, onSaved }: { open: boolean; onClose: () 
             </div>
           </div>
           {err && (
-            <div
-              role="alert"
-              className="text-xs text-danger whitespace-pre-wrap break-words rounded-md border border-danger/30 bg-danger/5 px-3 py-2"
-            >
-              {err}
+            <div role="alert">
+              <Alert
+                state="danger"
+                size="small"
+                text={<span className="whitespace-pre-wrap break-words">{err}</span>}
+              />
             </div>
           )}
         </div>
@@ -591,13 +593,19 @@ function DryRunPanel({ onRan }: { onRan: () => void }) {
             )}
           </div>
           {result.errors.length > 0 && (
-            <div className="text-xs text-danger rounded-md border border-danger/30 bg-danger/5 px-3 py-2 space-y-0.5">
-              {result.errors.map((e, i) => (
-                <div key={i} className="break-words">
-                  {e}
-                </div>
-              ))}
-            </div>
+            <Alert
+              state="danger"
+              size="small"
+              text={
+                <span className="block space-y-0.5">
+                  {result.errors.map((e, i) => (
+                    <span key={i} className="block break-words">
+                      {e}
+                    </span>
+                  ))}
+                </span>
+              }
+            />
           )}
           {result.rules.length === 0 && (
             <div className="text-xs text-text-subtle">
@@ -647,13 +655,9 @@ function DryRunPanel({ onRan }: { onRan: () => void }) {
                         <td className="px-3 py-2">
                           {lf ? (
                             lf.skipped ? (
-                              <span className="text-text-subtle" title={lf.skipped}>
-                                skipped
-                              </span>
+                              <span className="text-text-subtle">skipped</span>
                             ) : lf.error ? (
-                              <span className="text-danger" title={lf.error}>
-                                error
-                              </span>
+                              <span className="text-danger">error</span>
                             ) : (
                               <Bool v={lf.holds} />
                             )
@@ -663,7 +667,7 @@ function DryRunPanel({ onRan }: { onRan: () => void }) {
                         </td>
                         <td className="px-3 py-2 font-mono text-xs max-w-[32ch]">
                           {lf ? (
-                            <div className="truncate" title={lf.error || lf.skipped || undefined}>
+                            <div className="break-words">
                               {lf.error ||
                                 lf.skipped ||
                                 (lf.value === null || lf.value === undefined
@@ -770,9 +774,11 @@ function DecisionsPanel({ version }: { version: number }) {
             items: [
               {
                 label: (
-                  <span title={r.ts} className="text-text-muted">
-                    {relativeTime(r.ts)}
-                  </span>
+                  <TipTarget tip={r.ts} underline>
+                    <time dateTime={r.ts} className="text-text-muted">
+                      {relativeTime(r.ts)}
+                    </time>
+                  </TipTarget>
                 ),
               },
               { label: displayAgent(r.agent) },
@@ -781,21 +787,15 @@ function DecisionsPanel({ version }: { version: number }) {
               { label: <Bool v={r.enforced} /> },
               {
                 label: r.determining_rules.length ? (
-                  <span className="font-mono text-xs" title={r.determining_rules.join(", ")}>
-                    {r.determining_rules.join(", ")}
-                  </span>
+                  <span className="font-mono text-xs">{r.determining_rules.join(", ")}</span>
                 ) : (
                   DASH
                 ),
+                overflowMode: "wrap",
               },
               {
-                label: r.errors.length ? (
-                  <span className="text-xs text-danger" title={r.errors.join("\n")}>
-                    {r.errors.join("; ")}
-                  </span>
-                ) : (
-                  DASH
-                ),
+                label: r.errors.length ? <span className="text-xs text-danger">{r.errors.join("; ")}</span> : DASH,
+                overflowMode: "wrap",
               },
               { label: <span className="tabular-nums">{r.latency_ms} ms</span> },
             ],

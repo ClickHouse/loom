@@ -213,7 +213,7 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
           void onSubmit();
         }}
       >
-        <div className="max-h-[70vh] space-y-4 overflow-y-auto">
+        <div className="space-y-4">
           <div>
             <input
               aria-label="Choose a file to upload"
@@ -230,11 +230,12 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
               fillWidth
               onClick={() => fileRef.current?.click()}
             >
-              {replaceMode ? "Pick the new file" : "Pick a file"} (.pdf, .docx, .md, .txt, .json, .csv, …)
+              {replaceMode ? "Pick the new file" : "Pick a file"}
             </Button>
             <p className="mt-1.5 text-2xs text-text-subtle">
-              Text is extracted in your browser before upload — review it below before saving. Scanned/image PDFs need
-              OCR (not supported); paste the text directly instead.
+              PDF, Word (.docx), Markdown, text, JSON, YAML, CSV, HTML or XML. Text is extracted in your browser before
+              upload — review it below before saving. Scanned/image PDFs need OCR (not supported); paste the text
+              directly instead.
             </p>
           </div>
           {/* Locked in Replace mode, so the new content overwrites the document rather

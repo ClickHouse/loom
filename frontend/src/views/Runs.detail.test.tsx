@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RunGetResponse, RunRow } from "../api";
@@ -22,6 +22,20 @@ vi.mock("../api", async (importOriginal) => {
     isAuthDisabled: () => false,
   };
 });
+
+// A replay figure: the value under its label, and what its (i) says.
+async function stat(dialog: HTMLElement, label: string): Promise<HTMLElement> {
+  const term = await within(dialog).findByText(label, { selector: "dt" });
+  return must(term.nextElementSibling as HTMLElement | null, `${label} value`);
+}
+async function helpOf(dialog: HTMLElement, label: string): Promise<string> {
+  const about = within(dialog).getByRole("button", { name: `About ${label}` });
+  act(() => about.focus());
+  const text = (await screen.findByRole("tooltip")).textContent ?? "";
+  act(() => about.blur());
+  await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
+  return text;
+}
 
 const row = (over: Partial<RunRow> = {}): RunRow => ({
   run_id: "r-hollow",
@@ -145,10 +159,12 @@ describe("Runs page", () => {
     expect(within(dialog).getByText(/reported no memory activity/)).toBeInTheDocument();
     expect(within(dialog).getByText(EMPTY_WHY.used)).toBeInTheDocument();
     expect(within(dialog).getByText(EMPTY_WHY.written)).toBeInTheDocument();
-    expect(within(dialog).getByTitle(EMPTY_WHY.recalledZero)).toHaveTextContent("0");
+    expect(await stat(dialog, "recalled")).toHaveTextContent("0");
+    expect(await helpOf(dialog, "recalled")).toContain(EMPTY_WHY.recalledZero);
     // No top-level session: turns and cost cannot be joined, and the page says so.
     expect(within(dialog).getAllByText("no session")).toHaveLength(2);
-    expect(within(dialog).getAllByTitle(EMPTY_WHY.noSession)).toHaveLength(2);
+    expect(await helpOf(dialog, "turns")).toContain(EMPTY_WHY.noSession);
+    expect(await helpOf(dialog, "cost")).toContain(EMPTY_WHY.noSession);
     expect(within(dialog).queryByText(/inferred from a connection/)).toBeNull();
   });
 
@@ -174,7 +190,7 @@ describe("Runs page", () => {
     render(<Runs />);
     fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
     const dialog = await screen.findByRole("dialog");
-    const budget = await within(dialog).findByTitle(EMPTY_WHY.budget);
+    const budget = await stat(dialog, "budget");
     expect(budget).toHaveTextContent("$1.00 · 30m 0s · 42s elapsed · over cost");
   });
 
@@ -186,7 +202,7 @@ describe("Runs page", () => {
     fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
     const dialog = await screen.findByRole("dialog");
     expect(await within(dialog).findByText("$1.000004")).toBeInTheDocument();
-    expect(await within(dialog).findByTitle(EMPTY_WHY.budget)).toHaveTextContent("$1.00 · over cost");
+    expect(await stat(dialog, "budget")).toHaveTextContent("$1.00 · over cost");
   });
 
   it("spells a large spend with thousands separators, as the hint does", async () => {
@@ -205,7 +221,7 @@ describe("Runs page", () => {
     render(<Runs />);
     fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
     const dialog = await screen.findByRole("dialog");
-    expect(await within(dialog).findByTitle(EMPTY_WHY.budget)).toHaveTextContent("60s · 0s elapsed");
+    expect(await stat(dialog, "budget")).toHaveTextContent("60s · 0s elapsed");
   });
 
   it("names the turns it could not price", async () => {
@@ -214,7 +230,8 @@ describe("Runs page", () => {
     render(<Runs />);
     fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
     const dialog = await screen.findByRole("dialog");
-    expect(await within(dialog).findByTitle(EMPTY_WHY.unpriced)).toHaveTextContent("(2 unpriced)");
+    expect(await stat(dialog, "turns")).toHaveTextContent("(2 unpriced)");
+    expect(await helpOf(dialog, "turns")).toContain(EMPTY_WHY.unpriced);
   });
 
   it("a run without a budget shows a dash", async () => {
@@ -222,7 +239,7 @@ describe("Runs page", () => {
     render(<Runs />);
     fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
     const dialog = await screen.findByRole("dialog");
-    expect(await within(dialog).findByTitle(EMPTY_WHY.budget)).toHaveTextContent("—");
+    expect(await stat(dialog, "budget")).toHaveTextContent("—");
   });
 
   it("drops a run.list answer that lands after the status filter changed", async () => {
@@ -234,7 +251,7 @@ describe("Runs page", () => {
       ]);
     render(<Runs />);
     await waitFor(() => expect(listRuns).toHaveBeenCalledTimes(1));
-    fireEvent.click(screen.getByRole("button", { name: "failed" }));
+    fireEvent.click(screen.getByRole("button", { name: "Failed" }));
     await waitFor(() => expect(listRuns).toHaveBeenCalledTimes(2));
     expect(listRuns.mock.calls[1][1]?.status).toBe("failed");
     expect(await screen.findByText("the failed one")).toBeInTheDocument();
@@ -271,7 +288,8 @@ describe("Runs page", () => {
     render(<Runs />);
     fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
     const dialog = await screen.findByRole("dialog");
-    expect(await within(dialog).findByTitle(EMPTY_WHY.recalledOff)).toHaveTextContent("n/a");
+    expect(await stat(dialog, "recalled")).toHaveTextContent("n/a");
+    expect(await helpOf(dialog, "recalled")).toContain(EMPTY_WHY.recalledOff);
     expect(within(dialog).queryByRole("button", { name: /Recall history for this run/ })).toBeNull();
   });
 });

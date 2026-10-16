@@ -247,9 +247,7 @@ export function PrivacyFilters({
                     {r.reason && (
                       <>
                         <span>·</span>
-                        <span className="italic truncate" title={r.reason}>
-                          “{r.reason}”
-                        </span>
+                        <span className="italic min-w-0 break-words">“{r.reason}”</span>
                       </>
                     )}
                   </div>

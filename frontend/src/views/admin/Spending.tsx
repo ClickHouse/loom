@@ -1,8 +1,10 @@
 import { useState, type ReactNode } from "react";
+import { Alert } from "@clickhouse/click-ui/Alert";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { NumberField } from "@clickhouse/click-ui/NumberField";
+import { ProgressBar } from "@clickhouse/click-ui/ProgressBar";
 import { Select } from "@clickhouse/click-ui/Select";
 import { Table } from "@clickhouse/click-ui/Table";
 import {
@@ -195,37 +197,31 @@ export function Spending() {
       )}
 
       {budget && budget.cap_source !== "uncapped" && (
-        <div
-          className={`mb-5 rounded-xl border p-4 ${
-            budget.over_cap ? "border-warn/40 bg-warn/10" : "border-border bg-surface"
-          }`}
-        >
+        <div className="mb-5 rounded-xl border border-border bg-surface p-4">
+          {budget.over_cap && (
+            <Alert
+              className="mb-3"
+              state="warning"
+              size="small"
+              showIcon
+              text="Daily LLM cap reached — extraction paused for this namespace"
+            />
+          )}
           <div className="flex items-baseline justify-between gap-3 mb-2">
-            <div className="text-sm">
-              {budget.over_cap ? (
-                <span className="inline-flex items-center gap-1.5 text-warn font-medium">
-                  <Icon name="warning" size="xs" color="var(--color-warn)" aria-hidden="true" /> Daily LLM cap reached —
-                  extraction paused for this namespace
-                </span>
-              ) : (
-                <span className="font-medium">Daily LLM budget</span>
-              )}
-            </div>
+            <div className="text-sm font-medium">Daily LLM budget</div>
             <div className="text-xs tabular text-text-muted">
               ${budget.spent_24h_usd.toFixed(4)} / ${budget.cap_usd.toFixed(2)} ({budget.cap_source})
             </div>
           </div>
-          <div className="h-1.5 bg-surface-2 rounded-full overflow-hidden">
-            <div
-              className={`h-full transition-all ${budget.over_cap ? "bg-warn" : "bg-accent"}`}
-              style={{ width: `${Math.min(100, (budget.pct_of_cap ?? 0) * 100)}%` }}
-              aria-label={`${Math.round((budget.pct_of_cap ?? 0) * 100)}% of daily LLM budget used`}
-              role="progressbar"
-              aria-valuenow={Math.round((budget.pct_of_cap ?? 0) * 100)}
-              aria-valuemin={0}
-              aria-valuemax={100}
-            />
-          </div>
+          <ProgressBar
+            type="small"
+            progress={Math.min(100, Math.round((budget.pct_of_cap ?? 0) * 100))}
+            role="progressbar"
+            aria-label={`${Math.round((budget.pct_of_cap ?? 0) * 100)}% of daily LLM budget used`}
+            aria-valuenow={Math.round((budget.pct_of_cap ?? 0) * 100)}
+            aria-valuemin={0}
+            aria-valuemax={100}
+          />
           <div className="mt-2 flex items-baseline justify-between gap-3">
             <div className="text-2xs text-text-muted leading-relaxed">
               Rolling 24h sum of upstream LLM cost on this namespace. When the cap is hit,{" "}
@@ -253,21 +249,34 @@ export function Spending() {
         />
       )}
       {rows !== null && rows.length > 0 && totalCost === 0 && totalTokens === 0 && totalEmbedTokens === 0 && (
-        <div className="mb-5 p-3 rounded-xl border border-border bg-surface-2 text-sm text-text-muted">
-          <span className="text-text font-medium">$0 in this window.</span> The {totalOps.toLocaleString()} operations
-          counted are all read-only API calls (memory listing, audit reads, etc.) that don't hit a paid provider. Cost
-          shows up here once your agent writes memories (embedder fires), or once the entity_extractor worker is
-          enabled.
-        </div>
+        <Alert
+          className="mb-5"
+          state="neutral"
+          showIcon
+          text={
+            <>
+              <strong>$0 in this window.</strong> The {totalOps.toLocaleString()} operations counted are all read-only
+              API calls (memory listing, audit reads, etc.) that don't hit a paid provider. Cost shows up here once your
+              agent writes memories (embedder fires), or once the entity_extractor worker is enabled.
+            </>
+          }
+        />
       )}
 
       {rows !== null && rows.length > 0 && totalEmbedTokens > 0 && totalCost === 0 && (
-        <div className="mb-5 p-3 rounded-xl border border-warn/60 bg-warn/10 text-sm text-warn">
-          <span className="font-medium">{fmt(totalEmbedTokens)} embed tokens but $0 cost.</span> Your embedder fired but
-          its upstream-cost field isn't yet attributed in the rollup — known gap, applies to every Loom deployment
-          today. Once the attribution wiring lands, the number under Total cost will include embedder usage.
-          (LLM-extraction worker costs are tracked correctly.)
-        </div>
+        <Alert
+          className="mb-5"
+          state="warning"
+          showIcon
+          text={
+            <>
+              <strong>{fmt(totalEmbedTokens)} embed tokens but $0 cost.</strong> Your embedder fired but its
+              upstream-cost field isn't yet attributed in the rollup — known gap, applies to every Loom deployment
+              today. Once the attribution wiring lands, the number under Total cost will include embedder usage.
+              (LLM-extraction worker costs are tracked correctly.)
+            </>
+          }
+        />
       )}
 
       {rows !== null && rows.length > 0 && (
@@ -320,12 +329,9 @@ export function Spending() {
             </Select>
             <Checkbox
               label={
-                <>
-                  Show all operations
-                  {hiddenCount > 0 && !showAllOps && (
-                    <span className="ml-1 text-text-subtle tabular">({hiddenCount} zero-cost rows hidden)</span>
-                  )}
-                </>
+                hiddenCount > 0 && !showAllOps
+                  ? `Show all operations (${hiddenCount} zero-cost rows hidden)`
+                  : "Show all operations"
               }
               checked={showAllOps}
               onCheckedChange={(c) => setShowAllOps(c === true)}

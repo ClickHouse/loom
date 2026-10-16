@@ -14,6 +14,7 @@ import { EmptyState } from "../components/EmptyState";
 import { displayAgent, humanizeError, SENTINEL_AGENTS } from "../lib/format";
 import { PageContainer } from "../layout/PageContainer";
 import { ScopeBadge } from "../components/ScopeBadge";
+import { TipTarget } from "../components/ui";
 
 export function Sharing() {
   // The summary itself spans every namespace the caller holds a grant on
@@ -242,15 +243,23 @@ export function Sharing() {
                       <span className="text-xs text-text-muted">read-only</span>
                     </div>
                     <div className="mt-1 flex items-center gap-1.5 flex-wrap">
-                      {grp.rows.map((n) => (
-                        <Badge
-                          key={n.namespace}
-                          size="sm"
-                          state="neutral"
-                          title={n.namespace}
-                          text={<span className="font-mono">{repoInfo.get(n.namespace)?.branch ?? n.namespace}</span>}
-                        />
-                      ))}
+                      {grp.rows.map((n) => {
+                        const branch = repoInfo.get(n.namespace)?.branch;
+                        const badge = (
+                          <Badge
+                            size="sm"
+                            state="neutral"
+                            text={<span className="font-mono">{branch ?? n.namespace}</span>}
+                          />
+                        );
+                        return branch ? (
+                          <TipTarget key={n.namespace} tip={n.namespace}>
+                            {badge}
+                          </TipTarget>
+                        ) : (
+                          <span key={n.namespace}>{badge}</span>
+                        );
+                      })}
                     </div>
                     <div className="mt-1 text-xs text-text-muted tabular">
                       {grp.rows.length} branch{grp.rows.length === 1 ? "" : "es"} you read · {readers.toLocaleString()}{" "}

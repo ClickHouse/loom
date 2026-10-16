@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { forwardRef, type ComponentPropsWithoutRef } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as RadixPopover from "@radix-ui/react-popover";
 
@@ -14,10 +14,15 @@ import * as RadixPopover from "@radix-ui/react-popover";
  * skip link and other focusable elements stay in it; focus still moves into the menu and
  * back to the trigger on Escape.
  */
-export function MenuTrigger({ children }: { children: ReactNode }) {
-  return <DropdownMenu.Trigger asChild>{children}</DropdownMenu.Trigger>;
-}
+// Props and ref pass through, so a Tip can wrap a trigger.
+export const MenuTrigger = forwardRef<HTMLButtonElement, ComponentPropsWithoutRef<typeof DropdownMenu.Trigger>>(
+  function MenuTrigger(props, ref) {
+    return <DropdownMenu.Trigger asChild ref={ref} {...props} />;
+  },
+);
 
-export function PopoverTrigger({ children }: { children: ReactNode }) {
-  return <RadixPopover.Trigger asChild>{children}</RadixPopover.Trigger>;
-}
+export const PopoverTrigger = forwardRef<HTMLButtonElement, ComponentPropsWithoutRef<typeof RadixPopover.Trigger>>(
+  function PopoverTrigger(props, ref) {
+    return <RadixPopover.Trigger asChild ref={ref} {...props} />;
+  },
+);

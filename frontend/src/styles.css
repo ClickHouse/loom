@@ -45,12 +45,12 @@
 /* ============================================================
    Design tokens — Click UI light (https://github.com/ClickHouse/click-ui)
    ============================================================
-   One theme: Click UI's light set. Every colour below is a Click UI
-   variable (`--global-color-*`, `--click-<component>-*`) under Loom's
-   semantic name, so components never name a Click UI token and a Click UI
-   upgrade is `npm i -D @clickhouse/click-ui@x && node scripts/click_tokens.mjs`.
-   A hex literal here is a Click UI palette step that has no variable of its
-   own, named in its comment. */
+   One theme: Click UI's light set, loaded from the package (main.tsx). Loom's
+   semantic tokens below are Click UI variables (`--global-color-*`,
+   `--click-<component>-*`) for Loom's own elements; Click UI components read
+   Click UI's variables directly. A hex literal is a Click UI palette step with
+   no variable of its own, named in its comment. Loom's `text-muted` is one
+   step darker than Click UI's text-muted, which is Loom's `text-subtle`. */
 
 /* `static`: every token here is emitted whether or not a utility uses it.
    Without it Tailwind v4 emits only the variables its generated classes
@@ -98,7 +98,6 @@
   --spacing-row: 8px; /* between rows in a list or a meta grid */
   --spacing-pane: 12px; /* padding inside a pane or panel */
   --spacing-gutter: 24px; /* page side gutter */
-  --spacing-hit: 44px; /* the smallest touch target under a coarse pointer */
 
   /* Hit target under a coarse pointer: every primitive and
      Explorer control reaches this on touch — the Tailwind `pointer-coarse:`
@@ -145,16 +144,16 @@
   --color-accent-strong: var(--click-button-basic-color-primary-background-hover);
   --color-on-accent: var(--click-button-basic-color-primary-text-default);
 
-  /* Semantic — the Click UI badge text colours (success-700, warning-700,
-     danger-600), which read as text on white and tint as `bg-x/15`. Info is
-     the solid badge blue (info-600): the lighter info-400 is 3.9:1 on white. */
+  /* Semantic — the Click UI badge text colours as corrected below (success-800,
+     warning-700, danger-600), which read as text on white and tint as
+     `bg-x/15`. Info is the solid badge blue (info-600). */
   --color-success: var(--click-badge-opaque-color-text-success);
   --color-warn: var(--click-badge-opaque-color-text-warning);
   --color-danger: var(--click-badge-opaque-color-text-danger);
   --color-info: var(--click-badge-solid-color-background-info);
 
-  /* Elevation — Click UI's one shadow (cards, popovers, dialogs); every
-     Tailwind `shadow-*` step resolves to it at a different reach. */
+  /* Elevation — Click UI's one shadow (cards, popovers, dialogs) is `md` and
+     `lg`; `sm` is a hairline and `xl`/`2xl` reach further for drawers. */
   --color-shadow: var(--global-color-shadow-default);
   --shadow-sm: 0 1px 2px 0 var(--color-shadow);
   --shadow-md: 0 4px 6px -1px var(--color-shadow), 0 2px 4px -1px var(--color-shadow);
@@ -191,18 +190,20 @@
    Click UI light, corrected for WCAG 2.2 AA
    ============================================================
    A handful of Click UI 0.13's light values miss AA: link and empty-button
-   blue (3.8:1), opaque success and info badge text (4.3, 3.4), solid default
-   and warning badges (2.6, 4.2), placeholder text (2.6), and the checkbox and
-   field strokes a control is recognised by (2.0 and 1.2, under 1.4.11's 3:1).
+   blue (3.8:1), info alert text (3.4 on its tint), opaque success and info
+   badge text (4.3, 3.4), solid default and warning badges (2.6, 4.2),
+   placeholder text (2.6), and the field, checkbox, radio and switch strokes a
+   control is recognised by (1.2–2.0, under 1.4.11's 3:1).
    Each is redefined here with the next Click UI palette step that passes, so
    every Click UI component picks it up. Unlayered, so it wins over the
    `clickui` layer. */
 :root[data-cui-theme="light"] {
-  --global-color-text-link-default: #104ec6; /* info-600, 7.2:1 */
-  --click-global-color-text-link-default: #104ec6;
-  --click-button-basic-color-empty-text-default: #104ec6;
-  --click-button-basic-color-empty-text-active: #104ec6;
-  --click-button-basic-color-empty-text-hover: #0d3e9b; /* info-700 */
+  --global-color-text-link-default: #1d64ec; /* info-500, 5.1:1 */
+  --click-global-color-text-link-default: #1d64ec;
+  --click-button-basic-color-empty-text-default: #1d64ec;
+  --click-button-basic-color-empty-text-active: #1d64ec;
+  --click-button-basic-color-empty-text-hover: #104ec6; /* info-600 */
+  --click-alert-color-text-info: #104ec6; /* info-600, 6.4:1 on its tint */
   --click-badge-opaque-color-text-success: #006108; /* success-800, 7.4:1 on its tint */
   --click-badge-opaque-color-text-info: #104ec6; /* 6.4:1 on its tint */
   --click-badge-solid-color-background-default: #606060; /* neutral-600, 6.3:1 */
@@ -212,6 +213,12 @@
   --click-field-color-stroke-hover: #696e79;
   --click-checkbox-color-stroke-default: #808691;
   --click-checkbox-color-stroke-hover: #696e79;
+  --click-radio-color-stroke-default: #808691;
+  --click-radio-color-stroke-hover: #696e79;
+  --click-switch-color-stroke-default: #808691;
+  /* Click UI's small badge is 10 px; Loom's floor is 11 px. */
+  --click-badge-typography-label-sm-default:
+    500 0.6875rem / 1.5 "Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 /* ============================================================
@@ -253,20 +260,20 @@ body {
   }
 }
 
-/* Heading scale — Click UI product titles, sized for a console: a page
-   title at 20 px, a section at 18, a sub-section at 16. In the base layer,
-   so a heading's own `text-*` class still wins. */
+/* Heading scale — Click UI product titles: a page title is titles-xl (700,
+   20 px), a section titles-lg (700, 18 px), a sub-section titles-md (600,
+   16 px), all at 150 %. In the base layer, so a heading's own `text-*` class
+   still wins. */
 @layer base {
   h1 {
     font-size: var(--text-2xl);
     line-height: var(--text-2xl--line-height);
-    letter-spacing: -0.01em;
-    font-weight: 600;
+    font-weight: 700;
   }
   h2 {
     font-size: var(--text-xl);
-    line-height: var(--text-xl--line-height);
-    font-weight: 600;
+    line-height: 27px;
+    font-weight: 700;
   }
   h3 {
     font-size: var(--text-lg);
@@ -275,7 +282,6 @@ body {
   }
 }
 
-/* Section label. Use `.section-label` instead of inline classes. */
 /* Loom's own classes sit in the components layer, so a utility on the same
    element still applies. */
 @layer components {
@@ -295,9 +301,6 @@ body {
 
   .tabular {
     font-variant-numeric: tabular-nums;
-  }
-  .font-mono {
-    font-family: var(--font-mono);
   }
 
   /* Agent badge — a Click UI opaque badge in the agent's own hue
@@ -350,15 +353,28 @@ body {
   }
 }
 
-/* A control that is unavailable but must stay focusable so its reason can be read
-   (`aria-disabled`, not `disabled`) takes Click UI's disabled look; Click UI only
-   styles `:disabled`. */
+/* Room in a Click UI dialog's title for Loom's close button (components/ui/Modal). */
 @layer components {
-  button[aria-disabled="true"] {
+  [data-testid="click-dialog-title"] {
+    padding-right: 2.5rem;
+  }
+}
+
+/* A Click UI Button that is unavailable but must stay focusable so its reason can be
+   read (`aria-disabled`, not `disabled`) takes Click UI's disabled look, which Click UI
+   only gives `:disabled`. A loading button is natively disabled and keeps its own. The
+   selectors are Click UI's CSS-module class prefixes. */
+@layer components {
+  button[class*="button__"][aria-disabled="true"]:not(:disabled) {
     background: var(--click-button-basic-color-primary-background-disabled);
     border-color: var(--click-button-basic-color-primary-stroke-disabled);
     color: var(--click-button-basic-color-primary-text-disabled);
     cursor: not-allowed;
+  }
+  button[class*="button_empty__"][aria-disabled="true"]:not(:disabled) {
+    background: var(--click-button-basic-color-empty-background-disabled);
+    border-color: var(--click-button-basic-color-empty-stroke-disabled);
+    color: var(--click-button-basic-color-empty-text-disabled);
   }
 }
 
@@ -475,10 +491,23 @@ body {
   animation: fadeIn 240ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-/* Reduced motion — Click UI disables every major animation and transition
-   for a reader who asks the OS for less motion. One rule here covers the
-   stylesheet's own animations, so a component does not need its own
-   `motion-reduce:` variant; a spinner keeps turning, it is a status. */
+/* Skeleton shimmer */
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--color-surface-2) 0%,
+    var(--color-surface-3) 50%,
+    var(--color-surface-2) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+  border-radius: var(--radius-md);
+}
+
+/* Reduced motion: the stylesheet's animations and every transition stop for a
+   reader who asks the OS for less motion, so a component needs no
+   `motion-reduce:` variant; a spinner keeps turning, it is a status. After the
+   rules it overrides. */
 @media (prefers-reduced-motion: reduce) {
   .animate-network-slide,
   .animate-view-in,
@@ -495,23 +524,13 @@ body {
   }
 }
 
-/* Skeleton shimmer */
-.skeleton {
-  background: linear-gradient(
-    90deg,
-    var(--color-surface-2) 0%,
-    var(--color-surface-3) 50%,
-    var(--color-surface-2) 100%
-  );
-  background-size: 200% 100%;
-  animation: shimmer 1.4s ease-in-out infinite;
-  border-radius: var(--radius-md);
-}
-
 /* ============================================================
    Focus rings — Click UI outline blue
    ============================================================ */
 
+/* Click UI's focus ring (outline-default, 2 px, 2 px offset) on every focusable
+   element, including the ones Click UI draws none on (checkbox, switch, tabs,
+   link, its dialog close). */
 *:focus-visible {
   outline: 2px solid var(--color-focus);
   outline-offset: 2px;
@@ -521,12 +540,6 @@ body {
 input:not([type="checkbox"]):not([type="radio"]):focus-visible,
 textarea:focus-visible {
   outline: none;
-}
-
-button:focus-visible,
-input:focus-visible,
-[role="button"]:focus-visible {
-  outline-offset: 1px;
 }
 
 /* ============================================================
@@ -779,7 +792,7 @@ input:focus-visible,
     text-align: left;
   }
   .tq-inbox:hover {
-    background: var(--color-surface);
+    background: var(--color-surface-2);
   }
   .tq-inbox[aria-current="true"] {
     background: var(--color-surface-2);
@@ -817,7 +830,7 @@ input:focus-visible,
     align-items: center;
     justify-content: center;
     font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: var(--text-2xs);
     font-weight: 600;
     color: var(--color-text);
     text-transform: lowercase;
@@ -1123,7 +1136,7 @@ input:focus-visible,
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    font-size: 9px;
+    font-size: var(--text-2xs);
     font-family: var(--font-mono);
     color: var(--color-text);
   }

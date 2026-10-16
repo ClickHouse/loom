@@ -17,7 +17,7 @@
  *      the one that passed.
  *   Then a done state that says what happened and what happens next.
  */
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import { Alert } from "@clickhouse/click-ui/Alert";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
@@ -59,6 +59,7 @@ import { CopyButton } from "../components/CopyButton";
 import { IconButton } from "../components/IconButton";
 import { Skeleton } from "../components/Skeleton";
 import { ChoiceGroup } from "../components/ui/ChoiceGroup";
+import { Unavailable } from "../components/ui/Unavailable";
 import { MappingEditor } from "./TrackerMapping";
 import { CancelButton, DialogFrame, ErrorNote } from "./TaskDialogFrame";
 
@@ -347,17 +348,18 @@ export function RegisterTrackerSourceDialog({
       return (
         <>
           <CancelButton />
-          <Button
-            type="primary"
-            htmlType="button"
-            iconRight="chevron-right"
-            loading={busy === "inspect"}
-            disabled={problems.length > 0 || busy !== null}
-            onClick={() => void inspect()}
-            title={problems.length ? problems[0] : undefined}
-          >
-            Next: map your tables
-          </Button>
+          <Unavailable reason={problems[0]}>
+            <Button
+              type="primary"
+              htmlType="button"
+              iconRight="chevron-right"
+              loading={busy === "inspect"}
+              disabled={busy !== null}
+              onClick={() => void inspect()}
+            >
+              Next: map your tables
+            </Button>
+          </Unavailable>
         </>
       );
     if (step === "map")
@@ -366,16 +368,17 @@ export function RegisterTrackerSourceDialog({
           <Button type="secondary" htmlType="button" onClick={() => setStep("connect")}>
             Back
           </Button>
-          <Button
-            type="primary"
-            htmlType="button"
-            iconRight="chevron-right"
-            disabled={mapProblems.length > 0 || busy !== null}
-            onClick={goCheck}
-            title={mapProblems[0]}
-          >
-            Check
-          </Button>
+          <Unavailable reason={mapProblems[0]}>
+            <Button
+              type="primary"
+              htmlType="button"
+              iconRight="chevron-right"
+              disabled={busy !== null}
+              onClick={goCheck}
+            >
+              Check
+            </Button>
+          </Unavailable>
         </>
       );
     if (step === "check")
@@ -495,36 +498,40 @@ function MapStep({
   problems: string[];
 }) {
   const [views, setViews] = useState(false);
+  const viewsHintId = useId();
   const db = form.database.trim();
   if (inspected.proposal.mode === "views") {
     return (
-      <div className="rounded-lg bg-surface-2 border border-border p-3 text-sm space-y-1" role="status">
-        <p className="flex items-center gap-1.5">
-          <Icon name="check-in-circle" size="sm" color={SUCCESS} aria-hidden="true" />{" "}
-          <span>
-            <span className="font-mono">{db}</span> already exposes Loom's tables — nothing to map.
-          </span>
-        </p>
-        <p className="text-xs text-text-muted">
-          Loom reads <span className="font-mono">github_issues</span>, <span className="font-mono">github_prs</span> and{" "}
-          <span className="font-mono">edges</span> there as they are. Go to Check.
-        </p>
+      <div role="status">
+        <Alert
+          state="success"
+          text={
+            <>
+              <strong className="font-medium">
+                <span className="font-mono">{db}</span> already exposes Loom's tables — nothing to map.
+              </strong>{" "}
+              Loom reads <span className="font-mono">github_issues</span>, <span className="font-mono">github_prs</span>{" "}
+              and <span className="font-mono">edges</span> there as they are. Go to Check.
+            </>
+          }
+        />
       </div>
     );
   }
   return (
     <div className="space-y-4">
-      <div className="rounded-lg bg-surface-2 border border-border p-3 text-sm space-y-1">
-        <p>
-          <strong className="font-medium">Your schema, not Loom's:</strong> pick the table that holds your items and
-          which of its columns holds each field. Loom proposed what it could match — check the ones marked "guessed".
-          Fields you leave on "Loom default" are filled in for you.
-        </p>
-        <p className="text-xs text-text-muted">
-          Loom reads {inspected.tables.length} table{inspected.tables.length === 1 ? "" : "s"} in{" "}
-          <span className="font-mono">{db}</span>. Its read-only user needs SELECT on the tables you map.
-        </p>
-      </div>
+      <Alert
+        state="info"
+        text={
+          <>
+            <strong className="font-medium">Your schema, not Loom's:</strong> pick the table that holds your items and
+            which of its columns holds each field. Loom proposed what it could match — check the ones marked "guessed".
+            Fields you leave on "Loom default" are filled in for you. Loom reads {inspected.tables.length} table
+            {inspected.tables.length === 1 ? "" : "s"} in <span className="font-mono">{db}</span>; its read-only user
+            needs SELECT on the tables you map.
+          </>
+        }
+      />
       {mode === "mapping" && (
         <MappingEditor
           database={db}
@@ -557,18 +564,18 @@ function MapStep({
           <span className="text-xs text-text-muted">— create Loom's tables in your database yourself</span>
         </summary>
         <div className="px-3 pb-3 space-y-3">
-          <Checkbox
-            checked={mode === "views"}
-            onCheckedChange={(x) => onMode(x === true ? "views" : "mapping")}
-            // Click UI stringifies a node label into aria-label; name it explicitly.
-            aria-label={`I created Loom's views in ${db} — read them instead of a mapping`}
-            label={
-              <>
-                I created Loom's views in <span className="font-mono">{db}</span> — read them instead of a mapping
-              </>
-            }
-          />
-          {views && <ViewsStep org={org} database={db} onDatabase={() => {}} />}
+          <div>
+            <Checkbox
+              checked={mode === "views"}
+              onCheckedChange={(x) => onMode(x === true ? "views" : "mapping")}
+              aria-describedby={viewsHintId}
+              label="I created Loom's views — read them instead of a mapping"
+            />
+            <p id={viewsHintId} className="mt-1 ml-6 text-xs text-text-muted">
+              Loom reads them in <span className="font-mono">{db}</span>.
+            </p>
+          </div>
+          {views && <ViewsStep org={org} database={db} />}
         </div>
       </details>
     </div>
@@ -621,7 +628,7 @@ function Stepper({
 
 // ---- 1. Views --------------------------------------------------------------
 
-function ViewsStep({ org, database, onDatabase }: { org: string; database: string; onDatabase: (v: string) => void }) {
+function ViewsStep({ org, database }: { org: string; database: string }) {
   const [cat, setCat] = useState<TrackerContractCatalogue | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [db, setDb] = useState(database);
@@ -662,23 +669,21 @@ function ViewsStep({ org, database, onDatabase }: { org: string; database: strin
   };
   return (
     <div className="space-y-4">
-      <div className="rounded-lg bg-surface-2 border border-border p-3 text-sm space-y-1">
-        <p>
-          <strong className="font-medium">Who decides the schema:</strong> Loom reads fixed view names and columns; you
-          decide how your tables map onto them, as views in your own ClickHouse. Loom only ever reads.
-        </p>
-        <p className="text-xs text-text-muted">
-          Create the three required views below, then connect. Already have them? Go straight to Next.
-        </p>
-      </div>
+      <Alert
+        state="info"
+        text={
+          <>
+            <strong className="font-medium">Who decides the schema:</strong> Loom reads fixed view names and columns;
+            you decide how your tables map onto them, as views in your own ClickHouse. Loom only ever reads. Create the
+            three required views below, then connect. Already have them? Go straight to Next.
+          </>
+        }
+      />
       <TextField
         label={hinted("Database for the views", "create it if it does not exist")}
         value={db}
         placeholder="loom_tracker"
-        onChange={(v) => {
-          setDb(v);
-          onDatabase(v);
-        }}
+        onChange={(v) => setDb(v)}
       />
       {error && (
         <ErrorNote>
@@ -1174,10 +1179,10 @@ function CheckStep({
           )}
           {checked.contract.capabilities && <Capabilities caps={checked.contract.capabilities} />}
           {checked.contract.ok && !stale && (
-            <p className="text-sm text-success flex items-center gap-1.5">
+            <div className="text-sm text-success flex items-center gap-1.5">
               <Icon name="check-in-circle" size="sm" color={SUCCESS} aria-hidden="true" /> Ready to add. Nothing has
               been saved yet.
-            </p>
+            </div>
           )}
         </>
       )}
@@ -1227,9 +1232,9 @@ function DoneStep({ added, repo }: { added: TrackerSourceAddResult; repo?: strin
   const ns = added.namespaces[0];
   return (
     <div className="space-y-3 text-sm" role="status">
-      <p className="flex items-center gap-2 text-sm font-medium">
+      <div className="flex items-center gap-2 text-sm font-medium">
         <Icon name="check-in-circle" size="md" color={SUCCESS} aria-hidden="true" /> {added.name} is connected
-      </p>
+      </div>
       <ul className="space-y-1 text-text-muted list-disc pl-5">
         <li>
           Loom reads <span className="font-mono">{added.database}</span> on {added.host} live; nothing was copied.
@@ -1500,10 +1505,10 @@ export function EditMappingDialog({
       {checked && (
         <div className={checked.fp !== fp ? "opacity-60" : ""}>
           {checked.contract.ok ? (
-            <p className="text-sm text-success flex items-center gap-1.5">
+            <div className="text-sm text-success flex items-center gap-1.5">
               <Icon name="check-in-circle" size="sm" color={SUCCESS} aria-hidden="true" /> The mapping reads. Nothing
               has been saved yet.
-            </p>
+            </div>
           ) : (
             <ErrorNote>{checked.contract.summary}</ErrorNote>
           )}

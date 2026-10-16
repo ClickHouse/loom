@@ -106,37 +106,35 @@ export function MobileNav() {
       </nav>
 
       <Modal open={open} onOpenChange={setOpen} title="More" className="w-full max-w-[520px]">
-        <div className="max-h-[70vh] overflow-y-auto">
-          {groups.map((g) => (
-            <nav key={g.group} aria-label={g.group} className="mb-4">
-              <div className="section-label mb-1.5 px-1">{g.group}</div>
-              <div className="grid grid-cols-3 gap-2">
-                {g.items.map((m) => {
-                  const active = view === m.id;
-                  return (
-                    <a
-                      key={m.id}
-                      href={viewHref(m.id)}
-                      onClick={(e) => {
-                        if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
-                        e.preventDefault();
-                        setView(m.id);
-                        setOpen(false);
-                      }}
-                      aria-current={active ? "page" : undefined}
-                      className={`flex flex-col items-center justify-center gap-1.5 py-3 rounded-sm transition-colors no-underline hover:no-underline text-text ${
-                        active ? "bg-surface-3 font-medium" : "bg-surface-2 hover:bg-surface-3"
-                      }`}
-                    >
-                      <Icon name={m.icon} size="md" aria-hidden="true" />
-                      <span className="text-xs font-medium text-center">{m.label}</span>
-                    </a>
-                  );
-                })}
-              </div>
-            </nav>
-          ))}
-        </div>
+        {groups.map((g) => (
+          <nav key={g.group} aria-label={g.group} className="mb-4">
+            <div className="section-label mb-1.5 px-1">{g.group}</div>
+            <div className="grid grid-cols-3 gap-2">
+              {g.items.map((m) => {
+                const active = view === m.id;
+                return (
+                  <a
+                    key={m.id}
+                    href={viewHref(m.id)}
+                    onClick={(e) => {
+                      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+                      e.preventDefault();
+                      setView(m.id);
+                      setOpen(false);
+                    }}
+                    aria-current={active ? "page" : undefined}
+                    className={`flex flex-col items-center justify-center gap-1.5 py-3 rounded-sm transition-colors no-underline hover:no-underline text-text ${
+                      active ? "bg-surface-3 font-medium" : "bg-surface-2 hover:bg-surface-3"
+                    }`}
+                  >
+                    <Icon name={m.icon} size="md" aria-hidden="true" />
+                    <span className="text-xs font-medium text-center">{m.label}</span>
+                  </a>
+                );
+              })}
+            </div>
+          </nav>
+        ))}
       </Modal>
     </>
   );

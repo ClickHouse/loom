@@ -502,7 +502,9 @@ describe("Add a tracker", () => {
     expect(
       within(screen.getByRole("list", { name: "Before the check" })).getByText("Pick the table that holds your items."),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Check$/ })).toBeDisabled();
+    const check = screen.getByRole("button", { name: /^Check$/ });
+    expect(check).toHaveAttribute("aria-disabled", "true");
+    expect(check).toHaveAccessibleDescription("Pick the table that holds your items.");
   });
 
   it("a views database that fails the contract gets the fix per table", async () => {

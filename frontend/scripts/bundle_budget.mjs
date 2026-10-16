@@ -10,12 +10,13 @@ import path from "node:path";
 import { TraceMap, originalPositionFor } from "@jridgewell/trace-mapping";
 
 const INDEX_BUDGET_BYTES = 120 * 1024;
-// The stylesheets block first paint on every route; gzipped, as served. Click UI's is
-// ~53 kB of it (its components and tokens), Loom's ~16 kB.
-const CSS_BUDGET_GZIP_BYTES = 80 * 1024;
-// Every script the first paint waits on (the entry and its preloads), gzipped: React,
-// Radix and Click UI (~300 kB, its icon set included) plus the app.
-const BOOT_JS_BUDGET_GZIP_BYTES = 500 * 1024;
+// The stylesheets block first paint on every route; gzipped, as served: Click UI's light
+// tokens and the components in use (~27 kB) and Loom's (~14 kB).
+const CSS_BUDGET_GZIP_BYTES = 50 * 1024;
+// Every script the first paint waits on (the entry and its preloads), gzipped: React and
+// Radix (~90 kB), Click UI (~325 kB, most of it the icon set its Icon imports whole) and
+// the app.
+const BOOT_JS_BUDGET_GZIP_BYTES = 460 * 1024;
 // Sources that must not evaluate on every boot (relative to frontend/src).
 const FORBIDDEN_IN_INDEX = [/^flows\/.*Dialog\.tsx$/, /^components\/HeaderSearch\.tsx$/, /^views\/(?!registry\.ts$).+/];
 

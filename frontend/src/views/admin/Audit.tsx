@@ -16,6 +16,7 @@ import { relativeTime } from "../../lib/format";
 import { useAbortableEffect } from "../../lib/hooks";
 import { isRecord } from "../../lib/guards";
 import { PageContainer } from "../../layout/PageContainer";
+import { TabTrigger, TipTarget } from "../../components/ui";
 
 // Events recorded by the control plane that don't represent a user
 // or agent action — operator observability that pollutes the user-
@@ -245,14 +246,14 @@ export function Audit() {
         </p>
       </div>
 
-      <Tabs defaultValue="events" ariaLabel="Activity">
-        <Tabs.TriggersList className="mb-5">
-          <Tabs.Trigger value="events">
-            <Icon name="history" size="sm" aria-hidden="true" /> Events
-          </Tabs.Trigger>
-          <Tabs.Trigger value="erasures">
-            <Icon name="trash" size="sm" aria-hidden="true" /> Erasures
-          </Tabs.Trigger>
+      <Tabs defaultValue="events">
+        <Tabs.TriggersList className="mb-5" aria-label="Activity">
+          <TabTrigger value="events" icon="history">
+            Events
+          </TabTrigger>
+          <TabTrigger value="erasures" icon="trash">
+            Erasures
+          </TabTrigger>
         </Tabs.TriggersList>
         <Tabs.Content value="events">
           {rows !== null && rows.length > 0 && (
@@ -271,14 +272,9 @@ export function Audit() {
                 )}
                 <Checkbox
                   label={
-                    <>
-                      Include system events
-                      {hiddenSystemCount > 0 && !showSystem && (
-                        <span className="ml-1 text-text-subtle tabular">
-                          ({hiddenSystemCount} hidden — budget / rate-limit / worker)
-                        </span>
-                      )}
-                    </>
+                    hiddenSystemCount > 0 && !showSystem
+                      ? `Include system events (${hiddenSystemCount} hidden — budget / rate-limit / worker)`
+                      : "Include system events"
                   }
                   checked={showSystem}
                   onCheckedChange={(c) => setShowSystem(c === true)}
@@ -391,12 +387,11 @@ function ErasuresPanel({ org }: { org: string }) {
               <span className="inline-flex items-center gap-2">
                 <Badge text={r.status} state={ERASURE_STATE[r.status] ?? "neutral"} size="sm" />
                 {r.reversals_count > 0 && (
-                  <Badge
-                    text={`${r.reversals_count} reversed`}
-                    state="warning"
-                    size="sm"
-                    title={`${r.reversals_count} memor${r.reversals_count === 1 ? "y" : "ies"} restored via memory.restore — the "completed" status overstates what's actually erased.`}
-                  />
+                  <TipTarget
+                    tip={`${r.reversals_count} memor${r.reversals_count === 1 ? "y" : "ies"} restored via memory.restore — the "completed" status overstates what's actually erased.`}
+                  >
+                    <Badge text={`${r.reversals_count} reversed`} state="warning" size="sm" />
+                  </TipTarget>
                 )}
               </span>
             ),

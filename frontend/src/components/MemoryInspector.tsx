@@ -6,6 +6,7 @@ import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { Dropdown } from "@clickhouse/click-ui/Dropdown";
 import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
+import { Link } from "@clickhouse/click-ui/Link";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import type {
@@ -690,8 +691,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                                   key={r.agent}
                                   size="sm"
                                   state="neutral"
-                                  text={`${r.agent} ${r.count}×`}
-                                  title={r.last_at ? `Last by ${r.agent}: ${relativeTime(r.last_at)}` : r.agent}
+                                  text={`${r.agent} ${r.count}×${r.last_at ? ` · last ${relativeTime(r.last_at)}` : ""}`}
                                 />
                               ))}
                             </div>
@@ -858,6 +858,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                               type="button"
                               onClick={() => (isCurrent ? undefined : setDiffVersion(isOpen ? null : h.version))}
                               disabled={isCurrent}
+                              aria-expanded={isCurrent ? undefined : isOpen}
                               className={`w-full px-2 py-1.5 text-left transition-colors ${
                                 !isCurrent ? "hover:bg-surface-3" : ""
                               }`}
@@ -1074,20 +1075,31 @@ function ProvenanceSection({
             <dt className="text-text-muted">Source</dt>
             <dd>
               {p.source_kind === "conversation" && p.thread_exists ? (
-                <button
-                  type="button"
-                  onClick={() => onOpenThread(p.thread_id)}
-                  className={link}
-                  title="Open the conversation that produced this memory"
-                >
-                  {p.thread_title || "View source conversation"}
-                </button>
+                <Tip content="Open the conversation that produced this memory">
+                  <Link
+                    component="button"
+                    type="button"
+                    size="sm"
+                    onClick={() => onOpenThread(p.thread_id)}
+                    className="break-all text-left"
+                  >
+                    {p.thread_title || "View source conversation"}
+                  </Link>
+                </Tip>
               ) : p.source_kind === "conversation" ? (
-                <span title="The source conversation is no longer retained (recording off, or expired past the 180-day window)">
+                <>
                   From a conversation · <span className="text-text-subtle">transcript not retained</span>
-                </span>
+                  <div className="text-2xs text-text-subtle">
+                    Recording was off, or it expired past the 180-day window.
+                  </div>
+                </>
               ) : (
-                <span title={p.source_trace}>{p.source_label}</span>
+                <>
+                  {p.source_label}
+                  {p.source_trace && p.source_trace !== p.source_label && (
+                    <div className="text-2xs text-text-subtle font-mono break-all">{p.source_trace}</div>
+                  )}
+                </>
               )}
             </dd>
           </>
@@ -1097,7 +1109,7 @@ function ProvenanceSection({
             <dt className="text-text-muted">Trigger</dt>
             <dd>
               {trig.url ? (
-                <a href={trig.url} target="_blank" rel="noreferrer" className={link} title={trig.url}>
+                <a href={trig.url} target="_blank" rel="noreferrer" className={link}>
                   {shortUrl(trig.url)}
                   <Icon name="popout" size="xs" aria-hidden="true" />
                 </a>
@@ -1112,7 +1124,7 @@ function ProvenanceSection({
             <dt className="text-text-muted">Cited source</dt>
             <dd>
               {isUrl(cited) ? (
-                <a href={cited} target="_blank" rel="noreferrer" className={link} title={cited}>
+                <a href={cited} target="_blank" rel="noreferrer" className={link}>
                   {shortUrl(cited)}
                   <Icon name="popout" size="xs" aria-hidden="true" />
                 </a>
@@ -1131,7 +1143,6 @@ function ProvenanceSection({
               key={`${lk.memory_key}-${i}`}
               onClick={() => onInspect(lk.memory_key)}
               className="w-full text-left px-2 py-1.5 rounded-md hover:bg-surface-2 transition-colors group"
-              title="Open the linked memory"
             >
               <div className="flex items-center gap-1.5 text-2xs text-text-muted mb-0.5">
                 <span>{lk.direction === "out" ? "→" : "←"}</span>
@@ -1287,14 +1298,13 @@ function CodeLinks({ links }: { links: CodeLink[] }) {
           return (
             <li key={`${l.code_namespace}:${l.path}:${l.symbol}`} className="min-w-0">
               <div className="flex items-center gap-2 min-w-0">
-                <span
-                  className="font-mono text-xs truncate"
-                  title={`${l.code_namespace} · ${l.path}${l.symbol ? ` · ${l.symbol}` : ""}`}
-                >
-                  {l.symbol || l.path}
-                </span>
+                <span className="font-mono text-xs truncate">{l.symbol || l.path}</span>
                 <Badge state={state.state} text={state.label + since} size="sm" />
               </div>
+              <p className="text-2xs font-mono text-text-subtle break-all">
+                {l.code_namespace}
+                {l.symbol ? ` · ${l.path}` : ""}
+              </p>
               {l.suggestion && <p className="mt-1 text-xs text-text-muted">Suggested: {l.suggestion}</p>}
             </li>
           );
@@ -1507,71 +1517,54 @@ function RenameForm({
   );
 }
 
-/** Lifecycle-state badge for the Inspector header. */
+const LIFECYCLE: Record<string, { state: BadgeState; text: string; about: string }> = {
+  pinned: {
+    state: "info",
+    text: "Pinned · authoritative",
+    about:
+      "Pinned memories block conflicting writes from non-pinned candidates. Edit the pinned row explicitly to change the value.",
+  },
+  conflicted: {
+    state: "warning",
+    text: "Conflicted",
+    about: "This memory disagrees with one or more peers. Resolve via the Review queue.",
+  },
+  duplicate: {
+    state: "neutral",
+    text: "Duplicate",
+    about: "Exact-text duplicate of an older row. Kept for audit; the original is canonical.",
+  },
+  superseded: {
+    state: "neutral",
+    text: "Superseded",
+    about: "Replaced by a newer version of the same memory_key. History shows the chain.",
+  },
+  tombstoned: {
+    state: "danger",
+    text: "Deleted",
+    about: "Tombstoned. Searchable history is preserved for 14 days before TTL hard-delete.",
+  },
+  rejected: {
+    state: "danger",
+    text: "Rejected",
+    about: "The write-time LLM judge rejected this candidate. It never became active.",
+  },
+};
+
+/** Lifecycle-state badge for the Inspector header, with what the state means on an info
+ *  button beside it. */
 function LifecycleBadge({ status, pinned }: { status?: string; pinned: boolean }) {
   // 'active' is the default — only badge it when also pinned.
-  if (!status || status === "active") {
-    if (pinned) {
-      return (
-        <Badge
-          size="sm"
-          state="info"
-          text="Pinned · authoritative"
-          title="Pinned memories block conflicting writes from non-pinned candidates. Edit the pinned row explicitly to change the value."
-        />
-      );
-    }
-    return null;
-  }
-  switch (status) {
-    case "conflicted":
-      return (
-        <Badge
-          size="sm"
-          state="warning"
-          text="Conflicted"
-          title="This memory disagrees with one or more peers. Resolve via the Review queue."
-        />
-      );
-    case "duplicate":
-      return (
-        <Badge
-          size="sm"
-          state="neutral"
-          text="Duplicate"
-          title="Exact-text duplicate of an older row. Kept for audit; the original is canonical."
-        />
-      );
-    case "superseded":
-      return (
-        <Badge
-          size="sm"
-          state="neutral"
-          text="Superseded"
-          title="Replaced by a newer version of the same memory_key. History shows the chain."
-        />
-      );
-    case "tombstoned":
-      return (
-        <Badge
-          size="sm"
-          state="danger"
-          text="Deleted"
-          title="Tombstoned. Searchable history is preserved for 14 days before TTL hard-delete."
-        />
-      );
-    case "rejected":
-      return (
-        <Badge
-          size="sm"
-          state="danger"
-          text="Rejected"
-          title="The write-time LLM judge rejected this candidate. It never became active."
-        />
-      );
-    default:
-      return <Badge size="sm" state="neutral" text={status} />;
-  }
+  const key = !status || status === "active" ? (pinned ? "pinned" : "") : status;
+  if (!key) return null;
+  const info = LIFECYCLE[key];
+  if (!info) return <Badge size="sm" state="neutral" text={key} />;
+  return (
+    <span className="inline-flex items-center gap-0.5">
+      <Badge size="sm" state={info.state} text={info.text} />
+      <IconButton icon="info-in-circle" size="xs" label={`About ${info.text.toLowerCase()}`} tooltip={info.about} />
+    </span>
+  );
 }
 
 /** An entity on the memory, as a link into the Graph walked from it. An anchor, so
@@ -1581,10 +1574,10 @@ function EntityChip({ entity, small = false }: { entity: string; small?: boolean
     <a
       href={graphSeedHref(entity)}
       onClick={onGraphLinkClick(entity)}
-      title={`Open the graph around ${entity}`}
       className={`inline-flex items-center gap-1 rounded-md bg-surface-2 text-text no-underline hover:text-accent transition-colors ${small ? "text-2xs px-1.5 py-px" : "text-xs px-2 py-0.5"}`}
     >
       <Icon name="share-network" size="xs" aria-hidden="true" />
+      <span className="sr-only">Open the graph around </span>
       {entity}
     </a>
   );

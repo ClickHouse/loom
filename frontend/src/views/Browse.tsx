@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Alert } from "@clickhouse/click-ui/Alert";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
@@ -18,7 +19,7 @@ import { NamespaceSettingsDialog } from "../flows/NamespaceSettingsDialog";
 import { CreateNamespaceDialog } from "../flows/CreateNamespaceDialog";
 import { useStore, useIdentity } from "../lib/state";
 import { SkeletonCard } from "../components/Skeleton";
-import { Panel } from "../components/ui";
+import { Panel, Tip } from "../components/ui";
 import { ChoiceGroup } from "../components/ui/ChoiceGroup";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { IconButton } from "../components/IconButton";
@@ -210,16 +211,17 @@ export function Browse() {
                     <Badge text={r.visibility} state={r.visibility === "public" ? "success" : "neutral"} size="sm" />
                   </div>
                 </div>
-                <Button
-                  type="secondary"
-                  htmlType="button"
-                  iconLeft="users"
-                  onClick={() => setManageNs(r.namespace)}
-                  title={`Invite people to ${r.namespace}`}
-                  className="shrink-0"
-                >
-                  Invite
-                </Button>
+                <Tip content={`Invite people to ${r.namespace}`}>
+                  <Button
+                    type="secondary"
+                    htmlType="button"
+                    iconLeft="users"
+                    onClick={() => setManageNs(r.namespace)}
+                    className="shrink-0"
+                  >
+                    Invite
+                  </Button>
+                </Tip>
                 <IconButton
                   icon="gear"
                   label={`Namespace settings for ${r.namespace}`}
@@ -323,31 +325,32 @@ export function Browse() {
                   </div>
                 </div>
                 {isMember && pending.has(r.namespace) ? (
-                  <Button
-                    type="secondary"
-                    htmlType="button"
-                    iconLeft="clock"
-                    onClick={async () => {
-                      if (
-                        !(await confirmAction({
-                          title: `Withdraw your request on ${r.namespace}?`,
-                          message: "You'll keep any current access; the request just leaves the admin queue.",
-                          confirmLabel: "Withdraw",
-                        }))
-                      )
-                        return;
-                      try {
-                        await cancelNamespaceRequest(identity.org, r.namespace);
-                        toast(`Withdrew request on ${r.namespace}`, "ok");
-                        load();
-                      } catch (e) {
-                        toast(`Cancel failed: ${humanizeError(e)}`, "error");
-                      }
-                    }}
-                    title="Click to withdraw the pending request"
-                  >
-                    Pending
-                  </Button>
+                  <Tip content="Withdraw the pending request">
+                    <Button
+                      type="secondary"
+                      htmlType="button"
+                      iconLeft="clock"
+                      onClick={async () => {
+                        if (
+                          !(await confirmAction({
+                            title: `Withdraw your request on ${r.namespace}?`,
+                            message: "You'll keep any current access; the request just leaves the admin queue.",
+                            confirmLabel: "Withdraw",
+                          }))
+                        )
+                          return;
+                        try {
+                          await cancelNamespaceRequest(identity.org, r.namespace);
+                          toast(`Withdrew request on ${r.namespace}`, "ok");
+                          load();
+                        } catch (e) {
+                          toast(`Cancel failed: ${humanizeError(e)}`, "error");
+                        }
+                      }}
+                    >
+                      Pending
+                    </Button>
+                  </Tip>
                 ) : isMember ? (
                   (() => {
                     const role = myRole[r.namespace];
@@ -357,15 +360,16 @@ export function Browse() {
                     }
                     // Viewer / writer / jwt: offer to request a higher role.
                     return (
-                      <Button
-                        type="secondary"
-                        htmlType="button"
-                        iconLeft="check"
-                        onClick={() => setJoinDialog({ ns: r.namespace, row: r })}
-                        title={`You're a ${role} — request writer or admin`}
-                      >
-                        Joined · {role} — request upgrade
-                      </Button>
+                      <Tip content={`You're a ${role} — request writer or admin`}>
+                        <Button
+                          type="secondary"
+                          htmlType="button"
+                          iconLeft="check"
+                          onClick={() => setJoinDialog({ ns: r.namespace, row: r })}
+                        >
+                          Joined · {role} — request upgrade
+                        </Button>
+                      </Tip>
                     );
                   })()
                 ) : (
@@ -504,16 +508,25 @@ function JoinDialog({
         }))}
       />
       {willPend(role) && role !== "viewer" && (
-        <div className="text-xs text-warn bg-warn/15 rounded-md px-3 py-2 mt-3">
-          You'll get <strong>viewer</strong> access immediately so you can read. Your <strong>{role}</strong> request
-          waits in the admin queue — you'll get a notification once it's approved.
-        </div>
+        <Alert
+          className="mt-3"
+          state="warning"
+          size="small"
+          text={
+            <>
+              You'll get <strong>viewer</strong> access immediately so you can read. Your <strong>{role}</strong>{" "}
+              request waits in the admin queue — you'll get a notification once it's approved.
+            </>
+          }
+        />
       )}
       {willPend(role) && role === "viewer" && (
-        <div className="text-xs text-warn bg-warn/15 rounded-md px-3 py-2 mt-3">
-          This namespace requires admin approval for every join, including read-only. Your request will sit in the admin
-          queue until reviewed.
-        </div>
+        <Alert
+          className="mt-3"
+          state="warning"
+          size="small"
+          text="This namespace requires admin approval for every join, including read-only. Your request will sit in the admin queue until reviewed."
+        />
       )}
       <ModalFooter>
         <Button type="secondary" htmlType="button" onClick={onCancel}>
@@ -620,10 +633,17 @@ function RequestAccessCard({
             </Button>
           </div>
           {alreadyHasIt && (
-            <div className="text-xs text-warn bg-warn/15 rounded-md px-3 py-2 mt-3">
-              You're already <strong>{existingRole}</strong> on <span className="font-mono">{typedName}</span> — that's
-              at least {role}. Pick a higher role above to request an upgrade.
-            </div>
+            <Alert
+              className="mt-3"
+              state="warning"
+              size="small"
+              text={
+                <>
+                  You're already <strong>{existingRole}</strong> on <span className="font-mono">{typedName}</span> —
+                  that's at least {role}. Pick a higher role above to request an upgrade.
+                </>
+              }
+            />
           )}
           {error && <div className="text-xs text-danger mt-3">{error}</div>}
         </div>

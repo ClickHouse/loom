@@ -103,7 +103,8 @@ export function Chip({
 
   if (!onClick && !onRemove) {
     return wrap(
-      <span className={`${BASE} ${tone} ${className}`} tabIndex={tip ? 0 : undefined}>
+      // Focusable only to open its tip; `note` gives the stop a role.
+      <span className={`${BASE} ${tone} ${className}`} tabIndex={tip ? 0 : undefined} role={tip ? "note" : undefined}>
         {spoken}
       </span>,
     );
@@ -116,7 +117,7 @@ export function Chip({
       disabled={disabled && !softDisabled}
       aria-disabled={disabled || undefined}
       onClick={softDisabled ? undefined : onClick}
-      className={`${BASE} ${tone} ${onRemove ? "rounded-r-none border-r-0" : ""} disabled:opacity-50 ${className}`}
+      className={`${BASE} ${tone} ${onRemove ? "rounded-r-none border-r-0" : ""} disabled:opacity-50 aria-disabled:opacity-50 aria-disabled:cursor-not-allowed ${className}`}
     >
       {inner}
     </button>

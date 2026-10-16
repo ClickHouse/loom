@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Icon } from "@clickhouse/click-ui/Icon";
+import { TabTrigger } from "../../../components/ui";
 import { Tabs } from "@clickhouse/click-ui/Tabs";
 import {
   trackerAnswer,
@@ -401,13 +401,13 @@ export function Patterns({ identity, binding, isEntity, onWalk, initial, onUrlSt
         >
           <div className="h-8 mb-2 flex items-center justify-between gap-2 overflow-hidden">
             <Tabs.TriggersList aria-label="Patterns view">
-              <Tabs.Trigger value="board">
-                <Icon name="services" size="sm" aria-hidden="true" /> Board
-              </Tabs.Trigger>
-              <Tabs.Trigger value="graph">
-                <Icon name="git-merge" size="sm" aria-hidden="true" /> Tracker graph
+              <TabTrigger value="board" icon="services">
+                Board
+              </TabTrigger>
+              <TabTrigger value="graph" icon="git-merge">
+                Tracker graph
                 {graph ? <span className="tabular-nums">#{graph.seed.number}</span> : null}
-              </Tabs.Trigger>
+              </TabTrigger>
             </Tabs.TriggersList>
             <div className="text-xs text-text-muted truncate" aria-live="polite">
               {boardStatus === "served" && board && full && (

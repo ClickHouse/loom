@@ -92,14 +92,14 @@ export function TaskBoard({
         const meta = GROUP_META[g];
         return (
           <section key={g} className="tq-col" aria-labelledby={`tq-col-${g}`} {...drag.target(g)}>
-            <h3
+            <h2
               id={`tq-col-${g}`}
               className="text-sm font-semibold m-0 px-3 py-2.5 border-b border-border flex items-center gap-2"
             >
               <span className="inline-block w-2 h-2 rounded-xs" style={{ background: meta.color }} aria-hidden="true" />
               {meta.label}
               <span className="ml-auto text-xs font-medium text-text-subtle tabular">{rows.length}</span>
-            </h3>
+            </h2>
             <div className="p-2 flex flex-col gap-2">
               {rows.length === 0 ? (
                 <div className="p-4 text-xs text-text-subtle">

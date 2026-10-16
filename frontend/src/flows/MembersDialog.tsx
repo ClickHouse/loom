@@ -213,7 +213,7 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
       description={label ? namespace : undefined}
       className="w-full max-w-[600px]"
     >
-      <div className="max-h-[60vh] overflow-y-auto">
+      <div>
         {rows === null && <div className="py-8 text-center text-sm text-text-muted">Loading…</div>}
         {rows !== null && rows.length === 0 && (
           <div className="py-8 text-center text-sm text-text-muted">

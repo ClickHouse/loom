@@ -34,6 +34,7 @@ export function ChoiceGroup<V extends string>({
   error,
 }: ChoiceGroupProps<V>) {
   const labelId = useId();
+  const errorId = useId();
   return (
     <RadioGroup
       value={value}
@@ -43,9 +44,11 @@ export function ChoiceGroup<V extends string>({
       }}
       disabled={disabled}
       inline={inline}
-      error={error}
+      error={error && <span id={errorId}>{error}</span>}
       label={<span id={labelId}>{label}</span>}
       aria-labelledby={labelId}
+      aria-invalid={error ? true : undefined}
+      aria-describedby={error ? errorId : undefined}
     >
       {options.map((o) => (
         <Choice key={o.value} option={o} />

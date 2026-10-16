@@ -109,35 +109,37 @@ export function MemoryCard({
         <span className="block min-w-0 flex-1">
           <span className="flex items-center gap-2 mb-1.5">
             <span className="font-mono text-xs text-text-muted truncate">{entry.memory_key}</span>
-            {entry.pinned && <Icon name="star" size="xs" color="var(--color-warn)" aria-label="Pinned" />}
+            {entry.pinned && (
+              <>
+                <Icon name="star" size="xs" color="var(--color-warn)" aria-hidden="true" />
+                <span className="sr-only">, pinned</span>
+              </>
+            )}
             {(entry.verification === "human" || entry.verification === "process") && (
-              <span title={`Verified by ${entry.verified_by || "—"}`} className="inline-flex shrink-0">
-                <Icon name="secure" size="xs" color="var(--color-success)" aria-label="Verified" />
-              </span>
+              <>
+                <Icon name="secure" size="xs" color="var(--color-success)" aria-hidden="true" className="shrink-0" />
+                <span className="sr-only">, verified by {entry.verified_by || "—"}</span>
+              </>
             )}
             {entry.verification === "stale" && (
-              <span
-                title={`Verified by ${entry.verified_by || "—"}, then edited — verification is stale`}
-                className="inline-flex shrink-0"
-              >
-                <Icon name="warning" size="xs" color="var(--color-warn)" aria-label="Verification stale" />
-              </span>
+              <>
+                <Icon name="warning" size="xs" color="var(--color-warn)" aria-hidden="true" className="shrink-0" />
+                <span className="sr-only">
+                  , verified by {entry.verified_by || "—"}, then edited — verification is stale
+                </span>
+              </>
             )}
             {encoded && (
-              <span
-                title="Agent-encoded (base64) value — preview shows the decoded text"
-                className="inline-flex shrink-0"
-              >
-                <Badge text="b64" state="warning" size="sm" />
+              <span className="inline-flex shrink-0">
+                <Badge text="b64" state="warning" size="sm" aria-hidden="true" />
+                <span className="sr-only">, agent-encoded (base64) value — the preview shows the decoded text</span>
               </span>
             )}
             {hasConflict && (
-              <span
-                title="This memory conflicts with another in the namespace — open to review"
-                className="inline-flex shrink-0"
-              >
-                <Icon name="warning" size="xs" color="var(--color-warn)" aria-label="Has conflict" />
-              </span>
+              <>
+                <Icon name="warning" size="xs" color="var(--color-warn)" aria-hidden="true" className="shrink-0" />
+                <span className="sr-only">, conflicts with another memory in the namespace — open to review</span>
+              </>
             )}
           </span>
           <span className="block text-sm text-text leading-snug">

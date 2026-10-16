@@ -25,7 +25,15 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
   const variant = type === undefined || (type as string) === "button" ? "ghost" : type;
   return (
     <Tip content={tooltip ?? label}>
-      <ClickIconButton ref={ref} type={variant} htmlType={htmlType} aria-label={label} {...rest} />
+      <ClickIconButton
+        ref={ref}
+        type={variant}
+        htmlType={htmlType}
+        aria-label={label}
+        {...rest}
+        // A tooltip that only repeats the name would be read again as the description.
+        aria-describedby={tooltip ? rest["aria-describedby"] : undefined}
+      />
     </Tip>
   );
 });

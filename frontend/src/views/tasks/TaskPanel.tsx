@@ -113,10 +113,19 @@ function InputValue({ v }: { v: unknown }) {
   }
 }
 
+// Each status allows at most one of these: the footer's primary, last on the right.
+const PRIMARY_ACTIONS: { action: TaskAction; label: string; tip?: string }[] = [
+  { action: "accept", label: "Accept" },
+  { action: "start", label: "Start", tip: "Claim it: to do → in progress" },
+  { action: "complete", label: "Mark done…" },
+  { action: "unblock", label: "Unblock" },
+  { action: "resume", label: "Resume now" },
+];
+
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="tq-sec">
-      <h4>{title}</h4>
+      <h3 className="section-label m-0 mb-1.5">{title}</h3>
       {children}
     </div>
   );
@@ -353,6 +362,7 @@ export function TaskPanel({
   const brief = briefSections(task?.brief);
   const outcome = task?.outcome && Object.keys(task.outcome).length > 0 ? task.outcome : null;
   const act = (a: TaskAction) => onAction(a, a === "edit" && task ? task : current);
+  const primary = PRIMARY_ACTIONS.find((p) => allowed.has(p.action));
   const copyId = () => {
     navigator.clipboard
       ?.writeText(current.task_id)
@@ -385,9 +395,7 @@ export function TaskPanel({
           <span className="flex-1" />
           <IconButton icon="cross" label="Close" onClick={onClose} />
         </div>
-        <h2 className="text-lg font-semibold leading-[22px] m-0 mb-1 [text-wrap:balance] break-words">
-          {current.title}
-        </h2>
+        <h2 className="text-lg font-semibold m-0 mb-1 [text-wrap:balance] break-words">{current.title}</h2>
         <div className="text-xs text-text-subtle flex gap-1.5 items-center flex-wrap">
           {handed ? (
             <>
@@ -423,7 +431,7 @@ export function TaskPanel({
         </Section>
         {brief.criteria.length > 0 && (
           <Section title="Acceptance criteria">
-            <ul className="m-0 pl-[18px] text-text-muted list-disc">
+            <ul className="m-0 pl-4.5 text-text-muted list-disc">
               {brief.criteria.map((c, i) => (
                 <li key={i}>{c}</li>
               ))}
@@ -490,36 +498,20 @@ export function TaskPanel({
         role="group"
         aria-label="Actions"
       >
-        {allowed.has("accept") && (
-          <Button type="primary" htmlType="button" onClick={() => act("accept")}>
-            Accept
-          </Button>
+        {current.status === "deferred" && current.resume_at && (
+          <span className="text-xs text-text-subtle">otherwise resumes {rel(current.resume_at, now)}</span>
         )}
-        {allowed.has("start") && (
-          <Tip content="Claim it: to do → in progress">
-            <Button type="primary" htmlType="button" onClick={() => act("start")}>
-              Start
-            </Button>
-          </Tip>
+        {current.status === "in_progress" && (
+          <span className="text-xs text-text-subtle">
+            owned by <b className="font-medium text-text-muted">{current.owner || "—"}</b>
+            {lease !== null && <> · lease ends in {lease} min</>}
+          </span>
         )}
-        {allowed.has("complete") && (
-          <Button type="primary" htmlType="button" onClick={() => act("complete")}>
-            Mark done…
-          </Button>
-        )}
+        <span className="flex-1" />
+        <Menu items={menu} />
         {allowed.has("fail") && (
           <Button type="secondary" htmlType="button" onClick={() => act("fail")}>
             Fail…
-          </Button>
-        )}
-        {allowed.has("unblock") && (
-          <Button type="primary" htmlType="button" onClick={() => act("unblock")}>
-            Unblock
-          </Button>
-        )}
-        {allowed.has("resume") && (
-          <Button type="primary" htmlType="button" onClick={() => act("resume")}>
-            Resume now
           </Button>
         )}
         {allowed.has("defer") && (
@@ -542,17 +534,13 @@ export function TaskPanel({
             Reopen…
           </Button>
         )}
-        {current.status === "deferred" && current.resume_at && (
-          <span className="text-xs text-text-subtle">otherwise resumes {rel(current.resume_at, now)}</span>
+        {primary && (
+          <Tip content={primary.tip} disabled={!primary.tip}>
+            <Button type="primary" htmlType="button" onClick={() => act(primary.action)}>
+              {primary.label}
+            </Button>
+          </Tip>
         )}
-        {current.status === "in_progress" && (
-          <span className="text-xs text-text-subtle">
-            owned by <b className="font-medium text-text-muted">{current.owner || "—"}</b>
-            {lease !== null && <> · lease ends in {lease} min</>}
-          </span>
-        )}
-        <span className="flex-1" />
-        <Menu items={menu} />
       </div>
     </aside>
   );

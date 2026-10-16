@@ -11,7 +11,7 @@ import { PageContainer } from "../layout/PageContainer";
 import { MemoryTabs } from "../components/MemoryTabs";
 import { EmptyState } from "../components/EmptyState";
 import { ScopeBadge } from "../components/ScopeBadge";
-import { Chip } from "../components/ui";
+import { Chip, TabTrigger } from "../components/ui";
 import { humanizeError, relativeTime, displayAgent, previewValue } from "../lib/format";
 import { KEYWORD_PAGE, keywordThenRanked, parseSearchQuery } from "../lib/memoriesSearch";
 import { signed, whyTerms } from "../lib/whyNote";
@@ -395,14 +395,14 @@ export function RecallLab() {
         )}
       </div>
 
-      <Tabs value={tab} onValueChange={(v) => setTab(v === "history" ? "history" : "score")} ariaLabel="Recall">
-        <Tabs.TriggersList className="mb-4">
-          <Tabs.Trigger value="score">
-            <Icon name="flask" size="sm" aria-hidden="true" /> Score a query
-          </Tabs.Trigger>
-          <Tabs.Trigger value="history">
-            <Icon name="history" size="sm" aria-hidden="true" /> Recall history
-          </Tabs.Trigger>
+      <Tabs value={tab} onValueChange={(v) => setTab(v === "history" ? "history" : "score")}>
+        <Tabs.TriggersList className="mb-4" aria-label="Recall">
+          <TabTrigger value="score" icon="flask">
+            Score a query
+          </TabTrigger>
+          <TabTrigger value="history" icon="history">
+            Recall history
+          </TabTrigger>
         </Tabs.TriggersList>
         <Tabs.Content value="history">
           <RecallHistory />

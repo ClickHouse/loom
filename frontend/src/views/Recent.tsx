@@ -1,4 +1,5 @@
 import { startTransition, useEffect, useMemo, useRef, useState } from "react";
+import { Alert } from "@clickhouse/click-ui/Alert";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
@@ -24,7 +25,7 @@ import { useAbortableEffect, useVisiblePoll } from "../lib/hooks";
 import { useStore, useIdentity } from "../lib/state";
 import { MemoryCard } from "../components/MemoryCard";
 import { SearchWhy } from "../components/SearchWhy";
-import { Chip, SectionHeading } from "../components/ui";
+import { Chip, SectionHeading, Tip } from "../components/ui";
 import { SkeletonCard } from "../components/Skeleton";
 import { EmptyState } from "../components/EmptyState";
 import { toast } from "../components/Toast";
@@ -754,14 +755,17 @@ export function Recent() {
                 ? `${flatList.length.toLocaleString()} recently deleted`
                 : `Showing ${rangeStart.toLocaleString()}–${rangeEnd.toLocaleString()} of ${(total || entries.length).toLocaleString()}`}
           </span>
-          <Button
-            type="secondary"
-            htmlType="button"
-            onClick={() => setShowDeleted((v) => !v)}
-            title="Show memories deleted in the last 14 days; restore from this view"
+          <Tip
+            content={
+              showDeleted
+                ? "Back to the live memories"
+                : "Show memories deleted in the last 14 days; restore from this view"
+            }
           >
-            {showDeleted ? "Back to live" : "Recently deleted"}
-          </Button>
+            <Button type="secondary" htmlType="button" onClick={() => setShowDeleted((v) => !v)}>
+              {showDeleted ? "Back to live" : "Recently deleted"}
+            </Button>
+          </Tip>
           <Unavailable reason={readOnly ? READ_ONLY_TIP : null}>
             <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setAddOpen(true)}>
               Add memory
@@ -815,14 +819,17 @@ export function Recent() {
         </div>
       )}
       {!searching && searchAbstain && (
-        <div
-          role="status"
-          className="-mt-1 mb-3 px-3 py-2 rounded-lg border border-warn/40 bg-warn/10 text-xs text-text flex items-start gap-2"
-        >
-          <span className="font-medium text-warn shrink-0">Low confidence</span>
-          <span className="text-text-muted">
-            No strong match for "{rawQuery}" — these are best-effort results; treat them as weak.
-          </span>
+        <div role="status" className="-mt-1 mb-3">
+          <Alert
+            state="warning"
+            size="small"
+            text={
+              <>
+                <strong>Low confidence.</strong> No strong match for "{rawQuery}" — these are best-effort results; treat
+                them as weak.
+              </>
+            }
+          />
         </div>
       )}
       {/* Active query-bar filters as dismissable badges; click removes the token. */}

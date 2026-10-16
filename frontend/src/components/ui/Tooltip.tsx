@@ -8,11 +8,11 @@ import { Tooltip } from "@clickhouse/click-ui/Tooltip";
  * opens on hover is not reachable from the keyboard. Never a native `title`: it never
  * shows on touch or to keyboard focus.
  *
- * Carries its own provider so it works outside the app shell (tests, portals).
+ * Carries its own provider, so it also works where the app's root provider (main.tsx) is
+ * absent, as in a component test. Its layer comes from styles.css, which lifts every Radix
+ * popper over dialogs and toasts.
  */
 const TOOLTIP_DELAY_MS = 300;
-/** Above dialogs (z-50/60) and toasts (z-[65]); styles.css lifts every Radix popper here. */
-export const POPOVER_LAYER = "z-[70]";
 
 export interface TipProps {
   content: ReactNode;
@@ -28,7 +28,7 @@ export function Tip({ content, children, side = "top", disabled = false }: TipPr
     <RadixTooltip.Provider delayDuration={TOOLTIP_DELAY_MS}>
       <Tooltip>
         <Tooltip.Trigger asChild>{children}</Tooltip.Trigger>
-        <Tooltip.Content side={side} collisionPadding={8} maxWidth="320px" className={POPOVER_LAYER} showArrow>
+        <Tooltip.Content side={side} collisionPadding={8} maxWidth="320px" showArrow>
           {content}
         </Tooltip.Content>
       </Tooltip>

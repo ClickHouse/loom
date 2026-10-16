@@ -1,3 +1,4 @@
+import { Link } from "@clickhouse/click-ui/Link";
 import { useStore } from "../lib/state";
 import type { View } from "../lib/state";
 import { kindOf } from "../lib/namespace";
@@ -71,7 +72,7 @@ export function MemoryScopeMissing({ view }: { view: View }) {
         icon="code"
         title={`${namespace} is a repository index`}
         description={`It holds indexed code, not memories — ${title} has nothing to read there. Search and browse the repository from Repositories.`}
-        action={{ label: "Open Repositories", onClick: () => setView("code") }}
+        action={{ label: "Open repositories", onClick: () => setView("code") }}
       />
     );
   }
@@ -85,9 +86,9 @@ export function MemoryScopeMissing({ view }: { view: View }) {
       {body}
       <p className="text-center text-sm text-text-muted">
         Reading memories? Pick a memory namespace from the{" "}
-        <button type="button" onClick={() => openNamespacePicker(true)} className="text-link hover:underline">
+        <Link component="button" type="button" onClick={() => openNamespacePicker(true)}>
           namespace menu
-        </button>{" "}
+        </Link>{" "}
         in the header.
       </p>
     </PageContainer>

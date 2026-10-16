@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import * as RadixDialog from "@radix-ui/react-dialog";
 import { Alert } from "@clickhouse/click-ui/Alert";
 import { Button } from "@clickhouse/click-ui/Button";
+import { Label } from "@clickhouse/click-ui/Label";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 
 /**
@@ -37,7 +38,7 @@ export function DialogFrame({
       className={`w-full ${WIDTH[width]}`}
       onCloseAutoFocus={onCloseAutoFocus}
     >
-      <div className="max-h-[70vh] space-y-4 overflow-y-auto">{children}</div>
+      <div className="space-y-4">{children}</div>
       {footer && <ModalFooter>{footer}</ModalFooter>}
     </Modal>
   );
@@ -85,9 +86,9 @@ export function DateTimeField({
 }) {
   return (
     <div>
-      <label htmlFor={id} className="mb-1 block text-xs text-text-muted">
+      <Label htmlFor={id} className="mb-1 block">
         {label}
-      </label>
+      </Label>
       <input id={id} type="datetime-local" value={value} onChange={(e) => onChange(e.target.value)} />
     </div>
   );

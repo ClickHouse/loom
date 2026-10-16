@@ -116,11 +116,6 @@ export function PendingApprovalsBell() {
     }
     return out;
   };
-  const rowTitle = (it: AdminPending & { branches?: string[] }): string =>
-    it.kind === "code"
-      ? `${it.subject} asks to ${it.requested_role === "admin" ? "maintain" : "read"} ${repoInfo[it.namespace]?.repo ?? it.namespace}${it.branches && it.branches.length > 1 ? ` (${it.branches.join(", ")})` : ` @ ${repoInfo[it.namespace]?.branch ?? it.namespace}`} — ${it.namespace}`
-      : `${it.subject} wants ${it.requested_role} on ${it.namespace}`;
-
   // The read is org-scoped: a namespace switch changes nothing here. Every
   // two minutes while the tab is visible; a hidden tab catches up on return.
   // The first read leaves after the page's first paint, on idle — an approvals count is
@@ -142,7 +137,11 @@ export function PendingApprovalsBell() {
     <Popover open={open} onOpenChange={setOpen}>
       <span className="relative inline-flex">
         <PopoverTrigger>
-          <IconButton icon="bell" label="Pending approvals" tooltip={tip} />
+          <IconButton
+            icon="bell"
+            label={items.length > 0 ? `Pending approvals, ${items.length}` : "Pending approvals"}
+            tooltip={tip}
+          />
         </PopoverTrigger>
         {items.length > 0 && <CountBadge count={items.length} state="neutral" />}
       </span>
@@ -180,7 +179,6 @@ export function PendingApprovalsBell() {
               setManageNs(it.namespace);
             }}
             className="text-left -mx-2 w-[calc(100%+1rem)] px-2 py-2.5 rounded-sm hover:bg-surface-2 flex items-start gap-3 transition-colors"
-            title={rowTitle(it)}
           >
             <RoleIcon role={it.requested_role} />
             <div className="flex-1 min-w-0">
@@ -220,6 +218,9 @@ export function PendingApprovalsBell() {
                   <span className="font-mono break-all">{it.namespace}</span>
                 )}
               </div>
+              {isServiceSubject(it.subject) && (
+                <div className="text-2xs font-mono text-text-subtle break-all">{it.subject}</div>
+              )}
               {it.kind === "code" && repoInfo[it.namespace] && (
                 <div className="text-2xs font-mono text-text-subtle break-all">{it.namespace}</div>
               )}

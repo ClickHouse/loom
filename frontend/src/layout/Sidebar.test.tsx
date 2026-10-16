@@ -207,5 +207,7 @@ describe("Sidebar collapsed rail", () => {
       await new Promise((r) => setTimeout(r, 400));
     });
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    // The scope hint is the link's description instead.
+    expect(screen.getByRole("link", { name: "Memories" })).toHaveAccessibleDescription(/picked above/);
   });
 });

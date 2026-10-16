@@ -101,7 +101,7 @@ export function CopyToNamespaceDialog({ open, onOpenChange, source, memoryKey, o
           void onSubmit();
         }}
       >
-        <div className="max-h-[70vh] space-y-4 overflow-y-auto">
+        <div className="space-y-4">
           <p className="text-sm text-text-muted leading-relaxed">
             Copies <span className="font-mono text-text">{memoryKey}</span> from{" "}
             <span className="font-mono text-text">{source.namespace}</span> into another namespace. The original stays

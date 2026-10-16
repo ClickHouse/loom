@@ -367,13 +367,26 @@ export function Tasks() {
     setProgressNotes((m) => (m.get(taskId) === note ? m : new Map(m).set(taskId, note)));
   }, []);
 
+  // Moving the selection (j / k here, the arrow keys in the list) follows with the open
+  // panel and takes the focus to the row.
+  const selectRow = useCallback(
+    (r: TaskListRow) => {
+      setSelectedId(r.task_id);
+      if (openRow) openTask(r);
+      const el = document.querySelector<HTMLElement>(`[data-task-id="${r.task_id}"]`);
+      el?.scrollIntoView?.({ block: "nearest" });
+      el?.focus({ preventScroll: true });
+    },
+    [openRow, openTask],
+  );
+
   // Keys: j / k over the visible rows, Enter opens, a / s / c / x / d act on the
   // selected row, / focuses the kind filter, Esc closes the panel. Ignored
   // while typing or while a dialog is open.
   const orderedRef = useRef(ordered);
   orderedRef.current = ordered;
-  const stateRef = useRef({ selectedId, openRow, onAction, openTask, closeTask });
-  stateRef.current = { selectedId, openRow, onAction, openTask, closeTask };
+  const stateRef = useRef({ selectedId, openRow, onAction, openTask, closeTask, selectRow });
+  stateRef.current = { selectedId, openRow, onAction, openTask, closeTask, selectRow };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || inEditable(e.target)) return;
@@ -383,12 +396,7 @@ export function Tasks() {
       const i = list.findIndex((r) => r.task_id === sel);
       const move = (to: number) => {
         const r = list[Math.max(0, Math.min(list.length - 1, to))];
-        if (!r) return;
-        setSelectedId(r.task_id);
-        if (open) openT(r);
-        const el = document.querySelector<HTMLElement>(`[data-task-id="${r.task_id}"]`);
-        el?.scrollIntoView?.({ block: "nearest" });
-        el?.focus({ preventScroll: true });
+        if (r) stateRef.current.selectRow(r);
       };
       const row = i >= 0 ? list[i] : null;
       switch (e.key) {
@@ -462,6 +470,7 @@ export function Tasks() {
       selectedId,
       canWrite: mayWrite,
       onOpen: openTask,
+      onSelect: selectRow,
       onAccept: (r) => {
         void onAction("accept", r);
       },
@@ -473,7 +482,7 @@ export function Tasks() {
         if (a) void onAction(a, r);
       },
     }),
-    [now, ownerAgentOf, leaseSecondsOf, progressNotes, selectedId, mayWrite, openTask, onAction],
+    [now, ownerAgentOf, leaseSecondsOf, progressNotes, selectedId, mayWrite, openTask, selectRow, onAction],
   );
 
   const createInbox = inbox?.inbox ?? inboxes?.[0]?.inbox ?? null;

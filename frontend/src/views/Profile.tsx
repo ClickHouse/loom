@@ -370,12 +370,15 @@ function ActivityChip({ empty }: { empty?: boolean }) {
 
   if (entries.length === 0) {
     return (
-      <span
-        className="inline-flex items-center gap-1.5 text-text-muted"
-        title="Counts every way a client reads the profile: a plugin session start, an MCP connect, a typed “use loom”, or the SDK. Nothing in the last 7 days."
-      >
+      <span className="inline-flex items-center gap-1.5 text-text-muted">
         <span className="inline-block w-2 h-2 rounded-full bg-text-muted opacity-50" />
         No AI client has read this in the last 7 days
+        <IconButton
+          icon="information"
+          size="xs"
+          label="What counts as a read"
+          tooltip="Counts every way a client reads the profile: a plugin session start, an MCP connect, a typed “use loom”, or the SDK. Nothing in the last 7 days."
+        />
       </span>
     );
   }
@@ -387,15 +390,7 @@ function ActivityChip({ empty }: { empty?: boolean }) {
   return (
     <Popover open={expanded} onOpenChange={setExpanded}>
       <PopoverTrigger>
-        <button
-          type="button"
-          title={
-            empty
-              ? "These clients fetch the profile at session start or MCP connect. It has no sections, so they got nothing: add one to give them something."
-              : undefined
-          }
-          className="inline-flex items-center gap-1.5 text-text-muted hover:text-text"
-        >
+        <button type="button" className="inline-flex items-center gap-1.5 text-text-muted hover:text-text">
           <span className={`inline-block w-2 h-2 rounded-full ${empty ? "bg-text-muted opacity-50" : dotClass}`} />
           {empty ? "Checked by" : "Read by"} {entries.length === 1 ? mostRecent.agent : `${entries.length} clients`} ·{" "}
           {mostRecent.last_activated_at ? relativeTime(mostRecent.last_activated_at) : "—"}
@@ -403,6 +398,12 @@ function ActivityChip({ empty }: { empty?: boolean }) {
         </button>
       </PopoverTrigger>
       <Popover.Content align="start" className="min-w-[280px] space-y-1">
+        {empty && (
+          <p className="px-2 py-1 text-xs text-text-muted max-w-[320px]">
+            These clients fetch the profile at session start or MCP connect. It has no sections, so they got nothing:
+            add one to give them something.
+          </p>
+        )}
         {entries.map((e) => (
           <div key={e.agent} className="flex items-center justify-between gap-3 px-2 py-1">
             <span className="min-w-0">
@@ -457,8 +458,8 @@ function Preview({ entries, onClose }: { entries: ProfileEntry[]; onClose: () =>
         <ButtonGroup
           aria-label="Preview format"
           options={[
-            { value: "xml", label: "xml" },
-            { value: "markdown", label: "markdown" },
+            { value: "xml", label: "XML" },
+            { value: "markdown", label: "Markdown" },
           ]}
           selected={format}
           onClick={(value) => setFormat(value as "xml" | "markdown")}
@@ -695,7 +696,15 @@ const SectionRow = memo(function SectionRow({
         </Button>
       )}
       <div className="flex items-center gap-3 text-xs text-text-muted mt-2">
-        <div className="flex-1 h-1.5 rounded-full bg-surface-2 overflow-hidden">
+        {/* Not Click UI's ProgressBar: it has no warn state, and the bar turns warn near the cap. */}
+        <div
+          className="flex-1 h-1.5 rounded-full bg-surface-2 overflow-hidden"
+          role="progressbar"
+          aria-label="Share of the section limit used"
+          aria-valuenow={Math.round(pct)}
+          aria-valuemin={0}
+          aria-valuemax={100}
+        >
           <div className={"h-full " + (headroomWarn ? "bg-warn" : "bg-accent")} style={{ width: `${pct}%` }} />
         </div>
         <div className="flex items-center gap-1.5 whitespace-nowrap">
@@ -776,7 +785,15 @@ function SectionEditor({
         placeholder="This is what your AI reads, exactly as typed."
       />
       <div className="flex items-center gap-3 text-xs">
-        <div className="flex-1 h-1.5 rounded-full bg-surface-2 overflow-hidden">
+        {/* Not Click UI's ProgressBar: it has no danger state, and the bar turns danger over the limit. */}
+        <div
+          className="flex-1 h-1.5 rounded-full bg-surface-2 overflow-hidden"
+          role="progressbar"
+          aria-label="Share of the section limit used"
+          aria-valuenow={Math.round(pct)}
+          aria-valuemin={0}
+          aria-valuemax={100}
+        >
           <div className={"h-full " + (over ? "bg-danger" : "bg-accent")} style={{ width: `${pct}%` }} />
         </div>
         <div className={"font-mono tabular-nums whitespace-nowrap " + (over ? "text-danger" : "text-text-muted")}>

@@ -6,6 +6,7 @@ import { PasswordField } from "@clickhouse/click-ui/PasswordField";
 import { Tabs } from "@clickhouse/click-ui/Tabs";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { Panel } from "../components/ui/Panel";
+import { TabTrigger } from "../components/ui/TabTrigger";
 import { selfSignup, setToken, loginWithPassword } from "../api";
 import { errorRequestId, humanizeError } from "../lib/format";
 import type { GateReason } from "../lib/state";
@@ -129,21 +130,20 @@ export function TokenGate({ onLogin, reason = null }: TokenGateProps) {
           )}
           <Tabs
             value={mode}
-            ariaLabel="Sign in or sign up"
             onValueChange={(v) => {
               setErr(null);
               setErrRequestId("");
               if (v === "signin" || v === "signup") setMode(v);
             }}
           >
-            <Tabs.TriggersList>
-              <Tabs.Trigger value="signin">
-                <Icon name="enter" size="sm" aria-hidden="true" /> Sign in
-              </Tabs.Trigger>
+            <Tabs.TriggersList aria-label="Sign in or sign up">
+              <TabTrigger value="signin" icon="enter">
+                Sign in
+              </TabTrigger>
               {signupAvailable !== false && (
-                <Tabs.Trigger value="signup">
-                  <Icon name="users" size="sm" aria-hidden="true" /> Sign up
-                </Tabs.Trigger>
+                <TabTrigger value="signup" icon="users">
+                  Sign up
+                </TabTrigger>
               )}
             </Tabs.TriggersList>
 

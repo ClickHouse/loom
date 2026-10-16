@@ -46,7 +46,7 @@ export function SectionHeading({
         </span>
       )}
       {caption && <span className="caption whitespace-nowrap">{caption}</span>}
-      {hint && <IconButton icon="info-in-circle" size="xs" label={`About ${label}`} tooltip={hint} />}
+      {hint && <IconButton icon="info-in-circle" size="sm" label={`About ${label}`} tooltip={hint} />}
       {actions && <span className="ml-auto inline-flex items-center gap-1 text-2xs">{actions}</span>}
     </div>
   );

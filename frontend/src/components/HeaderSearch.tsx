@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useId, useMemo, useRef, useState } from "react";
 import * as RadixPopover from "@radix-ui/react-popover";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
@@ -69,6 +69,8 @@ export function HeaderSearch({
   const [profileSections, setProfileSections] = useState<ProfileEntry[]>([]);
   const [nsRows, setNsRows] = useState<NsRow[]>([]);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const listboxId = useId();
+  const optionId = (i: number) => `${listboxId}-${i}`;
 
   // The catalog groups (docs, profile, recents; namespaces) load on the first
   // open per scope rather than on every namespace switch. A load that is cut short
@@ -349,6 +351,13 @@ export function HeaderSearch({
     setActiveIdx(0);
   }, [q]);
 
+  const popoverOpen = open && (parsed.raw.length > 0 || q.length === 0);
+  const listboxShown = popoverOpen && hasResults;
+  // The highlighted option stays in view of the scrolling popover as ↑↓ move it.
+  useEffect(() => {
+    if (listboxShown) document.getElementById(`${listboxId}-${activeIdx}`)?.scrollIntoView?.({ block: "nearest" });
+  }, [listboxShown, listboxId, activeIdx]);
+
   const activate = (i: number) => {
     const a = activations[i];
     if (!a) return;
@@ -365,6 +374,13 @@ export function HeaderSearch({
       return;
     }
     if (!hasResults) return;
+    if (!popoverOpen) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setOpen(true);
+      }
+      return;
+    }
     if (e.key === "ArrowDown") {
       e.preventDefault();
       setActiveIdx((i) => Math.min(activations.length - 1, i + 1));
@@ -377,7 +393,6 @@ export function HeaderSearch({
     }
   };
 
-  const popoverOpen = open && (parsed.raw.length > 0 || q.length === 0);
   const memoryPending = searching && memoryQuery.length >= MEMORY_MIN_CHARS;
 
   // Index offsets for activeIdx → row mapping.
@@ -401,6 +416,13 @@ export function HeaderSearch({
             onKeyDown={onInputKeyDown}
             placeholder="Search profile, memories, library…"
             aria-label="Search Loom"
+            // WAI-ARIA combobox with a listbox popup: focus stays in the input and
+            // aria-activedescendant names the highlighted option.
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded={listboxShown}
+            aria-controls={listboxId}
+            aria-activedescendant={listboxShown && activations[activeIdx] ? optionId(activeIdx) : undefined}
             // On the Graph view the omnibox is the view's own input; this
             // one leaves the tab order there (⌘K still opens it, and the
             // hint beside it says so) so the first input Tab reaches is
@@ -447,58 +469,148 @@ export function HeaderSearch({
           </div>
         )}
 
-        {namespacesShown.length > 0 && (
-          <div className="mb-1">
-            <GroupHeader icon="folder-closed" label="Jump to" />
-            {namespacesShown.map((r, i) => {
-              const idx = offNs + i;
-              const isActive = idx === activeIdx;
-              return (
-                <a
-                  key={r.namespace}
-                  href={viewHref("memories")}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    switchNs(r.namespace);
-                  }}
-                  onMouseEnter={() => setActiveIdx(idx)}
-                  className={rowClass(isActive)}
-                >
-                  <div className="flex items-center gap-2">
-                    <TypeChip label="namespace" />
-                    <span className="font-mono text-sm">{r.namespace}</span>
-                    <Badge text={r.visibility} size="sm" state={r.visibility === "public" ? "success" : "default"} />
-                    {!r.joined && <span className="text-2xs text-text-subtle">not joined</span>}
-                  </div>
-                  {r.description && <div className="text-xs text-text-muted mt-0.5 truncate">{r.description}</div>}
-                </a>
-              );
-            })}
+        {hasResults && (
+          <div id={listboxId} role="listbox" aria-label="Search results">
+            {namespacesShown.length > 0 && (
+              <OptionGroup id={`${listboxId}-ns`} icon="folder-closed" label="Jump to" className="mb-1">
+                {namespacesShown.map((r, i) => {
+                  const idx = offNs + i;
+                  return (
+                    <a
+                      key={r.namespace}
+                      id={optionId(idx)}
+                      role="option"
+                      aria-selected={idx === activeIdx}
+                      tabIndex={-1}
+                      href={viewHref("memories")}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        switchNs(r.namespace);
+                      }}
+                      onMouseEnter={() => setActiveIdx(idx)}
+                      className={rowClass(idx === activeIdx)}
+                    >
+                      <div className="flex items-center gap-2">
+                        <TypeChip label="namespace" />
+                        <span className="font-mono text-sm">{r.namespace}</span>
+                        <Badge
+                          text={r.visibility}
+                          size="sm"
+                          state={r.visibility === "public" ? "success" : "default"}
+                        />
+                        {!r.joined && <span className="text-2xs text-text-subtle">not joined</span>}
+                      </div>
+                      {r.description && <div className="text-xs text-text-muted mt-0.5 truncate">{r.description}</div>}
+                    </a>
+                  );
+                })}
+              </OptionGroup>
+            )}
+
+            {profileShown.length > 0 && (
+              <OptionGroup id={`${listboxId}-profile`} icon="user" label="Profile">
+                {profileShown.map((s, i) => {
+                  const idx = offProfile + i;
+                  return (
+                    <button
+                      type="button"
+                      key={s.label}
+                      id={optionId(idx)}
+                      role="option"
+                      aria-selected={idx === activeIdx}
+                      tabIndex={-1}
+                      onClick={() => openProfileSection(s.label)}
+                      onMouseEnter={() => setActiveIdx(idx)}
+                      className={rowClass(idx === activeIdx)}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <TypeChip label="profile" />
+                        <span className="font-mono text-sm truncate">{s.label}</span>
+                      </div>
+                      <div className="text-xs text-text-muted mt-0.5 truncate">{truncateForRow(s.value)}</div>
+                    </button>
+                  );
+                })}
+              </OptionGroup>
+            )}
+
+            {memoryShown.length > 0 && (
+              <OptionGroup id={`${listboxId}-mem`} icon="document" label="Best matches">
+                {memoryShown.map((e, i) => {
+                  const idx = offMem + i;
+                  return (
+                    <button
+                      type="button"
+                      key={`${e.agent || ""}::${e.memory_key}`}
+                      id={optionId(idx)}
+                      role="option"
+                      aria-selected={idx === activeIdx}
+                      tabIndex={-1}
+                      onClick={() => openMemory({ memory_key: e.memory_key, agent: e.agent || "" })}
+                      onMouseEnter={() => setActiveIdx(idx)}
+                      className={rowClass(idx === activeIdx)}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <TypeChip label="memory" />
+                        <span className="font-mono text-sm truncate">{e.memory_key}</span>
+                        <span className="text-2xs text-text-subtle shrink-0 ml-auto">
+                          {e.memory_type}
+                          {e.created_at ? ` · ${relativeTime(e.created_at)}` : ""}
+                        </span>
+                      </div>
+                      <div className="text-xs text-text-muted mt-0.5 truncate">
+                        {e.agent ? (
+                          <>
+                            <span className="text-text-subtle">{e.agent}</span> ·{" "}
+                          </>
+                        ) : null}
+                        {e.content_excerpt || "(empty)"}
+                      </div>
+                    </button>
+                  );
+                })}
+              </OptionGroup>
+            )}
+
+            {documentsShown.length > 0 && (
+              <OptionGroup id={`${listboxId}-doc`} icon="book" label="Library">
+                {documentsShown.map((d, i) => {
+                  const idx = offDoc + i;
+                  const label = d.title || d.original_filename || d.source_uri;
+                  return (
+                    <button
+                      type="button"
+                      key={d.source_uri}
+                      id={optionId(idx)}
+                      role="option"
+                      aria-selected={idx === activeIdx}
+                      tabIndex={-1}
+                      onClick={() => openDocument(d)}
+                      onMouseEnter={() => setActiveIdx(idx)}
+                      className={rowClass(idx === activeIdx)}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <TypeChip label="library" />
+                        <span className={`text-sm truncate ${d.title ? "" : "font-mono"}`}>{label}</span>
+                        {(d.tags || []).slice(0, 3).map((t) => (
+                          <Badge key={t} text={`#${t}`} size="sm" className="shrink-0" />
+                        ))}
+                      </div>
+                      <div className="text-xs text-text-muted mt-0.5 truncate">
+                        {d.chunk_count} chunk{d.chunk_count === 1 ? "" : "s"}
+                        {d.description ? ` · ${d.description}` : ""}
+                      </div>
+                    </button>
+                  );
+                })}
+              </OptionGroup>
+            )}
           </div>
         )}
 
-        {profileShown.length > 0 && (
-          <div>
-            <GroupHeader icon="user" label="Profile" />
-            {profileShown.map((s, i) => {
-              const idx = offProfile + i;
-              const isActive = idx === activeIdx;
-              return (
-                <button
-                  type="button"
-                  key={s.label}
-                  onClick={() => openProfileSection(s.label)}
-                  onMouseEnter={() => setActiveIdx(idx)}
-                  className={`text-left w-[calc(100%+1rem)] ${rowClass(isActive)}`}
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <TypeChip label="profile" />
-                    <span className="font-mono text-sm truncate">{s.label}</span>
-                  </div>
-                  <div className="text-xs text-text-muted mt-0.5 truncate">{truncateForRow(s.value)}</div>
-                </button>
-              );
-            })}
+        {/* Links to the full views sit after the listbox: they are not options. */}
+        {hasResults && (
+          <div className="mt-1">
             <MoreLink
               shown={profileShown.length}
               total={matchedProfile.length}
@@ -508,87 +620,21 @@ export function HeaderSearch({
                 setOpen(false);
               }}
             />
-          </div>
-        )}
-
-        {memoryShown.length > 0 && (
-          <div>
-            <GroupHeader icon="document" label="Best matches" />
-            {memoryShown.map((e, i) => {
-              const idx = offMem + i;
-              const isActive = idx === activeIdx;
-              return (
-                <button
-                  type="button"
-                  key={`${e.agent || ""}::${e.memory_key}`}
-                  onClick={() => openMemory({ memory_key: e.memory_key, agent: e.agent || "" })}
-                  onMouseEnter={() => setActiveIdx(idx)}
-                  className={`text-left w-[calc(100%+1rem)] ${rowClass(isActive)}`}
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <TypeChip label="memory" />
-                    <span className="font-mono text-sm truncate">{e.memory_key}</span>
-                    <span className="text-2xs text-text-subtle shrink-0 ml-auto">
-                      {e.memory_type}
-                      {e.created_at ? ` · ${relativeTime(e.created_at)}` : ""}
-                    </span>
-                  </div>
-                  <div className="text-xs text-text-muted mt-0.5 truncate">
-                    {e.agent ? (
-                      <>
-                        <span className="text-text-subtle">{e.agent}</span> ·{" "}
-                      </>
-                    ) : null}
-                    {e.content_excerpt || "(empty)"}
-                  </div>
-                </button>
-              );
-            })}
-            <Button
-              type="empty"
-              htmlType="button"
-              align="left"
-              fillWidth
-              iconRight="arrow-right"
-              onClick={() => {
-                setView("memories");
-                setOpen(false);
-              }}
-            >
-              Search all memories
-            </Button>
-          </div>
-        )}
-
-        {documentsShown.length > 0 && (
-          <div>
-            <GroupHeader icon="book" label="Library" />
-            {documentsShown.map((d, i) => {
-              const idx = offDoc + i;
-              const isActive = idx === activeIdx;
-              const label = d.title || d.original_filename || d.source_uri;
-              return (
-                <button
-                  type="button"
-                  key={d.source_uri}
-                  onClick={() => openDocument(d)}
-                  onMouseEnter={() => setActiveIdx(idx)}
-                  className={`text-left w-[calc(100%+1rem)] ${rowClass(isActive)}`}
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <TypeChip label="library" />
-                    <span className={`text-sm truncate ${d.title ? "" : "font-mono"}`}>{label}</span>
-                    {(d.tags || []).slice(0, 3).map((t) => (
-                      <Badge key={t} text={`#${t}`} size="sm" className="shrink-0" />
-                    ))}
-                  </div>
-                  <div className="text-xs text-text-muted mt-0.5 truncate">
-                    {d.chunk_count} chunk{d.chunk_count === 1 ? "" : "s"}
-                    {d.description ? ` · ${d.description}` : ""}
-                  </div>
-                </button>
-              );
-            })}
+            {memoryShown.length > 0 && (
+              <Button
+                type="empty"
+                htmlType="button"
+                align="left"
+                fillWidth
+                iconRight="arrow-right"
+                onClick={() => {
+                  setView("memories");
+                  setOpen(false);
+                }}
+              >
+                Search all memories
+              </Button>
+            )}
             <MoreLink
               shown={documentsShown.length}
               total={matchedDocuments.length}
@@ -605,10 +651,33 @@ export function HeaderSearch({
   );
 }
 
-function GroupHeader({ icon, label }: { icon: IconName; label: string }) {
+function GroupHeader({ icon, label, id }: { icon: IconName; label: string; id?: string }) {
   return (
-    <div className="section-label py-1 flex items-center gap-1">
+    <div id={id} role={id ? "presentation" : undefined} className="section-label py-1 flex items-center gap-1">
       <Icon name={icon} size="xs" aria-hidden="true" /> {label}
+    </div>
+  );
+}
+
+/** One labelled group of options inside the results listbox. */
+function OptionGroup({
+  id,
+  icon,
+  label,
+  className,
+  children,
+}: {
+  id: string;
+  icon: IconName;
+  label: string;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    // biome-ignore lint/a11y/useSemanticElements: an option group inside a listbox, not form controls, so not a fieldset
+    <div role="group" aria-labelledby={id} className={className}>
+      <GroupHeader id={id} icon={icon} label={label} />
+      {children}
     </div>
   );
 }
@@ -618,7 +687,7 @@ function TypeChip({ label }: { label: "namespace" | "profile" | "memory" | "libr
     namespace: "default",
     profile: "neutral",
     memory: "info",
-    library: "warning",
+    library: "neutral",
   };
   const state = states[label];
   return <Badge text={label} state={state} size="sm" className="shrink-0" />;
@@ -647,8 +716,11 @@ function MoreLink({
   );
 }
 
+/** A result row bleeds into the popover's padding so its hover fill spans the width. */
+const ROW_BLEED = "block text-left -mx-2 w-[calc(100%+1rem)] px-2 rounded-sm cursor-pointer";
+
 function rowClass(isActive: boolean): string {
-  return `block -mx-2 px-2 py-2 rounded-sm cursor-pointer no-underline hover:no-underline text-text ${isActive ? "bg-surface-2" : "hover:bg-surface-2"}`;
+  return `${ROW_BLEED} py-2 no-underline hover:no-underline text-text ${isActive ? "bg-surface-2" : "hover:bg-surface-2"}`;
 }
 
 function EmptyState({
@@ -672,7 +744,7 @@ function EmptyState({
               type="button"
               key={`${e.agent}::${e.memory_key}`}
               onClick={() => onMemory(e)}
-              className="text-left block -mx-2 w-[calc(100%+1rem)] px-2 py-1.5 rounded-sm cursor-pointer hover:bg-surface-2"
+              className={`${ROW_BLEED} py-1.5 hover:bg-surface-2`}
             >
               <div className="flex items-center gap-2 min-w-0">
                 <TypeChip label="memory" />
@@ -690,7 +762,7 @@ function EmptyState({
               type="button"
               key={s.label}
               onClick={() => onProfile(s.label)}
-              className="text-left block -mx-2 w-[calc(100%+1rem)] px-2 py-1.5 rounded-sm cursor-pointer hover:bg-surface-2"
+              className={`${ROW_BLEED} py-1.5 hover:bg-surface-2`}
             >
               <div className="flex items-center gap-2 min-w-0">
                 <TypeChip label="profile" />

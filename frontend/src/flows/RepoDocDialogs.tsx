@@ -20,6 +20,7 @@ import { TextField } from "@clickhouse/click-ui/TextField";
 import { addKnowledge, downloadKnowledge, getKnowledge, textDownloadName, type KnowledgeEntry } from "../api";
 import { humanizeError, relativeTime } from "../lib/format";
 import { toastError } from "../components/Toast";
+import { TabTrigger } from "../components/ui/TabTrigger";
 import { readDocumentFile, slugify, type ReadDocument } from "../lib/docFiles";
 import { CancelButton, DialogFrame, ErrorNote } from "./TaskDialogFrame";
 
@@ -140,10 +141,10 @@ export function RepoDocAddDialog({
         </>
       }
     >
-      <Tabs value={mode} onValueChange={(v) => setMode(v === "paste" ? "paste" : "file")} ariaLabel="How to add it">
-        <Tabs.TriggersList>
-          <Tabs.Trigger value="file">Upload a file</Tabs.Trigger>
-          <Tabs.Trigger value="paste">Paste text</Tabs.Trigger>
+      <Tabs value={mode} onValueChange={(v) => setMode(v === "paste" ? "paste" : "file")}>
+        <Tabs.TriggersList aria-label="How to add it">
+          <TabTrigger value="file">Upload a file</TabTrigger>
+          <TabTrigger value="paste">Paste text</TabTrigger>
         </Tabs.TriggersList>
         <Tabs.Content value="file" className="pt-4">
           {/* Not Click UI's FileUpload: its file input has no name, and it cannot show what was read. */}
@@ -159,14 +160,14 @@ export function RepoDocAddDialog({
             className={`rounded border border-dashed p-5 text-center text-sm ${over ? "border-accent bg-accent-soft" : "border-border-strong"}`}
           >
             {file ? (
-              <p className="flex items-center justify-center gap-2">
+              <div className="flex items-center justify-center gap-2">
                 <Icon name="document" size="sm" aria-hidden="true" />
                 <span className="font-medium">{file.blob.name}</span>
                 <span className="text-text-muted">
                   · {Math.max(1, Math.round(file.blob.size / 1024))} KB · {file.text.length.toLocaleString()} characters
                   read
                 </span>
-              </p>
+              </div>
             ) : (
               <p className="text-text-muted">
                 {busy === "reading" ? "Reading the file…" : "Drop a PDF, Word, Markdown or text file here"}

@@ -43,7 +43,7 @@ export function PriorityBar({ priority }: { priority: number }) {
 }
 
 export function KindTag({ kind }: { kind: string }) {
-  return <Badge text={<span className="font-mono">{kind}</span>} size="sm" />;
+  return <Badge text={<span className="font-mono">{kind}</span>} size="md" />;
 }
 
 /** How much of the lease is left, amber under ten minutes. */
@@ -92,9 +92,9 @@ const STATUS_STATE: Record<TaskStatus, BadgeState> = {
 
 export function StatusPill({ status }: { status: TaskStatus }) {
   const meta = STATUS_META[status] ?? STATUS_META.todo;
-  return <Badge text={meta.label} state={STATUS_STATE[status] ?? "neutral"} size="sm" />;
+  return <Badge text={meta.label} state={STATUS_STATE[status] ?? "neutral"} size="md" />;
 }
 
 export function PriorityBadge({ priority }: { priority: number }) {
-  return <Badge text={PRIORITY_LABEL[priority] ?? `P${priority}`} state="neutral" size="sm" />;
+  return <Badge text={PRIORITY_LABEL[priority] ?? `P${priority}`} state="neutral" size="md" />;
 }

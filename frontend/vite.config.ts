@@ -1,6 +1,7 @@
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { fileURLToPath } from "node:url";
 
 // The two fonts every page renders with (Inter and Inconsolata, latin subset) are
 // discovered only after the CSS has been downloaded and parsed, one round trip after the
@@ -37,6 +38,16 @@ function fontPreload(): Plugin {
 export default defineConfig({
   base: "/",
   plugins: [react(), tailwindcss(), fontPreload()],
+  resolve: {
+    alias: {
+      // Click UI's light tokens and page defaults, which its exports map does not expose.
+      // Loaded directly instead of through ClickUIProvider, whose barrel import would ship
+      // every component's CSS and the dark theme.
+      "click-ui-styles": fileURLToPath(
+        new URL("./node_modules/@clickhouse/click-ui/dist/esm/theme/styles", import.meta.url),
+      ),
+    },
+  },
   build: {
     outDir: "dist",
     emptyOutDir: true,
@@ -47,19 +58,15 @@ export default defineConfig({
     // file. Bump the warning so the build output isn't drowned by
     // alarms about chunks that are deliberately fat-and-lazy.
     chunkSizeWarningLimit: 1500,
-    // Vendors in their own long-lived chunks so an app change does not re-download React;
-    // views split by React.lazy in App.tsx.
+    // Views split by React.lazy in App.tsx.
     rollupOptions: {
       output: {
-        manualChunks: {
-          // The vendor chunk carries what every page evaluates at boot. The dialog and
-          // tabs primitives belong to the lazy dialogs, the inspector and a few views;
-          // they ride with them (vendor 215 → 204 kB; the boot's module evaluation in
-          // proportion).
-          vendor: ["react", "react-dom", "zustand", "@radix-ui/react-popover", "@radix-ui/react-tooltip"],
-          // Click UI, its icon set included: large, loaded on every page, and changed only
-          // by a version bump, so it is cached apart from the app.
-          clickui: ["@clickhouse/click-ui"],
+        // Long-lived vendor chunks, so an app change does not re-download them. A function, not
+        // a package list: a listed package brings its whole entry, and Click UI's entry
+        // re-exports every component and its CSS. Only the modules the app imports go in.
+        manualChunks(id) {
+          if (id.includes("/node_modules/@clickhouse/click-ui/")) return "clickui";
+          if (/\/node_modules\/(react|react-dom|scheduler|zustand|@radix-ui\/[^/]+)\//.test(id)) return "vendor";
         },
       },
     },

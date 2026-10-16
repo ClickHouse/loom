@@ -85,7 +85,7 @@ export function EditDocumentMetadataDialog({ open, onOpenChange, identity, entry
           void onSave();
         }}
       >
-        <div className="max-h-[70vh] space-y-4 overflow-y-auto">
+        <div className="space-y-4">
           <TextField
             id="edit-doc-source-uri"
             label="Source URI (read-only — stable identifier the agent cites)"

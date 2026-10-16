@@ -101,7 +101,7 @@ export function AddMemoryDialog({ open, onOpenChange, identity, onAdded }: Props
           void onSubmit();
         }}
       >
-        <div className="max-h-[70vh] space-y-4 overflow-y-auto">
+        <div className="space-y-4">
           <TextField
             id="add-memory-key"
             label="Key (lower_snake_case)"

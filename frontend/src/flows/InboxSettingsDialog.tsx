@@ -666,7 +666,7 @@ function TrustTable({ identity, inbox, open }: { identity: Caller; inbox: string
             <Button type="secondary" htmlType="button" onClick={() => setDraft(null)}>
               Discard
             </Button>
-            <Button type="primary" htmlType="button" onClick={save} disabled={!draft.poster.trim()} loading={busy}>
+            <Button type="secondary" htmlType="button" onClick={save} disabled={!draft.poster.trim()} loading={busy}>
               Save rule
             </Button>
           </div>

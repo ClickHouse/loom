@@ -96,8 +96,8 @@ export function Header() {
             <Menu
               label="New"
               trigger={
-                <Button type="primary" htmlType="button" iconLeft="plus" aria-label="New">
-                  <span className="hidden sm:inline">New</span>
+                <Button type="primary" htmlType="button" iconLeft="plus">
+                  New
                 </Button>
               }
             >
@@ -215,8 +215,8 @@ function ItemLabel({ icon, children }: { icon: IconName; children: ReactNode }) 
 function DisabledNew({ reason }: { reason: string }) {
   return (
     <Unavailable reason={reason}>
-      <Button type="primary" htmlType="button" iconLeft="plus" aria-label="New" aria-haspopup="menu">
-        <span className="hidden sm:inline">New</span>
+      <Button type="primary" htmlType="button" iconLeft="plus">
+        New
       </Button>
     </Unavailable>
   );

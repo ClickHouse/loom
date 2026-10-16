@@ -233,19 +233,19 @@ describe("TaskPanel", () => {
   it("footer per status: triage accepts, todo starts/defers/blocks/won't do, in progress finishes, fails, blocks, defers or cancels", async () => {
     const onAction = mount("triage");
     let f = await footerOf();
-    expect(buttons(f)).toEqual(["Accept", "Won't do…", "More actions"]);
+    expect(buttons(f)).toEqual(["More actions", "Won't do…", "Accept"]);
     await userEvent.setup().click(within(f).getByRole("button", { name: "Accept" }));
     expect(onAction).toHaveBeenCalledWith("accept", expect.objectContaining({ task_id: "0123456789abcdef" }));
     cleanup();
 
     mount("todo");
     f = await footerOf();
-    expect(buttons(f)).toEqual(["Start", "Defer…", "Block…", "Won't do…", "More actions"]);
+    expect(buttons(f)).toEqual(["More actions", "Defer…", "Block…", "Won't do…", "Start"]);
     cleanup();
 
     mount("in_progress", { owner: "reporter", lease_until: iso(-22) });
     f = await footerOf();
-    expect(buttons(f)).toEqual(["Mark done…", "Fail…", "Defer…", "Block…", "Won't do…", "More actions"]);
+    expect(buttons(f)).toEqual(["More actions", "Fail…", "Defer…", "Block…", "Won't do…", "Mark done…"]);
     expect(f).toHaveTextContent("owned by reporter · lease ends in 22 min");
     const user = userEvent.setup();
     await user.click(within(f).getByRole("button", { name: "More actions" }));
@@ -255,14 +255,14 @@ describe("TaskPanel", () => {
   it("footer per status: blocked unblocks, deferred resumes now (task.resume) and says when the sweeper would, closed short of done reopens, done only copies", async () => {
     let onAction = mount("blocked", { blocked_on: "sender", reason: "need the exact server flags" });
     let f = await footerOf();
-    expect(buttons(f)).toEqual(["Unblock", "Won't do…", "More actions"]);
+    expect(buttons(f)).toEqual(["More actions", "Won't do…", "Unblock"]);
     expect(screen.getByRole("heading", { name: "Blocked on sender" })).toBeInTheDocument();
     expect(screen.getByText("need the exact server flags")).toBeInTheDocument();
     cleanup();
 
     onAction = mount("deferred", { reason: "binary for merge SHA not built yet", resume_at: iso(-120) });
     f = await footerOf();
-    expect(buttons(f)).toEqual(["Resume now", "Won't do…", "More actions"]);
+    expect(buttons(f)).toEqual(["More actions", "Won't do…", "Resume now"]);
     expect(f).toHaveTextContent("otherwise resumes in 2 h");
     expect(screen.getByRole("heading", { name: "Deferred · resumes in 2 h" })).toBeInTheDocument();
     await userEvent.setup().click(within(f).getByRole("button", { name: "Resume now" }));
@@ -271,7 +271,7 @@ describe("TaskPanel", () => {
 
     mount("failed", { reason: "bisect: no good build" });
     f = await footerOf();
-    expect(buttons(f)).toEqual(["Reopen…", "More actions"]);
+    expect(buttons(f)).toEqual(["More actions", "Reopen…"]);
     expect(screen.getByRole("heading", { name: "Reason" })).toBeInTheDocument();
     cleanup();
 

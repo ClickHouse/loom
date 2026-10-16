@@ -99,7 +99,7 @@ describe("TaskInboxBell", () => {
     const user = userEvent.setup();
     render(<TaskInboxBell />);
     await screen.findByText("3");
-    await user.click(screen.getByRole("button", { name: "Tasks waiting for a person" }));
+    await user.click(screen.getByRole("button", { name: "Tasks waiting for a person, 3" }));
     expect(screen.getByText("private-bot")).toBeInTheDocument();
     expect(screen.getByText("2 in triage", { exact: false })).toBeInTheDocument();
     expect(

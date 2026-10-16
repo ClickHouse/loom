@@ -92,7 +92,11 @@ export function TaskInboxBell() {
     <Popover open={open} onOpenChange={setOpen}>
       <span className="relative inline-flex">
         <PopoverTrigger>
-          <IconButton icon="email" label="Tasks waiting for a person" tooltip={tip} />
+          <IconButton
+            icon="email"
+            label={total > 0 ? `Tasks waiting for a person, ${total}` : "Tasks waiting for a person"}
+            tooltip={tip}
+          />
         </PopoverTrigger>
         {total > 0 && <CountBadge count={total} state="warning" />}
       </span>
@@ -114,7 +118,7 @@ export function TaskInboxBell() {
                 useStore.getState().setView("tasks");
               }}
             >
-              Open Tasks
+              Open tasks
             </Button>
           </div>
         )}

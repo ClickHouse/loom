@@ -9,6 +9,7 @@
  * per-PR context), Access (who can read it, how tokens get the claim).
  */
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Alert } from "@clickhouse/click-ui/Alert";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
@@ -87,7 +88,7 @@ import { branchState, branchOrder, buildCards, type CodeFacet } from "../lib/rep
 import { RepositoryCard, BranchChip, FRESH_STATE, type CodeActions, type RecordActionProps } from "./RepositoryCard";
 import { useTrackerSources, useRecordActions, TRACKER_SOURCES_ABSENT } from "./TrackerSources";
 import { TrackersPanel } from "./TrackersPanel";
-import { Tip } from "../components/ui";
+import { Chip, TabTrigger, Tip } from "../components/ui";
 import { isRecord } from "../lib/guards";
 import { oneOf } from "../lib/oneOf";
 
@@ -586,16 +587,18 @@ function RepositoriesHome({
       )}
 
       {pendingRows.length > 0 && (
-        <div className="mb-5 p-3.5 rounded-lg border border-warn/40 bg-warn/10 text-sm flex items-start gap-3">
-          <Icon name="clock" size="sm" color="var(--color-warn)" aria-hidden="true" className="shrink-0 mt-0.5" />
-          <div className="min-w-0 flex-1">
-            <div className="font-medium">Waiting for a maintainer</div>
-            <div className="text-xs text-text-muted mt-0.5 break-words">
+        <Alert
+          className="mb-5"
+          state="warning"
+          customIcon="clock"
+          text={
+            <span className="break-words">
+              <strong className="font-medium">Waiting for a maintainer.</strong>{" "}
               {pendingRows.map((r) => `${r.repo} @ ${r.branch}`).join(" · ")}. You'll be able to read as soon as a
               maintainer approves; nothing else to do.
-            </div>
-          </div>
-        </div>
+            </span>
+          }
+        />
       )}
 
       {repos === null && !error && (
@@ -907,8 +910,8 @@ function BranchesDialog({
           {want.size} of {selectable.length} selected
         </span>
       </div>
-      {/* biome-ignore lint/a11y/useSemanticElements: the scrolling list of branch rows, named for assistive technology; its checkboxes carry their own labels */}
-      <div className="max-h-[50vh] overflow-y-auto" role="group" aria-label="Branches">
+      {/* biome-ignore lint/a11y/useSemanticElements: the list of branch rows, named for assistive technology; its checkboxes carry their own labels */}
+      <div role="group" aria-label="Branches">
         <div className="rounded-xl border border-border divide-y divide-border">
           {rows.map((b) => {
             const st = branchState(b);
@@ -1174,7 +1177,7 @@ export function AddRepositoryDialog({
       className="max-w-[540px] w-full"
     >
       <form onSubmit={submit}>
-        <div className="max-h-[60vh] overflow-y-auto space-y-5">
+        <div className="space-y-5">
           <fieldset className="space-y-3">
             <legend className={LABEL}>Fetching from Git</legend>
             <div className="grid grid-cols-[1fr_auto] gap-3 items-end">
@@ -1260,37 +1263,30 @@ export function AddRepositoryDialog({
                     </span>
                   </div>
                 )}
-                {/* Toggle chips: each is a labelled checkbox, so a long list stays compact. */}
-                <ul className="flex flex-wrap gap-2 list-none p-0 m-0 max-h-56 overflow-y-auto" aria-label="branches">
+                <ul className="flex flex-wrap gap-2 list-none p-1 m-0 max-h-56 overflow-y-auto" aria-label="branches">
                   {shownBranches.map((b) => {
                     const taken = indexedSet.has(b.name);
-                    const on = picked.has(b.name);
+                    const on = taken || picked.has(b.name);
                     const release = remote.suggested.includes(b.name);
+                    const suffix = taken ? " · indexed" : release ? " · release" : "";
+                    const tip = taken
+                      ? `Already indexed here as ${remote.indexed.find((x) => x.branch === b.name)?.namespace}`
+                      : release
+                        ? "Release branch"
+                        : b.name === remote.default_branch
+                          ? "Default branch"
+                          : undefined;
                     return (
                       <li key={b.name}>
-                        <label
-                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs font-mono cursor-pointer select-none has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-focus ${taken ? "opacity-60 cursor-default border-border" : on ? "border-accent bg-accent-soft" : "border-border hover:border-border-strong"}`}
-                          title={
-                            taken
-                              ? `already indexed here as ${remote.indexed.find((x) => x.branch === b.name)?.namespace}`
-                              : release
-                                ? "release branch"
-                                : b.name === remote.default_branch
-                                  ? "default branch"
-                                  : undefined
-                          }
-                        >
-                          <input
-                            type="checkbox"
-                            checked={taken || on}
-                            disabled={taken}
-                            onChange={() => toggle(b.name)}
-                            className="sr-only"
-                          />
-                          <Icon name={taken || on ? "check" : "plus"} size="xs" aria-hidden="true" /> {b.name}
-                          {taken && <span className="font-sans text-xs text-text-muted">indexed</span>}
-                          {!taken && release && <span className="font-sans text-xs text-text-muted">release</span>}
-                        </label>
+                        <Chip
+                          label={`${b.name}${suffix}`}
+                          mono
+                          selected={on}
+                          disabled={taken}
+                          tip={tip}
+                          icon={<Icon name={on ? "check" : "plus"} size="xs" aria-hidden="true" />}
+                          onClick={() => toggle(b.name)}
+                        />
                       </li>
                     );
                   })}
@@ -1447,8 +1443,8 @@ export function AddRepositoryDialog({
           )}
 
           {error && (
-            <div role="alert" className="p-3 rounded-lg border border-danger/40 bg-danger/10 text-xs text-text">
-              {error}
+            <div role="alert">
+              <Alert state="danger" text={error} />
             </div>
           )}
         </div>
@@ -1614,20 +1610,20 @@ function RepoDetail({
         }}
       />
 
-      <Tabs defaultValue="health" ariaLabel={`${repo.repo} @ ${repo.branch}`}>
-        <Tabs.TriggersList className="mb-5">
-          <Tabs.Trigger value="health">
-            <Icon name="activity" size="sm" aria-hidden="true" /> Health
-          </Tabs.Trigger>
-          <Tabs.Trigger value="explore">
-            <Icon name="search" size="sm" aria-hidden="true" /> Explore
-          </Tabs.Trigger>
-          <Tabs.Trigger value="packs">
-            <Icon name="cards" size="sm" aria-hidden="true" /> PR packs
-          </Tabs.Trigger>
-          <Tabs.Trigger value="access">
-            <Icon name="secure" size="sm" aria-hidden="true" /> Access
-          </Tabs.Trigger>
+      <Tabs defaultValue="health">
+        <Tabs.TriggersList className="mb-5" aria-label={`${repo.repo} @ ${repo.branch}`}>
+          <TabTrigger value="health" icon="activity">
+            Health
+          </TabTrigger>
+          <TabTrigger value="explore" icon="search">
+            Explore
+          </TabTrigger>
+          <TabTrigger value="packs" icon="cards">
+            PR packs
+          </TabTrigger>
+          <TabTrigger value="access" icon="secure">
+            Access
+          </TabTrigger>
         </Tabs.TriggersList>
         <Tabs.Content value="health">
           <HealthTab id={id} />
@@ -1854,11 +1850,18 @@ function HealthTab({ id }: { id: CodeId }) {
         {st.compiler_candidates?.length ? ` · compiler candidates: ${st.compiler_candidates.join(", ")}` : ""}
       </div>
       {!!st.quality_warnings?.length && (
-        <div className="rounded-xl border border-warn/30 bg-warn/10 px-4 py-3 text-sm space-y-1">
-          {st.quality_warnings.map((warning) => (
-            <div key={warning}>{warning}</div>
-          ))}
-        </div>
+        <Alert
+          state="warning"
+          text={
+            <span className="block space-y-1">
+              {st.quality_warnings.map((warning) => (
+                <span key={warning} className="block">
+                  {warning}
+                </span>
+              ))}
+            </span>
+          }
+        />
       )}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <Stat label="Files" value={fmtInt(st.counts.code_files)} hint={st.path_prefixes.join(" ")} />
@@ -2069,8 +2072,14 @@ function HealthTab({ id }: { id: CodeId }) {
             type="button"
             onClick={() => setShowErrs((v) => !v)}
             aria-expanded={showErrs}
-            className="inline-flex items-center gap-2 text-sm font-medium w-full text-left"
+            className="inline-flex items-center gap-1.5 min-h-9 -ml-1 pl-1 pr-2 w-full rounded text-left text-sm font-medium hover:bg-surface-2 pointer-coarse:min-h-11"
           >
+            <Icon
+              name={showErrs ? "chevron-down" : "chevron-right"}
+              size="sm"
+              aria-hidden="true"
+              className="shrink-0"
+            />
             <Icon
               name="warning"
               size="sm"
@@ -2079,7 +2088,6 @@ function HealthTab({ id }: { id: CodeId }) {
             />
             Files with index errors{" "}
             {errs ? <span className="tabular text-text-muted">({fmtInt(errs.total)})</span> : null}
-            <Icon name={showErrs ? "chevron-down" : "chevron-right"} size="sm" aria-hidden="true" className="ml-auto" />
           </button>
           {errs === null && <Skeleton className="h-6 w-full mt-2" />}
           {errs && errs.total === 0 && (
@@ -2491,15 +2499,21 @@ function ExploreTab({ id }: { id: CodeId }) {
             </div>
           )}
           {res.abstain && res.abstain_code === "not_covered" && (
-            <div className="p-3 rounded-lg border border-danger/30 bg-danger/10 text-xs">
-              <b>Not covered.</b> {res.abstain_reason} An agent receives <Mono>abstain_code = not_covered</Mono> here,
-              distinct from a genuine miss.
-            </div>
+            <Alert
+              state="danger"
+              text={
+                <>
+                  <strong className="font-medium">Not covered.</strong> {res.abstain_reason} An agent receives{" "}
+                  <Mono>abstain_code = not_covered</Mono> here, distinct from a genuine miss.
+                </>
+              }
+            />
           )}
           {res.abstain && res.abstain_code !== "not_covered" && (
-            <div className="p-3 rounded-lg border border-warn/30 bg-warn/10 text-xs">
-              Abstained: {res.abstain_reason || "no confident match"}. Results below are best-effort.
-            </div>
+            <Alert
+              state="warning"
+              text={`Abstained: ${res.abstain_reason || "no confident match"}. Results below are best-effort.`}
+            />
           )}
           {res.results.length === 0 && (
             <EmptyState
@@ -2666,8 +2680,8 @@ function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
                   href={`https://github.com/${repo}/pull/${r.pr_number}`}
                   target="_blank"
                   rel="noreferrer"
-                  aria-label={`PR #${r.pr_number} on GitHub`}
-                  className="inline-flex items-center shrink-0"
+                  aria-label={`PR #${r.pr_number} on GitHub (opens in new tab)`}
+                  className="inline-flex items-center justify-center shrink-0 min-h-6 min-w-6 rounded hover:bg-surface-3 pointer-coarse:min-h-11 pointer-coarse:min-w-11"
                 >
                   <Icon name="popout" size="xs" aria-hidden="true" />
                 </a>
@@ -3017,11 +3031,7 @@ function AccessTab({
                 <div className="mt-1 text-lg font-medium inline-flex items-center gap-2 flex-wrap">
                   <Icon name={RULE_META[rule].icon} size="sm" color={RULE_COLOR[rule]} aria-hidden="true" />
                   {RULE_META[rule].headline(id.org)}
-                  <Badge
-                    text={RULE_META[rule].label.toLowerCase()}
-                    state={FRESH_STATE[RULE_META[rule].tone]}
-                    size="sm"
-                  />
+                  <Badge text={RULE_META[rule].label} state={FRESH_STATE[RULE_META[rule].tone]} size="sm" />
                   <span className="text-xs font-normal text-text-muted">read-only</span>
                 </div>
                 <p className="mt-1.5 text-xs text-text-muted max-w-2xl">{RULE_META[rule].detail}</p>
@@ -3055,19 +3065,17 @@ function AccessTab({
               )}
             </div>
             {orgReadable && (
-              <div className="mt-3 p-2.5 rounded-lg border border-warn/30 bg-warn/10 text-xs flex items-start gap-2">
-                <Icon
-                  name="warning"
-                  size="xs"
-                  color="var(--color-warn)"
-                  aria-hidden="true"
-                  className="shrink-0 mt-0.5"
-                />
-                <span>
-                  This deployment still lets every principal read every repository (<Mono>LOOM_CODE_ORG_READABLE</Mono>
-                  ), so the rule above is not enforced until an operator turns that off.
-                </span>
-              </div>
+              <Alert
+                className="mt-3"
+                state="warning"
+                text={
+                  <>
+                    This deployment still lets every principal read every repository (
+                    <Mono>LOOM_CODE_ORG_READABLE</Mono>), so the rule above is not enforced until an operator turns that
+                    off.
+                  </>
+                }
+              />
             )}
           </>
         )}
@@ -3086,10 +3094,10 @@ function AccessTab({
              thing here with a deadline attached to someone else's day. */}
       {grants !== null && waiting.length > 0 && (
         <section
-          className="rounded-xl border border-warn/40 bg-warn/5 overflow-hidden"
+          className="rounded-xl border border-border bg-surface overflow-hidden"
           aria-label="Waiting for approval"
         >
-          <div className="flex items-center justify-between gap-3 px-3.5 py-2.5 border-b border-warn/30">
+          <div className="flex items-center justify-between gap-3 px-3.5 py-2.5 border-b border-border">
             <div className="text-sm font-medium inline-flex items-center gap-2">
               <Icon name="clock" size="sm" color="var(--color-warn)" aria-hidden="true" /> Waiting for a maintainer{" "}
               <span className="tabular text-text-muted">({waiting.length})</span>
@@ -3180,10 +3188,10 @@ function AccessTab({
             </div>
           </div>
           {!hasAdmin && (
-            <div className="p-3 rounded-lg border border-warn/30 bg-warn/10 text-xs">
-              Registered by the indexer, no maintainer recorded yet. An operator grants the first maintainer; after that
-              the maintainer sets the rule above and approves readers.
-            </div>
+            <Alert
+              state="warning"
+              text="Registered by the indexer, no maintainer recorded yet. An operator grants the first maintainer; after that the maintainer sets the rule above and approves readers."
+            />
           )}
           {active.length === 0 ? (
             <div className="text-xs text-text-subtle">

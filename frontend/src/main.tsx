@@ -1,9 +1,11 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { ClickUIProvider } from "@clickhouse/click-ui";
+import * as RadixTooltip from "@radix-ui/react-tooltip";
 import App from "./App";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { installStaleChunkReload } from "./lib/staleChunk";
+import "click-ui-styles/tokens-light.css";
+import "click-ui-styles/global.css";
 import "./styles.css";
 
 // A tab older than the running build reloads once on a missing view chunk.
@@ -15,10 +17,12 @@ const root = document.getElementById("root");
 if (!root) throw new Error("index.html has no #root element to mount the app into");
 ReactDOM.createRoot(root).render(
   <React.StrictMode>
-    <ClickUIProvider theme="light" persistTheme={false}>
+    {/* Click UI's components use tooltips internally and expect a provider above them,
+        which ClickUIProvider would have mounted. */}
+    <RadixTooltip.Provider delayDuration={300}>
       <ErrorBoundary>
         <App />
       </ErrorBoundary>
-    </ClickUIProvider>
+    </RadixTooltip.Provider>
   </React.StrictMode>,
 );

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
 import { IconButton } from "../components/IconButton";
@@ -519,6 +519,7 @@ function NavBtn({
   collapsed: boolean;
 }) {
   const hint = scopeHint(item);
+  const hintId = useId();
   // Anchor (not button) so cmd/ctrl-click opens the view in a new tab,
   // middle-click works, and "Copy link" gives a usable URL.
   const anchor = (
@@ -532,8 +533,14 @@ function NavBtn({
       className={`${NAV_ITEM} ${collapsed ? "justify-center px-2!" : "justify-between"}`}
       aria-label={collapsed ? item.label : undefined}
       aria-current={active ? "page" : undefined}
-      title={!collapsed && hint ? `${item.label} — ${hint}` : undefined}
+      aria-describedby={hint ? hintId : undefined}
     >
+      {/* The scope hint is the link's description, not part of its name. */}
+      {hint && (
+        <span id={hintId} hidden>
+          {hint}
+        </span>
+      )}
       <span className={`flex items-center min-w-0 ${NAV_GAP}`}>
         <span className={NAV_ICON}>
           <Icon name={item.icon} size="sm" aria-hidden="true" />

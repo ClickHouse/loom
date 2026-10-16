@@ -1,5 +1,6 @@
 import { Badge } from "@clickhouse/click-ui/Badge";
 import type { SearchHit } from "../api";
+import { IconButton } from "./IconButton";
 import { signed, whyTerms } from "../lib/whyNote";
 
 // Under each ranked hit in the Memories list, one quiet line that says why it is there —
@@ -23,7 +24,6 @@ export function SearchWhy({ hit, rank }: SearchWhyProps) {
   return (
     <div
       className="mt-1 px-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-2xs text-text-muted tabular"
-      title={explanation || undefined}
       data-testid="search-why"
     >
       <span className="font-medium text-text">#{rank}</span>
@@ -38,6 +38,7 @@ export function SearchWhy({ hit, rank }: SearchWhyProps) {
           text={`${t.label} ${signed(t.value)}`}
         />
       ))}
+      {explanation && <IconButton icon="info-in-circle" size="xs" label="Ranking note" tooltip={explanation} />}
     </div>
   );
 }

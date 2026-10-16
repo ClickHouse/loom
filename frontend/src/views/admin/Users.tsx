@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Alert } from "@clickhouse/click-ui/Alert";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
@@ -228,7 +229,7 @@ function ClaimReleaseSection() {
         <Button type="danger" htmlType="button" onClick={run} loading={busy} disabled={busy || !ns.trim()}>
           Release claim
         </Button>
-        {result && <div className="mt-3 px-3 py-2 text-xs text-success bg-surface-2 rounded-md">{result}</div>}
+        {result && <Alert className="mt-3" state="success" size="small" text={result} />}
       </div>
     </section>
   );
@@ -276,9 +277,17 @@ function UserListTable({ data, filter }: { data: AdminUsersResult; filter: Filte
               <div>
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <span className="font-mono text-sm">{u.subject}</span>
-                  {u.is_platform_admin && <Badge text="Admin" state="info" size="sm" title="Platform admin" />}
+                  {u.is_platform_admin && <Badge text="Platform admin" state="info" size="sm" />}
                   {u.grants.some((g) => g.pending_role) && (
-                    <Badge text="Pending" state="warning" size="sm" title="Has a pending elevation request" />
+                    <Badge
+                      text={
+                        <>
+                          Pending<span className="sr-only"> elevation request</span>
+                        </>
+                      }
+                      state="warning"
+                      size="sm"
+                    />
                   )}
                 </div>
                 {u.contact_email && <div className="text-2xs text-text-muted mt-0.5">{u.contact_email}</div>}
@@ -295,13 +304,9 @@ function UserListTable({ data, filter }: { data: AdminUsersResult; filter: Filte
                     key={`${g.namespace}-${g.role}`}
                     size="sm"
                     state={g.pending_role ? "warning" : g.is_owner ? "info" : "neutral"}
-                    title={
-                      g.pending_role
-                        ? `Pending elevation: ${g.role} → ${g.pending_role}`
-                        : `${g.is_owner ? "Owner" : "Grant"}: ${g.role}`
-                    }
                     text={
                       <span className="font-mono">
+                        {g.pending_role && <span className="sr-only">Pending elevation: </span>}
                         {g.namespace} ·{" "}
                         {g.pending_role ? `${g.role} → ${g.pending_role}` : `${g.role}${g.is_owner ? " · owner" : ""}`}
                       </span>

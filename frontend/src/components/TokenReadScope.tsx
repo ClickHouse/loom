@@ -3,6 +3,7 @@ import { Badge } from "@clickhouse/click-ui/Badge";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import type { ScopeRepo, TokenReadScope } from "../lib/tokenScope";
+import { TipTarget } from "./ui/TipTarget";
 
 /** "What this token will read and write", shown under the namespace pick
  * before the token is minted. The pick is one namespace; the token reads many, and a page
@@ -35,7 +36,7 @@ export function TokenReadScopePanel({
     >
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
         <span className="font-medium text-text shrink-0">Writes to</span>
-        <Name title={scope.home}>{scope.home || "—"}</Name>
+        <Name>{scope.home || "—"}</Name>
         <span className="text-text-muted">memories, captured sessions and working notes land here.</span>
       </div>
 
@@ -55,12 +56,10 @@ export function TokenReadScopePanel({
         </div>
         <div className="flex flex-wrap gap-1">
           {scope.namespaces.map((ns) => (
-            <Name key={ns} title={ns}>
-              {ns}
-            </Name>
+            <Name key={ns}>{ns}</Name>
           ))}
           {scope.repositories.map((r) => (
-            <Name key={r.repo} title={r.branches.map((b) => b.namespace).join(", ")}>
+            <Name key={r.repo} detail={branchNamespaces(r)}>
               {r.repo}
               {r.branches.length > 1 ? <span className="font-sans"> · {r.branches.length} branches</span> : null}
             </Name>
@@ -68,7 +67,7 @@ export function TokenReadScopePanel({
           {includedRepos.map((r) => (
             <Name
               key={r.repo}
-              title={`${r.branches.map((b) => b.namespace).join(", ")} — restricted; the token gets its own read grant`}
+              detail={`${branchNamespaces(r)} — restricted; the token gets its own read grant`}
               data-testid="token-read-scope-included"
               locked
             >
@@ -106,7 +105,7 @@ export function TokenReadScopePanel({
                       aria-label={`Add ${r.repo} to this token`}
                       label={
                         <span className="inline-flex items-center gap-1.5">
-                          <Name title={r.branches.map((b) => b.namespace).join(", ")}>{r.repo}</Name>
+                          <Name detail={branchNamespaces(r)}>{r.repo}</Name>
                           {r.branches.length > 1 ? (
                             <span className="text-text-muted">{r.branches.length} branches</span>
                           ) : null}
@@ -128,7 +127,7 @@ export function TokenReadScopePanel({
               <div>
                 <span className="text-text font-medium">Not included: </span>
                 {stillExcluded.map((r) => (
-                  <Name key={r.repo} title={r.branches.map((b) => b.namespace).join(", ")} className="mr-1">
+                  <Name key={r.repo} detail={branchNamespaces(r)} className="mr-1">
                     {r.repo}
                   </Name>
                 ))}
@@ -155,19 +154,23 @@ export function TokenReadScopePanel({
   );
 }
 
+const branchNamespaces = (r: ScopeRepo) => r.branches.map((b) => b.namespace).join(", ");
+
 /** A namespace or repository name: Click UI's badge, the name in mono. */
 function Name({
   children,
   locked = false,
+  detail,
   ...rest
 }: {
   children: ReactNode;
   locked?: boolean;
-  title?: string;
+  /** More about the name, e.g. the namespaces a repository spans: its tooltip. */
+  detail?: string;
   className?: string;
   "data-testid"?: string;
 }) {
-  return (
+  const badge = (
     <Badge
       {...rest}
       text={
@@ -178,4 +181,5 @@ function Name({
       }
     />
   );
+  return detail ? <TipTarget tip={detail}>{badge}</TipTarget> : badge;
 }

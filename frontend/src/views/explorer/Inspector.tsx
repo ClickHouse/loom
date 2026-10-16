@@ -349,7 +349,7 @@ export function Inspector({
         header={
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0 flex-1">
-              <SectionHeading label="Edge" />
+              <SectionHeading level={2} label="Edge" />
               <div className="text-sm font-semibold font-mono break-words">
                 {edge.parent} — {c.entity}
               </div>
@@ -436,7 +436,7 @@ export function Inspector({
         tone="surface-2"
         scroll
         className="text-xs text-text-muted"
-        header={<SectionHeading label="Reading the graph" />}
+        header={<SectionHeading level={2} label="Reading the graph" />}
       >
         <NoticeLine notice={notice} about={null} />
         <ul className="space-y-1.5">
@@ -486,7 +486,7 @@ export function Inspector({
       header={
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
-            <SectionHeading label={isSeed ? "Seed" : "Selected"} />
+            <SectionHeading level={2} label={isSeed ? "Seed" : "Selected"} />
             <div className="text-sm font-semibold font-mono break-words">{n.entity}</div>
           </div>
           <IconButton label="Clear selection" onClick={() => onSelect(null)} icon="cross" size="sm" />

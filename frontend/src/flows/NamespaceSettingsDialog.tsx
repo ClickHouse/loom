@@ -172,7 +172,7 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
         setCapEdit(null);
       }}
     >
-      <div className="max-h-[70vh] overflow-y-auto">
+      <div>
         {!ns && <div className="py-8 text-center text-sm text-text-muted">Loading…</div>}
         {ns && (
           <div className="space-y-5">

@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Alert } from "@clickhouse/click-ui/Alert";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
@@ -7,7 +8,8 @@ import { Table, type TableRowType } from "@clickhouse/click-ui/Table";
 import { getRun, listRuns, type RunGetResponse, type RunRow, type RunStatus } from "../api";
 import { useStore, useIdentity } from "../lib/state";
 import { SkeletonCard } from "../components/Skeleton";
-import { Chip, Panel, SectionHeading } from "../components/ui";
+import { Chip, Panel, SectionHeading, Tip, TipTarget } from "../components/ui";
+import { IconButton } from "../components/IconButton";
 import { EmptyState } from "../components/EmptyState";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { displayAgent, humanizeError, relativeTime, truncate } from "../lib/format";
@@ -60,10 +62,10 @@ const RUN_FILTERS: readonly Filter[] = ["", "active", "completed", "failed", "ca
 const ALL_AGENTS = "*";
 
 const STATUS_META: Record<RunStatus, { label: string; state: BadgeState; icon: IconName }> = {
-  active: { label: "active", state: "neutral", icon: "sand-glass" },
-  completed: { label: "completed", state: "success", icon: "check-in-circle" },
-  failed: { label: "failed", state: "danger", icon: "cross" },
-  cancelled: { label: "cancelled", state: "warning", icon: "line-in-circle" },
+  active: { label: "Active", state: "neutral", icon: "sand-glass" },
+  completed: { label: "Completed", state: "success", icon: "check-in-circle" },
+  failed: { label: "Failed", state: "danger", icon: "cross" },
+  cancelled: { label: "Cancelled", state: "warning", icon: "line-in-circle" },
 };
 
 function StatusBadge({ status, inferred }: { status: RunStatus; inferred?: boolean }) {
@@ -71,17 +73,35 @@ function StatusBadge({ status, inferred }: { status: RunStatus; inferred?: boole
   // that the task succeeded — render it neutral, not green.
   const idleClosed = inferred && status === "completed";
   const meta = idleClosed ? STATUS_META.active : STATUS_META[status] || STATUS_META.active;
+  if (!idleClosed) return <Badge text={meta.label} state={meta.state} size="sm" />;
   return (
-    <Badge
-      text={idleClosed ? "idle-closed" : meta.label}
-      state={meta.state}
-      size="sm"
-      title={
-        idleClosed
-          ? "loom inferred this run from a connection; closed on idle, not by run.complete — not a reported outcome"
-          : undefined
-      }
+    <TipBadge
+      text="Idle-closed"
+      tip="Loom inferred this run from a connection; closed on idle, not by run.complete — not a reported outcome"
     />
+  );
+}
+
+/** A neutral badge whose tooltip carries the detail; the wrapper takes focus so keyboard
+ *  users reach the tip. */
+function TipBadge({ text, tip }: { text: string; tip: string }) {
+  return (
+    <TipTarget tip={tip}>
+      <Badge text={text} state="neutral" size="sm" />
+    </TipTarget>
+  );
+}
+
+/** One replay figure: its label, an (i) with what fills it, and the value. */
+function Stat({ label, help, children }: { label: string; help?: string; children: ReactNode }) {
+  return (
+    <div>
+      <dt className="text-2xs text-text-muted flex items-center gap-0.5">
+        {label}
+        {help && <IconButton icon="info-in-circle" size="xs" label={`About ${label}`} tooltip={help} />}
+      </dt>
+      <dd className="tabular-nums m-0">{children}</dd>
+    </div>
   );
 }
 
@@ -197,13 +217,15 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
+// Counts and durations read down a right edge.
+const NUMERIC = "block w-full text-right tabular-nums";
 const RUN_HEADERS = [
   { label: "Goal" },
   { label: "Agent", width: "160px" },
   { label: "Status", width: "140px" },
-  { label: "Relied on", width: "96px" },
-  { label: "Wrote", width: "80px" },
-  { label: "Took", width: "96px" },
+  { label: <span className={NUMERIC}>Relied on</span>, width: "96px" },
+  { label: <span className={NUMERIC}>Wrote</span>, width: "80px" },
+  { label: <span className={NUMERIC}>Took</span>, width: "96px" },
   { label: "Started", width: "120px" },
 ];
 
@@ -218,23 +240,23 @@ function runRow(r: RunRow, onOpen: (r: RunRow) => void): TableRowType {
       {
         label: (
           <div className="min-w-0">
-            <div className="flex items-center gap-2 min-w-0" title={r.goal}>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onOpen(r);
-                }}
-                className="min-w-0 max-w-full truncate text-left rounded outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-              >
-                {r.goal || <span className="text-text-subtle">(no goal)</span>}
-              </button>
+            <div className="flex items-center gap-2 min-w-0">
+              <Tip content={r.goal} disabled={!r.goal}>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpen(r);
+                  }}
+                  className="min-w-0 max-w-full truncate text-left rounded outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                >
+                  {r.goal || <span className="text-text-subtle">(no goal)</span>}
+                </button>
+              </Tip>
               {inferred && (
-                <Badge
-                  text="auto"
-                  state="neutral"
-                  size="sm"
-                  title="loom inferred this run from a connection; the agent did not declare it with run.begin"
+                <TipBadge
+                  text="Auto"
+                  tip="Loom inferred this run from a connection; the agent did not declare it with run.begin"
                 />
               )}
             </div>
@@ -246,10 +268,17 @@ function runRow(r: RunRow, onOpen: (r: RunRow) => void): TableRowType {
       },
       { label: displayAgent(r.agent) },
       { label: <StatusBadge status={r.status} inferred={inferred} /> },
-      { label: <span className="tabular-nums">{(r.memories_used ?? []).length}</span> },
-      { label: <span className="tabular-nums">{(r.memories_written ?? []).length}</span> },
-      { label: <span className="tabular-nums">{fmtDuration(r.duration_ms)}</span> },
-      { label: <span title={r.started_at}>{relativeTime(r.started_at)}</span> },
+      { label: <span className={NUMERIC}>{(r.memories_used ?? []).length}</span> },
+      { label: <span className={NUMERIC}>{(r.memories_written ?? []).length}</span> },
+      { label: <span className={NUMERIC}>{fmtDuration(r.duration_ms)}</span> },
+      {
+        label: (
+          <time dateTime={r.started_at}>
+            {relativeTime(r.started_at)}
+            <span className="sr-only"> ({r.started_at})</span>
+          </time>
+        ),
+      },
     ],
   };
 }
@@ -361,7 +390,12 @@ export function Runs() {
 
       <div className="flex items-center gap-2 mb-4 flex-wrap">
         {RUN_FILTERS.map((f) => (
-          <Chip key={f || "all"} label={f || "all"} selected={filter === f} onClick={() => setFilter(f)} />
+          <Chip
+            key={f || "all"}
+            label={f ? STATUS_META[f].label : "All"}
+            selected={filter === f}
+            onClick={() => setFilter(f)}
+          />
         ))}
         <span className="w-px h-4 bg-border mx-1" />
         <Chip label="Group by session" selected={groupBy} onClick={() => setGroupBy((v) => !v)} />
@@ -491,20 +525,24 @@ export function Runs() {
             )}
           </div>
         )}
-        <div className="max-h-[70vh] overflow-y-auto space-y-3">
+        <div className="space-y-3">
           {open && hasNoMemoryActivity(open) && metaBool(open.metadata, "implicit") && (
-            <div className="text-xs text-text-muted p-3 rounded-lg bg-surface-2 border border-border">
-              This run was inferred from a connection (implicit MCP session) that did no memory work — it recalled and
-              wrote nothing, and closed on idle rather than by run.complete. Its "completed" status is not a reported
-              outcome.
-            </div>
+            <Alert
+              state="neutral"
+              size="small"
+              text={
+                'This run was inferred from a connection (implicit MCP session) that did no memory work — it recalled and wrote nothing, and closed on idle rather than by run.complete. Its "completed" status is not a reported outcome.'
+              }
+            />
           )}
           {open && hasNoMemoryActivity(open) && !metaBool(open.metadata, "implicit") && (
-            <div className="text-xs text-text-muted p-3 rounded-lg bg-surface-2 border border-border">
-              This run reported no memory activity: the caller opened it with run.begin and closed it with run.complete
-              {open.duration_ms > 0 ? ` ${fmtDuration(open.duration_ms)} later` : ""}, naming nothing it relied on, and
-              no write carried its run_id. The fields below say what each one would have needed.
-            </div>
+            <Alert
+              state="neutral"
+              size="small"
+              text={`This run reported no memory activity: the caller opened it with run.begin and closed it with run.complete${
+                open.duration_ms > 0 ? ` ${fmtDuration(open.duration_ms)} later` : ""
+              }, naming nothing it relied on, and no write carried its run_id. The fields below say what each one would have needed.`}
+            />
           )}
           {open?.user_request && (
             <Section title="User request">
@@ -533,65 +571,57 @@ export function Runs() {
                 const hasSession = session !== "" && session !== "-";
                 const over = detail.over_budget ?? [];
                 return (
-                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm">
-                    <div>
-                      <div className="text-2xs text-text-muted">recalled</div>
-                      <div className="tabular-nums">
-                        {detail.recalled < 0 ? (
-                          <span title={EMPTY_WHY.recalledOff}>n/a</span>
-                        ) : detail.recalled === 0 ? (
-                          <span title={EMPTY_WHY.recalledZero} className="underline decoration-dotted">
-                            0
-                          </span>
-                        ) : (
-                          detail.recalled
-                        )}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-2xs text-text-muted">observations</div>
-                      <div className="tabular-nums" title={EMPTY_WHY.observations}>
-                        {detail.observations}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-2xs text-text-muted">turns</div>
-                      <div className="tabular-nums" title={hasSession ? EMPTY_WHY.sessionCost : EMPTY_WHY.noSession}>
-                        {hasSession ? (
-                          <>
-                            {detail.turns}
-                            {(detail.unpriced_turns ?? 0) > 0 && (
-                              <span className="text-text-subtle" title={EMPTY_WHY.unpriced}>
-                                {" "}
-                                ({detail.unpriced_turns} unpriced)
-                              </span>
-                            )}
-                          </>
-                        ) : (
-                          <span className="text-text-subtle">no session</span>
-                        )}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-2xs text-text-muted">cost</div>
-                      <div className="tabular-nums" title={hasSession ? EMPTY_WHY.sessionCost : EMPTY_WHY.noSession}>
-                        {!hasSession ? (
-                          <span className="text-text-subtle">no session</span>
-                        ) : detail.cost_usd > 0 ? (
-                          usd(detail.cost_usd)
-                        ) : (
-                          "—"
-                        )}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-2xs text-text-muted">budget</div>
-                      <div className="tabular-nums" title={EMPTY_WHY.budget}>
-                        {budgetText(detail)}
-                        {over.length > 0 && <span className="text-danger"> · over {over.join(" and ")}</span>}
-                      </div>
-                    </div>
-                  </div>
+                  <dl className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm m-0">
+                    <Stat
+                      label="recalled"
+                      help={
+                        detail.recalled < 0
+                          ? EMPTY_WHY.recalledOff
+                          : detail.recalled === 0
+                            ? EMPTY_WHY.recalledZero
+                            : undefined
+                      }
+                    >
+                      {detail.recalled < 0 ? "n/a" : detail.recalled}
+                    </Stat>
+                    <Stat label="observations" help={EMPTY_WHY.observations}>
+                      {detail.observations}
+                    </Stat>
+                    <Stat
+                      label="turns"
+                      help={
+                        !hasSession
+                          ? EMPTY_WHY.noSession
+                          : (detail.unpriced_turns ?? 0) > 0
+                            ? `${EMPTY_WHY.sessionCost}. Unpriced: ${EMPTY_WHY.unpriced}`
+                            : EMPTY_WHY.sessionCost
+                      }
+                    >
+                      {hasSession ? (
+                        <>
+                          {detail.turns}
+                          {(detail.unpriced_turns ?? 0) > 0 && (
+                            <span className="text-text-subtle"> ({detail.unpriced_turns} unpriced)</span>
+                          )}
+                        </>
+                      ) : (
+                        <span className="text-text-subtle">no session</span>
+                      )}
+                    </Stat>
+                    <Stat label="cost" help={hasSession ? EMPTY_WHY.sessionCost : EMPTY_WHY.noSession}>
+                      {!hasSession ? (
+                        <span className="text-text-subtle">no session</span>
+                      ) : detail.cost_usd > 0 ? (
+                        usd(detail.cost_usd)
+                      ) : (
+                        "—"
+                      )}
+                    </Stat>
+                    <Stat label="budget" help={EMPTY_WHY.budget}>
+                      {budgetText(detail)}
+                      {over.length > 0 && <span className="text-danger"> · over {over.join(" and ")}</span>}
+                    </Stat>
+                  </dl>
                 );
               })()}
             {!detailLoading && detail && detail.recalled_keys.length > 0 && (

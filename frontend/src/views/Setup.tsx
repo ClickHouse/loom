@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
+import { Alert } from "@clickhouse/click-ui/Alert";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
-import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
+import { Icon } from "@clickhouse/click-ui/Icon";
 import { Select } from "@clickhouse/click-ui/Select";
 import { Tabs } from "@clickhouse/click-ui/Tabs";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
@@ -33,7 +34,7 @@ import { PrivacyFilters, type PrivacyFilterStarter } from "./admin/Blacklist";
 import { canCall, canCallCodeRepos } from "../lib/canCall";
 import { PageContainer } from "../layout/PageContainer";
 import { ScopeBadge } from "../components/ScopeBadge";
-import { Tip, Unavailable } from "../components/ui";
+import { TabTrigger, Tip, Unavailable } from "../components/ui";
 import { Modal } from "../components/ui/Modal";
 import { IconButton } from "../components/IconButton";
 import { READ_ONLY_TIP, canWrite, roleOnNamespace, useNamespaceRole } from "../lib/namespaceRole";
@@ -123,16 +124,6 @@ function writeTabParam(tab: SettingsTab) {
   if (tab === "tokens") url.searchParams.delete("tab");
   else url.searchParams.set("tab", tab);
   window.history.replaceState(null, "", url.toString());
-}
-
-function SettingsTabTrigger({ value, icon, children }: { value: SettingsTab; icon: IconName; children: string }) {
-  return (
-    <Tabs.Trigger value={value}>
-      <span className="inline-flex items-center gap-1.5">
-        <Icon name={icon} size="sm" aria-hidden="true" /> {children}
-      </span>
-    </Tabs.Trigger>
-  );
 }
 
 export function Setup() {
@@ -241,37 +232,45 @@ export function Setup() {
         // or a grant. `code.repos` and `tracker.source.list` are org-level reads at
         // viewer role: a known principal may make them, so the button shows once whoami
         // is known.
-        <div
-          role="status"
-          className="mb-6 max-w-2xl flex items-start gap-2 p-3 rounded-lg border border-border-strong bg-surface text-sm text-text"
-        >
-          <Icon name="warning" size="sm" color="var(--color-warn)" className="shrink-0 mt-0.5" aria-hidden="true" />
-          <div>
-            <div className="font-semibold">No namespace selected</div>
-            <div className="text-text-muted mt-0.5">
-              Your token can reach no namespace yet. Join a repository or tracker source from Repositories, or ask for a
-              grant.
-            </div>
-            <div className="mt-2 flex flex-wrap items-center gap-3">
-              {whoami && (
-                <Button type="primary" htmlType="button" iconLeft="code" onClick={() => setView("code")}>
-                  Open Repositories
-                </Button>
-              )}
-              <Button type="empty" htmlType="button" onClick={() => openNamespacePicker(true)}>
-                Namespace menu
-              </Button>
-            </div>
-          </div>
+        <div role="status" className="mb-6 max-w-2xl">
+          <Alert
+            state="warning"
+            size="medium"
+            text={
+              <>
+                <strong>No namespace selected.</strong> Your token can reach no namespace yet. Join a repository or
+                tracker source from Repositories, or ask for a grant.
+                <span className="mt-2 flex flex-wrap items-center gap-3">
+                  <Button type="empty" htmlType="button" onClick={() => openNamespacePicker(true)}>
+                    Namespace menu
+                  </Button>
+                  {whoami && (
+                    <Button type="primary" htmlType="button" iconLeft="code" onClick={() => setView("code")}>
+                      Open repositories
+                    </Button>
+                  )}
+                </span>
+              </>
+            }
+          />
         </div>
       )}
       {canManageModels && showChecklist && tab !== "models" && (
-        <div className="mb-4 rounded-lg border border-border p-4 text-sm">
-          <p>Set up Loom's LLM and embedding provider before evaluating memory and search quality.</p>
-          <Button type="empty" htmlType="button" className="mt-2" onClick={() => selectTab("models")}>
-            Configure models and keys
-          </Button>
-        </div>
+        <Alert
+          className="mb-4"
+          state="info"
+          size="medium"
+          text={
+            <>
+              Set up Loom's LLM and embedding provider before evaluating memory and search quality.
+              <span className="mt-2 flex">
+                <Button type="empty" htmlType="button" onClick={() => selectTab("models")}>
+                  Configure models and keys
+                </Button>
+              </span>
+            </>
+          }
+        />
       )}
       {showChecklist && tab !== "models" && (
         <GettingStarted
@@ -293,16 +292,16 @@ export function Setup() {
         }}
       >
         <Tabs.TriggersList aria-label="Settings sections" className="mb-5">
-          <SettingsTabTrigger value="tokens" icon="key">
+          <TabTrigger value="tokens" icon="key">
             Tokens
-          </SettingsTabTrigger>
-          <SettingsTabTrigger value="memory" icon="light-bulb">
+          </TabTrigger>
+          <TabTrigger value="memory" icon="light-bulb">
             Memory
-          </SettingsTabTrigger>
+          </TabTrigger>
           {canManageModels && (
-            <SettingsTabTrigger value="models" icon="gear">
+            <TabTrigger value="models" icon="gear">
               Models &amp; keys
-            </SettingsTabTrigger>
+            </TabTrigger>
           )}
         </Tabs.TriggersList>
         <Tabs.Content value="tokens">
@@ -368,9 +367,7 @@ function MemoryTab() {
           description="Paste a Markdown document; each second-level section becomes one memory."
           className="max-w-[720px] w-full"
         >
-          <div className="max-h-[80vh] overflow-y-auto">
-            <ImportCuratedPanel />
-          </div>
+          <ImportCuratedPanel />
         </Modal>
       </section>
     </div>
@@ -1036,14 +1033,12 @@ function TokensSection({
         title="Token generated"
         className="max-w-[640px] w-full"
       >
-        <div className="max-h-[80vh] overflow-y-auto space-y-3">
-          <div className="flex items-start gap-2 px-3 py-2 rounded-md bg-warn/15 border border-warn/40 text-xs text-warn">
-            <Icon name="warning" size="sm" color="var(--color-warn)" className="mt-0.5 shrink-0" aria-hidden="true" />
-            <div>
-              This is the only time the token is shown. The same token works in every client — switch clients below to
-              copy each one's config block, then paste into each client's MCP config file and restart.
-            </div>
-          </div>
+        <div className="space-y-3">
+          <Alert
+            state="warning"
+            size="small"
+            text="This is the only time the token is shown. The same token works in every client — switch clients below to copy each one's config block, then paste into each client's MCP config file and restart."
+          />
           <div className="text-xs text-text-muted" data-testid="minted-token-scope">
             Writes to <span className="font-mono text-text">{mcpScope.home}</span>; reads every namespace and repository
             you belong to, including ones you join later
@@ -1127,7 +1122,7 @@ function TokensSection({
               );
             })()}
           <div className="relative">
-            <pre className="text-2xs font-mono bg-surface-2 rounded-lg p-3 max-h-72 overflow-auto whitespace-pre-wrap">
+            <pre className="text-2xs font-mono bg-surface-2 rounded-lg p-3 whitespace-pre-wrap">
               {mcpResult
                 ? configPreviewText(
                     formatMcpConfig({
@@ -1204,17 +1199,15 @@ function TokensSection({
         title="Token created"
         className="max-w-[680px] w-full"
       >
-        <div className="max-h-[80vh] overflow-y-auto space-y-3">
-          <div className="flex items-start gap-2 px-3 py-2 rounded-md bg-warn/15 border border-warn/40 text-xs text-warn">
-            <Icon name="warning" size="sm" color="var(--color-warn)" className="mt-0.5 shrink-0" aria-hidden="true" />
-            <div>
-              This is the only time the token is shown. Copy it now and store it somewhere safe (a secrets manager, your
-              CI's secret store). Lost tokens can't be recovered — only re-issued.
-            </div>
-          </div>
+        <div className="space-y-3">
+          <Alert
+            state="warning"
+            size="small"
+            text="This is the only time the token is shown. Copy it now and store it somewhere safe (a secrets manager, your CI's secret store). Lost tokens can't be recovered — only re-issued."
+          />
           <div className="relative">
             <div className="text-xs text-text-muted mb-1.5">Token</div>
-            <pre className="text-2xs font-mono bg-surface-2 rounded-lg p-3 max-h-32 overflow-auto break-all whitespace-pre-wrap">
+            <pre className="text-2xs font-mono bg-surface-2 rounded-lg p-3 break-all whitespace-pre-wrap">
               {mintedToken?.token ?? ""}
             </pre>
             <CopyButton text={mintedToken?.token ?? ""} label="Copy token" className={COPY_BELOW_CAPTION} />
@@ -1223,7 +1216,7 @@ function TokensSection({
           {mintedToken && (
             <div className="relative">
               <div className="text-xs text-text-muted mb-1.5">Connect your bot — Python</div>
-              <pre className="text-2xs font-mono bg-surface-2 rounded-lg p-3 max-h-72 overflow-auto whitespace-pre">
+              <pre className="text-2xs font-mono bg-surface-2 rounded-lg p-3 overflow-x-auto whitespace-pre">
                 {botSnippet(mintedToken)}
               </pre>
               <CopyButton text={botSnippet(mintedToken)} label="Copy code" className={COPY_BELOW_CAPTION} />
@@ -1285,13 +1278,11 @@ function TokensStatusSummary({ tokens }: { tokens: ServiceAccountEntry[] | null 
         <span className="text-text font-medium">{idle}</span> idle (&gt;7d)
       </div>
       {expiringSoon > 0 && (
-        <div className="inline-flex items-center gap-2 text-xs px-2.5 py-1 rounded-md bg-warn/15 border border-warn/40 text-warn">
-          <Icon name="warning" size="xs" color="var(--color-warn)" aria-hidden="true" />
-          <span>
-            <span className="font-medium">{expiringSoon}</span> token{expiringSoon === 1 ? "" : "s"} expir
-            {expiringSoon === 1 ? "es" : "e"} in the next 14 days — generate a replacement now to avoid downtime.
-          </span>
-        </div>
+        <Alert
+          state="warning"
+          size="small"
+          text={`${expiringSoon} token${expiringSoon === 1 ? " expires" : "s expire"} in the next 14 days — generate a replacement now to avoid downtime.`}
+        />
       )}
     </div>
   );
@@ -1436,16 +1427,14 @@ function ImportCuratedPanel() {
           <div className="text-xs text-text-muted mb-2">
             Result · {result.rows.length} section{result.rows.length === 1 ? "" : "s"}
           </div>
-          <div className="space-y-1.5 max-h-56 overflow-y-auto">
+          <div className="space-y-1.5">
             {result.rows.map((r, i) => (
               <div key={i} className="flex items-center gap-2 text-xs">
                 <Badge text={r.verdict} state={VERDICT_STATES[r.verdict] ?? "neutral"} size="sm" />
                 <span className="font-mono text-2xs truncate">{r.memory_key}</span>
                 <span className="text-text-muted text-2xs truncate flex-1">{r.section_heading}</span>
                 {r.rejection_reason && (
-                  <span className="text-warn text-2xs truncate" title={r.rejection_reason}>
-                    {r.rejection_reason}
-                  </span>
+                  <span className="text-warn text-2xs min-w-0 break-words">{r.rejection_reason}</span>
                 )}
               </div>
             ))}

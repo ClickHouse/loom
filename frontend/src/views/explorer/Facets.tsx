@@ -3,7 +3,7 @@ import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { Select } from "@clickhouse/click-ui/Select";
 import type { TaxonomyResponse } from "../../api";
-import { Chip, SectionHeading, Tip } from "../../components/ui";
+import { Chip, SectionHeading, TipTarget } from "../../components/ui";
 import { COMMUNITY_PALETTE, HOP_COLORS, HOP_EMPHASIS, type LabelMode } from "./Canvas";
 import { PROVENANCE_TIERS, relationLabel, today, type EdgeFilters, type Provenance } from "./model";
 import { communitiesCopy } from "./notices";
@@ -79,7 +79,7 @@ function Section({
 }) {
   return (
     <section className="pb-3 mb-3 border-b border-border last:border-b-0" aria-label={label}>
-      <SectionHeading label={label} count={count} caption={caption} hint={hint} actions={actions} />
+      <SectionHeading level={2} label={label} count={count} caption={caption} hint={hint} actions={actions} />
       {children}
     </section>
   );
@@ -188,9 +188,13 @@ export function Facets({
           type="date"
           value={asOf}
           max={today()}
-          aria-label="Replay the graph as it stood at the end of this day"
+          aria-label="Valid as of"
+          aria-describedby="graph-as-of-hint"
           onChange={(e) => onAsOf(e.target.value)}
         />
+        <span id="graph-as-of-hint" className="sr-only">
+          Replay the graph as it stood at the end of this day
+        </span>
       </Section>
 
       {communities.length > 0 && (
@@ -202,15 +206,9 @@ export function Facets({
           {commCopy.kind === "some" && (
             <p className="caption mb-1.5 break-words" data-testid="communities-computed">
               {commCopy.absolute ? (
-                <Tip content={`Computed ${commCopy.absolute}`}>
-                  <span
-                    // biome-ignore lint/a11y/noNoninteractiveTabindex: a tooltip trigger, focusable so keyboard users can reach the tooltip
-                    tabIndex={0}
-                    className="underline decoration-dotted rounded outline-none focus-visible:ring-2 focus-visible:ring-focus"
-                  >
-                    {commCopy.line}
-                  </span>
-                </Tip>
+                <TipTarget tip={`Computed ${commCopy.absolute}`} underline>
+                  {commCopy.line}
+                </TipTarget>
               ) : (
                 commCopy.line
               )}

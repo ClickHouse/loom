@@ -29,6 +29,7 @@ import { toast } from "../components/Toast";
 import { displayAgent, relativeTime, truncate, humanizeError, errorRequestId } from "../lib/format";
 import { useAbortableEffect, useKeyboard } from "../lib/hooks";
 import { CopyButton } from "../components/CopyButton";
+import { IconButton } from "../components/IconButton";
 import { SessionBriefPanel } from "../components/SessionBriefPanel";
 import { SessionBriefsSection } from "../components/SessionBriefsSection";
 import { PageContainer } from "../layout/PageContainer";
@@ -420,7 +421,6 @@ export function Conversations() {
             key={t.thread_id}
             onClick={() => openThreadDialog(t.thread_id, t.agent)}
             className="w-full text-left p-3 rounded-xl border border-border bg-surface hover:border-border-strong flex items-start gap-3"
-            title="Open this thread"
           >
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 mb-1 text-2xs tabular">
@@ -489,12 +489,13 @@ export function Conversations() {
             </Select>
           )}
           {canSetLogging && loggingEnabled !== null && (
-            <div className="ml-auto">
-              <Switch
-                checked={loggingEnabled}
-                onCheckedChange={toggleLogging}
-                label={`Recording ${loggingEnabled ? "on" : "off"}`}
-                title="When off, new conversation turns are not stored for this namespace"
+            <div className="ml-auto flex items-center gap-1">
+              <Switch checked={loggingEnabled} onCheckedChange={toggleLogging} label="Record conversations" />
+              <IconButton
+                icon="info-in-circle"
+                size="xs"
+                label="About recording"
+                tooltip="When off, new conversation turns are not stored for this namespace"
               />
             </div>
           )}
@@ -567,7 +568,6 @@ export function Conversations() {
                 type="button"
                 onClick={() => openThreadDialog(g.thread_id, g.agent)}
                 className="w-full text-left px-3.5 py-2.5 flex items-center gap-2 text-2xs tabular hover:bg-surface-2 border-b border-border"
-                title="Open this thread"
               >
                 <span className="font-mono text-text truncate">{g.thread_id}</span>
                 <span className="text-text-muted">·</span>
@@ -583,7 +583,6 @@ export function Conversations() {
                     key={`${h.msg_id}-${i}`}
                     onClick={() => openThreadDialog(g.thread_id, g.agent, h.msg_id)}
                     className="w-full text-left px-3.5 py-2.5 hover:bg-surface-2"
-                    title="Open thread at this message"
                   >
                     <div className="flex items-center gap-2 mb-1 text-2xs tabular">
                       <Badge text={h.role} state="neutral" size="sm" />
@@ -631,7 +630,7 @@ export function Conversations() {
             )}
           </div>
         )}
-        <div className="mt-4 max-h-[70vh] overflow-y-auto">
+        <div className="mt-4">
           {openThread && (
             <SessionBriefPanel org={identity.org} namespace={identity.namespace} sessionId={openThread.thread_id} />
           )}
@@ -676,9 +675,10 @@ export function Conversations() {
                       {typeof m.tokens === "number" && m.tokens > 0 && (
                         <span className="text-2xs text-text-subtle">· {m.tokens} tok</span>
                       )}
-                      <span className="text-2xs text-text-subtle ml-auto tabular" title={m.ts}>
+                      <time dateTime={m.ts} className="text-2xs text-text-subtle ml-auto tabular">
                         {relativeTime(m.ts)}
-                      </span>
+                        <span className="sr-only"> ({m.ts})</span>
+                      </time>
                     </div>
                     {m.reasoning ? <ReasoningDisclosure text={m.reasoning} /> : null}
                     <MessageBody content={m.content} />

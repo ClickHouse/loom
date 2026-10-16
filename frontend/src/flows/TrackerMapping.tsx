@@ -13,6 +13,7 @@
 import { useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
+import { Label } from "@clickhouse/click-ui/Label";
 import { Select } from "@clickhouse/click-ui/Select";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import {
@@ -230,7 +231,7 @@ function FieldRow({
 }) {
   const fid = `f-${role}-${spec.key}`;
   const labelEl = (
-    <label htmlFor={fid} className="text-xs text-text-muted">
+    <Label htmlFor={fid}>
       {spec.label}
       {spec.core && (
         <span aria-hidden="true" className="text-warn">
@@ -239,7 +240,7 @@ function FieldRow({
         </span>
       )}
       {spec.core && <span className="sr-only"> (required)</span>}
-    </label>
+    </Label>
   );
   const badge = confidence && (
     <Badge

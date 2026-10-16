@@ -3,7 +3,7 @@
  * source (a token only when GitHub refuses, or when the person says the repository is
  * private), and who may READ the index in Loom (open / restricted) — two different axes.
  */
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../lib/errors";
@@ -151,10 +151,10 @@ describe("Add repository — fetching versus reading are two questions", () => {
     expect(list.textContent).toMatch(/master/);
     expect(list.textContent).toMatch(/26\.8/);
     // the default is pre-selected, the indexed one is disabled, the release one is marked
-    expect(screen.getByLabelText(/^master/)).toBeChecked();
-    expect(screen.getByLabelText(/26\.7/)).toBeDisabled();
-    expect(screen.getByText("release")).toBeTruthy();
-    fireEvent.click(screen.getByLabelText(/26\.8/));
+    expect(within(list).getByRole("button", { name: /^master/ })).toHaveAttribute("aria-pressed", "true");
+    expect(within(list).getByRole("button", { name: /26\.7 · indexed/ })).toHaveAttribute("aria-disabled", "true");
+    expect(within(list).getByRole("button", { name: "26.8 · release" })).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(within(list).getByRole("button", { name: /26\.8/ }));
     fireEvent.click(screen.getByRole("button", { name: /Add 2 branches/ }));
     await waitFor(() => expect(addCodeRepo).toHaveBeenCalledTimes(1));
     expect(vi.mocked(addCodeRepo).mock.calls[0][1]).toMatchObject({
@@ -191,9 +191,9 @@ describe("Add repository — fetching versus reading are two questions", () => {
     fireEvent.keyDown(search, { key: "Enter" });
     await waitFor(() => expect(remoteBranches).toHaveBeenCalledTimes(2));
     expect(vi.mocked(remoteBranches).mock.calls[1]).toEqual(["dev", "acme/app", "", "22.3"]);
-    await waitFor(() => expect(screen.getByLabelText(/22\.3/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole("button", { name: /^22\.3/ })).toBeTruthy());
     // the pre-selected default survives the re-query
-    expect(screen.getByLabelText(/^master/)).toBeChecked();
+    expect(screen.getByRole("button", { name: /^master/ })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("a refused branch listing becomes the token step, and the typed branch still works without a listing", async () => {

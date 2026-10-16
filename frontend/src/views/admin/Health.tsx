@@ -1,8 +1,9 @@
 import { useState } from "react";
+import { Alert } from "@clickhouse/click-ui/Alert";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
-import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
+import { Icon } from "@clickhouse/click-ui/Icon";
 import { Table } from "@clickhouse/click-ui/Table";
 import { Tabs } from "@clickhouse/click-ui/Tabs";
 import { useStore, useIdentity } from "../../lib/state";
@@ -26,6 +27,7 @@ import { Skeleton } from "../../components/Skeleton";
 import { EmptyState } from "../../components/EmptyState";
 import { ScopeBadge } from "../../components/ScopeBadge";
 import { PageContainer } from "../../layout/PageContainer";
+import { TabTrigger } from "../../components/ui";
 
 // Friendly label + blurb per worker; unknown workers fall through to
 // a default rendering (raw name + "background worker").
@@ -172,8 +174,8 @@ export function Health() {
               : "Extraction quality for the namespaces you can access. Worker telemetry is hidden — that's the Loom operator's concern."}
         </p>
       </div>
-      <Tabs defaultValue={seesWorkers ? "workers" : "extraction"} ariaLabel="Health">
-        <Tabs.TriggersList className="mb-5">
+      <Tabs defaultValue={seesWorkers ? "workers" : "extraction"}>
+        <Tabs.TriggersList className="mb-5" aria-label="Health">
           {seesWorkers && (
             <TabTrigger value="workers" icon="settings">
               Workers
@@ -213,14 +215,6 @@ export function Health() {
         )}
       </Tabs>
     </PageContainer>
-  );
-}
-
-function TabTrigger({ value, icon, children }: { value: string; icon: IconName; children: React.ReactNode }) {
-  return (
-    <Tabs.Trigger value={value}>
-      <Icon name={icon} size="sm" aria-hidden="true" /> {children}
-    </Tabs.Trigger>
   );
 }
 
@@ -374,10 +368,18 @@ export function WorkersPanel() {
         />
       )}
       {rows !== null && rows.length > 0 && reporting.length === 0 && effective.length > 0 && (
-        <div className="mb-3 p-3 rounded-xl border border-border bg-surface-2 text-xs text-text-muted" role="status">
-          No worker has reported a pass yet. This process runs no workers (LOOM_BACKGROUND_WORKERS=off under
-          blue/green); the workers colour writes each finished pass to loom.worker_status and nothing has landed there
-          in the last 7 days.
+        <div role="status" className="mb-3">
+          <Alert
+            state="neutral"
+            size="small"
+            text={
+              <>
+                <strong>No worker has reported a pass yet.</strong> This process runs no workers
+                (LOOM_BACKGROUND_WORKERS=off under blue/green); the workers colour writes each finished pass to
+                loom.worker_status and nothing has landed there in the last 7 days.
+              </>
+            }
+          />
         </div>
       )}
       {rows !== null && visible.length > 0 && (
@@ -443,18 +445,16 @@ export function WorkersPanel() {
                             <>
                               {" "}
                               · reporting from{" "}
-                              <span className="font-mono" title={w.reporting_from}>
+                              <span className="font-mono">
                                 {from}
+                                {from !== w.reporting_from && <span className="sr-only"> ({w.reporting_from})</span>}
                               </span>
                             </>
                           )}
                           {w.namespace && (
                             <>
                               {" "}
-                              · reached:{" "}
-                              <span className="font-mono" title="the last namespace the pass reached">
-                                {w.namespace}
-                              </span>
+                              · last namespace reached: <span className="font-mono">{w.namespace}</span>
                             </>
                           )}
                           {w.trigger === "manual" && <> · manual run</>}
@@ -645,7 +645,6 @@ export function OpMixPanel() {
             {classes.map((k) => (
               <div
                 key={k}
-                title={`${CLASS_INFO[k].label}: ${fmt(data.counts[k])}`}
                 className={`${CLASS_BAR[k]} h-full`}
                 style={{ width: `${(100 * data.counts[k]) / total}%` }}
               />

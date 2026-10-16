@@ -82,7 +82,7 @@ export function ProfileSectionDialog() {
           )}
         </div>
       )}
-      <div className="max-h-[60vh] overflow-y-auto">
+      <div>
         {loading && (
           <div className="space-y-3">
             <Skeleton className="h-4 w-3/4" />

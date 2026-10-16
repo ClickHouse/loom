@@ -453,6 +453,42 @@ describe("Tasks page", () => {
     await waitFor(() => expect(acceptTask).toHaveBeenCalledWith({ org: "dev", namespace: "team" }, "urgent"));
   });
 
+  it("the grid is one tab stop: arrows move between headers and rows, Home / End jump, Left / Right walk a row", async () => {
+    seed(admin, [row("admin")]);
+    const user = userEvent.setup();
+    render(<Tasks />);
+    await screen.findByRole("row", { name: "Task urgent" });
+    const grid = screen.getByRole("grid", { name: "Tasks by what happens next" });
+    const stops = () => [...grid.querySelectorAll('[tabindex="0"]')];
+    expect(stops()).toHaveLength(1);
+    const triageHead = within(screen.getByRole("rowgroup", { name: /^Triage/ })).getByRole("button", {
+      name: /Triage/,
+    });
+    expect(stops()[0]).toBe(triageHead);
+    triageHead.focus();
+    await user.keyboard("{ArrowDown}");
+    const urgent = screen.getByRole("row", { name: "Task urgent" });
+    expect(urgent).toHaveFocus();
+    expect(urgent).toHaveAttribute("aria-selected", "true");
+    expect(stops()).toEqual([urgent]);
+    await user.keyboard("{ArrowRight}");
+    expect(within(urgent).getByRole("button", { name: "Accept Task urgent" })).toHaveFocus();
+    await user.keyboard("{ArrowLeft}");
+    expect(urgent).toHaveFocus();
+    await user.keyboard("{ArrowDown}");
+    expect(
+      within(screen.getByRole("rowgroup", { name: /^To do/ })).getByRole("button", { name: /To do/ }),
+    ).toHaveFocus();
+    await user.keyboard("{ArrowDown}");
+    expect(screen.getByRole("row", { name: "Task low-late" })).toHaveAttribute("aria-selected", "true");
+    await user.keyboard("{ArrowUp}{ArrowUp}");
+    expect(urgent).toHaveFocus();
+    await user.keyboard("{End}");
+    expect(screen.getByRole("row", { name: "Task blocked" })).toHaveFocus();
+    await user.keyboard("{Home}");
+    expect(triageHead).toHaveFocus();
+  });
+
   it("the board shows the same five groups as columns and shares the selection", async () => {
     seed(admin, [row("admin")]);
     const user = userEvent.setup();

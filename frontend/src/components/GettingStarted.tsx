@@ -18,7 +18,7 @@ import {
 import { AddMemoryDialog } from "../flows/AddMemoryDialog";
 import { MembersDialog } from "../flows/MembersDialog";
 import { DOCS_MCP_URL, DOCS_QUICKSTART_URL, DOCS_TOKENS_URL } from "../flows/TokenGate";
-import { Kbd, Panel } from "./ui";
+import { Kbd, Panel, TabTrigger } from "./ui";
 import { CopyButton } from "./CopyButton";
 
 /**
@@ -317,17 +317,11 @@ function ConnectLine({ mint }: { mint: { token: string; mcpUrl: string } }) {
   const others = CLIENTS.filter((c) => c.id !== "claude-code" && c.id !== "cursor");
   return (
     <div className="mt-2">
-      <Tabs defaultValue="claude-code" ariaLabel="Client">
-        <Tabs.TriggersList>
-          {[
-            ["claude-code", "Claude Code"],
-            ["cursor", "Cursor"],
-            ["other", "Other clients"],
-          ].map(([v, label]) => (
-            <Tabs.Trigger key={v} value={v}>
-              {label}
-            </Tabs.Trigger>
-          ))}
+      <Tabs defaultValue="claude-code">
+        <Tabs.TriggersList aria-label="Client">
+          <TabTrigger value="claude-code">Claude Code</TabTrigger>
+          <TabTrigger value="cursor">Cursor</TabTrigger>
+          <TabTrigger value="other">Other clients</TabTrigger>
         </Tabs.TriggersList>
         <Tabs.Content value="claude-code" className="mt-2">
           <p className="text-2xs text-text-muted mb-1">

@@ -153,7 +153,7 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     setConversationLogging.mockResolvedValue({});
 
     render(<Conversations />);
-    expect(await screen.findByText("Recording on")).toBeInTheDocument();
+    expect(await screen.findByRole("switch", { name: "Record conversations" })).toBeChecked();
     const box = screen.getByLabelText("Search conversation transcripts");
     fireEvent.change(box, { target: { value: "hello" } });
     fireEvent.keyDown(box, { key: "Enter" });
@@ -165,12 +165,14 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     act(() => setNamespace("ns-b"));
     await waitFor(() => expect(screen.queryByText("said in A")).toBeNull());
     // B's recording value is not loaded yet, so there is nothing to toggle.
-    expect(screen.queryByText(/^Recording (on|off)$/)).toBeNull();
+    expect(screen.queryByRole("switch", { name: "Record conversations" })).toBeNull();
     await act(async () => lateA.resolve({ hits: [hit("thread-a", "late from A")] }));
     expect(screen.queryByText("late from A")).toBeNull();
 
     await act(async () => nsB.resolve({ conversation_logging_enabled: false }));
-    fireEvent.click(await screen.findByText("Recording off"));
+    const recording = await screen.findByRole("switch", { name: "Record conversations" });
+    expect(recording).not.toBeChecked();
+    fireEvent.click(recording);
     await waitFor(() => expect(setConversationLogging).toHaveBeenCalledTimes(1));
     expect(setConversationLogging.mock.calls[0][0]).toMatchObject({ namespace: "ns-b" });
     expect(setConversationLogging.mock.calls[0][1]).toBe(true);

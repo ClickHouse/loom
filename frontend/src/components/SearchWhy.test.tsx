@@ -1,4 +1,5 @@
 import { cleanup, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 import type { SearchHit } from "../api";
 import { SearchWhy } from "./SearchWhy";
@@ -20,7 +21,7 @@ const hit = (over: Partial<SearchHit> = {}): SearchHit => ({
 describe("SearchWhy", () => {
   afterEach(cleanup);
 
-  it("shows rank, similarity, score and the ranking terms by magnitude", () => {
+  it("shows rank, similarity, score and the ranking terms by magnitude", async () => {
     render(
       <SearchWhy
         rank={3}
@@ -41,9 +42,10 @@ describe("SearchWhy", () => {
     expect(line).toHaveTextContent("score 0.71");
     // Terms by |value|: semantic 0.25, key match 0.12, date proximity -0.05.
     expect(line.textContent).toMatch(/semantic \+0\.25.*key match \+0\.12.*date proximity -0\.05/);
-    // The raw server note rides as the hover title, not as visible text.
-    expect(line).toHaveAttribute("title", expect.stringContaining("fact hit from namespace alice"));
+    // The raw server note is a tooltip on an info button, not inline text.
     expect(line).not.toHaveTextContent("rank_score");
+    await userEvent.setup().hover(screen.getByRole("button", { name: "Ranking note" }));
+    expect((await screen.findAllByText(/fact hit from namespace alice/)).length).toBeGreaterThan(0);
   });
 
   it("marks a term that pushed the hit down", () => {
@@ -55,6 +57,6 @@ describe("SearchWhy", () => {
   it("says so when the server reported no ranking terms", () => {
     render(<SearchWhy rank={1} hit={hit()} />);
     expect(screen.getByTestId("search-why")).toHaveTextContent("no ranking terms reported");
-    expect(screen.getByTestId("search-why")).not.toHaveAttribute("title");
+    expect(screen.queryByRole("button", { name: "Ranking note" })).toBeNull();
   });
 });

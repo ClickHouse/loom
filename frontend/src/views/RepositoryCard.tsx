@@ -34,7 +34,7 @@ import {
   type TrackerNamespaceState,
   type TrackerSource,
 } from "../lib/trackerSources";
-import { Chip, MetaList, MetaRow, Panel, Tip } from "../components/ui";
+import { Chip, MetaList, MetaRow, Panel, Tip, TipTarget } from "../components/ui";
 import {
   branchState,
   canBeApproved,
@@ -73,12 +73,9 @@ export const FRESH_STATE: Record<FreshTone, BadgeState> = {
  *  users reach the tip. */
 function TipBadge({ text, state, tip }: { text: string; state: BadgeState; tip: string }) {
   return (
-    <Tip content={tip}>
-      {/* biome-ignore lint/a11y/noNoninteractiveTabindex: focusable so keyboard users reach the tooltip; it is not an action */}
-      <span tabIndex={0} className="inline-flex rounded">
-        <Badge text={text} state={state} size="sm" />
-      </span>
-    </Tip>
+    <TipTarget tip={tip}>
+      <Badge text={text} state={state} size="sm" />
+    </TipTarget>
   );
 }
 
@@ -433,12 +430,9 @@ function RecordFacetRow({
               {fmtInt(f.issues)} issues · {fmtInt(f.prs)} PRs
             </span>
             {f.last_refresh_at && (
-              <Tip content={`Last refresh ${absoluteTime(f.last_refresh_at)}`}>
-                {/* biome-ignore lint/a11y/noNoninteractiveTabindex: focusable so keyboard users reach the tooltip; it is not an action, so not a button */}
-                <span tabIndex={0} className="underline decoration-dotted rounded">
-                  · refreshed {relativeTime(f.last_refresh_at)}
-                </span>
-              </Tip>
+              <TipTarget tip={`Last refresh ${absoluteTime(f.last_refresh_at)}`} underline>
+                · refreshed {relativeTime(f.last_refresh_at)}
+              </TipTarget>
             )}
           </>
         ) : r.unconfigured ? (
@@ -602,9 +596,7 @@ export function RepositoryCard({
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
             {/* The disclosure: the heading is the button, so the row opens from its
                 name (WAI-ARIA disclosure pattern); the chevron says which way. */}
-            {/* `text-sm!`: styles.css sizes every h2 by tag (22 px), outside Tailwind's
-                layers, so only an important utility brings a row's title down to 15 px. */}
-            <h2 className="text-lg! leading-[22px]! font-semibold tracking-tight min-w-0 max-w-full">
+            <h2 className="text-lg font-semibold tracking-tight min-w-0 max-w-full">
               <button
                 type="button"
                 onClick={() => setOpen((v) => !v)}
@@ -613,10 +605,10 @@ export function RepositoryCard({
                 className="inline-flex items-start gap-1.5 min-h-9 -ml-1 pl-1 pr-2 py-1.5 rounded text-left hover:bg-surface-2 pointer-coarse:min-h-11"
               >
                 <Icon
-                  name="chevron-right"
+                  name={open ? "chevron-down" : "chevron-right"}
                   size="sm"
                   aria-hidden="true"
-                  className={`mt-0.5 shrink-0 transition-transform ${open ? "rotate-90" : ""}`}
+                  className="mt-1 shrink-0"
                 />
                 <span className="break-words">{card.repo}</span>
               </button>

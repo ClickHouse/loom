@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
-import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
+import { Icon } from "@clickhouse/click-ui/Icon";
 import { Tabs } from "@clickhouse/click-ui/Tabs";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import {
@@ -21,6 +21,7 @@ import {
 import { useIdentity } from "../../lib/state";
 import { IconButton } from "../../components/IconButton";
 import { Panel } from "../../components/ui/Panel";
+import { TabTrigger } from "../../components/ui";
 import { Skeleton } from "../../components/Skeleton";
 import { EmptyState } from "../../components/EmptyState";
 import { ScopeBadge } from "../../components/ScopeBadge";
@@ -91,9 +92,9 @@ export function ReviewQueue() {
         Memory disputes needing a human decision — your agent flip-flopped on a fact, or the extractor wants to promote
         one. Most users never see anything here; that's a feature.
       </p>
-      <Tabs value={tab} onValueChange={setTab} ariaLabel="Review queue">
+      <Tabs value={tab} onValueChange={setTab}>
         {(hasLearnings || hasExceptions) && (
-          <Tabs.TriggersList className="mb-5">
+          <Tabs.TriggersList className="mb-5" aria-label="Review queue">
             <TabTrigger value="conflicts" icon="warning">
               Conflicts
             </TabTrigger>
@@ -124,14 +125,6 @@ export function ReviewQueue() {
         )}
       </Tabs>
     </PageContainer>
-  );
-}
-
-function TabTrigger({ value, icon, children }: { value: string; icon: IconName; children: React.ReactNode }) {
-  return (
-    <Tabs.Trigger value={value}>
-      <Icon name={icon} size="sm" aria-hidden="true" /> {children}
-    </Tabs.Trigger>
   );
 }
 
@@ -219,15 +212,24 @@ function ConflictsPanel() {
           <Side label="B · conflicting peer" memKey={current.memory_key} value={null} version={null} peerId={peerId} />
         </div>
         <TextAreaField
-          aria-label="Reason for the decision"
+          label="Reason for the decision"
           value={reason}
           onChange={(value) => setReason(value)}
-          placeholder="Optional reason (audit trail)…"
+          placeholder="Optional — recorded in the audit trail"
           rows={3}
         />
-        <div className="mt-4 flex items-center gap-2 flex-wrap">
-          <Button type="primary" htmlType="button" iconLeft="check" onClick={() => decide("revise")} disabled={busy}>
-            Keep A
+        <div className="mt-4 flex items-center justify-end gap-2 flex-wrap">
+          <Button
+            type="empty"
+            htmlType="button"
+            iconLeft="slide-in"
+            onClick={() => setIndex((i) => Math.min(rows.length - 1, i + 1))}
+            disabled={busy || index >= rows.length - 1}
+          >
+            Skip
+          </Button>
+          <Button type="secondary" htmlType="button" onClick={() => decide("allow")} disabled={busy}>
+            Allow both
           </Button>
           <Button
             type="secondary"
@@ -238,18 +240,8 @@ function ConflictsPanel() {
           >
             Drop A
           </Button>
-          <Button type="secondary" htmlType="button" onClick={() => decide("allow")} disabled={busy}>
-            Allow both
-          </Button>
-          <div className="flex-1" />
-          <Button
-            type="empty"
-            htmlType="button"
-            iconLeft="slide-in"
-            onClick={() => setIndex((i) => Math.min(rows.length - 1, i + 1))}
-            disabled={busy || index >= rows.length - 1}
-          >
-            Skip
+          <Button type="primary" htmlType="button" iconLeft="check" onClick={() => decide("revise")} disabled={busy}>
+            Keep A
           </Button>
         </div>
       </Panel>
@@ -335,13 +327,13 @@ function LearningsPanel({ initialPending }: { initialPending?: LearningEntry[] |
               {status === "pending" && (
                 <>
                   <TextAreaField
-                    aria-label="Reason for the decision"
+                    label="Reason for the decision"
                     value={reason[r.candidate_id] || ""}
                     onChange={(value) => setReason((m) => ({ ...m, [r.candidate_id]: value }))}
-                    placeholder="Optional decision reason…"
+                    placeholder="Optional — recorded in the audit trail"
                     rows={2}
                   />
-                  <div className="mt-2 flex items-center gap-2">
+                  <div className="mt-2 flex items-center justify-end gap-2">
                     <Button
                       type="secondary"
                       htmlType="button"
@@ -351,7 +343,7 @@ function LearningsPanel({ initialPending }: { initialPending?: LearningEntry[] |
                       Reject
                     </Button>
                     <Button
-                      type="primary"
+                      type="secondary"
                       htmlType="button"
                       iconLeft="check"
                       onClick={() => decide(r.candidate_id, "promote")}

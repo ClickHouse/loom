@@ -152,8 +152,11 @@ describe("ReviewQueue", () => {
     const reason = screen.getByRole("textbox", { name: "Reason for the decision" });
     reason.focus();
     await user.keyboard("dup");
-    await user.tab();
-    expect(document.activeElement).toBe(screen.getByRole("button", { name: /Keep A/ }));
+    // The footer reads secondary first, primary last: Skip, Allow both, Drop A, Keep A.
+    for (const name of [/Skip/, /Allow both/, /Drop A/, /Keep A/]) {
+      await user.tab();
+      expect(document.activeElement).toBe(screen.getByRole("button", { name }));
+    }
     await user.keyboard("{Enter}");
     await waitFor(
       () => expect(resolveConflict).toHaveBeenCalledWith(expect.anything(), "id-k/one", "revise", { reason: "dup" }),

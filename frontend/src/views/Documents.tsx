@@ -23,7 +23,7 @@ import { EmptyState } from "../components/EmptyState";
 import { toast, toastError } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
 import { IconButton } from "../components/IconButton";
-import { Chip } from "../components/ui";
+import { Chip, Tip, TipTarget } from "../components/ui";
 import { Modal } from "../components/ui/Modal";
 import { formatBytesShort, relativeTime } from "../lib/format";
 import { useAbortableEffect } from "../lib/hooks";
@@ -507,12 +507,9 @@ export function Documents() {
                   <span>·</span>
                   <span>{relativeTime(r.ingested_at)}</span>
                   {r.superseded && (
-                    <Badge
-                      text="superseded"
-                      state="warning"
-                      size="sm"
-                      title="A newer version of this URI was uploaded; agents read the latest"
-                    />
+                    <TipTarget tip="A newer version of this URI was uploaded; agents read the latest">
+                      <Badge text="Superseded" state="warning" size="sm" />
+                    </TipTarget>
                   )}
                   {r.tags && r.tags.length > 0 && (
                     <span className="flex items-center gap-1 ml-2">
@@ -653,28 +650,29 @@ export function Documents() {
           </div>
           {previewEntry && (
             <div className="flex items-center gap-2 shrink-0">
-              <Button
-                type="secondary"
-                htmlType="button"
-                iconLeft="refresh"
-                title="Upload a new file version of this document"
-                onClick={() => {
-                  const r = previewEntry;
-                  closePreview();
-                  setReplaceEntry(r);
-                }}
+              <Tip content="Upload a new file version of this document">
+                <Button
+                  type="secondary"
+                  htmlType="button"
+                  iconLeft="refresh"
+                  onClick={() => {
+                    const r = previewEntry;
+                    closePreview();
+                    setReplaceEntry(r);
+                  }}
+                >
+                  Edit content
+                </Button>
+              </Tip>
+              <Tip
+                content={
+                  hasOriginalFile(previewEntry) ? "Download the original file" : "Save the stored text as Markdown"
+                }
               >
-                Edit content
-              </Button>
-              <Button
-                type="primary"
-                htmlType="button"
-                iconLeft="download"
-                title={hasOriginalFile(previewEntry) ? "Download original file" : "Download text (.md)"}
-                onClick={() => onDownload(previewEntry)}
-              >
-                {hasOriginalFile(previewEntry) ? "Download" : "Download text (.md)"}
-              </Button>
+                <Button type="primary" htmlType="button" iconLeft="download" onClick={() => onDownload(previewEntry)}>
+                  {hasOriginalFile(previewEntry) ? "Download" : "Download text (.md)"}
+                </Button>
+              </Tip>
             </div>
           )}
         </div>
@@ -753,15 +751,15 @@ export function Documents() {
             </div>
           )}
         </div>
-        <div className="mt-4 border-t border-border max-h-[30vh] overflow-y-auto">
+        <div className="mt-4 border-t border-border">
           <button
             type="button"
             aria-expanded={showText}
             onClick={() => setShowText((v) => !v)}
             className="w-full flex items-center justify-between px-1 py-2.5 text-2xs text-text-muted hover:text-text hover:bg-surface-2 transition-colors"
           >
-            <span>{showText ? "Hide" : "Show"} extracted text (what your agents search)</span>
-            <span className="font-mono">{showText ? "▴" : "▾"}</span>
+            <span>Extracted text (what your agents search)</span>
+            <Icon name={showText ? "chevron-down" : "chevron-right"} size="xs" aria-hidden="true" />
           </button>
           {showText && previewDoc && previewDoc.found && (
             <pre className="whitespace-pre-wrap text-xs leading-normal text-text-muted font-sans px-1 pb-4">
