@@ -25,8 +25,9 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
   or Cloud ClickHouse:** every boot of a process that is not a read replica needs the
   DDL grants plus `OPTIMIZE` and `TRUNCATE` on `loom.*` (`SYSTEM REFRESH VIEW` too, or a
   warning), and the first boot after the upgrade, with a migration pending, also needs
-  `READ ON REMOTE` and `SELECT` on the system tables the migrations read. Run `loom doctor` or `loom ch-setup`
-  (or have an admin run `loom ch-setup --print-sql`) before upgrading.
+  `READ ON REMOTE` and `SELECT` on the system tables the migrations read. Run
+  `loom doctor` or `loom ch-setup` (or have an admin run `loom ch-setup --print-sql`)
+  before upgrading.
 - Every Loom session on a ClickHouse older than 26.8 runs with the query condition cache
   off (the vector-read fix, ClickHouse #112086), on every target; boot used to warn only.
 
@@ -76,9 +77,11 @@ A release tag `vX.Y.Z` ships only when the top entry reads `## [X.Y.Z] - YYYY-MM
 
 ### Changed
 
-- The installer writes `LOOM_PORT`, `LOOM_BIND_HOST` and `LOOM_IMAGE_REPOSITORY`, when
-  given, into the install directory's `.env`, so later `docker compose` commands there
-  use the same port and image; a rerun with a different value rewrites it. Its health
+- The installer writes `LOOM_PORT`, `LOOM_BIND_HOST`, `LOOM_IMAGE_REPOSITORY` and
+  `LOOM_CLICKHOUSE_IMAGE`, when given, into the install directory's `.env`, so later
+  `docker compose` commands there use the same port and images; a rerun with a
+  different value rewrites it, and a saved `LOOM_CLICKHOUSE_IMAGE` pins ClickHouse
+  through later upgrades until the line is deleted. Its health
   check polls the address Loom is published on.
 - `031_table_settings.sql` sets `non_replicated_deduplication_window` on every MergeTree
   table and the block-number columns on `loom.memory` and `loom.memory_embeddings`;

@@ -66,7 +66,8 @@ image as `LOOM_BUILD_COMMIT`, reported as `build_commit`). The remaining
 
 Other `${LOOM_*}` references in the compose files are settings fields given a
 compose-level default, the uvicorn variables above, and the standalone stack's
-image and published port (`LOOM_IMAGE_REPOSITORY`, `LOOM_VERSION`, `LOOM_PORT`);
+image and published port (`LOOM_IMAGE_REPOSITORY`, `LOOM_VERSION`, `LOOM_PORT`), which
+the installer keeps in `.env` when given, as it does `LOOM_CLICKHOUSE_IMAGE`;
 the [quickstart](../getting-started/quickstart.md) describes what the stock
 `.env` sets.
 

@@ -84,7 +84,9 @@ echo "LOOM_CLICKHOUSE_IMAGE=$(docker inspect -f '{{.Config.Image}}' \
 ```
 
 The installer keeps `.env`, so the pin holds ClickHouse through later upgrades too:
-delete the `LOOM_CLICKHOUSE_IMAGE` line before installing a newer Loom version. To go
+delete the `LOOM_CLICKHOUSE_IMAGE` line before installing a newer Loom version, and do not
+leave `LOOM_CLICKHOUSE_IMAGE` exported in the shell, since the installer writes a value it
+is given back into `.env`. To go
 back on both, restore a backup taken before the upgrade.
 
 ## What stays the same across an upgrade
