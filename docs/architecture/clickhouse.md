@@ -543,10 +543,12 @@ self-hosted ReplicatedMergeTree it waits only for inserts written with `insert_q
 and `insert_quorum_parallel = 0`, which ClickHouse refuses for async inserts (and which
 serializes every insert into a table), so a read on one replica can still miss a row
 another replica acknowledged a moment ago. The guarantees built on it, the sign-in attempt
-recounts and the single signing-key retire among them, hold exactly on Cloud and a
-single server. A self-hosted replicated cluster must send every Loom process to one
-replica; `loom doctor`'s `replica_consistency` line warns while `loom.auth_attempts` or
-`loom.signing_keys` has more than one.
+recounts, the single signing-key retire, `task.create`'s idempotency key (a retry finds
+the task the first call stored) and the single `code.coverage.ready` event among them,
+hold exactly on Cloud and a single server. A self-hosted replicated cluster must send
+every Loom process to one replica; `loom doctor`'s `replica_consistency` line warns while
+`loom.auth_attempts`, `loom.signing_keys`, `loom.tasks` or `loom.task_events` has more
+than one.
 
 **Keeper reads.** The Keeper keys that carry state between replicas (the namespace write
 keys, graph projections and writes, claims and leases) are read through each replica's own
