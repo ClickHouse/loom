@@ -29,6 +29,7 @@ from server.memory.domain.graph_quality import (
     order_ended_before_dated,
     restates_current,
 )
+from server.memory.domain.temporal_sql import GRAPH_HOLDER_SQL
 
 log = logging.getLogger(__name__)
 
@@ -990,11 +991,18 @@ async def end_triples_now(
 
 
 async def end_edges(
-    ch: Any, *, org: str, namespace: str, ends: list[tuple[str, str, datetime]]
+    ch: Any,
+    *,
+    org: str,
+    namespace: str,
+    ends: list[tuple[str, str, datetime]],
+    changed: list[str],
 ) -> None:
     """End each edge (entity_a, entity_b, end) still valid after its `end`, as a close
-    ends a triple. No `invalid_at`: the edge walk never walks a retired edge, and the
-    fact did hold until then. One read, and an UPDATE only when one is found."""
+    ends a triple, unless a live row of another key than the `changed` rows' (ids)
+    still names both entities (`entity_edge_memories`): the edge is its co-occurrence
+    too. No `invalid_at`: the edge walk never walks a retired edge, and the fact did
+    hold until then. One read, and an UPDATE only when it finds an edge to end."""
     if not ends:
         return
     params = {
@@ -1002,6 +1010,7 @@ async def end_edges(
         "ns": namespace,
         "pairs": [(a, b) for a, b, _end in ends],
         "ends": [end.replace(microsecond=0) for _a, _b, end in ends],
+        "changed": changed,
     }
     end = (
         "arrayElement({ends:Array(DateTime)},"
@@ -1010,20 +1019,38 @@ async def end_edges(
     where = f"""org = {{org:String}} AND namespace = {{ns:String}}
           AND (entity_a, entity_b) IN {{pairs:Array(Tuple(String, String))}}
           AND invalid_at IS NULL AND (valid_to IS NULL OR valid_to > {end})"""
+    # A link names a key, not the value it came from: the changed rows' own keys say
+    # nothing of what those rows name now.
     found = await ch.query_all(
-        f"SELECT 1 FROM loom.entity_edges WHERE {where} LIMIT 1"
-        " SETTINGS select_sequential_consistency = 1",
+        f"""
+        SELECT DISTINCT entity_a, entity_b FROM loom.entity_edges
+        WHERE {where}
+          AND (entity_a, entity_b) NOT IN (
+              SELECT entity_a, entity_b FROM loom.entity_edge_memories
+              WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                AND (entity_a, entity_b) IN {{pairs:Array(Tuple(String, String))}}
+                AND memory_key NOT IN (
+                    SELECT memory_key FROM loom.memory
+                    WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                      AND memory_id IN {{changed:Array(UUID)}})
+                AND memory_key IN (
+                    SELECT memory_key FROM loom.memory FINAL
+                    WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                      AND {GRAPH_HOLDER_SQL}))
+        SETTINGS select_sequential_consistency = 1
+        """,
         params=params,
     )
     if not found:
         return
+    ending = [(str(r["entity_a"]), str(r["entity_b"])) for r in found]
     await ch.execute(
         f"""
         ALTER TABLE loom.entity_edges
         UPDATE valid_to = greatest({end}, ifNull(valid_from, {end}))
-        WHERE {where}
+        WHERE {where} AND (entity_a, entity_b) IN {{ending:Array(Tuple(String, String))}}
         """,
-        params=params,
+        params={**params, "ending": ending},
     )
     from server.memory.app.graph_write_marks import marks as _graph_marks
 

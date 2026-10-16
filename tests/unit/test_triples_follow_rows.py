@@ -800,7 +800,9 @@ def test_a_dropped_facts_edge_ends_with_its_triples_unless_another_fact_is_held(
 
     gone = [("user", "live_in", "london"), ("user", "live_in", "rome")]
     rows = [row("london", datetime(2026, 9, 1)), row("rome", dec), row("rome", now)]
-    # London's edge ends now, though its triple ended before; Rome's at its latest end.
+    # London's edge ends now, though its triple ended before: the dropped row named
+    # London until now (`end_edges` keeps the pair while another row names both).
+    # Rome's ends at its latest end.
     assert tfr.edge_ends(gone, frozenset(), rows, now) == [
         ("london", "user", now),
         ("rome", "user", dec),

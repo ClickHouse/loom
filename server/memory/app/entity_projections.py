@@ -537,21 +537,27 @@ async def close_dropped_facts(input: Any, ids: list[str], *, ch: Any) -> None:
     if opened:
         await _write_follow_plan(input, tfr.FollowPlan(closes=sorted(opened), inserts=[]), ch=ch)
     await end_triples_now(ch, org=input.org, namespace=input.namespace, triples=gone)
-    await _after_the_close(input, gone, ch=ch)
+    await _after_the_close(input, ids, gone, ch=ch)
 
 
-async def _after_the_close(input: Any, gone: list[tfr.Triple], *, ch: Any) -> None:
-    """What follows a close of the `gone` facts, which no live row holds: their edges
-    end with them, and one value of each single-valued relation stays current. Checked
-    for every value the rows no longer keep, closed now or before: a replay finds the
-    close landed and must still check."""
-    await _close_dropped_edges(input, gone, ch=ch)
+async def _after_the_close(
+    input: Any, changed: list[str], gone: list[tfr.Triple], *, ch: Any
+) -> None:
+    """What follows a close of the `gone` facts, which no live row holds once the rows
+    `changed` (ids) were revised or retired: their edges end with them, and one value
+    of each single-valued relation stays current. Checked for every value the rows no
+    longer keep, closed now or before: a replay finds the close landed and must still
+    check."""
+    await _close_dropped_edges(input, changed, gone, ch=ch)
     await _keep_one_current(input, gone, ch=ch)
 
 
-async def _close_dropped_edges(input: Any, gone: list[tfr.Triple], *, ch: Any) -> None:
+async def _close_dropped_edges(
+    input: Any, changed: list[str], gone: list[tfr.Triple], *, ch: Any
+) -> None:
     """End the edges of the `gone` facts with them (`tfr.edge_ends`), unless a live row
-    still holds another fact between the same two entities."""
+    still holds another fact between the same two entities, or a live row other than
+    the `changed` ones names both (`end_edges`)."""
     if not gone:
         return
     names = sorted({e for s, _r, o in gone for e in (s, o)})
@@ -569,7 +575,7 @@ async def _close_dropped_edges(input: Any, gone: list[tfr.Triple], *, ch: Any) -
     same_pairs = sorted({(str(r["subject"]), str(r["relation"]), str(r["object"])) for r in rows})
     held = await stated_by_live_rows(input.org, input.namespace, same_pairs, ch=ch)
     ends = tfr.edge_ends(gone, held, rows, naive_utc_now())
-    await end_edges(ch, org=input.org, namespace=input.namespace, ends=ends)
+    await end_edges(ch, org=input.org, namespace=input.namespace, ends=ends, changed=changed)
 
 
 async def _keep_one_current(input: Any, values: list[tfr.Triple], *, ch: Any) -> None:
@@ -901,7 +907,7 @@ async def follow_row_supersessions(
     await end_triples_now(
         ch, org=input.org, namespace=input.namespace, triples=gone, stated_ends_only=True
     )
-    await _after_the_close(input, gone, ch=ch)
+    await _after_the_close(input, losers, gone, ch=ch)
     if closed or inserted:
         log.info(
             "triples follow rows: of %d pair(s), closed %d and wrote %d successor triple(s)",

@@ -1821,16 +1821,21 @@ async def _open_weights(ch: Any, org: str, city: str) -> dict[str, int]:
 
 
 async def _walked(
-    org: str, want: list[str], *, labeled: bool, as_of: datetime | None = None
+    org: str,
+    want: list[str],
+    *,
+    labeled: bool,
+    as_of: datetime | None = None,
+    seed: str = "user",
 ) -> list[str]:
-    """The entities one hop of `facts.traverse` from `user` reaches (at `as_of`, when
+    """The entities one hop of `facts.traverse` from `seed` reaches (at `as_of`, when
     given), waiting up to two seconds for `want`: it counts a fact closed this very
     second as current."""
     from server.memory.api.models_facts import FactsTraverseInput
     from server.memory.app.facts import handle_facts_traverse
 
     walk = FactsTraverseInput(
-        org=org, namespace=NS, seed_entity="user", max_hops=1, labeled=labeled, as_of=as_of
+        org=org, namespace=NS, seed_entity=seed, max_hops=1, labeled=labeled, as_of=as_of
     )
     for _ in range(10):
         out = await handle_facts_traverse(walk)
@@ -4009,3 +4014,38 @@ async def test_a_replayed_insert_of_an_older_value_leaves_the_newer_one_current(
     assert (await retry_projection_failure(failure, ch=ch)).resolved
     await _mutations_done(ch, org)
     assert await _open_facts(ch, org, {("live_in", "paris")}) == {("live_in", "paris")}
+
+
+async def _mentions(ch: Any, org: str, row: dict[str, Any], *entities: str) -> None:
+    """The co-occurrence edges `row` writes for `entities`, as its write would."""
+    from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetResult
+    from server.memory.app.projections import write_entity_edges
+
+    key = row["memory_key"]
+    write = MemoryBulkSetInput(
+        org=org,
+        namespace=NS,
+        agent="bot",
+        user_id=USER,
+        session_id=row["session_id"],
+        entries=[{"memory_key": key, "value": json.loads(row["value"]), "entities": entities}],
+    )
+    result = _BulkSetResult(memory_key=key, version=row["version"], memory_id=str(row["memory_id"]))
+    await write_entity_edges(write, [result], ch=ch, entity_map={}, wait_visible=True)
+
+
+async def test_a_dropped_facts_edge_stays_open_while_another_row_names_both(ch, org) -> None:
+    # A trip row names Alice and London and states no relation. London's row is
+    # revised away: its fact ends, the trip row's edge does not.
+    likes = ("alice", "like", "london")
+    london = await _stated(ch, org, "s1", "Alice likes London", likes)
+    trip = await _stated(
+        ch, org, "s2", "Alice's trip to London", extracted=False, memory_key="trip"
+    )
+    await _mentions(ch, org, london, "alice", "london")
+    await _mentions(ch, org, trip, "alice", "london")
+    await _revise("memory.update_by_id", org, london, "Alice likes Rome")
+    await _mutations_done(ch, org)
+    await asyncio.sleep(1.1)  # the walk counts an edge ended this second as current
+    assert await _walked(org, [], labeled=True, seed="alice") == []
+    assert await _walked(org, ["london"], labeled=False, seed="alice") == ["london"]
