@@ -57,6 +57,6 @@ the change goes here with the command that reproduces it.
 - [ ] A new migration is additive and numbered after the latest on `main`; no merged migration is edited.
 - [ ] A plugin hook change bumps both plugin manifests' version, and no other open PR uses that version.
 - [ ] The frontend builds (`npm --prefix frontend run build`) and its tests pass, if `frontend/` changed.
-- [ ] Docs under `docs/` describe the system as it now is.
+- [ ] Docs under `docs/` describe the system as it now is, and this description names any operator steps and wire changes.
 - [ ] Repository text has no dates, people, host names, internal namespaces, ticket or decision numbers; the history goes in this description (`tests/unit/test_public_copy.py`).
 - [ ] Commits are signed off (`git commit -s`), as CONTRIBUTING.md asks.
