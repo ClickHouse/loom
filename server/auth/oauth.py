@@ -28,7 +28,7 @@ import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
-from server.auth import claims, sso_links
+from server.auth import claims, machines, sso_links
 from server.auth.attempts import Attempts, address_key, client_address
 from server.auth.delegation import SESSION_TTL
 from server.auth.jwt import AuthInfo, mint_token, new_jti
@@ -135,9 +135,15 @@ def authorization_server_metadata(issuer: str) -> dict[str, Any]:
         "token_endpoint": f"{issuer}/oauth/token",
         "device_authorization_endpoint": f"{issuer}/oauth/device_authorization",
         "revocation_endpoint": f"{issuer}/oauth/revoke",
-        "grant_types_supported": [DEVICE_GRANT, "refresh_token"],
+        "grant_types_supported": [
+            DEVICE_GRANT,
+            "refresh_token",
+            "client_credentials",
+            machines.TOKEN_EXCHANGE,
+        ],
         "response_types_supported": [],  # required by RFC 8414; "code" with MCP connect
-        "token_endpoint_auth_methods_supported": ["none"],
+        "token_endpoint_auth_methods_supported": ["none", "private_key_jwt"],
+        "token_endpoint_auth_signing_alg_values_supported": sorted(machines.KEY_ALGORITHMS),
         "revocation_endpoint_auth_methods_supported": ["none"],
         "scopes_supported": ["loom"],
     }
@@ -727,8 +733,10 @@ async def _finish_oidc_login(request: Request) -> Response:
     resolved = await _account_for(email, pending, upstream) if email else None
     if isinstance(resolved, Response):
         return resolved
-    if resolved is None:
-        reason = "no loom account for this email" if email else "verified email required"
+    if resolved is None or isinstance(resolved, str):
+        reason = resolved or (
+            "no loom account for this email" if email else "verified email required"
+        )
         await _signin_denied(str(id_claims.get("email") or ""), reason)
         await oidc.revoke(upstream)
         if kind == "device":
@@ -739,9 +747,10 @@ async def _finish_oidc_login(request: Request) -> Response:
 
 async def _account_for(
     email: str, pending: dict[str, Any], upstream: str
-) -> Identity | Response | None:
+) -> Identity | Response | str | None:
     """The account a verified `email` signs in to, a page to answer instead
-    (link a password account, or try again later), or None: no account."""
+    (link a password account, or try again later), why it signs in to none,
+    or None: no account."""
     from server.auth import oidc
     from server.auth.jit import finish_unfinished_account, jit_provision_for_email
     from server.auth.login import SignInUnavailable, resolve_identity_for_email
@@ -751,8 +760,9 @@ async def _account_for(
         resolved = await resolve_identity_for_email(email)
         if resolved is not None:
             return resolved
-        if await sso_links.linked(email):
-            return None  # linked accounts that disagree (owners, orgs): fail closed
+        if await sso_links.reaching(email):
+            # Linked accounts that disagree (owners, orgs): fail closed, saying so.
+            return "this email's linked accounts do not resolve to one account"
         if await sso_links.unlinked_accounts(email):
             # Their password account: proving it links it, no new one is made.
             return await _offer_link(pending, email, upstream)
@@ -779,9 +789,11 @@ async def _signed_in_as(
     return await _connect_consent(pending, identity, upstream)
 
 
-# Binds a link ticket to the browser that did the IdP round trip: a ticket
-# seen elsewhere (a log, a shared screen) finishes nothing on its own.
-_LINK_COOKIE = "loom_link"
+def _link_cookie(ticket: str) -> str:
+    """The cookie binding a link ticket to the browser that did the IdP round
+    trip, one per ticket so two sign-ins in one browser keep theirs: a ticket
+    seen elsewhere (a log, a shared screen) finishes nothing on its own."""
+    return f"loom_link_{token_id(ticket)[:12]}"
 
 
 async def _offer_link(pending: dict[str, Any], email: str, upstream: str) -> Response:
@@ -804,7 +816,7 @@ async def _offer_link(pending: dict[str, Any], email: str, upstream: str) -> Res
         return _sign_in_unavailable(_restart_url(pending))
     response = _link_page(ticket, email)
     response.set_cookie(
-        _LINK_COOKIE,
+        _link_cookie(ticket),
         binding,
         max_age=PENDING_TTL,
         path="/oauth/link",
@@ -846,11 +858,11 @@ async def link_account(request: Request) -> Response:
     f = await form_body(request)
     ticket = f.get("ticket", "")
     held = await store.pending(token_id(ticket))
-    binding = token_id(request.cookies.get(_LINK_COOKIE, ""))
+    binding = token_id(request.cookies.get(_link_cookie(ticket), ""))
     if (
         held is None
         or held.get("kind") != "link"
-        or not secrets.compare_digest(binding, held["binding"])
+        or not secrets.compare_digest(binding, held.get("binding", ""))
     ):
         return _expired_sign_in()
     email, sign_in = held["email"], held["sign_in"]
@@ -869,12 +881,15 @@ async def link_account(request: Request) -> Response:
     upstream = unseal(UPSTREAM_PURPOSE, held["upstream_refresh"])
     try:
         if proven is None:
-            return await _without_the_password_account(email, sign_in, upstream)
-        return await _link_proven(email, proven, f.get("password", ""), sign_in, upstream)
+            response = await _without_the_password_account(email, sign_in, upstream)
+        else:
+            response = await _link_proven(email, proven, f.get("password", ""), sign_in, upstream)
     except Exception as e:  # noqa: BLE001 — the ticket is spent: the person starts again
         log.warning("oauth: linking %s's account failed: %r", email, e)
         await oidc.revoke(upstream)
-        return _sign_in_unavailable(_restart_url(sign_in))
+        response = _sign_in_unavailable(_restart_url(sign_in))
+    response.delete_cookie(_link_cookie(ticket), path="/oauth/link")
+    return response
 
 
 async def _link_proven(
@@ -1169,16 +1184,18 @@ async def _audit_ended(grant: Grant | Device, reason: str) -> None:
 
 
 async def put_back(saving: Coroutine[Any, Any, None]) -> None:
-    """Return a spent credential from a request being cancelled: held to its
-    end even if the cancellation comes again (shutdown drains it before
-    ClickHouse goes), and a failure logged from inside it, so it neither hides
-    the cancellation nor goes unseen."""
+    """Return a spent credential from a request that failed or is being
+    cancelled: held to its end, within _PUT_BACK_S, even if a cancellation
+    comes (shutdown drains it before ClickHouse goes), and a failure logged
+    from inside it, so it neither hides the request's own outcome nor goes
+    unseen."""
 
     async def logged() -> None:
         try:
-            await saving
-        except Exception as e:  # noqa: BLE001 — the cancellation is what goes on
-            log.warning("oauth: could not put a credential back: %s", e)
+            async with asyncio.timeout(_PUT_BACK_S):
+                await saving
+        except Exception as e:  # noqa: BLE001 — the request's own outcome is what goes on
+            log.warning("oauth: could not put a credential back: %r", e)
 
     await keeper_claims.shielded(logged(), name="oauth put-back")
 
@@ -1248,7 +1265,7 @@ async def _authorization_code_grant(f: dict[str, str]) -> dict[str, Any]:
         raise
     except Exception as e:  # Loom's own failure: unspend the code so the retry is no replay
         log.warning("oauth: issuing tokens for a code failed: %s", e)
-        await store.save_code(code, grant)
+        await put_back(store.save_code(code, grant))
         raise _unavailable() from e
 
 
@@ -1270,16 +1287,16 @@ async def _ask_identity_provider(grant: Grant, refresh_token: str) -> str:
     except oidc.UpstreamUnavailable as e:
         # Not the user's fault: put the spent token back so the retry works.
         log.warning("oauth refresh: identity provider unavailable: %s", e)
-        await store.save_refresh(refresh_token, grant)
+        await put_back(store.save_refresh(refresh_token, grant))
         raise OAuthError("temporarily_unavailable", 503, headers={"Retry-After": "5"}) from e
 
 
 # A refresh runs, its spend included, for at most _REFRESH_DEADLINE_S, and a
-# failed one's put-back for _PUT_BACK_S more. With a cancelled spend's undo
-# (claims.UNDO_S) that is 55 s: inside the SDK's 60-second wait, and well
-# before another request may call the spend abandoned (oauth_store._ABANDONED_S).
-_REFRESH_DEADLINE_S = 30.0
-_PUT_BACK_S = 15.0
+# failed one's put-back for _PUT_BACK_S more; each can end in a cancelled
+# write's undo (claims.UNDO_S). At most 45 s: inside the SDK's 60-second wait,
+# and well before another request may call the spend abandoned (_ABANDONED_S).
+_REFRESH_DEADLINE_S = 25.0
+_PUT_BACK_S = 10.0
 
 
 async def _refresh_token_grant(f: dict[str, str]) -> dict[str, Any]:
@@ -1312,12 +1329,7 @@ async def _refresh_token_grant(f: dict[str, str]) -> dict[str, Any]:
         raise
     except Exception as e:  # Loom's own failure (or too slow): unspend the token for the retry
         log.warning("oauth: refreshing a session failed: %r", e)
-        try:
-            # With the IdP token it may have rotated.
-            async with asyncio.timeout(_PUT_BACK_S):
-                await store.save_refresh(refresh_token, grant)
-        except TimeoutError:
-            log.warning("oauth: putting back session %s's refresh token timed out", grant["family"])
+        await put_back(store.save_refresh(refresh_token, grant))  # with the IdP token it rotated
         raise _unavailable() from e
 
 
@@ -1356,16 +1368,91 @@ async def _refresh_session(grant: Grant, refresh_token: str) -> dict[str, Any]:
     )
 
 
+def _refused(e: machines.Refused) -> OAuthError:
+    status = {"invalid_client": 401, "temporarily_unavailable": 503}.get(e.error, 400)
+    return OAuthError(e.error, status, description=e.description)
+
+
+async def _client_credentials_grant(f: dict[str, str], audiences: list[str]) -> dict[str, Any]:
+    """A bot proving its key (RFC 7523 private_key_jwt): an hour-long token."""
+    assertion = f.get("client_assertion", "")
+    if f.get("client_assertion_type") != machines.ASSERTION_TYPE or not assertion:
+        raise OAuthError(
+            "invalid_client", 401, description="send a private_key_jwt client assertion"
+        )
+    try:
+        m, proof = await machines.verify_assertion(assertion, f.get("client_id", ""), audiences)
+    except machines.Refused as e:
+        raise _refused(e) from None
+    if not await store.use_once(
+        f"assertion:{token_id(m['name'] + ':' + str(proof['jti']))}", int(proof["exp"]) + 60
+    ):
+        raise OAuthError(
+            "invalid_client", 401, description="this client assertion was used already"
+        )
+    return await _machine_tokens(m, {"by": "key"})
+
+
+async def _token_exchange_grant(f: dict[str, str]) -> dict[str, Any]:
+    """A CI job's own OIDC token for the bot whose workload trust it meets
+    (RFC 8693): an hour-long token."""
+    token = f.get("subject_token", "")
+    if f.get("subject_token_type") not in machines.SUBJECT_TOKEN_TYPES or not token:
+        raise OAuthError("invalid_request", description="send the workload's OIDC token as a jwt")
+    try:
+        m, proof = await machines.verify_workload(token, f.get("client_id", ""))
+    except machines.Refused as e:
+        raise _refused(e) from None
+    once = str(proof.get("jti") or hashlib.sha256(token.encode()).hexdigest())
+    if not await store.use_once(
+        f"workload:{token_id(m['name'] + ':' + once)}", int(proof["exp"]) + 60
+    ):
+        raise OAuthError("invalid_grant", description="this subject token was used already")
+    issued = await _machine_tokens(m, {"by": "workload", "workload_sub": str(proof["sub"])})
+    return {**issued, "issued_token_type": "urn:ietf:params:oauth:token-type:access_token"}
+
+
+async def _machine_tokens(m: machines.Machine, how: dict[str, str]) -> dict[str, Any]:
+    from server.auth.revocation import subjects_revoked
+
+    subject, now = machines.subject(m["name"]), int(time.time())
+    if await subjects_revoked([subject], issued_at=now):
+        raise OAuthError("invalid_client", 401, description="this bot is revoked")
+    jti = new_jti()
+    token = mint_token(
+        subject=subject,
+        org=m["org"],
+        namespaces=[ns for ns, _ in m["ns_roles"]],
+        roles=[],
+        ns_roles=dict(m["ns_roles"]),
+        ttl_seconds=machines.TOKEN_TTL,
+        is_service_account=True,
+        jti=jti,
+        issued_at=now,
+    )
+    await audit.emit(
+        "auth.machine_token",
+        org=m["org"],
+        namespace="-",
+        actor=subject,
+        subject={"jti": jti, **how},
+    )
+    return {"access_token": token, "token_type": "Bearer", "expires_in": machines.TOKEN_TTL}
+
+
 @router.post("/oauth/token")
 async def token(request: Request) -> JSONResponse:
     from server.auth import device
 
     f = await form_body(request)
     grant_type = f.get("grant_type", "")
+    iss = issuer(request)
     grants = {
         "authorization_code": _authorization_code_grant,
         "refresh_token": _refresh_token_grant,
         device.DEVICE_GRANT: device.device_code_grant,
+        "client_credentials": lambda f: _client_credentials_grant(f, [f"{iss}/oauth/token", iss]),
+        machines.TOKEN_EXCHANGE: _token_exchange_grant,
     }
     if grant_type not in grants:
         raise OAuthError("unsupported_grant_type")

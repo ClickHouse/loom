@@ -13,10 +13,18 @@ $ loom logout
 ```
 
 `loom login` stores a session that refreshes itself. CI and services have no
-one to approve the code, so they use a scoped token in `LOOM_API_KEY`
-instead. See [tokens and grants](tokens-and-grants.md#sign-in-from-a-terminal-or-a-notebook).
+one to approve the code, so they sign in as a bot (below), or with a scoped
+token in `LOOM_API_KEY`. See [tokens and grants](tokens-and-grants.md#sign-in-from-a-terminal-or-a-notebook).
 With only the SDK installed, run the same commands as `python -m loom login`
 and so on.
+
+## Bots and CI jobs
+
+A bot needs no `loom login`: register it once (`loom bot create`, or a platform admin's
+`loom call /v1/admin/bots.create`), then run it with `LOOM_CLIENT_ID` and either
+`LOOM_CLIENT_KEY_FILE` (its private key) or, in a CI job, `LOOM_WORKLOAD_AUDIENCE`.
+The SDK gets and renews its hour-long token itself. See
+[single sign-on](../operations/sso.md#bots-and-ci).
 
 ## `loom call`: the whole API
 

@@ -403,6 +403,10 @@ app.include_router(_admin_router)
 app.include_router(_org_admin_router)
 app.include_router(_provider_router)
 
+from server.identity.app.admin_account_routes import router as _account_admin_router  # noqa: E402
+
+app.include_router(_account_admin_router)
+
 # attach() mounts the StaticFiles assets dir before including the router so the
 # /me/{spa_path:path} catch-all doesn't swallow asset requests.
 from server.identity.app import me_routes as _me_handlers  # noqa: E402

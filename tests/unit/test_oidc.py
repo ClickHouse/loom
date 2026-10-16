@@ -50,7 +50,7 @@ def _no_password_accounts(monkeypatch: pytest.MonkeyPatch) -> None:
     async def no_links(email: str) -> list[tuple[str, str]]:
         return []
 
-    monkeypatch.setattr(sso_links, "linked", no_links)
+    monkeypatch.setattr(sso_links, "reaching", no_links)
 
 
 @pytest.fixture

@@ -36,6 +36,7 @@ from loom.errors import (
     RateLimited,
     from_response,
 )
+from loom.machine import MachineLogin
 from loom.retry import DEFAULT_MAX_RETRY_AFTER_S, DEFAULT_RETRY_POLICY, RetryPolicy, coerce_policy
 from loom.token import TokenClaims, decode_token_claims
 
@@ -253,7 +254,7 @@ class Transport:
         ratelimit_max_wait_s: float | None = None,
         retry: RetryPolicy | dict[str, Any] | None = None,
         consumer: str = "",
-        auth: StoredLogin | None = None,
+        auth: StoredLogin | MachineLogin | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         #: The consumer this process speaks for. Stamped into every body that

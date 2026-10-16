@@ -335,6 +335,18 @@ and approves before its owner signs the terminal in as themselves. The owner, en
 code or coming back from the provider, finds it already used and is told to run
 `loom logout`, and `loom login` prints the account it signed in as.
 
+**Bots and CI** (`server/auth/machines.py`, `loom.machine_identities`). A bot is
+registered by an operator or a platform admin with the namespaces it may use, and proves
+itself at `/oauth/token` for an hour-long service-account token: with a key, by a client
+assertion it signs (RFC 7523 `private_key_jwt`: issuer and subject its name, audience
+this token endpoint, at most five minutes long, its `jti` spent once in Keeper, ES256,
+RS256 or EdDSA only), or as a CI job, by token exchange (RFC 8693) of the OIDC token its
+platform issued for the run, checked against the registered issuer's keys (fetched only
+for a registered issuer), the audience and every registered claim, and spent once. A CI
+trust must name at least one claim: any job on a platform can ask for any audience.
+Disabling a bot refuses later proofs and revokes its tokens; no refresh token exists to
+outlive it.
+
 **Unauthenticated routes.** Sign-up and password sign-in are rate-limited in-process
 (`server/auth/attempts.py`) per client address (the connection's peer, which uvicorn
 replaces with the `X-Forwarded-For` client only when the peer is in

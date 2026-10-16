@@ -87,3 +87,20 @@ async def test_adopt_makes_the_password_account_the_sso_one(ch: Any) -> None:
 
     _sso("unlink", "--email", email, "--apply")
     assert await _resolve(email) is None
+
+
+async def test_adopting_an_offboarded_subject_keeps_it_offboarded(ch: Any) -> None:
+    from server.auth import revocation
+
+    domain = f"adopt-{uuid.uuid4().hex[:6]}.example"
+    org, email = f"sso-it-{uuid.uuid4().hex[:6]}", f"eve@{domain}"
+    await _password_account(ch, org, email)
+    await revocation.revoke(email, reason="offboarded")
+    _sso("adopt", "--domain", domain, "--apply")
+    # Adopting expires tokens from before it; the outright revoke stands over that.
+    with own_write_reads():
+        row = await ch.query_one(
+            "SELECT issued_before FROM loom.revoked_tokens FINAL WHERE jti = {j:String}",
+            params={"j": email},
+        )
+    assert row is not None and row["issued_before"] is None

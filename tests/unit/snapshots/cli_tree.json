@@ -7649,6 +7649,391 @@
       }
      ]
     },
+    "bot": {
+     "prog": "loom bot",
+     "usage": null,
+     "description": null,
+     "epilog": null,
+     "formatter_class": "argparse:HelpFormatter",
+     "add_help": true,
+     "allow_abbrev": true,
+     "defaults": {},
+     "groups": [
+      {
+       "title": "positional arguments",
+       "description": null,
+       "dests": [
+        "subcommand"
+       ]
+      },
+      {
+       "title": "options",
+       "description": null,
+       "dests": [
+        "help"
+       ]
+      }
+     ],
+     "mutually_exclusive": [],
+     "arguments": [
+      {
+       "option_strings": [
+        "-h",
+        "--help"
+       ],
+       "dest": "help",
+       "action": "_HelpAction",
+       "default": "==SUPPRESS==",
+       "const": null,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "show this help message and exit",
+       "metavar": null
+      },
+      {
+       "option_strings": [],
+       "dest": "subcommand",
+       "action": "_SubParsersAction",
+       "default": null,
+       "const": null,
+       "choices": null,
+       "nargs": "A...",
+       "type": null,
+       "required": true,
+       "help": null,
+       "metavar": null,
+       "subcommands": {
+        "create": {
+         "prog": "loom bot create",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.bots:_cmd_create"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "name",
+            "org",
+            "namespace_role",
+            "generate_key",
+            "public_key",
+            "issuer",
+            "audience",
+            "claim",
+            "replace"
+           ]
+          }
+         ],
+         "mutually_exclusive": [
+          {
+           "required": false,
+           "dests": [
+            "generate_key",
+            "public_key"
+           ]
+          }
+         ],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--name"
+           ],
+           "dest": "name",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "Its client_id: lower-case letters, digits, '-'",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--org"
+           ],
+           "dest": "org",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--namespace-role"
+           ],
+           "dest": "namespace_role",
+           "action": "_AppendAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "viewer|writer|admin on a namespace (repeatable; first = searched first)",
+           "metavar": "NS=ROLE"
+          },
+          {
+           "option_strings": [
+            "--generate-key"
+           ],
+           "dest": "generate_key",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "Write a new P-256 private key here (0600)",
+           "metavar": "PATH"
+          },
+          {
+           "option_strings": [
+            "--public-key"
+           ],
+           "dest": "public_key",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "The bot's own public key (P-256, Ed25519 or RSA)",
+           "metavar": "PEM"
+          },
+          {
+           "option_strings": [
+            "--issuer"
+           ],
+           "dest": "issuer",
+           "action": "_StoreAction",
+           "default": "",
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "CI trust: the platform's OIDC issuer (https)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--audience"
+           ],
+           "dest": "audience",
+           "action": "_StoreAction",
+           "default": "",
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "CI trust: the audience its token must name",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--claim"
+           ],
+           "dest": "claim",
+           "action": "_AppendAction",
+           "default": [],
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "CI trust: a claim the token must carry; VALUE ending in * matches a prefix (repeatable; at least one, e.g. sub=repo:org/repo:ref:refs/heads/main)",
+           "metavar": "NAME=VALUE"
+          },
+          {
+           "option_strings": [
+            "--replace"
+           ],
+           "dest": "replace",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Replace a bot of the same name",
+           "metavar": null
+          }
+         ]
+        },
+        "list": {
+         "prog": "loom bot list",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.bots:_cmd_list"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          }
+         ]
+        },
+        "disable": {
+         "prog": "loom bot disable",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.bots:_cmd_disable"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "name"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--name"
+           ],
+           "dest": "name",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": null,
+           "metavar": null
+          }
+         ]
+        }
+       },
+       "aliases_of": {
+        "create": "loom bot create",
+        "list": "loom bot list",
+        "disable": "loom bot disable"
+       },
+       "choices_help": [
+        {
+         "dest": "create",
+         "help": "Register a bot: its namespaces, and a key (--generate-key or --public-key) and/or a CI trust (--issuer, --audience, --claim). Its tokens are for sa:<name>.",
+         "metavar": "create"
+        },
+        {
+         "dest": "list",
+         "help": "Every bot, active or disabled.",
+         "metavar": "list"
+        },
+        {
+         "dest": "disable",
+         "help": "Refuse its proofs and revoke the tokens it holds.",
+         "metavar": "disable"
+        }
+       ]
+      }
+     ]
+    },
     "doctor": {
      "prog": "loom doctor",
      "usage": null,
@@ -10803,6 +11188,7 @@
     "mint-token": "loom mint-token",
     "revoke-token": "loom revoke-token",
     "sso": "loom sso",
+    "bot": "loom bot",
     "doctor": "loom doctor",
     "report": "loom report",
     "drops": "loom drops",
@@ -10970,6 +11356,11 @@
      "dest": "sso",
      "help": "Carry password accounts over to single sign-on.",
      "metavar": "sso"
+    },
+    {
+     "dest": "bot",
+     "help": "Bots and CI jobs that sign in with a key or their CI's identity.",
+     "metavar": "bot"
     },
     {
      "dest": "doctor",

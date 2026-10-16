@@ -32,6 +32,7 @@ OWNERS = {"code", "memory", "platform"}
 WRITE_PATHS: dict[str, tuple[str, str]] = {
     "provider_configuration": ("builder", "test_provider_configuration.py"),
     "sso_links": ("builder", "test_sso_links.py"),
+    "machine_identities": ("builder", "test_machines.py"),
     "deployment_config": ("builder", "test_read_replica.py"),
     "agent_runs": ("gap", "platform"),
     "agent_turn_usage": ("gap", "platform"),

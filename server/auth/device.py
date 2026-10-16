@@ -386,5 +386,5 @@ async def device_code_grant(f: dict[str, str]) -> dict[str, Any]:
         raise
     except Exception as e:  # Loom's own failure: unspend the code so the next poll is no replay
         oauth.log.warning("oauth: issuing tokens for a device grant failed: %s", e)
-        await oauth.store.save_device(device)
+        await oauth.put_back(oauth.store.save_device(device))
         raise oauth.OAuthError("temporarily_unavailable", 503, headers={"Retry-After": "5"}) from e

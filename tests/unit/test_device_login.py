@@ -64,7 +64,7 @@ def _world(monkeypatch):
     async def no_links(email: str) -> list[tuple[str, str]]:
         return []
 
-    monkeypatch.setattr(sso_links, "linked", no_links)
+    monkeypatch.setattr(sso_links, "reaching", no_links)
     monkeypatch.setattr(device.audit, "emit", emit)
 
     async def credentials(identifier: str, password: str, *, address: str = "") -> Any:
@@ -377,12 +377,49 @@ def test_a_refresh_past_its_deadline_answers_busy_and_keeps_the_token(monkeypatc
     assert _refresh(c, token).status_code == 200
 
 
+def test_a_failed_refresh_puts_its_token_back_even_when_cancelled(monkeypatch) -> None:
+    # The rollback of a failed refresh runs to its end: a request cancelled
+    # in it must not leave the token spent with nothing issued in its place.
+    from server.core import keeper_claims
+
+    c = _client()
+    token = _signed_in_tokens(c)["refresh_token"]
+    original_save, original_session = oauth.store.save_refresh, oauth._refresh_session
+    started, go = asyncio.Event(), asyncio.Event()
+
+    async def slow_save(t: str, g: Any) -> None:
+        started.set()
+        await go.wait()
+        await original_save(t, g)
+
+    async def broken(grant: Any, refresh_token: str) -> dict[str, Any]:
+        raise RuntimeError("ClickHouse away")
+
+    async def cancel_mid_rollback() -> None:
+        monkeypatch.setattr(oauth.store, "save_refresh", slow_save)
+        monkeypatch.setattr(oauth, "_refresh_session", broken)
+        form = {"grant_type": "refresh_token", "refresh_token": token, "client_id": "loom-cli"}
+        task = asyncio.create_task(oauth._refresh_token_grant(form))
+        await started.wait()
+        task.cancel()
+        go.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await keeper_claims.drain()
+
+    asyncio.run(cancel_mid_rollback())
+    monkeypatch.setattr(oauth.store, "save_refresh", original_save)
+    monkeypatch.setattr(oauth, "_refresh_session", original_session)
+    assert _refresh(c, token).status_code == 200
+
+
 def test_a_refresh_ends_well_before_a_spend_counts_as_abandoned() -> None:
     from loom.credentials import _REFRESH_TIMEOUT_S
 
     from server.auth import claims, oauth_store
 
-    budget = oauth._REFRESH_DEADLINE_S + oauth._PUT_BACK_S + claims.UNDO_S
+    # The deadline, then the put-back, each ending in a cancelled write's undo.
+    budget = oauth._REFRESH_DEADLINE_S + claims.UNDO_S + oauth._PUT_BACK_S + claims.UNDO_S
     assert budget < _REFRESH_TIMEOUT_S < oauth_store._ABANDONED_S
 
 
@@ -617,10 +654,11 @@ def test_linked_accounts_that_disagree_make_no_new_one(sso, monkeypatch) -> None
         raise AssertionError("JIT must not run")
 
     monkeypatch.setattr(login, "resolve_identity_for_email", nobody)
-    monkeypatch.setattr(sso_links, "linked", linked)
+    monkeypatch.setattr(sso_links, "reaching", linked)
     monkeypatch.setattr(jit, "jit_provision_for_email", no_jit)
     c = _client()
-    assert _sso_round_trip(c, _start(c)["user_code"]).status_code == 403
+    page = _sso_round_trip(c, _start(c)["user_code"])
+    assert page.status_code == 403 and "linked accounts" in page.text
 
 
 def test_a_link_ticket_finishes_nothing_in_another_browser(bobs_password_account) -> None:
@@ -648,6 +686,13 @@ def test_a_link_that_fails_once_spent_starts_again(bobs_password_account, monkey
     r = _link(c, page.text, "bobpw")
     assert r.status_code == 503 and "/oauth/device?user_code=" in r.text
     assert revoked == ["idp-r1"]
+
+
+def test_two_link_pages_in_one_browser_keep_their_own_binding(bobs_password_account) -> None:
+    c = _client()
+    first = _sso_round_trip(c, _start(c)["user_code"])
+    _sso_round_trip(c, _start(c)["user_code"])  # a second sign-in, in another tab
+    assert _link(c, first.text, "bobpw").status_code == 200
 
 
 def test_a_link_ticket_is_spent_once(bobs_password_account) -> None:

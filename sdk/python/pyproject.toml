@@ -32,6 +32,10 @@ classifiers = [
 # venv masks it: server deps pull h2 transitively).
 dependencies = ["httpx[http2]>=0.27"]
 
+[project.optional-dependencies]
+# A bot that proves a key (loom.machine) signs its client assertion with these.
+machine = ["pyjwt[crypto]>=2.8"]
+
 [project.urls]
 Homepage = "https://github.com/ClickHouse/loom"
 Repository = "https://github.com/ClickHouse/loom"

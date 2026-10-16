@@ -1,0 +1,177 @@
+"""Tokens for a bot or a CI job registered with `loom bot create`: no `loom
+login` and no long-lived secret. With LOOM_CLIENT_ID set, the SDK proves
+either
+
+- a key (LOOM_CLIENT_KEY_FILE): it signs a short client assertion
+  (private_key_jwt; needs `pip install clickhouse-loom[machine]`), or
+- its CI job's own OIDC token: read from LOOM_WORKLOAD_TOKEN_FILE, or asked of
+  the CI platform when it offers one on request (ACTIONS_ID_TOKEN_REQUEST_URL),
+  for LOOM_WORKLOAD_AUDIENCE,
+
+and gets an hour-long token from /oauth/token, renewed before it runs out and
+kept in memory only.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import threading
+import time
+import uuid
+from collections.abc import AsyncGenerator, Generator
+from pathlib import Path
+from typing import Any
+
+import httpx
+
+from loom.credentials import _origin
+from loom.errors import AuthInvalid
+
+ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+TOKEN_EXCHANGE = "urn:ietf:params:oauth:grant-type:token-exchange"
+_RENEW_BEFORE_S = 300
+
+
+def machine_login(server: str) -> MachineLogin | None:
+    """The bot login the environment describes, or None."""
+    client_id = os.environ.get("LOOM_CLIENT_ID", "").strip()
+    if not client_id:
+        return None
+    return MachineLogin(
+        server,
+        client_id,
+        key_file=os.environ.get("LOOM_CLIENT_KEY_FILE", ""),
+        audience=os.environ.get("LOOM_WORKLOAD_AUDIENCE", ""),
+    )
+
+
+class MachineLogin(httpx.Auth):
+    """httpx auth that sends the bot's hour-long token, getting a new one
+    before it expires and once more when the server answers 401."""
+
+    def __init__(
+        self, server: str, client_id: str, *, key_file: str = "", audience: str = ""
+    ) -> None:
+        self.server = server.rstrip("/")
+        self.profile = client_id  # how the transport names the credential
+        self._key_file, self._audience = key_file, audience
+        self._token, self._expires_at = "", 0.0
+        self._lock = threading.Lock()
+
+    def current_token(self) -> str:
+        return self._token
+
+    def token(self, refused: str = "") -> str:
+        with self._lock:
+            if (
+                not self._token
+                or self._token == refused
+                or time.time() > self._expires_at - _RENEW_BEFORE_S
+            ):
+                self._token, self._expires_at = self._fetch()
+            return self._token
+
+    def _fetch(self) -> tuple[str, float]:
+        endpoint = f"{self.server}/oauth/token"
+        if self._key_file:
+            form = {
+                "grant_type": "client_credentials",
+                "client_id": self.profile,
+                "client_assertion_type": ASSERTION_TYPE,
+                "client_assertion": self._assertion(endpoint),
+            }
+        else:
+            form = {
+                "grant_type": TOKEN_EXCHANGE,
+                "client_id": self.profile,
+                "subject_token": _workload_token(self._audience),
+                "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+            }
+        r = httpx.post(endpoint, data=form, timeout=30.0)
+        body: dict[str, Any] = (
+            r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+        )
+        if r.status_code != 200:
+            raise AuthInvalid(
+                f"bot {self.profile!r}: {body.get('error', r.status_code)} "
+                f"{body.get('error_description', '')}".strip()
+            )
+        return str(body["access_token"]), time.time() + float(body.get("expires_in", 3600))
+
+    def _assertion(self, endpoint: str) -> str:
+        try:
+            import jwt
+            from cryptography.hazmat.primitives.asymmetric import ec, ed25519
+            from cryptography.hazmat.primitives.serialization import load_pem_private_key
+        except ImportError as e:
+            raise AuthInvalid("a bot key needs `pip install clickhouse-loom[machine]`") from e
+        key = load_pem_private_key(Path(self._key_file).read_bytes(), password=None)
+        alg = (
+            "ES256"
+            if isinstance(key, ec.EllipticCurvePrivateKey)
+            else "EdDSA"
+            if isinstance(key, ed25519.Ed25519PrivateKey)
+            else "RS256"
+        )
+        now = int(time.time())
+        claims = {
+            "iss": self.profile,
+            "sub": self.profile,
+            "aud": endpoint,
+            "iat": now,
+            "exp": now + 120,
+            "jti": uuid.uuid4().hex,
+        }
+        return jwt.encode(claims, key, algorithm=alg)  # type: ignore[arg-type]
+
+    def _request_token(self, request: httpx.Request, refused: str = "") -> str:
+        if _origin(str(request.url)) != _origin(self.server):
+            raise AuthInvalid(
+                f"refusing to send bot {self.profile!r}'s token to {request.url.host}"
+            )
+        return self.token(refused)
+
+    def sync_auth_flow(
+        self, request: httpx.Request
+    ) -> Generator[httpx.Request, httpx.Response, None]:
+        token = self._request_token(request)
+        request.headers["Authorization"] = f"Bearer {token}"
+        response = yield request
+        if response.status_code == 401:
+            request.headers["Authorization"] = f"Bearer {self._request_token(request, token)}"
+            yield request
+
+    async def async_auth_flow(
+        self, request: httpx.Request
+    ) -> AsyncGenerator[httpx.Request, httpx.Response]:
+        # The token request blocks; keep it off the loop.
+        token = await asyncio.to_thread(self._request_token, request)
+        request.headers["Authorization"] = f"Bearer {token}"
+        response = yield request
+        if response.status_code == 401:
+            token = await asyncio.to_thread(self._request_token, request, token)
+            request.headers["Authorization"] = f"Bearer {token}"
+            yield request
+
+
+def _workload_token(audience: str) -> str:
+    """This CI job's OIDC token: a file the platform wrote, or one asked for."""
+    path = os.environ.get("LOOM_WORKLOAD_TOKEN_FILE", "")
+    if path:
+        return Path(path).read_text().strip()
+    url = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_URL", "")
+    bearer = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
+    if not (url and bearer and audience):
+        raise AuthInvalid(
+            "LOOM_CLIENT_ID is set but there is no key (LOOM_CLIENT_KEY_FILE) or CI token "
+            "(LOOM_WORKLOAD_TOKEN_FILE, or a CI job with LOOM_WORKLOAD_AUDIENCE)"
+        )
+    r = httpx.get(
+        url,
+        params={"audience": audience},
+        headers={"Authorization": f"Bearer {bearer}"},
+        timeout=30.0,
+    )
+    r.raise_for_status()
+    return str(r.json()["value"])

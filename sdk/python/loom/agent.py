@@ -37,6 +37,7 @@ from loom.facts import FactsClient
 from loom.grants import GrantsClient
 from loom.knowledge import KnowledgeClient
 from loom.learnings import LearningsClient
+from loom.machine import MachineLogin, machine_login
 from loom.memory import SENTINEL, MemoryClient
 from loom.namespace import NamespaceClient
 from loom.policy import PolicyClient
@@ -68,11 +69,12 @@ def default_agent_name(agent: str | None) -> str:
 
 def _credentials(
     base_url: str | None, api_key: str | None, profile: str | None
-) -> tuple[str, str | None, StoredLogin | None]:
+) -> tuple[str, str | None, StoredLogin | MachineLogin | None]:
     """The server and credential to use. A `profile` named here is the
     `loom login` session to use, on the server it signed in to. Otherwise
     the server is `base_url=`, else LOOM_BASE_URL, else localhost, and the
-    credential, first found wins: `api_key=`, LOOM_API_KEY, the session of
+    credential, first found wins: `api_key=`, LOOM_API_KEY, a bot's
+    LOOM_CLIENT_ID (loom.machine), the session of
     LOOM_PROFILE (else `default`) for that server, `~/.loom/token` (what
     `loom mint-token --save` writes)."""
     if profile:
@@ -88,6 +90,9 @@ def _credentials(
     api_key = api_key or os.environ.get("LOOM_API_KEY")
     if api_key:
         return base_url, api_key, None
+    bot = machine_login(base_url)
+    if bot is not None:
+        return base_url, None, bot
     auth = stored_login(base_url)
     return base_url, None if auth else token_from_file(), auth
 

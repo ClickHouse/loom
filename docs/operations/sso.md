@@ -65,9 +65,11 @@ account keeps its subject, grants, namespaces and data; no new one is made.
   domain with their owners, and `--apply` links them. It vouches that the
   domain's addresses are the provider's people, so read the list: an address
   someone else registered is linked too. It skips an email whose accounts are
-  in several orgs or have several owners, or that SSO already reaches, and it
-  revokes the tokens the linked accounts already hold, so people sign in again
-  (`--keep-tokens` keeps them).
+  in several orgs or have several owners, or that SSO already reaches. It
+  revokes every token the adopted subjects hold, so people sign in again, and
+  that includes the service-account and MCP tokens they made from their
+  sessions: CI using one of those breaks until it gets a bot of its own (see
+  below). `--keep-tokens` keeps them, and with them any tokens a squatter made.
 - **Anyone not adopted** is asked, at their first SSO sign-in, for their
   account's Loom password once; it then links. Wrong passwords count against
   the usual sign-in limits.
@@ -97,19 +99,54 @@ The provider can never grant admin.
 
 ## Bots and CI
 
-A bot never signs in at the provider. Give it a service-account token scoped
-to the namespace its data belongs in, usually a team namespace with more than
-one admin, and set it as `LOOM_API_KEY`:
+A bot never signs in at the provider, and should hold no long-lived secret.
+Register it with the namespaces its data belongs in (usually a team namespace
+with more than one admin); its tokens are for `sa:<name>`, last an hour, and
+its writes are stamped `actor=process:sa:<name>`.
+
+- **A key.** Loom keeps the public half; the bot signs a short assertion for
+  each hour-long token (OAuth client credentials with `private_key_jwt`).
+
+  ```bash
+  loom bot create --name triage-bot --org acme --namespace-role triage=writer \
+    --generate-key ./triage-bot.pem
+  # on the bot, with `pip install clickhouse-loom[machine]`:
+  LOOM_CLIENT_ID=triage-bot LOOM_CLIENT_KEY_FILE=./triage-bot.pem python agent.py
+  ```
+
+- **A CI job.** No secret at all: the job hands over the OIDC token its CI
+  platform issues for that run, and Loom accepts it only from that issuer, for
+  that audience, with every `--claim` matching (a value ending in `*` matches a
+  prefix). Any job on the platform can get a token for any audience, so name
+  the repository and branch in claims.
+
+  ```bash
+  loom bot create --name deploy --org acme --namespace-role deploys=writer \
+    --issuer https://token.actions.githubusercontent.com --audience loom \
+    --claim repository=acme/app --claim ref=refs/heads/main
+  # in the job (it needs permission to request its OIDC token):
+  LOOM_CLIENT_ID=deploy LOOM_WORKLOAD_AUDIENCE=loom python deploy.py
+  ```
+
+- `loom bot list` shows them; `loom bot disable --name …` refuses every later
+  proof and revokes the tokens the bot holds. A platform admin does the same
+  from anywhere with `loom call /v1/admin/bots.create --data '{…}'` (with
+  `"generate_key": true` the answer carries the private key, once),
+  `/v1/admin/bots.list` and `/v1/admin/bots.disable`; `/v1/admin/sso.adopt`,
+  `sso.unlink` and `sso.password_link` mirror `loom sso`.
+
+Software that can only hold a static key gets an operator-minted token, with an
+expiry (`--ttl-days 90`, re-minted on a schedule) or without one, which lives
+until `loom revoke-token`:
 
 ```bash
-loom mint-token --subject sa:triage-bot --org <org> --service-account \
-  --namespace-role triage=writer --ttl-days 90
+loom mint-token --subject sa:legacy --org acme --service-account \
+  --namespace-role legacy=writer --json
 ```
 
-Its writes land in that namespace, stamped `actor=process:sa:triage-bot`. SSO
-does not affect these tokens; revoke one with `loom revoke-token --subject`.
-A person can also create one from their session (`/v1/me/service_accounts`),
-but it lasts at most 30 days, so long-running bots use an operator's token.
+SSO does not affect bots or minted tokens. A token a person creates from their
+session (`/v1/me/service_accounts`) lasts at most 30 days and dies with that
+person's offboarding, so long-running bots use one of the above.
 
 ## Sessions and logout
 
@@ -132,7 +169,7 @@ but it lasts at most 30 days, so long-running bots use an operator's token.
   ended session writes an `auth.*` row to the audit log:
   `auth.sso_signin`, `auth.signin_denied`, `auth.device_approved`,
   `auth.device_denied`, `auth.connect_approved`, `auth.connect_denied`,
-  `auth.jit_provisioned`, `auth.sso_linked`, `auth.sso_unlinked`, `auth.sso_link_declined`, `auth.password_set`,
+  `auth.jit_provisioned`, `auth.sso_linked`, `auth.sso_unlinked`, `auth.sso_link_declined`, `auth.password_set`, `auth.machine_created`, `auth.machine_token`, `auth.machine_disabled`,
   `auth.session_revoked`.
 
 ## Behind a proxy
@@ -166,8 +203,8 @@ loom sso password-link --email lee@example.com
 ```
 
 which prints a link that sets it, once, within a day, and only while SSO is
-off. The account stays linked, so turning SSO on again reaches it. Bot tokens
-are not affected either way.
+off. The account stays linked, so turning SSO on again reaches it. Turning
+SSO on or off leaves bots (`loom bot`) and operator-minted tokens alone.
 
 ## Break glass
 

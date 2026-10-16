@@ -92,6 +92,22 @@ async def forget_account(org: str, namespace: str, by: str, *, ch: Any = None) -
         await _write(r["email"], [(org, namespace)], by, linked=0, ch=ch)
 
 
+async def reaching(email: str) -> list[tuple[str, str]]:
+    """The linked accounts an SSO sign-in with `email` would reach: active, and
+    still naming the email (a deactivated or released one reaches nothing)."""
+    rows = await get_client().query_all(
+        f"""
+        SELECT org, namespace FROM loom.namespaces FINAL
+        WHERE contact_email = {{email:String}} AND active = 1
+          AND (org, namespace) IN (
+              SELECT org, namespace FROM {TABLE} FINAL WHERE email = {{email:String}} AND linked = 1
+          )
+        """,
+        params={"email": email.strip().lower()},
+    )
+    return [(r["org"], r["namespace"]) for r in rows]
+
+
 async def unlink(email: str, accounts: list[tuple[str, str]], linked_by: str) -> None:
     """Stop SSO sign-ins with `email` reaching `accounts`."""
     await _write(email, accounts, linked_by, linked=0)

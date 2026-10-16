@@ -118,11 +118,12 @@ async def set_password(request: Request) -> Response:
     if await oauth.store.take_pending(token_id(code)) is None:
         return _closed()  # the form sent twice: the other one set it
     email, org = held["email"], held["org"]
-    rows = [r for r in [await namespaces.fetch_row(org, ns) for ns in held["namespaces"]] if r]
-    # Still that email's SSO accounts: one changed since the link was made is left alone.
-    rows = [
-        r for r in rows if r["active"] and not r["password_hash"] and r["contact_email"] == email
-    ]
+    rows = []
+    for ns in held["namespaces"]:
+        row = await namespaces.fetch_row(org, ns)
+        # Still that email's SSO account: one changed since the link was made is left alone.
+        if row and row["active"] and not row["password_hash"] and row["contact_email"] == email:
+            rows.append(row)
     if not rows:
         return _closed()
     password_hash = await hash_password_off_loop(password)

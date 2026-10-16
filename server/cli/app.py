@@ -273,9 +273,11 @@ def _add_version_install_demo_init_parsers(sub: Any) -> None:
 
 
 def _add_sso_parsers(sub: Any) -> None:
+    from server.cli.bots import register_bot_cli
     from server.cli.sso import register_sso_cli
 
     register_sso_cli(sub)
+    register_bot_cli(sub)
 
 
 # Every subcommand `main` registers, in `loom --help` order (the order the

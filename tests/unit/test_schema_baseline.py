@@ -93,6 +93,7 @@ def test_the_journal_files() -> None:
         "033_oauth_sessions.sql",
         "034_oauth_signin_state.sql",
         "035_sso_links.sql",
+        "036_machine_identities.sql",
     ]
 
 

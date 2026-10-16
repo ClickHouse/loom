@@ -40,10 +40,10 @@ TABLE_SQL = (
 )
 SWEEP_INTERVAL_SECONDS = 300
 _FULL_FOR_S = 900  # how long hitting the key limit stays a health problem
-UNDO_S = 10  # an undo Keeper does not finish by then is left to the key's expiry
+UNDO_S = 5  # an undo Keeper does not finish by then is left to the key's expiry
 # A write the server gives up on rather than lands late, after a request that
 # timed out has put its credential back or another has called it abandoned.
-_BOUNDED = "max_execution_time = 10"
+_BOUNDED = "max_execution_time = 5"
 
 # Whether loom.oauth_signin_state exists here: None until the boot probe or the
 # first sign-in asks.
@@ -140,29 +140,30 @@ async def swap(ch: Any, key: str, old: str | None, new: str, expires_at: int) ->
 async def _undo_once_settled(
     write: asyncio.Future[str | None], ch: Any, key: str, old: str | None, new: str, expires_at: int
 ) -> None:
+    """Wait for the write, then undo it if it landed: both within UNDO_S."""
     try:
         async with asyncio.timeout(UNDO_S):
-            landed = await write == new
-    except (Busy, TimeoutError):
-        landed = True  # unknown: the undo changes the key only if it holds `new`
-    if landed:
-        await _undo_quietly(ch, key, old, new, expires_at)
+            try:
+                landed = (await write) == new
+            except Busy:
+                landed = True  # unknown: the undo changes the key only if it holds `new`
+            if landed:
+                await _revert(ch, key, old, new, expires_at)
+    except (Busy, TimeoutError) as e:  # left as it is; a spend then waits out its abandonment
+        log.warning("oauth claims: could not undo a cancelled change of %s: %s", key, e)
 
 
 async def _undo(ch: Any, key: str, old: str | None, new: str, expires_at: int) -> None:
-    """Put `key` back to `old` if it holds `new` (unique: a nonce in it)."""
     async with asyncio.timeout(UNDO_S):
-        if old is None:
-            await _drop(ch, key, new)
-        else:
-            await _swap(ch, key, new, old, expires_at)
+        await _revert(ch, key, old, new, expires_at)
 
 
-async def _undo_quietly(ch: Any, key: str, old: str | None, new: str, expires_at: int) -> None:
-    try:
-        await _undo(ch, key, old, new, expires_at)
-    except (Busy, TimeoutError) as e:  # left as it is; a spend then waits out its abandonment
-        log.warning("oauth claims: could not undo a cancelled change of %s: %s", key, e)
+async def _revert(ch: Any, key: str, old: str | None, new: str, expires_at: int) -> None:
+    """Put `key` back to `old` if it holds `new` (unique: a nonce in it)."""
+    if old is None:
+        await _drop(ch, key, new)
+    else:
+        await _swap(ch, key, new, old, expires_at)
 
 
 async def _swap(ch: Any, key: str, old: str | None, new: str, expires_at: int) -> str | None:
