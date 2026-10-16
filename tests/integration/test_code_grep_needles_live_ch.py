@@ -164,6 +164,7 @@ def _skip_index_granules(reader: Any, sql: str, params: dict[str, Any]) -> tuple
         r[0].strip()
         for r in reader.query("EXPLAIN indexes = 1 " + sql, parameters=params).result_rows
     ]
+    assert "Name: idx_code_chunks_content_ng" in lines, "\n".join(lines)
     at = lines.index("Name: idx_code_chunks_content_ng")
     granules = next(line for line in lines[at:] if line.startswith("Granules:"))
     kept, total = granules.removeprefix("Granules:").strip().split("/")
@@ -173,15 +174,26 @@ def _skip_index_granules(reader: Any, sql: str, params: dict[str, Any]) -> tuple
 def test_a_case_insensitive_search_regex_still_prunes_on_the_text_index(
     ch_client: Any, reader: Any
 ) -> None:
-    """The k/s spellings keep code.search's guard index-visible: EXPLAIN shows the
-    n-gram index skipping granules, and the one matching chunk still comes back."""
+    """code.search's guard for a case-insensitive regex stays index-visible and
+    selective: EXPLAIN shows the n-gram index keeping only the granule with the
+    match, and the chunk that matches only through the Kelvin sign comes back."""
+    granule = int(
+        ch_client.query(
+            "SELECT extract(engine_full, 'index_granularity = (\\d+)') FROM system.tables "
+            "WHERE database = 'loom' AND name = 'code_chunks'"
+        ).result_rows[0][0]
+    )
     org, ns = unique_org("grep-explain"), "code-explain"
     rows = [
         [org, ns, "m", f"src/f{i:05d}.cpp", uuid.uuid4(), 1, 1, f"filler body {i}", [0.0] * 3072, 1]
-        for i in range(3000)
+        for i in range(12 * granule)  # paths sort in insert order: one granule per `granule` rows
     ]
+    match = 6 * granule + granule // 2
     # matches (?i)checkStackSize only through the Kelvin sign, which lower() leaves alone
-    rows[1500][7] = "void chec\u212aStackSize();"
+    rows[match][7] = "void chec\u212aStackSize();"
+    # near misses in other granules: every piece of the identifier, never the whole of it
+    rows[granule // 2][7] = "check the stack size"
+    rows[10 * granule][7] = "stackSize; check"
     ch_client.insert(
         "loom.code_chunks",
         rows,
@@ -200,13 +212,11 @@ def test_a_case_insensitive_search_regex_still_prunes_on_the_text_index(
     )
     for pattern in ("checkStackSize", r"getTotals\(\)|checkStackSize"):
         cond, params = build_scope(pattern=pattern, regex=True).content_condition()
-        assert cond.startswith("(lower(content) LIKE"), cond
         params.update(org=org, ns=ns)
         sql = (
             "SELECT path FROM loom.code_chunks FINAL WHERE org = {org:String} "
             f"AND namespace = {{ns:String}} AND tombstoned_at IS NULL AND {cond} "
             f"{GREP_FINAL_SETTINGS}"
         )
-        kept, total = _skip_index_granules(reader, sql, params)
-        assert 0 < kept < total, (pattern, kept, total)
-        assert _rows(reader, sql, params) == [("src/f01500.cpp",)], pattern
+        assert _skip_index_granules(reader, sql, params) == (1, 12), (pattern, cond)
+        assert _rows(reader, sql, params) == [(f"src/f{match:05d}.cpp",)], pattern
