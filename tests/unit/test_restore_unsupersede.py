@@ -209,6 +209,7 @@ async def test_a_guarded_restore_never_undoes_a_delete(monkeypatch):
 
 
 _PAST = datetime(2026, 1, 1)
+_FUTURE = datetime.now(UTC).replace(tzinfo=None) + timedelta(days=30)
 
 
 @pytest.mark.parametrize(
@@ -218,6 +219,8 @@ _PAST = datetime(2026, 1, 1)
         ({"status": "conflicted"}, "duplicate"),
         # Marked high since: still served to those who may read it, so the copy stays hidden.
         ({"status": "active", "sensitivity": "high"}, "duplicate"),
+        ({"status": "active", "expires_at": _FUTURE}, "duplicate"),
+        ({"status": "active", "valid_to": _FUTURE}, "duplicate"),
         (None, "active"),
         # Reads serve none of these, so the restored row must not hide behind them.
         ({"status": "proposed"}, "active"),

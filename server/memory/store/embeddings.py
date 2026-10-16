@@ -744,7 +744,7 @@ async def unsupersede_embeddings(
 ) -> int:
     """Inverse of the supersede re-emit for one key: every live
     memory_embeddings row goes back to `status` (the restored memory row's:
-    `active`, or `conflicted` for a row still under review) with the retirement
+    `active`, `conflicted` or `duplicate`) with the retirement
     stamp cleared, so recall sees it again. Returns rows re-emitted."""
     ch = ch or _default_client()
     rows = await live_embedding_rows_for_key(

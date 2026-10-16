@@ -135,7 +135,7 @@ async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryResto
     )
 
 
-def _served_now(row: Any) -> bool:
+def _served_now(row: MemoryRow) -> bool:
     """Whether reads serve `row` now: not deleted, a served status, not ended."""
     if row.tombstoned_at is not None or row.status not in SERVED_STATUSES:
         return False
