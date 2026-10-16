@@ -3,7 +3,7 @@
  * source (a token only when GitHub refuses, or when the person says the repository is
  * private), and who may READ the index in Loom (open / restricted) — two different axes.
  */
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../lib/errors";

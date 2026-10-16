@@ -354,7 +354,7 @@ function MemoryTab() {
           </h2>
           <p className="text-xs text-text-muted mt-0.5">
             Turn an AGENTS.md, CLAUDE.md or rules file into memories — one per{" "}
-            <code className="font-mono text-2xs">##</code> section.
+            <code className="font-mono text-xs">##</code> section.
           </p>
         </div>
         <Button type="secondary" htmlType="button" iconLeft="upload" onClick={() => setImporting(true)}>
@@ -872,7 +872,7 @@ function TokensSection({
                     </div>
                     {eligibleRepos.length > 0 && (
                       <div className="mt-3">
-                        <div className="text-2xs font-medium text-text-muted mb-1">Repositories (read-only)</div>
+                        <div className="text-xs font-medium text-text-muted mb-1">Repositories (read-only)</div>
                         {/* One row per repository, its branches beneath; an
                           "all branches" switch per repository. */}
                         <div className="max-h-56 overflow-y-auto rounded-md border border-border bg-surface-2 divide-y divide-border">
@@ -892,7 +892,7 @@ function TokensSection({
                                     aria-label={`Include all branches of ${grp.repo}`}
                                   />
                                   <span className="font-medium flex-1 truncate">{grp.repo}</span>
-                                  <span className="text-2xs text-text-muted tabular">
+                                  <span className="text-xs text-text-muted tabular">
                                     {onCount}/{grp.rows.length} branch{grp.rows.length === 1 ? "" : "es"} · viewer
                                   </span>
                                 </div>
@@ -904,7 +904,7 @@ function TokensSection({
                                       aria-label={`Include ${grp.repo} branch ${n.branch}`}
                                     />
                                     <span className="font-mono flex-1 truncate">{n.branch}</span>
-                                    <span className="font-mono text-2xs text-text-subtle truncate max-w-48">
+                                    <span className="font-mono text-xs text-text-subtle truncate max-w-48">
                                       {n.namespace}
                                     </span>
                                   </div>
@@ -913,7 +913,7 @@ function TokensSection({
                             );
                           })}
                         </div>
-                        <div className="text-2xs text-text-muted mt-1">
+                        <div className="text-xs text-text-muted mt-1">
                           A token reads a repository only if it is listed here; join more from Repositories.
                         </div>
                       </div>
@@ -938,7 +938,7 @@ function TokensSection({
                         New namespace
                       </Button>
                     </div>
-                    <p className="text-2xs text-text-subtle mt-1">
+                    <p className="text-xs text-text-subtle mt-1">
                       {selectedNs.length} selected — and nothing else, whatever you join later. Priority = search order
                       (1 = searched first). Role is capped at your grant. Or create a new namespace below.
                     </p>
@@ -1012,7 +1012,7 @@ function TokensSection({
                         {s.revoked_at && <Badge text="Revoked" state="danger" size="sm" />}
                         <SaExpiryBadge expiresAt={s.expires_at} revoked={!!s.revoked_at} />
                       </div>
-                      <div className="text-2xs text-text-muted tabular">
+                      <div className="text-xs text-text-muted tabular">
                         {describeTokenScope(s)} · created {relativeTime(s.created_at)}
                         {" · "}
                         {s.last_used_at ? (
@@ -1022,7 +1022,7 @@ function TokensSection({
                         )}
                       </div>
                       {stranded && (
-                        <div className="text-2xs text-warn mt-0.5">
+                        <div className="text-xs text-warn mt-0.5">
                           Not connecting? Check the client's MCP config + restart it. If still nothing after a minute,
                           revoke this and generate a fresh token.
                         </div>
@@ -1118,24 +1118,24 @@ function TokensSection({
                   <div className="text-xs font-medium text-text">
                     Recommended: the plugin (tools, memory primer, capture)
                   </div>
-                  <div className="text-2xs text-text-muted leading-relaxed">
+                  <div className="text-xs text-text-muted leading-relaxed">
                     1. Save the token where the plugin, the CLI and the SDK all read it —{" "}
                     <code>~/.loom/config.json</code> (chmod 600):
                   </div>
                   <div className="relative">
-                    <pre className="text-2xs font-mono bg-surface-2 rounded-lg p-3 overflow-auto whitespace-pre-wrap">
+                    <pre className="text-xs font-mono bg-surface-2 rounded-lg p-3 overflow-auto whitespace-pre-wrap">
                       {configJson}
                     </pre>
                     <CopyButton text={configJson} label="Copy" ariaLabel="Copy config.json" />
                   </div>
-                  <div className="text-2xs text-text-muted leading-relaxed">
+                  <div className="text-xs text-text-muted leading-relaxed">
                     2. Install the plugin; it mounts the Loom tools itself and reads that file. Leave the token prompt
                     empty.
                   </div>
-                  <pre className="text-2xs font-mono bg-surface-2 rounded-lg p-3 overflow-auto whitespace-pre-wrap">
+                  <pre className="text-xs font-mono bg-surface-2 rounded-lg p-3 overflow-auto whitespace-pre-wrap">
                     {plugin}
                   </pre>
-                  <div className="text-2xs text-text-muted leading-relaxed pt-1 border-t border-border">
+                  <div className="text-xs text-text-muted leading-relaxed pt-1 border-t border-border">
                     <span className="font-medium text-text">Tools only, no hooks:</span> register the server below
                     instead. Pick one — a user-scope <code>loom</code> entry outranks the plugin's own server.
                   </div>
@@ -1143,7 +1143,7 @@ function TokensSection({
               );
             })()}
           <div className="relative">
-            <pre className="text-2xs font-mono bg-surface-2 rounded-lg p-3 whitespace-pre-wrap">
+            <pre className="text-xs font-mono bg-surface-2 rounded-lg p-3 whitespace-pre-wrap">
               {mcpResult
                 ? configPreviewText(
                     formatMcpConfig({
@@ -1176,11 +1176,11 @@ function TokensSection({
               const lines = cfg.envLines ? `${cfg.command}\n${cfg.envLines}` : cfg.command;
               return (
                 <div className="space-y-2">
-                  <div className="text-2xs text-text-muted leading-relaxed">
+                  <div className="text-xs text-text-muted leading-relaxed">
                     Or register it from a terminal (the client writes its own config file):
                   </div>
                   <div className="relative">
-                    <pre className="text-2xs font-mono bg-surface-2 rounded-lg p-3 overflow-auto whitespace-pre-wrap">
+                    <pre className="text-xs font-mono bg-surface-2 rounded-lg p-3 overflow-auto whitespace-pre-wrap">
                       {lines}
                     </pre>
                     <CopyButton text={lines} label="Copy command" />
@@ -1195,18 +1195,18 @@ function TokensSection({
               return (
                 <div className="space-y-2 pt-3 border-t border-border">
                   <div className="text-xs font-medium text-text">Automatic capture and recall</div>
-                  <div className="text-2xs text-text-muted leading-relaxed">
+                  <div className="text-xs text-text-muted leading-relaxed">
                     The entry above gives Codex the Loom <em>tools</em>. To also load a memory primer at session start
                     and record decisions as you work, install the capture plugin; its hooks read the token from{" "}
                     <code>LOOM_API_KEY</code> or <code>~/.loom/config.json</code>.
                   </div>
-                  <pre className="text-2xs font-mono bg-surface-2 rounded-lg p-3 overflow-auto whitespace-pre-wrap">
+                  <pre className="text-xs font-mono bg-surface-2 rounded-lg p-3 overflow-auto whitespace-pre-wrap">
                     {plugin}
                   </pre>
                 </div>
               );
             })()}
-          <div className="text-2xs text-text-muted leading-relaxed">
+          <div className="text-xs text-text-muted leading-relaxed">
             Token lives in the list below — revoke it to disconnect every client at once.
           </div>
         </div>
@@ -1228,7 +1228,7 @@ function TokensSection({
           />
           <div className="relative">
             <div className="text-xs text-text-muted mb-1.5">Token</div>
-            <pre className="text-2xs font-mono bg-surface-2 rounded-lg p-3 break-all whitespace-pre-wrap">
+            <pre className="text-xs font-mono bg-surface-2 rounded-lg p-3 break-all whitespace-pre-wrap">
               {mintedToken?.token ?? ""}
             </pre>
             <CopyButton text={mintedToken?.token ?? ""} label="Copy token" className={COPY_BELOW_CAPTION} />
@@ -1237,15 +1237,15 @@ function TokensSection({
           {mintedToken && (
             <div className="relative">
               <div className="text-xs text-text-muted mb-1.5">Connect your bot — Python</div>
-              <pre className="text-2xs font-mono bg-surface-2 rounded-lg p-3 overflow-x-auto whitespace-pre">
+              <pre className="text-xs font-mono bg-surface-2 rounded-lg p-3 overflow-x-auto whitespace-pre">
                 {botSnippet(mintedToken)}
               </pre>
               <CopyButton text={botSnippet(mintedToken)} label="Copy code" className={COPY_BELOW_CAPTION} />
-              <div className="mt-1.5 text-2xs text-text-muted leading-relaxed">
+              <div className="mt-1.5 text-xs text-text-muted leading-relaxed">
                 Install with{" "}
-                <code className="font-mono text-2xs bg-surface-2 px-1 rounded">pip install clickhouse-loom</code>. The
+                <code className="font-mono text-xs bg-surface-2 px-1 rounded">pip install clickhouse-loom</code>. The
                 same token also works on raw HTTP:{" "}
-                <code className="font-mono text-2xs bg-surface-2 px-1 rounded">
+                <code className="font-mono text-xs bg-surface-2 px-1 rounded">
                   curl -H "Authorization: Bearer $LOOM_API_KEY" {mintedToken.baseUrl}/v1/memory.search
                 </code>
               </div>
@@ -1312,7 +1312,7 @@ function TokensStatusSummary({ tokens }: { tokens: ServiceAccountEntry[] | null 
 function SaExpiryBadge({ expiresAt, revoked }: { expiresAt: string | null; revoked: boolean }) {
   if (revoked) return null;
   if (!expiresAt) {
-    return <span className="ml-2 text-2xs text-text-subtle">never expires</span>;
+    return <span className="ml-2 text-xs text-text-subtle">never expires</span>;
   }
   const expiryMs = new Date(expiresAt).getTime();
   const now = Date.now();
@@ -1320,7 +1320,7 @@ function SaExpiryBadge({ expiresAt, revoked }: { expiresAt: string | null; revok
   const expired = expiryMs < now;
   const expiringSoon = !expired && expiryMs - now <= FOURTEEN_DAYS;
   const tone = expired ? "text-danger" : expiringSoon ? "text-warn" : "text-text-muted";
-  return <span className={`ml-2 text-2xs ${tone}`}>{expired ? "expired" : `expires ${relativeTime(expiresAt)}`}</span>;
+  return <span className={`ml-2 text-xs ${tone}`}>{expired ? "expired" : `expires ${relativeTime(expiresAt)}`}</span>;
 }
 
 // The copy button of a boxed block with a caption above it.
@@ -1331,23 +1331,23 @@ function BotConnectPreview({ org, namespace, baseUrl }: { org: string; namespace
   return (
     <div className="mt-2 rounded-lg border border-border bg-surface-2 p-3">
       <div className="flex items-start justify-between gap-3 mb-2">
-        <div className="text-2xs text-text-muted leading-relaxed">
+        <div className="text-xs text-text-muted leading-relaxed">
           Export the minted token as <code className="font-mono">LOOM_API_KEY</code>; the namespace follows the first
           one you tick.
         </div>
         <CopyButton
           text={code}
           label="Copy code"
-          className="shrink-0 inline-flex items-center gap-1 px-2 py-1 text-2xs font-medium bg-surface border border-border rounded-md hover:bg-surface-3"
+          className="shrink-0 inline-flex items-center gap-1 px-2 py-1 text-xs font-medium bg-surface border border-border rounded-md hover:bg-surface-3"
         />
       </div>
-      <pre className="text-2xs font-mono bg-bg rounded-lg p-3 max-h-72 overflow-auto whitespace-pre border border-border">
+      <pre className="text-xs font-mono bg-bg rounded-lg p-3 max-h-72 overflow-auto whitespace-pre border border-border">
         {code}
       </pre>
-      <div className="mt-2 text-2xs text-text-muted leading-relaxed">
-        Install with <code className="font-mono text-2xs bg-surface px-1 rounded">pip install clickhouse-loom</code>.
+      <div className="mt-2 text-xs text-text-muted leading-relaxed">
+        Install with <code className="font-mono text-xs bg-surface px-1 rounded">pip install clickhouse-loom</code>.
         Same JWT also works on raw HTTP — set{" "}
-        <code className="font-mono text-2xs bg-surface px-1 rounded">Authorization: Bearer $LOOM_API_KEY</code>.
+        <code className="font-mono text-xs bg-surface px-1 rounded">Authorization: Bearer $LOOM_API_KEY</code>.
       </div>
     </div>
   );
@@ -1374,7 +1374,7 @@ function Field({ hint, children }: { hint?: string; children: React.ReactNode })
   return (
     <div>
       {children}
-      {hint && <div className="text-2xs text-text-subtle mt-1">{hint}</div>}
+      {hint && <div className="text-xs text-text-subtle mt-1">{hint}</div>}
     </div>
   );
 }
@@ -1421,8 +1421,8 @@ function ImportCuratedPanel() {
     <div className="space-y-3">
       <div className="text-xs text-text-muted leading-relaxed">
         Paste a doc that represents reviewed knowledge — your AGENTS.md, CLAUDE.md, .cursor/rules, or any
-        operating-principles doc. Each <code className="font-mono text-2xs">##</code> section becomes one memory in{" "}
-        <code className="font-mono text-2xs">{identity.namespace}</code>. The import bypasses the review queue but still
+        operating-principles doc. Each <code className="font-mono text-xs">##</code> section becomes one memory in{" "}
+        <code className="font-mono text-xs">{identity.namespace}</code>. The import bypasses the review queue but still
         respects pinned memories: if a section contradicts a pinned memory it's rejected per-row.
       </div>
       <div className="grid grid-cols-[1fr_auto] gap-2">
@@ -1452,10 +1452,10 @@ function ImportCuratedPanel() {
             {result.rows.map((r, i) => (
               <div key={i} className="flex items-center gap-2 text-xs">
                 <Badge text={r.verdict} state={VERDICT_STATES[r.verdict] ?? "neutral"} size="sm" />
-                <span className="font-mono text-2xs truncate">{r.memory_key}</span>
-                <span className="text-text-muted text-2xs truncate flex-1">{r.section_heading}</span>
+                <span className="font-mono text-xs truncate">{r.memory_key}</span>
+                <span className="text-text-muted text-xs truncate flex-1">{r.section_heading}</span>
                 {r.rejection_reason && (
-                  <span className="text-warn text-2xs min-w-0 break-words">{r.rejection_reason}</span>
+                  <span className="text-warn text-xs min-w-0 break-words">{r.rejection_reason}</span>
                 )}
               </div>
             ))}

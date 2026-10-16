@@ -1,5 +1,4 @@
 import react from "@vitejs/plugin-react";
-import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 // Unit, component and axe tests. jsdom, one setup file, `src/**/*.test.{ts,tsx}` only —
@@ -7,12 +6,6 @@ import { defineConfig } from "vitest/config";
 // production build.
 export default defineConfig({
   plugins: [react()],
-  resolve: {
-    // Specs import Testing Library through src/test/rtl.tsx, which adds the app's providers.
-    alias: [
-      { find: /^@testing-library\/react$/, replacement: fileURLToPath(new URL("./src/test/rtl.tsx", import.meta.url)) },
-    ],
-  },
   test: {
     environment: "jsdom",
     include: ["src/**/*.test.{ts,tsx}"],

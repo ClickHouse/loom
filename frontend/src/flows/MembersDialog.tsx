@@ -238,7 +238,7 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
                     <RoleIcon role={r.requested_role} />
                     <div className="min-w-0 flex-1">
                       <div className="break-all font-mono text-sm">{r.subject}</div>
-                      <div className="text-2xs text-text-muted">
+                      <div className="text-xs text-text-muted">
                         {hasBase ? (
                           <>
                             currently <span className="font-medium">{r.role}</span> · requesting{" "}
@@ -310,7 +310,7 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
                         Withdraw
                       </Button>
                     ) : (
-                      <span className="px-2 text-2xs text-text-muted">awaiting admin</span>
+                      <span className="px-2 text-xs text-text-muted">awaiting admin</span>
                     )}
                   </div>
                 );
@@ -329,9 +329,9 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
                 <div className="min-w-0 flex-1">
                   <div className="truncate font-mono text-sm">
                     {r.subject}
-                    {r.subject === me && <span className="ml-2 font-sans text-2xs text-text-subtle">(you)</span>}
+                    {r.subject === me && <span className="ml-2 font-sans text-xs text-text-subtle">(you)</span>}
                   </div>
-                  <div className="text-2xs text-text-muted">
+                  <div className="text-xs text-text-muted">
                     Granted {relativeTime(r.granted_at)} by {r.granted_by}
                   </div>
                 </div>
@@ -394,7 +394,7 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
               />
             </div>
           </div>
-          <p className="text-2xs text-text-muted">{roles.find((r) => r.value === newRole)?.desc}</p>
+          <p className="text-xs text-text-muted">{roles.find((r) => r.value === newRole)?.desc}</p>
         </div>
       )}
 

@@ -1,6 +1,6 @@
 // A card computes a bounded preview, never a pretty-print of the whole value that is
 // re-parsed to detect an envelope.
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "../test/rtl";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { previewValue } from "./format";
 import { detectEncodedRecord, detectEncodedValue } from "./encoded";

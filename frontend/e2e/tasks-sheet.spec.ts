@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { installApi } from "./fixtures";
 
-// The task detail at every width. Under 1180 px it is a modal sheet: a dialog that takes
+// The task detail at every width. Under 1280 px it is a modal sheet: a dialog that takes
 // the focus, keeps it, closes on Escape (clearing ?task=) and hands the focus back to the
 // row. Wider, it is the side panel, and Escape closes that too.
 

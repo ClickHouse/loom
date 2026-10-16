@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "../test/rtl";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TokenReadScopePanel } from "./TokenReadScope";
 

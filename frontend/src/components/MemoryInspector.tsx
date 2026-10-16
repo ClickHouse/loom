@@ -863,7 +863,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                                 !isCurrent ? "hover:bg-surface-3" : ""
                               }`}
                             >
-                              <div className="flex items-center justify-between text-2xs tabular text-text-muted mb-0.5 gap-2">
+                              <div className="flex items-center justify-between text-xs tabular text-text-muted mb-0.5 gap-2">
                                 <span className="inline-flex items-center gap-1">
                                   {!isCurrent && (
                                     <Icon
@@ -885,7 +885,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                               {changed.length > 0 && (
                                 <div
                                   data-testid="history-change"
-                                  className="text-2xs text-text-muted [overflow-wrap:anywhere]"
+                                  className="text-xs text-text-muted [overflow-wrap:anywhere]"
                                 >
                                   {changed.join(" · ")}
                                 </div>
@@ -929,7 +929,7 @@ export function MemoryInspector({ identity, memoryKey, onClose, onChanged }: Ins
                             <span className="text-text-muted">{s.actor}</span>
                             <span className="text-text-subtle tabular ml-auto">{relativeTime(s.ts)}</span>
                           </div>
-                          {s.detail && <div className="text-2xs text-text-muted mt-0.5">{s.detail}</div>}
+                          {s.detail && <div className="text-xs text-text-muted mt-0.5">{s.detail}</div>}
                         </div>
                       ))}
                     </div>
@@ -1089,7 +1089,7 @@ function ProvenanceSection({
               ) : p.source_kind === "conversation" ? (
                 <>
                   From a conversation · <span className="text-text-subtle">transcript not retained</span>
-                  <div className="text-2xs text-text-subtle">
+                  <div className="text-xs text-text-subtle">
                     Recording was off, or it expired past the 180-day window.
                   </div>
                 </>
@@ -1097,7 +1097,7 @@ function ProvenanceSection({
                 <>
                   {p.source_label}
                   {p.source_trace && p.source_trace !== p.source_label && (
-                    <div className="text-2xs text-text-subtle font-mono break-all">{p.source_trace}</div>
+                    <div className="text-xs text-text-subtle font-mono break-all">{p.source_trace}</div>
                   )}
                 </>
               )}
@@ -1144,7 +1144,7 @@ function ProvenanceSection({
               onClick={() => onInspect(lk.memory_key)}
               className="w-full text-left px-2 py-1.5 rounded-md hover:bg-surface-2 transition-colors group"
             >
-              <div className="flex items-center gap-1.5 text-2xs text-text-muted mb-0.5">
+              <div className="flex items-center gap-1.5 text-xs text-text-muted mb-0.5">
                 <span>{lk.direction === "out" ? "→" : "←"}</span>
                 <span>{lk.relation || "linked"}</span>
                 {lk.label && <span className="text-text-subtle">· {lk.label}</span>}
@@ -1301,7 +1301,7 @@ function CodeLinks({ links }: { links: CodeLink[] }) {
                 <span className="font-mono text-xs truncate">{l.symbol || l.path}</span>
                 <Badge state={state.state} text={state.label + since} size="sm" />
               </div>
-              <p className="text-2xs font-mono text-text-subtle break-all">
+              <p className="text-xs font-mono text-text-subtle break-all">
                 {l.code_namespace}
                 {l.symbol ? ` · ${l.path}` : ""}
               </p>
@@ -1574,7 +1574,7 @@ function EntityChip({ entity, small = false }: { entity: string; small?: boolean
     <a
       href={graphSeedHref(entity)}
       onClick={onGraphLinkClick(entity)}
-      className={`inline-flex items-center gap-1 rounded-md bg-surface-2 text-text no-underline hover:text-accent transition-colors ${small ? "text-2xs px-1.5 py-px" : "text-xs px-2 py-0.5"}`}
+      className={`inline-flex items-center gap-1 rounded-md bg-surface-2 text-text no-underline hover:text-accent transition-colors ${small ? "text-xs px-1.5 py-px" : "text-xs px-2 py-0.5"}`}
     >
       <Icon name="share-network" size="xs" aria-hidden="true" />
       <span className="sr-only">Open the graph around </span>

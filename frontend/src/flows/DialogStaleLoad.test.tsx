@@ -1,7 +1,7 @@
 /** A dialog whose namespace changes while a load is in flight shows the new namespace's
  *  data, even when the old namespace's response lands last. */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "../test/rtl";
 import { MembersDialog } from "./MembersDialog";
 import { ProfileSectionDialog } from "./ProfileSectionDialog";
 import { InboxSettingsDialog } from "./InboxSettingsDialog";

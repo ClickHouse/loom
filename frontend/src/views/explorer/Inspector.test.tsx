@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen } from "../../test/rtl";
 import { describe, expect, it, vi } from "vitest";
 import { axeViolations } from "../../test/axe";
 import { Inspector } from "./Inspector";

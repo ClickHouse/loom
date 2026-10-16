@@ -63,7 +63,7 @@ export function DiffView({ prev, next, prevLabel, nextLabel }: DiffViewProps) {
   }
   return (
     <div className="rounded-sm border border-border bg-surface-2 overflow-hidden font-mono text-xs">
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-surface-3 text-2xs text-text-muted tabular">
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-surface-3 text-xs text-text-muted tabular">
         <span>− {prevLabel}</span>
         <span>+ {nextLabel}</span>
       </div>

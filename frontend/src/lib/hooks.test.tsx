@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen } from "../test/rtl";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAbortableEffect, useVisiblePoll } from "./hooks";

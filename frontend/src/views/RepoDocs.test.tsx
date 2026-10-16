@@ -4,7 +4,7 @@
  * counted as an agent), a maintainer adds one without typing an address and removes one
  * after a confirm; a refusal says "join".
  */
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 

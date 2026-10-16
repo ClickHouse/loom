@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { Popover } from "@clickhouse/click-ui/Popover";
@@ -27,6 +27,7 @@ const SESSION_TTL_MS = 120_000;
  * dropdown lists the inboxes with something waiting and opens the Tasks view on one.
  */
 export function TaskInboxBell() {
+  const headingId = useId();
   const identity = useStore((s) => s.identity);
   const whoami = useStore((s) => s.whoami);
   const myNamespaces = useStore((s) => s.myNamespaces);
@@ -100,8 +101,14 @@ export function TaskInboxBell() {
         </PopoverTrigger>
         {total > 0 && <CountBadge count={total} state="warning" />}
       </span>
-      <Popover.Content align="end" className="w-[min(400px,92vw)] max-h-[480px] overflow-y-auto">
-        <h2 className="section-label pb-2 border-b border-border">Tasks waiting · {total}</h2>
+      <Popover.Content
+        align="end"
+        aria-labelledby={headingId}
+        className="w-[min(400px,92vw)] max-h-[480px] overflow-y-auto"
+      >
+        <h2 id={headingId} className="section-label pb-2 border-b border-border">
+          Tasks waiting · {total}
+        </h2>
         {inboxes.length === 0 && (
           <div className="py-6 text-sm text-text-muted text-center">
             Nothing waits for you.
@@ -132,7 +139,7 @@ export function TaskInboxBell() {
             <Icon name="email" size="xs" aria-hidden="true" className="mt-1" />
             <div className="flex-1 min-w-0">
               <div className="text-sm font-medium font-mono break-all">{a.inbox}</div>
-              <div className="text-2xs text-text-muted mt-0.5">
+              <div className="text-xs text-text-muted mt-0.5">
                 {[
                   a.triage > 0 ? `${a.triage} in triage` : "",
                   a.blockedHuman > 0 ? `${a.blockedHuman} blocked on a person` : "",
@@ -143,7 +150,7 @@ export function TaskInboxBell() {
                   .join(" · ")}
               </div>
             </div>
-            <span className="text-2xs text-text-subtle mt-1 shrink-0">Open →</span>
+            <span className="text-xs text-text-subtle mt-1 shrink-0">Open →</span>
           </button>
         ))}
       </Popover.Content>

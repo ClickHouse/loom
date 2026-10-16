@@ -499,7 +499,7 @@ export function HeaderSearch({
                           size="sm"
                           state={r.visibility === "public" ? "success" : "default"}
                         />
-                        {!r.joined && <span className="text-2xs text-text-subtle">not joined</span>}
+                        {!r.joined && <span className="text-xs text-text-subtle">not joined</span>}
                       </div>
                       {r.description && <div className="text-xs text-text-muted mt-0.5 truncate">{r.description}</div>}
                     </a>
@@ -554,7 +554,7 @@ export function HeaderSearch({
                       <div className="flex items-center gap-2 min-w-0">
                         <TypeChip label="memory" />
                         <span className="font-mono text-sm truncate">{e.memory_key}</span>
-                        <span className="text-2xs text-text-subtle shrink-0 ml-auto">
+                        <span className="text-xs text-text-subtle shrink-0 ml-auto">
                           {e.memory_type}
                           {e.created_at ? ` · ${relativeTime(e.created_at)}` : ""}
                         </span>
@@ -776,19 +776,19 @@ function EmptyState({
       <div className="section-label pt-2 pb-1 border-t border-border mt-2">Syntax</div>
       <div className="pb-1 space-y-1 text-xs text-text-muted">
         <div className="flex items-baseline gap-2">
-          <code className="font-mono text-2xs px-1.5 py-0.5 rounded-sm bg-surface-2 text-text">coffee</code>
+          <code className="font-mono text-xs px-1.5 py-0.5 rounded-sm bg-surface-2 text-text">coffee</code>
           <span>match across profile, memory, library</span>
         </div>
         <div className="flex items-baseline gap-2">
-          <code className="font-mono text-2xs px-1.5 py-0.5 rounded-sm bg-surface-2 text-text">tag:work</code>
+          <code className="font-mono text-xs px-1.5 py-0.5 rounded-sm bg-surface-2 text-text">tag:work</code>
           <span>memories + library tagged work (partial OK)</span>
         </div>
         <div className="flex items-baseline gap-2">
-          <code className="font-mono text-2xs px-1.5 py-0.5 rounded-sm bg-surface-2 text-text">namespace:qa</code>
+          <code className="font-mono text-xs px-1.5 py-0.5 rounded-sm bg-surface-2 text-text">namespace:qa</code>
           <span>jump to a namespace</span>
         </div>
         <div className="flex items-baseline gap-2">
-          <code className="font-mono text-2xs px-1.5 py-0.5 rounded-sm bg-surface-2 text-text">
+          <code className="font-mono text-xs px-1.5 py-0.5 rounded-sm bg-surface-2 text-text">
             type:profile|memory|doc
           </code>
           <span>constrain to one content type</span>
@@ -812,7 +812,7 @@ function NoResults({ q }: { q: string }) {
       <div>
         No matches for <span className="font-mono text-text">{q}</span>
       </div>
-      <div className="text-2xs text-text-subtle mt-1.5">
+      <div className="text-xs text-text-subtle mt-1.5">
         Try <code className="font-mono">tag:</code>, <code className="font-mono">namespace:</code>, or{" "}
         <code className="font-mono">type:</code>.
       </div>

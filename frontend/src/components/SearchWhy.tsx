@@ -23,7 +23,7 @@ export function SearchWhy({ hit, rank }: SearchWhyProps) {
     .trim();
   return (
     <div
-      className="mt-1 px-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-2xs text-text-muted tabular"
+      className="mt-1 px-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-text-muted tabular"
       data-testid="search-why"
     >
       <span className="font-medium text-text">#{rank}</span>

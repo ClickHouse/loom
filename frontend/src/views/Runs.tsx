@@ -96,7 +96,7 @@ function TipBadge({ text, tip }: { text: string; tip: string }) {
 function Stat({ label, help, children }: { label: string; help?: string; children: ReactNode }) {
   return (
     <div>
-      <dt className="text-2xs text-text-muted flex items-center gap-0.5">
+      <dt className="text-xs text-text-muted flex items-center gap-0.5">
         {label}
         {help && <IconButton icon="info-in-circle" size="xs" label={`About ${label}`} tooltip={help} />}
       </dt>
@@ -260,7 +260,7 @@ function runRow(r: RunRow, onOpen: (r: RunRow) => void): TableRowType {
                 />
               )}
             </div>
-            <div className="text-2xs font-mono text-text-subtle truncate">
+            <div className="text-xs font-mono text-text-subtle truncate">
               {dim ? (inferred ? "connection only — no memory activity" : "no memory activity") : r.run_id}
             </div>
           </div>
@@ -475,7 +475,7 @@ export function Runs() {
                     {g.runs.length} run{g.runs.length === 1 ? "" : "s"}
                   </span>
                 </div>
-                <div className="text-2xs text-text-muted whitespace-nowrap">
+                <div className="text-xs text-text-muted whitespace-nowrap">
                   {g.used} relied on · {g.written} written · {relativeTime(g.latest)}
                 </div>
               </div>
@@ -502,9 +502,9 @@ export function Runs() {
           openerRef.current?.focus();
         }}
       >
-        <div className="text-2xs text-text-muted font-mono truncate">{open?.run_id}</div>
+        <div className="text-xs text-text-muted font-mono truncate">{open?.run_id}</div>
         {open && (
-          <div className="text-2xs text-text-muted mt-1 mb-4 flex items-center gap-2 flex-wrap">
+          <div className="text-xs text-text-muted mt-1 mb-4 flex items-center gap-2 flex-wrap">
             <StatusBadge status={open.status} inferred={metaBool(open.metadata, "implicit")} />
             <span>{displayAgent(open.agent)}</span>
             {open.session_id && open.session_id !== "-" && (
@@ -630,7 +630,7 @@ export function Runs() {
               })()}
             {!detailLoading && detail && detail.recalled_keys.length > 0 && (
               <div className="mt-3">
-                <div className="text-2xs text-text-muted mb-1">recalled keys</div>
+                <div className="text-xs text-text-muted mb-1">recalled keys</div>
                 <KeyChipButtons keys={detail.recalled_keys} empty="" />
               </div>
             )}
@@ -654,7 +654,7 @@ export function Runs() {
           )}
           {open && Object.keys(open.metadata || {}).length > 0 && (
             <Section title="Metadata">
-              <pre className="text-2xs font-mono whitespace-pre-wrap break-all">
+              <pre className="text-xs font-mono whitespace-pre-wrap break-all">
                 {JSON.stringify(open.metadata, null, 2)}
               </pre>
             </Section>

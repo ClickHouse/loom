@@ -354,7 +354,7 @@ export function Sharing() {
                     { label: <span className="tabular">{a.writes.toLocaleString()}</span> },
                     { label: <span className="tabular">{a.recalls.toLocaleString()}</span> },
                     { label: <span className="tabular">{a.cross_namespace_recalls.toLocaleString()}</span> },
-                    { label: <span className="text-2xs text-text-muted">{isSentinel ? "—" : agentPattern(a)}</span> },
+                    { label: <span className="text-xs text-text-muted">{isSentinel ? "—" : agentPattern(a)}</span> },
                   ],
                 };
               })}

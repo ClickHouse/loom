@@ -155,7 +155,7 @@ export function RepoDocsList({
                   >
                     {d.title || d.source_uri}
                   </button>
-                  <div className="text-2xs text-text-muted truncate">
+                  <div className="text-xs text-text-muted truncate">
                     {d.description ? <>{d.description} · </> : null}
                     {d.ingested_at ? `added ${relativeTime(d.ingested_at)}` : ""}
                     {phrase ? (
@@ -184,7 +184,7 @@ export function RepoDocsList({
           })}
         </ul>
       )}
-      {state.kind === "ready" && state.more && <p className="text-2xs text-text-muted">Showing the first {LIMIT}.</p>}
+      {state.kind === "ready" && state.more && <p className="text-xs text-text-muted">Showing the first {LIMIT}.</p>}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         {maintained && state.kind !== "refused" && (
           <Button type="empty" htmlType="button" iconLeft="plus" disabled={busy} onClick={() => setAdding(true)}>
@@ -192,7 +192,7 @@ export function RepoDocsList({
           </Button>
         )}
         {state.kind === "ready" && (state.rows.length > 0 || maintained) && (
-          <span className="text-2xs text-text-muted">{REPO_DOCS_HINT}</span>
+          <span className="text-xs text-text-muted">{REPO_DOCS_HINT}</span>
         )}
       </div>
       {adding && (

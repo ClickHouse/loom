@@ -145,7 +145,7 @@ function SqlBlock({ table, sql, copyLabel }: { table: string; sql: string; copyL
         <span className="text-xs font-mono">{table}</span>
         <CopyButton text={sql} label="Copy SQL" ariaLabel={copyLabel} />
       </div>
-      <pre className="max-h-56 overflow-auto p-2 text-2xs leading-relaxed font-mono whitespace-pre">{sql}</pre>
+      <pre className="max-h-56 overflow-auto p-2 text-xs leading-relaxed font-mono whitespace-pre">{sql}</pre>
     </div>
   );
 }
@@ -802,7 +802,7 @@ function TableCard({ t, defaultOpen }: { t: ContractTable; defaultOpen: boolean 
         />
         <span className="font-mono text-sm">{t.table}</span>
         <span className="text-xs text-text-muted">{t.note}</span>
-        <span className="text-2xs text-text-subtle ml-auto">
+        <span className="text-xs text-text-subtle ml-auto">
           {t.columns.length} column{t.columns.length === 1 ? "" : "s"}
           {must ? ` · ${must} must map` : ""}
         </span>
@@ -1235,7 +1235,7 @@ function Capabilities({ caps }: { caps: Record<string, boolean> }) {
         ))}
       </ul>
       {off.length > 0 && (
-        <p className="text-2xs text-text-subtle">
+        <p className="text-xs text-text-subtle">
           Map more fields later (Trackers → Edit mapping) to switch the rest on.
         </p>
       )}

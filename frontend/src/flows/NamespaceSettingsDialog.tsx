@@ -251,7 +251,7 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
                       {(ns.daily_cost_cap_usd ?? 0) === 0 ? "inherits the global default" : "per 24h rolling window"}
                     </span>
                   </div>
-                  <p className="mt-1.5 text-2xs leading-relaxed text-text-muted">
+                  <p className="mt-1.5 text-xs leading-relaxed text-text-muted">
                     Once this namespace's upstream LLM spend over the last 24h reaches the cap, background entity
                     extraction, code summaries and code-ingest descriptions skip, code.search skips query expansion, and
                     memory.ask, code.ask and knowledge.synthesize answer without synthesis until spend drops. Writes are
@@ -275,7 +275,7 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
                 }}
                 options={joinRules.map(([value, label, description]) => ({ value, label, description }))}
               />
-              <p className="mt-1.5 text-2xs text-text-muted">
+              <p className="mt-1.5 text-xs text-text-muted">
                 {isRepo ? (
                   <>
                     Right now this repository is{" "}
@@ -306,7 +306,7 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
                     disabled={locked}
                     onCheckedChange={(c) => save({ requires_approval: c === true })}
                   />
-                  <p id="ns-requires-approval-hint" className="mt-0.5 ml-6 text-2xs text-text-muted">
+                  <p id="ns-requires-approval-hint" className="mt-0.5 ml-6 text-xs text-text-muted">
                     Writer and admin joins always require approval. Turn this on if even read-only access should be
                     reviewed first.
                   </p>
@@ -326,7 +326,7 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
                     disabled={locked}
                     onCheckedChange={(c) => save({ capture_generation_io: c === true })}
                   />
-                  <p id="ns-capture-hint" className="mt-0.5 ml-6 text-2xs text-text-muted">
+                  <p id="ns-capture-hint" className="mt-0.5 ml-6 text-xs text-text-muted">
                     Off unless you tick it, so none of your text is kept. Tick this and loom records your{" "}
                     <em>search wording</em> plus the memory text and conversation turns it sends to the model while
                     answering &mdash; which is what makes a bad recall diagnosable afterwards. Counts, cost, latency,
@@ -341,7 +341,7 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
               <div className="mt-2 border-t border-border pt-4">
                 <div className="mb-2 text-xs font-medium text-danger">Danger zone</div>
                 <div className="flex items-start justify-between gap-3">
-                  <p className="text-2xs text-text-muted">
+                  <p className="text-xs text-text-muted">
                     Delete deactivates the namespace. Existing data stays queryable for forensics. For full erasure run
                     an erasure.request separately.
                   </p>

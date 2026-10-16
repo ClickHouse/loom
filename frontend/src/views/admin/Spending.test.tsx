@@ -1,7 +1,7 @@
 /** After a cap save the Usage page shows the server's budget for the namespace it is on:
  *  a removed cap reads the global one, and a save that lands after a namespace switch
  *  leaves the new namespace's bar alone. */
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "../../test/rtl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../../api";
 import type { BudgetStatus, NamespaceInfo } from "../../api";

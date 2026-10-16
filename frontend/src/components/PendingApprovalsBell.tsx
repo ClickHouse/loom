@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useState, useMemo } from "react";
+import { lazy, Suspense, useEffect, useId, useMemo, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
@@ -25,6 +25,7 @@ interface AdminPending {
 }
 
 export function PendingApprovalsBell() {
+  const headingId = useId();
   const identity = useStore((s) => s.identity);
   const whoami = useStore((s) => s.whoami);
   const [items, setItems] = useState<AdminPending[]>([]);
@@ -145,8 +146,14 @@ export function PendingApprovalsBell() {
         </PopoverTrigger>
         {items.length > 0 && <CountBadge count={items.length} state="neutral" />}
       </span>
-      <Popover.Content align="end" className="w-[min(440px,92vw)] max-h-[480px] overflow-y-auto">
-        <h2 className="section-label pb-2 border-b border-border">Pending approvals · {items.length}</h2>
+      <Popover.Content
+        align="end"
+        aria-labelledby={headingId}
+        className="w-[min(440px,92vw)] max-h-[480px] overflow-y-auto"
+      >
+        <h2 id={headingId} className="section-label pb-2 border-b border-border">
+          Pending approvals · {items.length}
+        </h2>
         {items.length === 0 && (
           <div className="py-6 text-sm text-text-muted text-center">
             No one's waiting for your approval.
@@ -219,17 +226,17 @@ export function PendingApprovalsBell() {
                 )}
               </div>
               {isServiceSubject(it.subject) && (
-                <div className="text-2xs font-mono text-text-subtle break-all">{it.subject}</div>
+                <div className="text-xs font-mono text-text-subtle break-all">{it.subject}</div>
               )}
               {it.kind === "code" && repoInfo[it.namespace] && (
-                <div className="text-2xs font-mono text-text-subtle break-all">{it.namespace}</div>
+                <div className="text-xs font-mono text-text-subtle break-all">{it.namespace}</div>
               )}
-              <div className="text-2xs text-text-muted mt-0.5">
+              <div className="text-xs text-text-muted mt-0.5">
                 {it.current_role !== it.requested_role && <>currently {it.current_role} · </>}
                 {it.pending_since && <>requested {relativeTime(it.pending_since)}</>}
               </div>
             </div>
-            <span className="text-2xs text-text-subtle mt-1 shrink-0">Review →</span>
+            <span className="text-xs text-text-subtle mt-1 shrink-0">Review →</span>
           </button>
         ))}
       </Popover.Content>

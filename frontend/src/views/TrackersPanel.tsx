@@ -138,11 +138,11 @@ function TrackerRow({
             <TipTarget tip={status.detail}>
               <Badge text={status.label} state={TONE_STATE[status.tone]} size="sm" />
             </TipTarget>
-            <span className="text-2xs text-text-subtle">
+            <span className="text-xs text-text-subtle">
               {operatorOwned(s) ? "set up by the operator" : "added from the dashboard"}
             </span>
             {/* Read through a mapping of the team's own tables, or loom's views */}
-            <span className="text-2xs text-text-subtle">
+            <span className="text-xs text-text-subtle">
               · {s.mode === "mapping" ? "your tables, mapped" : "Loom's views"}
             </span>
           </div>

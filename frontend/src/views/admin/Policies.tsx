@@ -279,9 +279,7 @@ export function Policies() {
                       <div className="font-mono text-xs">
                         <div>{r.policy_id}</div>
                         {r.updated_at && (
-                          <div className="text-2xs font-sans text-text-subtle">
-                            updated {relativeTime(r.updated_at)}
-                          </div>
+                          <div className="text-xs font-sans text-text-subtle">updated {relativeTime(r.updated_at)}</div>
                         )}
                       </div>
                     ),
@@ -464,7 +462,7 @@ function AddRuleDialog({ open, onClose, onSaved }: { open: boolean; onClose: () 
               spellCheck={false}
               className="font-mono"
             />
-            <div className="text-2xs text-text-muted mt-1.5 leading-relaxed">
+            <div className="text-xs text-text-muted mt-1.5 leading-relaxed">
               <span className="font-medium text-text">forbid</span> denies when the condition holds;{" "}
               <span className="font-medium text-text">require</span> denies when it does not. {GRAMMAR_HELP}
             </div>

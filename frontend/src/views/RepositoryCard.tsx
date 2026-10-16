@@ -623,7 +623,7 @@ export function RepositoryCard({
             {card.restricted && open && (
               // Membership reads it; a client token reads it only when added at mint
               // (Setup → For my own tools).
-              <span className="text-2xs text-text-muted" data-testid="repo-client-tokens-note">
+              <span className="text-xs text-text-muted" data-testid="repo-client-tokens-note">
                 your client tokens: only when added at Setup
               </span>
             )}

@@ -2,7 +2,7 @@
  *  requester is waiting, and the heading names the repository — nothing the approver
  *  reads truncates. */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "../test/rtl";
 import { MembersDialog } from "./MembersDialog";
 import { useStore } from "../lib/state";
 import * as api from "../api";

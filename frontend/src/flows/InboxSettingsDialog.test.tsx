@@ -3,7 +3,7 @@
  *  namespace are checked and disabled (they post regardless), the filter
  *  narrows the rows, and saving sends the checked subjects as `posters`. */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { InboxSettingsDialog } from "./InboxSettingsDialog";
 import * as tasks from "../api/tasks";

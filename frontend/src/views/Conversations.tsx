@@ -72,7 +72,7 @@ function CodeBlock({ code, lang }: { code: string; lang?: string }) {
         text={code}
         label="Copy"
         ariaLabel="Copy code"
-        className="absolute right-2 top-1 inline-flex items-center gap-1 text-2xs px-1.5 py-0.5 rounded bg-surface border border-border opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
+        className="absolute right-2 top-1 inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-surface border border-border opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
       />
       <pre className="text-xs font-mono whitespace-pre-wrap break-words bg-surface-2 border border-border rounded-lg p-3 pt-5 overflow-x-auto">
         {code}
@@ -423,8 +423,8 @@ export function Conversations() {
             className="w-full text-left p-3 rounded-xl border border-border bg-surface hover:border-border-strong flex items-start gap-3"
           >
             <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2 mb-1 text-2xs tabular">
-                <span className="font-mono text-2xs text-text-muted">{displayAgent(t.agent)}</span>
+              <div className="flex items-center gap-2 mb-1 text-xs tabular">
+                <span className="font-mono text-xs text-text-muted">{displayAgent(t.agent)}</span>
                 <span className="text-text-muted">·</span>
                 <span className="text-text-muted">
                   {t.msg_count} msg{t.msg_count === 1 ? "" : "s"}
@@ -436,7 +436,7 @@ export function Conversations() {
                 {truncate(t.last_content_excerpt, 140)}
               </div>
             </div>
-            <span className="text-2xs tabular text-text-muted shrink-0 mt-0.5">{relativeTime(t.last_seen)}</span>
+            <span className="text-xs tabular text-text-muted shrink-0 mt-0.5">{relativeTime(t.last_seen)}</span>
           </button>
         ))}
       </div>
@@ -567,7 +567,7 @@ export function Conversations() {
               <button
                 type="button"
                 onClick={() => openThreadDialog(g.thread_id, g.agent)}
-                className="w-full text-left px-3.5 py-2.5 flex items-center gap-2 text-2xs tabular hover:bg-surface-2 border-b border-border"
+                className="w-full text-left px-3.5 py-2.5 flex items-center gap-2 text-xs tabular hover:bg-surface-2 border-b border-border"
               >
                 <span className="font-mono text-text truncate">{g.thread_id}</span>
                 <span className="text-text-muted">·</span>
@@ -584,7 +584,7 @@ export function Conversations() {
                     onClick={() => openThreadDialog(g.thread_id, g.agent, h.msg_id)}
                     className="w-full text-left px-3.5 py-2.5 hover:bg-surface-2"
                   >
-                    <div className="flex items-center gap-2 mb-1 text-2xs tabular">
+                    <div className="flex items-center gap-2 mb-1 text-xs tabular">
                       <Badge text={h.role} state="neutral" size="sm" />
                       <span className="text-text-subtle ml-auto">{relativeTime(h.ts)}</span>
                     </div>
@@ -610,9 +610,9 @@ export function Conversations() {
         className="max-w-[820px] w-full"
         initialFocus="dialog"
       >
-        <div className="text-2xs text-text-muted font-mono truncate">{openThread?.thread_id}</div>
+        <div className="text-xs text-text-muted font-mono truncate">{openThread?.thread_id}</div>
         {threadDetail && (
-          <div className="text-2xs text-text-muted mt-1 flex items-center gap-2 flex-wrap">
+          <div className="text-xs text-text-muted mt-1 flex items-center gap-2 flex-wrap">
             <span>
               {threadDetail.msg_count} message{threadDetail.msg_count === 1 ? "" : "s"}
             </span>
@@ -673,9 +673,9 @@ export function Conversations() {
                     <div className="flex items-center gap-2 mb-1">
                       <span className="text-xs font-medium text-text-muted">{label}</span>
                       {typeof m.tokens === "number" && m.tokens > 0 && (
-                        <span className="text-2xs text-text-subtle">· {m.tokens} tok</span>
+                        <span className="text-xs text-text-subtle">· {m.tokens} tok</span>
                       )}
-                      <time dateTime={m.ts} className="text-2xs text-text-subtle ml-auto tabular">
+                      <time dateTime={m.ts} className="text-xs text-text-subtle ml-auto tabular">
                         {relativeTime(m.ts)}
                         <span className="sr-only"> ({m.ts})</span>
                       </time>

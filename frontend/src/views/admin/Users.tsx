@@ -146,10 +146,10 @@ export function Users() {
 
           <UserListTable data={data} filter={filter} />
 
-          <div className="mt-3 text-2xs text-text-muted">
+          <div className="mt-3 text-xs text-text-muted">
             {data.total} account{data.total === 1 ? "" : "s"} shown. To promote someone to platform admin, add their
-            email to <code className="font-mono text-2xs bg-surface-2 px-1 py-0.5 rounded">LOOM_PLATFORM_ADMINS</code>{" "}
-            in <code className="font-mono text-2xs bg-surface-2 px-1 py-0.5 rounded">.env</code> and have them re-login.
+            email to <code className="font-mono text-xs bg-surface-2 px-1 py-0.5 rounded">LOOM_PLATFORM_ADMINS</code> in{" "}
+            <code className="font-mono text-xs bg-surface-2 px-1 py-0.5 rounded">.env</code> and have them re-login.
           </div>
         </div>
       )}
@@ -290,7 +290,7 @@ function UserListTable({ data, filter }: { data: AdminUsersResult; filter: Filte
                     />
                   )}
                 </div>
-                {u.contact_email && <div className="text-2xs text-text-muted mt-0.5">{u.contact_email}</div>}
+                {u.contact_email && <div className="text-xs text-text-muted mt-0.5">{u.contact_email}</div>}
               </div>
             ),
             overflowMode: "wrap",
@@ -298,7 +298,7 @@ function UserListTable({ data, filter }: { data: AdminUsersResult; filter: Filte
           {
             label: (
               <div className="flex flex-wrap gap-1.5">
-                {u.grants.length === 0 && <span className="text-2xs text-text-muted">—</span>}
+                {u.grants.length === 0 && <span className="text-xs text-text-muted">—</span>}
                 {u.grants.map((g) => (
                   <Badge
                     key={`${g.namespace}-${g.role}`}

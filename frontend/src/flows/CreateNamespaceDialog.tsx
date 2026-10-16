@@ -135,7 +135,7 @@ export function CreateNamespaceDialog({ open, onOpenChange, onCreated }: Props) 
               checked={requiresApproval}
               onCheckedChange={(x) => setRequiresApproval(x === true)}
             />
-            <p id="create-ns-approval-hint" className="mt-1 text-2xs text-text-muted">
+            <p id="create-ns-approval-hint" className="mt-1 text-xs text-text-muted">
               Writer and admin joins always need approval. Turn this on if even viewers should be reviewed first.
             </p>
           </div>

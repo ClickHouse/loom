@@ -409,7 +409,7 @@ export function WorkersPanel() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-sm font-medium text-text">{info.label}</span>
-                    <span className="text-2xs text-text-subtle font-mono">{w.name}</span>
+                    <span className="text-xs text-text-subtle font-mono">{w.name}</span>
                     {(w.consecutive_failures ?? 0) > 0 && (
                       <Badge
                         size="sm"
@@ -433,7 +433,7 @@ export function WorkersPanel() {
                   </div>
                   <div className="text-xs text-text-muted mt-1">{info.blurb}</div>
                   {status !== "disabled" && (
-                    <div className="text-2xs text-text-subtle mt-1 tabular">
+                    <div className="text-xs text-text-subtle mt-1 tabular">
                       {w.last_run_at ? (
                         <>
                           Last ran {relativeTime(w.last_run_at)}
@@ -883,7 +883,7 @@ function Stat({
     <div className="rounded-lg border border-border bg-surface px-3 py-3">
       <div className="text-xs text-text-muted">{label}</div>
       <div className={`text-xl font-semibold tabular mt-0.5 ${tone === "warn" ? "text-warn" : ""}`}>{value}</div>
-      {hint && <div className="text-2xs text-text-muted mt-0.5">{hint}</div>}
+      {hint && <div className="text-xs text-text-muted mt-0.5">{hint}</div>}
     </div>
   );
 }

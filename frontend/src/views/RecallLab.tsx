@@ -59,9 +59,9 @@ function RecallHistoryRow({ r }: { r: SearchTraceLogRow }) {
             <span className="italic text-text-subtle">wording not recorded</span>
           )}
         </div>
-        <div className="text-2xs text-text-subtle whitespace-nowrap">{relativeTime(r.ts)}</div>
+        <div className="text-xs text-text-subtle whitespace-nowrap">{relativeTime(r.ts)}</div>
       </div>
-      <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs text-text-muted">
+      <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-muted">
         <span>
           <strong className="text-text">{r.result_count}</strong> of {r.top_k} returned
         </span>
@@ -91,7 +91,7 @@ function RecallHistoryRow({ r }: { r: SearchTraceLogRow }) {
         {r.run_id !== "" && r.run_id !== "-" && <span>run {r.run_id}</span>}
       </div>
       {pairs.length > 0 && (
-        <div className="mt-2 flex justify-end text-2xs text-text-subtle">
+        <div className="mt-2 flex justify-end text-xs text-text-subtle">
           <TipTarget tip="blended rank score at the time of the search" underline>
             score
           </TipTarget>
@@ -100,7 +100,7 @@ function RecallHistoryRow({ r }: { r: SearchTraceLogRow }) {
       {pairs.length > 0 && (
         <ul className="mt-0.5 space-y-0.5" aria-label="Returned memories with scores">
           {shown.map(({ key, score }) => (
-            <li key={key} className="grid grid-cols-[minmax(0,1fr)_3.5rem] items-center gap-x-2 text-2xs">
+            <li key={key} className="grid grid-cols-[minmax(0,1fr)_3.5rem] items-center gap-x-2 text-xs">
               <span className="min-w-0 break-all font-mono text-text-muted">{key}</span>
               <span className="text-right font-mono tabular-nums text-text">
                 {score == null ? "–" : score.toFixed(3)}
@@ -443,7 +443,7 @@ export function RecallLab() {
                 </div>
               )}
               {model && showResults && (
-                <div className="text-2xs text-text-subtle mb-2 px-1">
+                <div className="text-xs text-text-subtle mb-2 px-1">
                   {rows.length} row{rows.length === 1 ? "" : "s"} · embedder <span className="font-mono">{model}</span>
                 </div>
               )}
@@ -456,9 +456,9 @@ export function RecallLab() {
                           #{i + 1}
                         </span>
                         <div className="flex-1 min-w-0">
-                          <p className="text-2xs font-mono text-text-subtle break-all">{row.key}</p>
+                          <p className="text-xs font-mono text-text-subtle break-all">{row.key}</p>
                           <p className="text-sm text-text break-words">{row.text}</p>
-                          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs font-mono text-text-muted">
+                          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-mono text-text-muted">
                             {row.keyword && (
                               <TipTarget tip="its text holds the query; the Memories list shows these first, newest first">
                                 <Badge text="keyword match" state="neutral" size="sm" />

@@ -159,7 +159,7 @@ export function MemoryCard({
             className="pointer-events-auto relative z-[1]"
           />
         ))}
-        <span className="text-2xs text-text-subtle tabular ml-auto">
+        <span className="text-xs text-text-subtle tabular ml-auto">
           {timeMode === "absolute" ? timeOfDay(entry.created_at) : relativeTime(entry.created_at)}
         </span>
       </div>

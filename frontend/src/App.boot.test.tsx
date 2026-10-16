@@ -8,7 +8,7 @@
 //   - the view's chunk is preloaded for the URL before any answer,
 //   - the page's first data read leaves while list_mine is still pending,
 //   - the late list_mine answer does not replay the page's reads.
-import { act, cleanup, render } from "@testing-library/react";
+import { act, cleanup, render } from "./test/rtl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { preloadView } = vi.hoisted(() => ({ preloadView: vi.fn() }));

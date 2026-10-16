@@ -1,4 +1,4 @@
-import { renderHook } from "@testing-library/react";
+import { renderHook } from "../test/rtl";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   navigationHref,

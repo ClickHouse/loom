@@ -254,14 +254,14 @@ export function TaskEditDialog({ open, onOpenChange, identity, mode, onSaved }: 
           <div className="rounded-lg border border-border p-3 space-y-1.5">
             <div className="section-label">Your edit</div>
             <div className="font-medium break-words">{title}</div>
-            <pre className="whitespace-pre-wrap break-words font-mono text-2xs text-text-muted">
+            <pre className="whitespace-pre-wrap break-words font-mono text-xs text-text-muted">
               {JSON.stringify(brief, null, 1)}
             </pre>
           </div>
           <div className="rounded-lg border border-warn/40 p-3 space-y-1.5">
             <div className="section-label">Current (version {conflict.currentVersion})</div>
             <div className="font-medium break-words">{conflict.current?.title ?? "—"}</div>
-            <pre className="whitespace-pre-wrap break-words font-mono text-2xs text-text-muted">
+            <pre className="whitespace-pre-wrap break-words font-mono text-xs text-text-muted">
               {JSON.stringify(conflict.current?.brief ?? {}, null, 1)}
             </pre>
             {conflict.current && (

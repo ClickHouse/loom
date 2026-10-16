@@ -370,7 +370,7 @@ function Section({
                   <span className="truncate">{r.namespace}</span>
                   {(r.kind === "code" || r.kind === "qa") && <Badge text={r.kind} size="sm" />}
                 </span>
-                {r.description && <span className="text-2xs text-text-muted truncate block">{r.description}</span>}
+                {r.description && <span className="text-xs text-text-muted truncate block">{r.description}</span>}
               </span>
               <VisibilityBadge v={r.visibility} />
             </button>

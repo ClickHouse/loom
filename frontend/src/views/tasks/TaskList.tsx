@@ -5,6 +5,7 @@ import type { TaskListRow } from "../../api/tasks";
 import { GROUPS, GROUP_META, posterName, rel, sublineOf, type Group, type Subline } from "../../lib/tasks";
 import { Avatar, KindTag, LeaseBar, PosterAvatar, PriorityBar } from "./TaskBits";
 import { useTaskDrag } from "./drag";
+import { absoluteTime } from "../../lib/format";
 
 /**
  * The list: five collapsible groups by what happens next — Triage, To do, In progress,
@@ -139,6 +140,7 @@ function TaskRowView({
       tabIndex={tabStop ? 0 : -1}
       aria-selected={selected}
       aria-label={r.title}
+      aria-describedby={`${r.task_id}-posted`}
       data-task-id={r.task_id}
       data-nav={`task:${r.task_id}`}
       className="tq-row"
@@ -158,6 +160,10 @@ function TaskRowView({
       </span>
       <span role="gridcell">
         <Meta r={r} ctx={ctx} />
+        {/* The row shows a relative time; the full one is its description (and the panel's). */}
+        <span id={`${r.task_id}-posted`} className="sr-only">
+          Posted {absoluteTime(r.created_at)}
+        </span>
       </span>
     </div>
   );

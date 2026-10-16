@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "../test/rtl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConversationHit, ConversationThreadDetail, ConversationThreadSummary, MemoryListResponse } from "../api";
 import { useStore } from "../lib/state";

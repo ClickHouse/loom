@@ -69,7 +69,7 @@ const InboxSettingsDialog = lazy(() =>
  * happens next — Triage, To do, In progress, Waiting, Closed — as a list or
  * a board; each row carries the one line that matters for its state and,
  * in Triage, inline Accept / Won't do. A row opens the document-shaped
- * panel beside the list (under 1180 px, a modal sheet over it); its footer holds the
+ * panel beside the list (under 1280 px, a modal sheet over it); its footer holds the
  * status's actions.
  *
  * Reads on load: `inbox.list` once, `task.counts` once (the rail), and
@@ -110,8 +110,9 @@ function writeQuery(key: string, value: string | null): void {
   }
 }
 
-// Where styles.css stops giving the panel a column beside the list.
-const SHEET_QUERY = "(max-width: 1180px)";
+// Below Click UI's xl breakpoint the panel is a modal sheet over the list, not a column
+// beside it. The one place the breakpoint lives: styles.css keys on what this decides.
+const SHEET_QUERY = "(max-width: 1279px)";
 
 function matchesSheet(): boolean {
   return typeof window.matchMedia === "function" && window.matchMedia(SHEET_QUERY).matches;
@@ -601,7 +602,7 @@ export function Tasks() {
       {inboxes && inboxes.length > 0 && picked && (
         <>
           <AttentionTiles counts={attention} active={filters.attention} onToggle={toggleTile} />
-          <div className="tq-body" data-panel={!!openRow}>
+          <div className="tq-body" data-panel={!!openRow && !sheetLayout}>
             <InboxRail
               inboxes={inboxes}
               counts={counts ? railCounts(counts) : null}

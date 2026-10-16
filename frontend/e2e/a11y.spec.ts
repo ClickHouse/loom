@@ -54,8 +54,10 @@ async function violations(page: Page): Promise<Violation[]> {
         };
       }
     ).axe;
-    const res = await axe.run(document, { runOnly: { type: "tag", values: tags } });
-    return res.violations.map((v) => ({
+    const wcag = await axe.run(document, { runOnly: { type: "tag", values: tags } });
+    // A popover or sheet is a dialog; axe files its name under best practice, not WCAG.
+    const names = await axe.run(document, { runOnly: { type: "rule", values: ["aria-dialog-name"] } });
+    return [...wcag.violations, ...names.violations].map((v) => ({
       id: v.id,
       impact: v.impact,
       nodes: v.nodes.slice(0, 5).map((n) => n.target.join(" ")),
@@ -133,6 +135,40 @@ test.describe("open overlays", () => {
     await expect(trigger).toBeFocused();
   });
 
+  test("the two header bells", async ({ page }) => {
+    await open(page, "/memories");
+    for (const name of [/^Pending approvals/, /^Tasks waiting for a person/]) {
+      await page.getByRole("button", { name }).click();
+      await expect(page.getByRole("dialog")).toBeVisible();
+      expect(await violations(page)).toEqual([]);
+      await page.keyboard.press("Escape");
+      await expect(page.getByRole("dialog")).toBeHidden();
+    }
+  });
+
+  test("the profile's read-by popover", async ({ page }) => {
+    await installApi(page);
+    await page.route("**/v1/profile.activity", (route) =>
+      route.fulfill({
+        json: {
+          entries: [
+            {
+              agent: "claude-code",
+              last_activated_at: new Date(Date.now() - 3_600_000).toISOString(),
+              event_count: 4,
+              operations: ["profile.get"],
+            },
+          ],
+        },
+      }),
+    );
+    await page.goto("/profile");
+    await expect(page.locator("main h1").first()).toBeVisible();
+    await page.getByRole("button", { name: /^(Read|Checked) by/ }).click();
+    await expect(page.getByRole("dialog")).toBeVisible();
+    expect(await violations(page)).toEqual([]);
+  });
+
   test("an open Select list", async ({ page }) => {
     await open(page, "/settings");
     await page.getByRole("button", { name: /Home namespace/ }).click();
@@ -150,7 +186,7 @@ test.describe("open overlays", () => {
 
   test.describe("375 px", () => {
     test.use({ viewport: { width: 375, height: 812 } });
-    test("the More dialog opens on its first link, not on Close", async ({ page }) => {
+    test("the More dialog opens on the dialog itself, not on Close", async ({ page }) => {
       await open(page, "/memories");
       await page.getByRole("button", { name: "More" }).click();
       const dialog = page.getByRole("dialog");

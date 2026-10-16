@@ -171,7 +171,7 @@ function FactList({
               </span>
               <span className="tabular-nums text-text-muted shrink-0">{f.co_occur}×</span>
             </div>
-            <div className="mt-0.5 flex items-center gap-1.5 text-2xs text-text-subtle min-w-0 flex-wrap">
+            <div className="mt-0.5 flex items-center gap-1.5 text-xs text-text-subtle min-w-0 flex-wrap">
               {f.provenance && <Badge text={f.provenance} state="neutral" size="sm" />}
               <span className="tabular-nums">{f.last_seen ? f.last_seen.slice(0, 10) : ""}</span>
               {f.stale ? (
@@ -407,7 +407,7 @@ export function Inspector({
             icon="copy"
             size="sm"
           />
-          {copied && <span className="text-2xs text-text-muted">copied</span>}
+          {copied && <span className="text-xs text-text-muted">copied</span>}
         </div>
         <div className="mt-3">
           <SectionHeading label="Rows behind this edge" count={facts ? facts.length : undefined} />
@@ -572,8 +572,8 @@ export function Inspector({
           size="sm"
         />
         <IconButton label="Copy entity" onClick={() => copy(n.entity)} icon="copy" size="sm" />
-        {copied && <span className="text-2xs text-text-muted">copied</span>}
-        {expanding === n.entity && <span className="text-2xs text-text-muted">expanding…</span>}
+        {copied && <span className="text-xs text-text-muted">copied</span>}
+        {expanding === n.entity && <span className="text-xs text-text-muted">expanding…</span>}
       </div>
 
       {!isSeed && (
@@ -608,7 +608,7 @@ export function Inspector({
                       {e}
                     </button>
                     {step && (
-                      <span className="text-2xs text-text-subtle shrink-0 font-sans">
+                      <span className="text-xs text-text-subtle shrink-0 font-sans">
                         {typed && step.via_relation ? relationLabel(step.via_relation) : `${step.via_co_occur}×`}
                       </span>
                     )}
@@ -676,7 +676,7 @@ export function Inspector({
                     className="w-full text-left text-xs rounded-md border border-border bg-surface px-2 py-1.5 hover:border-border-strong"
                   >
                     <TextClamp text={excerpt} lines={1} max={200} reach="parent" className="leading-snug" />
-                    <div className="mt-0.5 flex items-center gap-1.5 min-w-0 text-2xs text-text-subtle">
+                    <div className="mt-0.5 flex items-center gap-1.5 min-w-0 text-xs text-text-subtle">
                       <Badge text={h.memory_type} state="neutral" size="sm" className="shrink-0" />
                       {h.created_at && <span className="tabular-nums shrink-0">{h.created_at.slice(0, 10)}</span>}
                       <span className="font-mono truncate flex-1">{h.memory_key}</span>

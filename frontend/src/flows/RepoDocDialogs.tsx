@@ -221,7 +221,7 @@ export function RepoDocAddDialog({
         onChange={setDescription}
       />
       {uri && (
-        <p className="text-2xs text-text-subtle break-all">
+        <p className="text-xs text-text-subtle break-all">
           Saved as <span className="font-mono">{uri}</span>
         </p>
       )}
@@ -319,7 +319,7 @@ export function RepoDocViewer({
       {state.kind === "ready" && (
         <>
           {state.description && <p className="text-sm text-text-muted">{state.description}</p>}
-          <p className="text-2xs text-text-subtle">The text agents read, as Loom stores it.</p>
+          <p className="text-xs text-text-subtle">The text agents read, as Loom stores it.</p>
           <pre className="max-h-[55vh] overflow-auto rounded-md border border-border bg-surface-2 p-3 text-xs leading-relaxed whitespace-pre-wrap break-words font-mono">
             {state.content || "(no text)"}
           </pre>

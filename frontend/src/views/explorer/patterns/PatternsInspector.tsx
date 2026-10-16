@@ -148,7 +148,7 @@ function AreaClassList({
                       </a>
                     )}
                   </div>
-                  <div className="mt-0.5 pl-4 text-2xs text-text-subtle truncate tabular-nums">
+                  <div className="mt-0.5 pl-4 text-xs text-text-subtle truncate tabular-nums">
                     {d.open ? "open" : "closed"}
                     {d.opened_at ? ` · opened ${d.opened_at.slice(0, 10)}` : ""}
                     {d.detail ? ` · ${d.detail}` : ""}
@@ -170,7 +170,7 @@ function Flags({ i }: { i: Issue }) {
     i.bisected ? `bisected${i.bisect_outcome ? `: ${i.bisect_outcome}` : ""}` : null,
   ].filter((x): x is string => typeof x === "string");
   if (!f.length) return null;
-  return <span className="text-2xs text-text-subtle shrink-0">{f.join(" · ")}</span>;
+  return <span className="text-xs text-text-subtle shrink-0">{f.join(" · ")}</span>;
 }
 
 export function PatternsInspector(p: PatternsInspectorProps) {
@@ -185,7 +185,7 @@ export function PatternsInspector(p: PatternsInspectorProps) {
       .catch(() => undefined);
   };
   const restrictedLine = p.restricted.length > 0 && (
-    <p className="mt-2 text-2xs text-text-subtle inline-flex items-start gap-1">
+    <p className="mt-2 text-xs text-text-subtle inline-flex items-start gap-1">
       <Icon name="lock" size="xs" className="mt-0.5 shrink-0" aria-hidden="true" />
       <span>
         {p.restricted.map((t) => RESTRICTED_WORDS[t] ?? t).join(", ")}: restricted — not available with this token
@@ -273,7 +273,7 @@ export function PatternsInspector(p: PatternsInspectorProps) {
                         className="text-left underline decoration-dotted hover:text-text break-words"
                         onClick={() => p.onPickIssue(n)}
                       >
-                        {titled(n)} <span className="text-danger text-2xs">named by graph</span>
+                        {titled(n)} <span className="text-danger text-xs">named by graph</span>
                       </button>
                     ))}
                   </span>
@@ -324,7 +324,7 @@ export function PatternsInspector(p: PatternsInspectorProps) {
                       onClick={() => p.onPickIssue(d.number)}
                     >
                       #{d.number} {shorten(d.title, 48)}{" "}
-                      <span className="text-text-subtle text-2xs">
+                      <span className="text-text-subtle text-xs">
                         {d.direction === "out" ? "this duplicates it" : "duplicates this"}
                       </span>
                     </button>
@@ -345,7 +345,7 @@ export function PatternsInspector(p: PatternsInspectorProps) {
                       onClick={() => p.onPickIssue(d.number)}
                     >
                       #{d.number} {shorten(d.title, 48)}{" "}
-                      <span className="text-text-subtle text-2xs">related, not a duplicate</span>
+                      <span className="text-text-subtle text-xs">related, not a duplicate</span>
                     </button>
                   ))}
               </span>
@@ -384,7 +384,7 @@ export function PatternsInspector(p: PatternsInspectorProps) {
             icon="copy"
             size="sm"
           />
-          {copied && <span className="text-2xs text-text-muted">copied</span>}
+          {copied && <span className="text-xs text-text-muted">copied</span>}
         </div>
         {p.similarFor === i.title && (
           <div className="mt-3">
@@ -467,7 +467,7 @@ export function PatternsInspector(p: PatternsInspectorProps) {
             empty
           </li>
         </ul>
-        <p className="mt-3 text-2xs text-text-subtle">
+        <p className="mt-3 text-xs text-text-subtle">
           source: <span className="font-mono">{p.trackerNamespace}</span>
         </p>
       </Panel>
@@ -554,7 +554,7 @@ export function PatternsInspector(p: PatternsInspectorProps) {
           </ul>
         )}
         {p.issues && c && p.issues.length > 0 && p.issuesCapped && p.issues.length < c.open && (
-          <p className="mt-1.5 text-2xs text-text-subtle">
+          <p className="mt-1.5 text-xs text-text-subtle">
             <span className="tabular-nums">{p.issues.length}</span> of {c.open} shown: the read stops at {p.issuesRead}{" "}
             rows.
           </p>

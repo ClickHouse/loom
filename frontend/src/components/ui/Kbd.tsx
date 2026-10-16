@@ -7,7 +7,7 @@ import type { ReactNode } from "react";
 export function Kbd({ children, className = "" }: { children: ReactNode; className?: string }) {
   return (
     <kbd
-      className={`inline-flex items-center justify-center min-w-[1.6em] h-5 px-1 rounded-sm border border-border bg-bg font-mono text-2xs text-text-subtle leading-none ${className}`}
+      className={`inline-flex items-center justify-center min-w-[1.6em] h-5 px-1 rounded-sm border border-border bg-bg font-mono text-xs text-text-subtle leading-none ${className}`}
     >
       {children}
     </kbd>

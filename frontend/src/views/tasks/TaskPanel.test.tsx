@@ -1,6 +1,6 @@
 import * as RadixDialog from "@radix-ui/react-dialog";
 import { useState } from "react";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "../../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Inbox, TaskEvent, TaskListRow, TaskRow, TaskStatus } from "../../api/tasks";
@@ -328,7 +328,7 @@ describe("TaskPanel", () => {
     await waitFor(() => expect(getTask).toHaveBeenCalledTimes(2));
     expect(taskHistory).toHaveBeenCalledTimes(2);
   });
-  // Under 1180 px the page renders the panel as a modal sheet: a dialog named by the task's
+  // Under 1280 px the page renders the panel as a modal sheet: a dialog named by the task's
   // title that takes the focus, closes on Escape and hands the focus back to the task's row.
   it("as a sheet is a dialog that takes the focus, closes on Escape and returns it to the row", async () => {
     vi.mocked(getTask).mockResolvedValueOnce(fullRow("todo"));

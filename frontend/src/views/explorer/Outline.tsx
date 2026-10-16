@@ -256,7 +256,7 @@ export function Outline({
                   )}
                   {hidden > 0 && <Badge text={`+${hidden}`} state="neutral" size="sm" className="inline-flex ml-1.5" />}
                 </div>
-                <div className="text-2xs text-text-muted flex items-center gap-1.5 min-w-0">
+                <div className="text-xs text-text-muted flex items-center gap-1.5 min-w-0">
                   <span className="tabular-nums shrink-0">hop {n.hop}</span>
                   {parent && (
                     <button

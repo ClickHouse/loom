@@ -258,13 +258,11 @@ export function MentorPanel({ identity }: { identity: Identity }) {
                   <div className="flex flex-wrap items-center gap-2">
                     <SeverityBadge severity={h.severity} />
                     <span className="font-medium text-text">{humanizeHintCode(h.code)}</span>
-                    {h.ops.length > 0 && (
-                      <span className="font-mono text-2xs text-text-muted">{h.ops.join(" · ")}</span>
-                    )}
+                    {h.ops.length > 0 && <span className="font-mono text-xs text-text-muted">{h.ops.join(" · ")}</span>}
                   </div>
                   <p className="mt-1 text-text leading-relaxed">{h.text}</p>
                   {Object.keys(h.evidence).length > 0 && (
-                    <p className="mt-1 font-mono text-2xs text-text-muted">evidence: {evidenceText(h.evidence)}</p>
+                    <p className="mt-1 font-mono text-xs text-text-muted">evidence: {evidenceText(h.evidence)}</p>
                   )}
                 </li>
               ))}

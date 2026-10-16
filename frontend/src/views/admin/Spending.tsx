@@ -223,9 +223,9 @@ export function Spending() {
             aria-valuemax={100}
           />
           <div className="mt-2 flex items-baseline justify-between gap-3">
-            <div className="text-2xs text-text-muted leading-relaxed">
+            <div className="text-xs text-text-muted leading-relaxed">
               Rolling 24h sum of upstream LLM cost on this namespace. When the cap is hit,{" "}
-              <code className="font-mono text-2xs bg-surface-2 px-1 py-0.5 rounded">entity_extractor</code> skip writes
+              <code className="font-mono text-xs bg-surface-2 px-1 py-0.5 rounded">entity_extractor</code> skip writes
               here until usage drops below the cap.
             </div>
             {canEditCap && (
@@ -301,12 +301,12 @@ export function Spending() {
               <div className="flex items-end gap-2 h-[140px]">
                 {days.map(([day, cost]) => (
                   <div key={day} className="flex-1 flex flex-col items-center gap-1.5">
-                    <div className="text-2xs tabular text-text-muted">${cost.toFixed(4)}</div>
+                    <div className="text-xs tabular text-text-muted">${cost.toFixed(4)}</div>
                     <div
                       className="w-full bg-accent rounded-t"
                       style={{ height: `${(cost / maxCost) * 100}%`, minHeight: "2px" }}
                     />
-                    <div className="text-2xs tabular text-text-subtle">{day === "—" ? "—" : day.slice(5)}</div>
+                    <div className="text-xs tabular text-text-subtle">{day === "—" ? "—" : day.slice(5)}</div>
                   </div>
                 ))}
               </div>
@@ -357,7 +357,7 @@ export function Spending() {
               rows={visibleRows.map((r, i) => ({
                 id: i,
                 items: [
-                  { label: <span className="font-mono text-2xs tabular text-text-muted">{r.day || "—"}</span> },
+                  { label: <span className="font-mono text-xs tabular text-text-muted">{r.day || "—"}</span> },
                   ...dimColumns.map((c) => ({ label: c.cell(r) })),
                   { label: <span className="tabular">{fmt(r.ops)}</span> },
                   {
@@ -369,13 +369,13 @@ export function Spending() {
                   },
                   {
                     label: (
-                      <span className="tabular text-2xs">
+                      <span className="tabular text-xs">
                         {fmt(r.tokens)}
                         {r.embed_tokens > 0 && <span className="text-text-subtle"> + {fmt(r.embed_tokens)} embed</span>}
                       </span>
                     ),
                   },
-                  { label: <span className="tabular text-2xs text-text-muted">{Math.round(r.latency_p95_ms)}</span> },
+                  { label: <span className="tabular text-xs text-text-muted">{Math.round(r.latency_p95_ms)}</span> },
                   {
                     label:
                       r.cost_usd > 0 ? (
@@ -408,7 +408,7 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
     <div className="p-4 rounded-xl border border-border bg-surface">
       <div className="text-xs text-text-muted mb-1">{label}</div>
       <div className="text-xl font-semibold tabular tracking-tight">{value}</div>
-      {hint && <div className="text-2xs text-text-subtle mt-1">{hint}</div>}
+      {hint && <div className="text-xs text-text-subtle mt-1">{hint}</div>}
     </div>
   );
 }

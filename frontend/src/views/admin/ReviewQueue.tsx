@@ -483,7 +483,7 @@ function Side({
           truncate(formatValue(value), 200)
         )}
       </div>
-      <div className="flex items-center gap-2 text-2xs text-text-muted tabular">
+      <div className="flex items-center gap-2 text-xs text-text-muted tabular">
         {version != null && <span>v{version}</span>}
         {pinned && <Badge text="Pinned" state="warning" size="sm" />}
         {createdAt && <span>{relativeTime(createdAt)}</span>}

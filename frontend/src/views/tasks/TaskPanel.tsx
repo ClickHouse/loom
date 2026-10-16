@@ -69,7 +69,7 @@ interface Props {
   onOpenTask: (taskId: string) => void;
   /** The history landed: the page keeps the latest progress note per row. */
   onHistory?: (taskId: string, events: TaskEvent[]) => void;
-  /** Under 1180 px the panel is a modal sheet: the page renders it inside a Radix
+  /** Under 1280 px the panel is a modal sheet: the page renders it inside a Radix
    *  `Dialog.Root` + `Portal`, and the panel is the dialog's content, titled by its
    *  heading. Opening focuses the sheet; closing returns the focus to the task's row. */
   sheet?: boolean;
@@ -96,7 +96,7 @@ function InputValue({ v }: { v: unknown }) {
     );
   }
   if (v && typeof v === "object")
-    return <pre className="text-2xs font-mono whitespace-pre-wrap break-all m-0">{JSON.stringify(v, null, 1)}</pre>;
+    return <pre className="text-xs font-mono whitespace-pre-wrap break-all m-0">{JSON.stringify(v, null, 1)}</pre>;
   const s = String(v);
   switch (inputKind(s)) {
     case "url":
@@ -173,7 +173,7 @@ function Track({
           ).map(([l, n]) => (
             <div key={l}>
               <div className="text-lg font-semibold leading-5 tabular">{n}</div>
-              <div className="text-2xs text-text-subtle">{l}</div>
+              <div className="text-xs text-text-subtle">{l}</div>
             </div>
           ))}
         </div>
@@ -586,7 +586,7 @@ export function TaskPanel({
         rowEl.focus({ preventScroll: true });
       }}
     >
-      <div className="tq-panel outline-none" data-status={current.status}>
+      <div className="tq-panel outline-none" data-sheet="" data-status={current.status}>
         {body}
       </div>
     </RadixDialog.Content>

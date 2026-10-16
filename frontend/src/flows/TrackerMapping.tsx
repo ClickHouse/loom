@@ -409,7 +409,7 @@ function FieldRow({
           {custom && <Select.Item value="__custom">{describeExpr(expr)}</Select.Item>}
         </Select>
         {badge}
-        {spec.hint && <span className="text-2xs text-text-subtle min-w-0">{spec.hint}</span>}
+        {spec.hint && <span className="text-xs text-text-subtle min-w-0">{spec.hint}</span>}
       </div>
     </>
   );

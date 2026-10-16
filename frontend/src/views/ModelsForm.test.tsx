@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ModelStatus } from "../api/models";
 import { initialModelConfiguration, ModelsForm } from "./ModelsForm";

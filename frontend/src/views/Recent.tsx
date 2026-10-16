@@ -834,7 +834,7 @@ export function Recent() {
       )}
       {/* Active query-bar filters as dismissable badges; click removes the token. */}
       {(queryTags.length > 0 || queryAgent) && (
-        <div className="-mt-2 mb-3 flex flex-wrap items-center gap-1.5 text-2xs">
+        <div className="-mt-2 mb-3 flex flex-wrap items-center gap-1.5 text-xs">
           <span className="text-text-subtle">Filtering:</span>
           {queryAgent && (
             <Chip
@@ -1023,14 +1023,14 @@ export function Recent() {
                         timeMode="absolute"
                       />
                       {searchActive && keywordKeys.has(e.memory_key) ? (
-                        <div className="mt-1 px-2 text-2xs text-text-muted" data-testid="search-why">
+                        <div className="mt-1 px-2 text-xs text-text-muted" data-testid="search-why">
                           contains "{rawQuery.trim()}"
                         </div>
                       ) : (
                         why && <SearchWhy hit={why} rank={(searchHits?.indexOf(e.memory_key) ?? 0) + 1} />
                       )}
                       {isTombstoned && (
-                        <div className="flex items-center justify-between mt-1 px-2 py-1 text-2xs text-text-muted">
+                        <div className="flex items-center justify-between mt-1 px-2 py-1 text-xs text-text-muted">
                           <span>
                             Deleted
                             {e.tombstoned_at

@@ -2,7 +2,7 @@
 // tooltips), stays out of the modal's aria-hidden, and still pauses on hover even though the
 // modal turns pointer events off on <body>.
 import * as Dialog from "@radix-ui/react-dialog";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "../test/rtl";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConfirmViewport, confirmAction } from "./ConfirmDialog";
 import { ToastViewport, toast } from "./Toast";

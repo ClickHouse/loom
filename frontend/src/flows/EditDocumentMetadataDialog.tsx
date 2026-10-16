@@ -122,7 +122,7 @@ export function EditDocumentMetadataDialog({ open, onOpenChange, identity, entry
               checked={reindex}
               onCheckedChange={(x) => setReindex(x === true)}
             />
-            <p id="edit-doc-reindex-hint" className="mt-1 text-2xs text-text-muted">
+            <p id="edit-doc-reindex-hint" className="mt-1 text-xs text-text-muted">
               Picks up the retrieval-quality boost from the new title + description without re-uploading. Costs one
               OpenAI batch call per save.
             </p>

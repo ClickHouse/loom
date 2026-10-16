@@ -85,7 +85,7 @@ export function SessionBriefPanel({
         <Icon name="book" size="sm" aria-hidden="true" />
         <span className="font-medium">Session brief</span>
         <span className="font-mono text-text-muted truncate">{head.brief_key}</span>
-        <span className="ml-auto shrink-0 text-2xs text-text-muted">
+        <span className="ml-auto shrink-0 text-xs text-text-muted">
           rev {head.revision}
           {head.updated_at ? ` · saved ${relativeTime(head.updated_at)}` : ""}
         </span>
@@ -105,8 +105,8 @@ export function SessionBriefPanel({
             </div>
           )}
           <div className="flex items-center gap-2 rounded-sm bg-surface border border-border px-2 py-1.5">
-            <span className="text-2xs text-text-muted shrink-0">Say in Claude Code or Codex:</span>
-            <code className="text-2xs flex-1 min-w-0 break-all">{restorePhrase(head.brief_key)}</code>
+            <span className="text-xs text-text-muted shrink-0">Say in Claude Code or Codex:</span>
+            <code className="text-xs flex-1 min-w-0 break-all">{restorePhrase(head.brief_key)}</code>
             <CopyButton
               text={() => restorePhrase(head.brief_key)}
               label="Copy"
@@ -116,7 +116,7 @@ export function SessionBriefPanel({
           </div>
           {error && <div className="text-xs text-danger">{error}</div>}
           {body && (
-            <pre className="max-h-[40vh] overflow-auto text-2xs whitespace-pre-wrap break-words font-mono">
+            <pre className="max-h-[40vh] overflow-auto text-xs whitespace-pre-wrap break-words font-mono">
               {body.rendered}
             </pre>
           )}

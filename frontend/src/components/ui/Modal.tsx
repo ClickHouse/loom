@@ -35,9 +35,10 @@ export interface ModalProps {
 // Toasts are z-[65]; popovers and tooltips z-[70] (styles.css).
 const LAYER = { dialog: "z-50", confirm: "z-[60]" } as const;
 
-// Radix focuses the first tabbable element on open, links aside. When the body has none
-// (its fields render after a read, or it holds only links), that would be the close
-// button, whose tooltip then opens over the title; start on the dialog itself instead.
+// Opening focuses the first field or action in the body, as Radix would, or the dialog
+// itself when the body has none yet (its fields render after a read, or it holds only
+// links, which Radix skips too). Never the close button: its tooltip would open over the
+// title.
 const BODY_FOCUSABLE = "input, select, textarea, button:not([data-modal-close]), [tabindex]:not([tabindex='-1'])";
 
 function focusDialog(e: Event) {
@@ -47,8 +48,13 @@ function focusDialog(e: Event) {
 }
 
 function focusBodyOrDialog(e: Event) {
-  if (e.currentTarget instanceof HTMLElement && e.currentTarget.querySelector(BODY_FOCUSABLE)) return;
-  focusDialog(e);
+  const content = e.currentTarget;
+  if (!(content instanceof HTMLElement)) return;
+  e.preventDefault();
+  const first = [...content.querySelectorAll<HTMLElement>(BODY_FOCUSABLE)].find(
+    (el) => !el.matches(":disabled") && el.getClientRects().length > 0,
+  );
+  (first ?? content).focus();
 }
 
 export function Modal({
@@ -88,8 +94,7 @@ export function Modal({
         onCloseAutoFocus={returnFocus}
         {...handlers}
       >
-        {children}
-        {/* After the body, so opening focuses the first field or action, not the close. */}
+        {/* First in the DOM, as it is drawn in the header, so Tab follows what is seen. */}
         <RadixDialog.Close asChild>
           <IconButton
             icon="cross"
@@ -98,6 +103,7 @@ export function Modal({
             data-modal-close=""
           />
         </RadixDialog.Close>
+        {children}
       </Dialog.Content>
     </Dialog>
   );

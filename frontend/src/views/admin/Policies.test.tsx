@@ -1,6 +1,6 @@
 /** The mode badge shows the server's mode verbatim; a mode the UI does not know
  *  takes the off styling and blurb instead of an undefined lookup. */
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "../../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../../api";

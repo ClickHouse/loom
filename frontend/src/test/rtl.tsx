@@ -1,6 +1,6 @@
-// Testing Library as the specs import it (vitest.config.ts aliases "@testing-library/react"
-// here): `render` wraps every tree in the tooltip provider main.tsx mounts around the app, so
-// a component renders under test as it does in the app.
+// Testing Library for the specs: `render` wraps every tree in the tooltip provider main.tsx
+// mounts around the app, so a component renders under test as it does in the app. Specs
+// import from here, not from "@testing-library/react".
 import * as RadixTooltip from "@radix-ui/react-tooltip";
 import type { ReactElement, ReactNode } from "react";
 import { render as baseRender, type RenderOptions } from "@testing-library/react/pure";

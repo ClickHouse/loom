@@ -61,7 +61,7 @@ export function ProfileSectionDialog() {
       className="w-full max-w-[720px]"
     >
       {section && (
-        <div className="mb-4 flex flex-wrap items-center gap-2 text-2xs text-text-muted tabular-nums">
+        <div className="mb-4 flex flex-wrap items-center gap-2 text-xs text-text-muted tabular-nums">
           <span>
             {section.value.length.toLocaleString()}
             {section.char_limit ? ` / ${section.char_limit.toLocaleString()}` : ""} chars

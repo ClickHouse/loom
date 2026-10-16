@@ -207,7 +207,7 @@ export function Browse() {
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-mono text-text">{r.namespace}</div>
                   {r.description && <div className="text-xs text-text-muted mt-0.5 truncate">{r.description}</div>}
-                  <div className="mt-1.5 flex items-center gap-3 text-2xs text-text-muted tabular">
+                  <div className="mt-1.5 flex items-center gap-3 text-xs text-text-muted tabular">
                     <Badge text={r.visibility} state={r.visibility === "public" ? "success" : "neutral"} size="sm" />
                   </div>
                 </div>
@@ -310,7 +310,7 @@ export function Browse() {
                     {isSystemKind(r.kind) && <Badge text={r.kind} state="neutral" size="sm" />}
                   </div>
                   {r.description && <div className="text-xs text-text-muted mt-0.5">{r.description}</div>}
-                  <div className="mt-1.5 flex items-center gap-3 text-2xs text-text-muted tabular">
+                  <div className="mt-1.5 flex items-center gap-3 text-xs text-text-muted tabular">
                     <span className="inline-flex items-center gap-1">
                       <Icon name="users" size="xs" aria-hidden="true" /> {r.member_count} member
                       {r.member_count === 1 ? "" : "s"}

@@ -8,12 +8,12 @@ describe("labelSelectSearch", () => {
     document.body.innerHTML = "";
   });
 
-  it("names Click UI's Select filter field when it appears", async () => {
+  it("names Click UI's Select filter field, its clear button and its dialog when they appear", async () => {
     stop = labelSelectSearch();
-    const input = document.createElement("input");
-    input.dataset.testid = "select-search-input";
-    document.body.append(input);
+    document.body.innerHTML = `<div role="dialog"><input data-testid="select-search-input" /><button data-testid="select-search-close"></button></div>`;
     await new Promise((r) => setTimeout(r, 0));
-    expect(input).toHaveAttribute("aria-label", "Filter options");
+    expect(document.querySelector("input")).toHaveAttribute("aria-label", "Filter options");
+    expect(document.querySelector("button")).toHaveAttribute("aria-label", "Clear filter");
+    expect(document.querySelector('[role="dialog"]')).toHaveAttribute("aria-label", "Options");
   });
 });

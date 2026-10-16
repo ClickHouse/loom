@@ -188,7 +188,7 @@ export function GettingStarted({
             {spaceName ? (
               <>
                 {" "}
-                — <code className="font-mono text-2xs bg-surface-2 px-1 rounded-sm">{spaceName}</code>
+                — <code className="font-mono text-xs bg-surface-2 px-1 rounded-sm">{spaceName}</code>
               </>
             ) : null}
             . Four steps show the whole loop; about five minutes.
@@ -243,7 +243,7 @@ export function GettingStarted({
                   </h3>
                   <p className="text-xs text-text-muted mt-0.5">{meta.why}</p>
                   {step === "find" && !isDone && (
-                    <p className="text-2xs text-text-subtle mt-1">
+                    <p className="text-xs text-text-subtle mt-1">
                       Or press <Kbd>⌘K</Kbd> anywhere and type a few words.
                     </p>
                   )}
@@ -324,14 +324,14 @@ function ConnectLine({ mint }: { mint: { token: string; mcpUrl: string } }) {
           <TabTrigger value="other">Other clients</TabTrigger>
         </Tabs.TriggersList>
         <Tabs.Content value="claude-code" className="mt-2">
-          <p className="text-2xs text-text-muted mb-1">
+          <p className="text-xs text-text-muted mb-1">
             Run this once in a terminal, then start a new Claude Code session — Loom&apos;s profile and context arrive
             when the client connects. For capture and hooks, install the plugin from Settings instead:
           </p>
           <CopyBlock text={claude.command ?? ""} label="Copy command" />
         </Tabs.Content>
         <Tabs.Content value="cursor" className="mt-2">
-          <p className="text-2xs text-text-muted mb-1">
+          <p className="text-xs text-text-muted mb-1">
             Paste into Cursor's MCP settings (<code className="font-mono">.cursor/mcp.json</code>), then restart Cursor:
           </p>
           <CopyBlock text={JSON.stringify(cursor.block, null, 2)} label="Copy config" />
@@ -361,7 +361,7 @@ function ConnectLine({ mint }: { mint: { token: string; mcpUrl: string } }) {
 function CopyBlock({ text, label }: { text: string; label: string }) {
   return (
     <div className="relative">
-      <pre className="text-2xs font-mono bg-bg border border-border rounded-sm p-2.5 pr-32 max-h-40 overflow-auto whitespace-pre-wrap break-all">
+      <pre className="text-xs font-mono bg-bg border border-border rounded-sm p-2.5 pr-32 max-h-40 overflow-auto whitespace-pre-wrap break-all">
         {text}
       </pre>
       <CopyButton text={text} label={label} className="absolute top-1.5 right-1.5" />

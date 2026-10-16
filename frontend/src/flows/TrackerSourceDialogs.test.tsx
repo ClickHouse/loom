@@ -6,7 +6,7 @@
  * form that passed. The Trackers list says each tracker's state in plain words and gives
  * its admin Check / Rotate / Retire.
  */
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../lib/errors";

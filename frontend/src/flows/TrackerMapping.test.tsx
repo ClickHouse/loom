@@ -4,7 +4,7 @@
  * switching tables keeps the fields the new table also has; an optional role can be left
  * out.
  */
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "../test/rtl";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {

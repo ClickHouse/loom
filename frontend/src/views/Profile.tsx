@@ -397,7 +397,7 @@ function ActivityChip({ empty }: { empty?: boolean }) {
           {empty && " · empty, nothing to read yet"}
         </button>
       </PopoverTrigger>
-      <Popover.Content align="start" className="min-w-[280px] space-y-1">
+      <Popover.Content align="start" aria-label="Clients that read the profile" className="min-w-[280px] space-y-1">
         {empty && (
           <p className="px-2 py-1 text-xs text-text-muted max-w-[320px]">
             These clients fetch the profile at session start or MCP connect. It has no sections, so they got nothing:
@@ -409,12 +409,10 @@ function ActivityChip({ empty }: { empty?: boolean }) {
             <span className="min-w-0">
               <span className="font-mono text-xs">{e.agent}</span>
               {e.operations.length > 0 && (
-                <span className="block text-2xs text-text-subtle">
-                  via {e.operations.map(readPathLabel).join(", ")}
-                </span>
+                <span className="block text-xs text-text-subtle">via {e.operations.map(readPathLabel).join(", ")}</span>
               )}
             </span>
-            <span className="shrink-0 text-2xs text-text-muted tabular-nums">
+            <span className="shrink-0 text-xs text-text-muted tabular-nums">
               {e.event_count}× · {relativeTime(e.last_activated_at)}
             </span>
           </div>
@@ -475,7 +473,7 @@ function Preview({ entries, onClose }: { entries: ProfileEntry[]; onClose: () =>
         >
           Copy
         </Button>
-        <span className="ml-auto text-2xs text-text-muted tabular-nums">{fmtInt(rendered.length)} chars</span>
+        <span className="ml-auto text-xs text-text-muted tabular-nums">{fmtInt(rendered.length)} chars</span>
         <IconButton icon="cross" size="sm" label="Close preview" onClick={onClose} />
       </div>
       <pre className="text-xs font-mono whitespace-pre-wrap break-words p-2 rounded bg-surface max-h-56 overflow-y-auto">
@@ -525,7 +523,7 @@ function ReachSection() {
           <div className="mb-2">Delivered when a session starts, with your relevant memories. Nothing to type.</div>
           <details className="text-xs text-text-muted">
             <summary className="cursor-pointer hover:text-text">Not installed yet? Two commands.</summary>
-            <pre className="mt-1.5 text-2xs font-mono whitespace-pre-wrap break-words p-2 rounded bg-surface-2">
+            <pre className="mt-1.5 text-xs font-mono whitespace-pre-wrap break-words p-2 rounded bg-surface-2">
               {plugin}
             </pre>
           </details>
@@ -597,7 +595,7 @@ function EmptyState({ onPickTemplate }: { onPickTemplate: (t: (typeof TEMPLATES)
           >
             <div className="text-sm font-semibold mb-1">{t.title}</div>
             <div className="text-xs text-text-muted mb-2">{t.description}</div>
-            <pre className="text-2xs font-mono text-text-muted whitespace-pre-wrap leading-relaxed line-clamp-3">
+            <pre className="text-xs font-mono text-text-muted whitespace-pre-wrap leading-relaxed line-clamp-3">
               {t.value}
             </pre>
           </button>
@@ -652,7 +650,7 @@ const SectionRow = memo(function SectionRow({
           ) : (
             <div className="font-mono text-sm font-semibold truncate">{section.label}</div>
           )}
-          <div className="text-2xs font-mono tabular-nums text-text-muted whitespace-nowrap">
+          <div className="text-xs font-mono tabular-nums text-text-muted whitespace-nowrap">
             {fmtInt(valueLen)} / {fmtInt(cap)}
           </div>
         </div>

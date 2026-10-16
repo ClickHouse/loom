@@ -357,7 +357,7 @@ export function Board({
                     className={`board-cell border-b border-border/60 px-2 py-1 text-center cursor-pointer select-none outline-none ${isSel ? "ring-2 ring-inset ring-text" : ""}`}
                   >
                     <span className="tabular-nums font-medium">{c.open}</span>
-                    <span className="tabular-nums text-text-muted ml-1 text-2xs" aria-hidden="true">
+                    <span className="tabular-nums text-text-muted ml-1 text-xs" aria-hidden="true">
                       {c.open ? Math.round((c.untested / c.open) * 100) : 0}%
                     </span>
                   </div>
@@ -369,7 +369,7 @@ export function Board({
         {/* biome-ignore-end lint/a11y/useFocusableInteractive: the grid ends */}
         {/* biome-ignore-end lint/a11y/useSemanticElements: the grid ends */}
       </div>
-      <div className="px-3 py-1.5 border-t border-border text-2xs text-text-muted flex items-center gap-3 flex-wrap">
+      <div className="px-3 py-1.5 border-t border-border text-xs text-text-muted flex items-center gap-3 flex-wrap">
         <span>
           <span className="tabular-nums text-text">{board.rows.length}</span>
           {totalRows && totalRows !== board.rows.length ? ` of ${totalRows}` : ""} components ·{" "}

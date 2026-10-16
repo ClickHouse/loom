@@ -184,7 +184,7 @@ export function PrivacyFilters({
           </div>
           {starters.length > 0 && (
             // A starter fills the form; it never copies to the clipboard.
-            <div className="mt-2 flex flex-wrap items-center gap-1.5 text-2xs text-text-muted">
+            <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-text-muted">
               <span>Suggested:</span>
               {starters.map((st) => (
                 <Chip
@@ -236,7 +236,7 @@ export function PrivacyFilters({
               >
                 <div className="flex-1 min-w-0">
                   <div className="font-mono text-sm text-text truncate">{r.pattern}</div>
-                  <div className="text-2xs text-text-muted tabular flex items-center gap-x-1 flex-wrap">
+                  <div className="text-xs text-text-muted tabular flex items-center gap-x-1 flex-wrap">
                     <span>{r.pattern_type}</span>
                     <span>·</span>
                     <span>{r.scope}</span>
