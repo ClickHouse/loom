@@ -497,6 +497,9 @@ class MemoryDeleteOutput(BaseModel):
     # The journal commit of the retraction, and its read token ("" when none).
     commit_seq: int = 0
     read_token: str = ""
+    # A key only the journal held got a current row meanwhile, not yet rewritten: the
+    # reconciler brings it in line.
+    current_rows_pending: bool = False
 
 
 class MemoryRestoreInput(_Identity):
@@ -548,6 +551,9 @@ class MemoryClearOutput(BaseModel):
     total: int  # sum across all tables
     # Live rows in scope that carried a lock in force and were left alone.
     locked_skipped: int = 0
+    # A key only the journal held got a current row while the clear ran, and that row
+    # is not yet rewritten: the reconciler brings it in line.
+    current_rows_pending: bool = False
 
 
 class MemoryTouchInput(_Identity):

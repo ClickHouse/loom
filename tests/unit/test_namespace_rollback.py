@@ -119,3 +119,26 @@ def test_rows_older_than_the_journal_do_not_block_a_rollback() -> None:
     cut = reads.Cut(namespace="n", axes=None)  # type: ignore[arg-type]
     cut.gaps = ["history_before_journal"]
     rb._refuse_gaps(cut, cut)  # the keys it concerns are the seeded ones, left out
+
+
+@pytest.mark.asyncio
+async def test_a_value_redacted_after_the_plan_stops_the_rollback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A redaction scrubs the journal without a commit: the check under the lock sees it.
+    from server.core.errors import PreconditionFailedError
+
+    c = _change([tm.first('"Leeds"')], [tm.first('"Paris"')])
+
+    async def redacted(org: str, ns: str, wanted: list, **_k: Any) -> set:
+        assert wanted == [(_IDENT, tm.first('"Leeds"').value_sha256)]
+        return set(wanted)
+
+    async def publish(org: str, ns: str, items: list, *, recheck: Any, **_k: Any) -> list:
+        await recheck()
+        return []
+
+    monkeypatch.setattr(rb.store, "redacted_among", redacted)
+    monkeypatch.setattr(rb.publisher, "publish_amendments", publish)
+    with pytest.raises(PreconditionFailedError, match="redacted since it was planned"):
+        await rb.apply("o", "n", [c])

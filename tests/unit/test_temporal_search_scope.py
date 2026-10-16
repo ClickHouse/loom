@@ -80,10 +80,11 @@ async def test_a_scoped_tokens_historical_search_stops_at_the_first_confident_na
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("historical", [True, False])
+@pytest.mark.parametrize(("historical", "read_token"), [(True, ""), (False, ""), (False, "t")])
 async def test_a_historical_asks_pool_takes_no_pending_turns(
-    monkeypatch: pytest.MonkeyPatch, historical: bool
+    monkeypatch: pytest.MonkeyPatch, historical: bool, read_token: str
 ) -> None:
+    # A read token is read-your-writes today: its ask still takes pending turns.
     from types import SimpleNamespace
 
     from server.memory.app.ask import pool
@@ -95,6 +96,7 @@ async def test_a_historical_asks_pool_takes_no_pending_turns(
     asked = MemorySearchInput(
         org="o", namespace="n", agent="*", query="q",
         known_as_of=datetime(2026, 1, 1, tzinfo=UTC) if historical else None,
+        read_token=read_token,
     )  # fmt: skip
     run = SimpleNamespace(
         search_input=asked, question="q", settings=None, ranked=[], recency_weight=0,

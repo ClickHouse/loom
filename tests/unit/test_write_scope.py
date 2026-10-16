@@ -105,6 +105,11 @@ def store(monkeypatch):
     monkeypatch.setattr(memory_repo, "get_many_by_keys", get_many_by_keys)
     monkeypatch.setattr(memory_repo, "record_usage_event", record_usage_event)
     monkeypatch.setattr("server.memory.store.lifecycle.insert_memory_versions", insert_versions)
+
+    async def _no_journal_only(*_a: Any, **_k: Any) -> list:
+        return []  # no key only the journal holds
+
+    monkeypatch.setattr("server.memory.store.temporal.journal_only_identities", _no_journal_only)
     return calls
 
 

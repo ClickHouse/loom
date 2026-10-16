@@ -418,6 +418,7 @@ Bulk-tombstone memories in one scope.
 | `rows_affected` | `dict[str, int]` | {table_name: rows_tombstoned} |
 | `total` | `int` | sum across all tables |
 | `locked_skipped` | `int` | Live rows in scope that carried a lock in force and were left alone. |
+| `current_rows_pending` | `bool` | A key only the journal held got a current row while the clear ran, and that row is not yet rewritten: the reconciler brings it in line. |
 
 ## `memory.consolidate`
 
@@ -592,6 +593,7 @@ WHAT: Tombstone a memory by key (14-day recovery via /me).
 | `left_out` | `str` | Why a found memory was not removed: memory.set's `left_out` reasons (version is then 0). "" when it was removed, or not found. |
 | `commit_seq` | `int` | The journal commit of the retraction, and its read token ("" when none). |
 | `read_token` | `str` |  |
+| `current_rows_pending` | `bool` | A key only the journal held got a current row meanwhile, not yet rewritten: the reconciler brings it in line. |
 
 ## `memory.demonstrate`
 

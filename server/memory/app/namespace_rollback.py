@@ -11,12 +11,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from server.core.errors import TemporalUnavailableError, ValidationError
+from server.core.errors import PreconditionFailedError, TemporalUnavailableError, ValidationError
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.app import temporal_publisher as publisher
 from server.memory.app import temporal_reads as reads
 from server.memory.domain import temporal_model as tm
 from server.memory.domain.temporal_reads import Axes
+from server.memory.store import temporal as store
 from server.memory.store.redaction import REDACTED_VALUE
 
 log = logging.getLogger(__name__)
@@ -181,11 +182,24 @@ async def apply(org: str, namespace: str, changes: list[KeyChange]) -> list[publ
     """Commit each change a key's state allows, as one batch; the receipts of the keys
     that committed. A refused key commits nothing, nor does one whose lock in force
     refuses the change. The current rows follow with `project`."""
+    kept = [c for c in changes if not c.refused]
+    restored = [(c.ident, a.value_sha256) for c in kept for a in c.then]
+
+    async def not_redacted_since() -> None:
+        # A redaction scrubs the journal without a commit: under the lock, a value
+        # this plan restores must not be one scrubbed since it was planned.
+        if await store.redacted_among(org, namespace, restored):
+            raise PreconditionFailedError(
+                "a value this rollback restores was redacted since it was planned; "
+                "plan the rollback again"
+            )
+
     return await publisher.publish_amendments(
         org,
         namespace,
-        [(c.ident, c.memory_id, _build(c)) for c in changes if not c.refused],
+        [(c.ident, c.memory_id, _build(c)) for c in kept],
         operation="namespace.rollback",
+        recheck=not_redacted_since,
     )
 
 

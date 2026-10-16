@@ -417,6 +417,8 @@ def health_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setattr(settings, "llm_provider", "fake")
     monkeypatch.setattr(settings, "require_real_providers", False)
     monkeypatch.setattr("server.embedding.embedder._probed_dim", None)
+    # The stock stack's ClickHouse runs a Keeper (deploy/clickhouse-config/keeper.xml).
+    monkeypatch.setattr("server.auth.grant_claims.claims_atomic", lambda: True)
     return TestClient(main_module.app)
 
 
@@ -656,3 +658,24 @@ def test_grant_changes_without_keeper_claims_are_a_warning(
 
     assert codes(None) == codes(True) == []
     assert codes(False) == ["warn"]
+
+
+@pytest.mark.parametrize(
+    ("atomic", "mode", "workers", "refused"),
+    [
+        (False, "auto", 1, True),
+        (False, "keeper", 1, True),
+        (False, "process", 2, True),
+        (False, "process", 1, False),
+        (True, "auto", 4, False),
+        (None, "auto", 1, False),
+    ],
+)
+def test_memory_writes_refused_without_a_keeper_or_a_declared_single_writer(
+    monkeypatch: pytest.MonkeyPatch, atomic: bool | None, mode: str, workers: int, refused: bool
+) -> None:
+    s = _settings(monkeypatch)
+    monkeypatch.setattr(s, "memory_temporal_publisher", mode)
+    monkeypatch.setattr(s, "web_workers", workers)
+    problems = collect_problems(s, HealthState(grant_claims_atomic=atomic))
+    assert ("memory_writes_refused" in {p.code for p in problems}) is refused

@@ -455,9 +455,10 @@ async def handle_memory_amend(input: MemoryAmendInput) -> MemoryAmendOutput:
     """Publish one bounded change, then bring the current-state row in line with
     what now applies. The publication is the change; the row is a projection."""
     ident = (input.agent, input.user_id, input.session_id, input.memory_key)
-    # A retry of a committed amendment is answered from its commit before the guards
-    # meant for a new one (a lock set since) refuse it.
-    receipt = await publisher.durable_replay(input.org, input.namespace, ident)
+    # A retry of a committed amendment is answered from its commit, whether or not the
+    # key moved on since, before the guards meant for a new one (a lock or a blacklist
+    # rule added since) refuse it; its row is projected below either way.
+    receipt = await publisher.durable_replay(input.org, input.namespace, ident, latest_too=True)
     if receipt is not None:
         memory_id = receipt.retried_memory_id
     else:

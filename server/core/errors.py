@@ -164,8 +164,11 @@ class TemporalUnavailableError(LoomServerError):
     code = "TEMPORAL_UNAVAILABLE"
     status_code = 503
 
-    def __init__(self, message: str = "", *, retry_after_s: int = 1) -> None:
-        super().__init__(message, retry_after_s=retry_after_s)
+    # retry_after_s None: a configuration the operator must change, not a retry.
+    def __init__(self, message: str = "", *, retry_after_s: int | None = 1) -> None:
+        super().__init__(
+            message, **({} if retry_after_s is None else {"retry_after_s": retry_after_s})
+        )
 
 
 class BackendTimeoutError(LoomServerError):

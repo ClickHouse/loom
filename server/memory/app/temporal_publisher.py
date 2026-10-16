@@ -160,12 +160,15 @@ def replayed(namespace: str, ident: Ident) -> Receipt | None:
     )
 
 
-async def durable_replay(org: str, ns: str, ident: Ident) -> Receipt | None:
+async def durable_replay(
+    org: str, ns: str, ident: Ident, *, latest_too: bool = False
+) -> Receipt | None:
     """The receipt of this request's earlier commit to `ident` under its client
     retry key (past the transport's 24 h cache) when the key has moved on since:
     a retry is answered from it before a guard meant for a new change (a pin or
     lock a later write set) refuses it. One that has not moved on goes the normal
-    way and rewrites its row. The same key with another body is refused."""
+    way and rewrites its row, unless `latest_too` (a handler that projects its own
+    row): then its receipt answers too. The same key with another body is refused."""
     idem = idempotency.request_key_var.get()
     if not idem or (ns, ident) in _request_commits():  # this request's own commit is no retry
         return None
@@ -180,9 +183,10 @@ async def durable_replay(org: str, ns: str, ident: Ident) -> Receipt | None:
             "Idempotency-Key reused with a different request to this memory"
         )
     last = (await store.last_commits(org, ns, [ident])).get(ident)
-    if last in {str(c["commit_id"]) for c in prior}:
+    latest = last in {str(c["commit_id"]) for c in prior}
+    if latest and not latest_too:
         return None
-    receipt = _receipt(ns, ident, prior[-1], moved_on=True)
+    receipt = _receipt(ns, ident, prior[-1], moved_on=not latest)
     bag = _bag()
     if bag is not None:
         bag.append(receipt)
@@ -404,11 +408,13 @@ async def publish_amendments(
     *,
     operation: str,
     scope: str = "private",
+    recheck: Callable[[], Awaitable[None]] | None = None,
     ch: _CHClient | None = None,
 ) -> list[Receipt]:
     """Publish one built amendment per key as one batch (one plan, one lock): a
     receipt per key that committed; a build that returns an empty amendment commits
-    nothing for its key."""
+    nothing for its key. `recheck` runs under the lock before the commits: what a
+    plan was built on that changes without a commit (a redaction) is checked there."""
     from server.memory.app.provenance import writer_actor
     from server.memory.domain.provenance import source_class_for
 
@@ -432,7 +438,14 @@ async def publish_amendments(
     if not changes:
         return []
     return await publish(
-        org, namespace, changes, WriteIntent(), operation=operation, scope=scope, ch=ch
+        org,
+        namespace,
+        changes,
+        WriteIntent(),
+        operation=operation,
+        scope=scope,
+        recheck=recheck,
+        ch=ch,
     )
 
 
@@ -444,6 +457,7 @@ async def publish(
     *,
     operation: str = "",
     scope: str = "private",
+    recheck: Callable[[], Awaitable[None]] | None = None,
     ch: _CHClient | None = None,
 ) -> list[Receipt]:
     """Plan the batch's commits against a head snapshot, then take the namespace
@@ -472,10 +486,11 @@ async def publish(
                     continue
                 if seq != batch.seq and await _touched(batch, seq, ch):
                     continue
-                # A projection lands rows without a commit: one stamped above the floor a
-                # change was planned on would outrank the row this batch writes.
-                if await _floor_moved(batch, ch):
-                    continue
+                # A projection lands rows without a commit, so the sequence holds still:
+                # the plan is current, but its rows go above the versions that landed.
+                await _above_landed(batch, ch)
+                if recheck is not None:
+                    await recheck()
                 # Stamp, then fence: an erasure requested after the stamp has a later
                 # request time than every commit of the batch, so reads never serve
                 # the batch even if its withdrawal below fails.
@@ -573,8 +588,6 @@ class _Batch:
     commits: list[dict[str, Any]] = field(default_factory=list)
     projection: list[dict[str, Any]] = field(default_factory=list)
     receipts: list[Receipt] = field(default_factory=list)
-    # Per key, the newest loom.memory version the plan stamped its rows above.
-    floor: dict[Ident, int] = field(default_factory=dict)
     # Keys a past-only change re-cut the current claim of (a plan bounding it): its
     # row is not the write's, so it is reconciled once the batch is published.
     refresh: list[Ident] = field(default_factory=list)
@@ -626,7 +639,6 @@ async def _plan(
         else int(committed_v.get(ident, 0))
         for ident in keys
     }
-    b.floor = dict(floor)
     priors = await _retried_commits(b, ch)
     own = {ident: {str(c["commit_id"]) for c in cs} for ident, cs in priors.items()}
     for change in changes:
@@ -1309,11 +1321,20 @@ def _no_commit(ns: str, ident: Ident, at: datetime, why: str) -> Receipt:
     return Receipt(ns, ident, "", 0, at, "", left_out=why)
 
 
-async def _floor_moved(b: _Batch, ch: _CHClient) -> bool:
-    """Has a loom.memory row of one of the batch's keys landed above the version floor
-    the batch was planned on (a projection, which moves no sequence)?"""
-    now = await store.row_versions(b.org, b.ns, b.keys, ch=ch)
-    return any(v > b.floor.get(ident, 0) for ident, v in now.items())
+async def _above_landed(b: _Batch, ch: _CHClient) -> None:
+    """Raise the batch's row versions above any loom.memory row of its keys that
+    landed since the plan read its floor (a projection, which moves no sequence), so
+    the merge ranks the batch's rows as the journal orders them: after it."""
+    if not any(p.row.get("version") and not p.past_only for p in b.planned):
+        return
+    newest = dict(await store.row_versions(b.org, b.ns, b.keys, ch=ch))
+    for p in b.planned:
+        drawn = int(p.row.get("version") or 0)
+        if not drawn or p.past_only:
+            continue
+        if newest.get(p.ident, 0) >= drawn:
+            cast(dict[str, Any], p.row)["version"] = drawn = newest[p.ident] + 1
+        newest[p.ident] = max(newest.get(p.ident, 0), drawn)
 
 
 async def _touched(b: _Batch, head: int, ch: _CHClient) -> bool:
@@ -1399,7 +1420,8 @@ async def namespace_lock(org: str, ns: str) -> AsyncIterator[Callable[[], Awaita
         raise TemporalUnavailableError(
             "memory writes need a cross-process publisher: run with a Keeper, or declare "
             "LOOM_MEMORY_TEMPORAL_PUBLISHER=process on a single server process "
-            "(LOOM_WEB_WORKERS=1, no separate workers container) that writes memory"
+            "(LOOM_WEB_WORKERS=1, no separate workers container) that writes memory",
+            retry_after_s=None,
         )
     async with AsyncExitStack() as stack:
         # Only taking the lock maps to "busy": a refusal from inside the section

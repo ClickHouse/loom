@@ -54,6 +54,8 @@ def health_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     provider_health.reset()
     monkeypatch.setattr(boot, "SKIPPED_PENDING_MIGRATIONS", ())
     monkeypatch.setattr("server.embedding.embedder._probed_dim", None)
+    # A Keeper is present, as on the stock stack (deploy/clickhouse-config/keeper.xml).
+    monkeypatch.setattr("server.auth.grant_claims.claims_atomic", lambda: True)
     # Default: pure CH-only — every integration off.
     monkeypatch.setattr(settings, "langfuse_url", "")
     monkeypatch.setattr(settings, "langfuse_admin_token", "")

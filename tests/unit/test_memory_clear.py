@@ -20,6 +20,7 @@ def _row(mode: str = "", until: datetime | None = None) -> Any:
 def clear(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """The scope's live rows, the tombstones written and the locked count."""
     from server.memory import store as memory_repo
+    from server.memory.app import temporal_projection
     from server.memory.app import temporal_publisher as publisher
     from server.memory.store import temporal as temporal_store
 
@@ -54,10 +55,16 @@ def clear(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
     async def _publish(org: str, ns: str, items: list, **_k: Any) -> list:
         seen["published"].extend(items)
-        return [type("R", (), {"commit_seq": 7})() for _ in items]
+        return [type("R", (), {"commit_seq": 7, "ident": ident})() for ident, _m, _b in items]
+
+    async def _project(org: str, ns: str, idents: list, **_k: Any) -> dict:
+        seen["projected"] = idents
+        return {}
 
     monkeypatch.setattr(temporal_store, "journal_only_identities", _journal_only)
     monkeypatch.setattr(publisher, "publish_amendments", _publish)
+    monkeypatch.setattr(temporal_projection, "project_keys", _project)
+    monkeypatch.setattr(publisher, "read_token", lambda receipts: "t")
     return seen
 
 
@@ -165,6 +172,8 @@ async def test_clear_retracts_a_key_only_the_journal_holds_unless_a_lock_keeps_i
         MemoryClearInput(org="o", namespace="n", user_id="alice", confirm_subject="alice")
     )
     assert out.rows_affected["loom.memory_temporal_commits"] == 1
+    # A plan that came due while the clear ran has a row: it is brought in line.
+    assert clear["projected"] == [ident] and out.current_rows_pending is False
     ((got, _mid, build),) = clear["published"]
     plan = tm.Assertion("p1", "p1", "launch")
     assert got == ident and build([plan]).retired == ("p1",)

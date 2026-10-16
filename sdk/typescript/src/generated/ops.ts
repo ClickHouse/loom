@@ -4001,6 +4001,7 @@ export interface MemoryClearOutput {
   rows_affected: Record<string, number>;
   total: number;
   locked_skipped?: number;
+  current_rows_pending?: boolean;
 }
 
 export interface MemoryConsolidateInput {
@@ -4174,6 +4175,7 @@ export interface MemoryDeleteOutput {
   left_out?: string;
   commit_seq?: number;
   read_token?: string;
+  current_rows_pending?: boolean;
 }
 
 export interface MemoryDemonstrateInput {

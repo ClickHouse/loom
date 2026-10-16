@@ -105,6 +105,11 @@ def world(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     # pinned in test_rmt_write_is_typed.
     monkeypatch.setattr("server.memory.store.inserts.check_memory_rows", lambda rows: None)
     monkeypatch.setattr(hm._lock, "assert_unlocked", lambda *a, **k: None)
+
+    async def _no_journal_only(*_a: Any, **_k: Any) -> list:
+        return []  # no key only the journal holds
+
+    monkeypatch.setattr("server.memory.store.temporal.journal_only_identities", _no_journal_only)
     return state
 
 

@@ -630,6 +630,10 @@ async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
         if existing is not None and not same_user(existing, identity):
             existing = None  # the wide form ignores user_id; another user's row is not ours
     if existing is None:
+        # A plan only the journal holds is still the key's: retract it.
+        journal_only = await _delete_journal_only(input)
+        if journal_only is not None:
+            return journal_only
         # Idempotent: deleting a non-existent row is a no-op — and says so.
         return MemoryDeleteOutput(tombstoned=False, found=False, version=next_version())
     _lock.assert_unlocked(existing, "delete", op="memory.delete")
@@ -811,10 +815,11 @@ async def handle_memory_clear(input: MemoryClearInput) -> MemoryClearOutput:
             list(heads.values()), _tombstone, skip=lambda row: bool(_lock.effective_mode(row))
         )
         cleared, mirrored = cleared + n, mirrored + m
+    retracted, pending = await _clear_journal_only(input)
     counts = {
         "loom.memory": cleared,
         "loom.memory_embeddings": mirrored,
-        "loom.memory_temporal_commits": await _clear_journal_only(input),
+        "loom.memory_temporal_commits": retracted,
     }
     locked_skipped = await memory_repo.locked_in_scope(
         org=input.org, namespace=input.namespace, user_id=input.user_id, agent=input.agent
@@ -824,34 +829,86 @@ async def handle_memory_clear(input: MemoryClearInput) -> MemoryClearOutput:
         rows_affected=counts,
         total=sum(counts.values()),
         locked_skipped=locked_skipped,
+        current_rows_pending=pending,
     )
 
 
-async def _clear_journal_only(input: MemoryClearInput) -> int:
-    """Retract the scope's keys that only the journal holds (a plan not yet due has no
-    current row to tombstone), save one a lock in force keeps. Returns the commits."""
+def _retract_unless_locked(served: list[Any]) -> Any:
+    """A journal-only key's retraction: every claim it serves, unless a lock in force
+    refuses the delete (then an empty amendment, which commits nothing)."""
     from server.memory.app import temporal_publisher as publisher
     from server.memory.domain import temporal_model as tm
-    from server.memory.store import temporal as temporal_store
 
-    def _retract(served: list[tm.Assertion]) -> tm.Amendment:
-        if publisher._locked_against(served, "delete", datetime.now(UTC)):
-            return tm.Amendment("retract")
-        return tm.retract(served)
+    if publisher._locked_against(served, "delete", datetime.now(UTC)):
+        return tm.Amendment("retract")
+    return tm.retract(served)
+
+
+async def _retract_journal_only(
+    org: str, namespace: str, idents: list[tuple[tuple[str, str, str, str], str]], op: str
+) -> tuple[list[Any], bool]:
+    """Retract keys only the journal holds (a plan not yet due has no current row to
+    tombstone), then bring their current rows in line: one can come due while this
+    runs. The receipts of the ones that committed, and whether a row was left to the
+    reconciler."""
+    from server.memory.app import temporal_publisher as publisher
+    from server.memory.app.temporal_projection import project_keys
+
+    done: list[Any] = []
+    for i in range(0, len(idents), _CLEAR_CHUNK):
+        receipts = await publisher.publish_amendments(
+            org,
+            namespace,
+            [(ident, mid, _retract_unless_locked) for ident, mid in idents[i : i + _CLEAR_CHUNK]],
+            operation=op,
+        )
+        done += [r for r in receipts if r.commit_seq]
+    if not done:
+        return done, False
+    try:
+        await project_keys(
+            org, namespace, [r.ident for r in done], read_token=publisher.read_token(done)
+        )
+    except Exception as e:  # noqa: BLE001 — committed: the reconciler follows
+        log.warning("%s: current rows left to the reconciler: %s", op, e)
+        return done, True
+    return done, False
+
+
+async def _clear_journal_only(input: MemoryClearInput) -> tuple[int, bool]:
+    """The scope's keys only the journal holds, retracted: the commits, and whether a
+    current row was left to the reconciler."""
+    from server.memory.store import temporal as temporal_store
 
     idents = await temporal_store.journal_only_identities(
         input.org, input.namespace, user_id=input.user_id, agent=input.agent
     )
-    n = 0
-    for i in range(0, len(idents), _CLEAR_CHUNK):
-        receipts = await publisher.publish_amendments(
-            input.org,
-            input.namespace,
-            [(ident, memory_id, _retract) for ident, memory_id in idents[i : i + _CLEAR_CHUNK]],
-            operation="memory.clear",
-        )
-        n += sum(1 for r in receipts if r.commit_seq)
-    return n
+    done, pending = await _retract_journal_only(input.org, input.namespace, idents, "memory.clear")
+    return len(done), pending
+
+
+async def _delete_journal_only(input: MemoryDeleteInput) -> MemoryDeleteOutput | None:
+    """A delete of a key only the journal holds (any agent of the caller's user, as the
+    row lookup goes namespace-wide): its claims retracted, or None when it has none."""
+    from server.memory.app import temporal_publisher as publisher
+    from server.memory.store import temporal as temporal_store
+
+    idents = await temporal_store.journal_only_identities(
+        input.org, input.namespace, user_id=input.user_id, memory_key=input.memory_key
+    )
+    if not idents:
+        return None
+    done, pending = await _retract_journal_only(input.org, input.namespace, idents, "memory.delete")
+    if not done:  # served nothing, or a lock in force kept it
+        return None
+    return MemoryDeleteOutput(
+        tombstoned=True,
+        found=True,
+        version=next_version(),  # no row was written: a number no row carries
+        commit_seq=done[-1].commit_seq,
+        read_token=publisher.read_token(done),
+        current_rows_pending=pending,
+    )
 
 
 async def handle_memory_touch(input: MemoryTouchInput) -> MemoryTouchOutput:

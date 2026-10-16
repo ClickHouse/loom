@@ -408,35 +408,33 @@ def test_a_commit_to_the_same_key_between_plan_and_lock_replans(
     assert [c["commit_seq"] for c in journal.commits] == [1, 2, 3]
 
 
-def test_a_projection_landing_between_plan_and_lock_replans_the_write(
+def test_a_projection_landing_between_plan_and_lock_goes_below_the_write(
     journal: Journal, monkeypatch
 ) -> None:
-    # C is drawn, then another write's projection lands a later version of k without
-    # moving the sequence: C is planned again and, drawn earlier, left out.
+    # C is planned, then a projection lands a later version of k without moving the
+    # sequence: C still commits, as planned, and its row goes above the landed one,
+    # so loom.memory serves what the journal serves.
     run(pub.publish_rows([mrow('"A"')]))
     c = mrow('"C"')
-    landed: dict[str, Any] = {}
+    landed = {"v": 0}
     real_head = journal.head
     calls = {"n": 0}
 
     async def head(*a, **k):
         calls["n"] += 1
         if calls["n"] == 2:  # under the lock
-            landed.update(mrow('"B"', version=c["version"] + 5))
+            landed["v"] = c["version"] + 5
         return await real_head(*a, **k)
 
-    async def heads(*_a, **_k):
-        return [dict(landed)] if landed else []
-
     async def versions(*_a, **_k):
-        return {("a", "-", "-", "k"): landed["version"]} if landed else {}
+        return {("a", "-", "-", "k"): landed["v"]} if landed["v"] else {}
 
     monkeypatch.setattr(store, "head", head)
-    monkeypatch.setattr(store, "memory_heads", heads)
     monkeypatch.setattr(store, "row_versions", versions)
-    assert run(pub.publish_rows([c])) == []  # superseded: no row, no commit
-    assert calls["n"] >= 3  # planned twice
-    assert len(journal.commits) == 1
+    (row,) = run(pub.publish_rows([c]))
+    assert calls["n"] == 2  # planned once
+    assert row["version"] == landed["v"] + 1
+    assert journal.commits[-1]["row_version"] == row["version"]
 
 
 def test_a_write_begun_before_an_erasure_is_fenced(journal: Journal) -> None:
@@ -1479,3 +1477,24 @@ def test_late_evidence_names_no_row_version(journal: Journal) -> None:
     assert run(pub.publish_rows([late])) == []
     assert journal.commits[-1]["row_version"] == 0
     assert journal.commits[0]["row_version"] > 0
+
+
+def test_a_recheck_under_the_lock_refuses_the_whole_batch(journal: Journal) -> None:
+    async def scrubbed_since() -> None:
+        raise PreconditionFailedError("changed since planned")
+
+    def build(served: list[tm.Assertion]) -> tm.Amendment:
+        return tm.Amendment("correct", (), (tm.first('"X"'),))
+
+    ident = ("a", "-", "-", "k")
+    with pytest.raises(PreconditionFailedError):
+        run(
+            pub.publish_amendments(
+                "o",
+                "n",
+                [(ident, "00000000-0000-0000-0000-000000000001", build)],
+                operation="t",
+                recheck=scrubbed_since,
+            )  # fmt: skip
+        )
+    assert journal.commits == []

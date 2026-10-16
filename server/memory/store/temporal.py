@@ -1055,11 +1055,12 @@ async def journal_only_identities(
     *,
     user_id: str | None = None,
     agent: str | None = None,
+    memory_key: str | None = None,
     ch: _CHClient | None = None,
 ) -> list[tuple[tuple[str, str, str, str], str]]:
     """The (identity, memory_id) of every key of the scope the journal has a commit for
     and loom.memory serves no live row of (a plan an amendment made, not yet due):
-    what `memory.clear` retracts in the journal itself."""
+    what `memory.clear` and `memory.delete` retract in the journal itself."""
     ch = ch or _default_client()
     where = ["org = {org:String}", "namespace = {ns:String}"]
     params: dict[str, Any] = {"org": org, "ns": namespace}
@@ -1069,6 +1070,9 @@ async def journal_only_identities(
     if agent is not None:
         where.append("agent = {agent:String}")
         params["agent"] = agent
+    if memory_key is not None:
+        where.append("memory_key = {mk:String}")
+        params["mk"] = memory_key
     scope = " AND ".join(where)
     rows = await ch.query_all(
         "SELECT agent, user_id, session_id, memory_key, "
@@ -1268,6 +1272,40 @@ async def served_contents(
         Assertion.from_json(a).content_sha256
         for a in _added(commits)
         if str(a["assertion_id"]) not in retired
+    }
+
+
+async def redacted_among(
+    org: str,
+    namespace: str,
+    wanted: Sequence[tuple[tuple[str, str, str, str], str]],
+    *,
+    ch: _CHClient | None = None,
+) -> set[tuple[tuple[str, str, str, str], str]]:
+    """Which (identity, value sha256) pairs a redaction has scrubbed from the journal."""
+    if not wanted:
+        return set()
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        "SELECT agent, user_id, session_id, memory_key, toString(value_sha256) AS sha "
+        f"FROM {ASSERTIONS} FINAL WHERE org = {{org:String}} AND namespace = {{ns:String}} "
+        "AND memory_key IN {mk:Array(String)} "
+        "AND (agent, user_id, session_id, memory_key, toString(value_sha256)) "
+        "IN {pairs:Array(Tuple(String, String, String, String, String))} "
+        f"AND value = '{REDACTED_VALUE}'",
+        params={
+            "org": org,
+            "ns": namespace,
+            "mk": sorted({i[3] for i, _ in wanted}),
+            "pairs": [(*i, sha) for i, sha in wanted],
+        },
+    )
+    return {
+        (
+            (str(r["agent"]), str(r["user_id"]), str(r["session_id"]), str(r["memory_key"])),
+            str(r["sha"]),
+        )
+        for r in rows
     }
 
 

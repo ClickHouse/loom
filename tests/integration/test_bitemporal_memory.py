@@ -1089,6 +1089,22 @@ async def _delete(ch: Any, sql: str, **params: Any) -> None:
     await ch.execute(sql, params=params, settings={"lightweight_deletes_sync": 2})
 
 
+async def _expire_replay(ch: Any, client_key: str, operation: str) -> None:
+    """The replay cache entry of this one request gone, as if it expired. Its stored
+    key hashes the admitted caller in: derive it for each caller the cache holds, so
+    only this (unique) client key's row matches and other runs are untouched."""
+    from server.core.idempotency import scoped_key
+
+    callers = await ch.query_all("SELECT DISTINCT org, subject FROM loom.idempotency")
+    keys = [
+        scoped_key(client_key, org=c["org"], subject=c["subject"], operation=operation)
+        for c in callers
+    ]
+    where = "FROM loom.idempotency WHERE idempotency_key IN {k:Array(String)}"
+    assert (await ch.query_one(f"SELECT count() AS n {where}", params={"k": keys}))["n"]
+    await _delete(ch, f"DELETE {where}", k=keys)
+
+
 async def test_an_erasure_cut_hides_what_cleanup_left_behind(
     control_plane_url, mint_test_token
 ) -> None:
@@ -1253,7 +1269,7 @@ async def test_a_retry_writes_its_row_under_the_committed_id(
                 o=ORG,
                 n=ns,
             )
-            await _delete(ch, "DELETE FROM loom.idempotency WHERE 1")
+            await _expire_replay(ch, key, "memory.set")
         finally:
             await ch.disconnect()
         again = await a.call("memory.set", {"memory_key": "n", "value": "v"}, idempotency_key=key)
@@ -1275,7 +1291,7 @@ async def test_a_durable_retry_is_answered_before_a_later_pin_refuses_it(
         await a.call("memory.set", {"memory_key": "p", "value": "B", "pinned": True})
         ch = await _ch()
         try:
-            await _delete(ch, "DELETE FROM loom.idempotency WHERE 1")  # the replay cache expired
+            await _expire_replay(ch, key, "memory.set")
         finally:
             await ch.disconnect()
         again = await a.call("memory.set", {"memory_key": "p", "value": "A"}, idempotency_key=key)
@@ -1504,7 +1520,7 @@ async def test_a_durable_amend_retry_is_answered_before_a_later_lock_refuses_it(
         await a.call("memory.lock", {"memory_key": "m", "mode": "read_only", "reason": "audit"})
         ch = await _ch()
         try:
-            await _delete(ch, "DELETE FROM loom.idempotency WHERE 1")  # the replay cache expired
+            await _expire_replay(ch, key, "memory.amend")
         finally:
             await ch.disconnect()
         again = await a.call("memory.amend", body, idempotency_key=key)
@@ -1552,3 +1568,40 @@ async def test_a_historical_ask_filters_by_the_tags_recorded_at_its_cutoff(
              "allow_synthesis": False},
         )  # fmt: skip
         assert any(r["memory_key"] == "rel" for r in out["results"])
+
+
+async def test_a_durable_amend_retry_whose_commit_is_still_latest_skips_new_guards(
+    control_plane_url, mint_test_token
+) -> None:
+    a, _ = await _agent(control_plane_url, mint_test_token, "amend-retry-bl")
+    async with a:
+        await a.call("memory.set", {"memory_key": "m", "value": "the code is alpha"})
+        key = f"r-{uuid.uuid4().hex}"
+        body = {"memory_key": "m", "change_kind": "correct", "value": "the code is omega"}
+        first = await a.call("memory.amend", body, idempotency_key=key)
+        await a.call("blacklist.add", {"pattern": "omega", "scope": "namespace", "sweep": False})
+        ch = await _ch()
+        try:
+            await _expire_replay(ch, key, "memory.amend")
+        finally:
+            await ch.disconnect()
+        again = await a.call("memory.amend", body, idempotency_key=key)
+        assert again["commit_seq"] == first["commit_seq"]  # its receipt, not a 422
+
+
+async def test_delete_retracts_a_key_only_the_journal_holds(
+    control_plane_url, mint_test_token
+) -> None:
+    a, _ = await _agent(control_plane_url, mint_test_token, "delete-plan")
+    later = datetime.now(UTC) + timedelta(days=30)
+    async with a:
+        await a.call(
+            "memory.amend",
+            {"memory_key": "plan", "change_kind": "transition", "value": "launch",
+             "effective_at": later.isoformat()},
+        )  # fmt: skip
+        due = {"memory_key": "plan", "valid_as_of": (later + timedelta(days=1)).isoformat()}
+        assert (await a.call("memory.get", due))["value"] == "launch"
+        out = await a.call("memory.delete", {"memory_key": "plan"})
+        assert (out["found"], out["tombstoned"]) == (True, True) and out["commit_seq"]
+        assert (await a.call("memory.get", due))["found"] is False

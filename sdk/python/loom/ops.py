@@ -10058,6 +10058,7 @@ class MemoryClearOutput(TypedDict, total=False):
     rows_affected: Required[dict[str, int]]
     total: Required[int]
     locked_skipped: NotRequired[int]
+    current_rows_pending: NotRequired[bool]
 
 
 class MemoryConsolidateInput(TypedDict, total=False):
@@ -10313,6 +10314,7 @@ class MemoryDeleteOutput(TypedDict, total=False):
     left_out: NotRequired[str]
     commit_seq: NotRequired[int]
     read_token: NotRequired[str]
+    current_rows_pending: NotRequired[bool]
 
 
 class MemoryDemonstrateInput(TypedDict, total=False):

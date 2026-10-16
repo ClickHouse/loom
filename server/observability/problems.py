@@ -686,6 +686,27 @@ def _grant_claim_problems(state: HealthState) -> list[Problem]:
     ]
 
 
+def _memory_publisher_problems(settings: Any, state: HealthState) -> list[Problem]:
+    """No Keeper (loom.grant_claims, a KeeperMap table, is absent) and no declared single
+    writer: the temporal publisher refuses every memory write."""
+    single = settings.memory_temporal_publisher == "process" and settings.web_workers == 1
+    if single or state.grant_claims_atomic is not False:
+        return []
+    return [
+        Problem(
+            "memory_writes_refused",
+            "error",
+            "ClickHouse has no Keeper, so memory writes have no cross-process publisher "
+            "lock and every memory.set, amend and delete is refused (503 "
+            "TEMPORAL_UNAVAILABLE).",
+            "Run ClickHouse with a Keeper (deploy/clickhouse-config/keeper.xml), or run one "
+            "server process that writes memory with LOOM_MEMORY_TEMPORAL_PUBLISHER=process "
+            "and LOOM_WEB_WORKERS=1 (no separate workers container).",
+            source="runtime",
+        )
+    ]
+
+
 def _constraint_message(error: str) -> str:
     """`Setting max_execution_time shouldn't be greater than 30` out of the error text."""
     m = re.search(r"Setting \w+ [^.(]*", error)
@@ -711,6 +732,7 @@ def collect_problems(settings: Any, state: HealthState | None = None) -> list[Pr
         + _run_claim_problems(st)
         + _oauth_claim_problems(settings, st)
         + _grant_claim_problems(st)
+        + _memory_publisher_problems(settings, st)
     )
     return sorted(problems, key=lambda p: (SEVERITY_RANK.get(p.severity, 9), p.code))
 
