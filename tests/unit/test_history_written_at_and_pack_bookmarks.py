@@ -57,7 +57,8 @@ def test_every_intended_edit_stamps_updated_at() -> None:
         + inspect.getsource(update)
         + inspect.getsource(restore)
     )
-    for marker in ("tombstoned_at=now,", 'status="active",', "run_id=revision_run_id,"):
+    restored = "status=await _status_before_retirement(existing, ch=ch),"
+    for marker in ("tombstoned_at=now,", restored, "run_id=revision_run_id,"):
         i = msrc.index(marker)
         assert stamp in msrc[max(0, i - 200) : i], marker
     assert inspect.getsource(app).count("updated_at=memory_repo.written_now()") == 2

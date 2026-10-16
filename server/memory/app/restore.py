@@ -79,7 +79,7 @@ async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryResto
             existing,
             version=new_version,
             updated_at=memory_repo.written_now(),
-            status="active",
+            status=await _status_before_retirement(existing, ch=ch),
             superseded_by="",
             invalid_at=None,
         )
@@ -129,6 +129,27 @@ async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryResto
         version=new_version,
         from_status="superseded",
     )
+
+
+async def _status_before_retirement(row: MemoryRow, *, ch: Any) -> str:
+    """`conflicted` for a row retired while under review, which still lists its peers
+    as they list it; `active` otherwise."""
+    found = await ch.query_all(
+        """
+        SELECT argMax(status, version) AS was FROM loom.memory_versions
+        WHERE org = {org:String} AND namespace = {ns:String} AND memory_id = {id:UUID}
+          AND version < {version:UInt64} AND status != 'superseded'
+        SETTINGS select_sequential_consistency = 1
+        """,
+        params={
+            "org": row.org,
+            "ns": row.namespace,
+            "id": str(row.memory_id),
+            "version": int(row.version),
+        },
+    )
+    was = str(found[0]["was"]) if found else ""
+    return "conflicted" if was == "conflicted" and row.conflict_with else "active"
 
 
 def _attested(row: MemoryRow) -> bool:

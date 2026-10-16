@@ -4250,6 +4250,24 @@ async def test_every_start_of_a_closed_value_closes_its_edge(ch, org) -> None:
     assert await _open_edges(ch, org, set()) == []
 
 
+async def test_an_undo_gives_a_conflicted_row_back_its_conflict(ch, org) -> None:
+    # Retired while under review: its peer still lists it, so it returns to the queue.
+    from server.memory import store as M
+    from server.memory.app.restore import handle_memory_restore
+
+    peer = _row(org, "s9", "User lives in Rome", datetime(2023, 5, 30), memory_key="city")
+    await M.insert_memory_versions([peer], ch=ch)
+    paris = _row(org, "s1", "User lives in Paris", datetime(2023, 5, 30))
+    paris |= {"status": "conflicted", "conflict_with": [str(peer["memory_id"])]}
+    london = _row(org, "s2", "User lives in London", datetime(2023, 6, 30))
+    retired = {**paris, "version": M.next_version(), "status": "superseded"}
+    retired["superseded_by"] = str(london["memory_id"])
+    await M.insert_memory_versions([paris, london, retired], ch=ch)
+    assert (await handle_memory_restore(_undo_of(london))).restored
+    head = await M.get_by_id(str(paris["memory_id"]), org=org, ch=ch, scope=WHOLE_NAMESPACE)
+    assert (head.status, head.conflict_with) == ("conflicted", [str(peer["memory_id"])])
+
+
 def _undo_of(winner: dict[str, Any]) -> Any:
     from server.memory.api.models_crud import MemoryRestoreInput
 
