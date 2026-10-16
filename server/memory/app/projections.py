@@ -24,8 +24,9 @@ from server.memory.app import conflicts as _conflicts
 from server.memory.app.projection_errors import TriplesInsertFailed, TriplesRepairFailed
 from server.memory.domain.graph_quality import (
     MAX_TRIPLES_PER_ROW,
+    ended_state,
     observation_key,
-    order_undated_before_later_starts,
+    order_ended_before_dated,
     restates_current,
 )
 
@@ -379,6 +380,8 @@ async def write_entity_triples(
     triples: list[dict[str, Any]] = []
     triple_memories: list[dict[str, Any]] = []
     triple_rows: list[dict[str, Any]] = []
+    # The triples whose fact is worded as a state that has ended.
+    ended: set[int] = set()
     # The names this write resolved to something else, for a replay to reuse.
     resolved_names: dict[str, str] = {}
     if entity_map is None:
@@ -443,6 +446,8 @@ async def write_entity_triples(
                 return
             if not provenance:
                 provenance = _tp.classify(s, o, _cn)
+            if ended_state(_cn):
+                ended.add(len(triples))
             triples.append(
                 entity_triple_row(
                     input.org,
@@ -503,8 +508,8 @@ async def write_entity_triples(
         return
     from server.identity.app.namespace_ontology import load_relation_cardinality
 
-    order_undated_before_later_starts(
-        triples, await load_relation_cardinality(input.org, input.namespace)
+    order_ended_before_dated(
+        triples, ended, await load_relation_cardinality(input.org, input.namespace)
     )
 
     if inserted_at is None:

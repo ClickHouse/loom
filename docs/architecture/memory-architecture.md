@@ -432,11 +432,14 @@ the value it was written or stated for (`carried`):
   dated value. Within one write the later-stated triple is stored later, so on one start
   day the later-stated value is the newer, and any other writer reads that order back; a
   later start day still wins whatever the order ("I move to Berlin" next month, then an
-  undated "I live in Paris": Paris closes when Berlin begins). An undated value stated
-  before a dated one in the same write is the older: it is seen a microsecond before the
-  earliest start stated after it, when that start is earlier ("I lived in London", then
-  "I moved to Paris on Oct 1", written Oct 15: London closes on Oct 1, Paris stays
-  current). Two writers racing, even in
+  undated "I live in Paris": Paris closes when Berlin begins). Within one write, an undated
+  value worded as a state that has ended ("I lived in London", "used to work at Acme")
+  is older than a dated value of its relation, whichever is stated first: it is seen a
+  microsecond before the earliest start of another value in the write, when that start
+  is earlier ("I lived in London" and "I moved to Paris on Oct 1", written Oct 15:
+  London closes on Oct 1, Paris stays current). Statement order alone moves nothing,
+  because extraction emits facts in any order: "I live in Paris" next to "I moved to
+  London in 2019" keeps Paris. Two writers racing, even in
   one second, so agree on one current value: the later arrival. A value can have several
   open rows, one per observation, so values compare at their newest open row, the new
   value's open stored rows counted with the new one ("London from Oct 15, Paris from

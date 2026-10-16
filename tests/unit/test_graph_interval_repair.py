@@ -957,8 +957,11 @@ def test_a_restatement_is_judged_with_the_namespace_cardinality() -> None:
     assert not restates_current(*args, closed_at=_T, declared={})
 
 
-async def _stored_batch(monkeypatch, *values: tuple[str, datetime | None]) -> list[dict]:
-    """The triple rows one bulk write stores for `values`, stated in that order."""
+async def _stored_batch(
+    monkeypatch, *values: tuple[str, datetime | None], said: dict[str, str] | None = None
+) -> list[dict]:
+    """The triple rows one bulk write stores for `values`, stated in that order (each
+    city's sentence is "I live in <city>" unless `said` words it otherwise)."""
     from server.memory.app import projections as proj
 
     async def no_repair(*a: Any, **k: Any) -> None:
@@ -969,7 +972,7 @@ async def _stored_batch(monkeypatch, *values: tuple[str, datetime | None]) -> li
     entries = [
         _BulkSetEntry(
             memory_key=f"k{i}",
-            value=f"I live in {city}",
+            value=(said or {}).get(city, f"I live in {city}"),
             relations=[("user", "live_in", city)],
             valid_at=day,
         )
@@ -1076,16 +1079,31 @@ async def test_a_batch_keeps_the_value_with_the_newest_observation(monkeypatch, 
 
 
 @pytest.mark.asyncio
-async def test_a_batch_stating_an_undated_value_then_a_dated_one_keeps_the_dated(
-    monkeypatch, _declared
+@pytest.mark.parametrize("london_first", [True, False])
+async def test_a_batch_with_an_ended_undated_value_keeps_the_dated_one(
+    monkeypatch, _declared, london_first: bool
 ) -> None:
-    # One write on Sep 12: "I lived in London", then "I moved to Paris on Sep 1". Paris
-    # is current.
-    rows = await _stored_batch(monkeypatch, ("london", None), ("paris", datetime(2026, 9, 1)))
+    # One write on Sep 12, in either order: "I lived in London" and "I moved to Paris
+    # on Sep 1". Paris is current, and London closes when Paris began.
+    values = [("london", None), ("paris", datetime(2026, 9, 1))]
+    rows = await _stored_batch(
+        monkeypatch,
+        *(values if london_first else values[::-1]),
+        said={"london": "I lived in London", "paris": "I moved to Paris"},
+    )
     assert _current(rows) == {"paris"}
     ch = _Triples([{**r, "invalid_at": None} for r in rows])
     repairs = await _repair_contradictory_triples(_bulk_input(), rows, ch=ch, at=_T)
     assert [(r.old_object, r.valid_to) for r in repairs] == [("london", datetime(2026, 9, 1))]
+
+
+@pytest.mark.asyncio
+async def test_a_batch_keeps_a_value_that_still_holds_over_a_dated_past_one(
+    monkeypatch, _declared
+) -> None:
+    # One write: "I live in Paris", then "I moved to London in 2019". Paris is current.
+    rows = await _stored_batch(monkeypatch, ("paris", None), ("london", datetime(2019, 1, 1)))
+    assert _current(rows) == {"paris"}
 
 
 async def _replay_of_paris_then_madrid(monkeypatch, london_from: datetime | None) -> list[Any]:

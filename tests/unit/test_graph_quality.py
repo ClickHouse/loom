@@ -7,8 +7,9 @@ from server.memory.domain.graph_quality import (
     canonical_entity,
     canonical_entity_text,
     canonical_relation,
+    ended_state,
     is_single_valued_relation,
-    order_undated_before_later_starts,
+    order_ended_before_dated,
     triple_interval_repairs,
 )
 
@@ -391,25 +392,66 @@ def test_within_one_write_the_later_stated_value_wins() -> None:
     assert _survivors([zurich, amsterdam]) == {"amsterdam"}
 
 
-def test_within_one_write_an_undated_value_stated_before_a_dated_one_is_the_older() -> None:
-    # "I lived in London ... I moved to Paris on Oct 1", written Oct 15, London undated:
-    # London is seen just before Paris starts, so Paris closes it then and stays current.
+@pytest.mark.parametrize("london_first", [True, False])
+def test_within_one_write_an_ended_undated_value_is_older_than_a_dated_one(
+    london_first: bool,
+) -> None:
+    # "I lived in London" and "I moved to Paris on Oct 1", written Oct 15, in either
+    # order: London, worded as ended, is seen just before Paris starts, so Paris closes
+    # it then and stays current.
     seen = datetime(2026, 10, 15, 10, 0, 0, 7)
-    rome = _live("rome", None, seen)
-    london = _live("london", None, seen + timedelta(microseconds=1))
-    paris = _live("paris", datetime(2026, 10, 1), seen + timedelta(microseconds=2))
-    order_undated_before_later_starts([rome, london, paris])
-    assert rome["seen_at"] < london["seen_at"] < datetime(2026, 10, 1)
+    london = _live("london", None, seen)
+    paris = _live("paris", datetime(2026, 10, 1), seen)
+    rows = [london, paris] if london_first else [paris, london]
+    for n, row in enumerate(rows):
+        row["seen_at"] = seen + timedelta(microseconds=n)
+    order_ended_before_dated(rows, {rows.index(london)})
+    assert london["seen_at"] < datetime(2026, 10, 1)
     assert [(r.old_object, r.valid_to) for r in _repairs([london], paris)] == [
         ("london", datetime(2026, 10, 1))
     ]
-    assert _survivors([rome, london, paris]) == {"paris"}
-    # Stated after the dated value, the undated one is the newer, as before.
-    paris = _live("paris", datetime(2026, 10, 1), seen)
-    london = _live("london", None, seen + timedelta(microseconds=1))
-    order_undated_before_later_starts([paris, london])
-    assert london["seen_at"] == seen + timedelta(microseconds=1)
-    assert _survivors([paris, london]) == {"london"}
+    assert _survivors(rows) == {"paris"}
+
+
+@pytest.mark.parametrize("london_end", [None, datetime(2021, 6, 1)])
+def test_within_one_write_a_value_that_still_holds_beats_a_dated_past_one(
+    london_end: datetime | None,
+) -> None:
+    # "I live in Paris", then "I moved to London in 2019" (or "lived in London 2019 to
+    # 2021"): the order says nothing, Paris is worded as holding, so nothing moves.
+    seen = datetime(2026, 10, 15, 10, 0, 0, 7)
+    paris = _live("paris", None, seen)
+    london = {**_live("london", datetime(2019, 1, 1), seen + timedelta(microseconds=1))}
+    london["valid_to"] = london_end
+    order_ended_before_dated([paris, london], set())
+    assert paris["seen_at"] == seen
+    assert _survivors([paris, london]) == {"paris"}
+
+
+def test_within_one_write_an_ended_value_restated_with_a_date_does_not_move() -> None:
+    # "I lived in Paris" next to "I moved to Paris on Oct 1": the same value, no move.
+    seen = datetime(2026, 10, 15, 10, 0, 0, 7)
+    lived = _live("paris", None, seen)
+    moved = _live("paris", datetime(2026, 10, 1), seen + timedelta(microseconds=1))
+    order_ended_before_dated([lived, moved], {0})
+    assert lived["seen_at"] == seen
+
+
+@pytest.mark.parametrize(
+    ("text", "ended"),
+    [
+        ("user lived in london", True),
+        ("user used to work at acme", True),
+        ("user previously worked at acme", True),
+        ("user was living in london", True),
+        ("user lives in paris", False),
+        ("user moved to paris", False),
+        ("user has lived in paris for years", False),
+        ("i ve lived here since 2019", False),
+    ],
+)
+def test_ended_state_wording(text: str, ended: bool) -> None:
+    assert ended_state(text) is ended
 
 
 @pytest.mark.parametrize("berlin_first", [True, False])
@@ -422,7 +464,7 @@ def test_within_one_write_a_later_start_day_wins_whatever_the_order(berlin_first
     berlin = _live("berlin", datetime(2026, 11, 29), first if berlin_first else second)
     paris = _live("paris", None, second if berlin_first else first)
     old, new = (berlin, paris) if berlin_first else (paris, berlin)
-    order_undated_before_later_starts([old, new])  # a start in the future moves nothing
+    order_ended_before_dated([old, new], {[old, new].index(paris)})  # a future start moves nothing
     assert paris["seen_at"] == (second if berlin_first else first)
     repairs = _repairs([old], new)
     assert [(r.old_object, r.valid_to) for r in repairs] == [("paris", datetime(2026, 11, 29))]

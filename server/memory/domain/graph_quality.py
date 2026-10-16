@@ -534,25 +534,55 @@ def observation_key(
     return (start.date(), seen, obj)
 
 
-def order_undated_before_later_starts(
-    triples: list[dict[str, object]], declared: Mapping[str, str] | None = None
+# An undated value worded as a state that has ended ("I lived in London", "used to
+# work at Acme"), not one that still holds ("I've lived here for years").
+_ENDED_STATE_RE = re.compile(
+    r"\b(?:used to|previously|formerly|no longer|"
+    r"(?<!has )(?<!have )(?<!ve )(?:lived|worked|stayed|(?:was|were) (?:living|working|based)))\b"
+)
+
+
+def ended_state(text_norm: str) -> bool:
+    """Whether normalised prose words its fact as a state that has ended."""
+    return bool(_ENDED_STATE_RE.search(text_norm))
+
+
+def order_ended_before_dated(
+    triples: list[dict[str, object]],
+    ended: Collection[int],
+    declared: Mapping[str, str] | None = None,
 ) -> None:
-    """In one write, an undated value of a single-valued relation stated before a dated
-    one is the older ("I lived in London ... moved to Paris on Oct 1"). An undated row
-    starts when it was seen, so its `seen_at` moves to just before the earliest start
-    stated after it, when that start is earlier; a later start in the future changes
-    nothing. In place, before the insert, so the stored key carries the order."""
-    cap: dict[tuple[str, str], datetime] = {}
-    for t in reversed(triples):
+    """In one write, an undated value worded as an ended state (the triples at `ended`:
+    "I lived in London") is older than a dated value of the same single-valued relation
+    ("I moved to Paris on Oct 1"), whichever is stated first. An undated row starts when
+    it was seen, so its `seen_at` moves to just before the earliest start of another
+    value of that relation in the write, when that start is earlier. A value that still
+    holds ("I live in Paris") and a dated restatement of the same value move nothing:
+    the order statements come in says nothing about which is current. In place, before
+    the insert, so the stored key carries it."""
+    keys: list[tuple[tuple[str, str], str] | None] = []
+    starts: dict[tuple[str, str], list[tuple[datetime, str]]] = {}
+    for t in triples:
         relation = canonical_relation(str(t["relation"])).verb
         if not is_single_valued_relation(relation, declared):
+            keys.append(None)
             continue
         key = (canonical_entity_text(str(t["subject"])), relation)
-        start, seen = t.get("valid_from"), t.get("seen_at")
+        obj = canonical_entity_text(str(t["object"]))
+        keys.append((key, obj))
+        start = t.get("valid_from")
         if isinstance(start, datetime):
-            cap[key] = min(cap.get(key, start), start)
-        elif key in cap and isinstance(seen, datetime) and seen >= cap[key]:
-            t["seen_at"] = cap[key] = cap[key] - timedelta(microseconds=1)
+            starts.setdefault(key, []).append((start, obj))
+    for i in sorted(ended):
+        t, keyed = triples[i], keys[i]
+        seen = t.get("seen_at")
+        if keyed is None or t.get("valid_from") is not None or not isinstance(seen, datetime):
+            continue
+        key, obj = keyed
+        others = [start for start, o in starts.get(key, []) if o != obj]
+        if others and min(others) <= seen:
+            # A microsecond per place left in the write keeps moved rows in stated order.
+            t["seen_at"] = min(others) - timedelta(microseconds=len(triples) - i)
 
 
 def triple_interval_repairs(
