@@ -61,6 +61,9 @@ _revoked_jtis: frozenset[str] = frozenset()
 # Keys revoked only for tokens issued before the cutoff (unix seconds);
 # replaced together with `_revoked_jtis` on every refresh.
 _revoked_before: dict[str, int] = {}
+# Operator cutoffs (`cut_off`), apart from the subject's own row: whatever that
+# row says, a cutoff here still stands.
+_cut_off: dict[str, int] = {}
 # False until one refresh has succeeded in this process.
 _loaded = False
 # time.monotonic() of the last successful refresh; 0.0 = never.
@@ -88,8 +91,9 @@ def is_revoked(jti: str, *, issued_at: int | None = None) -> bool:
         return False
     if jti in _revoked_jtis:
         return True
-    cutoff = _revoked_before.get(jti)
-    return cutoff is not None and issued_at is not None and issued_at < cutoff
+    if issued_at is None:
+        return False
+    return issued_at < max(_revoked_before.get(jti, 0), _cut_off.get(jti, 0))
 
 
 async def revoked_outright(jti: str) -> bool:
@@ -118,7 +122,7 @@ async def refresh() -> None:
     """Re-read the revocation set from CH and replace the in-memory copy."""
     from server.core.ch import get_client
 
-    global _revoked_jtis, _revoked_before, _loaded, _loaded_at
+    global _revoked_jtis, _revoked_before, _cut_off, _loaded, _loaded_at
     try:
         ch = get_client()
         # A session whose revocation could not be written gets a
@@ -135,17 +139,17 @@ async def refresh() -> None:
         )
         full: set[str] = set()
         before: dict[str, int] = {}
+        operator: dict[str, int] = {}
         for r in rows:
-            key, cutoff = (
-                str(r["jti"]).removeprefix(CUTOFF_PREFIX),
-                _cutoff_seconds(r.get("issued_before")),
-            )
-            if cutoff is None:
+            key, cutoff = str(r["jti"]), _cutoff_seconds(r.get("issued_before"))
+            if key.startswith(CUTOFF_PREFIX):
+                operator[key.removeprefix(CUTOFF_PREFIX)] = cutoff or 0
+            elif cutoff is None:
                 full.add(key)
             else:
-                before[key] = max(before.get(key, 0), cutoff)
+                before[key] = cutoff
         _revoked_jtis = frozenset(full)
-        _revoked_before = before
+        _revoked_before, _cut_off = before, operator
         _loaded = True
         _loaded_at = time.monotonic()
     except Exception as e:  # noqa: BLE001 — keep the last revocation set on a CH glitch
@@ -216,8 +220,9 @@ async def revoke(
 
 # A cutoff an operator action writes beside a subject's own revocation row, so
 # it can never replace an outright revoke written there (by `revoke-token`, at
-# any moment): the snapshot reads both, and the stronger one stands.
-CUTOFF_PREFIX = "cutoff:"
+# any moment): the snapshot reads both, and the stronger one stands. The NUL
+# keeps it apart from every subject, which no command line can carry.
+CUTOFF_PREFIX = "\x00cutoff:"
 
 
 async def cut_off(subject: str, *, issued_before: datetime, reason: str, revoked_by: str) -> None:
@@ -240,9 +245,9 @@ async def cut_off(subject: str, *, issued_before: datetime, reason: str, revoked
             }
         ],
     )
-    global _revoked_before
+    global _cut_off
     seconds = _cutoff_seconds(cutoff) or 0
-    _revoked_before = {**_revoked_before, subject: max(_revoked_before.get(subject, 0), seconds)}
+    _cut_off = {**_cut_off, subject: max(_cut_off.get(subject, 0), seconds)}
 
 
 def revoked_here(jti: str) -> None:

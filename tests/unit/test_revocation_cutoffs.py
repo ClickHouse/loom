@@ -37,6 +37,7 @@ def table(monkeypatch) -> _Table:
     monkeypatch.setattr(ch, "get_client", lambda: t)
     monkeypatch.setattr(revocation, "_revoked_jtis", frozenset())
     monkeypatch.setattr(revocation, "_revoked_before", {})
+    monkeypatch.setattr(revocation, "_cut_off", {})
     return t
 
 
@@ -61,3 +62,27 @@ def test_a_cutoff_alone_ends_only_earlier_tokens(table) -> None:
     assert not revocation.is_revoked("sa:bot", issued_at=after)
     assert asyncio.run(revocation.subjects_revoked(["sa:bot"], issued_at=before))
     assert not asyncio.run(revocation.subjects_revoked(["sa:bot"], issued_at=after))
+
+
+def test_a_subject_that_looks_like_a_cutoff_is_its_own(table) -> None:
+    # `loom mint-token --subject cutoff:batch-import` is a subject like any other.
+    asyncio.run(revocation.revoke("cutoff:batch-import", reason="leaked"))
+    asyncio.run(revocation.refresh())
+    assert revocation.is_revoked("cutoff:batch-import", issued_at=int(time.time()))
+    assert not revocation.is_revoked("batch-import", issued_at=int(time.time()))
+
+
+def test_a_later_revoke_does_not_lower_an_operator_cutoff_here(table) -> None:
+    now = datetime.now(UTC)
+    asyncio.run(
+        revocation.cut_off(
+            "sa:bot", issued_before=now + timedelta(seconds=6), reason="r", revoked_by="ops"
+        )
+    )
+    asyncio.run(revocation.revoke("sa:bot", issued_before=now - timedelta(seconds=60)))
+    issued = int(now.timestamp())
+    # This process and ClickHouse agree, before and after a refresh.
+    assert revocation.is_revoked("sa:bot", issued_at=issued)
+    assert asyncio.run(revocation.subjects_revoked(["sa:bot"], issued_at=issued))
+    asyncio.run(revocation.refresh())
+    assert revocation.is_revoked("sa:bot", issued_at=issued)

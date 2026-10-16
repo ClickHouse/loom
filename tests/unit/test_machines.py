@@ -349,3 +349,20 @@ def test_a_ci_token_running_out_while_it_is_verified_gets_nothing(bots, monkeypa
     token = _ci_token(bots, exp=int(clock[0]) + 60)
     r = _exchange(TestClient(oauth_app()), token)
     assert r.status_code == 400 and r.json()["error"] == "invalid_grant"
+
+
+def test_a_slow_revocation_lookup_does_not_stretch_a_token_past_its_proof(
+    bots, monkeypatch
+) -> None:
+    clock = [time.time()]
+
+    async def slow_lookup(subjects: list[str], *, issued_at: int) -> bool:
+        clock[0] += 10
+        return False
+
+    monkeypatch.setattr(oauth.time, "time", lambda: clock[0])
+    monkeypatch.setattr(revocation, "subjects_revoked", slow_lookup)
+    proof_exp = int(clock[0]) + 60
+    r = _exchange(TestClient(oauth_app()), _ci_token(bots, exp=proof_exp))
+    claims = pyjwt.decode(r.json()["access_token"], options={"verify_signature": False})
+    assert claims["exp"] <= proof_exp and r.json()["expires_in"] <= proof_exp - int(clock[0])

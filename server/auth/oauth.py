@@ -1398,7 +1398,7 @@ async def _client_credentials_grant(f: dict[str, str], audiences: list[str]) -> 
         raise OAuthError(
             "invalid_client", 401, description="this client assertion was used already"
         )
-    return await _machine_tokens(m, since, machines.TOKEN_TTL, {"by": "key"})
+    return await _machine_tokens(m, since, int(time.time()) + machines.TOKEN_TTL, {"by": "key"})
 
 
 async def _token_exchange_grant(f: dict[str, str]) -> dict[str, Any]:
@@ -1413,21 +1413,19 @@ async def _token_exchange_grant(f: dict[str, str]) -> dict[str, Any]:
         m, proof = await machines.verify_workload(token, f.get("client_id", ""))
     except machines.Refused as e:
         raise _refused(e) from None
-    # Its life left is measured now, after the verify (which may have waited on
-    # the issuer); `since` stays the issue time revocation is judged by.
-    ttl = min(machines.TOKEN_TTL, int(proof["exp"]) - int(time.time()))
-    if ttl < 30:  # inside the verify's leeway, or nearly out: a token would outlive it
-        raise OAuthError("invalid_grant", description="the subject token has run out")
+    # The token never outlives the proof; `since` stays the issue time
+    # revocation is judged by.
+    ends = min(int(proof["exp"]), int(time.time()) + machines.TOKEN_TTL)
     issued = await _machine_tokens(
-        m, since, ttl, {"by": "workload", "workload_sub": str(proof["sub"])}
+        m, since, ends, {"by": "workload", "workload_sub": str(proof["sub"])}
     )
     return {**issued, "issued_token_type": "urn:ietf:params:oauth:token-type:access_token"}
 
 
 async def _machine_tokens(
-    m: machines.Machine, since: int, ttl: int, how: dict[str, str]
+    m: machines.Machine, since: int, ends: int, how: dict[str, str]
 ) -> dict[str, Any]:
-    """The token for bot `m`, good for `ttl` seconds from now. `since` was
+    """The token for bot `m`, good until `ends` (epoch seconds). `since` was
     taken before `m` was read, so a disable the read missed has a later
     cutoff, and revokes this token."""
     from server.auth.revocation import subjects_revoked
@@ -1436,13 +1434,15 @@ async def _machine_tokens(
     if await subjects_revoked([subject], issued_at=since):
         raise OAuthError("invalid_client", 401, description="this bot is revoked")
     jti, now = new_jti(), int(time.time())
+    if ends - now < 30:  # its proof runs out (verify's leeway, a slow lookup)
+        raise OAuthError("invalid_grant", description="the proof has run out")
     token = mint_token(
         subject=subject,
         org=m["org"],
         namespaces=[ns for ns, _ in m["ns_roles"]],
         roles=[],
         ns_roles=dict(m["ns_roles"]),
-        ttl_seconds=now - since + ttl,  # `ttl` from now, the token dated `since`
+        ttl_seconds=ends - since,  # dated `since`, it ends when its proof does
         is_service_account=True,
         jti=jti,
         issued_at=since,
@@ -1454,7 +1454,7 @@ async def _machine_tokens(
         actor=subject,
         subject={"jti": jti, **how},
     )
-    return {"access_token": token, "token_type": "Bearer", "expires_in": ttl}
+    return {"access_token": token, "token_type": "Bearer", "expires_in": ends - now}
 
 
 @router.post("/oauth/token")
