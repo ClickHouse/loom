@@ -711,11 +711,12 @@ async def _keep_one_current(input: Any, rows: list[Mapping[str, Any]], *, ch: An
     # the close it answered is another row, and needs a marker of its own.
     restore_id = uuid.uuid5(uuid.NAMESPACE_OID, repr((back, str(restored_at)))).hex
     facts = frozenset(t[:3] for t in back)
-    # Only rows found holding a value stated again, newest first: a value many rows link
-    # would have each of them read again by the Undo's check.
-    holders = {h for f in facts for h in held[f]}
-    latest_first = sorted(holders, key=lambda h: (h.updated_at, h.id), reverse=True)
-    hashes = {h.id: h.sha for h in latest_first[:_FALLBACK_ROWS]}
+    # Only rows found holding a value stated again, each value's newest few: a value many
+    # rows link would have each of them read again by the Undo's check.
+    hashes: dict[str, str] = {}
+    for f in facts:
+        latest_first = sorted(held[f], key=lambda h: (h.updated_at, h.id), reverse=True)
+        hashes.update({h.id: h.sha for h in latest_first[:_FALLBACK_ROWS]})
     await graph_undo.reopen_held_facts(
         input,
         sorted(hashes),
@@ -728,8 +729,8 @@ async def _keep_one_current(input: Any, rows: list[Mapping[str, Any]], *, ch: An
     )
 
 
-# The rows a fallback asks to state a value again: one is enough, and a few more keep
-# it from failing when the newest is revised meanwhile.
+# The rows a fallback asks to state each value again: one is enough, and a few more
+# keep it from failing when the newest is revised meanwhile.
 _FALLBACK_ROWS = 8
 
 

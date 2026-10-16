@@ -357,8 +357,8 @@ the value it was written or stated for (`carried`):
   a close ended later counts only while an open value starts by that end: Paris holds
   until the move to Berlin it was closed for), the newest value a live row still holds
   and a close ended is stated again from the relation's last close, as an Undo states
-  it and through the Undo's own check of the rows found holding it, newest first and
-  at most eight (a row revised or retired meanwhile is left to that change), but
+  it and through the Undo's own check of the rows found holding it, each value's
+  newest eight (a row revised or retired meanwhile is left to that change), but
   labelled `row-fallback`: triple and edge markers, then the
   interval repair, so a newer value written meanwhile wins. Its id is derived from the
   closes it answers, so a replay finds the markers. When the repair of a fallback's or

@@ -1859,3 +1859,47 @@ async def test_a_fallback_marker_closed_in_the_same_second_gets_a_marker_of_its_
     await entity_projections._keep_one_current(inp, list(stored), ch=None)
     assert len({restore_id for restore_id, _ in restated}) == 2
     assert {adapter for _, adapter in restated} == {"row-fallback"}
+
+
+async def test_a_fallback_asks_each_value_its_own_newest_holders(monkeypatch) -> None:
+    # One fallback states Paris and Acme again. Nine rows newer than Acme's one hold
+    # Paris: the cap is per value, so Acme's holder is still asked.
+    from types import SimpleNamespace
+
+    from server.memory.app import entity_projections, graph_undo
+
+    closed = datetime(2026, 9, 1, 12, 0, 0)
+
+    def fact(relation: str, obj: str) -> dict:
+        return {
+            "subject": "user",
+            "relation": relation,
+            "object": obj,
+            "valid_from": None,
+            "valid_to": closed,
+            "invalid_at": closed,
+            "seen_at": datetime(2026, 9, 1, 11, 0, 0),
+            "adapter_name": "itest",
+            "restore_id": "",
+        }
+
+    stored = [fact("live_in", "paris"), fact("work_at", "acme")]
+    asked: list[list[str]] = []
+
+    async def reopen(input, ids, *, ch, **_kw):
+        asked.append(ids)
+
+    async def holders(org, namespace, triples, *, ch, rows=None):
+        paris = {
+            entity_projections.Holder(f"p{i}", "sha", datetime(2026, 8, 2, i)) for i in range(9)
+        }
+        acme = {entity_projections.Holder("a0", "sha", datetime(2026, 8, 1))}
+        found = {("user", "live_in", "paris"): paris, ("user", "work_at", "acme"): acme}
+        return {t: found[t] for t in triples}
+
+    monkeypatch.setattr(graph_undo, "reopen_held_facts", reopen)
+    monkeypatch.setattr(entity_projections, "live_holders", holders)
+    inp = SimpleNamespace(org="o", namespace="ns", agent="a")
+    await entity_projections._keep_one_current(inp, stored, ch=None)
+    (ids,) = asked
+    assert "a0" in ids and len([i for i in ids if i.startswith("p")]) == 8
