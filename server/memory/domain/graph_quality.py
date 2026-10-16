@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from collections.abc import Collection, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 _SPACE_RE = re.compile(r"\s+")
 _VOWELS = frozenset("aeiouy")
@@ -532,6 +532,27 @@ def observation_key(
     seen = seen_at or datetime.min
     start = valid_from if valid_from is not None else seen
     return (start.date(), seen, obj)
+
+
+def order_undated_before_later_starts(
+    triples: list[dict[str, object]], declared: Mapping[str, str] | None = None
+) -> None:
+    """In one write, an undated value of a single-valued relation stated before a dated
+    one is the older ("I lived in London ... moved to Paris on Oct 1"). An undated row
+    starts when it was seen, so its `seen_at` moves to just before the earliest start
+    stated after it, when that start is earlier; a later start in the future changes
+    nothing. In place, before the insert, so the stored key carries the order."""
+    cap: dict[tuple[str, str], datetime] = {}
+    for t in reversed(triples):
+        relation = canonical_relation(str(t["relation"])).verb
+        if not is_single_valued_relation(relation, declared):
+            continue
+        key = (canonical_entity_text(str(t["subject"])), relation)
+        start, seen = t.get("valid_from"), t.get("seen_at")
+        if isinstance(start, datetime):
+            cap[key] = min(cap.get(key, start), start)
+        elif key in cap and isinstance(seen, datetime) and seen >= cap[key]:
+            t["seen_at"] = cap[key] = cap[key] - timedelta(microseconds=1)
 
 
 def triple_interval_repairs(

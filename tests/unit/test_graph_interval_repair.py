@@ -1075,6 +1075,19 @@ async def test_a_batch_keeps_the_value_with_the_newest_observation(monkeypatch, 
     assert [(r.old_object, r.valid_to) for r in repairs] == [("paris", datetime(2026, 10, 15))]
 
 
+@pytest.mark.asyncio
+async def test_a_batch_stating_an_undated_value_then_a_dated_one_keeps_the_dated(
+    monkeypatch, _declared
+) -> None:
+    # One write on Sep 12: "I lived in London", then "I moved to Paris on Sep 1". Paris
+    # is current.
+    rows = await _stored_batch(monkeypatch, ("london", None), ("paris", datetime(2026, 9, 1)))
+    assert _current(rows) == {"paris"}
+    ch = _Triples([{**r, "invalid_at": None} for r in rows])
+    repairs = await _repair_contradictory_triples(_bulk_input(), rows, ch=ch, at=_T)
+    assert [(r.old_object, r.valid_to) for r in repairs] == [("london", datetime(2026, 9, 1))]
+
+
 async def _replay_of_paris_then_madrid(monkeypatch, london_from: datetime | None) -> list[Any]:
     """One write states Paris (+0 µs) and Madrid (+2 µs), and its closes never land;
     another write states London at +1 µs, dated `london_from`. Returns the triples

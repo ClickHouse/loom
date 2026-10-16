@@ -8,6 +8,7 @@ from server.memory.domain.graph_quality import (
     canonical_entity_text,
     canonical_relation,
     is_single_valued_relation,
+    order_undated_before_later_starts,
     triple_interval_repairs,
 )
 
@@ -388,16 +389,27 @@ def test_within_one_write_the_later_stated_value_wins() -> None:
     repairs = _repairs([zurich], amsterdam)
     assert [(r.old_object, r.new_object) for r in repairs] == [("zurich", "amsterdam")]
     assert _survivors([zurich, amsterdam]) == {"amsterdam"}
-    # "I lived in London ... I moved to Paris on Oct 1", London left undated: undated,
-    # London starts at the write (Oct 15), a later day than Paris, so it is the newer
-    # in either order and Paris closes then. Only a date or an end on London keeps
-    # Paris current.
-    london = _live("london", None, datetime(2026, 10, 15))
-    paris = _live("paris", datetime(2026, 10, 1), datetime(2026, 10, 15, 0, 0, 0, 1))
+
+
+def test_within_one_write_an_undated_value_stated_before_a_dated_one_is_the_older() -> None:
+    # "I lived in London ... I moved to Paris on Oct 1", written Oct 15, London undated:
+    # London is seen just before Paris starts, so Paris closes it then and stays current.
+    seen = datetime(2026, 10, 15, 10, 0, 0, 7)
+    rome = _live("rome", None, seen)
+    london = _live("london", None, seen + timedelta(microseconds=1))
+    paris = _live("paris", datetime(2026, 10, 1), seen + timedelta(microseconds=2))
+    order_undated_before_later_starts([rome, london, paris])
+    assert rome["seen_at"] < london["seen_at"] < datetime(2026, 10, 1)
     assert [(r.old_object, r.valid_to) for r in _repairs([london], paris)] == [
-        ("paris", datetime(2026, 10, 15))
+        ("london", datetime(2026, 10, 1))
     ]
-    assert _survivors([london, paris]) == {"london"}
+    assert _survivors([rome, london, paris]) == {"paris"}
+    # Stated after the dated value, the undated one is the newer, as before.
+    paris = _live("paris", datetime(2026, 10, 1), seen)
+    london = _live("london", None, seen + timedelta(microseconds=1))
+    order_undated_before_later_starts([paris, london])
+    assert london["seen_at"] == seen + timedelta(microseconds=1)
+    assert _survivors([paris, london]) == {"london"}
 
 
 @pytest.mark.parametrize("berlin_first", [True, False])
@@ -410,6 +422,8 @@ def test_within_one_write_a_later_start_day_wins_whatever_the_order(berlin_first
     berlin = _live("berlin", datetime(2026, 11, 29), first if berlin_first else second)
     paris = _live("paris", None, second if berlin_first else first)
     old, new = (berlin, paris) if berlin_first else (paris, berlin)
+    order_undated_before_later_starts([old, new])  # a start in the future moves nothing
+    assert paris["seen_at"] == (second if berlin_first else first)
     repairs = _repairs([old], new)
     assert [(r.old_object, r.valid_to) for r in repairs] == [("paris", datetime(2026, 11, 29))]
     assert _survivors([berlin, paris]) == {"berlin"}

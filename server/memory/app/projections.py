@@ -25,6 +25,7 @@ from server.memory.app.projection_errors import TriplesInsertFailed, TriplesRepa
 from server.memory.domain.graph_quality import (
     MAX_TRIPLES_PER_ROW,
     observation_key,
+    order_undated_before_later_starts,
     restates_current,
 )
 
@@ -500,6 +501,11 @@ async def write_entity_triples(
 
     if not triples:
         return
+    from server.identity.app.namespace_ontology import load_relation_cardinality
+
+    order_undated_before_later_starts(
+        triples, await load_relation_cardinality(input.org, input.namespace)
+    )
 
     if inserted_at is None:
         try:
