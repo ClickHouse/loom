@@ -1920,3 +1920,33 @@ async def test_a_bulk_retry_names_why_an_entry_was_skipped(
         again = await a.call("memory.bulk_set", body, idempotency_key=key)
         assert [w["version"] for w in again["written"]] == [w["version"] for w in first["written"]]
         assert again["skipped_pinned"] == ["p"]
+
+
+async def test_a_bulk_retry_answers_in_the_first_attempts_shape(
+    control_plane_url, mint_test_token
+) -> None:
+    # An unchanged entry was named in no list, a blacklisted one had no result: the
+    # retry answers the same way.
+    a, _ = await _agent(control_plane_url, mint_test_token, "bulk-retry-shape")
+    async with a:
+        await a.call("memory.set", {"memory_key": "p", "value": "same value"})
+        await a.call("blacklist.add", {"pattern": "forbidden-word", "scope": "namespace"})
+        key = f"r-{uuid.uuid4().hex}"
+        body = {"entries": [
+            {"memory_key": "p", "value": "same value"},
+            {"memory_key": "b", "value": "contains forbidden-word here"},
+            {"memory_key": "q", "value": "new"},
+        ]}  # fmt: skip
+        first = await a.call("memory.bulk_set", body, idempotency_key=key)
+        ch = await _ch()
+        try:
+            await _expire_replay(ch, key, "memory.bulk_set")
+        finally:
+            await ch.disconnect()
+        again = await a.call("memory.bulk_set", body, idempotency_key=key)
+        shape = lambda out: (  # noqa: E731
+            [(w["memory_key"], w["version"]) for w in out["written"]],
+            out.get("merged"),
+            out.get("identity_duplicates"),
+        )
+        assert shape(again) == shape(first)

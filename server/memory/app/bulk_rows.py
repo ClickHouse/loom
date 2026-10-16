@@ -257,6 +257,9 @@ def _bulk_label_skipped(
     """A retried entry that made no commit: the reason the skip gate gives it, named on
     the answer as the first attempt named it. Labels only: the reinforcement the gate
     records for a restatement was recorded then."""
+    if state.existing_sha.get(entry.memory_key) == entry_sha:
+        state.skipped_unchanged += 1  # an unchanged restatement is named in no list
+        return
     dup = identity_dupes.get(entry_sha)
     if dup is not None:
         state.identity_duplicates[entry.memory_key] = dup[0]
@@ -328,6 +331,7 @@ async def _bulk_build_rows(
     char_limit (raises 422), blacklist, procedural retype — and append one
     full-column memory row, a result and (when searchable) a pending embed
     item per kept entry to `state`."""
+    from server.memory.app.blacklist_guard import find_match
 
     _seen_keys: set[str] = set()
     retried = state.retried is not None
@@ -335,8 +339,15 @@ async def _bulk_build_rows(
     for slot, entry in enumerate(input.entries):
         entry_sha = _content_sha256(entry.value)
         if retried and slot not in commit_of:
-            _bulk_label_skipped(entry, entry_sha, state, identity_dupes)
-            state.results.append(_BulkSetResult(memory_key=entry.memory_key, version=0))
+            # The blacklist dropped it without a result the first time; so does its retry.
+            if (
+                await find_match(
+                    org=input.org, namespace=input.namespace, value=json.dumps(entry.value)
+                )
+                is None
+            ):
+                _bulk_label_skipped(entry, entry_sha, state, identity_dupes)
+                state.results.append(_BulkSetResult(memory_key=entry.memory_key, version=0))
             continue
         if not retried and _bulk_skip_gate(entry, entry_sha, state, identity_dupes):
             continue
