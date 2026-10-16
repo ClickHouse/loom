@@ -38,6 +38,7 @@ nothing (``SCAN``) rather than guess.
 
 from __future__ import annotations
 
+import functools
 import importlib
 import itertools
 import re
@@ -125,11 +126,8 @@ def plan_regex(pattern: str, *, ignore_case: bool = False, spell_folds: bool = T
     the same. Flags other than ``i`` don't change which literals are required.
     ``spell_folds=False`` keeps only pieces without k/s instead of spelling them.
     """
-    if "[:" in pattern:
-        return SCAN
-    try:
-        parsed = _sre_parser.parse(pattern)
-    except (re.error, ValueError, OverflowError, RecursionError):
+    parsed = _parse(pattern)
+    if parsed is None:
         return SCAN
     ignore_case = ignore_case or bool(parsed.state.flags & re.IGNORECASE)
     try:
@@ -143,12 +141,21 @@ def plan_regex(pattern: str, *, ignore_case: bool = False, spell_folds: bool = T
         return SCAN
 
 
+@functools.lru_cache(maxsize=256)
+def _parse(pattern: str) -> Any:
+    """The stdlib parse of a pattern, or None when the stdlib rejects or misreads it."""
+    if "[:" in pattern:
+        return None
+    try:
+        return _sre_parser.parse(pattern)
+    except (re.error, ValueError, OverflowError, RecursionError):
+        return None
+
+
 def _sets_ignore_case(pattern: str) -> bool:
     """A leading global ``(?i)``."""
-    try:
-        return bool(_sre_parser.parse(pattern).state.flags & re.IGNORECASE)
-    except (re.error, ValueError, OverflowError, RecursionError):
-        return False
+    parsed = _parse(pattern)
+    return parsed is not None and bool(parsed.state.flags & re.IGNORECASE)
 
 
 # Under (?i) RE2 also matches k and s to these; lower() leaves both alone.
