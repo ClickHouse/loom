@@ -180,6 +180,7 @@ def journal(monkeypatch: pytest.MonkeyPatch) -> Journal:
         "last_commits": j.parents,
         "newest_row_versions": j.row_versions,
         "row_versions": j.landed,
+        "landed_heads": j.landed,
         "request_hashes": j.hashes,
         "commits_between": j.between,
         "other_commits_at": j.others,
@@ -439,10 +440,11 @@ def test_a_projection_landing_between_plan_and_lock_goes_below_the_write(
         return await real_head(*a, **k)
 
     async def versions(*_a, **_k):
-        return {("a", "-", "-", "k"): landed["v"]} if landed["v"] else {}
+        # A projection row this build wrote: stamped at its own version.
+        return {("a", "-", "-", "k"): (landed["v"], landed["v"])} if landed["v"] else {}
 
     monkeypatch.setattr(store, "head", head)
-    monkeypatch.setattr(store, "row_versions", versions)
+    monkeypatch.setattr(store, "landed_heads", versions)
     (row,) = run(pub.publish_rows([c]))
     assert calls["n"] == 2  # planned once
     assert row["version"] == landed["v"] + 1
@@ -1535,10 +1537,11 @@ def test_a_raised_version_reaches_the_claims_later_rows_of_the_batch_carry(
         return await real_head(*a, **k)
 
     async def versions(*_a, **_k):
-        return {("a", "-", "-", "k"): landed["v"]} if landed["v"] else {}
+        # A projection row this build wrote: stamped at its own version.
+        return {("a", "-", "-", "k"): (landed["v"], landed["v"])} if landed["v"] else {}
 
     monkeypatch.setattr(store, "head", head)
-    monkeypatch.setattr(store, "row_versions", versions)
+    monkeypatch.setattr(store, "landed_heads", versions)
     rows = run(pub.publish_rows([c1, c2]))
     written = {r["version"] for r in rows}
     assert written.isdisjoint(drawn)
@@ -1618,3 +1621,55 @@ def test_a_value_another_build_wrote_is_journaled_as_observed(
         berlin["version"],
     )
     assert observed["change_kind"] == "assert" and "Berlin" in observed["assertions"]
+
+
+def test_a_row_another_build_lands_before_the_lock_is_adopted_not_overwritten(
+    journal: Journal, monkeypatch
+) -> None:
+    # C is planned; another build writes B (drawn later) before the lock: the batch is
+    # planned again, journals B as observed, and C, drawn earlier, is left out.
+    run(pub.publish_rows([mrow('"A"')]))
+    c = mrow('"C"')
+    b = mrow('"B"', journal_version=journal.commits[-1]["row_version"])
+    landed: dict[str, Any] = {}
+    real_head = journal.head
+    calls = {"n": 0}
+
+    async def head(*a, **k):
+        calls["n"] += 1
+        if calls["n"] == 2:  # under the lock
+            landed["row"] = b
+        return await real_head(*a, **k)
+
+    async def heads(*_a, **_k):
+        return [landed["row"]] if landed else []
+
+    async def versions(*_a, **_k):
+        return {("a", "-", "-", "k"): (b["version"], b["journal_version"])} if landed else {}
+
+    monkeypatch.setattr(store, "head", head)
+    monkeypatch.setattr(store, "memory_heads", heads)
+    monkeypatch.setattr(store, "landed_heads", versions)
+    assert run(pub.publish_rows([c])) == []  # C was drawn before B: B wins
+    ops = [x["operation"] for x in journal.commits]
+    assert ops[-1] == "memory.observed" and "B" in journal.commits[-1]["assertions"]
+
+
+def test_a_key_only_another_build_wrote_is_seeded_and_written_not_planned_again(
+    journal: Journal, monkeypatch
+) -> None:
+    # The key's only row is another build's (no commit, an unstamped journal_version):
+    # the seed journals it, and the write goes on without planning again forever.
+    theirs = mrow('"Paris"', journal_version=0)
+
+    async def heads(*_a, **_k):
+        return [theirs]
+
+    async def versions(*_a, **_k):
+        return {("a", "-", "-", "k"): (theirs["version"], 0)}
+
+    monkeypatch.setattr(store, "memory_heads", heads)
+    monkeypatch.setattr(store, "landed_heads", versions)
+    (row,) = run(pub.publish_rows([mrow('"Berlin"')]))
+    ops = [c["operation"] for c in journal.commits]
+    assert ops[0] == "memory.journal_seed" and row["value"] == '"Berlin"'

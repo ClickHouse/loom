@@ -100,10 +100,13 @@ class HistoryTarget:
         )
 
 
-# Every persisted column but the version stamp and `entities`; `content_sha256`
-# stands in for the value, which the version list does not read.
+# Every persisted column but the version stamps (`version`, the writing build's
+# `journal_version`) and `entities`; `content_sha256` stands in for the value, which
+# the version list does not read.
 _SAME_STATE_COLS = tuple(
-    c for c in MEMORY_PERSISTED_COLS if c not in ("version", "entities", "value", "value_json")
+    c
+    for c in MEMORY_PERSISTED_COLS
+    if c not in ("version", "journal_version", "entities", "value", "value_json")
 )
 _STATE_HASH = f"cityHash64(tuple({', '.join(_SAME_STATE_COLS)}))"
 

@@ -941,18 +941,62 @@ async def restated_claims(
 
 
 async def foreign_rows(
-    since: datetime, *, limit: int, ch: _CHClient | None = None
+    after_version: int,
+    *,
+    limit: int,
+    only: tuple[str, str] | None = None,
+    ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
-    """Identities with a loom.memory row written since `since` whose version is not
-    the one this build stamped (`journal_version`): another build's writes, oldest
-    first. A superset: `temporal_publisher.adopt` checks each against its head."""
+    """Identities with a loom.memory row drawn after `after_version` whose version is
+    not the one this build stamped (`journal_version`): another build's writes, by
+    version (unique, its draw time), so a page always moves past what it returned.
+    A superset: `temporal_publisher.adopt` checks each against its head."""
     ch = ch or _default_client()
+    where = "version > {after:UInt64} AND journal_version != version"
+    params: dict[str, Any] = {"after": after_version, "limit": limit}
+    if only is not None:
+        where += " AND org = {org:String} AND namespace = {ns:String}"
+        params |= {"org": only[0], "ns": only[1]}
     return await ch.query_all(
-        f"SELECT org, namespace, {_IDENT_COLS}, max(updated_at) AS at FROM loom.memory "
-        "WHERE updated_at >= {since:DateTime64(6, 'UTC')} AND journal_version != version "
-        f"GROUP BY org, namespace, {_IDENT_COLS} ORDER BY at LIMIT {{limit:UInt32}}",
-        params={"since": since, "limit": limit},
+        f"SELECT org, namespace, {_IDENT_COLS}, max(version) AS v FROM loom.memory "
+        f"WHERE {where} GROUP BY org, namespace, {_IDENT_COLS} ORDER BY v LIMIT {{limit:UInt32}}",
+        params=params,
     )
+
+
+async def landed_heads(
+    org: str,
+    namespace: str,
+    keys: Sequence[tuple[str, str, str, str]],
+    *,
+    ch: _CHClient | None = None,
+) -> dict[tuple[str, str, str, str], tuple[int, int]]:
+    """Each identity's newest loom.memory version, landed or not yet merged, and the
+    journal_version that row carries."""
+    if not keys:
+        return {}
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        "SELECT agent, user_id, session_id, memory_key, max(version) AS v, "
+        "argMax(journal_version, version) AS j FROM loom.memory "
+        "WHERE org = {org:String} AND namespace = {ns:String} "
+        "AND memory_key IN {mk:Array(String)} "
+        f"AND {_IDENT} IN {_KEYS} "
+        "GROUP BY agent, user_id, session_id, memory_key",
+        params={
+            "org": org,
+            "ns": namespace,
+            "mk": sorted({k[3] for k in keys}),
+            "keys": [tuple(k) for k in keys],
+        },
+    )
+    return {
+        (str(r["agent"]), str(r["user_id"]), str(r["session_id"]), str(r["memory_key"])): (
+            int(r["v"]),
+            int(r["j"]),
+        )
+        for r in rows
+    }
 
 
 async def row_versions(

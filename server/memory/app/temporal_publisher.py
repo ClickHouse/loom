@@ -524,8 +524,10 @@ async def publish(
                 if seq != batch.seq and await _touched(batch, seq, ch):
                     continue
                 # A projection lands rows without a commit, so the sequence holds still:
-                # the plan is current, but its rows go above the versions that landed.
-                await _above_landed(batch, ch)
+                # the plan is current, but its rows go above the versions that landed. A
+                # row another build wrote is a write the plan has not seen: plan again.
+                if await _above_landed(batch, ch):
+                    continue
                 if recheck is not None:
                     await recheck()
                 # Stamp, then fence: an erasure requested after the stamp has a later
@@ -1472,13 +1474,23 @@ async def serving(org: str, ns: str, keys: Sequence[Ident]) -> set[Ident]:
     return {ident for ident, claims in served.items() if claims}
 
 
-async def _above_landed(b: _Batch, ch: _CHClient) -> None:
+async def _above_landed(b: _Batch, ch: _CHClient) -> bool:
     """Raise the batch's row versions above any loom.memory row of its keys that
     landed since the plan read its floor (a projection, which moves no sequence), so
     the merge ranks the batch's rows as the journal orders them: after it."""
     if not any(p.row.get("version") and not p.past_only for p in b.planned):
-        return
-    newest = dict(await store.row_versions(b.org, b.ns, b.keys, ch=ch))
+        return False
+    landed = await store.landed_heads(b.org, b.ns, b.keys, ch=ch)
+    committed = await store.newest_row_versions(b.org, b.ns, b.keys, ch=ch)
+    # A seed or adoption of this batch journals the row itself: no reason to plan again.
+    adopting = {(p.ident, int(p.row.get("version") or 0)) for p in b.planned if p.seed}
+    if any(
+        (ident, v) not in adopting
+        and foreign({"version": v, "journal_version": j}, committed.get(ident, 0))
+        for ident, (v, j) in landed.items()
+    ):
+        return True
+    newest = {ident: v for ident, (v, _j) in landed.items()}
     # Per key, each version this batch drew and raised: a later row of the batch can
     # carry a claim an earlier one added. Versions already committed stay as they are.
     raised_from: dict[Ident, dict[int, int]] = {}
@@ -1499,6 +1511,7 @@ async def _above_landed(b: _Batch, ch: _CHClient) -> None:
                 ),
             )
             p.payload_sha = p.amendment.payload_sha256()
+    return False
 
 
 async def _touched(b: _Batch, head: int, ch: _CHClient) -> bool:

@@ -192,7 +192,7 @@ def _vector_row(
 # checked up to; and one global valid-time cursor for boundaries coming due.
 _CHECKED = "current"
 _BOUNDARY = "current_boundary"
-# The cursor of the foreign-write sweep: microseconds of the last `updated_at` swept.
+# The cursor of the foreign-write sweep: the last version (its draw time, ns) swept.
 _FOREIGN = "foreign_writes"
 # How long after the last older build was seen live the sweep keeps running (its
 # last writes still land), and when this process last saw one (boot counts: writes
@@ -228,7 +228,7 @@ _SETTLE: ContextVar[int] = ContextVar("loom_temporal_settle_s", default=store.SE
 
 
 async def _reconcile_pass(*, limit: int, settle_s: int, only: tuple[str, str] | None) -> int:
-    fixed = await _adopt_foreign_writes(limit=limit)
+    fixed = await _adopt_foreign_writes(limit=limit, only=only)
     # recorded_at is ClickHouse's clock: the cutoff is too.
     settled = await store.server_now() - timedelta(seconds=settle_s)
     for r in await store.unchecked_namespaces(_CHECKED, only=only):
@@ -284,7 +284,7 @@ def _rollout() -> bool:
     return time.monotonic() - _last_mixed < _FOREIGN_TAIL_S
 
 
-async def _adopt_foreign_writes(*, limit: int) -> int:
+async def _adopt_foreign_writes(*, limit: int, only: tuple[str, str] | None = None) -> int:
     """During a rollout, journal the current rows a build that does not journal wrote
     (`temporal_publisher.foreign`), a page per pass from a durable cursor, so the
     journal's reads see them and the reconciler never takes them for drift."""
@@ -292,14 +292,16 @@ async def _adopt_foreign_writes(*, limit: int) -> int:
 
     if not _rollout():
         return 0
-    cursor = await store.watermark("", "", _FOREIGN)
+    # Scoped to one namespace (`only`), the sweep keeps its own cursor there.
+    org_, ns_ = only or ("", "")
+    cursor = await store.watermark(org_, ns_, _FOREIGN)
     if not cursor:
         # The first pass of the first build that journals: rows written before it are
-        # pre-journal rows, seeded when next written; only those since are swept.
-        cursor = _to_us(datetime.now(UTC) - timedelta(seconds=_FOREIGN_START_S))
-        await store.advance_watermark("", "", cursor, _FOREIGN)
-    since = _from_us(cursor)
-    rows = await store.foreign_rows(since, limit=limit)
+        # pre-journal rows, seeded when next written; only those drawn since are swept.
+        start = datetime.now(UTC) - timedelta(seconds=_FOREIGN_START_S)
+        cursor = int(start.timestamp() * 1e9)  # a version is its draw time in ns
+        await store.advance_watermark(org_, ns_, cursor, _FOREIGN)
+    rows = await store.foreign_rows(cursor, limit=limit, only=only)
     by_ns: dict[tuple[str, str], list[Ident]] = {}
     for r in rows:
         by_ns.setdefault((str(r["org"]), str(r["namespace"])), []).append(ident_of(r))
@@ -311,7 +313,7 @@ async def _adopt_foreign_writes(*, limit: int) -> int:
             log.warning("temporal adopt: %s/%s failed, retried next pass: %r", org, ns, e)
             return adopted  # the cursor stays: the page is swept again
     if rows:
-        await store.advance_watermark("", "", _to_us(tm.utc(rows[-1]["at"]) or since), _FOREIGN)
+        await store.advance_watermark(org_, ns_, int(rows[-1]["v"]), _FOREIGN)
     return adopted
 
 

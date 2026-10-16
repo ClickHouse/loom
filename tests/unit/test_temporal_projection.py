@@ -23,6 +23,10 @@ def _server_clock(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(store, "server_now", now)
 
 
+# The sweep itself, before the fixture below stubs it out for the other tests.
+_ADOPT_FOREIGN = tp._adopt_foreign_writes
+
+
 @pytest.fixture(autouse=True)
 def _no_foreign_writes(monkeypatch: pytest.MonkeyPatch) -> None:
     """These tests reconcile against the journal alone: no other build writes here
@@ -541,3 +545,41 @@ async def test_a_cut_short_read_rewrites_nothing(monkeypatch: pytest.MonkeyPatch
             "o", "n", [("a", "u1", "-", "k"), ("a", "u2", "-", "k")], read_token=""
         )
     assert rewrote == ["u1"]
+
+
+def test_the_foreign_write_sweep_moves_past_every_page_by_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Adopting a row leaves it as another build wrote it: the cursor (a version, unique)
+    # must still move past it, or a page of rows from one second would pin the sweep.
+    from server.memory.app import temporal_publisher
+
+    cursors: dict[tuple[str, str], int] = {("o", "n"): 100}
+    asked: list[tuple[int, Any]] = []
+
+    async def watermark(org: str, ns: str, name: str = "", **_k: Any) -> int:
+        return cursors.get((org, ns), 0)
+
+    async def advance(org: str, ns: str, value: int, name: str = "", **_k: Any) -> None:
+        cursors[(org, ns)] = value
+
+    async def foreign_rows(after: int, *, limit: int, only: Any = None, **_k: Any) -> list:
+        asked.append((after, only))
+        page = [r for r in range(after + 1, 106)][:limit]
+        return [
+            {"org": "o", "namespace": "n", "agent": "a", "user_id": "-", "session_id": "-",
+             "memory_key": f"k{v}", "v": v}
+            for v in page
+        ]  # fmt: skip
+
+    async def adopt(*_a: Any, **_k: Any) -> int:
+        return 0  # adoption leaves the rows foreign by their stamp
+
+    monkeypatch.setattr(store, "watermark", watermark)
+    monkeypatch.setattr(store, "advance_watermark", advance)
+    monkeypatch.setattr(store, "foreign_rows", foreign_rows)
+    monkeypatch.setattr(temporal_publisher, "adopt", adopt)
+    monkeypatch.setattr(tp, "_rollout", lambda: True)
+    asyncio.run(_ADOPT_FOREIGN(limit=2, only=("o", "n")))
+    asyncio.run(_ADOPT_FOREIGN(limit=2, only=("o", "n")))
+    assert asked == [(100, ("o", "n")), (102, ("o", "n"))] and cursors[("o", "n")] == 104
