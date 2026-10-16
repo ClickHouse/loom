@@ -98,3 +98,38 @@ async def test_the_successor_triple_carries_the_predecessor_provenance(
     assert isinstance(row["last_seen"], datetime)
     assert row["seen_at"].replace(microsecond=0) == row["last_seen"]
     assert row == canonical
+
+
+@pytest.mark.asyncio
+async def test_a_successor_is_repaired_when_its_old_value_is_kept(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Another live row still says Abbas, so the plan closes nothing; Kahlon is still
+    # a newer value and goes through the interval repair, as a write of it would.
+    kahlon = proj.tfr.Successor("fatah", "chairperson_of", "moshe kahlon", "new", None, 0.9, "")
+    plan = proj.tfr.merge_plans(
+        [
+            proj.tfr.FollowPlan(
+                closes=[("fatah", "chairperson_of", "mahmoud abba")], inserts=[kahlon]
+            )
+        ],
+        kept=frozenset({("fatah", "chairperson_of", "mahmoud abba")}),
+    )
+    assert plan.closes == []
+    stored = {"subject": "fatah", "relation": "chairperson_of", "object": "moshe kahlon"}
+
+    class _Stored(_CH):
+        async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[dict]:
+            if "adapter_name" in sql:
+                return [{**stored, "valid_from": None, "seen_at": datetime(2026, 1, 1)}]
+            return []
+
+    repaired: list[Any] = []
+
+    async def _repair(input: Any, triples: list[dict[str, Any]], **k: Any) -> list[Any]:
+        repaired.extend(triples)
+        return []
+
+    monkeypatch.setattr(proj, "repair_intervals", _repair)
+    await proj._write_follow_plan(SimpleNamespace(org="o", namespace="n"), plan, ch=_Stored())
+    assert repaired == [{**stored, "valid_from": None, "seen_at": datetime(2026, 1, 1)}]

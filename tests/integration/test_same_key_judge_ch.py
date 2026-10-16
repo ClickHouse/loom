@@ -1239,7 +1239,8 @@ async def test_another_relation_to_the_same_object_does_not_gainsay_a_successor(
     berlin = await _stated(ch, org, "s4", "I currently live in Berlin", extracted=False)
     await _follow_retirement(ch, org, other, berlin)
     await _mutations_done(ch, org)
-    want = {("live_in", "london"), ("work_in", "london"), ("live_in", "berlin")}
+    # Berlin starts May 1, before the undated London seen today: the repair closes it.
+    want = {("live_in", "london"), ("work_in", "london")}
     assert await _open_facts(ch, org, want) == want
 
 
@@ -1254,7 +1255,8 @@ async def test_a_name_in_another_script_is_carried_through_a_revision(ch, org) -
     initech = await _stated(ch, org, "s4", "Bob is CEO of Initech", extracted=False)
     await _follow_retirement(ch, org, other, initech)
     await _mutations_done(ch, org)
-    want = {"компания", "initech"}
+    # Initech starts May 1, before the undated Компания seen today: the repair closes it.
+    want = {"компания"}
     assert await _open_cities(ch, org, want) == want
 
 
@@ -1276,8 +1278,9 @@ async def _open_facts(ch: Any, org: str, want: set[tuple[str, str]]) -> set[tupl
 @pytest.mark.parametrize(
     ("revised", "stated", "want"),
     [
-        # The same words, and no relation saying otherwise: the successor holds.
-        ("I currently live in London.", (), {("live_in", "london"), ("live_in", "berlin")}),
+        # The same words, and no relation saying otherwise: the successor holds, and
+        # closes Berlin, which starts May 1, before the undated London seen today.
+        ("I currently live in London.", (), {("live_in", "london")}),
         # More detail, which words alone cannot tell from a retraction: it closes.
         (
             "I currently live in London and work at Acme",
@@ -1308,6 +1311,9 @@ async def test_a_revision_keeps_a_successor_only_while_its_relations_agree(
     other = await _stated(
         ch, org, "s3", "I currently live in London", ("user", "live_in", "london")
     )
+    # London's close of Rome lands first: Berlin's repair reads stored rows, and an
+    # undated Rome still open would be newer than Berlin.
+    await _mutations_done(ch, org)
     berlin = await _stated(ch, org, "s4", "I currently live in Berlin", extracted=False)
     await _follow_retirement(ch, org, other, berlin)
     await _mutations_done(ch, org)
@@ -1332,7 +1338,8 @@ async def test_a_live_row_holds_the_successor_written_for_its_value(ch, org) -> 
     berlin = await _stated(ch, org, "s4", "I currently live in Berlin", extracted=False)
     await _follow_retirement(ch, org, other, berlin)
     await _mutations_done(ch, org)
-    want = {("resid_in", "london"), ("live_in", "london"), ("live_in", "berlin")}
+    # Berlin starts May 1, before the undated London seen today: the repair closes it.
+    want = {("resid_in", "london"), ("live_in", "london")}
     assert await _open_facts(ch, org, want) == want
 
 
@@ -1495,6 +1502,18 @@ async def test_an_ended_sibling_does_not_keep_a_fact_open(ch, org, ended) -> Non
     paris = await _stated(ch, org, "s1", "My favourite city is Paris")
     await _stated(ch, org, "s3", "My favourite city is Paris", **{ended: _past()})
     london = await _stated(ch, org, "s2", "My favourite city is London")
+    await _follow_retirement(ch, org, paris, london)
+    await _mutations_done(ch, org)
+    assert await _open_cities(ch, org, {"london"}) == {"london"}
+
+
+async def test_a_successor_closes_the_older_value_a_sibling_still_states(ch, org) -> None:
+    # Another live row still says Paris, so the follow keeps it; London is the newer
+    # value of a single-valued relation and closes it, as a write of London would.
+    lives, april = ("user", "lives_in", "paris"), datetime(2026, 4, 1)
+    paris = await _stated(ch, org, "s1", "I currently live in Paris", lives, valid_at=april)
+    await _stated(ch, org, "s3", "I currently live in Paris", lives, valid_at=april)
+    london = await _stated(ch, org, "s2", "I currently live in London", extracted=False)
     await _follow_retirement(ch, org, paris, london)
     await _mutations_done(ch, org)
     assert await _open_cities(ch, org, {"london"}) == {"london"}

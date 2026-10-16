@@ -30,6 +30,7 @@ from server.memory.app.projections import (
     entity_triple_row,
     open_triples_among,
     reopen_triples,
+    repair_intervals,
     resolve_projection_entity_map,
     triple_row_link,
     write_entity_edges,
@@ -1448,8 +1449,15 @@ async def _write_follow_plan(input: Any, plan: tfr.FollowPlan, *, ch: Any) -> tu
         ch, org=input.org, namespace=input.namespace, triples=[s.triple for s in plan.inserts]
     )
     inserted = await _insert_successors(input, plan.inserts, already, at=arrived, ch=ch)
-    if not plan.closes:
-        return 0, inserted
+    closed = await _close_planned(input, plan, now, ch=ch) if plan.closes else 0
+    # After the closes, which date a closed value by its own row's replacement.
+    await _repair_successors(input, plan.inserts, at=arrived, ch=ch)
+    return closed, inserted
+
+
+async def _close_planned(input: Any, plan: tfr.FollowPlan, now: datetime, *, ch: Any) -> int:
+    """Close the plan's triples at `now` and open again those a live row holds.
+    Returns how many stay closed."""
 
     # valid_to = when its own row was replaced (an erased winner's: now);
     # invalid_at = now.
@@ -1493,7 +1501,35 @@ async def _write_follow_plan(input: Any, plan: tfr.FollowPlan, *, ch: Any) -> tu
             )
     except Exception as e:  # noqa: BLE001 — the closes are in; the trail is best effort
         log.debug("triples follow rows: audit skipped: %s", e)
-    return len(closed), inserted
+    return len(closed)
+
+
+async def _repair_successors(
+    input: Any, successors: list[tfr.Successor], *, at: datetime, ch: Any
+) -> None:
+    """Repair the open successor triples as a write of them is repaired: an older
+    value another live row still states closes when the successor starts. Read back
+    rather than taken from the insert, so a replay that inserts none still repairs them."""
+    if not successors:
+        return
+    rows = await ch.query_all(
+        """
+        SELECT subject, relation, object, valid_from, max(seen_at) AS seen_at
+        FROM loom.entity_triples
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND (subject, relation, object) IN {triples:Array(Tuple(String, String, String))}
+          AND valid_to IS NULL AND invalid_at IS NULL AND adapter_name = 'row-supersession'
+        GROUP BY subject, relation, object, valid_from
+        SETTINGS select_sequential_consistency = 1
+        """,
+        params={
+            "org": input.org,
+            "ns": input.namespace,
+            "triples": sorted({s.triple for s in successors}),
+        },
+    )
+    if rows:
+        await repair_intervals(input, [dict(r) for r in rows], ch=ch, at=at)
 
 
 async def reopen_held(

@@ -1184,6 +1184,8 @@ class _Graph:
             return []  # the relation's stored values: none beyond the open ones here
         if "names" in params or "now" in params:
             return []  # no stored intervals or later ends: open triples only
+        if "adapter_name = 'row-supersession'" in sql:
+            return []  # the successors' interval repair: not modelled here
         if "SELECT DISTINCT subject, relation, object" in sql and "ids" in params:
             # The triples linked to rows, whatever value each holds now.
             return [
