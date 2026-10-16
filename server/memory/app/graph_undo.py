@@ -253,9 +253,15 @@ async def finish_restated_repair(
         """,
         params={"org": input.org, "ns": input.namespace, "rid": restore_id},
     )
-    await finish_interval_repair(
-        input, [dict(m) for m in markers], at=restored_at, repaired=repaired, ch=ch
-    )
+    try:
+        await finish_interval_repair(
+            input, [dict(m) for m in markers], at=restored_at, repaired=repaired, ch=ch
+        )
+    except TriplesRepairFailed as e:
+        # The closes this finish made ride the failure under the same id, as in
+        # `restate_facts`: a closed triple is not found open again.
+        e.restore_id = restore_id
+        raise
 
 
 class _Marker(NamedTuple):

@@ -763,6 +763,52 @@ async def test_a_follow_replay_whose_fallback_fails_records_its_repair(monkeypat
     assert _recorded_repairs(failure.payload) == [paris]
 
 
+async def test_a_replay_whose_finish_of_a_recorded_repair_fails_records_its_closes(
+    monkeypatch,
+) -> None:
+    # Recorded with the markers' id and no closes. The replay's finish closes Paris and
+    # fails to close its edge: the next replay must find Paris in the payload, since
+    # Paris's triple is no longer open for a fresh repair to find.
+    from server.memory.app import graph_undo
+    from server.memory.app.projection_errors import (
+        TRIPLES_INSERTED_AT,
+        TRIPLES_REPAIRS,
+        TRIPLES_RESTORE_ID,
+        TriplesRepairFailed,
+    )
+    from server.memory.app.projection_failures import _recorded_repairs
+    from server.memory.domain.graph_quality import IntervalRepair
+
+    at = datetime(2026, 10, 16, 12, 0, 0)
+    paris = IntervalRepair("user", "live_in", "paris", "berlin", valid_to=datetime(2026, 12, 1))
+
+    async def finish(input, triples, *, at, repaired, ch):
+        raise TriplesRepairFailed(at, ConnectionError("edge close"), [paris])
+
+    monkeypatch.setattr(graph_undo, "finish_interval_repair", finish)
+    failure = ProjectionFailureRow(
+        failure_id="f1",
+        org="o",
+        namespace="n",
+        agent="a",
+        projection="triples_follow_rows",
+        source_operation="memory.bulk_set",
+        source_resource_id="",
+        memory_keys=[],
+        error_type="RuntimeError",
+        error_message="boom",
+        payload={
+            "pairs": [["a", "b"]],
+            TRIPLES_RESTORE_ID: "r1",
+            TRIPLES_INSERTED_AT: at.isoformat(),
+            TRIPLES_REPAIRS: [],
+        },
+    )
+    assert not (await retry_projection_failure(failure, ch=_FailureRowCH(failure))).resolved
+    assert failure.payload[TRIPLES_RESTORE_ID] == "r1"
+    assert _recorded_repairs(failure.payload) == [paris]
+
+
 async def test_a_failure_row_is_committed_not_left_in_a_buffer() -> None:
     """The ledger row is the only record of a lost projection: the insert
     waits for the async-insert flush."""
