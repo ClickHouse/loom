@@ -3,11 +3,12 @@ paths:
   - "server/memory/**"
   - "server/knowledge/**"
   - "server/erasure/**"
+  - "server/identity/app/namespace_snapshot.py"
+  - "server/observability/audit.py"
 ---
 
 # Memory plane
 
-- Every new version row of `loom.memory` / `loom.shared` is built by `build_memory_version_row` / `build_embedding_row` (`server/memory/store/rows.py`). A hand-built row omits a column and zeros it for every reader under `FINAL`.
 - Writes take `actor` and `source_class` from the token (`writer_actor`, `source_class_for`), never from the body, and leave a hash-only audit row.
 - Map the behaviour onto Expand / Revise / Contract / Reinforce / Refuse. A write path that bypasses conflict surfacing, the blacklist or the pinned-peer check is a finding.
 - An op addressed by org-wide id checks `authz.row_in_scope` after the fetch and answers `found=False` on refusal.
@@ -30,4 +31,4 @@ paths:
 
 ## Erasure and audit
 
-- Not a GDPR-compliance guarantee — the erasure cascade and per-row audit hashing are engineering primitives. The federated erasure cascade (Langfuse / ClickStack) fails closed: a backend that can't confirm deletion records `failed` and the recovery worker retries idempotently; after `max_attempts` it's marked `failed` + `erasure.abandoned` for manual escalation. The saga's last step is a residue census over every substrate the read paths touch: any live row in scope fails the saga, and the terminal `erasure_requests` row carries `residue_count` / `residue` / `verified_at`. A new table that can hold memory content needs a saga step AND a census row — one `Substrate(...)` in `server/erasure/store/census.py::_CENSUS` naming its owner step per scope (a step without a census row goes in `STEP_ONLY_TABLES` with its reason, and a table that never holds memory content in `NO_MEMORY_CONTENT`; the registry test fails otherwise), and a resumed saga re-runs the owner of any table the last census found rows in. The audit log is per-row content-hashing plus hash-chained hourly checkpoints; every write that creates or changes memory leaves a hash-only row there (`memory.set` and `memory.bulk_set` alike), and `loom.audit.checkpoint_lag_windows` says how far behind the chain is.
+- The erasure cascade and per-row audit hashing are engineering primitives, not a compliance guarantee. The federated erasure cascade (Langfuse / ClickStack) fails closed: a backend that can't confirm deletion records `failed` and the recovery worker retries idempotently; after `max_attempts` it's marked `failed` + `erasure.abandoned` for manual escalation. The saga's last step is a residue census over every substrate the read paths touch: any live row in scope fails the saga, and the terminal `erasure_requests` row carries `residue_count` / `residue` / `verified_at`. A new table that can hold memory content needs a saga step AND a census row — one `Substrate(...)` in `server/erasure/store/census.py::_CENSUS` naming its owner step per scope (a step without a census row goes in `STEP_ONLY_TABLES` with its reason, and a table that never holds memory content in `NO_MEMORY_CONTENT`; the registry test fails otherwise), and a resumed saga re-runs the owner of any table the last census found rows in. The audit log is per-row content-hashing plus hash-chained hourly checkpoints; every write that creates or changes memory leaves a hash-only row there (`memory.set` and `memory.bulk_set` alike), and `loom.audit.checkpoint_lag_windows` says how far behind the chain is.

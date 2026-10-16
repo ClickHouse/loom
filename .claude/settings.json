@@ -34,6 +34,6 @@
       "Bash(.venv/bin/python -m tests.inventory.coverage_floors:*)",
       "Bash(make migrate-status)"
     ],
-    "deny": ["Bash(git stash:*)"]
+    "deny": ["Bash(git stash:*)", "Bash(git push -f:*)"]
   }
 }

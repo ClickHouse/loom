@@ -71,7 +71,7 @@ These hold for every change, by a person or an agent. The skills under `.claude/
 | `.claude/skills/loom-ship-pr/` | pull request body, push, review, CI watch, squash merge | when opening or landing a PR |
 | `.claude/skills/loom-review/` | Loom's review gates: the invariants a diff can break | reviewing a PR or diff |
 | `.claude/skills/loom-investigate-ci/` | a red CI job to its cause and fix | a failing check |
-| `.claude/skills/loom-bench/` | when and how to run a benchmark and report it | on request |
+| `.claude/skills/loom-bench/` | when and how to run a benchmark and report it; a run only on request | benchmark questions |
 | `.claude/skills/loom-deploy/` | blue/green deploy, rollback and checks with `redeploy.sh` | operators, on request only |
 | `.claude/rules/*.md` | per-area rules, each with the `paths:` it governs | Claude Code loads one when a matching file is read or edited; other agents read the one for the files they touch |
 | `.claude/agents/loom-reviewer.md` | a read-only reviewer that runs `loom-review` | after a push |
