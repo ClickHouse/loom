@@ -175,16 +175,17 @@ class AnthropicLLMClient:
             # Retries exhausted or non-retryable: health reports a
             # configured-but-failing provider. Cancellation is not recorded.
             with recording("anthropic:messages"):
+                key = await gateway.bearer(self._api_key)  # a gateway outage is the provider's
                 async for attempt in retrying():
                     with attempt:
                         _gen.note_attempt()
-                        r = await _post(client, self.model, self._api_key, payload)
+                        r = await _post(client, self.model, key, payload)
                         for _ in range(traits.MAX_NEGOTIATION):
                             # A refused field: re-send without it.
                             if not _learn_from_refusal(self.model, r, payload):
                                 break
                             payload = _payload(self.model, system, user, max_tokens, temperature)
-                            r = await _post(client, self.model, self._api_key, payload)
+                            r = await _post(client, self.model, key, payload)
                         _raise_for_status(r, "anthropic:messages")
                         data = r.json()
                         hidden = _thinking_tokens(data)
@@ -194,7 +195,7 @@ class AnthropicLLMClient:
                             payload["max_tokens"] = traits.starved_cap(
                                 self.model, int(payload["max_tokens"]), hidden
                             )
-                            r = await _post(client, self.model, self._api_key, payload)
+                            r = await _post(client, self.model, key, payload)
                             _raise_for_status(r, "anthropic:messages")
                             data = r.json()
             text = "".join(

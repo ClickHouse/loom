@@ -152,13 +152,12 @@ class OpenAILLMClient:
         from server.observability.genai import generation_span
         from server.observability.provider_health import recording
 
-        bearer = await gateway.bearer(self._api_key)
-        headers = {"Authorization": f"Bearer {bearer}", "Content-Type": "application/json"}
-
         with generation_span(provider=self.provider, model=self.model) as _gen:
             # A failure after the retries (or a non-retryable one, or an
             # unreadable answer) marks the provider failing for /v1/health.
             with recording("openai:chat"):
+                bearer = await gateway.bearer(self._api_key)  # a gateway outage is the provider's
+                headers = {"Authorization": f"Bearer {bearer}", "Content-Type": "application/json"}
                 async for attempt in retrying():
                     with attempt:
                         _gen.note_attempt()

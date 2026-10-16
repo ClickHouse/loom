@@ -202,13 +202,23 @@ OPENAI_API_KEY=<the key the gateway issued for Loom>
 Off its default, the Anthropic key is also sent as `Authorization: Bearer`, the
 scheme gateways take. A gateway that accepts workload identity (RFC 8693 token
 exchange) needs no key at all: Loom exchanges its workload's OIDC token there,
-renews the answer halfway through its life, and sends it with every call.
+renews the answer halfway through its life (or five minutes before it runs out,
+whichever is sooner), and sends it with every call. With no key to infer them
+from, name the provider and the models:
 
 ```bash
-LOOM_INFERENCE_TOKEN_URL=https://gateway.example/oauth/token
+LOOM_INFERENCE_TOKEN_URL=https://gateway.example/oauth/token         # https
 LOOM_INFERENCE_WORKLOAD_TOKEN_FILE=/var/run/secrets/tokens/gateway   # rotated by the platform
 LOOM_INFERENCE_TOKEN_SCOPE="chat embeddings"                         # if the gateway asks for one
+LOOM_OPENAI_BASE_URL=https://gateway.example/v1                      # required: the token is the gateway's
+LOOM_LLM_PROVIDER=openai
+LOOM_LLM_MODEL=gpt-6-luna
+LOOM_EMBEDDING_MODEL=text-embedding-3-large
 ```
+
+Loom refuses to start when a provider it calls still points at the provider's
+own API, since the gateway's token would go there. In the dashboard, model
+changes for OpenAI and Anthropic are checked through the gateway too.
 
 On Kubernetes the token file is a projected service-account token with the
 gateway's audience; the gateway must trust the cluster's OIDC issuer and match

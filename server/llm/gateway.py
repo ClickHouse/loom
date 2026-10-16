@@ -12,6 +12,7 @@ gateway.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from pathlib import Path
 
@@ -19,10 +20,12 @@ import httpx
 
 from server.settings import settings
 
+log = logging.getLogger(__name__)
+
 TOKEN_EXCHANGE = "urn:ietf:params:oauth:grant-type:token-exchange"
-# Renewed halfway through its life, at most this long before it runs out; on
-# a failed renewal the token in hand serves until then, and the next try
-# waits this long.
+# Renewed halfway through its life or this long before it runs out, whichever
+# is sooner; on a failed renewal the token in hand serves until it runs out,
+# and the next try waits this long (with no token in hand too).
 _RENEW_BEFORE_S = 300
 _RETRY_S = 30
 
@@ -49,7 +52,7 @@ async def bearer(provider_key: str) -> str:
     if time.time() < _renew_at and _token:
         return _token
     async with _lock:
-        if time.time() >= _renew_at or not _token:
+        if time.time() >= _renew_at:  # 0 at first: the first call renews
             await _renew()
     if not _token or time.time() >= _expires_at:
         raise GatewayUnavailable("the inference gateway's token could not be renewed")
@@ -70,10 +73,15 @@ async def _renew() -> None:
         if settings.inference_token_scope:
             form["scope"] = settings.inference_token_scope
         r = await http().post(settings.inference_token_url, data=form, timeout=10.0)
-        r.raise_for_status()
-        body = r.json()
+        body = r.json() if r.content else {}
+        if r.status_code != 200:
+            raise ValueError(f"{r.status_code} {body.get('error', '')}".strip())
         token, life = str(body["access_token"]), float(body.get("expires_in", 900))
-    except (OSError, httpx.HTTPError, ValueError, KeyError, TypeError):
+        if life <= 0:
+            raise ValueError(f"expires_in {life}")
+    except (OSError, httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError) as e:
+        # The gateway's status and error code, never a token.
+        log.warning("inference gateway token exchange failed: %s", e)
         _renew_at = time.time() + _RETRY_S  # the token in hand serves until it runs out
         return
     now = time.time()

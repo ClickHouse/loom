@@ -170,3 +170,78 @@ def test_an_exchanging_deployment_does_not_fall_back_to_the_fake_model(
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     assert not provider_key_missing("openai") and not provider_key_missing("anthropic")
+
+
+def test_anthropic_calls_carry_the_gateway_token(gw: _Gateway, monkeypatch) -> None:
+    from server.llm import anthropic as anthropic_mod
+
+    monkeypatch.setattr(settings, "anthropic_base_url", "https://gateway.example")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    recorder = _Recorder(
+        {
+            "content": [{"type": "text", "text": "hi"}],
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+            "stop_reason": "end_turn",
+        }
+    )
+    monkeypatch.setattr(anthropic_mod, "_http_client", lambda: recorder)
+    client = anthropic_mod.AnthropicLLMClient(model="claude-haiku-4-5", api_key="")
+    asyncio.run(client.complete("s", "u"))
+    headers = recorder.calls[0]["headers"]
+    assert headers["Authorization"] == "Bearer gw-1" and headers["x-api-key"] == "gw-1"
+
+
+def test_a_gateway_that_refuses_is_asked_again_only_after_a_pause(
+    gw: _Gateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No token ever had (a wrong audience, the gateway away at boot): every call
+    # must not knock on the token endpoint.
+    now = [1000.0]
+    monkeypatch.setattr(gateway.time, "time", lambda: now[0])
+    gw.down = True
+    for _ in range(3):
+        with pytest.raises(gateway.GatewayUnavailable):
+            asyncio.run(gateway.bearer(""))
+    assert len(gw.sent) == 1
+    now[0] += 31
+    gw.down = False
+    assert asyncio.run(gateway.bearer("")) == "gw-2"
+
+
+def test_a_token_that_is_already_spent_counts_as_no_token(gw: _Gateway) -> None:
+    gw.life = 0
+    with pytest.raises(gateway.GatewayUnavailable):
+        asyncio.run(gateway.bearer(""))
+
+
+@pytest.mark.parametrize(
+    ("env", "message"),
+    [
+        # The gateway's token would go to the provider itself.
+        ({"LOOM_LLM_PROVIDER": "openai", "LOOM_LLM_MODEL": "gpt-6-luna"}, "LOOM_OPENAI_BASE_URL"),
+        ({"LOOM_INFERENCE_TOKEN_URL": "http://gateway.example/oauth/token"}, "https"),
+        ({"LOOM_OPENAI_BASE_URL": "https://"}, "LOOM_OPENAI_BASE_URL"),
+    ],
+)
+def test_a_gateway_set_up_to_leak_or_fail_is_refused_at_load(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, env: dict[str, str], message: str
+) -> None:
+    token = tmp_path / "token"
+    token.write_text("t")
+    base = {
+        "LOOM_INFERENCE_TOKEN_URL": "https://gateway.example/oauth/token",
+        "LOOM_INFERENCE_WORKLOAD_TOKEN_FILE": str(token),
+    }
+    for name, value in {**base, **env}.items():
+        monkeypatch.setenv(name, value)
+    with pytest.raises(ValueError, match=message):
+        Settings(_env_file=None)  # type: ignore[call-arg]
+
+
+def test_health_does_not_call_an_exchanging_deployment_keyless(gw: _Gateway, monkeypatch) -> None:
+    from server.observability.problems import HealthState, collect_problems
+
+    monkeypatch.setattr(settings, "llm_provider", "openai")
+    monkeypatch.setattr(settings, "embedding_model", "text-embedding-3-large")
+    codes = {p.code for p in collect_problems(settings, HealthState(env={}))}
+    assert "llm_key_missing" not in codes and "embedder_key_missing" not in codes

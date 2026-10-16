@@ -126,8 +126,13 @@ class ProviderSettings(ModelSettings):
             "inference_token_url": self.inference_token_url,
         }
         for name, value in urls.items():
-            if value and urlsplit(value).scheme not in ("https", "http"):
+            parts = urlsplit(value)
+            if value and (parts.scheme not in ("https", "http") or not parts.hostname):
                 raise ValueError(f"LOOM_{name.upper()} must be an http(s) URL, got {value!r}")
+        token = urlsplit(self.inference_token_url)
+        if token.scheme == "http" and token.hostname not in ("localhost", "127.0.0.1", "::1"):
+            # The workload's own OIDC token goes there.
+            raise ValueError("LOOM_INFERENCE_TOKEN_URL must be https")
         if self.inference_token_url and not self.inference_workload_token_file:
             raise ValueError(
                 "LOOM_INFERENCE_TOKEN_URL needs LOOM_INFERENCE_WORKLOAD_TOKEN_FILE, "
@@ -210,6 +215,26 @@ class ProviderSettings(ModelSettings):
         if not raw:
             return {}
         return dict(json_map_items(raw, "rerank_endpoints_json", non_empty=False))
+
+    @model_validator(mode="after")
+    def _check_gateway_is_in_front(self) -> ProviderSettings:
+        """The gateway's token is for the gateway: a provider whose calls still
+        go to its own API would be handed it."""
+        from server.core.embedding_space import inferred_provider
+
+        if not self.inference_token_url:
+            return self
+        embedder = self.embedding_provider or inferred_provider(self.embedding_model)
+        to_openai = self.openai_base_url == "https://api.openai.com/v1" and (
+            self.llm_provider == "openai" or embedder == "openai"
+        )
+        to_anthropic = self.anthropic_base_url == "https://api.anthropic.com" and (
+            self.llm_provider == "anthropic"
+        )
+        if to_openai or to_anthropic:
+            name = "LOOM_OPENAI_BASE_URL" if to_openai else "LOOM_ANTHROPIC_BASE_URL"
+            raise ValueError(f"LOOM_INFERENCE_TOKEN_URL needs {name} at the gateway")
+        return self
 
     @model_validator(mode="after")
     def _check_rerank_endpoints(self) -> ProviderSettings:
