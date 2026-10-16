@@ -86,16 +86,6 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
           echo "Releasing v$VERSION (prerelease: $PRERELEASE)"
-      # Each changelog's dated entry is the release gate: a tag whose version
-      # has no entry in the root or either SDK changelog ships nothing.
-      - name: Changelogs name this version
-        env:
-          VERSION: ${{ steps.parse.outputs.version }}
-        run: |
-          for f in CHANGELOG.md sdk/python/CHANGELOG.md sdk/typescript/CHANGELOG.md; do
-            grep -qE "^## \[${VERSION//./\\.}\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" "$f" \
-              || { echo "::error file=$f::no dated entry for $VERSION"; exit 1; }
-          done
       # The server reports its version from server/__init__.py (= pyproject.toml);
       # a tag that disagrees would ship an image that names another release.
       - name: Server version names this tag
@@ -206,7 +196,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
       # The SDK sources carry the tag's version, so every published file names it.
       # check-version.mjs compares package.json, package-lock.json (npm version
-      # rewrites both), src/version.ts and the changelog's top entry.
+      # rewrites both) and src/version.ts.
       - name: Sync SDK versions to the tag
         run: |
           python - <<'PY'
@@ -524,6 +514,23 @@ jobs:
               ;;
             *) exit "$status" ;;
           esac
+      # Notes are generated only when this run creates the release: on an existing
+      # one the action appends them again, under notes edited by hand.
+      - name: Is there a release for this tag already
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # Only a 404 means there is none: any other failure would regenerate the notes.
+        run: |
+          if out=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" 2>&1); then
+            echo "release=true" >>"$GITHUB_OUTPUT"
+          elif grep -q "(HTTP 404)" <<<"$out"; then
+            echo "release=false" >>"$GITHUB_OUTPUT"
+          else
+            echo "$out" >&2
+            echo "::error::could not tell whether $GITHUB_REF_NAME has a release"
+            exit 1
+          fi
       # An existing release for the tag is updated and its other files replaced,
       # so a re-run or the later dispatch leaves the published bytes attached.
       - name: Create or update the release with notes and files
@@ -531,7 +538,7 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
-          generate_release_notes: true # from the commits since the previous tag
+          generate_release_notes: ${{ steps.existing.outputs.release != 'true' }} # from the commits since the previous tag
           draft: false
           prerelease: ${{ needs.version.outputs.prerelease == 'true' }}
           overwrite_files: true

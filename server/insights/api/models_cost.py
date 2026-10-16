@@ -153,7 +153,8 @@ class TurnUsage(BaseModel):
     cache_creation_5m_tokens: int = Field(default=0, ge=0, le=100_000_000)
     cache_creation_1h_tokens: int = Field(default=0, ge=0, le=100_000_000)
     output_tokens: int = Field(default=0, ge=0, le=100_000_000)
-    # ISO-8601 time of the turn (the transcript's timestamp); empty = now.
+    # ISO-8601 time of the turn (the transcript's timestamp). Empty or not a
+    # time: the time this message_id is recorded with, else now.
     turn_at: str = Field(default="", max_length=40)
 
 
@@ -185,6 +186,10 @@ class CostRecordTurnsOutput(BaseModel):
     unpriced_models: list[str] = Field(default_factory=list)
     # Total price of the priced turns in this batch, in USD, rounded to 6 places.
     cost_usd: float = 0.0
+    # Turns dated over 5 s after the server's clock: the client's clock runs
+    # ahead, so a run's cost window may place them late. They are stored as
+    # sent. The plugins post fire-and-forget and do not read this.
+    turns_dated_ahead: int = 0
 
 
 AgentGroupDim = Literal["namespace", "agent", "day", "model", "consumer", "session_id"]

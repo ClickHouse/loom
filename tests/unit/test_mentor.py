@@ -633,6 +633,60 @@ def test_set_rules_duplicate_large_value_and_churn() -> None:
     assert churn is not None and churn[0] == "set_churn" and "working_memory" in churn[1]
 
 
+def test_run_over_budget_fires_only_when_run_get_names_a_budget() -> None:
+    run = {"status": "active", "budget_usd": 2.0}
+    within = {"run": run, "over_budget": [], "cost_usd": 0.4, "elapsed_seconds": 30}
+    assert _call("run.get", {"run_id": "r1"}, within) is None
+    over = {"run": run, "over_budget": ["cost"], "cost_usd": 2.5, "elapsed_seconds": 30}
+    hint = _call("run.get", {"run_id": "r1"}, over, session="s2")
+    assert hint is not None and hint[0] == "run_over_budget"
+    assert "cost budget ($2.50 of $2.00 spent)" in hint[1] and "run.complete" in hint[1]
+
+
+def test_run_over_budget_names_only_the_budgets_it_went_past() -> None:
+    run = {"status": "active", "budget_usd": 0.005, "budget_seconds": 60}
+    time_only = {"run": run, "over_budget": ["time"], "cost_usd": 0.0, "elapsed_seconds": 90}
+    hint = _call("run.get", {"run_id": "r1"}, time_only, session="s-time")
+    assert hint is not None and "time budget (1m 30s of 60s)" in hint[1] and "$" not in hint[1]
+    both = {"run": run, "over_budget": ["cost", "time"], "cost_usd": 0.0062, "elapsed_seconds": 90}
+    hint = _call("run.get", {"run_id": "r1"}, both, session="s-both")
+    # A sub-cent budget is shown as it is, not as $0.00.
+    expected = "cost and time budgets ($0.0062 of $0.005 spent, 1m 30s of 60s)"
+    assert hint is not None and expected in hint[1]
+
+
+def test_run_over_budget_shows_a_spend_just_past_the_budget() -> None:
+    run = {"status": "active", "budget_usd": 1.0}
+    just_over = {"run": run, "over_budget": ["cost"], "cost_usd": 1.000004}
+    hint = _call("run.get", {"run_id": "r1"}, just_over, session="s-just")
+    assert hint is not None and "$1.000004 of $1.00 spent" in hint[1]
+    # A budget is not rounded up past the spend either.
+    run = {"status": "active", "budget_usd": 1.235}
+    just_over = {"run": run, "over_budget": ["cost"], "cost_usd": 1.23516}
+    hint = _call("run.get", {"run_id": "r1"}, just_over, session="s-odd")
+    assert hint is not None and "$1.23516 of $1.235 spent" in hint[1]
+
+
+def test_run_over_budget_spells_a_large_spend_in_dollars() -> None:
+    run = {"status": "active", "budget_usd": 10000.0}
+    big = {"run": run, "over_budget": ["cost"], "cost_usd": 12345.0}
+    hint = _call("run.get", {"run_id": "r1"}, big, session="s-big")
+    assert hint is not None and "$12,345.00 of $10,000.00 spent" in hint[1]
+
+
+def test_run_over_budget_spells_a_long_time_budget_as_the_runs_page_does() -> None:
+    run = {"status": "active", "budget_seconds": 3600}
+    over = {"run": run, "over_budget": ["time"], "elapsed_seconds": 5400}
+    hint = _call("run.get", {"run_id": "r1"}, over, session="s-long")
+    assert hint is not None and "time budget (1h 30m of 60m 0s)" in hint[1]
+
+
+@pytest.mark.parametrize("status", ["completed", "failed", "cancelled"])
+def test_run_over_budget_says_nothing_about_a_closed_run(status: str) -> None:
+    closed = {"run": {"status": status}, "over_budget": ["time"], "elapsed_seconds": 90}
+    assert _call("run.get", {"run_id": "r1"}, closed, session=f"s-{status}") is None
+
+
 def test_search_abstain_points_at_the_plane_the_namespace_has() -> None:
     # No cached profile: nothing to say, and a background read is scheduled (not run here).
     assert _call("memory.search", {"query": "q"}, {"abstain": True, "hits": []}) is None
@@ -1109,6 +1163,7 @@ def test_call_hint_ops_cover_every_per_call_code() -> None:
         "set_churn",
         "set_stack_trace",
         "set_issue_reference",
+        "run_over_budget",
     }
     assert set(mentor_rules.CALL_HINT_OPS) == codes
     assert handler.CALL_HINT_OPS is mentor_rules.CALL_HINT_OPS

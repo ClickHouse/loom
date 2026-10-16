@@ -216,5 +216,7 @@ class RunLedgerRow(TypedDict, total=False):
     grade_reason: str
     grade_ref: str
     graded_at: datetime | None
+    budget_usd: float
+    budget_seconds: int
     # Set only by a session run's first begin; every other write takes the server's clock.
     version: int

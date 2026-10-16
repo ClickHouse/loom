@@ -268,6 +268,21 @@ def _unlisted(ops: tuple[str, ...]) -> str:
     return ""
 
 
+def _usd(amount: float) -> str:
+    """Dollars to the 6 places cost and budgets are kept to: "$2.50", "$1.000004"."""
+    return "$" + re.sub("0{1,4}$", "", f"{amount:,.6f}")
+
+
+def _duration(seconds: int) -> str:
+    """Seconds as the Runs page shows them: "42s", "30m 0s", "2h 5m"."""
+    if seconds < 90:
+        return f"{seconds}s"
+    minutes = seconds // 60
+    if minutes < 90:
+        return f"{minutes}m {seconds % 60}s"
+    return f"{minutes // 60}h {minutes % 60}m"
+
+
 def _byname(op: str) -> str:
     """The op as written in a hint; the listing note rides the hint's tail."""
     return op
@@ -902,6 +917,31 @@ def _rule_set_large_value(
     )
 
 
+def _rule_run_over_budget(
+    op: str, args: dict[str, Any], res: dict[str, Any], facts: dict[str, Any], st: dict[str, Any]
+) -> _Call:
+    if op != "run.get":
+        return None
+    over = res.get("over_budget") or []
+    run = res.get("run") or {}
+    if not over or run.get("status") != "active":
+        return None
+    spent = []
+    if "cost" in over:
+        budget = _usd(float(run.get("budget_usd") or 0.0))
+        spent.append(f"{_usd(float(res.get('cost_usd') or 0.0))} of {budget} spent")
+    if "time" in over:
+        elapsed = int(res.get("elapsed_seconds") or 0)
+        allowed = int(run.get("budget_seconds") or 0)
+        spent.append(f"{_duration(elapsed)} of {_duration(allowed)}")
+    budgets = "cost and time budgets" if len(over) > 1 else f"{over[0]} budget"
+    return (
+        "run_over_budget",
+        f"this run is past its {budgets} ({', '.join(spent)}): wrap up and run.complete, "
+        "or ask the user before going on." + _unlisted(("run.complete",)),
+    )
+
+
 # Per-call rules in precedence order: one fires per call.
 CALL_RULES: tuple[Callable[..., _Call], ...] = (
     _rule_set_churn,
@@ -912,6 +952,7 @@ CALL_RULES: tuple[Callable[..., _Call], ...] = (
     _rule_search_abstain,
     _rule_set_duplicate,
     _rule_set_large_value,
+    _rule_run_over_budget,
 )
 # Per-call hint codes and the ops that count as following them (the profile
 # codes carry their own `ops`); read by mentor.brief's adoption.
@@ -928,6 +969,7 @@ CALL_HINT_OPS: dict[str, tuple[str, ...]] = {
     "search_abstain_knowledge": ("loom_search", "knowledge.search", "knowledge.get"),
     "set_duplicate": ("memory.update", "memory.link", "memory.get", "memory.related"),
     "set_large_value": ("knowledge.upsert", "knowledge.add"),
+    "run_over_budget": ("run.complete",),
     "set_churn": ("working_memory.set", "working_memory.append", "working_memory.replace"),
     "set_stack_trace": (
         "code.trace",
