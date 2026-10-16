@@ -703,8 +703,9 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
                 new_memory_id=memory_id,
                 peer_ids=[p.memory_id for p in conflict_result.peers],
             )
-        if landed == "clear":
-            # Every peer retired before the mark: nothing was flagged.
+        if landed != "conflict":
+            # Every peer, or the new row itself, retired before the mark:
+            # nothing was flagged.
             conflict_result = replace(conflict_result, verdict="clear", peers=[])
     elif conflict_result.verdict == "refines" and conflict_result.refined_peers:
         # A judged elaboration supersedes the rows it refines and links to them; nothing is

@@ -118,8 +118,9 @@ def wired(monkeypatch: pytest.MonkeyPatch):
             calls.check.append(kw)
             return verdict
 
-        async def _mark(**kw: Any) -> None:
+        async def _mark(**kw: Any) -> str:
             calls.marked.append(kw)
+            return "conflict"
 
         async def _refines(**kw: Any) -> None:
             calls.refined.append(kw)
@@ -179,16 +180,18 @@ async def test_clear_verdict_writes_an_active_version_and_resets_the_old_mark(wi
 
 
 @pytest.mark.asyncio
-async def test_a_conflict_whose_peers_all_retired_before_the_mark_answers_clear(
-    wired, monkeypatch
+@pytest.mark.parametrize("landed", ["clear", "moved"])
+async def test_a_conflict_the_mark_did_not_flag_answers_clear(
+    wired, monkeypatch, landed: str
 ) -> None:
     # Nothing was flagged, so there is no conflict to report.
     wired(ConflictResult(verdict="conflict", peers=[_peer()]))
 
-    async def _no_live_peer(**_: Any) -> str:
-        return "clear"
+    # `clear`: every peer retired before the mark; `moved`: the new row did.
+    async def _not_flagged(**_: Any) -> str:
+        return landed
 
-    monkeypatch.setattr(cf, "mark_peers_conflicted", _no_live_peer)
+    monkeypatch.setattr(cf, "mark_peers_conflicted", _not_flagged)
     out = await update_mod.handle_memory_update(_input())
     assert out.updated and (out.conflict_verdict, out.conflict_peers) == ("clear", 0)
 

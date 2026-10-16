@@ -516,7 +516,7 @@ async def _update_post_write(input: Any, existing: MemoryRow, conflict_result: A
     """Post-write, as memory.set: a conflict flags both sides (the new version
     exists, so the cross-link resolves); a judged elaboration supersedes the
     rows it refines and links to them. Returns the verdict that landed: `clear`
-    when no peer was left live to flag."""
+    when the mark flagged nothing (no peer, or the new row, was left live)."""
     from server.observability.otel import traced
 
     if conflict_result is not None and conflict_result.verdict == "conflict":
@@ -528,8 +528,9 @@ async def _update_post_write(input: Any, existing: MemoryRow, conflict_result: A
                 new_memory_id=str(existing.memory_id),
                 peer_ids=[p.memory_id for p in conflict_result.peers],
             )
-        if landed == "clear":
-            # Every peer retired before the mark: nothing was flagged.
+        if landed != "conflict":
+            # Every peer, or the new row itself, retired before the mark:
+            # nothing was flagged.
             conflict_result = replace(conflict_result, verdict="clear", peers=[])
     elif (
         conflict_result is not None
