@@ -19,6 +19,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from server.auth import sso_links
 from server.auth.authz import Role
 from server.auth.jwt import AuthInfo
 from server.core import grant_cache
@@ -152,6 +153,7 @@ async def release_claim(
     row["description"] = f"Released by {actor_subject}" + (f" ({reason})" if reason else "")
     row["updated_at"] = max(now, existing.get("updated_at") or now)
     await ch.insert("loom.namespaces", [row])
+    await sso_links.forget_account(org, namespace, actor_subject, ch=ch)
     # The claim cap reads which accounts tie a person's spellings from this table.
     grant_cache.invalidate(org)
 

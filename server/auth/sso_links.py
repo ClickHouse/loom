@@ -20,7 +20,7 @@ TABLE = "loom.sso_links"
 
 # Active password accounts naming an email and not linked to it.
 _UNLINKED = f"""
-    SELECT org, namespace, owner_email, contact_email, created_at
+    SELECT org, namespace, owner_email, contact_email, created_at, password_hash
     FROM loom.namespaces FINAL
     WHERE active = 1 AND password_hash != '' AND {{where}}
       AND (contact_email, org, namespace) NOT IN (
@@ -49,6 +49,22 @@ async def unlinked_in_domain(domain: str, org: str = "") -> list[dict[str, Any]]
     )
 
 
+async def reached_by_sso(emails: list[str]) -> set[str]:
+    """Which of `emails` an SSO sign-in already reaches: an SSO account, or a link."""
+    if not emails:
+        return set()
+    rows = await get_client().query_all(
+        f"""
+        SELECT contact_email AS email FROM loom.namespaces FINAL
+        WHERE active = 1 AND password_hash = '' AND contact_email IN {{emails:Array(String)}}
+        UNION DISTINCT
+        SELECT email FROM {TABLE} FINAL WHERE linked = 1 AND email IN {{emails:Array(String)}}
+        """,
+        params={"emails": emails},
+    )
+    return {r["email"] for r in rows}
+
+
 async def link(email: str, accounts: list[tuple[str, str]], linked_by: str) -> None:
     """Let an SSO sign-in with `email` reach each (org, namespace)."""
     await _write(email, accounts, linked_by, linked=1)
@@ -63,16 +79,31 @@ async def linked(email: str) -> list[tuple[str, str]]:
     return [(r["org"], r["namespace"]) for r in rows]
 
 
+async def forget_account(org: str, namespace: str, by: str, *, ch: Any = None) -> None:
+    """Drop every link to (org, namespace): it was released, and a next holder
+    of the name is not the person who linked it."""
+    ch = ch or get_client()
+    rows = await ch.query_all(
+        f"SELECT email FROM {TABLE} FINAL WHERE org = {{org:String}} "
+        "AND namespace = {ns:String} AND linked = 1",
+        params={"org": org, "ns": namespace},
+    )
+    for r in rows:
+        await _write(r["email"], [(org, namespace)], by, linked=0, ch=ch)
+
+
 async def unlink(email: str, accounts: list[tuple[str, str]], linked_by: str) -> None:
     """Stop SSO sign-ins with `email` reaching `accounts`."""
     await _write(email, accounts, linked_by, linked=0)
 
 
-async def _write(email: str, accounts: list[tuple[str, str]], by: str, *, linked: int) -> None:
+async def _write(
+    email: str, accounts: list[tuple[str, str]], by: str, *, linked: int, ch: Any = None
+) -> None:
     if not accounts:
         return
     now, version = datetime.now(UTC), time.time_ns()
-    await get_client().insert(
+    await (ch or get_client()).insert(
         TABLE,
         [
             {

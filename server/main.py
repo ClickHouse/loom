@@ -386,12 +386,14 @@ from server.auth import login as _login  # noqa: E402
 from server.auth import oauth as _oauth  # noqa: E402
 from server.auth import self_signup as _self_signup  # noqa: E402
 from server.identity.app import claim_release as _claim_release  # noqa: E402
+from server.identity.app import password_link as _password_link  # noqa: E402
 
 _self_signup.attach(app)
 _login.attach(app)
 _claim_release.attach(app)
 # OAuth 2.1 AS for MCP one-click connect — mounts only when LOOM_OAUTH_ENABLED.
 _oauth.attach(app)
+_password_link.attach(app)
 
 from server.insights.app.admin_routes import admin_router as _admin_router  # noqa: E402
 from server.insights.app.admin_routes import org_admin_router as _org_admin_router  # noqa: E402

@@ -117,8 +117,12 @@ async def swap(ch: Any, key: str, old: str | None, new: str, expires_at: int) ->
     holds `old` (None: if it is absent). Returns what it holds afterwards:
     `new` if this call's write landed."""
     await _require(ch)
+    # A cancelled request does not stop ClickHouse running the write, so the
+    # write and its read-back finish as one, and only then is a cancelled
+    # write undone: an undo run first would find nothing and miss it.
+    write = asyncio.ensure_future(_swap(ch, key, old, new, expires_at))
     try:
-        return await _swap(ch, key, old, new, expires_at)
+        return await asyncio.shield(write)
     except Busy:
         # The write may have landed before Keeper failed: undo it, so the
         # request told to retry finds the key as it read it.
@@ -126,10 +130,23 @@ async def swap(ch: Any, key: str, old: str | None, new: str, expires_at: int) ->
             await _undo(ch, key, old, new, expires_at)
         raise
     except asyncio.CancelledError:
-        # Cancelled after the write may have landed: the same undo, held to
-        # its end, before whoever cancelled puts the credential back.
-        await keeper_claims.shielded(_undo_quietly(ch, key, old, new, expires_at), name="undo")
+        # Held to its end, before whoever cancelled puts the credential back.
+        await keeper_claims.shielded(
+            _undo_once_settled(write, ch, key, old, new, expires_at), name="undo"
+        )
         raise
+
+
+async def _undo_once_settled(
+    write: asyncio.Future[str | None], ch: Any, key: str, old: str | None, new: str, expires_at: int
+) -> None:
+    try:
+        async with asyncio.timeout(UNDO_S):
+            landed = await write == new
+    except (Busy, TimeoutError):
+        landed = True  # unknown: the undo changes the key only if it holds `new`
+    if landed:
+        await _undo_quietly(ch, key, old, new, expires_at)
 
 
 async def _undo(ch: Any, key: str, old: str | None, new: str, expires_at: int) -> None:

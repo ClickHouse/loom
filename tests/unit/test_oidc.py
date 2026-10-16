@@ -47,6 +47,11 @@ def _no_password_accounts(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(sso_links, "unlinked_accounts", none)
 
+    async def no_links(email: str) -> list[tuple[str, str]]:
+        return []
+
+    monkeypatch.setattr(sso_links, "linked", no_links)
+
 
 @pytest.fixture
 def _signing_key():
@@ -171,6 +176,22 @@ async def test_resolve_identity_for_email_no_account(monkeypatch) -> None:
 
     monkeypatch.setattr(login, "get_client", lambda: FakeCH())
     assert await login.resolve_identity_for_email("nobody@example.com") is None
+
+
+async def test_resolve_identity_rejects_accounts_of_two_owners(monkeypatch) -> None:
+    """An email naming two people's accounts (a squatter's linked beside the
+    owner's) signs in to neither: the first row's subject would win."""
+    rows = [
+        {"namespace": "u-carol-1", "owner_email": "u-carol-1", "org": "o", "password_hash": ""},
+        {"namespace": "aa-sq", "owner_email": "squat", "org": "o", "password_hash": "x"},
+    ]
+
+    class FakeCH:
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            return [{**r, "contact_email": "carol@corp.io"} for r in rows]
+
+    monkeypatch.setattr(login, "get_client", lambda: FakeCH())
+    assert await login.resolve_identity_for_email("carol@corp.io") is None
 
 
 async def test_resolve_identity_rejects_cross_org_ambiguity(monkeypatch) -> None:
@@ -314,25 +335,22 @@ async def test_jit_refuses_a_person_whose_account_was_revoked(monkeypatch) -> No
     assert asked == [["bob", "u-bob-1234abcd-9f3e"]]
 
 
-async def test_a_revoked_password_account_naming_the_email_is_not_theirs(monkeypatch) -> None:
-    # Self-signup never verified its email: whoever registered it, revoked or
-    # not, is no offboarding of the address's owner.
+async def test_a_revoked_password_account_naming_the_email_blocks_jit(monkeypatch) -> None:
+    # It may be this person, offboarded: a fresh name would be a new subject
+    # past the revoke. A squatter's account is released instead, which clears
+    # its email, so it no longer names the address.
     provisioned = _jit_on(monkeypatch)
 
     async def accounts(org: str, ident: str) -> list[dict[str, Any]]:
-        return [{"namespace": "squat", "owner": "squat", "active": False, "sso": False}]
+        return [{"namespace": "eve", "owner": "eve", "active": False, "sso": False}]
 
     async def revoked(subjects: list[str], *, issued_at: int) -> bool:
-        return "squat" in subjects
-
-    async def free(org: str, namespace: str) -> None:
-        return None
+        return "eve" in subjects
 
     monkeypatch.setattr(jit, "_accounts_naming", accounts)
     monkeypatch.setattr(revocation, "subjects_revoked", revoked)
-    monkeypatch.setattr(jit, "_registry_row", free)
-    assert await jit.jit_provision_for_email("bob@acme.com") is not None
-    assert provisioned["namespace"].startswith("u-bob-")
+    assert await jit.jit_provision_for_email("eve@acme.com") is None
+    assert provisioned == {}
 
 
 async def test_a_deleted_account_alone_is_no_offboarding(monkeypatch) -> None:

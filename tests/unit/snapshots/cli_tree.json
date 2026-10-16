@@ -7334,6 +7334,7 @@
             "help",
             "domain",
             "org",
+            "keep_tokens",
             "dry_run",
             "dry_run"
            ]
@@ -7393,6 +7394,21 @@
            "type": null,
            "required": false,
            "help": "Only accounts in this org",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--keep-tokens"
+           ],
+           "dest": "keep_tokens",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Keep the tokens the accounts already hold (by default they are revoked: whoever registered an address may hold some)",
            "metavar": null
           },
           {

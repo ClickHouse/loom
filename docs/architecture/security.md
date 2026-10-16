@@ -232,8 +232,14 @@ A verified email reaches a password account only once the account is linked to i
 given, so linking on an email match alone would hand the account to whoever registered the
 address first. The owner links it by proving the account's password once from the SSO
 sign-in, under the password sign-in limits; an operator can vouch for a whole domain with
-`loom sso adopt`, which lists the accounts before `--apply`. A linked account keeps its
-subject, grants and data, and JIT never makes a second account beside one.
+`loom sso adopt`, which lists each account and its owner before `--apply`, skips an email
+whose accounts span orgs or owners or that SSO already reaches, and revokes the tokens the
+adopted subjects held (whoever registered an address may hold some). A linked account keeps
+its subject, grants and data. An email whose linked accounts disagree (two owners, two orgs)
+signs in to none, and JIT adds nothing beside them. A person who says a password account
+naming their address is not theirs goes on to a JIT account, unless an account naming the
+address is revoked: offboarding stands, and a squatter's account is released
+(`loom claim-release` clears its email and its links) rather than revoked.
 
 Loom stays the authorization server for every client (the dashboard, `loom login`, MCP
 clients); the provider only authenticates the person. The OAuth server:

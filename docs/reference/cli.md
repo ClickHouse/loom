@@ -264,7 +264,7 @@ python scripts/codegen/docs_reference.py
 | `loom mint-token` | Mint a JWT locally (requires LOOM_JWT_SECRET). | `--subject`, `--org`, `--namespaces`, `--roles`, `--namespace-role`, `--ttl-days`, `--save`, `--read-scope`, `--read-user-id`, `--traffic-class`, `--consumer`, `--service-account`, `--user-token`, `--json` |
 | `loom revoke-token` | Revoke one token by jti or subject (writes loom.revoked_tokens through the revocation module; needs the configured ClickHouse). | `--jti`, `--subject`, `--list`, `--issued-before`, `--reason`, `--expires-at`, `--json` |
 | `loom sso` | Carry password accounts over to single sign-on. |  |
-| `loom sso adopt` | Let SSO sign-ins reach the password accounts whose email is at --domain: each person then signs in with the identity provider to their own account, its namespaces and data. | `--domain`, `--org`, `--apply`, `--dry-run` |
+| `loom sso adopt` | Let SSO sign-ins reach the password accounts whose email is at --domain: each person then signs in with the identity provider to their own account, its namespaces and data. | `--domain`, `--org`, `--keep-tokens`, `--apply`, `--dry-run` |
 | `loom sso unlink` | Undo the links of one email. | `--email`, `--apply`, `--dry-run` |
 | `loom sso password-link` | Print a one-time link (a day) that sets the password of an email's SSO accounts, for after single sign-on is turned off. | `--email`, `--org` |
 | `loom doctor` | Diagnose pre-boot misconfig (Python version, settings, JWT, CH reachability) and print the problem list /v1/health carries, each with its fix. | `--json`, `--client`, `--server-url`, `--token` |

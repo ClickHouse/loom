@@ -296,6 +296,10 @@ async def resolve_identity_for_email(
     # capture the login). Same email may own several namespaces in ONE org.
     if len({r["org"] for r in rows}) > 1:
         return None
+    # Likewise two owners (a password account linked beside another's): the
+    # first row's subject would win, and with it the other's namespaces.
+    if len({r["owner_email"] for r in rows}) > 1:
+        return None
     return await _with_restricted_grants(_identity_from_rows(rows, verified_email=ident))
 
 

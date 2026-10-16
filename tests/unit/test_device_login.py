@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from server.auth import device, jit, login, oauth, oidc, revocation, sso_links
 from server.auth.jwt import mint_token
+from server.auth.passwords import hash_password
 from tests.unit.oauth_store_fake import MemoryOAuthStore, oauth_app
 
 _USER = ("alice@example.com", "acme", ["alice"], ["writer"])
@@ -59,6 +60,11 @@ def _world(monkeypatch):
         return []
 
     monkeypatch.setattr(sso_links, "unlinked_accounts", no_password_accounts)
+
+    async def no_links(email: str) -> list[tuple[str, str]]:
+        return []
+
+    monkeypatch.setattr(sso_links, "linked", no_links)
     monkeypatch.setattr(device.audit, "emit", emit)
 
     async def credentials(identifier: str, password: str, *, address: str = "") -> Any:
@@ -372,10 +378,12 @@ def test_a_refresh_past_its_deadline_answers_busy_and_keeps_the_token(monkeypatc
 
 
 def test_a_refresh_ends_well_before_a_spend_counts_as_abandoned() -> None:
+    from loom.credentials import _REFRESH_TIMEOUT_S
+
     from server.auth import claims, oauth_store
 
     budget = oauth._REFRESH_DEADLINE_S + oauth._PUT_BACK_S + claims.UNDO_S
-    assert budget < oauth_store._ABANDONED_S
+    assert budget < _REFRESH_TIMEOUT_S < oauth_store._ABANDONED_S
 
 
 def test_refresh_needs_the_client_it_was_issued_to() -> None:
@@ -531,8 +539,10 @@ def bobs_password_account(sso, monkeypatch):
     async def by_email(email: str) -> Any:
         return bob if links else None
 
+    stored = hash_password("bobpw")
+
     async def unlinked(email: str) -> list[dict[str, Any]]:
-        return [] if links else [{"org": "acme", "namespace": "bob"}]
+        return [] if links else [{"org": "acme", "namespace": "bob", "password_hash": stored}]
 
     async def link(email: str, accounts: list[tuple[str, str]], by: str) -> None:
         links.append((email, accounts, by))
@@ -590,6 +600,54 @@ def test_someone_elses_password_account_does_not_lock_the_owner_out(
     r = c.post("/oauth/link", data={"ticket": _ticket(page.text), "decision": "not_mine"})
     assert r.status_code == 200 and "u-bob-1a2b3c4d" in r.text
     assert not bobs_password_account  # nothing linked
+
+
+def test_linked_accounts_that_disagree_make_no_new_one(sso, monkeypatch) -> None:
+    # The email's linked accounts resolve to nobody (two owners): JIT must not
+    # add a third beside them.
+    sso["email"] = "carol@example.com"
+
+    async def nobody(email: str) -> None:
+        return None
+
+    async def linked(email: str) -> list[tuple[str, str]]:
+        return [("acme", "aa-sq")]
+
+    async def no_jit(email: str) -> None:
+        raise AssertionError("JIT must not run")
+
+    monkeypatch.setattr(login, "resolve_identity_for_email", nobody)
+    monkeypatch.setattr(sso_links, "linked", linked)
+    monkeypatch.setattr(jit, "jit_provision_for_email", no_jit)
+    c = _client()
+    assert _sso_round_trip(c, _start(c)["user_code"]).status_code == 403
+
+
+def test_a_link_ticket_finishes_nothing_in_another_browser(bobs_password_account) -> None:
+    c = _client()
+    page = _sso_round_trip(c, _start(c)["user_code"])
+    elsewhere = _client()  # the ticket, without the browser that got it
+    assert _link(elsewhere, page.text, "bobpw").status_code == 400
+    assert not bobs_password_account
+    assert _link(c, page.text, "bobpw").status_code == 200
+
+
+def test_a_link_that_fails_once_spent_starts_again(bobs_password_account, monkeypatch) -> None:
+    revoked: list[str] = []
+
+    async def down(email: str, accounts: list[tuple[str, str]], by: str) -> None:
+        raise RuntimeError("ClickHouse away")
+
+    async def revoke(token: str) -> None:
+        revoked.append(token)
+
+    monkeypatch.setattr(sso_links, "link", down)
+    monkeypatch.setattr(oidc, "revoke", revoke)
+    c = _client()
+    page = _sso_round_trip(c, _start(c)["user_code"])
+    r = _link(c, page.text, "bobpw")
+    assert r.status_code == 503 and "/oauth/device?user_code=" in r.text
+    assert revoked == ["idp-r1"]
 
 
 def test_a_link_ticket_is_spent_once(bobs_password_account) -> None:

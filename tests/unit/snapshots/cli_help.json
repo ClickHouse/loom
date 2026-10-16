@@ -230,8 +230,8 @@
   "options: -h, --help show this help message and exit"
  ],
  "loom sso adopt": [
-  "usage: loom sso adopt [-h] --domain DOMAIN [--org ORG] [--apply | --dry-run]",
-  "options: -h, --help show this help message and exit --domain DOMAIN Email domain, e.g. example.com --org ORG Only accounts in this org --apply link the accounts (default: dry run) --dry-run report what --apply would write, write nothing (the default)"
+  "usage: loom sso adopt [-h] --domain DOMAIN [--org ORG] [--keep-tokens] [--apply | --dry-run]",
+  "options: -h, --help show this help message and exit --domain DOMAIN Email domain, e.g. example.com --org ORG Only accounts in this org --keep-tokens Keep the tokens the accounts already hold (by default they are revoked: whoever registered an address may hold some) --apply link the accounts (default: dry run) --dry-run report what --apply would write, write nothing (the default)"
  ],
  "loom sso unlink": [
   "usage: loom sso unlink [-h] --email EMAIL [--apply | --dry-run]",

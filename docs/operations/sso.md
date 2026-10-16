@@ -62,14 +62,22 @@ account keeps its subject, grants, namespaces and data; no new one is made.
 
 - **Before turning SSO on**, link your people's accounts in one go:
   `loom sso adopt --domain example.com` lists the password accounts at that
-  domain, and `--apply` links them. It vouches that the domain's addresses are
-  the provider's people, so read the list: an address someone else registered
-  is linked too. An email with accounts in several orgs signs in to none.
+  domain with their owners, and `--apply` links them. It vouches that the
+  domain's addresses are the provider's people, so read the list: an address
+  someone else registered is linked too. It skips an email whose accounts are
+  in several orgs or have several owners, or that SSO already reaches, and it
+  revokes the tokens the linked accounts already hold, so people sign in again
+  (`--keep-tokens` keeps them).
 - **Anyone not adopted** is asked, at their first SSO sign-in, for their
   account's Loom password once; it then links. Wrong passwords count against
   the usual sign-in limits.
 - `loom sso unlink --email <email> --apply` takes a link back. Sessions already
   open are not ended; revoke them with `loom revoke-token --subject`.
+- Someone who says a password account naming their address is not theirs goes
+  on to an account of their own, and `auth.sso_link_declined` is audited. To
+  free an address someone else registered, release that account
+  (`loom claim-release`), which clears its email and links; a revoked account
+  naming the address blocks new accounts, since it may be the same person.
 
 For a person with no account:
 
@@ -124,7 +132,7 @@ but it lasts at most 30 days, so long-running bots use an operator's token.
   ended session writes an `auth.*` row to the audit log:
   `auth.sso_signin`, `auth.signin_denied`, `auth.device_approved`,
   `auth.device_denied`, `auth.connect_approved`, `auth.connect_denied`,
-  `auth.jit_provisioned`, `auth.sso_linked`, `auth.sso_unlinked`,
+  `auth.jit_provisioned`, `auth.sso_linked`, `auth.sso_unlinked`, `auth.sso_link_declined`, `auth.password_set`,
   `auth.session_revoked`.
 
 ## Behind a proxy
@@ -144,6 +152,22 @@ reports `oauth_signin_needs_keeper`; tokens from `loom mint-token` still work.
 If `/v1/health` reports `oauth_signin_state_full`, the Keeper table hit its key
 limit (a flood of device sign-ins): new sign-ins answer 503 until keys expire,
 so rate-limit the sign-in routes by network at your proxy.
+
+## Turning SSO off
+
+Set `LOOM_OAUTH_LOGIN_PROVIDER=password` (or remove it) and restart. Password
+accounts, adopted or linked ones included, sign in with their passwords again;
+a link never removes a password. A session signed in through SSO ends at its
+next refresh, and its owner signs in again. An account JIT made has no
+password: give its owner one with
+
+```bash
+loom sso password-link --email lee@example.com
+```
+
+which prints a link that sets it, once, within a day, and only while SSO is
+off. The account stays linked, so turning SSO on again reaches it. Bot tokens
+are not affected either way.
 
 ## Break glass
 

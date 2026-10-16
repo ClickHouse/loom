@@ -18,4 +18,5 @@ CREATE TABLE IF NOT EXISTS loom.sso_links
     `version` UInt64
 )
 ENGINE = ReplacingMergeTree(version)
-ORDER BY (email, org, namespace);
+ORDER BY (email, org, namespace)
+SETTINGS non_replicated_deduplication_window = 1000;

@@ -168,8 +168,10 @@ async def _provision_jit(org: str, ident: str, base: str) -> login.Identity | No
     # (self-signup never verified the address), so it is not theirs here.
     if any(a["active"] and a["sso"] for a in accounts):
         return await _resolve_as_written(ident)  # their account, whatever its name
-    # Only accounts that were theirs (SSO ones) say whether they were offboarded.
-    if await _any_revoked([a for a in accounts if a["sso"]]):
+    # Any account naming the email counts, a password one too: its owner may
+    # be the person offboarded. A squatter's is released (`loom claim-release`
+    # clears its email), not revoked, to free the address.
+    if await _any_revoked(accounts):
         # Offboarded: a fresh name would be a new subject past the revoke.
         log.info("oidc jit: an account of %r in %s is revoked; not provisioning", ident, org)
         return None

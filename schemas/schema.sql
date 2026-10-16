@@ -3149,7 +3149,7 @@ CREATE TABLE IF NOT EXISTS loom.sso_links
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (email, org, namespace)
-SETTINGS index_granularity = 8192;
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
 
 -- loom.subject_last_seen
 CREATE TABLE IF NOT EXISTS loom.subject_last_seen

@@ -22,6 +22,7 @@ from fastapi.responses import Response
 from server.auth import oauth, sso_links
 from server.auth.oauth_store import token_id
 from server.core.ch import get_client
+from server.identity.store import namespaces
 from server.observability import audit
 from server.settings import settings
 
@@ -33,7 +34,7 @@ _MIN_LENGTH, _MAX_LENGTH = 8, 256  # as self-signup asks
 
 # The SSO accounts (no password) naming an email, active, in one org.
 _SSO_ACCOUNTS = """
-    SELECT * FROM loom.namespaces FINAL
+    SELECT org, namespace FROM loom.namespaces FINAL
     WHERE contact_email = {email:String} AND active = 1 AND password_hash = ''
       AND ({org:String} = '' OR org = {org:String})
     ORDER BY org, namespace
@@ -117,8 +118,11 @@ async def set_password(request: Request) -> Response:
     if await oauth.store.take_pending(token_id(code)) is None:
         return _closed()  # the form sent twice: the other one set it
     email, org = held["email"], held["org"]
+    rows = [r for r in [await namespaces.fetch_row(org, ns) for ns in held["namespaces"]] if r]
     # Still that email's SSO accounts: one changed since the link was made is left alone.
-    rows = [r for r in await sso_accounts(email, org) if r["namespace"] in held["namespaces"]]
+    rows = [
+        r for r in rows if r["active"] and not r["password_hash"] and r["contact_email"] == email
+    ]
     if not rows:
         return _closed()
     password_hash = await hash_password_off_loop(password)
@@ -144,3 +148,9 @@ async def set_password(request: Request) -> Response:
         "Set your Loom password",
         f"<h2>Password set</h2><p>Sign in as <b>{html.escape(email)}</b>.</p>",
     )
+
+
+def attach(app: Any) -> None:
+    """Mounted wherever sign-in is: the page is for a person signing in."""
+    if settings.auth_actually_required() or settings.oauth_enabled:
+        app.include_router(router)

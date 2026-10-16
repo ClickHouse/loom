@@ -10,10 +10,18 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from server.auth import oauth, password_setup, sso_links
+from server.auth import oauth, sso_links
+from server.identity.app import password_link
 from tests.unit.oauth_store_fake import MemoryOAuthStore, oauth_app
 
-_ACCOUNT = {"org": "acme", "namespace": "u-lee-1a2b3c4d", "updated_at": None}
+_ACCOUNT = {
+    "org": "acme",
+    "namespace": "u-lee-1a2b3c4d",
+    "contact_email": "lee@acme.com",
+    "password_hash": "",
+    "active": True,
+    "updated_at": None,
+}
 
 
 @pytest.fixture
@@ -38,16 +46,21 @@ def world(monkeypatch) -> dict[str, Any]:
     async def emit(event_type: str, **kw: Any) -> str:
         return ""
 
-    monkeypatch.setattr(password_setup, "sso_accounts", accounts)
-    monkeypatch.setattr(password_setup, "get_client", lambda: _CH())
+    async def fetch_row(org: str, namespace: str) -> dict[str, Any] | None:
+        found = [a for a in written["accounts"] if (a["org"], a["namespace"]) == (org, namespace)]
+        return dict(found[0]) if found else None
+
+    monkeypatch.setattr(password_link, "sso_accounts", accounts)
+    monkeypatch.setattr(password_link.namespaces, "fetch_row", fetch_row)
+    monkeypatch.setattr(password_link, "get_client", lambda: _CH())
     monkeypatch.setattr(sso_links, "link", link)
-    monkeypatch.setattr(password_setup.audit, "emit", emit)
+    monkeypatch.setattr(password_link.audit, "emit", emit)
     return written
 
 
 def _code() -> str:
-    accounts = asyncio.run(password_setup.sso_accounts("lee@acme.com"))
-    return asyncio.run(password_setup.make_link("lee@acme.com", accounts))
+    accounts = asyncio.run(password_link.sso_accounts("lee@acme.com"))
+    return asyncio.run(password_link.make_link("lee@acme.com", accounts))
 
 
 def _set(c: TestClient, code: str, password: str, repeat: str | None = None) -> Any:

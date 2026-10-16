@@ -46,6 +46,8 @@ class _CH:
         return dict(self.row) if self.row else None
 
     async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+        if "sso_links" in sql:
+            return [{"email": "alice@example.com"}]  # linked for SSO before the release
         return [{"subject": "alice", "role": "admin", "granted_by": "alice"}]
 
     async def insert(self, table: str, rows: list[dict[str, Any]], **k: Any) -> None:
@@ -96,6 +98,9 @@ def test_the_release_keeps_every_column_but_the_claim(env: Any) -> None:
     run, _ = env
     out, ch = run(_tok(["org_admin"]))
     assert out.released and out.previous_owner == "alice" and out.grants_revoked == 1
+    # Its SSO link goes too: a next holder of the name is not who linked it.
+    (link,) = ch.inserts["loom.sso_links"]
+    assert (link["email"], link["linked"]) == ("alice@example.com", 0)
     (row,) = ch.inserts["loom.namespaces"]
     assert {k: row[k] for k in ("owner_email", "contact_email", "password_hash", "active")} == {
         "owner_email": "",

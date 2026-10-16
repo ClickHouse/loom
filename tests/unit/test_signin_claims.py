@@ -15,12 +15,13 @@ pytestmark = pytest.mark.asyncio
 
 
 class _Keeper:
-    """Takes writes at once; the first read-back hangs until cancelled."""
+    """Takes writes at once; the first read-back answers only once `answer` is set."""
 
     def __init__(self, value: str | None) -> None:
         self.value = value
         self.writes: list[str] = []
         self.reading = asyncio.Event()
+        self.answer = asyncio.Event()
         self._hung = False
 
     async def execute(self, sql: str, params: dict[str, Any]) -> None:
@@ -37,7 +38,7 @@ class _Keeper:
         if not self._hung:
             self._hung = True
             self.reading.set()
-            await asyncio.Event().wait()  # the read-back the cancellation lands in
+            await self.answer.wait()  # the read-back the cancellation lands in
         return {"value": self.value} if self.value is not None else None
 
 
@@ -50,6 +51,9 @@ async def _cancel_during_read_back(ch: _Keeper, old: str | None) -> None:
     task = asyncio.create_task(claims.swap(ch, "family:f", old, "mine", 2_000_000_000))
     await ch.reading.wait()
     task.cancel()
+    await asyncio.sleep(0)
+    assert ch.writes[-1] in ("INSERT", "ALTER") and len(ch.writes) == 1  # no undo yet
+    ch.answer.set()  # the write's own read-back comes back after the cancellation
     with pytest.raises(asyncio.CancelledError):
         await task
 

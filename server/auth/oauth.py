@@ -21,7 +21,7 @@ import secrets
 import time
 from collections.abc import Coroutine
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 import httpx
@@ -46,6 +46,9 @@ from server.core import keeper_claims
 from server.core.secrets_at_rest import open_sealed, seal, unseal
 from server.observability import audit
 from server.settings import settings
+
+if TYPE_CHECKING:
+    from server.auth.login import Identity
 
 log = logging.getLogger(__name__)
 
@@ -396,7 +399,7 @@ async def authorize_submit(request: Request) -> RedirectResponse:
 
 async def _redirect_with_code(
     client: dict[str, str],
-    identity: tuple[str, str, list[str], list[str]],
+    identity: Identity,
     *,
     upstream_refresh: str,
     state: str,
@@ -736,7 +739,7 @@ async def _finish_oidc_login(request: Request) -> Response:
 
 async def _account_for(
     email: str, pending: dict[str, Any], upstream: str
-) -> tuple[str, str, list[str], list[str]] | Response | None:
+) -> Identity | Response | None:
     """The account a verified `email` signs in to, a page to answer instead
     (link a password account, or try again later), or None: no account."""
     from server.auth import oidc
@@ -746,11 +749,15 @@ async def _account_for(
     try:
         await finish_unfinished_account(email)
         resolved = await resolve_identity_for_email(email)
-        if resolved is None and await sso_links.unlinked_accounts(email):
+        if resolved is not None:
+            return resolved
+        if await sso_links.linked(email):
+            return None  # linked accounts that disagree (owners, orgs): fail closed
+        if await sso_links.unlinked_accounts(email):
             # Their password account: proving it links it, no new one is made.
             return await _offer_link(pending, email, upstream)
         # No account — auto-provision one if JIT is on (else stay fail-closed).
-        return resolved or await jit_provision_for_email(email)
+        return await jit_provision_for_email(email)
     except SignInUnavailable as e:
         log.warning("oidc callback: the account could not be read: %s", e)
         await oidc.revoke(upstream)
@@ -759,7 +766,7 @@ async def _account_for(
 
 async def _signed_in_as(
     pending: dict[str, Any],
-    identity: tuple[str, str, list[str], list[str]],
+    identity: Identity,
     upstream: str,
 ) -> Response:
     """Carry on the sign-in `pending` began, as `identity`."""
@@ -772,14 +779,20 @@ async def _signed_in_as(
     return await _connect_consent(pending, identity, upstream)
 
 
+# Binds a link ticket to the browser that did the IdP round trip: a ticket
+# seen elsewhere (a log, a shared screen) finishes nothing on its own.
+_LINK_COOKIE = "loom_link"
+
+
 async def _offer_link(pending: dict[str, Any], email: str, upstream: str) -> Response:
-    ticket = secrets.token_urlsafe(32)
+    ticket, binding = secrets.token_urlsafe(32), secrets.token_urlsafe(16)
     try:
         await store.save_pending(
             token_id(ticket),
             {
                 "kind": "link",
                 "email": email,
+                "binding": token_id(binding),
                 "sign_in": pending,
                 "upstream_refresh": seal(UPSTREAM_PURPOSE, upstream),
             },
@@ -789,7 +802,17 @@ async def _offer_link(pending: dict[str, Any], email: str, upstream: str) -> Res
 
         await oidc.revoke(upstream)
         return _sign_in_unavailable(_restart_url(pending))
-    return _link_page(ticket, email)
+    response = _link_page(ticket, email)
+    response.set_cookie(
+        _LINK_COOKIE,
+        binding,
+        max_age=PENDING_TTL,
+        path="/oauth/link",
+        secure=settings.oauth_issuer.startswith("https://"),
+        httponly=True,
+        samesite="strict",  # posted only from the link page itself
+    )
+    return response
 
 
 def _link_page(ticket: str, email: str, error: str = "", status_code: int = 200) -> Response:
@@ -813,15 +836,99 @@ That isn't my account</button>
     )
 
 
-async def _without_the_password_account(held: dict[str, Any]) -> Response:
+@router.post("/oauth/link")
+async def link_account(request: Request) -> Response:
+    """The person the IdP vouched for proves the password of the account that
+    names their email; that account is then theirs under SSO."""
+    from server.auth import oidc
+    from server.auth.login import LoginThrottled, resolve_user_credentials
+
+    f = await form_body(request)
+    ticket = f.get("ticket", "")
+    held = await store.pending(token_id(ticket))
+    binding = token_id(request.cookies.get(_LINK_COOKIE, ""))
+    if (
+        held is None
+        or held.get("kind") != "link"
+        or not secrets.compare_digest(binding, held["binding"])
+    ):
+        return _expired_sign_in()
+    email, sign_in = held["email"], held["sign_in"]
+    proven = None
+    if f.get("decision") != "not_mine":
+        try:
+            proven = await resolve_user_credentials(
+                email, f.get("password", ""), address=address_key(client_address(request))
+            )
+        except LoginThrottled:
+            return _link_page(ticket, email, "Too many failed attempts. Try again later.", 429)
+        if proven is None:
+            return _link_page(ticket, email, "That is not the account's password.", 401)
+    if await store.take_pending(token_id(ticket)) is None:
+        return _expired_sign_in()  # the form sent twice: the other one carries on
+    upstream = unseal(UPSTREAM_PURPOSE, held["upstream_refresh"])
+    try:
+        if proven is None:
+            return await _without_the_password_account(email, sign_in, upstream)
+        return await _link_proven(email, proven, f.get("password", ""), sign_in, upstream)
+    except Exception as e:  # noqa: BLE001 — the ticket is spent: the person starts again
+        log.warning("oauth: linking %s's account failed: %r", email, e)
+        await oidc.revoke(upstream)
+        return _sign_in_unavailable(_restart_url(sign_in))
+
+
+async def _link_proven(
+    email: str, proven: Identity, password: str, sign_in: dict[str, Any], upstream: str
+) -> Response:
+    from server.auth import oidc
+    from server.auth.login import resolve_identity_for_email
+    from server.auth.passwords import verify_password_off_loop
+    from server.core.ch import own_write_reads
+
+    subject, org, namespaces, _ = proven
+    # The password proves the accounts behind its own hash, not every one the
+    # identity reaches (a restricted namespace granted to it) or names the email.
+    accounts = [
+        (a["org"], a["namespace"])
+        for a in await sso_links.unlinked_accounts(email)
+        if a["org"] == org
+        and a["namespace"] in namespaces
+        and await verify_password_off_loop(a["password_hash"], password)
+    ]
+    await sso_links.link(email, accounts, "self")
+    await audit.emit(
+        "auth.sso_linked",
+        org=org,
+        namespace="-",
+        actor=subject,
+        subject={"email": email, "by": "self", "namespaces": [ns for _, ns in accounts]},
+    )
+    with own_write_reads():
+        resolved = await resolve_identity_for_email(email)
+    if resolved is None:  # its accounts disagree (orgs, owners): the guard holds
+        await _signin_denied(email, "linked account does not resolve")
+        await oidc.revoke(upstream)
+        return _denied_page("this email names several accounts; ask your Loom operator")
+    return await _signed_in_as(sign_in, resolved, upstream)
+
+
+async def _without_the_password_account(
+    email: str, sign_in: dict[str, Any], upstream: str
+) -> Response:
     """Someone else registered the address with a password: the person goes on
     to an account of their own (JIT), as if that one did not exist."""
     from server.auth import device, oidc
     from server.auth.jit import jit_provision_for_email
     from server.auth.login import SignInUnavailable
 
-    email, sign_in = held["email"], held["sign_in"]
-    upstream = unseal(UPSTREAM_PURPOSE, held["upstream_refresh"])
+    # The signal an operator looks for when an address was squatted.
+    await audit.emit(
+        "auth.sso_link_declined",
+        org="-",
+        namespace="-",
+        actor=email,
+        subject={"namespaces": [a["namespace"] for a in await sso_links.unlinked_accounts(email)]},
+    )
     try:
         identity = await jit_provision_for_email(email)
     except SignInUnavailable:
@@ -836,67 +943,9 @@ async def _without_the_password_account(held: dict[str, Any]) -> Response:
     return await _signed_in_as(sign_in, identity, upstream)
 
 
-@router.post("/oauth/link")
-async def link_account(request: Request) -> Response:
-    """The person the IdP vouched for proves the password of the account that
-    names their email; that account is then theirs under SSO."""
-    from server.auth.login import (
-        LoginThrottled,
-        resolve_identity_for_email,
-        resolve_user_credentials,
-    )
-    from server.core.ch import own_write_reads
-
-    f = await form_body(request)
-    ticket = f.get("ticket", "")
-    held = await store.pending(token_id(ticket))
-    if held is None or held.get("kind") != "link":
-        return _expired_sign_in()
-    email, sign_in = held["email"], held["sign_in"]
-    if f.get("decision") == "not_mine":
-        if await store.take_pending(token_id(ticket)) is None:
-            return _expired_sign_in()
-        return await _without_the_password_account(held)
-    try:
-        proven = await resolve_user_credentials(
-            email, f.get("password", ""), address=address_key(client_address(request))
-        )
-    except LoginThrottled:
-        return _link_page(ticket, email, "Too many failed attempts. Try again later.", 429)
-    if proven is None:
-        return _link_page(ticket, email, "That is not the account's password.", 401)
-    if await store.take_pending(token_id(ticket)) is None:
-        return _expired_sign_in()  # the form sent twice: the other one carries on
-    subject, org, namespaces, _ = proven
-    # The password proves the accounts behind it, not every one naming the email.
-    accounts = [
-        (a["org"], a["namespace"])
-        for a in await sso_links.unlinked_accounts(email)
-        if a["org"] == org and a["namespace"] in namespaces
-    ]
-    await sso_links.link(email, accounts, "self")
-    await audit.emit(
-        "auth.sso_linked",
-        org=org,
-        namespace="-",
-        actor=subject,
-        subject={"email": email, "by": "self", "namespaces": [ns for _, ns in accounts]},
-    )
-    with own_write_reads():
-        resolved = await resolve_identity_for_email(email)
-    upstream = unseal(UPSTREAM_PURPOSE, held["upstream_refresh"])
-    if resolved is None:  # another org shares the email: the cross-org guard holds
-        await _signin_denied(email, "linked account does not resolve")
-        from server.auth import oidc
-
-        await oidc.revoke(upstream)
-        return _denied_page("this email names accounts in several orgs; ask your Loom operator")
-    return await _signed_in_as(sign_in, resolved, upstream)
-
-
 async def _connect_consent(
     pending: dict[str, Any],
-    identity: tuple[str, str, list[str], list[str]],
+    identity: Identity,
     upstream_refresh: str,
 ) -> Response:
     """Under OIDC the IdP may sign the user in without a single click, so the
@@ -995,7 +1044,7 @@ async def _decide_connect(f: dict[str, str]) -> Response:
     return _back_to_client(client["redirect_uri"], {"error": "access_denied"}, pending["mcp_state"])
 
 
-async def _dashboard_signed_in(identity: tuple[str, str, list[str], list[str]]) -> Response:
+async def _dashboard_signed_in(identity: Identity) -> Response:
     """Hand the dashboard its token the way a sign-in link does: in the URL
     fragment, which the browser never sends to a server. The token is short
     because the dashboard cannot refresh it and only a refresh asks the IdP
@@ -1226,11 +1275,11 @@ async def _ask_identity_provider(grant: Grant, refresh_token: str) -> str:
 
 
 # A refresh runs, its spend included, for at most _REFRESH_DEADLINE_S, and a
-# failed one's put-back for _PUT_BACK_S more: together (and with a cancelled
-# spend's undo, claims.UNDO_S) well before another request may call the spend
-# abandoned (oauth_store._ABANDONED_S), and inside the SDK's 60-second wait.
-_REFRESH_DEADLINE_S: float = 45
-_PUT_BACK_S = 20
+# failed one's put-back for _PUT_BACK_S more. With a cancelled spend's undo
+# (claims.UNDO_S) that is 55 s: inside the SDK's 60-second wait, and well
+# before another request may call the spend abandoned (oauth_store._ABANDONED_S).
+_REFRESH_DEADLINE_S = 30.0
+_PUT_BACK_S = 15.0
 
 
 async def _refresh_token_grant(f: dict[str, str]) -> dict[str, Any]:
@@ -1264,10 +1313,9 @@ async def _refresh_token_grant(f: dict[str, str]) -> dict[str, Any]:
     except Exception as e:  # Loom's own failure (or too slow): unspend the token for the retry
         log.warning("oauth: refreshing a session failed: %r", e)
         try:
+            # With the IdP token it may have rotated.
             async with asyncio.timeout(_PUT_BACK_S):
-                await store.save_refresh(
-                    refresh_token, grant
-                )  # with the IdP token it may have rotated
+                await store.save_refresh(refresh_token, grant)
         except TimeoutError:
             log.warning("oauth: putting back session %s's refresh token timed out", grant["family"])
         raise _unavailable() from e
@@ -1403,7 +1451,7 @@ def _busy_response(request: Request, exc: Exception) -> JSONResponse:
 def attach(app: Any) -> None:
     """Mount sign-in wherever there is something to sign in to, and MCP
     connect (dynamic client registration, an opt-in surface) only when enabled."""
-    from server.auth import device, oidc, password_setup
+    from server.auth import device, oidc
 
     if settings.auth_actually_required() or settings.oauth_enabled:
         oidc.validate_config()  # fail fast if provider=oidc but IdP config missing
@@ -1411,6 +1459,5 @@ def attach(app: Any) -> None:
         app.add_exception_handler(claims.Busy, _busy_response)
         app.include_router(router)
         app.include_router(device.router)
-        app.include_router(password_setup.router)
     if settings.oauth_enabled:
         app.include_router(connect_router)
