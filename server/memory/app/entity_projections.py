@@ -22,7 +22,12 @@ from server.memory.app.projection_errors import (
     record_input_projection_failure,
     restated_repair_payload,
 )
-from server.memory.app.projection_failures import TRIPLES_RECONCILE, TRIPLES_REOPEN
+from server.memory.app.projection_failures import (
+    EDGES_CLOSE,
+    TRIPLES_RECONCILE,
+    TRIPLES_REOPEN,
+    record_projection_failure,
+)
 from server.memory.app.projections import (
     close_triples,
     end_edges,
@@ -430,9 +435,35 @@ async def project_memory_set_entities(
         await write_entity_edges(bulk_like, [result], ch=ch, wait_visible=wait_visible)
     # Revised or retired while the edges were written: its close may have run before
     # they landed, so end the ones no live row names.
-    if content_sha256 and not await still_held():
-        await _end_edges_of(input, memory_id, content_sha256, ch=ch)
+    if content_sha256:
+        try:
+            if not await still_held():
+                await _end_edges_of(input, memory_id, content_sha256, ch=ch)
+        except Exception as e:  # noqa: BLE001 — recorded; the projection repair ends them
+            await record_projection_failure(
+                org=input.org,
+                namespace=input.namespace,
+                agent=input.agent,
+                projection=EDGES_CLOSE,
+                source_operation="memory.set",
+                memory_keys=[memory_key],
+                error=e,
+                payload={"memory_id": memory_id, "content_sha256": content_sha256},
+                ch=ch,
+            )
     return len(ents)
+
+
+async def close_late_edges(
+    org: str, namespace: str, memory_id: str, content_sha256: str, *, ch: Any
+) -> None:
+    """The projection repair of a late projection whose cleanup failed: end the
+    edges of that value unless the row holds it again. Safe to run twice."""
+    version = [(memory_id, content_sha256)]
+    if await rows_holding(org, namespace, version, ch=ch, holder_sql=HOLDS_VALUE_SQL):
+        return
+    scope = SimpleNamespace(org=org, namespace=namespace)
+    await _end_edges_of(scope, memory_id, content_sha256, ch=ch)
 
 
 async def _end_edges_of(input: Any, memory_id: str, content_sha256: str, *, ch: Any) -> None:

@@ -2025,6 +2025,68 @@ async def test_a_projection_landing_after_a_revision_leaves_no_edge(
     assert "london" not in await _walked(org, ["jazz", "lif"], labeled=False, seed="alice")
 
 
+async def test_a_late_projection_whose_cleanup_failed_is_closed_by_the_repair(
+    ch, org, monkeypatch
+) -> None:
+    # As above with the edges landing late, but the cleanup that ends them fails
+    # once: it is recorded, and the projection repair ends them.
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import after_write, entity_projections
+    from server.memory.app.projection_failures import (
+        list_projection_failures,
+        retry_projection_failures,
+    )
+    from server.memory.app.write import handle_memory_set
+
+    write_edges, release = entity_projections.write_entity_edges, asyncio.Event()
+    end_edges_of, failures = entity_projections._end_edges_of, ["once"]
+    calls: list[str] = []
+
+    async def _held(*args: Any, **kw: Any) -> Any:
+        calls.append("edges")
+        if len(calls) == 1:
+            await release.wait()
+        return await write_edges(*args, **kw)
+
+    async def _fails_once(*args: Any, **kw: Any) -> Any:
+        if failures:
+            failures.pop()
+            raise RuntimeError("transient")
+        return await end_edges_of(*args, **kw)
+
+    monkeypatch.setattr(entity_projections, "write_entity_edges", _held)
+    monkeypatch.setattr(entity_projections, "_end_edges_of", _fails_once)
+
+    def _set(value: str, relations: list[Any]) -> Any:
+        return handle_memory_set(
+            MemorySetInput(
+                org=org,
+                namespace=NS,
+                agent="bot",
+                user_id=USER,
+                memory_key="alice",
+                value=value,
+                relations=relations,
+            )
+        )
+
+    await _set("Alice lives in London", [("alice", "live_in", "london")])
+    await _set("Alice likes jazz", [])
+    release.set()
+    await after_write.drain()
+    (failure,) = await list_projection_failures(
+        org=org, projection="entity_edges_close", status="active", ch=ch
+    )
+    await _mutations_done(ch, org)
+    assert "london" in await _walked(org, ["jazz", "lif"], labeled=False, seed="alice")
+    await retry_projection_failures(org=org, projection="entity_edges_close", ch=ch)
+    await _mutations_done(ch, org)
+    assert "london" not in await _walked(org, ["jazz", "lif"], labeled=False, seed="alice")
+    assert not await list_projection_failures(
+        org=org, projection="entity_edges_close", status="active", ch=ch
+    )
+
+
 @pytest.mark.parametrize(
     "extra",
     [

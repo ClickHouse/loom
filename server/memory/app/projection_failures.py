@@ -75,6 +75,9 @@ STATUS_MIRROR = "memory_status_mirror"
 TRIPLES_REOPEN = "triples_reopen"
 # The facts of rows a revision or an Undo changed, not yet reconciled with them.
 TRIPLES_RECONCILE = "triples_reconcile"
+# The edges a point write's late projection wrote for a value the row no longer
+# holds, whose cleanup failed: payload memory_id and content_sha256.
+EDGES_CLOSE = "entity_edges_close"
 
 
 async def queue_status_mirror(rows: list[dict[str, Any]]) -> None:
@@ -305,6 +308,8 @@ async def retry_projection_failure(
             reason = await _retry_triples_reopen(failure, ch=ch)
         elif failure.projection == TRIPLES_RECONCILE:
             reason = await _retry_triples_reconcile(failure, ch=ch)
+        elif failure.projection == EDGES_CLOSE:
+            reason = await _retry_edges_close(failure, ch=ch)
         else:
             return ProjectionFailureRetryResult(
                 failure_id=failure.failure_id,
@@ -517,6 +522,19 @@ async def _retry_triples_reopen(failure: ProjectionFailureRow, *, ch: Any) -> st
             failure.org,
             failure.namespace,
         )
+    return ""
+
+
+async def _retry_edges_close(failure: ProjectionFailureRow, *, ch: Any) -> str:
+    """Run the failed cleanup of a late projection again. A payload no retry can
+    read returns the reason that abandons it."""
+    from server.memory.app.entity_projections import close_late_edges
+
+    memory_id = str(failure.payload.get("memory_id") or "")
+    content_sha256 = str(failure.payload.get("content_sha256") or "")
+    if not memory_id or not content_sha256:
+        return "malformed_payload"
+    await close_late_edges(failure.org, failure.namespace, memory_id, content_sha256, ch=ch)
     return ""
 
 
