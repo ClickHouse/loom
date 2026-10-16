@@ -220,7 +220,7 @@ def test_demo_missing_file_is_actionable(repo: Path, serve, capsys) -> None:
     assert fake.posts == []  # nothing was ingested
 
 
-def test_demo_no_claude_md_in_cwd_is_actionable(repo: Path, serve, capsys, monkeypatch) -> None:
+def test_demo_no_agents_md_in_cwd_is_actionable(repo: Path, serve, capsys, monkeypatch) -> None:
     (repo / "AGENTS.md").unlink()
     monkeypatch.setattr(demo, "load_loom_ingest", lambda root=None: None)
     serve(fake_llm=True)

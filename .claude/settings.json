@@ -31,7 +31,6 @@
       "Bash(./redeploy.sh --status)",
       "Bash(npm --prefix frontend run budget)",
       "Bash(npm --prefix sdk/typescript run check)",
-      "Bash(node --test:*)",
       "Bash(.venv/bin/python -m tests.inventory.coverage_floors:*)",
       "Bash(make migrate-status)",
       "Bash(.venv/bin/python -m pytest tests/unit)",
@@ -43,7 +42,23 @@
       "Bash(.venv/bin/python -m scripts.codegen.op_reach_census:*)",
       "Bash(.venv/bin/python -m scripts.codegen.settings_reference:*)",
       "Bash(.venv/bin/python -m scripts.codegen.agent_plugin_sync:*)",
-      "Bash(python3 .claude/skills/loom-writing/scripts/check_prose.py:*)"
+      "Bash(python3 .claude/skills/loom-writing/scripts/check_prose.py:*)",
+      "Bash(node --test)"
+    ],
+    "ask": [
+      "Bash(gh pr create*)",
+      "Bash(gh pr merge*)",
+      "Bash(gh pr edit*)",
+      "Bash(gh pr comment*)",
+      "Bash(gh pr review*)",
+      "Bash(gh pr close*)",
+      "Bash(gh issue create*)",
+      "Bash(gh issue comment*)",
+      "Bash(gh issue edit*)",
+      "Bash(gh issue close*)",
+      "Bash(gh api *)",
+      "Bash(make bench*)",
+      "Bash(*bench/*.py*)"
     ],
     "deny": [
       "Bash(git stash:*)",
@@ -71,16 +86,6 @@
       "Bash(*redeploy.sh)",
       "Bash(*redeploy.sh --force*)",
       "Bash(*redeploy.sh --rollback*)",
-      "Bash(git push * v0*)",
-      "Bash(git push * v1*)",
-      "Bash(git push * v2*)",
-      "Bash(git push * v3*)",
-      "Bash(git push * v4*)",
-      "Bash(git push * v5*)",
-      "Bash(git push * v6*)",
-      "Bash(git push * v7*)",
-      "Bash(git push * v8*)",
-      "Bash(git push * v9*)",
       "Bash(git push *refs/tags/*)",
       "Bash(git push *--follow-tags*)",
       "Bash(git push * main *)",
@@ -101,7 +106,19 @@
       "Bash(git push --mirror*)",
       "Bash(git push * --mirror*)",
       "Bash(git push --all*)",
-      "Bash(git push * --all*)"
+      "Bash(git push * --all*)",
+      "Bash(git push * v*.*)",
+      "Bash(git -C * push*)",
+      "Bash(git -c * push*)",
+      "Bash(git * --output*)",
+      "Bash(git * --upload-pack*)",
+      "Bash(git reset --hard*)",
+      "Bash(git reset * --hard*)",
+      "Bash(git clean -f*)",
+      "Bash(git clean * -f*)",
+      "Bash(git checkout main*)",
+      "Bash(git switch main*)",
+      "Bash(* --basetemp*)"
     ]
   }
 }

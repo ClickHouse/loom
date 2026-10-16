@@ -1,6 +1,6 @@
 ---
 name: loom-ship-pr
-description: Opens, pushes, reviews and lands a Loom pull request — signed-off commits, a public-safe title and body from the template, a fresh review at every push in parallel with CI, CI gated on gh's JSON, and a squash merge once every check is green and the review is empty. Use when asked to open, update, land or merge a Loom PR ("ship it"). Runs after loom-pre-push; a red check is loom-investigate-ci, review comments are loom-address-review.
+description: Opens and lands a Loom PR — signed-off commits, a public body from the template, a fresh review at every push alongside CI, a CI gate on gh's JSON, and a squash merge on green. Use when asked to open, update, land or merge a PR. Comments on it — loom-address-review; a red check — loom-investigate-ci.
 argument-hint: "[pr-number]"
 ---
 
@@ -17,7 +17,7 @@ The subject says what is now true, as `git log` reads it. Sign-off (`-s`) is req
 
 ## 2. Body
 
-Fill `.github/PULL_REQUEST_TEMPLATE.md` in order: linked issues, changelog category, changelog entry, Why, Scope and risk, Compatibility/rollout/rollback, Tests, AI assistance, checklist. Write it to a file and pass `--body-file`.
+Fill `.github/PULL_REQUEST_TEMPLATE.md` in order: linked issues, changelog category, changelog entry, Why, Scope and risk, Compatibility/rollout/rollback, Tests, AI assistance, checklist. Write it to a file and pass `--body-file`. Where `gh pr edit` fails on the retired Projects (classic) API (older `gh` releases), update the body with `gh api -X PATCH repos/ClickHouse/loom/pulls/<n> -F body=@<body file>`.
 
 The body is public. It carries:
 
@@ -29,7 +29,7 @@ It never carries other products' names or comparative framing, host names, inter
 
 Write it in the `loom-writing` voice and run `python3 .claude/skills/loom-writing/scripts/check_prose.py <body file>` before every `gh pr create` or `gh pr edit`. Link the issue it fixes with `Closes: <full issue URL>`.
 
-One concern per PR, and the title matches every part of it: a feature, an example and a release-process change are three PRs. A large task is a few PRs grouped by concern, not one per file: each needs CI and review, and the merge queue is the bottleneck.
+One concern per PR, and the title matches every part of it: a feature, an example and a release-process change are three PRs. A large task is a few PRs grouped by concern, not one per file: each needs its own CI run and review.
 
 ## 3. Push and open
 
@@ -52,17 +52,17 @@ Work the findings with `loom-address-review`: fix every confirmed one, nits incl
 
 ## 5. Read CI
 
-Right after a push the new head has no checks yet (runs queue behind the previous head's), and `gh pr checks --watch` returns at once on an empty list. Wait for the head's checks to appear first:
+Right after a push the new head has no checks for a few seconds (the previous head's runs are cancelled), and `gh pr checks --watch` returns at once on an empty list. Wait for the head's checks to appear first, for at most five minutes; none by then means a conflict or a workflow that did not start (`loom-investigate-ci`):
 
 ```bash
-until [ "$(gh pr view <n> --json headRefOid,statusCheckRollup --jq "(.headRefOid == \"$(git rev-parse HEAD)\") and (.statusCheckRollup | length > 0)")" = true ]; do sleep 15; done
+for _ in $(seq 20); do [ "$(gh pr view <n> --json headRefOid,statusCheckRollup --jq "(.headRefOid == \"$(git rev-parse HEAD)\") and (.statusCheckRollup | length > 0)")" = true ] && break; sleep 15; done
 gh pr checks <n> --watch --fail-fast      # a CI round trip outlasts a foreground call: run it in the background
-gh pr view <n> --json statusCheckRollup --jq '.statusCheckRollup[] | "\((if (.conclusion // "") == "" then .status else .conclusion end))\t\(.name)"'
+gh pr view <n> --json statusCheckRollup --jq '.statusCheckRollup[] | "\((.conclusion // "") as $c | if $c == "" then (.state // .status) else $c end)\t\(.name // .context)"'
 gh pr view <n> --json statusCheckRollup --jq '.statusCheckRollup | length > 0 and all(.[];
-  .status == "COMPLETED" and (.conclusion | IN("SUCCESS", "SKIPPED", "NEUTRAL")))'   # true = green
+  (.status // "COMPLETED") == "COMPLETED" and ((.conclusion // .state) | IN("SUCCESS", "SKIPPED", "NEUTRAL")))'   # true = green
 ```
 
-Gate on `jq`'s `all(...)` (an empty rollup is not green) and print the table; do not gate on `grep -v` over text output, whose exit code inverts on some grep implementations. A red job: `loom-investigate-ci`.
+Gate on `jq`'s `all(...)` (an empty rollup is not green; a commit-status entry has `state` where a check run has `status` and `conclusion`) and print the table; do not gate on `grep -v` over text output, whose exit code inverts on some grep implementations. A red job: `loom-investigate-ci`.
 
 ## 6. Merge
 

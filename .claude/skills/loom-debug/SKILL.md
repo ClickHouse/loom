@@ -1,6 +1,6 @@
 ---
 name: loom-debug
-description: Finds the cause of a Loom bug before any edit — collects the failing cases from evidence (request ids, loom.agent_events, system.query_log, search traces, server logs), names the pattern they share, and states a hypothesis the fix must confirm. Use when a Loom op, worker, migration, search result or test behaves wrongly, when asked "why does X happen", "debug", "root-cause" or "fix this bug". Not for a red CI job (loom-investigate-ci) or a deployment-wide outage (docs/operations/troubleshooting.md).
+description: Finds the cause of a Loom bug before any edit — failing cases from evidence (request id, loom.agent_events, system.query_log, search traces), their pattern, a hypothesis, then a test that fails first. Use when an op, worker, search result or test behaves wrongly. Not for a red CI job (loom-investigate-ci).
 argument-hint: "<symptom, request id or failing test>"
 ---
 
@@ -22,7 +22,7 @@ Diagnosis:
 Work on a private server and ClickHouse (`loom-dev-setup`), never one someone else owns. Start from the request's ids and join outward; [debug a request](../../../docs/guides/debugging.md) has the full join.
 
 ```bash
-curl -si -XPOST localhost:<port>/v1/<op> -H 'Content-Type: application/json' -H 'X-Request-Id: dbg-1' -d @req.json | sed -n '1,/^\r$/p'
+curl -si -XPOST localhost:<port>/v1/<op> -H 'Content-Type: application/json' -H "X-Request-Id: dbg-$(date +%s)" -d @req.json | sed -n '1,/^\r$/p'
 ```
 
 | Evidence | Where | Answers |

@@ -1,6 +1,6 @@
 ---
 name: loom-bench
-description: Runs, reads and reports a Loom benchmark — when a run is allowed, which harness answers the question, proving the treatment ran, judging a delta against noise, and writing up results. Use when asked to benchmark, measure recall or answer accuracy, A/B a ranking change, check a model or embedder change, or update docs/benchmarks/results.md. Not for unit-test speed or CI timing.
+description: Runs and reports a Loom benchmark — when a paid run is allowed, which harness answers the question, proving the treatment ran, judging a delta against noise. Use when asked to benchmark, measure recall or answer accuracy, A/B a setting, or update docs/benchmarks/results.md. Not for test or CI speed.
 argument-hint: "<question to answer>"
 ---
 
@@ -8,7 +8,9 @@ argument-hint: "<question to answer>"
 
 ## 0. Ask first
 
-A benchmark run spends provider money and hours of wall clock. Start one only when the requester asked for that run. "Keep the bench numbers" means the existing numbers. Offline harnesses and `--help` are free; anything that ingests or judges is not.
+A benchmark run spends provider money and hours of wall clock. Offline harnesses and `--help` are free; anything that ingests or judges is not. "Keep the bench numbers" means the existing numbers.
+
+Before a paid run, even one the requester asked for, reply with the question, the harness and arms, the item count and repeats, the provider and judge, and whether the treatment can change anything on that dataset (read the code path first: a setting that scores every row of the dataset alike cannot move the result). Start only after a yes to that plan. Use the provider keys the requester's environment already has; never copy a key from another checkout's `.env`. A run never outlives the session that started it: stop its server, its ClickHouse and the harness before you report.
 
 A benchmark is the confirm step, never exploration: the diagnosis (failing items, their shared pattern, the change and the result it predicts) comes first, and every named part of the change is built before the run.
 

@@ -13,7 +13,6 @@ paths:
 - ClickHouse Cloud forbids `allow_experimental_nlp_functions`: the runner drops the flag there (`_nlp_available` in `server/core/schema/migrate.py`) and lexical search runs on plain tokens. Use that path; never add a second fallback.
 - Builds N-1 and N run side by side on N's schema: a new column, enum value or wire format is written only once the previous build tolerates it ([rolling upgrades](../../docs/architecture/rolling-upgrades.md#the-rules)); `make test-mixed-version` checks it (needs docker).
 - A sort-key or partition change is a rebuild, not an `ALTER` ([migrations](../../docs/development/migrations.md#changing-a-sort-key-or-a-partition-key)).
-- A new table is classified for erasure in the same change: a saga step and a residue-census row in `server/erasure/store/census.py`, or `NO_MEMORY_CONTENT` / `STEP_ONLY_TABLES` with the reason (`test_every_table_is_classified.py`).
-- A new `loom.memory` column is added to `loom.memory_versions` and to `memory_versions_mv`'s `SELECT` in the same migration, and to the row builders in `server/memory/store/rows.py`.
-- No `TTL` on durable memory (`loom.memory`, `loom.shared`, `loom.memory_versions`): Loom deletes only what its writer asked to delete. A cache, queue or trace that copies content may expire, and still needs its census row.
+- A new table is classified for erasure in the same change (`memory-plane` rule; `test_every_table_is_classified.py` fails otherwise), and a TTL never goes on durable memory.
+- A new `loom.memory` column is added to `loom.memory_versions` and to `memory_versions_mv`'s `SELECT` in the same migration (a unit test compares the column lists), and to the row builders.
 - Checklist: [adding-a-table](../../docs/development/adding-a-table.md#checklist), [migrations](../../docs/development/migrations.md#checklist).

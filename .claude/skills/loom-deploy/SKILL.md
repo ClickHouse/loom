@@ -1,6 +1,6 @@
 ---
 name: loom-deploy
-description: Operator procedure for a blue/green Loom deployment with redeploy.sh — preflight, the swap, post-swap checks and rollback. Use only when an operator explicitly asks to deploy, redeploy, roll back or check which build is serving.
+description: Operator procedure for a blue/green Loom deployment with redeploy.sh — preflight, swap, post-swap checks, rollback. Use only when an operator explicitly asks to deploy, roll back or check which build is serving.
 disable-model-invocation: true
 argument-hint: "[--status | --rollback]"
 ---
@@ -47,7 +47,7 @@ docker logs --since 5m "loom-$(./redeploy.sh --status | awk '/\(serving\)/ {prin
 ./redeploy.sh --rollback
 ```
 
-The previous colour restarts on its previous image; no schema step, because migrations are additive ([upgrades](../../../docs/operations/upgrades.md#rollback)). Rows the new build wrote stay.
+The previous colour restarts on its previous image and takes the traffic; the current colour keeps running until the operator confirms the rollback and stops it with the command the script prints (`docker stop -t 75 loom-<colour>`). No schema step, because migrations are additive ([upgrades](../../../docs/operations/upgrades.md#rollback)). Rows the new build wrote stay.
 
 ## Reference
 

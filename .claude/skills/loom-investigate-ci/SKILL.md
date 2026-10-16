@@ -1,6 +1,6 @@
 ---
 name: loom-investigate-ci
-description: Takes a failing Loom CI check to its root cause and a fix — the failed log, whether main fails too, a local reproduction, a fix at the source. Use when a PR check is red, a PR shows no checks, a job looks flaky, or when asked "why is CI failing" or "fix CI". Not for bugs found outside CI (loom-debug).
+description: Takes a failing Loom CI check to its cause and fix — the failed log, whether main fails too, a local reproduction. Use when a PR check is red, a PR shows no checks, a job looks flaky, or when asked why CI fails. Not for bugs found outside CI (loom-debug).
 argument-hint: "[pr-number | run-url]"
 ---
 
@@ -9,7 +9,7 @@ argument-hint: "[pr-number | run-url]"
 ## 1. Which job, which line
 
 ```bash
-gh pr view <n> --json statusCheckRollup --jq '.statusCheckRollup[] | select(.conclusion | IN("SUCCESS", "SKIPPED", "NEUTRAL") | not) | "\((if (.conclusion // "") == "" then .status else .conclusion end))\t\(.name)\t\(.detailsUrl)"'
+gh pr view <n> --json statusCheckRollup --jq '.statusCheckRollup[] | select((.conclusion // .state) | IN("SUCCESS", "SKIPPED", "NEUTRAL") | not) | "\((.conclusion // "") as $c | if $c == "" then (.state // .status) else $c end)\t\(.name // .context)\t\(.detailsUrl // .targetUrl)"'
 gh run view <run-id> --log-failed | tail -200
 ```
 
@@ -29,12 +29,15 @@ gh run list --workflow ci.yml --branch main -L 5 --json conclusion,headSha,creat
 | Job | Usual cause | Reproduce / fix |
 | --- | --- | --- |
 | `ruff + mypy-gate` (lint) | a generator `--check` is stale (the plugin sync also compares executable bits); ruff; function-length or mypy ratchet | `make lint`, `make typecheck`; run the named generator without `--check` and commit its output; split the long function |
-| `pytest unit + coverage` | order dependence; a fake that drifted; a snapshot | `pytest -p randomly --randomly-seed=<seed from the log> <test>`; update a snapshot only for an intended change |
+| `pytest unit + coverage` | order dependence; a fake that drifted; a snapshot; a per-module coverage floor; `integrations/generic/test.sh` | `pytest -p randomly --randomly-seed=<seed from the log> <test>`; update a snapshot only for an intended change; the coverage-floor command in `loom-pre-push` §3; `bash integrations/generic/test.sh` |
+| `repository-job sandbox (real bubblewrap)` | a change to the repository-job sandbox or its profiles | `pytest tests/unit/test_repo_job_sandbox_hostile.py -q` on a host with bubblewrap |
 | `schema.sql in sync with migrations` | `schemas/schema.sql` dumped from another ClickHouse release, or not regenerated | start a private ClickHouse on the release the run names (job "the ClickHouse release this run tests"): `LOOM_CLICKHOUSE_IMAGE=clickhouse/clickhouse-server:<ver>` plus the name and ports of `loom-dev-setup` §3, `bash dev/ci_start_clickhouse.sh`; migrate; `make schema-dump` |
 | `builds N-1 and N on one ClickHouse` (mixed-version) | N writes something N-1 cannot read, or a lease or bundle rule broken | `make test-mixed-version REQUIRE=1` (docker); [rolling upgrades](../../../docs/architecture/rolling-upgrades.md) names the rule |
 | `format` | an unformatted file | `make format` from the repository root (the pinned Biome reads `biome.json` there) |
 | `coding-agent plugins` | a hook test; a non-executable `integrations/grep-shim/bin/` entry point | `node --test` in the plugin directory; `.venv/bin/python -m scripts.codegen.agent_plugin_sync` |
 | `tsc (frontend)`, `frontend tests` | types, bundle budget, an axe rule | `npm --prefix frontend run build && npm --prefix frontend run budget && npm --prefix frontend run test` |
+| `typescript sdk (...)` | generated types stale, lint, a vitest failure | `.venv/bin/python -m scripts.codegen.sdk_ts_gen`, then `npm --prefix sdk/typescript run check` |
+| `python sdk wheel (...)` | the wheel does not build, or fails its smoke test on the lowest dependency pins | `uv build sdk/python --out-dir dist && python scripts/gates/sdk_wheel_smoke.py dist/*.whl` in a clean virtualenv |
 | `pytest integration` | behaviour change; a test that needs an env CI lacks (self-signup) | the suite against a private server (`loom-dev-setup`); the failure report lists the last requests with `X-Request-Id` to find the server log line |
 
 ## 4. Flaky or real

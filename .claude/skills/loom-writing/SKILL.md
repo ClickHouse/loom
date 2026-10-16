@@ -1,6 +1,6 @@
 ---
 name: loom-writing
-description: Plain technical English for every text an agent writes in the Loom repository and on GitHub — commit messages, PR titles and bodies, issues, review comments and replies, code comments, docs. Gives the rules, the words to drop, before/after examples and a checker script. Use before writing or posting any of those texts. Not for the PR template's sections (loom-ship-pr) or the issue forms (loom-file-issue).
+description: Plain technical English for commit messages, PR and issue text, review comments and replies, code comments and docs, with a checker for filler words and internal details. Use before writing or posting any of them, or when asked to make text read less generated. Owns wording, not sections.
 ---
 
 # Writing in Loom

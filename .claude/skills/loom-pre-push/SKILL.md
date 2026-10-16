@@ -1,6 +1,6 @@
 ---
 name: loom-pre-push
-description: Runs the Loom CI gates a diff touches, locally — format, lint, generator checks, the mypy and function-length ratchets, unit tests, schema check, frontend and plugin tests, integration tests — and fixes each failure at its source. Use before committing or pushing a Loom change, after a rebase, or when asked "is this ready" or "run the checks". Not for opening or merging the PR (loom-ship-pr).
+description: Runs the Loom CI gates a diff touches, locally, and fixes each failure at its source — format, lint, generator checks, ratchets, unit tests, schema, frontend, plugins, integration. Use before a commit or push, after a rebase, or when asked "is this ready". Not for opening the PR (loom-ship-pr).
 ---
 
 # Loom pre-push gates

@@ -1,6 +1,6 @@
 ---
 name: loom-review
-description: Reviews a Loom pull request or diff against the invariants Loom's design depends on (tenant isolation, identity and provenance stamps, ReplacingMergeTree column mirroring, additive migrations, erasure coverage, fail-closed auth, generated files, public copy) and for needless complexity, verifying every finding before reporting it with severity and file:line. Use when asked to review a Loom PR, branch or diff, or to post review comments. After your own push, start the loom-reviewer agent, which preloads this skill.
+description: Reviews a Loom PR or diff against Loom's invariants and area rules and for needless complexity, verifying each finding before reporting it with severity and file:line. Use when asked to review a PR, branch or diff, or to post review comments. After your own push, start the loom-reviewer agent instead.
 argument-hint: "[pr-number | branch | diff-range]"
 ---
 
@@ -29,28 +29,17 @@ Do not give a verdict until each gate is addressed; a gate you could not close g
 
 ## 3. Loom invariants
 
-Check each one the diff can reach (see [AGENTS.md](../../../AGENTS.md) for the reasons):
+The checklist is the files the diff touches, not a copy of them:
 
-- **Tenant isolation.** A read scopes by `(org, namespace)` from the token, never from the body. An op addressed by org-wide id calls `authz.row_in_scope` after the fetch and answers `found=False`, never a 403 that confirms the id. A new read op is covered by `test_cross_principal_leakage.py` automatically — check it does not opt out.
-- **Identity and provenance.** Every new write path sets the identity tuple, stamps `actor` and `source_class` from the token, and leaves a hash-only audit row when it creates or changes memory.
-- **ReplacingMergeTree rows.** A new version row of `loom.memory` / `loom.shared` goes through the builders in `server/memory/store/rows.py`; a new column reaches the builders, every projection feeding them, and `loom.memory_versions` with its view.
-- **Migrations.** Additive, next free number on `main`, no merged file edited, `schemas/schema.sql` regenerated (not hand-edited). A sort-key or partition change follows the rebuild procedure in `docs/development/migrations.md`.
-- **Rolling upgrade.** Build N-1 keeps serving on N's schema: a new column, enum value or wire format is written only once N-1 tolerates it, and no replica-wide state lives outside ClickHouse ([rules](../../../docs/architecture/rolling-upgrades.md#the-rules)).
-- **Erasure.** A table that can hold memory content has a saga step and a census row, or a classified exemption with its reason.
-- **No silent deletion.** No TTL, retention sweep or cleanup on durable memory (`loom.memory`, `loom.shared`, `loom.memory_versions`) that removes memory its writer did not ask to remove. A cache, queue or trace copy may expire but keeps its census row.
-- **Fail closed.** Revocation, grants, idempotency replay (scoped to the caller, after auth) and admin gates refuse when their state is unknown.
-- **ClickHouse cost.** A query on a hot path is bounded (`LIMIT`, a key prefix in `WHERE`, `FINAL` only where needed), tagged, and reads what its budget allows. Mutations on big tables need a reason. See `.claude/rules/clickhouse-sql.md` for statement traps.
-- **Code index.** A code change to an `extractor_stamp.EXTRACTOR_MODULES` file re-indexes every repository — the PR must say so and mean it.
-- **Settings and flags.** `settings.<field>` reads; a comment on what the field controls; reference regenerated. A retired flag removes the setting, its branch and its request field together.
-- **Generated files** regenerated in the same PR, never hand-edited.
-- **Integrations.** An example or README meets the open-source bar in `.claude/rules/plugins.md`.
-- **Plugins.** A hook change edits the Claude Code plugin, syncs the Codex copy, and bumps both manifests to a unique version. Hooks run inside users' sessions: a hook that can throw, block or print secrets is a finding.
-- **Public copy.** No people, hosts, internal namespaces, dates, history, decision numbers or product names in repository text; the PR body carries none of them either.
-- **Compatibility.** No shim for a removed field (it is served and named in `ignored_args`); the PR body's changelog entry and the "Compatibility" section name the break.
+- the **Invariants** in [AGENTS.md](../../../AGENTS.md), for every diff;
+- the rule for each area the diff touches (`grep -A8 '^paths:' .claude/rules/*.md` maps paths to rules): every bullet in it is a check;
+- the "also in the same PR" column of `loom-change` for each kind of change in the diff (generated files, snapshots, manifests, docs).
+
+Read each rule in full before judging its area. Also check what no rule owns: a hot-path query that is unbounded or untagged, a hook that can throw, block or print a secret in a user's session, an example or README that does not run as written, and public text (code, docs, PR body) that names people, hosts, internal namespaces, dates or other products.
 
 ## 4. Readability and simplicity
 
-The code should read as if an experienced Python engineer wrote it by hand. Each of these is a finding (P3 unless it hides a bug):
+The code should read as if an experienced Python engineer wrote it by hand. Each of these is a finding, P3 unless it hides a bug (then rate the bug):
 
 - an abstraction, class, flag or parameter with one caller and no second use in sight;
 - a defensive branch, `try`, fallback or retry for a state the code cannot reach;
@@ -74,7 +63,7 @@ Missing tests or evidence
 Blind spots
 ```
 
-P0: data loss, a cross-tenant read, an auth bypass. P1: wrong results or a broken rollout on a common path. P2: an edge-case bug or a missing test for a promised behaviour. P3: a stale claim or a cleanup that hides a bug.
+P0: data loss, a cross-tenant read, an auth bypass. P1: wrong results or a broken rollout on a common path. P2: an edge-case bug or a missing test for a promised behaviour. P3: a stale claim, a readability or simplicity finding, a missing cleanup.
 
 Nothing found is a valid result: say "no findings" and list what was checked. Write each finding in the `loom-writing` voice: the problem first, no praise or softening.
 
@@ -93,4 +82,4 @@ gh api repos/ClickHouse/loom/pulls/<n>/reviews --input "$review"
 - `line` is a line of the diff's new side; a finding outside the diff goes in the review body with its `file:line`.
 - A one-line fix goes in a `suggestion` block so the author can apply it.
 - `event` stays `COMMENT` from an agent; `APPROVE` and `REQUEST_CHANGES` are a maintainer's call.
-- Do not repeat a point another reviewer already made in an open thread; add evidence to that thread instead.
+- Do not repeat a point another reviewer already made in an open thread (`loom-address-review` §1 lists the threads); add evidence to that thread instead.

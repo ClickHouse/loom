@@ -1,6 +1,6 @@
 ---
 name: loom-dev-setup
-description: Sets up an isolated Loom environment for one task — a git worktree from origin/main, its own virtualenv, its own ClickHouse on free ports, migrations, and a server from source on its own port. Use when starting a Loom change, when asked to set up, create a worktree, run the server or run integration tests locally, and before any command that writes to ClickHouse.
+description: Sets up an isolated Loom environment for one task — a worktree from origin/main, its own virtualenv, its own ClickHouse on free ports, migrations, a server from source. Use when starting a Loom change, or when asked to run the server or the integration tests locally.
 argument-hint: "<branch-name>"
 ---
 
@@ -11,17 +11,15 @@ Everything a task touches is private to it: the branch, the checkout, the virtua
 ## 1. Worktree
 
 ```bash
-BRANCH="$ARGUMENTS"          # e.g. fix/search-floor
+BRANCH="$ARGUMENTS"          # Claude Code fills this in; elsewhere write the branch name, e.g. fix/search-floor
 git fetch origin main
-git worktree add -b "$BRANCH" "../loom-${BRANCH//\//-}" origin/main
+git worktree add --no-track -b "$BRANCH" "../loom-${BRANCH//\//-}" origin/main   # no upstream until the first push sets one
 cd "../loom-${BRANCH//\//-}" && pwd   # the worktree's absolute path: <worktree> below
 ```
 
 An agent's shell does not keep its working directory or variables between calls, so every block below starts with `cd <worktree> &&`, the absolute path printed here. Without it, `uv sync` rewrites the launch checkout's `.venv` and the server serves the launch checkout's code.
 
-- Branch from `origin/main`, never from a local `main` or `FETCH_HEAD` (a concurrent fetch rewrites `FETCH_HEAD`).
-- Never `git checkout main`, `git pull` or `git reset` on `main` in a linked worktree: `refs/heads/main` is shared with the primary checkout.
-- Never `git stash` (shared across worktrees). Use a WIP commit; squash merge removes it.
+Branch from `origin/main`, not a local `main` or `FETCH_HEAD` (a concurrent fetch rewrites `FETCH_HEAD`). `main` and the stash are shared with every other worktree (`AGENTS.md`): set work aside with a WIP commit.
 
 ## 2. Virtualenv
 
@@ -48,10 +46,11 @@ Keep a list of every container, compose project and volume you start, and remove
 
 ## 4. One `.env` for this worktree
 
-An agent's shell keeps no variables between calls, and a server started without them falls back to `localhost:8123` and migrates whatever answers there at boot. Put the worktree's values in its own `.env` (ignored; a fresh worktree has none), which the server, `make migrate` and the tests all read:
+An agent's shell keeps no variables between calls, and a server started without them falls back to `localhost:8123` and migrates whatever answers there at boot. Put the worktree's values in its own `.env` (ignored; a fresh worktree has none), which the server, `make migrate` and the tests all read. A variable already exported in the agent's environment wins over `.env`, so check for one first:
 
 ```bash
 cd <worktree>
+env | grep -E '^LOOM_(CH_|BASE_URL)' && { echo "these override .env: unset them first"; exit 1; }
 bash -c '(exec 3<>/dev/tcp/127.0.0.1/7790)' 2>/dev/null && {   # bash's /dev/tcp; zsh has none
   echo "port 7790 is taken: pick another for the label, URL and --port"; exit 1; }
 test -e .env && { echo ".env exists: check its LOOM_CH_* before migrating"; exit 1; }
@@ -77,12 +76,18 @@ The last five lines are the posture of CI's main integration pass (`.github/work
 Run it in the background (`run_in_background`, or `&`), from the worktree root:
 
 ```bash
-cd <worktree> && LOOM_INSTANCE_LABEL="iso:$(basename "$PWD"):7790" LOOM_BUILD_COMMIT=$(git rev-parse --short HEAD) \
+cd <worktree> && LOOM_INSTANCE_LABEL="iso:$(pwd | cksum | cut -d' ' -f1):7790" LOOM_BUILD_COMMIT=$(git rev-parse --short HEAD) \
   .venv/bin/uvicorn server.main:app \
   --app-dir "$PWD" --host 127.0.0.1 --port 7790 --loop asyncio --reload
 ```
 
-Check it in a separate call, by its label rather than its commit (two worktrees fresh from `origin/main` report the same `build_commit`): `curl -s localhost:7790/v1/health | jq -e --arg l "iso:<worktree basename>:7790" '.instance_label == $l and .status == "ok"'`. A `false` means another server holds the port. `--app-dir "$PWD"` makes uvicorn serve this worktree's code; `build_commit` confirms it (a source run reports `unknown` without `LOOM_BUILD_COMMIT`). The label is read from the process environment, not `.env`: without it the server refuses to start.
+Check it in a separate call, by its label rather than its commit (two worktrees fresh from `origin/main` report the same `build_commit`); the label is a checksum of the worktree path because the server keeps only 64 characters of it:
+
+```bash
+cd <worktree> && curl -s localhost:7790/v1/health | jq -e --arg l "iso:$(pwd | cksum | cut -d' ' -f1):7790" '.instance_label == $l and .status == "ok"'
+```
+
+A `false` means another server holds the port. `--app-dir "$PWD"` makes uvicorn serve this worktree's code; `build_commit` confirms it (a source run reports `unknown` without `LOOM_BUILD_COMMIT`). The label is read from the process environment, not `.env`: without it the server refuses to start.
 
 ## 6. Frontend dependencies
 
