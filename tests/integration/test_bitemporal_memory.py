@@ -2031,3 +2031,21 @@ async def test_a_rollback_undoes_what_another_build_wrote_since(
         assert (out["reinstate"], out["remove"]) == (1, 1) and not out["current_rows_pending"]
         assert (await a.call("memory.get", {"memory_key": "k"}))["value"] == "keep me"
         assert not (await a.call("memory.get", {"memory_key": "new"}))["found"]
+
+
+async def test_a_rollback_leaves_out_what_another_build_changed_before_as_of(
+    control_plane_url, mint_test_token
+) -> None:
+    # The previous build deletes k before as_of; this build's write after as_of adopts
+    # that delete. The journal learned of it after as_of, so what k held then was never
+    # recorded as known then: the rollback names k as left out and leaves it as it is.
+    a, ns = await _agent(control_plane_url, mint_test_token, "late-rb")
+    async with a:
+        await a.call("memory.set", {"memory_key": "k", "value": "first"})
+        await _write_as_older_build(ns, "k", "k", removed=True)
+        before = await _now_after(1.1)
+        await a.call("memory.set", {"memory_key": "k", "value": "after"})
+        out = await a.call("namespace.rollback", {"as_of": before, "dry_run": False})
+        assert (out["reinstate"], out["remove"], out["left_out"]) == (0, 0, 1)
+        assert [s["action"] for s in out["sample"]] == ["left_out"]
+        assert (await a.call("memory.get", {"memory_key": "k"}))["value"] == "after"
