@@ -290,7 +290,7 @@ NOT_DENIED = (
     "bash redeploy.sh --status",
     "sh redeploy.sh --status",
 )
-# Reads of files whose execution asks first: a reviewer in the background cannot answer.
+# Reads of files whose execution asks first: each would stop a background reviewer on a prompt.
 NOT_ASKED = (
     "git show abc:bench/locomo_qa.py",
     "git diff origin/main...HEAD -- bench/longmemeval.py",
@@ -308,7 +308,7 @@ def test_settings_deny_shared_and_production_commands() -> None:
         assert not any(_matches(r, command) for r in perms["deny"]), command
     for command in NOT_ASKED:
         assert not any(_matches(r, command) for r in perms["ask"]), command
-    # The reviewer runs in the background, where only pre-approved commands run.
+    # The reviewer runs in the background; anything it runs that is not pre-approved prompts.
     reviewer = (ROOT / ".claude" / "agents" / "loom-reviewer.md").read_text()
     for command in re.findall(r"`(\.venv/bin/python -m pytest[^`]*)`", reviewer):
         assert any(_matches(r, command) for r in perms["allow"]), command
@@ -386,6 +386,7 @@ def test_reviewer_hook_allows_reads(command: str) -> None:
         '.venv/bin/python -m pytest tests/unit/test_cli_demo.py "|" grep --log-file=x',
         ".venv/bin/python -m pytest tests/unit/test_x.py '&&' gh pr view --junitxml=x",
         "git log -1 2>/dev/null.x",
+        "true",  # the reviewer's first call: it must be refused while the hook is on
         "git status\n2>/dev/null touch x",
         "git status\n2>&1 touch x",
         "git log || git status",

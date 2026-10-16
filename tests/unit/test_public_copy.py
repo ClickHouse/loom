@@ -226,16 +226,14 @@ DECISION_REFERENCE_DATA = {
 
 def _iter_scan_files():
     # `.claude/` also holds ignored third-party skills a contributor installed.
-    agent_files = set(tracked(".claude"))
     for d in SCAN_DIRS:
         base = ROOT / d
         if not base.exists():
             continue
-        for path in sorted(base.rglob("*")):
+        # `.claude/` also holds worktrees and ignored skills a contributor installed.
+        files = (ROOT / p for p in tracked(d)) if d == ".claude" else base.rglob("*")
+        for path in sorted(files):
             if not path.is_file() or path.suffix not in SCAN_SUFFIXES:
-                continue
-            rel = path.relative_to(ROOT).as_posix()
-            if rel.startswith(".claude/") and rel not in agent_files:
                 continue
             if SKIP_DIR_PARTS.intersection(path.parts):
                 continue
