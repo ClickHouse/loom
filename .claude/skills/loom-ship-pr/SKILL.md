@@ -61,8 +61,11 @@ Gate on `jq`'s `all(...)` (an empty rollup is not green) and print the table; do
 Only when the gate above prints `true`, the review has no open finding and the requester approved merging:
 
 ```bash
-gh pr merge <n> --squash --delete-branch
+gh pr merge <n> --squash
+git push origin --delete <branch>   # the repository keeps merged branches
 ```
+
+`--delete-branch` would check out and pull `main` in this linked worktree, which `main`'s shared ref forbids, and fails after the merge when `main` is checked out elsewhere.
 
 - Squash-merge always. Never merge another author's PR for them.
 - If another PR merged after your last green run and yours adds files the whole-tree gates scan (any `.py`, `.md`, test or doc), rebase on it (`git fetch origin main && git rebase origin/main && git push --force-with-lease`, which asks for approval; `--force`, `-f` and `+ref` are denied) and wait for green again: two PRs green alone can be red together.
@@ -70,4 +73,4 @@ gh pr merge <n> --squash --delete-branch
 
 ## 7. After the merge
 
-Remove the worktree and the private ClickHouse (`git worktree remove`, `docker rm -f <your container>`). Deploying is a separate, explicit step (`loom-deploy`).
+Remove the private ClickHouse (`docker rm -f <your container>`), then, from the primary checkout, the worktree and its branch (`git worktree remove <worktree>`, `git branch -D <branch>`). Deploying is a separate, explicit step (`loom-deploy`).
