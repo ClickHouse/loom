@@ -408,6 +408,7 @@ async def _conversation_get_reads(input: ConversationGetInput) -> ConversationGe
         messages = [
             _ConversationEntry(
                 msg_id=r.msg_id,
+                agent=r.agent,
                 role=r.role,
                 content=r.content,
                 reasoning=r.reasoning,
@@ -458,6 +459,7 @@ async def handle_conversation_list(
     entries = [
         _ConversationEntry(
             msg_id=r.msg_id,
+            agent=r.agent,
             role=r.role,
             content=r.content,
             reasoning=r.reasoning,

@@ -1,4 +1,4 @@
-import { startTransition, useEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert } from "@clickhouse/click-ui/Alert";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
@@ -415,13 +415,19 @@ export function Recent() {
     return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
   }, [entries]);
 
-  const toggleSelect = (key: string) => {
+  const toggleSelect = useCallback((key: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
       next.has(key) ? next.delete(key) : next.add(key);
       return next;
     });
-  };
+  }, []);
+  // One callback for every card, so the memoised cards skip a render when it is not theirs.
+  const selecting = selected.size > 0;
+  const openCard = useCallback(
+    (e: MemoryListEntry) => (selecting ? toggleSelect(e.memory_key) : inspect(e.memory_key, { agent: e.agent })),
+    [selecting, toggleSelect, inspect],
+  );
 
   // Keyboard nav — active when no inspector is open and not typing.
   useKeyboard(
@@ -1016,10 +1022,8 @@ export function Recent() {
                         entry={e}
                         value={e.value !== undefined ? e.value : bulkValues.get(e.memory_key)}
                         active={isActive}
-                        onSelect={(k) =>
-                          isSelected || selected.size > 0 ? toggleSelect(k) : inspect(k, { agent: e.agent })
-                        }
-                        onTagClick={(t) => setMemoryTagFilter(t)}
+                        onSelect={openCard}
+                        onTagClick={setMemoryTagFilter}
                         timeMode="absolute"
                       />
                       {searchActive && keywordKeys.has(e.memory_key) ? (

@@ -1,4 +1,4 @@
-import { defineConfig, type Plugin } from "vite";
+import { defineConfig, type Plugin, type Rollup } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
@@ -31,6 +31,16 @@ function fontPreload(): Plugin {
       },
     },
   };
+}
+
+// Whether a module is reached from the entry by static imports alone, so the first paint
+// waits on it.
+function loadsAtBoot(id: string, getModuleInfo: Rollup.GetModuleInfo, seen = new Set<string>()): boolean {
+  const info = getModuleInfo(id);
+  if (!info || seen.has(id)) return false;
+  if (info.isEntry) return true;
+  seen.add(id);
+  return info.importers.some((importer) => loadsAtBoot(importer, getModuleInfo, seen));
 }
 
 // Served at the server root, so HTML and asset URLs are absolute under /.
@@ -72,9 +82,11 @@ export default defineConfig({
       output: {
         // Long-lived vendor chunks, so an app change does not re-download them. A function, not
         // a package list: a listed package brings its whole entry, and Click UI's entry
-        // re-exports every component and its CSS. Only the modules the app imports go in.
-        manualChunks(id) {
-          if (id.includes("/node_modules/@clickhouse/click-ui/")) return "clickui";
+        // re-exports every component and its CSS. Only the modules the app imports go in, and
+        // of Click UI only those the shell loads at boot; the components only lazy views use
+        // (Select and its sortable list, Table, Pagination, ...) split with those views.
+        manualChunks(id, { getModuleInfo }) {
+          if (id.includes("/node_modules/@clickhouse/click-ui/") && loadsAtBoot(id, getModuleInfo)) return "clickui";
           if (/\/node_modules\/(react|react-dom|scheduler|zustand|@radix-ui\/[^/]+)\//.test(id)) return "vendor";
         },
       },

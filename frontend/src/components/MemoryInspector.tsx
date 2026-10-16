@@ -43,7 +43,7 @@ import { SkeletonText } from "./Skeleton";
 import { DiffView } from "./DiffView";
 import { toast } from "./Toast";
 import { IconButton } from "./IconButton";
-import { Chip, Tip } from "./ui";
+import { Chip, ExternalLink, Tip } from "./ui";
 import { confirmAction } from "./ConfirmDialog";
 import { CopyToNamespaceDialog } from "../flows/CopyToNamespaceDialog";
 import { relativeTime, formatValue, humanizeError, SENTINEL_AGENTS } from "../lib/format";
@@ -1066,7 +1066,6 @@ function ProvenanceSection({
   const links = p.links || [];
   if (!showSource && !trig && !cited && links.length === 0) return null;
 
-  const link = "inline-flex items-center gap-1 text-link hover:underline break-all";
   const isUrl = (s: string) => /^https?:\/\/\S+$/i.test(s);
 
   return (
@@ -1116,10 +1115,9 @@ function ProvenanceSection({
             <dt className="text-text-muted">Trigger</dt>
             <dd>
               {trig.url ? (
-                <a href={trig.url} target="_blank" rel="noreferrer" className={link}>
+                <ExternalLink href={trig.url} className="break-all">
                   {shortUrl(trig.url)}
-                  <Icon name="popout" size="xs" aria-hidden="true" />
-                </a>
+                </ExternalLink>
               ) : (
                 <span>{trig.label}</span>
               )}
@@ -1131,10 +1129,9 @@ function ProvenanceSection({
             <dt className="text-text-muted">Cited source</dt>
             <dd>
               {isUrl(cited) ? (
-                <a href={cited} target="_blank" rel="noreferrer" className={link}>
+                <ExternalLink href={cited} className="break-all">
                   {shortUrl(cited)}
-                  <Icon name="popout" size="xs" aria-hidden="true" />
-                </a>
+                </ExternalLink>
               ) : (
                 <span className="font-mono break-all">{cited}</span>
               )}

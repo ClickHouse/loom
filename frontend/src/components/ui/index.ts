@@ -2,6 +2,7 @@
 // section heading, label/value grid) and the wrappers that work around its gaps
 // (docs/development/dashboard-design.md).
 export { Chip, type ChipProps } from "./Chip";
+export { ExternalLink } from "./ExternalLink";
 export { Kbd } from "./Kbd";
 export { MetaList, MetaRow, type MetaRowProps } from "./Meta";
 export { Panel, type PanelProps } from "./Panel";

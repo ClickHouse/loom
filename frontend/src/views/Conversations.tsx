@@ -22,7 +22,7 @@ import { useStore, useIdentity } from "../lib/state";
 import { canCall } from "../lib/canCall";
 import { useNamespaceRole } from "../lib/namespaceRole";
 import { Skeleton } from "../components/Skeleton";
-import { Chip, SectionHeading } from "../components/ui";
+import { Chip, ExternalLink, SectionHeading } from "../components/ui";
 import { Modal } from "../components/ui/Modal";
 import { EmptyState } from "../components/EmptyState";
 import { toast } from "../components/Toast";
@@ -55,9 +55,9 @@ const ROLE_META: Record<string, { label: string; rail: string; card: string; mut
 function linkify(text: string) {
   return text.split(/(https?:\/\/[^\s)]+)/g).map((p, i) =>
     /^https?:\/\//.test(p) ? (
-      <a key={i} href={p} target="_blank" rel="noreferrer" className="break-all">
-        {p} <Icon name="popout" size="xs" aria-hidden="true" className="inline" />
-      </a>
+      <ExternalLink key={i} href={p} className="break-all">
+        {p}
+      </ExternalLink>
     ) : (
       <span key={i}>{p}</span>
     ),
@@ -66,17 +66,12 @@ function linkify(text: string) {
 
 function CodeBlock({ code, lang }: { code: string; lang?: string }) {
   return (
-    <div className="relative group my-2">
-      {lang && <span className="absolute left-2 top-1 text-xs text-text-muted">{lang}</span>}
-      <CopyButton
-        text={code}
-        label="Copy"
-        ariaLabel="Copy code"
-        className="absolute right-2 top-1 inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-surface border border-border opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
-      />
-      <pre className="text-xs font-mono whitespace-pre-wrap break-words bg-surface-2 border border-border rounded-lg p-3 pt-5 overflow-x-auto">
-        {code}
-      </pre>
+    <div className="my-2 rounded-lg border border-border bg-surface-2">
+      <div className="flex items-center justify-between gap-2 px-3 pt-2">
+        <span className="text-xs text-text-muted">{lang}</span>
+        <CopyButton text={code} label="Copy" ariaLabel="Copy code" className="shrink-0" />
+      </div>
+      <pre className="text-xs font-mono whitespace-pre-wrap break-words p-3 overflow-x-auto">{code}</pre>
     </div>
   );
 }
@@ -601,7 +596,7 @@ export function Conversations() {
                   </>
                 )}
                 <span className="ml-auto text-accent font-medium">
-                  {g.hits.length} match{g.hits.length === 1 ? "" : "es"} · open ↗
+                  {g.hits.length} match{g.hits.length === 1 ? "" : "es"} · open
                 </span>
               </button>
               <div className="divide-y divide-border">
@@ -687,7 +682,8 @@ export function Conversations() {
           {threadLoading && <div className="text-center text-sm text-text-muted py-12">Loading…</div>}
           {!threadLoading && threadDetail && !threadDetail.found && (
             <div className="text-center text-sm text-text-muted py-12">
-              Thread not found — it may have been deleted.
+              {/* "or upgraded" goes with the previous-release fallback above. */}
+              Thread not found. It may have been deleted, or a server is being upgraded: try again shortly.
             </div>
           )}
           {!threadLoading && threadDetail && threadDetail.found && threadDetail.messages.length === 0 && (
@@ -697,7 +693,8 @@ export function Conversations() {
             <div className="space-y-2.5">
               {threadDetail.messages.map((m) => {
                 const meta = ROLE_META[m.role] || ROLE_META.assistant;
-                const label = m.role === "assistant" ? displayAgent(threadDetail.agent || "assistant") : meta.label;
+                const label =
+                  m.role === "assistant" ? displayAgent(m.agent || threadDetail.agent || "assistant") : meta.label;
                 const highlighted = m.msg_id === highlightMsgId;
                 return (
                   <div

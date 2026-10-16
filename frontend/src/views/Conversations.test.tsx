@@ -234,6 +234,28 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     expect(listConversationMessages.mock.calls[0][1]).toBe("claude-code");
   });
 
+  it("labels each assistant turn with the agent that wrote it", async () => {
+    listConversationThreads.mockResolvedValue({ threads: [summary("thread-p", "Title P")] });
+    getNamespace.mockResolvedValue({ conversation_logging_enabled: true });
+    const now = new Date().toISOString();
+    getConversationThread.mockResolvedValue({
+      ...detail("thread-p", "Title P"),
+      agent: "planner",
+      msg_count: 2,
+      messages: [
+        { msg_id: "p1", agent: "planner", role: "assistant", content: "plan it", ts: now },
+        { msg_id: "p2", agent: "deployer", role: "assistant", content: "shipped", ts: now },
+      ],
+    });
+    listMemories.mockResolvedValue(noMemories);
+
+    render(<Conversations />);
+    fireEvent.click(await screen.findByText("Title P"));
+    const shipped = await screen.findByText("shipped");
+    expect(must(shipped.closest("[id^='msg-']"), "turn p2")).toHaveTextContent("deployer");
+    expect(must(screen.getByText("plan it").closest("[id^='msg-']"), "turn p1")).toHaveTextContent("planner");
+  });
+
   it("ignores '/' pressed inside the thread dialog", async () => {
     listConversationThreads.mockResolvedValue({ threads: [summary("thread-a", "Title A")] });
     getNamespace.mockResolvedValue({ conversation_logging_enabled: true });

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import type { Identity, MemoryListEntry } from "../api";
@@ -19,7 +19,7 @@ function describe(v: unknown): { value: string; encoded: boolean } {
 interface MemoryCardProps {
   identity: Identity;
   entry: MemoryListEntry;
-  onSelect: (key: string) => void;
+  onSelect: (entry: MemoryListEntry) => void;
   active: boolean;
   /** Show full ISO time prefix vs relative time. */
   timeMode?: "absolute" | "relative";
@@ -41,7 +41,10 @@ interface MemoryCardProps {
   value?: unknown;
 }
 
-export function MemoryCard({
+// Memoised: a page lists ~100 cards, and each Click UI Badge and Icon re-measures its text
+// on every render, so closing the inspector re-rendered every card (~110 ms at 4x CPU). With
+// stable callbacks from the parent only the cards whose props changed render again.
+export const MemoryCard = memo(function MemoryCard({
   identity,
   entry,
   onSelect,
@@ -103,7 +106,7 @@ export function MemoryCard({
     <div data-memory-key={entry.memory_key} className={`group ${card}`}>
       <button
         type="button"
-        onClick={() => onSelect(entry.memory_key)}
+        onClick={() => onSelect(entry)}
         className="flex w-full items-start justify-between gap-3 text-left bg-transparent border-0 p-0 cursor-pointer after:absolute after:inset-0 after:rounded-xl after:content-['']"
       >
         <span className="block min-w-0 flex-1">
@@ -170,4 +173,4 @@ export function MemoryCard({
       )}
     </div>
   );
-}
+});

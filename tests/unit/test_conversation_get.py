@@ -32,13 +32,13 @@ def _thread(
     }
 
 
-def _msg(*, msg_id: str, role: str, content: str, ts: datetime):
+def _msg(*, msg_id: str, role: str, content: str, ts: datetime, agent: str = "reviewer"):
     from server.knowledge.store.conversations import MessageRow
 
     return MessageRow(
         org="clickhouse",
         namespace="finance",
-        agent="reviewer",
+        agent=agent,
         thread_id="t-1",
         msg_id=msg_id,
         role=role,
@@ -466,8 +466,10 @@ async def test_any_agent_names_an_append_only_threads_latest_writer(
         return 2
 
     async def fake_list_thread(*a, **kw):
+        # Newest first, as order="desc" returns them: the latest writer is not the first row read.
         return [
-            _msg(msg_id="m1", role="user", content="hi", ts=datetime(2026, 6, 1, 9, 0)),
+            _msg(msg_id="m1", role="user", content="hi", ts=datetime(2026, 6, 1, 9, 0), agent="planner"),
+            _msg(msg_id="m3", role="assistant", content="done", ts=datetime(2026, 6, 1, 9, 2), agent="deployer"),
             _msg(msg_id="m2", role="assistant", content="hello", ts=datetime(2026, 6, 1, 9, 1)),
         ]
 
@@ -481,7 +483,13 @@ async def test_any_agent_names_an_append_only_threads_latest_writer(
         )
     )
     assert out.found is True
-    assert out.agent == "reviewer"
+    assert out.agent == "deployer"
+    # Each turn names its own writer.
+    assert [(m.msg_id, m.agent) for m in out.messages] == [
+        ("m1", "planner"),
+        ("m3", "deployer"),
+        ("m2", "reviewer"),
+    ]
 
 
 @pytest.mark.asyncio
@@ -521,11 +529,11 @@ async def test_list_with_any_agent_pages_the_whole_thread(
 
     async def fake_list_thread(org, namespace, agent, thread_id, **kw):
         assert agent is None
-        return [_msg(msg_id="m1", role="user", content="hi", ts=datetime(2026, 6, 1, 9, 0))]
+        return [_msg(msg_id="m1", role="user", content="hi", ts=datetime(2026, 6, 1, 9, 0), agent="planner")]
 
     monkeypatch.setattr(conversation_repo, "list_thread", fake_list_thread)
 
     out = await handle_conversation_list(
         ConversationListInput(org="clickhouse", namespace="finance", agent="*", thread_id="t-1")
     )
-    assert [r.msg_id for r in out.rows] == ["m1"]
+    assert [(r.msg_id, r.agent) for r in out.rows] == [("m1", "planner")]

@@ -4,7 +4,7 @@ The dashboard at `/` is built on ClickHouse's design system, [Click UI](https://
 
 ## Click UI is the component library
 
-`@clickhouse/click-ui` (pinned exactly in `frontend/package.json`) is a runtime dependency. `src/main.tsx` loads its light tokens and page defaults directly (the `click-ui-styles` alias in `vite.config.ts`) instead of mounting `ClickUIProvider`, whose barrel import would ship every component's CSS and the dark theme; the Radix tooltip provider Click UI's components expect is mounted there directly; `index.html` sets `data-cui-theme="light"`. Controls are Click UI components, imported by subpath (`@clickhouse/click-ui/Button`), so only the components in use ship:
+`@clickhouse/click-ui` (pinned exactly in `frontend/package.json`) is a runtime dependency. `src/main.tsx` loads its light tokens and page defaults directly (the `click-ui-styles` alias in `vite.config.ts`) instead of mounting `ClickUIProvider`, whose barrel import would ship every component's CSS and the dark theme; the Radix tooltip provider Click UI's components expect is mounted there directly; `index.html` sets `data-cui-theme="light"`. Controls are Click UI components, imported by subpath (`@clickhouse/click-ui/Button`), so only the components the dashboard imports are bundled, and those only lazy views use load with those views:
 
 | Need                                   | Use                                                                                       |
 | -------------------------------------- | ----------------------------------------------------------------------------------------- |
@@ -13,7 +13,7 @@ The dashboard at `/` is built on ClickHouse's design system, [Click UI](https://
 | a check or switch                      | `Checkbox`, `Switch` (labels are plain strings)                                           |
 | tabs, a menu, a popover                | `Tabs` (name the `Tabs.TriggersList`), `Dropdown`, `Popover` (with Loom's triggers below) |
 | a table, a badge, an alert, pagination | `Table`, `Badge`, `Alert`, `Pagination`, `ProgressBar`                                    |
-| a text link or a link-styled action    | `Link` (`component="button"` for an action)                                               |
+| a text link or a link-styled action    | `Link` (`component="button"` for an action; `ui/ExternalLink` for a new tab)              |
 | an icon                                | `Icon` with a Click UI name, `aria-hidden` unless it is the only content                  |
 
 A few Loom primitives in `src/components` wrap Click UI where Click UI 0.13 falls short. Use them, not the Click UI component underneath:
@@ -25,6 +25,7 @@ A few Loom primitives in `src/components` wrap Click UI where Click UI 0.13 fall
 | `ui/Menu`: `MenuTrigger`, `PopoverTrigger` | Radix triggers           | Click UI's `Dropdown.Trigger` and `Popover.Trigger` put `aria-expanded` on a wrapping `div` and return focus to it                                  |
 | `ui/Unavailable`                           | —                        | a control that is unavailable for a stated reason: `aria-disabled`, its tooltip and description                                                     |
 | `ui/ChoiceGroup`                           | `RadioGroup`             | Click UI's group label does not name the group, and a non-text item label is announced as "[object Object]"                                         |
+| `ui/ExternalLink`                          | `Link`                   | Click UI's `icon` prop names its icon ("popout"), read after the link text; this hides the icon and says "(opens in a new tab)"                     |
 | `ui/Tooltip` (`Tip`)                       | `Tooltip`                | one tooltip shape; it uses the provider `main.tsx` mounts (specs get it from `src/test/rtl.tsx`)                                                    |
 | `ui/TabTrigger`                            | `Tabs.Trigger`           | Click UI's Icon is a block, so an icon stacks above the label without a wrapper                                                                     |
 | `Toast` (`toast()`)                        | —                        | Click UI's Toast has no keyed replacement or request-id line and its close is named "cross"; Loom's card uses Click UI's toast tokens, bottom right |
@@ -55,6 +56,8 @@ Loom keeps a few elements of its own, on Click UI tokens:
 ## What ships of Click UI
 
 - `vite.config.ts` aliases Click UI's flag, logo and payment-mark maps to an empty module (`src/lib/emptyAssetMap.ts`): Click UI's `Icon` imports them whole to resolve any name, and the dashboard draws only interface icons. Click UI ships ~95 kB gz of script this way instead of ~325 kB.
+- `vite.config.ts` puts the Click UI modules the shell imports statically in one `clickui` chunk (~64 kB gz) that every page loads; Rollup splits the rest (Select and its sortable list, Table, Pagination) into the lazy views that use them. `npm run budget` fails when the boot scripts pass 198 kB gz.
+- Click UI's `Badge` measures its text on every render. A long list of them memoises its rows and passes them stable callbacks, as `MemoryCard` does, or one change re-measures every row.
 - `src/lib/clickUiFixes.ts` names what Click UI 0.13's Select leaves unnamed in its option list: the filter field, its clear button and the dialog that holds them.
 
 ## Follow a Click UI release

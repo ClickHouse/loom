@@ -548,6 +548,11 @@ input:not([type="checkbox"]):not([type="radio"]):focus-visible,
 textarea:focus-visible {
   outline: none;
 }
+/* A dialog or drawer that takes focus itself on open is not a control: no frame
+   around the whole surface. */
+[role="dialog"]:focus-visible {
+  outline: none;
+}
 
 /* ============================================================
    Selection — the primary-button slate, white text

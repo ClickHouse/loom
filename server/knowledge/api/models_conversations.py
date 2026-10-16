@@ -95,6 +95,8 @@ class ConversationSetLoggingOutput(BaseModel):
 
 class _ConversationEntry(BaseModel):
     msg_id: str
+    # The agent that wrote this turn; a thread read with agent "*" holds several.
+    agent: str
     role: ConversationRole
     content: str
     reasoning: str
@@ -164,7 +166,8 @@ class ConversationGetInput(BaseModel):
 
     org: str
     namespace: str
-    # "*" reads every agent's turns in the thread, for a caller that has only its id.
+    # "*" reads every agent's turns in the thread, for a caller that has only its id;
+    # any other value, "-" included, reads that one agent's.
     agent: str
     # The thread to fetch.
     thread_id: str
@@ -192,6 +195,8 @@ class ConversationGetOutput(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     run_id: str = "-"
     user_id: str = "-"
+    # The thread's owner (the agent of its thread row); for a thread built by appends
+    # only, the latest writer among the messages read, so empty without `include_messages`.
     agent: str = ""
     # When the thread row was first written; None for a thread built by appends only.
     created_at: datetime | None = None
@@ -207,7 +212,8 @@ class ConversationGetOutput(BaseModel):
 class ConversationListInput(BaseModel):
     org: str
     namespace: str
-    # "*" reads every agent's turns in the thread, for a caller that has only its id.
+    # "*" reads every agent's turns in the thread, for a caller that has only its id;
+    # any other value, "-" included, reads that one agent's.
     agent: str
     # The thread to page through, oldest message first.
     thread_id: str

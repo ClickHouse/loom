@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import type { TrackerItem, TrackerSection } from "../../../api";
 import { IconButton } from "../../../components/IconButton";
-import { Chip, MetaList, MetaRow, Panel, SectionHeading, TextClamp, Tip } from "../../../components/ui";
+import { Chip, ExternalLink, MetaList, MetaRow, Panel, SectionHeading, TextClamp, Tip } from "../../../components/ui";
 import { shorten } from "../model";
 import { areaClass, type AreaClass, type Cell, type DuplicateRow, type Issue } from "./model";
 
@@ -369,14 +369,9 @@ export function PatternsInspector(p: PatternsInspectorProps) {
           )}
           <IconButton label={`Similar to #${i.number}`} onClick={() => p.onSimilar(i.title)} icon="search" size="sm" />
           {i.url && (
-            <a
-              href={i.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-xs text-text-muted hover:text-text px-1.5 min-h-7"
-            >
-              <Icon name="popout" size="xs" aria-hidden="true" /> Open on GitHub
-            </a>
+            <ExternalLink href={i.url} size="xs" className="min-h-7">
+              Open on GitHub
+            </ExternalLink>
           )}
           <IconButton
             label="Copy the issue line"

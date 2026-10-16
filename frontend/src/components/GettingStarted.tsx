@@ -18,7 +18,7 @@ import {
 import { AddMemoryDialog } from "../flows/AddMemoryDialog";
 import { MembersDialog } from "../flows/MembersDialog";
 import { DOCS_MCP_URL, DOCS_QUICKSTART_URL, DOCS_TOKENS_URL } from "../flows/TokenGate";
-import { Kbd, Panel, TabTrigger } from "./ui";
+import { ExternalLink, Kbd, Panel, TabTrigger } from "./ui";
 import { CopyButton } from "./CopyButton";
 
 /**
@@ -251,14 +251,9 @@ export function GettingStarted({
                       {act.label}
                     </Button>
                     {act.docs && (
-                      <a
-                        href={act.docs.href}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-1 text-xs"
-                      >
-                        {act.docs.label} <Icon name="popout" size="xs" aria-hidden="true" />
-                      </a>
+                      <ExternalLink href={act.docs.href} size="xs">
+                        {act.docs.label}
+                      </ExternalLink>
                     )}
                   </div>
                 </div>

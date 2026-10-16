@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import * as RadixDialog from "@radix-ui/react-dialog";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Dropdown } from "@clickhouse/click-ui/Dropdown";
-import { Icon } from "@clickhouse/click-ui/Icon";
 import { Title } from "@clickhouse/click-ui/Title";
 import {
   getTask,
@@ -40,7 +39,7 @@ import {
 import { humanizeError } from "../../lib/format";
 import { toast } from "../../components/Toast";
 import { IconButton } from "../../components/IconButton";
-import { Tip, TipTarget } from "../../components/ui";
+import { ExternalLink, Tip, TipTarget } from "../../components/ui";
 import { KindTag, PriorityBadge, StatusPill } from "./TaskBits";
 import { MenuTrigger } from "../../components/ui/Menu";
 
@@ -102,9 +101,9 @@ function InputValue({ v }: { v: unknown }) {
   switch (inputKind(s)) {
     case "url":
       return (
-        <a href={s} target="_blank" rel="noreferrer" className="break-all">
-          {s.replace(/^https?:\/\//, "")} <Icon name="popout" size="xs" className="inline" aria-hidden="true" />
-        </a>
+        <ExternalLink href={s} className="break-all">
+          {s.replace(/^https?:\/\//, "")}
+        </ExternalLink>
       );
     case "issue": {
       const href = issueHref(s);

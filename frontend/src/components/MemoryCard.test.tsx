@@ -42,7 +42,7 @@ describe("MemoryCard", () => {
     expect(open.querySelector("button")).toBeNull();
     open.focus();
     await userEvent.keyboard("{Enter}");
-    expect(onSelect).toHaveBeenCalledWith("prefs/coffee");
+    expect(onSelect).toHaveBeenCalledWith(entry);
     expect(await axeViolations(container)).toEqual([]);
   });
 });

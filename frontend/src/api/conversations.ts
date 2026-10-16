@@ -59,6 +59,8 @@ export interface ConversationThreadSummary {
 
 export interface ConversationMessage {
   msg_id: string;
+  /** The turn's writer; absent from a server of the previous release. */
+  agent?: string;
   role: ChatRole;
   content: string;
   ts: string;
