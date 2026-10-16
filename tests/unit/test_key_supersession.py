@@ -1194,8 +1194,8 @@ class _Graph:
                 if i in params["ids"]
             ]
         if "WITH keyed AS" in sql:
-            # Live rows with no row link, of a key a triple is linked to.
-            linked = {link[0] for link in self.links}
+            # Live rows with no stated link for their value, of a key a triple is linked to.
+            linked = {(link[0], link[1]) for link in self.links if not link[5]}
             return [
                 {
                     "id": row["id"],
@@ -1207,7 +1207,7 @@ class _Graph:
                     "object": o,
                 }
                 for row in self.rows.values()
-                if self._holds(row) and row["id"] not in linked
+                if self._holds(row) and (row["id"], row["content_sha256"]) not in linked
                 for s, r, o, key in sorted(self.provenance)
                 if key == row["memory_key"] and (s, r, o) in params["triples"]
             ]

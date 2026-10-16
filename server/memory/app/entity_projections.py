@@ -1414,9 +1414,11 @@ async def _unlinked_holders(
                k.subject AS subject, k.relation AS relation, k.object AS object
         FROM keyed AS k
         INNER JOIN live AS l ON k.memory_key = l.memory_key
-        WHERE l.memory_id NOT IN (
-            SELECT memory_id FROM loom.entity_triple_rows
-            WHERE org = {{org:String}} AND namespace = {{ns:String}}
+        -- What its extractor stated for its current value; a successor written for it
+        -- (inferred) or a link of another value leaves it a legacy row.
+        WHERE (l.memory_id, l.content_sha256) NOT IN (
+            SELECT memory_id, content_sha256 FROM loom.entity_triple_rows
+            WHERE org = {{org:String}} AND namespace = {{ns:String}} AND NOT inferred
               AND memory_id IN (SELECT memory_id FROM live)
         )
         SETTINGS select_sequential_consistency = 1

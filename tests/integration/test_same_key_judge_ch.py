@@ -1068,6 +1068,28 @@ async def test_a_row_predating_row_links_holds_by_when_its_value_was_first_writt
     assert await _open_facts(ch, org, want) == want
 
 
+async def _link_inferred(ch: Any, org: str, row: dict[str, Any], triple: tuple) -> None:
+    """Link `row` to `triple` as a follow links a successor to its winner."""
+    from server.memory.app.projections import triple_row_link
+
+    link = triple_row_link(
+        org, NS, str(row["memory_id"]), row["content_sha256"], triple, user_id=USER, inferred=True
+    )
+    await ch.insert("loom.entity_triple_rows", [link])
+
+
+async def test_an_inferred_link_leaves_a_row_predating_row_links_its_old_facts(ch, org) -> None:
+    # A successor written for it is not what its value stated before rows were linked.
+    jazz, rock = ("user", "like", "jazz"), ("user", "like", "rock")
+    legacy = await _legacy_stated(ch, org, "I like jazz", jazz, "legacy")
+    await _link_inferred(ch, org, legacy, ("user", "like", "folk"))
+    linked = await _stated(ch, org, "s1", "I like jazz", jazz, memory_key="r1")
+    await _revise("memory.update_by_id", org, linked, "I like rock", (rock,))
+    await _mutations_done(ch, org)
+    want = {("like", "jazz"), ("like", "rock")}
+    assert await _open_facts(ch, org, want) == want
+
+
 async def test_a_row_written_since_row_links_that_stated_nothing_keeps_nothing_open(
     ch, org
 ) -> None:
@@ -1095,14 +1117,20 @@ async def test_a_fact_a_row_predating_row_links_states_survives_a_follow(ch, org
     assert await _open_facts(ch, org, want) == want
 
 
-async def test_undo_brings_back_the_facts_a_row_predating_row_links_holds(ch, org) -> None:
+@pytest.mark.parametrize("inferred", [False, True])
+async def test_undo_brings_back_the_facts_a_row_predating_row_links_holds(
+    ch, org, inferred
+) -> None:
     # The follow closes a legacy row's facts by what its value names; the Undo has no
-    # row link to find them by, and reopens them by the same rule.
+    # row link to find them by, and reopens them by the same rule. A successor linked
+    # to the row (`inferred`) is no link to them.
     from server.memory.api.models_crud import MemoryRestoreInput
     from server.memory.app.restore import handle_memory_restore
 
     jazz, rock = ("alice", "like", "jazz"), ("alice", "like", "rock")
     legacy = await _legacy_stated(ch, org, "Alice likes jazz", jazz, KEY)
+    if inferred:
+        await _link_inferred(ch, org, legacy, ("alice", "like", "folk"))
     winner = await _stated(ch, org, "s2", "Alice likes rock", rock)
     await _follow_retirement(ch, org, legacy, winner)
     assert await _open_facts(ch, org, {("like", "rock")}) == {("like", "rock")}

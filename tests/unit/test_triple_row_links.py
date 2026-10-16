@@ -686,11 +686,10 @@ async def _none_held(*a: Any, **k: Any) -> frozenset:
     return frozenset()
 
 
-@pytest.mark.parametrize(("ids", "legacy_read"), [(["m1"], False), (["m1", "m2"], True)])
-async def test_an_undo_reads_legacy_rows_unless_its_one_row_has_links(
-    monkeypatch, ids, legacy_read
-) -> None:
-    # Several rows may mix a linked row with one written before rows were linked.
+@pytest.mark.parametrize("ids", [["m1"], ["m1", "m2"]])
+async def test_an_undo_reads_legacy_rows_whatever_links_its_rows_have(monkeypatch, ids) -> None:
+    # A link of another value, or a successor written for it, leaves a row a legacy one:
+    # the read decides by the links of its current value.
     from types import SimpleNamespace
 
     from server.memory.app import graph_undo
@@ -711,4 +710,4 @@ async def test_an_undo_reads_legacy_rows_unless_its_one_row_has_links(
     await graph_undo.reopen_held_facts(
         scope, ids, ch=_CH(), restored_at=datetime(2026, 10, 15), restore_id="u1"
     )
-    assert read == ([ids] if legacy_read else [])
+    assert read == [ids]
