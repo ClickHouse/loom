@@ -96,7 +96,10 @@ async def test_list_page_scopes_filters_and_keysets_below_the_cursor() -> None:
 
 
 @pytest.mark.asyncio
-async def test_audit_list_pages_with_a_cursor_and_hex_hashes(monkeypatch) -> None:
+async def test_the_cursor_reads_the_same_on_the_previous_build(monkeypatch) -> None:
+    # During a rollout the next page may land on the previous build, whose decoder
+    # (origin/main server/insights/app/audit.py) takes everything after the first
+    # `|` as the request id. So this build still writes `ts|request_id`.
     from server.auth import context as ctx
     from server.core.cursors import decode_cursor
     from server.insights.api.models_audit import AuditListInput
@@ -110,33 +113,48 @@ async def test_audit_list_pages_with_a_cursor_and_hex_hashes(monkeypatch) -> Non
     out = await h.handle_audit_list(AuditListInput(org="clickhouse", namespace="ns", limit=1))
     assert [r.row_hash for r in out.rows] == ["e" * 64]
     assert out.next_cursor is not None
-    # The row hash breaks a tie between rows of one millisecond and one request id.
-    assert decode_cursor(out.next_cursor)[1] == "req-1|" + "e" * 64
+    assert decode_cursor(out.next_cursor) == (_row()["ts"], "req-1")
     _, params = ch.query_all_calls[0]
     assert params["lim"] == 2 and params["ns"] == "ns"
 
 
 @pytest.mark.asyncio
-async def test_the_next_page_keysets_on_the_row_hash_so_no_tied_row_is_skipped(
-    monkeypatch,
-) -> None:
+async def test_a_page_never_ends_inside_one_writes_rows(monkeypatch) -> None:
+    # Three records of one write share a millisecond and a request id. A cursor of
+    # (ts, request_id) would skip the ones after it, so the page takes them all.
+    from server.auth import context as ctx
+    from server.core.cursors import decode_cursor
+    from server.insights.api.models_audit import AuditListInput
+    from server.insights.app import audit as h
+
+    monkeypatch.setattr(ctx, "current_auth", lambda: None)
+    tied = [{**_row(), "row_hash": c * 64} for c in "fed"]
+    older = {**_row(), "ts": datetime(2026, 5, 16, 11, 0, 0, tzinfo=UTC), "request_id": "req-0"}
+    ch = StubCH()
+    ch.query_all_returns.extend([tied[:2], [tied[2], older]])
+    monkeypatch.setattr(h, "get_client", lambda: ch)
+    out = await h.handle_audit_list(AuditListInput(org="clickhouse", namespace="ns", limit=1))
+    assert [r.row_hash for r in out.rows] == [c * 64 for c in "fed"]
+    assert out.next_cursor is not None
+    assert decode_cursor(out.next_cursor) == (_row()["ts"], "req-1")
+    # The rest of the write is read below the last row it returned.
+    sql, params = ch.query_all_calls[1]
+    assert "(ts, request_id, row_hash) <" in sql
+    assert (params["c_rid"], params["c_hash"]) == ("req-1", "e" * 64)
+
+
+@pytest.mark.asyncio
+async def test_a_versioned_cursor_keysets_on_the_row_hash(monkeypatch) -> None:
     from server.auth import context as ctx
     from server.insights.api.models_audit import AuditListInput
     from server.insights.app import audit as h
 
     monkeypatch.setattr(ctx, "current_auth", lambda: None)
-    # Three records of one write: one millisecond, one request id, three hashes.
-    tied = [{**_row(), "row_hash": c * 64} for c in "fed"]
     ch = StubCH()
-    ch.query_all_returns.append(tied[:2])
     monkeypatch.setattr(h, "get_client", lambda: ch)
-    first = await h.handle_audit_list(AuditListInput(org="clickhouse", namespace="ns", limit=1))
-    assert first.next_cursor is not None
-    ch.query_all_returns.append(tied[1:])
-    await h.handle_audit_list(
-        AuditListInput(org="clickhouse", namespace="ns", limit=1, cursor=first.next_cursor)
-    )
-    sql, params = ch.query_all_calls[1]
+    cursor = h._encode_cursor_v2(_row()["ts"], "req-1", "f" * 64)
+    await h.handle_audit_list(AuditListInput(org="clickhouse", namespace="ns", cursor=cursor))
+    sql, params = ch.query_all_calls[0]
     assert "(ts, request_id, row_hash) <" in sql and "{c_hash:FixedString(64)}" in sql
     assert "ORDER BY ts DESC, request_id DESC, row_hash DESC" in sql
     assert (params["c_rid"], params["c_hash"]) == ("req-1", "f" * 64)
@@ -159,14 +177,14 @@ async def test_a_cursor_issued_before_the_row_hash_still_pages(monkeypatch) -> N
     assert params["c_rid"] == "req-1"
 
 
-def test_a_request_id_with_a_bar_keeps_its_row_hash() -> None:
+@pytest.mark.parametrize("request_id", ["req-1", "trace|1", "ends|", "|", ""])
+def test_both_cursor_formats_keep_any_request_id(request_id: str) -> None:
     from server.core.cursors import encode_cursor
-    from server.insights.app.audit import _decode_page_cursor
+    from server.insights.app.audit import _decode_page_cursor, _encode_cursor_v2
 
     ts = datetime(2026, 5, 16, 12, 0, tzinfo=UTC)
-    row_hash = "a" * 64
-    assert _decode_page_cursor(encode_cursor(ts, "trace|1", row_hash)) == (ts, "trace|1", row_hash)
-    # A cursor issued before the hash: the whole extra is the request id.
-    assert _decode_page_cursor(encode_cursor(ts, "trace|1")) == (ts, "trace|1", None)
-    # A page ending on a row with no hash still names its request id alone.
-    assert _decode_page_cursor(encode_cursor(ts, "req-1", "")) == (ts, "req-1", "")
+    # The previous build's `ts|request_id`: everything after the first bar is the id.
+    assert _decode_page_cursor(encode_cursor(ts, request_id)) == (ts, request_id, None)
+    for row_hash in ("a" * 64, ""):
+        v2 = _encode_cursor_v2(ts, request_id, row_hash)
+        assert _decode_page_cursor(v2) == (ts, request_id, row_hash)

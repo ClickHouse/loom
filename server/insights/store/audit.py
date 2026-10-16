@@ -88,8 +88,8 @@ async def list_page(
     visibility decision), strictly older than the keyset `before` =
     (ts, request_id, row_hash) of the previous page's last row. Two rows can share
     a millisecond and a request id (one write's several audit rows), so the per-row
-    hash breaks the tie; a cursor issued before the hash was in it (row_hash None)
-    keysets on (ts, request_id) as it did."""
+    hash breaks the tie; a cursor without the hash (row_hash None) keysets on
+    (ts, request_id), and the handler then never ends a page inside one write."""
     ch = ch or _default_client()
     where = scope_where
     params: dict[str, Any] = {**scope_params, "org": org, "lim": int(limit)}

@@ -15,11 +15,9 @@ from datetime import datetime
 from server.core.errors import ValidationError
 
 
-def encode_cursor(ts: datetime, *extra: str) -> str:
-    """Opaque base64 of `<iso-ts>|<extra>|…` for keyset pagination; each extra part
-    is one tiebreaker column. A caller whose part may hold `|` reads the others from
-    the right (audit.list's request id comes first, its 64-hex row hash last)."""
-    raw = "|".join((ts.isoformat(), *extra))
+def encode_cursor(ts: datetime, extra: str) -> str:
+    """Opaque base64 of `<iso-ts>|<extra>` for keyset pagination."""
+    raw = f"{ts.isoformat()}|{extra}"
     return base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii")
 
 
