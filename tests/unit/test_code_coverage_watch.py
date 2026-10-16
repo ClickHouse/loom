@@ -229,6 +229,37 @@ async def test_two_racing_deliveries_report_one_emitted_event(
 
 
 @pytest.mark.asyncio
+async def test_a_delivery_whose_lease_is_held_or_unavailable_posts_nothing(
+    fake: Fake, history: tuple[str, list[str]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.core import leases
+    from server.core.errors import PreconditionFailedError
+
+    _, (a, b, c) = history
+    fake.set_heads(fast=c, clang=a)
+    await h.handle_code_coverage_watch(_watch(b))
+    watch = fake.watches[(ORG, NS, b, INBOX)]
+
+    async def still_held(name: str, **_: Any) -> None:
+        return None  # another delivery kept the event past the wait
+
+    monkeypatch.setattr(leases, "take", still_held)
+    with pytest.raises(PreconditionFailedError) as held:
+        await svc.deliver(watch, {"tiers": []})
+    assert held.value.status_code == 409
+
+    async def keeper_down(name: str, **_: Any) -> None:
+        raise leases.LeaseUnavailable("the lease store did not answer", operation=name)
+
+    monkeypatch.setattr(leases, "take", keeper_down)
+    with pytest.raises(leases.LeaseUnavailable) as down:
+        await svc.deliver(watch, {"tiers": []})
+    assert down.value.status_code == 503
+    assert not fake.events
+    assert fake.watches[(ORG, NS, b, INBOX)].delivered_at is None
+
+
+@pytest.mark.asyncio
 async def test_two_racing_first_watches_post_one_event(
     fake: Fake, history: tuple[str, list[str]], monkeypatch: pytest.MonkeyPatch
 ) -> None:

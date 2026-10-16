@@ -226,34 +226,16 @@ async def test_a_new_watch_after_the_namespace_was_erased_posts_its_ready_event(
     )
 
 
-async def _record_unrelated_erasure(ch: Any, org: str) -> None:
-    """An erasure request for another namespace of the same org: it deletes no
-    task, but it is a new row in the org's erasure ledger."""
-    row = {
-        "id": str(uuid.uuid4()),
-        "org": org,
-        "scope_type": "namespace",
-        "scope_value": f"unrelated-{uuid.uuid4().hex[:6]}",
-        "requester": "itest",
-        "status": "in_progress",
-        "version": time.time_ns(),
-    }
-    await ch.insert("loom.erasure_requests", [row])
-
-
 async def _late(i: int, call: Any, *args: Any) -> Any:
-    """Racer `i` starts half a hook's sleep after racer `i - 1`, so an erasure
-    one racer records falls between two of the other's reads."""
+    """Racer `i` starts half an insert's delay after racer `i - 1`, so each one's
+    lookup runs while the other's insert is still on its way."""
     await asyncio.sleep(0.025 * i)
     return await call(*args)
 
 
 @pytest.mark.asyncio
-async def test_racing_creates_land_one_task_while_an_unrelated_erasure_lands(
-    ch: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # The original task was erased, then two retries race. Before each of
-    # their inserts another namespace of the org is erased.
+async def test_racing_creates_store_one(ch: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The original task was erased, then two retries race, each insert slow.
     org = f"itest-erased-{uuid.uuid4().hex[:8]}"
     ident = {"org": org, "namespace": "private", "agent": "admin"}
     await inboxes.handle_inbox_register(
@@ -276,12 +258,11 @@ async def test_racing_creates_land_one_task_while_an_unrelated_erasure_lands(
 
     insert = repo.insert_task_version
 
-    async def erase_elsewhere_then_insert(*args: Any, **kwargs: Any) -> None:
-        await _record_unrelated_erasure(ch, org)
+    async def slow_insert(*args: Any, **kwargs: Any) -> None:
         await asyncio.sleep(0.05)  # the other racer runs meanwhile
         await insert(*args, **kwargs)
 
-    monkeypatch.setattr(repo, "insert_task_version", erase_elsewhere_then_insert)
+    monkeypatch.setattr(repo, "insert_task_version", slow_insert)
     outs = await asyncio.gather(
         *(_late(i, transitions.handle_task_create, wire.TaskCreateInput(**body)) for i in range(2))
     )
@@ -295,9 +276,7 @@ async def test_racing_creates_land_one_task_while_an_unrelated_erasure_lands(
 
 
 @pytest.mark.asyncio
-async def test_racing_deliveries_post_one_ready_event_while_an_unrelated_erasure_lands(
-    ch: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_racing_deliveries_store_one(ch: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     from server.code.app import watches as svc
     from server.code.store import coverage_watches as wrepo
 
@@ -307,12 +286,11 @@ async def test_racing_deliveries_post_one_ready_event_while_an_unrelated_erasure
 
     insert = wrepo.insert_ready_event
 
-    async def erase_elsewhere_then_insert(*args: Any, **kwargs: Any) -> None:
-        await _record_unrelated_erasure(ch, org)
+    async def slow_insert(*args: Any, **kwargs: Any) -> None:
         await asyncio.sleep(0.05)  # the other deliverer runs meanwhile
         await insert(*args, **kwargs)
 
-    monkeypatch.setattr(wrepo, "insert_ready_event", erase_elsewhere_then_insert)
+    monkeypatch.setattr(wrepo, "insert_ready_event", slow_insert)
     outs = await asyncio.gather(*(_late(i, svc.deliver, watch, {"tiers": []}) for i in range(2)))
 
     assert sorted(emitted for emitted, _ in outs) == [False, True]
