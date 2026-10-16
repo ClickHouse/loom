@@ -999,9 +999,9 @@ async def reopen_triples(
             "closed_at": closed_at,
         },
     )
-    from server.memory.app.graph_write_marks import marks as _graph_marks
+    from server.memory.app import graph_write_marks as _graph_marks
 
-    _graph_marks().note_write(org, namespace)
+    _graph_marks.note_write(org, namespace)
 
 
 async def end_triples_now(
@@ -1054,9 +1054,9 @@ async def end_triples_now(
         """,
         params=params,
     )
-    from server.memory.app.graph_write_marks import marks as _graph_marks
+    from server.memory.app import graph_write_marks as _graph_marks
 
-    _graph_marks().note_write(org, namespace)
+    _graph_marks.note_write(org, namespace)
 
 
 # Each edge's own end in the parallel arrays `end_edges` passes, and the valid_to it
@@ -1172,9 +1172,9 @@ async def end_edges(
         """,
         params={**params, "ending": ending},
     )
-    from server.memory.app.graph_write_marks import marks as _graph_marks
+    from server.memory.app import graph_write_marks as _graph_marks
 
-    _graph_marks().note_write(org, namespace)
+    _graph_marks.note_write(org, namespace)
     await reopen_held_edges(ch, params=params, ending=ending)
 
 
@@ -1205,9 +1205,9 @@ async def reopen_held_edges(
         """,
         params={**params, "held": sorted((str(r["entity_a"]), str(r["entity_b"])) for r in held)},
     )
-    from server.memory.app.graph_write_marks import marks as _graph_marks
+    from server.memory.app import graph_write_marks as _graph_marks
 
-    _graph_marks().note_write(params["org"], params["ns"])
+    _graph_marks.note_write(params["org"], params["ns"])
 
 
 async def open_triples_among(
