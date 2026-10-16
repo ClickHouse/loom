@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Button } from "@clickhouse/click-ui/Button";
 import { listTrackerSources, setSavedNamespace } from "../../../api";
 import { useAbortableEffect } from "../../../lib/hooks";
 import { humanizeError } from "../../../lib/format";
@@ -91,7 +92,7 @@ export function SourcePicker({
       aria-labelledby="patterns-picker-title"
       className="flex-1 min-h-0 overflow-auto rounded-xl border border-border bg-surface p-5 max-w-2xl"
     >
-      <h2 id="patterns-picker-title" className="text-base font-semibold text-text">
+      <h2 id="patterns-picker-title" className="text-sm font-semibold text-text">
         Which tracker source?
       </h2>
       <p className="text-sm text-text-muted mt-1">
@@ -133,13 +134,9 @@ export function SourcePicker({
                   {ns.classification === "restricted" ? " · restricted" : ""}
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => open(ns)}
-                className="shrink-0 text-sm rounded-lg border border-border-strong px-3 py-1.5 text-text hover:bg-surface-2"
-              >
+              <Button type="secondary" htmlType="button" className="shrink-0" onClick={() => open(ns)}>
                 Open
-              </button>
+              </Button>
             </li>
           ))}
         </ul>

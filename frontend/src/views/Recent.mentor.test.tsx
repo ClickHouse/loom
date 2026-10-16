@@ -131,7 +131,8 @@ describe("Memories: mentor panel", () => {
     expect(mentorBrief).not.toHaveBeenCalled();
 
     // First ask: no agent typed — the server picks the most active writer.
-    await userEvent.selectOptions(within(panel).getByLabelText("Mentor window"), String(30 * 86_400));
+    await userEvent.click(within(panel).getByLabelText("Mentor window"));
+    await userEvent.click(await screen.findByText("30 days"));
     await userEvent.click(within(panel).getByRole("button", { name: /Ask the mentor/ }));
 
     await waitFor(() => expect(mentorBrief).toHaveBeenCalledTimes(1));
@@ -153,10 +154,11 @@ describe("Memories: mentor panel", () => {
     expect(summary).not.toHaveTextContent("erasure");
     // After the first brief the agent control is a picker over the namespace's writers.
     const picker = within(panel).getByLabelText("Agent");
-    expect(picker).toBeInstanceOf(HTMLSelectElement);
-    if (!(picker instanceof HTMLSelectElement)) return;
-    expect(Array.from(picker.options).map((o) => o.value)).toEqual(["sre-agent", "claude-code"]);
-    await userEvent.selectOptions(picker, "claude-code");
+    expect(picker).toHaveTextContent("sre-agent");
+    await userEvent.click(picker);
+    const options = Array.from(document.querySelectorAll("[cui-select-item]"));
+    expect(options.map((o) => o.getAttribute("data-value"))).toEqual(["sre-agent", "claude-code"]);
+    await userEvent.click(await screen.findByText("claude-code"));
     await userEvent.click(within(panel).getByRole("button", { name: /Ask again/ }));
     await waitFor(() => expect(mentorBrief).toHaveBeenCalledTimes(2));
     expect(vi.mocked(mentorBrief).mock.calls[1][1]).toMatchObject({ agent: "claude-code" });

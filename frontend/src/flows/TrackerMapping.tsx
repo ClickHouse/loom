@@ -11,7 +11,10 @@
  * a PR's state from merged/closed …). Nothing here is SQL.
  */
 import { useState } from "react";
-import { ChevronRight } from "lucide-react";
+import { Badge } from "@clickhouse/click-ui/Badge";
+import { Button } from "@clickhouse/click-ui/Button";
+import { Select } from "@clickhouse/click-ui/Select";
+import { TextField } from "@clickhouse/click-ui/TextField";
 import {
   describeExpr,
   refExpr,
@@ -27,8 +30,6 @@ import {
   type TableMapping,
 } from "../lib/trackerSources";
 
-const SELECT =
-  "min-h-9 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 text-sm text-[var(--color-text)] max-w-full";
 const TYPE_VALUES = [
   "fixes",
   "related_to",
@@ -136,36 +137,36 @@ function RoleCard({
   const hidden = fields.length - shown.length;
   const id = `map-${role}`;
   return (
-    <section aria-labelledby={`${id}-h`} className="rounded-lg border border-[var(--color-border)] p-3 space-y-2">
+    <section aria-labelledby={`${id}-h`} className="rounded-lg border border-border p-3 space-y-2">
       <div className="flex flex-wrap items-center gap-2">
         <h3 id={`${id}-h`} className="text-sm font-medium">
           {label.title}
         </h3>
-        <span className="text-xs text-[var(--color-text-muted)] min-w-0">
+        <span className="text-xs text-text-muted min-w-0">
           — {label.hint}
           {label.required ? "" : " (optional)"}
         </span>
-        <select
+        <Select
           id={`${id}-table`}
-          aria-label={`${label.title}: your table`}
-          className={`${SELECT} ml-auto`}
+          className="ml-auto w-64 max-w-full"
+          triggerProps={{ "aria-label": `${label.title}: your table` }}
           value={value?.source.split(".").pop() ?? ""}
-          onChange={(e) => pick(e.target.value)}
+          onSelect={pick}
         >
-          <option value="">{label.required ? "Choose a table…" : "None"}</option>
+          <Select.Item value="">{label.required ? "Choose a table…" : "None"}</Select.Item>
           {tables.map((t) => (
-            <option key={t.table} value={t.table}>
+            <Select.Item key={t.table} value={t.table}>
               {t.table} · {t.rows.toLocaleString()} rows
-            </option>
+            </Select.Item>
           ))}
-        </select>
+        </Select>
       </div>
       {value && (
         <>
           {role === "edges" &&
             proposal?.roles.edges_derived_from &&
             value.source.endsWith(`.${proposal.roles.edges}`) && (
-              <p className="text-xs text-[var(--color-text-muted)]">
+              <p className="text-xs text-text-muted">
                 Derived from <span className="font-mono">{proposal.roles.edges_derived_from}</span>: each change links
                 to the item it names.
               </p>
@@ -194,15 +195,15 @@ function RoleCard({
             ))}
           </div>
           {(hidden > 0 || more) && (
-            <button
-              type="button"
+            <Button
+              type="empty"
+              htmlType="button"
+              iconLeft={more ? "chevron-down" : "chevron-right"}
               aria-expanded={more}
               onClick={() => setMore((v) => !v)}
-              className="inline-flex items-center gap-1 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] min-h-8"
             >
-              <ChevronRight size={12} aria-hidden="true" className={more ? "rotate-90" : ""} />{" "}
               {more ? "Fewer fields" : `${hidden} more field${hidden === 1 ? "" : "s"}`}
-            </button>
+            </Button>
           )}
         </>
       )}
@@ -229,10 +230,10 @@ function FieldRow({
 }) {
   const fid = `f-${role}-${spec.key}`;
   const labelEl = (
-    <label htmlFor={fid} className="text-xs text-[var(--color-text-muted)]">
+    <label htmlFor={fid} className="text-xs text-text-muted">
       {spec.label}
       {spec.core && (
-        <span aria-hidden="true" className="text-[var(--color-warn)]">
+        <span aria-hidden="true" className="text-warn">
           {" "}
           *
         </span>
@@ -241,11 +242,11 @@ function FieldRow({
     </label>
   );
   const badge = confidence && (
-    <span
-      className={`text-2xs rounded px-1 ${confidence === "high" ? "text-[var(--color-success)]" : "text-[var(--color-text-subtle)]"}`}
-    >
-      {confidence === "high" ? "matched" : "guessed"}
-    </span>
+    <Badge
+      size="sm"
+      state={confidence === "high" ? "success" : "neutral"}
+      text={confidence === "high" ? "matched" : "guessed"}
+    />
   );
   if (spec.kind === "ref") {
     const parts = refParts(expr);
@@ -282,60 +283,60 @@ function FieldRow({
           {expr !== undefined && !parts ? (
             <>
               <span className="font-mono text-xs">{describeExpr(expr)}</span>
-              <button type="button" className="text-xs underline" onClick={() => onChange(undefined)}>
-                change
-              </button>
+              <Button type="empty" htmlType="button" onClick={() => onChange(undefined)}>
+                Change
+              </Button>
             </>
           ) : (
             <>
-              <select
+              <Select
                 id={fid}
-                aria-label={`${spec.label}: repository`}
-                className={SELECT}
+                className="w-44"
+                triggerProps={{ "aria-label": `${spec.label}: repository` }}
                 value={repoValue}
-                onChange={(e) => set({ repo: e.target.value })}
+                onSelect={(v) => set({ repo: v })}
               >
-                <option value="fixed">one repository:</option>
+                <Select.Item value="fixed">one repository:</Select.Item>
                 {cols.map((c) => (
-                  <option key={c.name} value={`col:${c.name}`}>
+                  <Select.Item key={c.name} value={`col:${c.name}`}>
                     {c.name}
-                  </option>
+                  </Select.Item>
                 ))}
-              </select>
+              </Select>
               {(!parts || "fixed" in parts.repo) && (
-                <input
+                <TextField
                   aria-label={`${spec.label}: fixed repository`}
-                  className={`${SELECT} w-40 font-mono`}
+                  className="w-40"
                   placeholder="Org/repo"
                   value={parts && "fixed" in parts.repo ? parts.repo.fixed : ""}
-                  onChange={(e) => set({ fixed: e.target.value })}
+                  onChange={(v) => set({ fixed: v })}
                 />
               )}
               <span aria-hidden="true" className="font-mono text-xs">
                 #
               </span>
-              <select
-                aria-label={`${spec.label}: number`}
-                className={SELECT}
+              <Select
+                className="w-56"
+                triggerProps={{ "aria-label": `${spec.label}: number` }}
                 value={numberValue}
-                onChange={(e) => set({ number: e.target.value })}
+                onSelect={(v) => set({ number: v })}
               >
-                <option value="">number column…</option>
+                <Select.Item value="">number column…</Select.Item>
                 {cols.map((c) => (
-                  <option key={c.name} value={`col:${c.name}`}>
+                  <Select.Item key={c.name} value={`col:${c.name}`}>
                     {c.name} · {shortType(c.type)}
-                  </option>
+                  </Select.Item>
                 ))}
-                <optgroup label="The number at the end of a key ('HD-7' → 7)">
+                <Select.Group heading="The number at the end of a key ('HD-7' → 7)">
                   {cols
                     .filter((c) => /String/.test(c.type))
                     .map((c) => (
-                      <option key={`d-${c.name}`} value={`digits:${c.name}`}>
+                      <Select.Item key={`d-${c.name}`} value={`digits:${c.name}`}>
                         number in {c.name}
-                      </option>
+                      </Select.Item>
                     ))}
-                </optgroup>
-              </select>
+                </Select.Group>
+              </Select>
             </>
           )}
           {badge}
@@ -356,32 +357,32 @@ function FieldRow({
       <>
         {labelEl}
         <div className="flex flex-wrap items-center gap-1.5">
-          <select
+          <Select
             id={fid}
-            className={SELECT}
+            className="w-56"
             value={cur}
-            onChange={(e) => {
-              const v = e.target.value;
+            onSelect={(v) => {
+              if (v === "expr") return;
               onChange(v === "" ? undefined : v.startsWith("col:") ? v.slice(4) : { lit: v.slice(4) });
             }}
           >
-            <option value="">choose…</option>
-            <optgroup label="Always">
+            <Select.Item value="">choose…</Select.Item>
+            <Select.Group heading="Always">
               {TYPE_VALUES.map((t) => (
-                <option key={t} value={`lit:${t}`}>
+                <Select.Item key={t} value={`lit:${t}`}>
                   {t}
-                </option>
+                </Select.Item>
               ))}
-            </optgroup>
-            <optgroup label="From a column">
+            </Select.Group>
+            <Select.Group heading="From a column">
               {cols.map((c) => (
-                <option key={c.name} value={`col:${c.name}`}>
+                <Select.Item key={c.name} value={`col:${c.name}`}>
                   {c.name}
-                </option>
+                </Select.Item>
               ))}
-            </optgroup>
-            {cur === "expr" && <option value="expr">{describeExpr(expr)}</option>}
-          </select>
+            </Select.Group>
+            {cur === "expr" && <Select.Item value="expr">{describeExpr(expr)}</Select.Item>}
+          </Select>
           {badge}
         </div>
       </>
@@ -392,24 +393,22 @@ function FieldRow({
     <>
       {labelEl}
       <div className="flex flex-wrap items-center gap-1.5 min-w-0">
-        <select
+        <Select
           id={fid}
-          className={SELECT}
+          className="w-56"
           value={custom ? "__custom" : typeof expr === "string" ? expr : ""}
-          onChange={(e) =>
-            onChange(e.target.value === "" ? undefined : e.target.value === "__custom" ? expr : e.target.value)
-          }
+          onSelect={(v) => onChange(v === "" ? undefined : v === "__custom" ? expr : v)}
         >
-          <option value="">{spec.core ? "choose a column…" : "Loom default"}</option>
+          <Select.Item value="">{spec.core ? "choose a column…" : "Loom default"}</Select.Item>
           {cols.map((c) => (
-            <option key={c.name} value={c.name}>
+            <Select.Item key={c.name} value={c.name}>
               {c.name} · {shortType(c.type)}
-            </option>
+            </Select.Item>
           ))}
-          {custom && <option value="__custom">{describeExpr(expr)}</option>}
-        </select>
+          {custom && <Select.Item value="__custom">{describeExpr(expr)}</Select.Item>}
+        </Select>
         {badge}
-        {spec.hint && <span className="text-2xs text-[var(--color-text-subtle)] min-w-0">{spec.hint}</span>}
+        {spec.hint && <span className="text-2xs text-text-subtle min-w-0">{spec.hint}</span>}
       </div>
     </>
   );

@@ -327,8 +327,9 @@ export default function App() {
           const target = landingTarget(saved, claims, mine);
           setIdentity({ org: effectiveOrg, namespace: target.namespace ?? "", agent: "loom-ui" });
           if (target.namespace === null) {
+            // Setup's notice says how to get in and opens the picker on request; opened here
+            // it would cover that notice's actions.
             bootView("setup");
-            useStore.getState().openNamespacePicker(true);
             toast(
               "Your token can reach no namespace yet — join one from Repositories or Spaces (namespace picker → Browse and join)",
               "error",
@@ -393,7 +394,7 @@ export default function App() {
   }
   if (!authed && isProxyMode()) {
     return (
-      <main className="min-h-screen grid place-items-center text-base text-[var(--color-text-muted)]">
+      <main className="min-h-screen grid place-items-center text-sm text-text-muted">
         <h1 className="sr-only">Loom</h1>
         Proxy auth failed — check your gateway session.
       </main>
@@ -401,7 +402,7 @@ export default function App() {
   }
   if (!identity || !whoami_) {
     return (
-      <main className="min-h-screen grid place-items-center text-base text-[var(--color-text-muted)]" aria-busy="true">
+      <main className="min-h-screen grid place-items-center text-sm text-text-muted" aria-busy="true">
         <h1 className="sr-only">Loom</h1>
         Loading…
       </main>
@@ -409,10 +410,10 @@ export default function App() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-[var(--color-bg)] text-[var(--color-text)]">
+    <div className="h-screen flex flex-col bg-bg text-text">
       <a
         href="#main"
-        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[60] focus:px-3 focus:py-1.5 focus:bg-[var(--color-accent)] focus:text-[var(--color-on-accent)] focus:rounded-md focus:shadow-lg text-xs font-medium"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[60] focus:px-3 focus:py-1.5 focus:bg-accent focus:text-on-accent focus:rounded-sm focus:shadow-lg text-xs font-medium"
       >
         Skip to main content
       </a>

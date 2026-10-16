@@ -1,5 +1,11 @@
 import { useMemo, useState } from "react";
-import { Users as UsersIcon, RefreshCw, Shield, Crown, Clock } from "lucide-react";
+import { Badge } from "@clickhouse/click-ui/Badge";
+import { Button } from "@clickhouse/click-ui/Button";
+import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
+import { Checkbox } from "@clickhouse/click-ui/Checkbox";
+import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
+import { Table } from "@clickhouse/click-ui/Table";
+import { TextField } from "@clickhouse/click-ui/TextField";
 import { useStore, useIdentity } from "../../lib/state";
 import { hasOrgAdminClaim } from "../../lib/role";
 import { adminListUsers, claimRelease, type AdminUserRow, type AdminUsersResult } from "../../api";
@@ -58,7 +64,7 @@ export function Users() {
     return (
       <PageContainer>
         <EmptyState
-          icon={Shield}
+          icon="secure"
           title="Operators only"
           description="The Users view shows every account in the org. It's gated to platform / org admins — the operators running this Loom. Your token doesn't carry that role."
         />
@@ -70,12 +76,12 @@ export function Users() {
     <PageContainer>
       <div className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
-          <UsersIcon size={20} /> Users
+          <Icon name="users" size="md" aria-hidden="true" /> Users
         </h1>
         <div className="mt-1">
           <ScopeBadge kind="namespace" value={identity.namespace} />
         </div>
-        <p className="text-sm text-[var(--color-text-muted)] mt-1 max-w-2xl">
+        <p className="text-sm text-text-muted mt-1 max-w-2xl">
           Every subject in <span className="font-mono">{identity.org}</span> with namespace grants + last-activity. Use
           this to answer "who has access to X" and "when was Y last on."
         </p>
@@ -83,46 +89,32 @@ export function Users() {
 
       {data && (
         <div className="flex flex-wrap items-center gap-2 mb-4">
-          <FilterChip
-            label="All"
-            count={data.users.length}
-            active={filter === "all"}
-            onClick={() => setFilter("all")}
-          />
-          <FilterChip
-            label="Pending elevation"
-            count={data.total_pending_elevations}
-            active={filter === "pending"}
-            onClick={() => setFilter("pending")}
-            tone={data.total_pending_elevations > 0 ? "warn" : "muted"}
-            icon={<Clock size={11} />}
-          />
-          <FilterChip
-            label="Active last 7d"
-            count={data.total_active_last_7d}
-            active={filter === "active7d"}
-            onClick={() => setFilter("active7d")}
+          <ButtonGroup
+            aria-label="Filter users"
+            selected={filter}
+            onClick={(value) => setFilter(value as Filter)}
+            options={[
+              { value: "all", label: <FilterLabel label="All" count={data.users.length} /> },
+              {
+                value: "pending",
+                label: <FilterLabel label="Pending elevation" count={data.total_pending_elevations} icon="clock" />,
+              },
+              { value: "active7d", label: <FilterLabel label="Active last 7d" count={data.total_active_last_7d} /> },
+            ]}
           />
           <div className="flex-1" />
-          <label className="inline-flex items-center gap-2 text-xs cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={includeServiceAccounts}
-              onChange={(e) => setIncludeServiceAccounts(e.target.checked)}
-            />
-            Include service accounts
-          </label>
-          <button
-            type="button"
-            onClick={() => load()}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-[var(--color-border)] rounded-md hover:bg-[var(--color-surface-2)]"
-          >
-            <RefreshCw size={12} /> Refresh
-          </button>
+          <Checkbox
+            label="Include service accounts"
+            checked={includeServiceAccounts}
+            onCheckedChange={(x) => setIncludeServiceAccounts(x === true)}
+          />
+          <Button type="secondary" htmlType="button" iconLeft="refresh" onClick={() => load()}>
+            Refresh
+          </Button>
         </div>
       )}
 
-      {error && <EmptyState icon={UsersIcon} title="Couldn't load" description={error} />}
+      {error && <EmptyState icon="users" title="Couldn't load" description={error} />}
       {!error && data === null && (
         <div className="space-y-2">
           <Skeleton className="h-14" />
@@ -132,7 +124,7 @@ export function Users() {
       )}
       {!error && data !== null && data.users.length === 0 && (
         <EmptyState
-          icon={UsersIcon}
+          icon="users"
           title="No accounts yet"
           description="When users sign up in the dashboard or get granted on a namespace, they'll appear here."
         />
@@ -140,10 +132,8 @@ export function Users() {
       {!error && data !== null && data.users.length > 0 && (
         <div className="space-y-2">
           {data.platform_admins_configured.length > 0 && (
-            <div className="mb-3 text-xs text-[var(--color-text-muted)]">
-              <span className="font-medium text-[var(--color-text)]">
-                Configured platform admins (LOOM_PLATFORM_ADMINS):
-              </span>{" "}
+            <div className="mb-3 text-xs text-text-muted">
+              <span className="font-medium text-text">Configured platform admins (LOOM_PLATFORM_ADMINS):</span>{" "}
               {data.platform_admins_configured.map((e, i) => (
                 <span key={e} className="font-mono">
                   {i > 0 && ", "}
@@ -155,14 +145,10 @@ export function Users() {
 
           <UserListTable data={data} filter={filter} />
 
-          <div className="mt-3 text-2xs text-[var(--color-text-muted)]">
+          <div className="mt-3 text-2xs text-text-muted">
             {data.total} account{data.total === 1 ? "" : "s"} shown. To promote someone to platform admin, add their
-            email to{" "}
-            <code className="font-mono text-2xs bg-[var(--color-surface-2)] px-1 py-0.5 rounded">
-              LOOM_PLATFORM_ADMINS
-            </code>{" "}
-            in <code className="font-mono text-2xs bg-[var(--color-surface-2)] px-1 py-0.5 rounded">.env</code> and have
-            them re-login.
+            email to <code className="font-mono text-2xs bg-surface-2 px-1 py-0.5 rounded">LOOM_PLATFORM_ADMINS</code>{" "}
+            in <code className="font-mono text-2xs bg-surface-2 px-1 py-0.5 rounded">.env</code> and have them re-login.
           </div>
         </div>
       )}
@@ -219,74 +205,43 @@ function ClaimReleaseSection() {
 
   return (
     <section className="mt-8">
-      <h2 className="text-md font-semibold mb-3">Release a namespace claim</h2>
-      <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
-        <div className="text-sm text-[var(--color-text-muted)] mb-4">
+      <h2 className="text-lg font-semibold mb-3">Release a namespace claim</h2>
+      <div className="rounded-2xl border border-border bg-surface p-5">
+        <div className="text-sm text-text-muted mb-4">
           Release a namespace whose owner lost their password: its grants are revoked and it is deactivated. Existing
           memories under it are preserved, and the name stays reserved.
         </div>
-        <input
-          aria-label="Namespace to release"
-          value={ns}
-          onChange={(e) => setNs(e.target.value)}
-          placeholder="namespace to release (e.g. alice)"
-          className="w-full px-3 py-2 text-base font-mono rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] outline-none focus:border-[var(--color-accent)] mb-2"
-        />
-        <input
-          aria-label="Reason for releasing the claim"
-          value={reason}
-          onChange={(e) => setReason(e.target.value)}
-          placeholder="Reason (audit trail)"
-          className="w-full px-3 py-2 text-base rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] outline-none focus:border-[var(--color-accent)] mb-3"
-        />
-        <button
-          type="button"
-          onClick={run}
-          disabled={busy || !ns.trim()}
-          className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium border border-[var(--color-danger)]/60 text-[var(--color-danger)] hover:bg-[var(--color-surface-2)] rounded-md disabled:opacity-50"
-        >
-          {busy ? "Releasing…" : "Release claim"}
-        </button>
-        {result && (
-          <div className="mt-3 px-3 py-2 text-xs text-[var(--color-success)] bg-[var(--color-surface-2)] rounded-md">
-            {result}
-          </div>
-        )}
+        <div className="space-y-2 mb-3">
+          <TextField
+            aria-label="Namespace to release"
+            value={ns}
+            onChange={(value) => setNs(value)}
+            placeholder="namespace to release (e.g. alice)"
+          />
+          <TextField
+            aria-label="Reason for releasing the claim"
+            value={reason}
+            onChange={(value) => setReason(value)}
+            placeholder="Reason (audit trail)"
+          />
+        </div>
+        <Button type="danger" htmlType="button" onClick={run} loading={busy} disabled={busy || !ns.trim()}>
+          Release claim
+        </Button>
+        {result && <div className="mt-3 px-3 py-2 text-xs text-success bg-surface-2 rounded-md">{result}</div>}
       </div>
     </section>
   );
 }
 
-function FilterChip({
-  label,
-  count,
-  active,
-  onClick,
-  tone = "default",
-  icon,
-}: {
-  label: string;
-  count: number;
-  active: boolean;
-  onClick: () => void;
-  tone?: "default" | "warn" | "muted";
-  icon?: React.ReactNode;
-}) {
-  const toneCls = active
-    ? "bg-[var(--color-accent)] text-[var(--color-on-accent)] border-[var(--color-accent)]"
-    : tone === "warn" && count > 0
-      ? "bg-[var(--color-warn)]/10 text-[var(--color-warn)] border-[var(--color-warn)]/40 hover:bg-[var(--color-warn)]/15"
-      : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:bg-[var(--color-surface-2)]";
+// ButtonGroup draws an option's `icon` only in icon-only mode, so the label carries it.
+function FilterLabel({ label, count, icon }: { label: string; count: number; icon?: IconName }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md border transition-colors ${toneCls}`}
-    >
-      {icon}
-      <span>{label}</span>
-      <span className={`tabular ${active ? "opacity-90" : "opacity-70"}`}>{count}</span>
-    </button>
+    <span className="inline-flex items-center gap-1.5">
+      {icon && <Icon name={icon} size="xs" aria-hidden="true" />}
+      {label}
+      <span className="tabular">{count}</span>
+    </span>
   );
 }
 
@@ -302,94 +257,71 @@ function UserListTable({ data, filter }: { data: AdminUsersResult; filter: Filte
     return data.users;
   }, [data, filter, sevenDaysMs]);
 
-  if (rows.length === 0) {
-    return (
-      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-6 text-sm text-[var(--color-text-muted)] text-center">
-        {filter === "pending"
+  return (
+    <Table
+      size="sm"
+      noDataMessage={
+        filter === "pending"
           ? "No pending elevation requests."
           : filter === "active7d"
             ? "No users active in the last 7 days."
-            : "No users to show."}
-      </div>
-    );
-  }
-
-  return (
-    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-      <table className="w-full text-sm">
-        <thead className="bg-[var(--color-surface-2)]">
-          <tr className="text-left text-xs text-[var(--color-text-muted)]">
-            <th className="px-4 py-2.5">Subject</th>
-            <th className="px-4 py-2.5">Namespaces</th>
-            <th className="px-4 py-2.5">Auth</th>
-            <th className="px-4 py-2.5 text-right">Last active</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((u: AdminUserRow) => (
-            <tr key={u.subject} className="border-t border-[var(--color-border)] align-top">
-              <td className="px-4 py-3">
+            : "No users to show."
+      }
+      headers={[{ label: "Subject" }, { label: "Namespaces" }, { label: "Auth" }, { label: "Last active" }]}
+      rows={rows.map((u: AdminUserRow) => ({
+        id: u.subject,
+        items: [
+          {
+            label: (
+              <div>
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <span className="font-mono text-sm">{u.subject}</span>
-                  {u.is_platform_admin && (
-                    <span
-                      title="Platform admin"
-                      className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-2xs font-semibold bg-[var(--color-accent-soft)] text-[var(--color-accent)] border border-[var(--color-accent)]/30"
-                    >
-                      <Crown size={10} /> ADMIN
-                    </span>
-                  )}
+                  {u.is_platform_admin && <Badge text="Admin" state="info" size="sm" title="Platform admin" />}
                   {u.grants.some((g) => g.pending_role) && (
-                    <span
-                      title="Has a pending elevation request"
-                      className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-2xs font-semibold bg-[var(--color-warn)]/10 text-[var(--color-warn)] border border-[var(--color-warn)]/30"
-                    >
-                      <Clock size={10} /> PENDING
-                    </span>
+                    <Badge text="Pending" state="warning" size="sm" title="Has a pending elevation request" />
                   )}
                 </div>
-                {u.contact_email && (
-                  <div className="text-2xs text-[var(--color-text-muted)] mt-0.5">{u.contact_email}</div>
-                )}
-              </td>
-              <td className="px-4 py-3">
-                <div className="flex flex-wrap gap-1.5">
-                  {u.grants.length === 0 && <span className="text-2xs text-[var(--color-text-muted)]">—</span>}
-                  {u.grants.map((g) => (
-                    <span
-                      key={`${g.namespace}-${g.role}`}
-                      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs font-mono ${
-                        g.pending_role
-                          ? "bg-[var(--color-warn)]/10 text-[var(--color-text)] border border-[var(--color-warn)]/40"
-                          : g.is_owner
-                            ? "bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-accent)]/40"
-                            : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border border-[var(--color-border)]"
-                      }`}
-                      title={
-                        g.pending_role
-                          ? `Pending elevation: ${g.role} → ${g.pending_role}`
-                          : `${g.is_owner ? "Owner" : "Grant"}: ${g.role}`
-                      }
-                    >
-                      {g.namespace}
-                      <span className="opacity-60">·</span>
-                      <span className="text-2xs">
-                        {g.pending_role ? `${g.role} → ${g.pending_role}` : `${g.role}${g.is_owner ? "·owner" : ""}`}
+                {u.contact_email && <div className="text-2xs text-text-muted mt-0.5">{u.contact_email}</div>}
+              </div>
+            ),
+            overflowMode: "wrap",
+          },
+          {
+            label: (
+              <div className="flex flex-wrap gap-1.5">
+                {u.grants.length === 0 && <span className="text-2xs text-text-muted">—</span>}
+                {u.grants.map((g) => (
+                  <Badge
+                    key={`${g.namespace}-${g.role}`}
+                    size="sm"
+                    state={g.pending_role ? "warning" : g.is_owner ? "info" : "neutral"}
+                    title={
+                      g.pending_role
+                        ? `Pending elevation: ${g.role} → ${g.pending_role}`
+                        : `${g.is_owner ? "Owner" : "Grant"}: ${g.role}`
+                    }
+                    text={
+                      <span className="font-mono">
+                        {g.namespace} ·{" "}
+                        {g.pending_role ? `${g.role} → ${g.pending_role}` : `${g.role}${g.is_owner ? " · owner" : ""}`}
                       </span>
-                    </span>
-                  ))}
-                </div>
-              </td>
-              <td className="px-4 py-3 text-xs text-[var(--color-text-muted)]">
-                {u.has_password_auth ? "password" : "token / SA"}
-              </td>
-              <td className="px-4 py-3 text-xs tabular text-right text-[var(--color-text-muted)] whitespace-nowrap">
+                    }
+                  />
+                ))}
+              </div>
+            ),
+            overflowMode: "wrap",
+          },
+          { label: <span className="text-xs text-text-muted">{u.has_password_auth ? "password" : "token / SA"}</span> },
+          {
+            label: (
+              <span className="text-xs tabular text-text-muted whitespace-nowrap">
                 {u.last_active ? relativeTime(u.last_active) : "never"}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+              </span>
+            ),
+          },
+        ],
+      }))}
+    />
   );
 }

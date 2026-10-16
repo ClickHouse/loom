@@ -127,7 +127,7 @@ Start with docs/index.md (the map) and docs/getting-started/connect-a-coding-age
 - [Add an operation](docs/development/adding-an-operation.md): An operation is declared once, in the registry.
 - [Add language support to the code index](docs/development/adding-language-support.md): The code index reads a repository in two tiers:
 - [Code generation](docs/development/code-generation.md): Several files in the repository are derived from the code: the SDKs' operation tables and wire types, the reference pages, the Codex plugin's copies, the op reach manifest, the schema dump.
-- [Dashboard design](docs/development/dashboard-design.md): The dashboard at `/` uses ClickHouse's design system, Click UI, in its light theme.
+- [Dashboard design](docs/development/dashboard-design.md): The dashboard at `/` is built on ClickHouse's design system, Click UI, in its light theme.
 - [Documentation style guide](docs/development/documentation-style.md): How to place a new page in the right section, write it in the house style, and pass the documentation checks on the first push.
 - [Extend Loom](docs/development/extending-loom.md): Loom has one registry per kind of thing: operations, workers, settings, providers, language lanes, extraction steps and tracker sources.
 - [Local development](docs/development/local-development.md): This page sets up a checkout for working on Loom's code.

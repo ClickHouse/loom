@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ExternalLink, GitBranch, MoreHorizontal, X as XIcon } from "lucide-react";
+import { Button } from "@clickhouse/click-ui/Button";
+import { Dropdown } from "@clickhouse/click-ui/Dropdown";
+import { Icon } from "@clickhouse/click-ui/Icon";
 import {
   getTask,
   listPolicies,
@@ -35,7 +37,10 @@ import {
 } from "../../lib/tasks";
 import { humanizeError } from "../../lib/format";
 import { toast } from "../../components/Toast";
-import { KindTag, PriorityBadge, StatusPill, TqButton } from "./TaskBits";
+import { IconButton } from "../../components/IconButton";
+import { Tip } from "../../components/ui";
+import { KindTag, PriorityBadge, StatusPill } from "./TaskBits";
+import { MenuTrigger } from "../../components/ui/Menu";
 
 /**
  * The detail panel: a document, then the verb. Header — status, kind, priority, title,
@@ -86,7 +91,7 @@ function InputValue({ v }: { v: unknown }) {
     case "url":
       return (
         <a href={s} target="_blank" rel="noreferrer" className="break-all">
-          {s.replace(/^https?:\/\//, "")} <ExternalLink size={10} className="inline" aria-hidden="true" />
+          {s.replace(/^https?:\/\//, "")} <Icon name="popout" size="xs" className="inline" aria-hidden="true" />
         </a>
       );
     case "issue": {
@@ -129,8 +134,8 @@ function Track({
   const ev = policy ? evidenceStatus(policy.require_evidence, task.brief) : null;
   return (
     <Section title="Poster's record in this inbox">
-      {record === undefined && <div className="text-xs text-[var(--color-text-subtle)]">counting…</div>}
-      {record === null && <div className="text-xs text-[var(--color-text-subtle)]">not readable</div>}
+      {record === undefined && <div className="text-xs text-text-subtle">counting…</div>}
+      {record === null && <div className="text-xs text-text-subtle">not readable</div>}
       {record && (
         // biome-ignore lint/a11y/useSemanticElements: a labelled cluster of counts, not form fields
         <div
@@ -148,12 +153,12 @@ function Track({
           ).map(([l, n]) => (
             <div key={l}>
               <div className="text-lg font-semibold leading-5 tabular">{n}</div>
-              <div className="text-2xs text-[var(--color-text-subtle)]">{l}</div>
+              <div className="text-2xs text-text-subtle">{l}</div>
             </div>
           ))}
         </div>
       )}
-      <p className="text-xs text-[var(--color-text-muted)] mt-1.5 m-0">
+      <p className="text-xs text-text-muted mt-1.5 m-0">
         {policy === undefined && "Rule: …"}
         {policy === null && (
           <>
@@ -193,8 +198,8 @@ function Track({
 }
 
 function Timeline({ events, now }: { events: TaskEvent[] | null; now: number }) {
-  if (events === null) return <div className="text-xs text-[var(--color-text-muted)]">Loading…</div>;
-  if (events.length === 0) return <div className="text-xs text-[var(--color-text-subtle)]">No events recorded.</div>;
+  if (events === null) return <div className="text-xs text-text-muted">Loading…</div>;
+  if (events.length === 0) return <div className="text-xs text-text-subtle">No events recorded.</div>;
   const asc = [...events].sort((a, b) => a.seq - b.seq);
   const rows = collapseHeartbeats(asc).reverse();
   return (
@@ -213,8 +218,8 @@ function Timeline({ events, now }: { events: TaskEvent[] | null; now: number }) 
             >
               {kind === "human" ? "h" : kind === "sweeper" ? "s" : "b"}
             </span>
-            <span className="text-[var(--color-text-muted)] min-w-0">
-              <b className="font-medium text-[var(--color-text)]">
+            <span className="text-text-muted min-w-0">
+              <b className="font-medium text-text">
                 {e.collapsed && e.collapsed > 1
                   ? `${e.collapsed} heartbeats`
                   : (EVENT_LABEL[e.event] ?? e.event.replace(/_/g, " "))}
@@ -222,7 +227,7 @@ function Timeline({ events, now }: { events: TaskEvent[] | null; now: number }) 
               {" · "}
               {actorName(e.actor, e.agent)}
               {e.from_status && e.to_status && e.from_status !== e.to_status && (
-                <span className="text-[var(--color-text-subtle)]">
+                <span className="text-text-subtle">
                   {" "}
                   · {e.from_status} → {e.to_status}
                 </span>
@@ -234,7 +239,7 @@ function Timeline({ events, now }: { events: TaskEvent[] | null; now: number }) 
                 </>
               )}
             </span>
-            <span className="text-xs text-[var(--color-text-subtle)] whitespace-nowrap" title={e.ts}>
+            <span className="text-xs text-text-subtle whitespace-nowrap" title={e.ts}>
               {rel(e.ts, now)}
             </span>
           </li>
@@ -245,59 +250,19 @@ function Timeline({ events, now }: { events: TaskEvent[] | null; now: number }) 
 }
 
 function Menu({ items }: { items: Array<{ label: string; onClick: () => void; disabled?: boolean }> }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      const t = e.target instanceof Node ? e.target : null;
-      if (!ref.current?.contains(t)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        setOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey, true);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey, true);
-    };
-  }, [open]);
   return (
-    <div className="relative" ref={ref}>
-      <TqButton
-        tone="ghost"
-        aria-label="More actions"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
-        className="px-2"
-      >
-        <MoreHorizontal size={16} aria-hidden="true" />
-      </TqButton>
-      {open && (
-        <div className="tq-menu" role="menu">
-          {items.map((it) => (
-            <button
-              key={it.label}
-              type="button"
-              role="menuitem"
-              disabled={it.disabled}
-              onClick={() => {
-                setOpen(false);
-                it.onClick();
-              }}
-              className="disabled:opacity-50"
-            >
-              {it.label}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+    <Dropdown modal={false}>
+      <MenuTrigger>
+        <IconButton icon="dots-horizontal" label="More actions" />
+      </MenuTrigger>
+      <Dropdown.Content align="end">
+        {items.map((it) => (
+          <Dropdown.Item key={it.label} disabled={it.disabled} onSelect={it.onClick}>
+            {it.label}
+          </Dropdown.Item>
+        ))}
+      </Dropdown.Content>
+    </Dropdown>
   );
 }
 
@@ -412,45 +377,34 @@ export function TaskPanel({
 
   return (
     <aside className="tq-panel" aria-label="Task detail" data-status={current.status}>
-      <div className="px-3.5 pt-3 pb-2.5 border-b border-[var(--color-border)]">
+      <div className="px-3.5 pt-3 pb-2.5 border-b border-border">
         <div className="flex items-center gap-2 flex-wrap mb-2">
           <StatusPill status={current.status} />
           <KindTag kind={current.kind} />
           <PriorityBadge priority={current.priority} />
           <span className="flex-1" />
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="p-1.5 -mr-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
-          >
-            <XIcon size={16} />
-          </button>
+          <IconButton icon="cross" label="Close" onClick={onClose} />
         </div>
         <h2 className="text-lg font-semibold leading-[22px] m-0 mb-1 [text-wrap:balance] break-words">
           {current.title}
         </h2>
-        <div className="text-xs text-[var(--color-text-subtle)] flex gap-1.5 items-center flex-wrap">
+        <div className="text-xs text-text-subtle flex gap-1.5 items-center flex-wrap">
           {handed ? (
             <>
-              <b className="font-medium text-[var(--color-text-muted)]">from {posterName(current)}</b>
+              <b className="font-medium text-text-muted">from {posterName(current)}</b>
               <span>→ {current.inbox}</span>
             </>
           ) : (
-            <b className="font-medium text-[var(--color-text-muted)]">this agent's own task</b>
+            <b className="font-medium text-text-muted">this agent's own task</b>
           )}
           <span>· posted {rel(current.created_at, now)}</span>
           <span className="font-mono" title={current.task_id}>
             · {shortId(current.task_id)}
           </span>
           {parentTaskId && (
-            <button
-              type="button"
-              onClick={() => onOpenTask(parentTaskId)}
-              className="inline-flex items-center gap-1 underline font-mono"
-            >
-              <GitBranch size={10} aria-hidden="true" /> reassigned from {shortId(parentTaskId)}
-            </button>
+            <Button type="empty" htmlType="button" iconLeft="git-merge" onClick={() => onOpenTask(parentTaskId)}>
+              Reassigned from {shortId(parentTaskId)}
+            </Button>
           )}
         </div>
       </div>
@@ -460,18 +414,16 @@ export function TaskPanel({
         {task?.status === "triage" && <Track record={record} policy={policy} task={task} />}
         <Section title="Objective">
           {task ? (
-            <p className="m-0 text-[var(--color-text-muted)] whitespace-pre-wrap">
-              {brief.objective || (
-                <span className="text-[var(--color-text-subtle)]">The poster left the objective empty.</span>
-              )}
+            <p className="m-0 text-text-muted whitespace-pre-wrap">
+              {brief.objective || <span className="text-text-subtle">The poster left the objective empty.</span>}
             </p>
           ) : (
-            <div className="text-xs text-[var(--color-text-muted)]">Loading…</div>
+            <div className="text-xs text-text-muted">Loading…</div>
           )}
         </Section>
         {brief.criteria.length > 0 && (
           <Section title="Acceptance criteria">
-            <ul className="m-0 pl-[18px] text-[var(--color-text-muted)] list-disc">
+            <ul className="m-0 pl-[18px] text-text-muted list-disc">
               {brief.criteria.map((c, i) => (
                 <li key={i}>{c}</li>
               ))}
@@ -524,7 +476,7 @@ export function TaskPanel({
             current.status === "wont_do" ||
             current.status === "cancelled") && (
             <Section title={reasonTitle}>
-              <p className="m-0 text-[var(--color-text-muted)] whitespace-pre-wrap">{current.reason}</p>
+              <p className="m-0 text-text-muted whitespace-pre-wrap">{current.reason}</p>
             </Section>
           )}
         <Section title="Timeline">
@@ -534,48 +486,68 @@ export function TaskPanel({
 
       {/* biome-ignore lint/a11y/useSemanticElements: a labelled cluster of action buttons, not form fields */}
       <div
-        className="border-t border-[var(--color-border)] px-3.5 py-2.5 flex gap-2 items-center flex-wrap"
+        className="border-t border-border px-3.5 py-2.5 flex gap-2 items-center flex-wrap"
         role="group"
         aria-label="Actions"
       >
         {allowed.has("accept") && (
-          <TqButton tone="primary" onClick={() => act("accept")}>
+          <Button type="primary" htmlType="button" onClick={() => act("accept")}>
             Accept
-          </TqButton>
+          </Button>
         )}
         {allowed.has("start") && (
-          <TqButton tone="primary" onClick={() => act("start")} title="Claim it: to do → in progress">
-            Start
-          </TqButton>
+          <Tip content="Claim it: to do → in progress">
+            <Button type="primary" htmlType="button" onClick={() => act("start")}>
+              Start
+            </Button>
+          </Tip>
         )}
         {allowed.has("complete") && (
-          <TqButton tone="primary" onClick={() => act("complete")}>
+          <Button type="primary" htmlType="button" onClick={() => act("complete")}>
             Mark done…
-          </TqButton>
+          </Button>
         )}
-        {allowed.has("fail") && <TqButton onClick={() => act("fail")}>Fail…</TqButton>}
+        {allowed.has("fail") && (
+          <Button type="secondary" htmlType="button" onClick={() => act("fail")}>
+            Fail…
+          </Button>
+        )}
         {allowed.has("unblock") && (
-          <TqButton tone="primary" onClick={() => act("unblock")}>
+          <Button type="primary" htmlType="button" onClick={() => act("unblock")}>
             Unblock
-          </TqButton>
+          </Button>
         )}
         {allowed.has("resume") && (
-          <TqButton tone="primary" onClick={() => act("resume")}>
+          <Button type="primary" htmlType="button" onClick={() => act("resume")}>
             Resume now
-          </TqButton>
+          </Button>
         )}
-        {allowed.has("defer") && <TqButton onClick={() => act("defer")}>Defer…</TqButton>}
-        {allowed.has("block") && <TqButton onClick={() => act("block")}>Block…</TqButton>}
-        {allowed.has("wont_do") && <TqButton onClick={() => act("wont_do")}>Won't do…</TqButton>}
-        {allowed.has("reopen") && <TqButton onClick={() => act("reopen")}>Reopen…</TqButton>}
+        {allowed.has("defer") && (
+          <Button type="secondary" htmlType="button" onClick={() => act("defer")}>
+            Defer…
+          </Button>
+        )}
+        {allowed.has("block") && (
+          <Button type="secondary" htmlType="button" onClick={() => act("block")}>
+            Block…
+          </Button>
+        )}
+        {allowed.has("wont_do") && (
+          <Button type="secondary" htmlType="button" onClick={() => act("wont_do")}>
+            Won't do…
+          </Button>
+        )}
+        {allowed.has("reopen") && (
+          <Button type="secondary" htmlType="button" onClick={() => act("reopen")}>
+            Reopen…
+          </Button>
+        )}
         {current.status === "deferred" && current.resume_at && (
-          <span className="text-xs text-[var(--color-text-subtle)]">
-            otherwise resumes {rel(current.resume_at, now)}
-          </span>
+          <span className="text-xs text-text-subtle">otherwise resumes {rel(current.resume_at, now)}</span>
         )}
         {current.status === "in_progress" && (
-          <span className="text-xs text-[var(--color-text-subtle)]">
-            owned by <b className="font-medium text-[var(--color-text-muted)]">{current.owner || "—"}</b>
+          <span className="text-xs text-text-subtle">
+            owned by <b className="font-medium text-text-muted">{current.owner || "—"}</b>
             {lease !== null && <> · lease ends in {lease} min</>}
           </span>
         )}

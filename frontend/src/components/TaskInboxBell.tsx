@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { Inbox } from "lucide-react";
+import { Button } from "@clickhouse/click-ui/Button";
+import { Icon } from "@clickhouse/click-ui/Icon";
+import { Popover } from "@clickhouse/click-ui/Popover";
+import { IconButton } from "./IconButton";
+import { CountBadge } from "./PendingApprovalsBell";
 import { taskCounts, type InboxCount } from "../api/tasks";
 import { useVisiblePoll } from "../lib/hooks";
 import { readSession, useAfterPaint, writeSession } from "../lib/afterPaint";
@@ -9,6 +13,7 @@ import { roleOnNamespace } from "../lib/namespaceRole";
 import { isMemoryNamespace } from "../lib/namespace";
 import { attentionByInbox, bellCount } from "../lib/taskBell";
 import { relativeTime } from "../lib/format";
+import { PopoverTrigger } from "./ui/Menu";
 
 // A remembered badge answer is shown until the refresh replaces it — one poll interval.
 const SESSION_TTL_MS = 120_000;
@@ -27,8 +32,6 @@ export function TaskInboxBell() {
   const myNamespaces = useStore((s) => s.myNamespaces);
   const [counts, setCounts] = useState<InboxCount[]>([]);
   const [open, setOpen] = useState(false);
-  const triggerRef = useRef<HTMLButtonElement | null>(null);
-  const dropdownRef = useRef<HTMLDivElement | null>(null);
 
   const ns = identity?.namespace ?? "";
   const roleHere = roleOnNamespace(whoami, myNamespaces, ns);
@@ -63,17 +66,6 @@ export function TaskInboxBell() {
   );
   useVisiblePoll(refresh, 120_000, mayRead);
 
-  useEffect(() => {
-    if (!open) return;
-    const onClick = (e: MouseEvent) => {
-      const t = e.target instanceof Node ? e.target : null;
-      if (triggerRef.current?.contains(t) || dropdownRef.current?.contains(t)) return;
-      setOpen(false);
-    };
-    document.addEventListener("mousedown", onClick);
-    return () => document.removeEventListener("mousedown", onClick);
-  }, [open]);
-
   if (!identity || !mayRead) return null;
 
   const total = bellCount(counts);
@@ -94,79 +86,63 @@ export function TaskInboxBell() {
     useStore.getState().setView("tasks");
   };
 
+  const tip =
+    total > 0 ? `${total} task${total === 1 ? "" : "s"} waiting for a person` : "No tasks waiting for a person";
   return (
-    <div className="relative">
-      <button
-        type="button"
-        ref={triggerRef}
-        onClick={() => setOpen((v) => !v)}
-        className="h-8 w-8 inline-flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-md transition-colors relative"
-        title={
-          total > 0 ? `${total} task${total === 1 ? "" : "s"} waiting for a person` : "No tasks waiting for a person"
-        }
-        aria-label="Tasks waiting for a person"
-        aria-expanded={open}
-      >
-        <Inbox size={15} />
-        {total > 0 && (
-          <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-[16px] px-1 inline-flex items-center justify-center text-2xs font-semibold bg-[var(--color-warn)] text-[var(--color-on-accent)] rounded-full">
-            {total > 99 ? "99+" : total}
-          </span>
-        )}
-      </button>
-      {open && (
-        <div
-          ref={dropdownRef}
-          className="absolute right-0 top-full mt-1 z-50 w-[min(400px,92vw)] max-h-[480px] overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl py-1"
-        >
-          <div className="px-4 py-2.5 border-b border-[var(--color-border)] text-xs text-[var(--color-text-subtle)] font-medium">
-            Tasks waiting · {total}
-          </div>
-          {inboxes.length === 0 && (
-            <div className="px-4 py-6 text-sm text-[var(--color-text-muted)] text-center">
-              Nothing waits for you.
-              <div className="text-2xs text-[var(--color-text-subtle)] mt-1.5">
-                Review items in triage and blocked tasks in the inboxes of <span className="font-mono">{ns}</span> show
-                up here.
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setOpen(false);
-                  useStore.getState().setView("tasks");
-                }}
-                className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)]"
-              >
-                Open Tasks →
-              </button>
+    <Popover open={open} onOpenChange={setOpen}>
+      <span className="relative inline-flex">
+        <PopoverTrigger>
+          <IconButton icon="email" label="Tasks waiting for a person" tooltip={tip} />
+        </PopoverTrigger>
+        {total > 0 && <CountBadge count={total} state="warning" />}
+      </span>
+      <Popover.Content align="end" className="w-[min(400px,92vw)] max-h-[480px] overflow-y-auto">
+        <h2 className="section-label pb-2 border-b border-border">Tasks waiting · {total}</h2>
+        {inboxes.length === 0 && (
+          <div className="py-6 text-sm text-text-muted text-center">
+            Nothing waits for you.
+            <div className="text-xs text-text-subtle mt-1.5">
+              Review items in triage and blocked tasks in the inboxes of <span className="font-mono">{ns}</span> show up
+              here.
             </div>
-          )}
-          {inboxes.map((a) => (
-            <button
-              type="button"
-              key={a.inbox}
-              onClick={() => openInbox(a.inbox)}
-              className="w-full text-left px-4 py-2.5 hover:bg-[var(--color-surface-2)] flex items-start gap-3 transition-colors"
+            <Button
+              type="secondary"
+              htmlType="button"
+              className="mt-3"
+              onClick={() => {
+                setOpen(false);
+                useStore.getState().setView("tasks");
+              }}
             >
-              <Inbox size={13} className="text-[var(--color-text-muted)] shrink-0 mt-0.5" aria-hidden="true" />
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium font-mono break-all">{a.inbox}</div>
-                <div className="text-2xs text-[var(--color-text-muted)] mt-0.5">
-                  {[
-                    a.triage > 0 ? `${a.triage} in triage` : "",
-                    a.blockedHuman > 0 ? `${a.blockedHuman} blocked on a person` : "",
-                    a.blockedOther > 0 ? `${a.blockedOther} blocked on a sender or external event` : "",
-                    a.oldest ? `oldest ${relativeTime(a.oldest)}` : "",
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")}
-                </div>
+              Open Tasks
+            </Button>
+          </div>
+        )}
+        {inboxes.map((a) => (
+          <button
+            type="button"
+            key={a.inbox}
+            onClick={() => openInbox(a.inbox)}
+            className="text-left -mx-2 w-[calc(100%+1rem)] px-2 py-2.5 rounded-sm hover:bg-surface-2 flex items-start gap-3 transition-colors"
+          >
+            <Icon name="email" size="xs" aria-hidden="true" className="mt-1" />
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-medium font-mono break-all">{a.inbox}</div>
+              <div className="text-2xs text-text-muted mt-0.5">
+                {[
+                  a.triage > 0 ? `${a.triage} in triage` : "",
+                  a.blockedHuman > 0 ? `${a.blockedHuman} blocked on a person` : "",
+                  a.blockedOther > 0 ? `${a.blockedOther} blocked on a sender or external event` : "",
+                  a.oldest ? `oldest ${relativeTime(a.oldest)}` : "",
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
               </div>
-              <span className="text-2xs text-[var(--color-text-subtle)] mt-1 shrink-0">Open →</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+            </div>
+            <span className="text-2xs text-text-subtle mt-1 shrink-0">Open →</span>
+          </button>
+        ))}
+      </Popover.Content>
+    </Popover>
   );
 }

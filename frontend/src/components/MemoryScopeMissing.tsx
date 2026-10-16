@@ -1,4 +1,3 @@
-import { Code, Bug, Layers } from "lucide-react";
 import { useStore } from "../lib/state";
 import type { View } from "../lib/state";
 import { kindOf } from "../lib/namespace";
@@ -51,7 +50,7 @@ export function MemoryScopeMissing({ view }: { view: View }) {
   if (!namespace) {
     body = (
       <EmptyState
-        icon={Layers}
+        icon="cards"
         title="No memory namespace to read"
         description={`${title} reads a memory namespace, and your token reaches none yet. Join one from Spaces (namespace picker → Browse and join), or ask for a grant; anything you can already reach is in the namespace menu.`}
         action={{ label: "Browse and join spaces", onClick: () => setView("browse") }}
@@ -60,7 +59,7 @@ export function MemoryScopeMissing({ view }: { view: View }) {
   } else if (kind === "qa") {
     body = (
       <EmptyState
-        icon={Bug}
+        icon="flag"
         title={`${namespace} is a tracker source`}
         description={`It holds issues, pull requests and incidents read live from the tracker, not memories — ${title} has nothing to read there. Its bug board is the Graph view's Patterns mode.`}
         action={{ label: "Open in Patterns", onClick: openPatterns }}
@@ -69,7 +68,7 @@ export function MemoryScopeMissing({ view }: { view: View }) {
   } else {
     body = (
       <EmptyState
-        icon={Code}
+        icon="code"
         title={`${namespace} is a repository index`}
         description={`It holds indexed code, not memories — ${title} has nothing to read there. Search and browse the repository from Repositories.`}
         action={{ label: "Open Repositories", onClick: () => setView("code") }}
@@ -79,18 +78,14 @@ export function MemoryScopeMissing({ view }: { view: View }) {
 
   return (
     <PageContainer>
-      <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+      <h1 className="text-2xl font-semibold">{title}</h1>
       <div className="mt-1 mb-6">
         <ScopeBadge kind="namespace" value={namespace} />
       </div>
       {body}
-      <p className="text-center text-sm text-[var(--color-text-muted)]">
+      <p className="text-center text-sm text-text-muted">
         Reading memories? Pick a memory namespace from the{" "}
-        <button
-          type="button"
-          onClick={() => openNamespacePicker(true)}
-          className="text-[var(--color-accent)] hover:underline"
-        >
+        <button type="button" onClick={() => openNamespacePicker(true)} className="text-link hover:underline">
           namespace menu
         </button>{" "}
         in the header.

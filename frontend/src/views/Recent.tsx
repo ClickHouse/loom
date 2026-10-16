@@ -1,5 +1,10 @@
 import { startTransition, useEffect, useMemo, useRef, useState } from "react";
-import { Clock, Star, Trash2, X as XIcon, Plus, Search, AlertTriangle } from "lucide-react";
+import { Badge } from "@clickhouse/click-ui/Badge";
+import { Button } from "@clickhouse/click-ui/Button";
+import { Checkbox } from "@clickhouse/click-ui/Checkbox";
+import { Icon } from "@clickhouse/click-ui/Icon";
+import { Pagination } from "@clickhouse/click-ui/Pagination";
+import { SearchField } from "@clickhouse/click-ui/SearchField";
 import {
   getMemory,
   listMemories,
@@ -19,7 +24,7 @@ import { useAbortableEffect, useVisiblePoll } from "../lib/hooks";
 import { useStore, useIdentity } from "../lib/state";
 import { MemoryCard } from "../components/MemoryCard";
 import { SearchWhy } from "../components/SearchWhy";
-import { SectionHeading } from "../components/ui";
+import { Chip, SectionHeading } from "../components/ui";
 import { SkeletonCard } from "../components/Skeleton";
 import { EmptyState } from "../components/EmptyState";
 import { toast } from "../components/Toast";
@@ -32,7 +37,7 @@ import { MemoryTabs } from "../components/MemoryTabs";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { NamespaceAuditPanel } from "../components/NamespaceAuditPanel";
 import { MentorPanel } from "../components/MentorPanel";
-import { Tip } from "../components/ui";
+import { Unavailable } from "../components/ui";
 import { READ_ONLY_TIP, canWrite, useNamespaceRole } from "../lib/namespaceRole";
 import { canCall } from "../lib/canCall";
 import { KEYWORD_PAGE, keywordThenRanked, parseSearchQuery } from "../lib/memoriesSearch";
@@ -661,7 +666,7 @@ export function Recent() {
         </div>
         <MemoryTabs active="memories" />
         <EmptyState
-          icon={AlertTriangle}
+          icon="warning"
           title="Couldn't load memories"
           description={loadError.requestId ? `${loadError.text} (request id ${loadError.requestId})` : loadError.text}
           action={{
@@ -686,7 +691,7 @@ export function Recent() {
         </div>
         <MemoryTabs active="memories" />
         <EmptyState
-          icon={Clock}
+          icon="clock"
           title="No memories yet"
           description={
             // Keyed on auth-off, not on the name "local": the namespace an
@@ -734,22 +739,6 @@ export function Recent() {
   const pageCount = showDeleted ? 1 : Math.max(1, Math.ceil((total || entries.length) / PAGE_SIZE));
   const rangeStart = entries.length === 0 ? 0 : page * PAGE_SIZE + 1;
   const rangeEnd = page * PAGE_SIZE + entries.length;
-  // Windowed page numbers: first, a band around current, last — with -1 markers
-  // standing in for elided ranges. Plain const (not a hook — runs after the
-  // early returns above).
-  const pageWindow: number[] = (() => {
-    const around = [0, page - 1, page, page + 1, pageCount - 1]
-      .filter((p) => p >= 0 && p < pageCount)
-      .sort((a, b) => a - b);
-    const out: number[] = [];
-    let prev = -2;
-    for (const p of Array.from(new Set(around))) {
-      if (p - prev > 1) out.push(-1);
-      out.push(p);
-      prev = p;
-    }
-    return out;
-  })();
 
   return (
     <PageContainer className="pb-24">
@@ -758,47 +747,26 @@ export function Recent() {
       <div className="mb-1 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-2">
         <h1 className="text-2xl font-semibold tracking-tight">Memories</h1>
         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-          <span className="text-sm text-[var(--color-text-muted)] tabular whitespace-nowrap">
+          <span className="text-sm text-text-muted tabular whitespace-nowrap">
             {searchActive
               ? `${flatList.length} shown`
               : showDeleted
                 ? `${flatList.length.toLocaleString()} recently deleted`
                 : `Showing ${rangeStart.toLocaleString()}–${rangeEnd.toLocaleString()} of ${(total || entries.length).toLocaleString()}`}
           </span>
-          <button
-            type="button"
+          <Button
+            type="secondary"
+            htmlType="button"
             onClick={() => setShowDeleted((v) => !v)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] transition-colors"
             title="Show memories deleted in the last 14 days; restore from this view"
           >
             {showDeleted ? "Back to live" : "Recently deleted"}
-          </button>
-          {readOnly ? (
-            <>
-              {/* aria-disabled, not disabled: the button stays focusable so the tip can say why. */}
-              <Tip content={READ_ONLY_TIP}>
-                <button
-                  type="button"
-                  aria-disabled="true"
-                  aria-describedby="recent-add-readonly"
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md opacity-50 cursor-not-allowed"
-                >
-                  <Plus size={13} aria-hidden="true" /> Add memory
-                </button>
-              </Tip>
-              <span id="recent-add-readonly" className="sr-only">
-                {READ_ONLY_TIP}
-              </span>
-            </>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setAddOpen(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md hover:bg-[var(--color-accent-strong)] transition-colors"
-            >
-              <Plus size={13} aria-hidden="true" /> Add memory
-            </button>
-          )}
+          </Button>
+          <Unavailable reason={readOnly ? READ_ONLY_TIP : null}>
+            <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setAddOpen(true)}>
+              Add memory
+            </Button>
+          </Unavailable>
         </div>
       </div>
       <div className="mb-3">
@@ -809,14 +777,8 @@ export function Recent() {
       {/* Authoritative counts (server-computed, not the truncated page). */}
       {total > 0 && !searchActive && (
         <div className="mb-5 flex flex-wrap items-center gap-2 text-sm">
-          <span className="inline-flex items-baseline gap-1 rounded-md bg-[var(--color-surface-2)] px-2.5 py-1">
-            <span className="font-semibold tabular text-[var(--color-text)]">{total.toLocaleString()}</span>
-            <span className="text-[var(--color-text-muted)]">total</span>
-          </span>
-          <span className="inline-flex items-baseline gap-1 rounded-md bg-[var(--color-surface-2)] px-2.5 py-1">
-            <span className="font-semibold tabular text-[var(--color-text)]">{todayCount.toLocaleString()}</span>
-            <span className="text-[var(--color-text-muted)]">today</span>
-          </span>
+          <Badge text={`${total.toLocaleString()} total`} state="neutral" />
+          <Badge text={`${todayCount.toLocaleString()} today`} state="neutral" />
         </div>
       )}
 
@@ -836,33 +798,17 @@ export function Recent() {
       />
 
       {/* Inline semantic search — filters the list in place. Press / to focus. */}
-      <div className="relative mb-4">
-        <Search
-          size={15}
-          className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] pointer-events-none"
-          aria-hidden="true"
-        />
-        <input
+      <div className="mb-4">
+        <SearchField
           ref={searchInputRef}
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(value) => setQuery(value)}
           placeholder="Search memories. Try a keyword, or filter with tag:work, agent:claude-desktop…"
           aria-label="Search memories"
-          className="w-full pl-10 pr-9 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-subtle)] text-base focus:border-[var(--color-accent)] outline-none transition-colors"
         />
-        {query && (
-          <button
-            type="button"
-            onClick={() => setQuery("")}
-            className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)] rounded"
-            aria-label="Clear search"
-          >
-            <XIcon size={14} />
-          </button>
-        )}
       </div>
       {searchHits != null && (
-        <div className="-mt-2 mb-3 text-xs text-[var(--color-text-muted)] tabular">
+        <div className="-mt-2 mb-3 text-xs text-text-muted tabular">
           {searching
             ? "Searching…"
             : `${searchSummary(flatList.length, rawQuery, keywordKeys.size, keywordTotal)}${ranking ? " · finding related…" : ""}`}
@@ -871,10 +817,10 @@ export function Recent() {
       {!searching && searchAbstain && (
         <div
           role="status"
-          className="-mt-1 mb-3 px-3 py-2 rounded-lg border border-[var(--color-warn)]/40 bg-[var(--color-warn)]/10 text-xs text-[var(--color-text)] flex items-start gap-2"
+          className="-mt-1 mb-3 px-3 py-2 rounded-lg border border-warn/40 bg-warn/10 text-xs text-text flex items-start gap-2"
         >
-          <span className="font-medium text-[var(--color-warn)] shrink-0">Low confidence</span>
-          <span className="text-[var(--color-text-muted)]">
+          <span className="font-medium text-warn shrink-0">Low confidence</span>
+          <span className="text-text-muted">
             No strong match for "{rawQuery}" — these are best-effort results; treat them as weak.
           </span>
         </div>
@@ -882,11 +828,12 @@ export function Recent() {
       {/* Active query-bar filters as dismissable badges; click removes the token. */}
       {(queryTags.length > 0 || queryAgent) && (
         <div className="-mt-2 mb-3 flex flex-wrap items-center gap-1.5 text-2xs">
-          <span className="text-[var(--color-text-subtle)]">Filtering:</span>
+          <span className="text-text-subtle">Filtering:</span>
           {queryAgent && (
-            <button
-              type="button"
-              onClick={() =>
+            <Chip
+              label={`agent:${queryAgent}`}
+              mono
+              onRemove={() =>
                 setQuery((q) =>
                   q
                     .replace(new RegExp(`\\bagent:${queryAgent}\\b`, "g"), "")
@@ -894,17 +841,14 @@ export function Recent() {
                     .trim(),
                 )
               }
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[var(--color-surface-2)] text-[var(--color-text)] hover:bg-[var(--color-surface-3)]"
-              title="Remove this filter from the query"
-            >
-              agent:{queryAgent} <XIcon size={10} />
-            </button>
+            />
           )}
           {queryTags.map((t) => (
-            <button
-              type="button"
+            <Chip
               key={t}
-              onClick={() =>
+              label={`tag:${t}`}
+              mono
+              onRemove={() =>
                 setQuery((q) =>
                   q
                     .replace(new RegExp(`\\btag:${t}\\b`, "g"), "")
@@ -912,11 +856,7 @@ export function Recent() {
                     .trim(),
                 )
               }
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[var(--color-surface-2)] text-[var(--color-text)] hover:bg-[var(--color-surface-3)]"
-              title="Remove this filter from the query"
-            >
-              tag:{t} <XIcon size={10} />
-            </button>
+            />
           ))}
         </div>
       )}
@@ -924,44 +864,19 @@ export function Recent() {
       {(entries.some((e) => e.pinned) || agentsInList.length > 1 || showDeleted || memoryTagFilter) && (
         <div className="mb-5 flex flex-wrap items-center gap-1">
           {memoryTagFilter && (
-            <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md bg-[var(--color-accent-soft)] text-[var(--color-accent)]">
-              tag: <span className="font-mono">{memoryTagFilter}</span>
-              <button
-                type="button"
-                onClick={() => setMemoryTagFilter(null)}
-                className="ml-1 opacity-70 hover:opacity-100"
-                aria-label="Clear tag filter"
-              >
-                ×
-              </button>
-            </span>
+            <Chip label={`tag:${memoryTagFilter}`} mono selected onRemove={() => setMemoryTagFilter(null)} />
           )}
           {entries.some((e) => e.pinned) && !showDeleted && (
-            <button
-              type="button"
+            <Chip
+              label="Pinned"
+              icon={<Icon name="star" size="xs" aria-hidden="true" />}
+              count={entries.filter((e) => e.pinned).length}
+              selected={pinnedOnly}
               onClick={() => setPinnedOnly((v) => !v)}
-              className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
-                pinnedOnly
-                  ? "bg-warn/15 text-warn"
-                  : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
-              }`}
-            >
-              <Star size={11} className={pinnedOnly ? "fill-warn" : ""} /> Pinned
-              <span className="opacity-70 tabular">{entries.filter((e) => e.pinned).length}</span>
-            </button>
+            />
           )}
           {showDeleted && (
-            <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md bg-[var(--color-warn)]/15 text-[var(--color-warn)]">
-              Recently deleted · 14-day grace
-              <button
-                type="button"
-                onClick={() => setShowDeleted(false)}
-                className="ml-1 opacity-70 hover:opacity-100"
-                aria-label="Show live memories"
-              >
-                ×
-              </button>
-            </span>
+            <Chip label="Recently deleted · 14-day grace" selected onRemove={() => setShowDeleted(false)} />
           )}
           {/* Agent filter chips — only when more than one agent exists.
               Click toggles; clicking the active chip clears the filter. */}
@@ -969,52 +884,32 @@ export function Recent() {
             agentsInList.map(([agent, count]) => {
               const active = agentFilter === agent;
               return (
-                <button
-                  type="button"
+                <Chip
                   key={`a-${agent}`}
+                  label={displayAgent(agent)}
+                  count={count}
+                  selected={active}
+                  tip={`Show only memories written by ${displayAgent(agent)}`}
                   onClick={() => setAgentFilter(active ? null : agent)}
-                  className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
-                    active
-                      ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
-                      : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
-                  }`}
-                  title={`Show only memories written by ${displayAgent(agent)}`}
-                >
-                  {displayAgent(agent)}
-                  <span className="opacity-70 tabular">{count}</span>
-                </button>
+                />
               );
             })}
         </div>
       )}
 
       {selected.size > 0 && (
-        <div className="sticky top-0 z-[2] mb-3 animate-fade-in motion-reduce:animate-none! flex items-center gap-2 p-2.5 rounded-xl border border-[var(--color-accent)] bg-[var(--color-accent-soft)] shadow-sm">
-          <span className="text-sm font-medium text-[var(--color-accent)] tabular">{selected.size} selected</span>
+        <div className="sticky top-0 z-[2] mb-3 animate-fade-in flex items-center gap-2 p-2.5 rounded-xl border border-accent bg-accent-soft shadow-sm">
+          <span className="text-sm font-medium text-accent tabular">{selected.size} selected</span>
           <div className="flex-1" />
-          <button
-            type="button"
-            onClick={bulkPin}
-            disabled={busy}
-            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] border border-[var(--color-border)] disabled:opacity-50"
-          >
-            <Star size={11} /> Pin all
-          </button>
-          <button
-            type="button"
-            onClick={bulkDelete}
-            disabled={busy}
-            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md text-danger bg-danger/15 hover:bg-danger/25 disabled:opacity-50"
-          >
-            <Trash2 size={11} /> Delete all
-          </button>
-          <button
-            type="button"
-            onClick={() => setSelected(new Set())}
-            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
-          >
-            <XIcon size={11} /> Clear
-          </button>
+          <Button type="secondary" htmlType="button" iconLeft="cross" onClick={() => setSelected(new Set())}>
+            Clear
+          </Button>
+          <Button type="secondary" htmlType="button" iconLeft="pin" disabled={busy} onClick={bulkPin}>
+            Pin all
+          </Button>
+          <Button type="danger" htmlType="button" iconLeft="trash" disabled={busy} onClick={bulkDelete}>
+            Delete all
+          </Button>
         </div>
       )}
 
@@ -1024,43 +919,40 @@ export function Recent() {
         entries.length > 0 &&
         (showDeleted ? (
           <div className="py-12 text-center">
-            <div className="mx-auto mb-3 grid place-items-center w-12 h-12 rounded-2xl bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
-              <Trash2 size={20} strokeWidth={1.5} />
+            <div className="mx-auto mb-3 grid place-items-center w-12 h-12 rounded-2xl bg-surface-2">
+              <Icon name="trash" size="md" aria-hidden="true" />
             </div>
             <h2 className="text-lg font-semibold tracking-tight">No recently deleted memories</h2>
-            <p className="mt-1 text-sm text-[var(--color-text-muted)] leading-relaxed">
+            <p className="mt-1 text-sm text-text-muted leading-relaxed">
               Deleted memories stay here for 14 days so you can restore them — nothing has been deleted recently.
             </p>
-            <button
-              type="button"
-              onClick={() => setShowDeleted(false)}
-              className="mt-4 inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] transition-colors"
-            >
+            <Button type="secondary" htmlType="button" onClick={() => setShowDeleted(false)} className="mt-4">
               Back to live
-            </button>
+            </Button>
           </div>
         ) : (
           <div className="py-12 text-center">
-            <div className="mx-auto mb-3 grid place-items-center w-12 h-12 rounded-2xl bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
-              <Clock size={20} strokeWidth={1.5} />
+            <div className="mx-auto mb-3 grid place-items-center w-12 h-12 rounded-2xl bg-surface-2">
+              <Icon name="clock" size="md" aria-hidden="true" />
             </div>
             <h2 className="text-lg font-semibold tracking-tight">Nothing matches your filters</h2>
-            <p className="mt-1 text-sm text-[var(--color-text-muted)] leading-relaxed">
+            <p className="mt-1 text-sm text-text-muted leading-relaxed">
               {(total || entries.length).toLocaleString()} memor{(total || entries.length) === 1 ? "y is" : "ies are"}{" "}
               in this namespace, but none pass the active filters.
             </p>
-            <button
-              type="button"
+            <Button
+              type="secondary"
+              htmlType="button"
+              className="mt-4"
               onClick={() => {
                 setQuery("");
                 setPinnedOnly(false);
                 setAgentFilter(null);
                 setMemoryTagFilter(null);
               }}
-              className="mt-4 inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] transition-colors"
             >
               Clear filters
-            </button>
+            </Button>
           </div>
         ))}
 
@@ -1089,27 +981,23 @@ export function Recent() {
                       // The browser lays out and paints only the rows in view
                       "p-3.5 rounded-xl border flex items-start gap-3 transition-colors [content-visibility:auto] [contain-intrinsic-size:auto_112px]",
                       isSelected
-                        ? "border-[var(--color-accent)] bg-[var(--color-surface)] ring-1 ring-[var(--color-accent)]/40"
+                        ? "border-accent bg-surface ring-1 ring-accent/40"
                         : isActive
-                          ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]"
-                          : "border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-border-strong)]",
-                      isNew ? "animate-fade-in motion-reduce:animate-none! ring-2 ring-[var(--color-accent)]" : "",
-                      isFocused && !isSelected ? "ring-2 ring-[var(--color-accent)]" : "",
+                          ? "border-accent bg-accent-soft"
+                          : "border-border bg-surface hover:border-border-strong",
+                      isNew ? "animate-fade-in ring-2 ring-accent" : "",
+                      isFocused && !isSelected ? "ring-2 ring-accent" : "",
                       isTombstoned ? "opacity-60" : "",
                     ]
                       .filter(Boolean)
                       .join(" ")}
                   >
-                    <input
-                      type="checkbox"
+                    <Checkbox
                       checked={isSelected}
-                      onChange={(ev) => {
-                        ev.stopPropagation();
-                        toggleSelect(e.memory_key);
-                      }}
+                      onCheckedChange={() => toggleSelect(e.memory_key)}
                       onClick={(ev) => ev.stopPropagation()}
                       aria-label={`Select ${e.memory_key}`}
-                      className="mt-1 shrink-0 cursor-pointer"
+                      className="mt-1 shrink-0"
                     />
                     <div className="flex-1 min-w-0">
                       <MemoryCard
@@ -1126,14 +1014,14 @@ export function Recent() {
                         timeMode="absolute"
                       />
                       {searchActive && keywordKeys.has(e.memory_key) ? (
-                        <div className="mt-1 px-2 text-2xs text-[var(--color-text-muted)]" data-testid="search-why">
+                        <div className="mt-1 px-2 text-2xs text-text-muted" data-testid="search-why">
                           contains "{rawQuery.trim()}"
                         </div>
                       ) : (
                         why && <SearchWhy hit={why} rank={(searchHits?.indexOf(e.memory_key) ?? 0) + 1} />
                       )}
                       {isTombstoned && (
-                        <div className="flex items-center justify-between mt-1 px-2 py-1 text-2xs text-[var(--color-text-muted)]">
+                        <div className="flex items-center justify-between mt-1 px-2 py-1 text-2xs text-text-muted">
                           <span>
                             Deleted
                             {e.tombstoned_at
@@ -1146,8 +1034,9 @@ export function Recent() {
                               return ` ${daysLeft} day${daysLeft === 1 ? "" : "s"} left to restore`;
                             })()}
                           </span>
-                          <button
-                            type="button"
+                          <Button
+                            type="empty"
+                            htmlType="button"
                             onClick={async (ev) => {
                               ev.stopPropagation();
                               // Identity carries only (org, namespace, agent);
@@ -1165,10 +1054,9 @@ export function Recent() {
                                 toast("Nothing to restore", "info");
                               }
                             }}
-                            className="px-2 py-0.5 rounded-md text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)] font-medium"
                           >
                             Restore
-                          </button>
+                          </Button>
                         </div>
                       )}
                     </div>
@@ -1181,44 +1069,8 @@ export function Recent() {
       </div>
 
       {!searchActive && pageCount > 1 && (
-        <nav className="mt-8 flex items-center justify-center gap-1.5" aria-label="Pagination">
-          <button
-            type="button"
-            onClick={() => setPage((p) => Math.max(0, p - 1))}
-            disabled={page === 0}
-            className="px-3 py-1.5 text-sm font-medium rounded-md border border-[var(--color-border)] enabled:hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-          >
-            Prev
-          </button>
-          {pageWindow.map((p, i) =>
-            p === -1 ? (
-              <span key={`gap-${i}`} className="px-1.5 text-sm text-[var(--color-text-muted)]">
-                …
-              </span>
-            ) : (
-              <button
-                type="button"
-                key={p}
-                onClick={() => setPage(p)}
-                aria-current={p === page ? "page" : undefined}
-                className={`min-w-[34px] px-2.5 py-1.5 text-sm font-medium rounded-md border transition-colors ${
-                  p === page
-                    ? "border-[var(--color-accent)] bg-[var(--color-accent)] text-[var(--color-on-accent)]"
-                    : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
-                }`}
-              >
-                {(p + 1).toLocaleString()}
-              </button>
-            ),
-          )}
-          <button
-            type="button"
-            onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
-            disabled={page >= pageCount - 1}
-            className="px-3 py-1.5 text-sm font-medium rounded-md border border-[var(--color-border)] enabled:hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-          >
-            Next
-          </button>
+        <nav className="mt-8" aria-label="Pagination">
+          <Pagination totalPages={pageCount} currentPage={page + 1} onChange={(n) => setPage(n - 1)} />
         </nav>
       )}
     </PageContainer>

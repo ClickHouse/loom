@@ -204,7 +204,7 @@ describe("Setup's remembered MCP client", () => {
     render(<Setup />);
     await userEvent.click(await screen.findByRole("button", { name: /Generate token/ }, WAIT));
     const picker = await screen.findByLabelText(/^MCP client/, undefined, WAIT);
-    expect(picker).toHaveValue("claude-desktop");
+    expect(picker).toHaveTextContent("Claude Desktop");
   });
 
   it("a stored id that names no client falls back to the default", async () => {
@@ -213,7 +213,7 @@ describe("Setup's remembered MCP client", () => {
     seed(admin, [], MEMORY_NS);
     render(<Setup />);
     await userEvent.click(await screen.findByRole("button", { name: /Generate token/ }, WAIT));
-    expect(await screen.findByLabelText(/^MCP client/, undefined, WAIT)).toHaveValue("claude-desktop");
+    expect(await screen.findByLabelText(/^MCP client/, undefined, WAIT)).toHaveTextContent("Claude Desktop");
     localStorage.clear();
   });
 });

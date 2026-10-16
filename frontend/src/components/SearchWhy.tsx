@@ -1,3 +1,4 @@
+import { Badge } from "@clickhouse/click-ui/Badge";
 import type { SearchHit } from "../api";
 import { signed, whyTerms } from "../lib/whyNote";
 
@@ -21,21 +22,21 @@ export function SearchWhy({ hit, rank }: SearchWhyProps) {
     .trim();
   return (
     <div
-      className="mt-1 px-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-2xs text-[var(--color-text-muted)] tabular"
+      className="mt-1 px-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-2xs text-text-muted tabular"
       title={explanation || undefined}
       data-testid="search-why"
     >
-      <span className="font-medium text-[var(--color-text)]">#{rank}</span>
+      <span className="font-medium text-text">#{rank}</span>
       {similarity !== null && <span>similarity {similarity.toFixed(2)}</span>}
       {typeof hit.rank_score === "number" && <span>score {hit.rank_score.toFixed(2)}</span>}
       {terms.length === 0 && !explanation && <span className="italic">no ranking terms reported</span>}
       {terms.map((t) => (
-        <span
+        <Badge
           key={t.label}
-          className={`px-1.5 rounded-md bg-[var(--color-surface-2)] ${t.value < 0 ? "text-[var(--color-warn)]" : ""}`}
-        >
-          {t.label} {signed(t.value)}
-        </span>
+          size="sm"
+          state={t.value < 0 ? "warning" : "default"}
+          text={`${t.label} ${signed(t.value)}`}
+        />
       ))}
     </div>
   );

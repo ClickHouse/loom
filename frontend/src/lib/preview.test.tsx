@@ -92,8 +92,7 @@ describe("MemoryCard preview", () => {
 
   it("keeps the layout containment on a standalone card", () => {
     render(<MemoryCard identity={identity} entry={entry} onSelect={() => {}} active={false} value="plain" />);
-    expect(screen.getByRole("button", { name: /alerts\/2026-09-19\/1/ }).className).toContain(
-      "[content-visibility:auto]",
-    );
+    const card = screen.getByRole("button", { name: /alerts\/2026-09-19\/1/ }).closest("[data-memory-key]");
+    expect(card?.className).toContain("[content-visibility:auto]");
   });
 });

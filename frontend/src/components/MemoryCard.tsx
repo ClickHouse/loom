@@ -1,8 +1,10 @@
 import { useMemo, useState } from "react";
-import { Star, ChevronRight, AlertTriangle, ShieldCheck, ShieldAlert } from "lucide-react";
+import { Badge } from "@clickhouse/click-ui/Badge";
+import { Icon } from "@clickhouse/click-ui/Icon";
 import type { Identity, MemoryListEntry } from "../api";
 import { getMemory } from "../api";
 import { AgentBadge } from "./AgentBadge";
+import { Chip } from "./ui";
 import { relativeTime, timeOfDay, truncate, previewValue } from "../lib/format";
 import { detectEncodedValue, detectEncodedRecord } from "../lib/encoded";
 import { useAbortableEffect } from "../lib/hooks";
@@ -87,29 +89,30 @@ export function MemoryCard({
   const value = shown ? shown.value : null;
   const encoded = shown ? shown.encoded : false;
 
+  const card = embedded
+    ? "relative"
+    : `relative p-3.5 rounded-xl border transition-colors [content-visibility:auto] [contain-intrinsic-size:auto_112px] ${
+        active
+          ? "border-accent bg-accent-soft"
+          : "border-border bg-surface hover:border-border-strong hover:bg-surface-2"
+      }`;
+
+  // The card's body is one button stretched over the whole card (its ::after); the tag
+  // chips sit beside it, above the stretch, so no control is nested in another.
   return (
-    <button
-      type="button"
-      data-memory-key={entry.memory_key}
-      onClick={() => onSelect(entry.memory_key)}
-      className={
-        embedded
-          ? "w-full text-left transition group bg-transparent border-0 p-0 cursor-pointer"
-          : `w-full text-left p-3.5 rounded-xl border transition group [content-visibility:auto] [contain-intrinsic-size:auto_112px] ${
-              active
-                ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]"
-                : "border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)]"
-            }`
-      }
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 mb-1.5">
-            <span className="font-mono text-xs text-[var(--color-text-muted)] truncate">{entry.memory_key}</span>
-            {entry.pinned && <Star size={12} className="text-warn fill-warn shrink-0" aria-label="Pinned" />}
+    <div data-memory-key={entry.memory_key} className={`group ${card}`}>
+      <button
+        type="button"
+        onClick={() => onSelect(entry.memory_key)}
+        className="flex w-full items-start justify-between gap-3 text-left bg-transparent border-0 p-0 cursor-pointer after:absolute after:inset-0 after:rounded-xl after:content-['']"
+      >
+        <span className="block min-w-0 flex-1">
+          <span className="flex items-center gap-2 mb-1.5">
+            <span className="font-mono text-xs text-text-muted truncate">{entry.memory_key}</span>
+            {entry.pinned && <Icon name="star" size="xs" color="var(--color-warn)" aria-label="Pinned" />}
             {(entry.verification === "human" || entry.verification === "process") && (
               <span title={`Verified by ${entry.verified_by || "—"}`} className="inline-flex shrink-0">
-                <ShieldCheck size={12} className="text-success" aria-label="Verified" />
+                <Icon name="secure" size="xs" color="var(--color-success)" aria-label="Verified" />
               </span>
             )}
             {entry.verification === "stale" && (
@@ -117,15 +120,15 @@ export function MemoryCard({
                 title={`Verified by ${entry.verified_by || "—"}, then edited — verification is stale`}
                 className="inline-flex shrink-0"
               >
-                <ShieldAlert size={12} className="text-warn" aria-label="Verification stale" />
+                <Icon name="warning" size="xs" color="var(--color-warn)" aria-label="Verification stale" />
               </span>
             )}
             {encoded && (
               <span
                 title="Agent-encoded (base64) value — preview shows the decoded text"
-                className="inline-flex shrink-0 text-xs font-medium text-[var(--color-warn)] border border-[var(--color-warn)] rounded px-1 leading-4"
+                className="inline-flex shrink-0"
               >
-                b64
+                <Badge text="b64" state="warning" size="sm" />
               </span>
             )}
             {hasConflict && (
@@ -133,58 +136,36 @@ export function MemoryCard({
                 title="This memory conflicts with another in the namespace — open to review"
                 className="inline-flex shrink-0"
               >
-                <AlertTriangle size={12} className="text-[var(--color-warn)]" aria-label="Has conflict" />
+                <Icon name="warning" size="xs" color="var(--color-warn)" aria-label="Has conflict" />
               </span>
             )}
-          </div>
-          <div className="text-base text-[var(--color-text)] leading-snug">
-            {value === null ? <span className="text-[var(--color-text-subtle)]">…</span> : truncate(value, 140)}
-          </div>
-          <div className="mt-2 flex items-center gap-2 flex-wrap">
-            {entry.tags &&
-              entry.tags.length > 0 &&
-              entry.tags.slice(0, 4).map((t) =>
-                onTagClick ? (
-                  <button
-                    type="button"
-                    key={t}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onTagClick(t);
-                    }}
-                    className="inline-flex items-center text-2xs text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-accent)] transition-colors cursor-pointer"
-                    title={`Filter by tag: ${t}`}
-                  >
-                    <span className="opacity-50 mr-0.5">#</span>
-                    {t}
-                  </button>
-                ) : (
-                  <span
-                    key={t}
-                    className="inline-flex items-center text-2xs text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded"
-                  >
-                    <span className="opacity-50 mr-0.5">#</span>
-                    {t}
-                  </span>
-                ),
-              )}
-            <span className="text-2xs text-[var(--color-text-subtle)] tabular ml-auto">
-              {timeMode === "absolute" ? timeOfDay(entry.created_at) : relativeTime(entry.created_at)}
-            </span>
-          </div>
-        </div>
-        <div className="flex flex-col items-end gap-1.5 shrink-0">
-          <ChevronRight
-            size={14}
-            className="text-[var(--color-text-subtle)] group-hover:text-[var(--color-text)] transition-colors"
+          </span>
+          <span className="block text-sm text-text leading-snug">
+            {value === null ? <span className="text-text-subtle">…</span> : truncate(value, 140)}
+          </span>
+        </span>
+        <Icon name="chevron-right" size="sm" aria-hidden="true" className="shrink-0" />
+      </button>
+      <div className="relative mt-2 flex items-center gap-2 flex-wrap pointer-events-none">
+        {(entry.tags ?? []).slice(0, 4).map((t) => (
+          <Chip
+            key={t}
+            label={t}
+            icon="#"
+            onClick={onTagClick ? () => onTagClick(t) : undefined}
+            ariaLabel={onTagClick ? `Filter by tag: ${t}` : undefined}
+            className="pointer-events-auto"
           />
-        </div>
+        ))}
+        <span className="text-2xs text-text-subtle tabular ml-auto">
+          {timeMode === "absolute" ? timeOfDay(entry.created_at) : relativeTime(entry.created_at)}
+        </span>
       </div>
       {entry.agent && (
-        <div className="mt-2">
+        <div className="relative mt-2 pointer-events-none">
           <AgentBadge agent={entry.agent} />
         </div>
       )}
-    </button>
+    </div>
   );
 }

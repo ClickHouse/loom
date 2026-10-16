@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
-import { MessagesSquare, Search, X as XIcon, AlertTriangle } from "lucide-react";
+import { Badge } from "@clickhouse/click-ui/Badge";
+import { Button } from "@clickhouse/click-ui/Button";
+import { Icon } from "@clickhouse/click-ui/Icon";
+import { SearchField } from "@clickhouse/click-ui/SearchField";
+import { Select } from "@clickhouse/click-ui/Select";
+import { Switch } from "@clickhouse/click-ui/Switch";
 import {
   searchConversations,
   listConversationThreads,
@@ -19,6 +23,7 @@ import { canCall } from "../lib/canCall";
 import { useNamespaceRole } from "../lib/namespaceRole";
 import { Skeleton } from "../components/Skeleton";
 import { Chip, SectionHeading } from "../components/ui";
+import { Modal } from "../components/ui/Modal";
 import { EmptyState } from "../components/EmptyState";
 import { toast } from "../components/Toast";
 import { displayAgent, relativeTime, truncate, humanizeError, errorRequestId } from "../lib/format";
@@ -36,21 +41,21 @@ const THREADS_FIELDS = ["thread_id", "agent", "msg_count", "title", "last_role",
 // single biggest readability win: a coding chat is otherwise an undifferentiated
 // wall of gray text with code indistinguishable from prose.
 const ROLE_META: Record<string, { label: string; rail: string; card: string }> = {
-  user: { label: "You", rail: "border-l-2 border-[var(--color-accent)]", card: "bg-[var(--color-surface)]" },
+  user: { label: "You", rail: "border-l-2 border-accent", card: "bg-surface" },
   assistant: {
     label: "Assistant",
-    rail: "border-l-2 border-[var(--color-border)]",
-    card: "bg-[var(--color-surface-2)]",
+    rail: "border-l-2 border-border",
+    card: "bg-surface-2",
   },
   system: { label: "System", rail: "", card: "bg-transparent opacity-70" },
-  tool: { label: "Tool", rail: "border-l-2 border-warn/60", card: "bg-[var(--color-surface-2)]" },
+  tool: { label: "Tool", rail: "border-l-2 border-warn/60", card: "bg-surface-2" },
 };
 
 function linkify(text: string) {
   return text.split(/(https?:\/\/[^\s)]+)/g).map((p, i) =>
     /^https?:\/\//.test(p) ? (
-      <a key={i} href={p} target="_blank" rel="noreferrer" className="text-[var(--color-accent)] underline break-all">
-        {p}
+      <a key={i} href={p} target="_blank" rel="noreferrer" className="break-all">
+        {p} <Icon name="popout" size="xs" aria-hidden="true" className="inline" />
       </a>
     ) : (
       <span key={i}>{p}</span>
@@ -61,14 +66,14 @@ function linkify(text: string) {
 function CodeBlock({ code, lang }: { code: string; lang?: string }) {
   return (
     <div className="relative group my-2">
-      {lang && <span className="absolute left-2 top-1 text-xs text-[var(--color-text-subtle)]">{lang}</span>}
+      {lang && <span className="absolute left-2 top-1 text-xs text-text-subtle">{lang}</span>}
       <CopyButton
         text={code}
         label="Copy"
         ariaLabel="Copy code"
-        className="absolute right-2 top-1 inline-flex items-center gap-1 text-2xs px-1.5 py-0.5 rounded bg-[var(--color-surface)] border border-[var(--color-border)] opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
+        className="absolute right-2 top-1 inline-flex items-center gap-1 text-2xs px-1.5 py-0.5 rounded bg-surface border border-border opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
       />
-      <pre className="text-xs font-mono whitespace-pre-wrap break-words bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg p-3 pt-5 overflow-x-auto">
+      <pre className="text-xs font-mono whitespace-pre-wrap break-words bg-surface-2 border border-border rounded-lg p-3 pt-5 overflow-x-auto">
         {code}
       </pre>
     </div>
@@ -81,7 +86,7 @@ function CodeBlock({ code, lang }: { code: string; lang?: string }) {
 function MessageBody({ content }: { content: string }) {
   const segs = content.split(/```/);
   return (
-    <div className="text-sm text-[var(--color-text)] leading-relaxed">
+    <div className="text-sm text-text leading-relaxed">
       {segs.map((seg, i) => {
         if (i % 2 === 1) {
           const nl = seg.indexOf("\n");
@@ -94,7 +99,7 @@ function MessageBody({ content }: { content: string }) {
           <span key={i} className="whitespace-pre-wrap break-words">
             {seg.split(/(`[^`]+`)/g).map((piece, j) =>
               piece.length > 1 && piece.startsWith("`") && piece.endsWith("`") ? (
-                <code key={j} className="text-xs font-mono px-1 rounded bg-[var(--color-surface-2)]">
+                <code key={j} className="text-xs font-mono px-1 rounded bg-surface-2">
                   {piece.slice(1, -1)}
                 </code>
               ) : (
@@ -112,15 +117,17 @@ function ReasoningDisclosure({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="mb-1">
-      <button
-        type="button"
+      <Button
+        type="empty"
+        htmlType="button"
+        iconLeft={open ? "chevron-down" : "chevron-right"}
+        aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
-        className="text-2xs text-[var(--color-text-subtle)] hover:text-[var(--color-text-muted)]"
       >
-        {open ? "▾ Thinking" : "▸ Thinking"}
-      </button>
+        Thinking
+      </Button>
       {open && (
-        <div className="mt-1 text-xs text-[var(--color-text-muted)] italic whitespace-pre-wrap break-words border-l-2 border-[var(--color-border)] pl-2">
+        <div className="mt-1 text-xs text-text-muted italic whitespace-pre-wrap break-words border-l-2 border-border pl-2">
           {text}
         </div>
       )}
@@ -412,30 +419,24 @@ export function Conversations() {
             type="button"
             key={t.thread_id}
             onClick={() => openThreadDialog(t.thread_id, t.agent)}
-            className="w-full text-left p-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-border-strong)] flex items-start gap-3"
+            className="w-full text-left p-3 rounded-xl border border-border bg-surface hover:border-border-strong flex items-start gap-3"
             title="Open this thread"
           >
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 mb-1 text-2xs tabular">
-                <span className="font-mono text-2xs text-[var(--color-text-muted)]">{displayAgent(t.agent)}</span>
-                <span className="text-[var(--color-text-muted)]">·</span>
-                <span className="text-[var(--color-text-muted)]">
+                <span className="font-mono text-2xs text-text-muted">{displayAgent(t.agent)}</span>
+                <span className="text-text-muted">·</span>
+                <span className="text-text-muted">
                   {t.msg_count} msg{t.msg_count === 1 ? "" : "s"}
                 </span>
               </div>
-              {t.title ? (
-                <div className="text-base font-medium text-[var(--color-text)] truncate">{t.title}</div>
-              ) : null}
-              <div
-                className={`text-sm truncate ${t.title ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"}`}
-              >
-                <span className="text-xs font-medium text-[var(--color-text-subtle)] mr-1.5">{t.last_role}</span>
+              {t.title ? <div className="text-sm font-medium text-text truncate">{t.title}</div> : null}
+              <div className={`text-sm truncate ${t.title ? "text-text-muted" : "text-text"}`}>
+                <span className="text-xs font-medium text-text-subtle mr-1.5">{t.last_role}</span>
                 {truncate(t.last_content_excerpt, 140)}
               </div>
             </div>
-            <span className="text-2xs tabular text-[var(--color-text-muted)] shrink-0 mt-0.5">
-              {relativeTime(t.last_seen)}
-            </span>
+            <span className="text-2xs tabular text-text-muted shrink-0 mt-0.5">{relativeTime(t.last_seen)}</span>
           </button>
         ))}
       </div>
@@ -449,73 +450,53 @@ export function Conversations() {
         <div className="mb-2">
           <ScopeBadge kind="namespace" value={identity.namespace} />
         </div>
-        <p className="text-base text-[var(--color-text-muted)]">
+        <p className="text-sm text-text-muted">
           The raw chats your agents recorded. Search to find what was said; click any thread to replay the full
           exchange.
         </p>
       </div>
 
-      <div className="relative mb-6">
-        <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)]" />
-        <input
+      <div className="mb-6">
+        <SearchField
           ref={searchRef}
           value={q}
-          onChange={(e) => setQ(e.target.value)}
+          onChange={(value) => {
+            setQ(value);
+            if (!value) setHits(null);
+          }}
           onKeyDown={(e) => e.key === "Enter" && run()}
           placeholder="Search transcripts (press / to focus)…"
           aria-label="Search conversation transcripts"
-          className="w-full pl-10 pr-9 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-md outline-none focus:border-[var(--color-accent)]"
         />
-        {q && (
-          <button
-            type="button"
-            onClick={() => {
-              setQ("");
-              setHits(null);
-            }}
-            className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)] rounded"
-            aria-label="Clear search"
-          >
-            <XIcon size={14} />
-          </button>
-        )}
       </div>
 
       {(agentOptions.length > 1 || (canSetLogging && loggingEnabled !== null)) && (
         <div className="flex items-center gap-3 mb-5 -mt-3">
           {agentOptions.length > 1 && (
-            <label className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)]">
-              Agent
-              <select
-                value={agentFilter}
-                onChange={(e) => setAgentFilter(e.target.value)}
-                className="text-xs rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 outline-none focus:border-[var(--color-accent)]"
-              >
-                <option value="*">All agents</option>
-                {agentOptions.map((a) => (
-                  <option key={a} value={a}>
-                    {displayAgent(a)}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <Select
+              label="Agent"
+              orientation="horizontal"
+              value={agentFilter}
+              onSelect={(value) => setAgentFilter(value)}
+              className="w-64"
+            >
+              <Select.Item value="*">All agents</Select.Item>
+              {agentOptions.map((a) => (
+                <Select.Item key={a} value={a}>
+                  {displayAgent(a)}
+                </Select.Item>
+              ))}
+            </Select>
           )}
           {canSetLogging && loggingEnabled !== null && (
-            <button
-              type="button"
-              onClick={toggleLogging}
-              className="ml-auto flex items-center gap-2 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-              title="When off, new conversation turns are not stored for this namespace"
-            >
-              <span
-                className={`inline-flex items-center w-7 h-4 rounded-full transition-colors ${loggingEnabled ? "bg-[var(--color-accent)]" : "bg-[var(--color-surface-2)] border border-[var(--color-border)]"}`}
-              >
-                <span
-                  className={`block w-3 h-3 rounded-full bg-text shadow transition-transform ${loggingEnabled ? "translate-x-3.5" : "translate-x-0.5"}`}
-                />
-              </span>
-              Recording {loggingEnabled ? "on" : "off"}
-            </button>
+            <div className="ml-auto">
+              <Switch
+                checked={loggingEnabled}
+                onCheckedChange={toggleLogging}
+                label={`Recording ${loggingEnabled ? "on" : "off"}`}
+                title="When off, new conversation turns are not stored for this namespace"
+              />
+            </div>
           )}
         </div>
       )}
@@ -532,7 +513,7 @@ export function Conversations() {
 
       {!busy && hits === null && threads !== null && threads.length === 0 && threadsError && (
         <EmptyState
-          icon={AlertTriangle}
+          icon="warning"
           title="Couldn't load conversations"
           description={threadsError}
           action={{
@@ -547,7 +528,7 @@ export function Conversations() {
 
       {!busy && hits === null && threads !== null && threads.length === 0 && !threadsError && (
         <EmptyState
-          icon={MessagesSquare}
+          icon="chat"
           title="No conversations yet in this namespace"
           description="Once an AI agent connected to this namespace starts saving its chats, each thread shows up here."
           details={
@@ -564,13 +545,11 @@ export function Conversations() {
       {!busy && hits !== null && hits.length === 0 && (
         <div className="space-y-6">
           <div className="py-8 text-center">
-            <div className="mx-auto mb-3 grid place-items-center w-12 h-12 rounded-2xl bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
-              <Search size={20} strokeWidth={1.5} />
+            <div className="mx-auto mb-3 grid place-items-center w-12 h-12 rounded-2xl bg-surface-2">
+              <Icon name="search" size="md" aria-hidden="true" />
             </div>
             <h2 className="text-lg font-semibold tracking-tight">No matches for "{q}"</h2>
-            <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-              Try a different phrase, or browse recent threads below.
-            </p>
+            <p className="mt-1 text-sm text-text-muted">Try a different phrase, or browse recent threads below.</p>
           </div>
           {renderRecentThreads("Or, the most recent threads")}
         </div>
@@ -578,46 +557,39 @@ export function Conversations() {
 
       {!busy && groupedHits !== null && groupedHits.length > 0 && (
         <div className="space-y-3">
-          <div className="text-xs text-[var(--color-text-muted)] tabular">
+          <div className="text-xs text-text-muted tabular">
             {hits?.length} match{hits?.length === 1 ? "" : "es"} in {groupedHits.length} thread
             {groupedHits.length === 1 ? "" : "s"}
           </div>
           {groupedHits.map((g) => (
-            <div
-              key={g.thread_id}
-              className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden"
-            >
+            <div key={g.thread_id} className="rounded-xl border border-border bg-surface overflow-hidden">
               <button
                 type="button"
                 onClick={() => openThreadDialog(g.thread_id, g.agent)}
-                className="w-full text-left px-3.5 py-2.5 flex items-center gap-2 text-2xs tabular hover:bg-[var(--color-surface-2)] border-b border-[var(--color-border)]"
+                className="w-full text-left px-3.5 py-2.5 flex items-center gap-2 text-2xs tabular hover:bg-surface-2 border-b border-border"
                 title="Open this thread"
               >
-                <span className="font-mono text-[var(--color-text)] truncate">{g.thread_id}</span>
-                <span className="text-[var(--color-text-muted)]">·</span>
-                <span className="font-mono text-[var(--color-text-muted)]">{displayAgent(g.agent)}</span>
-                <span className="ml-auto text-[var(--color-accent)] font-medium">
+                <span className="font-mono text-text truncate">{g.thread_id}</span>
+                <span className="text-text-muted">·</span>
+                <span className="font-mono text-text-muted">{displayAgent(g.agent)}</span>
+                <span className="ml-auto text-accent font-medium">
                   {g.hits.length} match{g.hits.length === 1 ? "" : "es"} · open ↗
                 </span>
               </button>
-              <div className="divide-y divide-[var(--color-border)]">
+              <div className="divide-y divide-border">
                 {g.hits.map((h, i) => (
                   <button
                     type="button"
                     key={`${h.msg_id}-${i}`}
                     onClick={() => openThreadDialog(g.thread_id, g.agent, h.msg_id)}
-                    className="w-full text-left px-3.5 py-2.5 hover:bg-[var(--color-surface-2)]"
+                    className="w-full text-left px-3.5 py-2.5 hover:bg-surface-2"
                     title="Open thread at this message"
                   >
                     <div className="flex items-center gap-2 mb-1 text-2xs tabular">
-                      <span className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] font-medium text-[var(--color-text-muted)]">
-                        {h.role}
-                      </span>
-                      <span className="text-[var(--color-text-subtle)] ml-auto">{relativeTime(h.ts)}</span>
+                      <Badge text={h.role} state="neutral" size="sm" />
+                      <span className="text-text-subtle ml-auto">{relativeTime(h.ts)}</span>
                     </div>
-                    <div className="text-base text-[var(--color-text)] leading-snug">
-                      {truncate(h.content_excerpt || "", 280)}
-                    </div>
+                    <div className="text-sm text-text leading-snug">{truncate(h.content_excerpt || "", 280)}</div>
                   </button>
                 ))}
               </div>
@@ -630,128 +602,100 @@ export function Conversations() {
           returns the first 200 messages; we render them as a chat
           transcript with role chips, and "Load more" walks the rest
           via conversation.list. */}
-      <Dialog.Root
+      <Modal
         open={openThread !== null}
         onOpenChange={(v) => {
           if (!v) closeThreadDialog();
         }}
+        title={threadDetail?.title || "Thread"}
+        className="max-w-[820px] w-full"
+        initialFocus="dialog"
       >
-        <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-50 bg-overlay animate-fade-in motion-reduce:animate-none!" />
-          <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[min(820px,94vw)] h-[min(85vh,800px)] flex flex-col rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl animate-fade-in motion-reduce:animate-none!">
-            <div className="flex items-start justify-between gap-4 px-6 py-4 border-b border-[var(--color-border)] shrink-0">
-              <div className="min-w-0 flex-1">
-                <Dialog.Title className="text-md font-semibold tracking-tight truncate">
-                  {threadDetail?.title || "Thread"}
-                </Dialog.Title>
-                <div className="text-2xs text-[var(--color-text-muted)] mt-1 font-mono truncate">
-                  {openThread?.thread_id}
-                </div>
-                {threadDetail && (
-                  <div className="text-2xs text-[var(--color-text-muted)] mt-1 flex items-center gap-2 flex-wrap">
-                    <span>
-                      {threadDetail.msg_count} message{threadDetail.msg_count === 1 ? "" : "s"}
-                    </span>
-                    {threadDetail.agent && (
-                      <>
-                        <span>·</span>
-                        <span className="font-mono">{displayAgent(threadDetail.agent)}</span>
-                      </>
-                    )}
-                    {threadDetail.updated_at && (
-                      <>
-                        <span>·</span>
-                        <span>updated {relativeTime(threadDetail.updated_at)}</span>
-                      </>
-                    )}
-                  </div>
-                )}
+        <div className="text-2xs text-text-muted font-mono truncate">{openThread?.thread_id}</div>
+        {threadDetail && (
+          <div className="text-2xs text-text-muted mt-1 flex items-center gap-2 flex-wrap">
+            <span>
+              {threadDetail.msg_count} message{threadDetail.msg_count === 1 ? "" : "s"}
+            </span>
+            {threadDetail.agent && (
+              <>
+                <span>·</span>
+                <span className="font-mono">{displayAgent(threadDetail.agent)}</span>
+              </>
+            )}
+            {threadDetail.updated_at && (
+              <>
+                <span>·</span>
+                <span>updated {relativeTime(threadDetail.updated_at)}</span>
+              </>
+            )}
+          </div>
+        )}
+        <div className="mt-4 max-h-[70vh] overflow-y-auto">
+          {openThread && (
+            <SessionBriefPanel org={identity.org} namespace={identity.namespace} sessionId={openThread.thread_id} />
+          )}
+          {threadMemories.length > 0 && (
+            <div className="mb-4 p-3 rounded-lg bg-surface-2 border border-border">
+              <SectionHeading label="Memories this thread produced" count={threadMemories.length} />
+              <div className="flex flex-wrap gap-1.5">
+                {threadMemories.map((m) => (
+                  <Chip
+                    key={m.memory_key}
+                    label={m.memory_key}
+                    mono
+                    tip={typeof m.value === "string" ? m.value : JSON.stringify(m.value ?? "")}
+                  />
+                ))}
               </div>
-              <Dialog.Close
-                className="p-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-                aria-label="Close"
-              >
-                <XIcon size={16} />
-              </Dialog.Close>
             </div>
-            <div className="flex-1 overflow-y-auto px-6 py-4">
-              {openThread && (
-                <SessionBriefPanel org={identity.org} namespace={identity.namespace} sessionId={openThread.thread_id} />
-              )}
-              {threadMemories.length > 0 && (
-                <div className="mb-4 p-3 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)]">
-                  <SectionHeading label="Memories this thread produced" count={threadMemories.length} />
-                  <div className="flex flex-wrap gap-1.5">
-                    {threadMemories.map((m) => (
-                      <Chip
-                        key={m.memory_key}
-                        label={m.memory_key}
-                        mono
-                        tip={typeof m.value === "string" ? m.value : JSON.stringify(m.value ?? "")}
-                      />
-                    ))}
-                  </div>
-                </div>
-              )}
-              {threadLoading && (
-                <div className="text-center text-sm text-[var(--color-text-muted)] py-12">Loading…</div>
-              )}
-              {!threadLoading && threadDetail && !threadDetail.found && (
-                <div className="text-center text-sm text-[var(--color-text-muted)] py-12">
-                  Thread not found — it may have been deleted.
-                </div>
-              )}
-              {!threadLoading && threadDetail && threadDetail.found && threadDetail.messages.length === 0 && (
-                <div className="text-center text-sm text-[var(--color-text-muted)] py-12">
-                  Thread exists but contains no messages.
-                </div>
-              )}
-              {!threadLoading && threadDetail && threadDetail.messages.length > 0 && (
-                <div className="space-y-2.5">
-                  {threadDetail.messages.map((m) => {
-                    const meta = ROLE_META[m.role] || ROLE_META.assistant;
-                    const label = m.role === "assistant" ? displayAgent(threadDetail.agent || "assistant") : meta.label;
-                    const highlighted = m.msg_id === highlightMsgId;
-                    return (
-                      <div
-                        key={m.msg_id}
-                        id={`msg-${m.msg_id}`}
-                        className={`rounded-lg px-3 py-2 ${meta.rail} ${meta.card} ${highlighted ? "ring-2 ring-[var(--color-accent)]" : ""}`}
-                      >
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-xs font-medium text-[var(--color-text-muted)]">{label}</span>
-                          {typeof m.tokens === "number" && m.tokens > 0 && (
-                            <span className="text-2xs text-[var(--color-text-subtle)]">· {m.tokens} tok</span>
-                          )}
-                          <span className="text-2xs text-[var(--color-text-subtle)] ml-auto tabular" title={m.ts}>
-                            {relativeTime(m.ts)}
-                          </span>
-                        </div>
-                        {m.reasoning ? <ReasoningDisclosure text={m.reasoning} /> : null}
-                        <MessageBody content={m.content} />
-                      </div>
-                    );
-                  })}
-                  {moreCursor && (
-                    <div className="pt-3 flex justify-center">
-                      <button
-                        type="button"
-                        onClick={loadMoreMessages}
-                        disabled={loadingMore}
-                        className="px-3 py-1.5 text-sm font-medium rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
-                      >
-                        {loadingMore
-                          ? "Loading…"
-                          : `Load more (${threadDetail.msg_count - threadDetail.messages.length} remaining)`}
-                      </button>
+          )}
+          {threadLoading && <div className="text-center text-sm text-text-muted py-12">Loading…</div>}
+          {!threadLoading && threadDetail && !threadDetail.found && (
+            <div className="text-center text-sm text-text-muted py-12">
+              Thread not found — it may have been deleted.
+            </div>
+          )}
+          {!threadLoading && threadDetail && threadDetail.found && threadDetail.messages.length === 0 && (
+            <div className="text-center text-sm text-text-muted py-12">Thread exists but contains no messages.</div>
+          )}
+          {!threadLoading && threadDetail && threadDetail.messages.length > 0 && (
+            <div className="space-y-2.5">
+              {threadDetail.messages.map((m) => {
+                const meta = ROLE_META[m.role] || ROLE_META.assistant;
+                const label = m.role === "assistant" ? displayAgent(threadDetail.agent || "assistant") : meta.label;
+                const highlighted = m.msg_id === highlightMsgId;
+                return (
+                  <div
+                    key={m.msg_id}
+                    id={`msg-${m.msg_id}`}
+                    className={`rounded-lg px-3 py-2 ${meta.rail} ${meta.card} ${highlighted ? "ring-2 ring-accent" : ""}`}
+                  >
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-xs font-medium text-text-muted">{label}</span>
+                      {typeof m.tokens === "number" && m.tokens > 0 && (
+                        <span className="text-2xs text-text-subtle">· {m.tokens} tok</span>
+                      )}
+                      <span className="text-2xs text-text-subtle ml-auto tabular" title={m.ts}>
+                        {relativeTime(m.ts)}
+                      </span>
                     </div>
-                  )}
+                    {m.reasoning ? <ReasoningDisclosure text={m.reasoning} /> : null}
+                    <MessageBody content={m.content} />
+                  </div>
+                );
+              })}
+              {moreCursor && (
+                <div className="pt-3 flex justify-center">
+                  <Button type="secondary" htmlType="button" loading={loadingMore} onClick={loadMoreMessages}>
+                    {`Load more (${threadDetail.msg_count - threadDetail.messages.length} remaining)`}
+                  </Button>
                 </div>
               )}
             </div>
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
+          )}
+        </div>
+      </Modal>
     </PageContainer>
   );
 }

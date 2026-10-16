@@ -22,7 +22,7 @@ vi.mock("../lib/sharedReads", () => ({ sharedMine: () => Promise.resolve([]) }))
 async function requestWriter() {
   render(<Browse />);
   fireEvent.click(await screen.findByRole("button", { name: "Join" }));
-  fireEvent.click(await screen.findByRole("button", { name: /Writer/ }));
+  fireEvent.click(await screen.findByRole("radio", { name: "Writer" }));
   fireEvent.click(screen.getByRole("button", { name: "Request writer" }));
   await waitFor(() => expect(joinNamespace).toHaveBeenCalledTimes(1));
 }

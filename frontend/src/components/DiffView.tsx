@@ -58,14 +58,12 @@ export function DiffView({ prev, next, prevLabel, nextLabel }: DiffViewProps) {
   const lines = diffLines(prev, next);
   if (prev === next) {
     return (
-      <div className="text-sm text-[var(--color-text-muted)] italic px-2 py-3">
-        No textual difference between these versions.
-      </div>
+      <div className="text-sm text-text-muted italic px-2 py-3">No textual difference between these versions.</div>
     );
   }
   return (
-    <div className="rounded-md bg-[var(--color-surface-2)] overflow-hidden font-mono text-xs leading-[1.55]">
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-[var(--color-border)] bg-[var(--color-surface-3)] text-2xs text-[var(--color-text-muted)] tabular">
+    <div className="rounded-sm border border-border bg-surface-2 overflow-hidden font-mono text-xs">
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-surface-3 text-2xs text-text-muted tabular">
         <span>− {prevLabel}</span>
         <span>+ {nextLabel}</span>
       </div>
@@ -76,11 +74,11 @@ export function DiffView({ prev, next, prevLabel, nextLabel }: DiffViewProps) {
               ? "bg-success/15 text-success"
               : l.kind === "del"
                 ? "bg-danger/15 text-danger"
-                : "text-[var(--color-text)]";
+                : "text-text";
           const marker = l.kind === "add" ? "+" : l.kind === "del" ? "−" : " ";
           return (
             <div key={idx} className={cls}>
-              <span className="select-none text-[var(--color-text-subtle)] pr-2">{marker}</span>
+              <span className="select-none text-text-subtle pr-2">{marker}</span>
               {l.text || " "}
             </div>
           );

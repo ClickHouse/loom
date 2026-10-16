@@ -1,6 +1,9 @@
-import { Suspense, lazy, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import * as Popover from "@radix-ui/react-popover";
-import { LogOut, Plus, FileText, Sparkles, HelpCircle, Search, Settings as SettingsIcon } from "lucide-react";
+import { Suspense, lazy, useEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
+import { Avatar } from "@clickhouse/click-ui/Avatar";
+import { Button } from "@clickhouse/click-ui/Button";
+import { Dropdown } from "@clickhouse/click-ui/Dropdown";
+import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
+import { SearchField } from "@clickhouse/click-ui/SearchField";
 import { useStore } from "../lib/state";
 import { clearToken, isProxyMode } from "../api";
 import { toast } from "../components/Toast";
@@ -18,17 +21,17 @@ const loadHeaderSearch = () => import("../components/HeaderSearch");
 const HeaderSearch = lazy(() => loadHeaderSearch().then((m) => ({ default: m.HeaderSearch })));
 import { PendingApprovalsBell } from "../components/PendingApprovalsBell";
 import { TaskInboxBell } from "../components/TaskInboxBell";
-import { Tip } from "../components/ui";
+import { IconButton } from "../components/IconButton";
+import { Kbd, Unavailable } from "../components/ui";
 import { READ_ONLY_TIP, canWrite, useNamespaceRole } from "../lib/namespaceRole";
+import { MenuTrigger } from "../components/ui/Menu";
 
 /**
  * Header — top chrome of every page.
  *
- * The "New" and account menus are Radix `Popover` menus on `<button>`
- * triggers: click, Enter or Space opens; arrow keys move between items; Escape closes and
- * returns focus to the trigger. The earlier CSS `group-hover` menus opened on hover only,
- * which no keyboard or touch user could reach — and the ⌘K palette did not carry create
- * or sign-out commands to compensate.
+ * The "New" and account menus are Click UI `Dropdown` menus (Radix menu semantics):
+ * click, Enter or Space opens; arrow keys move between items; Escape closes and returns
+ * focus to the trigger.
  *
  * Below `md` the search input leaves the first row: a search button reveals it on its own
  * full-width row, the action cluster wraps instead of overlapping, and "New" drops its
@@ -52,7 +55,7 @@ export function Header() {
   };
 
   return (
-    <header className="min-h-14 border-b border-[var(--color-border)] bg-[var(--color-surface)] flex flex-wrap md:flex-nowrap items-center gap-x-2 gap-y-1.5 md:gap-3 px-3 py-2 md:px-5 md:py-0 shrink-0">
+    <header className="min-h-14 border-b border-border bg-surface flex flex-wrap md:flex-nowrap items-center gap-x-2 gap-y-1.5 md:gap-3 px-3 py-2 md:px-5 md:py-0 shrink-0">
       {/* Left cluster — namespace context. */}
       <div className="shrink min-w-0 max-w-[60%] md:max-w-none md:shrink-0">
         <RichNamespacePicker />
@@ -60,7 +63,7 @@ export function Header() {
 
       {/* Vertical separator between context and search to make the
           two regions feel distinct without a heavy border. */}
-      <div className="hidden md:block h-6 w-px bg-[var(--color-border)] shrink-0" aria-hidden />
+      <div className="hidden md:block h-6 w-px bg-border shrink-0" aria-hidden />
 
       {/* Center cluster — search grows to fill available space but
           caps so the right cluster stays anchored at the edge on wide
@@ -77,58 +80,35 @@ export function Header() {
       {/* Right cluster — primary action + user. Height-aligned at 32px to
           match the search bar and namespace picker; wraps when it must. */}
       <div className="flex flex-wrap items-center justify-end gap-1.5 md:gap-3 shrink-0">
-        <button
-          type="button"
+        <IconButton
+          icon="search"
+          label="Search"
           onClick={() => setMobileSearch((v) => !v)}
-          aria-label="Search"
           aria-expanded={mobileSearch}
           aria-controls="header-search"
-          className="md:hidden h-8 w-8 inline-flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-md transition-colors"
-        >
-          <Search size={15} aria-hidden="true" />
-        </button>
+          className="md:hidden"
+        />
 
-        {identity && (
-          <MenuPopover
-            label="New"
-            disabled={readOnly}
-            disabledTip={READ_ONLY_TIP}
-            triggerClassName="inline-flex items-center gap-1.5 h-8 px-2.5 sm:px-3 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md hover:bg-[var(--color-accent-strong)] data-[state=open]:bg-[var(--color-accent-strong)] transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:cursor-not-allowed aria-disabled:hover:bg-[var(--color-accent)]"
-            trigger={
-              <>
-                <Plus size={13} aria-hidden="true" /> <span className="hidden sm:inline">New</span>
-              </>
-            }
-            align="end"
-          >
-            {(close) => (
-              <>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    close();
-                    setAddMemOpen(true);
-                  }}
-                  className={MENU_ITEM_LG}
-                >
-                  <Sparkles size={13} /> Memory
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    close();
-                    setAddDocOpen(true);
-                  }}
-                  className={MENU_ITEM_LG}
-                >
-                  <FileText size={13} /> Document
-                </button>
-              </>
-            )}
-          </MenuPopover>
-        )}
+        {identity &&
+          (readOnly ? (
+            <DisabledNew reason={READ_ONLY_TIP} />
+          ) : (
+            <Menu
+              label="New"
+              trigger={
+                <Button type="primary" htmlType="button" iconLeft="plus" aria-label="New">
+                  <span className="hidden sm:inline">New</span>
+                </Button>
+              }
+            >
+              <Dropdown.Item onSelect={() => setAddMemOpen(true)}>
+                <ItemLabel icon="sparkle">Memory</ItemLabel>
+              </Dropdown.Item>
+              <Dropdown.Item onSelect={() => setAddDocOpen(true)}>
+                <ItemLabel icon="document">Document</ItemLabel>
+              </Dropdown.Item>
+            </Menu>
+          ))}
 
         {/* A dialog is mounted while it is open. Mounted closed, its hooks and
             element tree would run on every page's boot — about 42 ms of main
@@ -163,187 +143,87 @@ export function Header() {
 
         {/* Keyboard shortcut + general help. Opens HelpDialog mounted
             in App.tsx (state lives in the store). */}
-        <button
-          type="button"
+        <IconButton
+          icon="question"
+          label="Keyboard shortcuts"
+          tooltip="Keyboard shortcuts (press ?)"
           onClick={() => openHelp(true)}
-          title="Keyboard shortcuts (press ?)"
-          aria-label="Keyboard shortcuts"
-          className="h-8 w-8 inline-flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-md transition-colors"
-        >
-          <HelpCircle size={15} />
-        </button>
+        />
 
         {whoami && (
-          <MenuPopover
+          <Menu
             label={`Account: ${whoami.subject}`}
-            triggerClassName="inline-flex items-center gap-2 h-8 pl-1 pr-2 rounded-md hover:bg-[var(--color-surface-2)] data-[state=open]:bg-[var(--color-surface-2)] transition-colors"
             trigger={
-              <>
-                <span
-                  className="w-6 h-6 rounded-full bg-[var(--color-accent)] grid place-items-center text-[var(--color-on-accent)] text-xs font-semibold shrink-0"
-                  aria-hidden="true"
-                >
-                  {(whoami.subject || "?").charAt(0).toUpperCase()}
-                </span>
-                <span
-                  className="text-sm text-[var(--color-text)] hidden lg:inline truncate max-w-[140px]"
-                  aria-hidden="true"
-                >
+              <button
+                type="button"
+                aria-label={`Account: ${whoami.subject}`}
+                className="inline-flex items-center gap-2 h-8 pl-1 pr-2 rounded-sm hover:bg-surface-2 data-[state=open]:bg-surface-2 transition-colors"
+              >
+                <Avatar text={(whoami.subject || "?").charAt(0)} aria-hidden="true" />
+                <span className="text-sm text-text hidden lg:inline truncate max-w-[140px]" aria-hidden="true">
                   {whoami.subject}
                 </span>
-              </>
+              </button>
             }
-            align="end"
           >
-            {(close) => (
-              <>
-                <div className="px-2 py-1.5" role="presentation">
-                  <div className="text-xs text-[var(--color-text-muted)]">Signed in as</div>
-                  <div className="text-sm font-medium text-[var(--color-text)] truncate">{whoami.subject}</div>
-                  <div className="text-xs text-[var(--color-text-muted)] mt-0.5 truncate">{whoami.org}</div>
-                </div>
-                <hr className="h-px border-0 bg-[var(--color-border)] my-1" />
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    close();
-                    useStore.getState().setView("setup");
-                  }}
-                  className={MENU_ITEM}
-                >
-                  <SettingsIcon size={12} /> Setup & MCP config
-                </button>
-                {!isProxyMode() && (
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      close();
-                      onLogout();
-                    }}
-                    className={MENU_ITEM}
-                  >
-                    <LogOut size={12} /> Sign out
-                  </button>
-                )}
-              </>
+            <Dropdown.Group>
+              <div className="px-4 py-2">
+                <div className="text-xs text-text-subtle">Signed in as</div>
+                <div className="text-sm font-medium text-text truncate">{whoami.subject}</div>
+                <div className="text-xs text-text-subtle mt-0.5 truncate">{whoami.org}</div>
+              </div>
+            </Dropdown.Group>
+            <Dropdown.Item onSelect={() => useStore.getState().setView("setup")}>
+              <ItemLabel icon="gear">Setup & MCP config</ItemLabel>
+            </Dropdown.Item>
+            {!isProxyMode() && (
+              <Dropdown.Item onSelect={onLogout}>
+                <ItemLabel icon="slide-out">Sign out</ItemLabel>
+              </Dropdown.Item>
             )}
-          </MenuPopover>
+          </Menu>
         )}
       </div>
     </header>
   );
 }
 
-const MENU_ITEM =
-  "w-full flex items-center gap-2 px-2 py-1.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] focus-visible:bg-[var(--color-surface-2)] rounded cursor-pointer outline-none";
-const MENU_ITEM_LG =
-  "w-full text-left flex items-center gap-2 px-2.5 py-2 text-base rounded text-[var(--color-text)] hover:bg-[var(--color-surface-2)] focus-visible:bg-[var(--color-surface-2)] outline-none";
-
-/**
- * Click-to-open menu on a Radix Popover. The trigger is a real `<button>`
- * with `aria-haspopup="menu"` (Radix supplies `aria-expanded`); the panel
- * is `role="menu"` and moves focus between its `role="menuitem"` children
- * with ArrowUp/ArrowDown (wrapping), Home and End. Radix portals the
- * panel, focuses its first item on open, closes on Escape or an outside
- * click, and returns focus to the trigger. Children receive `close` so an
- * item can shut the menu before it opens a dialog.
- */
-function MenuPopover({
-  label,
-  trigger,
-  triggerClassName,
-  children,
-  align = "start",
-  disabled = false,
-  disabledTip,
-}: {
-  label: string;
-  trigger: ReactNode;
-  triggerClassName: string;
-  children: (close: () => void) => ReactNode;
-  align?: "start" | "end";
-  /** Render the trigger disabled; `disabledTip` explains why on hover and
-   *  focus. With a tip the trigger stays focusable and is `aria-disabled`
-   *  (a natively disabled button takes no hover or focus, so the reason
-   *  would be unreachable); the reason is also its accessible description. */
-  disabled?: boolean;
-  disabledTip?: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const close = () => setOpen(false);
-  const reasonId = useId();
-
-  if (disabled) {
-    const btn = (
-      <button
-        type="button"
-        aria-haspopup="menu"
-        aria-label={label}
-        aria-disabled="true"
-        disabled={!disabledTip}
-        aria-describedby={disabledTip ? reasonId : undefined}
-        className={triggerClassName}
-      >
-        {trigger}
-      </button>
-    );
-    if (!disabledTip) return btn;
-    return (
-      <>
-        <Tip content={disabledTip}>{btn}</Tip>
-        <span id={reasonId} className="sr-only">
-          {disabledTip}
-        </span>
-      </>
-    );
-  }
-
-  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
-    const items = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]:not([disabled])'));
-    if (items.length === 0) return;
-    e.preventDefault();
-    const idx = items.findIndex((i) => i === document.activeElement);
-    const next =
-      e.key === "Home"
-        ? 0
-        : e.key === "End"
-          ? items.length - 1
-          : e.key === "ArrowDown"
-            ? (idx + 1) % items.length
-            : (idx - 1 + items.length) % items.length;
-    items[next]?.focus();
-  };
-
+/** A header menu: the trigger button and its labelled items. */
+function Menu({ label, trigger, children }: { label: string; trigger: ReactElement; children: ReactNode }) {
   return (
-    <Popover.Root open={open} onOpenChange={setOpen}>
-      <Popover.Trigger asChild>
-        <button type="button" aria-haspopup="menu" aria-label={label} className={triggerClassName}>
-          {trigger}
-        </button>
-      </Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Content
-          role="menu"
-          aria-label={label}
-          align={align}
-          sideOffset={4}
-          onKeyDown={onKeyDown}
-          className="z-50 min-w-[200px] p-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl animate-fade-in motion-reduce:animate-none! outline-none"
-        >
-          {children(close)}
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
+    <Dropdown modal={false}>
+      <MenuTrigger>{trigger}</MenuTrigger>
+      <Dropdown.Content align="end" aria-label={label}>
+        {children}
+      </Dropdown.Content>
+    </Dropdown>
   );
 }
 
-const SEARCH_INPUT_CLASS =
-  "w-full h-8 pl-8 pr-14 text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md outline-none focus:border-[var(--color-accent)] focus:bg-[var(--color-surface)] focus:ring-2 focus:ring-[var(--color-accent)]/15 transition-colors placeholder:text-[var(--color-text-subtle)]";
+/** A menu item's icon and label. Not Dropdown.Item's `icon`: Click UI names that svg
+ *  after the icon ("sparkle Memory"), so the item's spoken name would carry it. */
+function ItemLabel({ icon, children }: { icon: IconName; children: ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-2">
+      <Icon name={icon} size="sm" aria-hidden="true" />
+      {children}
+    </span>
+  );
+}
 
-/** The same input in the same place, before the search body has loaded:
+/** "New" for a read-only role: unavailable, with the reason. */
+function DisabledNew({ reason }: { reason: string }) {
+  return (
+    <Unavailable reason={reason}>
+      <Button type="primary" htmlType="button" iconLeft="plus" aria-label="New" aria-haspopup="menu">
+        <span className="hidden sm:inline">New</span>
+      </Button>
+    </Unavailable>
+  );
+}
+
+/** The same input in the same place, before the search body has loaded (HeaderSearch
+ *  draws the same SearchField with the ⌘K hint over its end while empty):
  *  it takes focus and keystrokes (kept as the draft the real box mounts
  * with), and carries the Graph view's tab-order rule. */
 function SearchPlaceholder({
@@ -363,22 +243,17 @@ function SearchPlaceholder({
   }, [focus]);
   return (
     <div className="relative w-full">
-      <Search
-        size={13}
-        className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-subtle)] pointer-events-none"
-      />
-      <input
+      <SearchField
         ref={ref}
         aria-label="Search Loom"
         placeholder="Search profile, memories, library…"
-        className={SEARCH_INPUT_CLASS}
         value={draft}
-        onChange={(e) => onDraft(e.target.value)}
+        onChange={(v) => onDraft(v)}
         tabIndex={view === "graph" ? -1 : undefined}
       />
-      <kbd className="absolute right-2.5 top-1/2 -translate-y-1/2 font-mono text-2xs px-1.5 py-0.5 bg-[var(--color-bg)] border border-[var(--color-border)] rounded text-[var(--color-text-subtle)] pointer-events-none hidden sm:inline">
-        ⌘K
-      </kbd>
+      {!draft && (
+        <Kbd className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none hidden sm:inline-flex">⌘K</Kbd>
+      )}
     </div>
   );
 }

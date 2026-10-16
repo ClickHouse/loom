@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { sharedHealth } from "../lib/sharedReads";
-import { AlertTriangle, OctagonAlert, X as XIcon } from "lucide-react";
+import { Alert } from "@clickhouse/click-ui/Alert";
+import { Badge } from "@clickhouse/click-ui/Badge";
+import { IconButton } from "./IconButton";
 
 const STORAGE_KEY = "loom_problems_banner_v1_dismissed";
 
@@ -86,51 +88,44 @@ export function ProblemsBanner() {
   };
 
   const hasError = problems.some((p) => p.severity === "error");
-  const tone = hasError ? "var(--color-danger, var(--color-warn))" : "var(--color-warn)";
-  const Icon = hasError ? OctagonAlert : AlertTriangle;
 
   return (
-    <div className="px-6 xl:px-8 mt-4" role="status" aria-live="polite" data-testid="problems-banner">
-      <div
-        className="rounded-lg border px-4 py-3 flex items-start gap-3"
-        style={{
-          borderColor: `color-mix(in srgb, ${tone} 40%, transparent)`,
-          background: `color-mix(in srgb, ${tone} 10%, transparent)`,
-        }}
-      >
-        <Icon size={16} className="mt-0.5 shrink-0" style={{ color: tone }} aria-hidden="true" />
-        <div className="flex-1 min-w-0">
-          <div className="text-sm text-[var(--color-text)]">
+    <div className="px-6 xl:px-8 mt-4 relative" role="status" aria-live="polite" data-testid="problems-banner">
+      <Alert
+        state={hasError ? "danger" : "warning"}
+        size="medium"
+        text={
+          <div className="pr-8">
             <strong>
               {hasError ? "Loom is degraded" : "Loom is running with warnings"} — {problems.length}{" "}
               {problems.length === 1 ? "problem" : "problems"}.
             </strong>
+            <ul className="mt-1.5 space-y-1.5">
+              {problems.map((p) => (
+                <li key={p.code} className="text-xs" data-severity={p.severity}>
+                  <Badge
+                    text={p.severity}
+                    state={p.severity === "error" ? "danger" : "warning"}
+                    size="sm"
+                    className="mr-1.5"
+                  />
+                  <span className="text-text">{p.message}</span> <span className="text-text-muted">Fix: </span>
+                  <code className="font-mono text-2xs bg-surface-2 px-1 py-0.5 rounded-sm break-words text-text">
+                    {p.fix}
+                  </code>
+                </li>
+              ))}
+            </ul>
           </div>
-          <ul className="mt-1.5 space-y-1.5">
-            {problems.map((p) => (
-              <li key={p.code} className="text-xs leading-relaxed" data-severity={p.severity}>
-                <span className="font-mono text-xs mr-1.5" style={{ color: tone }}>
-                  {p.severity}
-                </span>
-                <span className="text-[var(--color-text)]">{p.message}</span>{" "}
-                <span className="text-[var(--color-text-muted)]">Fix: </span>
-                <code className="font-mono text-2xs bg-[var(--color-surface-2)] px-1 py-0.5 rounded break-words">
-                  {p.fix}
-                </code>
-              </li>
-            ))}
-          </ul>
-        </div>
-        <button
-          type="button"
-          onClick={dismiss}
-          aria-label="Dismiss for this session"
-          title="Dismiss for this session"
-          className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded shrink-0"
-        >
-          <XIcon size={13} />
-        </button>
-      </div>
+        }
+      />
+      <IconButton
+        icon="cross"
+        size="sm"
+        label="Dismiss for this session"
+        onClick={dismiss}
+        className="absolute top-2 right-8 xl:right-10"
+      />
     </div>
   );
 }

@@ -1,5 +1,5 @@
-import * as Dialog from "@radix-ui/react-dialog";
-import { Keyboard, X } from "lucide-react";
+import { Kbd } from "./ui";
+import { Modal } from "./ui/Modal";
 
 interface Shortcut {
   key: string;
@@ -46,45 +46,33 @@ const SEARCH: Shortcut[] = [
 
 export function HelpDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-overlay animate-fade-in motion-reduce:animate-none!" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[min(520px,90vw)] max-h-[80vh] overflow-y-auto rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl animate-fade-in motion-reduce:animate-none!">
-          <div className="flex items-center justify-between px-5 py-3 border-b border-[var(--color-border)]">
-            <Dialog.Title className="text-md font-semibold tracking-tight flex items-center gap-2">
-              <Keyboard size={14} /> Keyboard shortcuts
-            </Dialog.Title>
-            <Dialog.Close
-              className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-              aria-label="Close"
-            >
-              <X size={14} />
-            </Dialog.Close>
-          </div>
-          <div className="p-5 space-y-5">
-            <Section title="Global" rows={GLOBAL} />
-            <Section title="Universal search" rows={SEARCH} />
-            <Section title="Navigation" rows={GOTO} />
-            <Section title="Lists" rows={LIST} />
-            <Section title="Inspector" rows={INSPECTOR} />
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+    <Modal open={open} onOpenChange={onOpenChange} title="Keyboard shortcuts" className="max-w-[520px] w-full">
+      {/* Focusable so a keyboard user can scroll the list. */}
+      <div
+        className="max-h-[60vh] overflow-y-auto space-y-5"
+        tabIndex={0}
+        role="region"
+        aria-label="Keyboard shortcuts"
+      >
+        <Section title="Global" rows={GLOBAL} />
+        <Section title="Universal search" rows={SEARCH} />
+        <Section title="Navigation" rows={GOTO} />
+        <Section title="Lists" rows={LIST} />
+        <Section title="Inspector" rows={INSPECTOR} />
+      </div>
+    </Modal>
   );
 }
 
 function Section({ title, rows }: { title: string; rows: Shortcut[] }) {
   return (
     <div>
-      <h4 className="text-xs font-medium text-[var(--color-text-muted)] mb-2">{title}</h4>
+      <h3 className="section-label mb-2">{title}</h3>
       <div className="space-y-1">
         {rows.map((r) => (
           <div key={r.key} className="flex items-center justify-between text-sm">
-            <span className="text-[var(--color-text)]">{r.label}</span>
-            <kbd className="font-mono text-2xs px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)]">
-              {r.key}
-            </kbd>
+            <span className="text-text">{r.label}</span>
+            <Kbd>{r.key}</Kbd>
           </div>
         ))}
       </div>

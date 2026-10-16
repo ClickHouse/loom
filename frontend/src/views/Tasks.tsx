@@ -1,5 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Inbox as InboxIcon, LayoutGrid, List as ListIcon, Plus, Settings as SettingsIcon } from "lucide-react";
+import { Button } from "@clickhouse/click-ui/Button";
+import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
+import { Icon } from "@clickhouse/click-ui/Icon";
 import {
   acceptTask,
   claimTask,
@@ -36,7 +38,7 @@ import {
   type TaskAction,
 } from "../lib/tasks";
 import { SkeletonCard } from "../components/Skeleton";
-import { Kbd } from "../components/ui";
+import { Kbd, Tip } from "../components/ui";
 import { EmptyState } from "../components/EmptyState";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { toast, toastError } from "../components/Toast";
@@ -47,7 +49,6 @@ import { ALL_INBOXES, InboxRail, railCounts } from "./tasks/InboxRail";
 import { TaskList, type RowContext } from "./tasks/TaskList";
 import { TaskBoard } from "./tasks/TaskBoard";
 import { TaskPanel } from "./tasks/TaskPanel";
-import { TqButton } from "./tasks/TaskBits";
 import type { ReasonAction } from "../flows/TaskActionDialog";
 
 // Dialogs load on the click that opens them.
@@ -78,6 +79,15 @@ const InboxSettingsDialog = lazy(() =>
  * / focuses the kind filter, Esc closes the panel.
  */
 type Mode = "list" | "board";
+
+function ViewLabel({ icon, text }: { icon: "list-bulleted" | "services"; text: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <Icon name={icon} size="xs" aria-hidden="true" />
+      {text}
+    </span>
+  );
+}
 
 function readQuery(key: string): string | null {
   try {
@@ -473,33 +483,31 @@ export function Tasks() {
       <header className="flex items-center justify-between gap-4 flex-wrap pb-3">
         <div className="flex items-center gap-2.5 flex-wrap">
           <h1 className="text-2xl font-semibold tracking-tight inline-flex items-center gap-2.5 m-0">
-            <InboxIcon size={20} aria-hidden="true" /> Tasks
+            <Icon name="email" size="md" aria-hidden="true" /> Tasks
           </h1>
           <ScopeBadge kind="namespace" value={identity.namespace} />
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          {/* biome-ignore lint/a11y/useSemanticElements: a labelled segmented control of two buttons, not form fields */}
-          <div role="group" aria-label="View" className="tq-seg">
-            <button type="button" aria-pressed={mode === "list"} onClick={() => setModeAndRemember("list")}>
-              <ListIcon size={13} aria-hidden="true" /> List
-            </button>
-            <button type="button" aria-pressed={mode === "board"} onClick={() => setModeAndRemember("board")}>
-              <LayoutGrid size={13} aria-hidden="true" /> Board
-            </button>
-          </div>
+          <ButtonGroup
+            aria-label="View"
+            selected={mode}
+            onClick={(v) => setModeAndRemember(v === "board" ? "board" : "list")}
+            options={[
+              { value: "list", label: <ViewLabel icon="list-bulleted" text="List" /> },
+              { value: "board", label: <ViewLabel icon="services" text="Board" /> },
+            ]}
+          />
           {mayAdmin && inbox && (
-            <TqButton
-              tone="ghost"
-              onClick={() => setSettings("edit")}
-              title="Inbox settings: posters, disclosure, trust, leases"
-            >
-              <SettingsIcon size={13} aria-hidden="true" /> Inbox settings
-            </TqButton>
+            <Tip content="Inbox settings: posters, disclosure, trust, leases">
+              <Button type="empty" htmlType="button" iconLeft="gear" onClick={() => setSettings("edit")}>
+                Inbox settings
+              </Button>
+            </Tip>
           )}
           {mayWrite && createInbox && (
-            <TqButton tone="primary" onClick={() => setCreating(true)}>
-              <Plus size={13} aria-hidden="true" /> New task
-            </TqButton>
+            <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setCreating(true)}>
+              New task
+            </Button>
           )}
         </div>
       </header>
@@ -510,12 +518,10 @@ export function Tasks() {
           <SkeletonCard />
         </div>
       )}
-      {inboxes && inboxError && (
-        <EmptyState icon={InboxIcon} title="Couldn't load the inboxes" description={inboxError} />
-      )}
+      {inboxes && inboxError && <EmptyState icon="email" title="Couldn't load the inboxes" description={inboxError} />}
       {inboxes && !inboxError && inboxes.length === 0 && (
         <EmptyState
-          icon={InboxIcon}
+          icon="email"
           title="No inbox here yet"
           description={`An inbox is one agent's queue, owned by ${identity.namespace}. An admin of this namespace registers it; writers then pull from it and the trust table says who else may post.`}
           action={mayAdmin ? { label: "Register inbox", onClick: () => setSettings("register") } : undefined}
@@ -551,18 +557,20 @@ export function Tasks() {
                   <SkeletonCard />
                 </div>
               )}
-              {rows && rowsError && (
-                <EmptyState icon={InboxIcon} title="Couldn't load the tasks" description={rowsError} />
-              )}
+              {rows && rowsError && <EmptyState icon="email" title="Couldn't load the tasks" description={rowsError} />}
               {rows && !rowsError && visible.length === 0 && (
                 <div className="tq-empty">
                   {rows.length === 0 ? "Nothing here yet." : "No tasks match."} Bots post with{" "}
                   <span className="font-mono text-xs">task.create</span>; people use New task.
                   {filtering && (
                     <div className="mt-2">
-                      <TqButton onClick={() => setFilters((f) => ({ ...NO_FILTERS, showClosed: f.showClosed }))}>
+                      <Button
+                        type="secondary"
+                        htmlType="button"
+                        onClick={() => setFilters((f) => ({ ...NO_FILTERS, showClosed: f.showClosed }))}
+                      >
                         Clear filters
-                      </TqButton>
+                      </Button>
                     </div>
                   )}
                 </div>
@@ -576,11 +584,9 @@ export function Tasks() {
                   <TaskBoard groups={groups} ctx={ctx} showClosed={showClosed} />
                 ))}
               {truncated && (
-                <div className="text-xs text-[var(--color-text-subtle)] px-1 pt-1">
-                  Showing the first 200 tasks per inbox.
-                </div>
+                <div className="text-xs text-text-subtle px-1 pt-1">Showing the first 200 tasks per inbox.</div>
               )}
-              <div className="flex gap-3.5 flex-wrap text-xs text-[var(--color-text-subtle)] px-1 py-3">
+              <div className="flex gap-3.5 flex-wrap text-xs text-text-subtle px-1 py-3">
                 <span>
                   <Kbd>j</Kbd> <Kbd>k</Kbd> move
                 </span>

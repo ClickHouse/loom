@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { Button } from "@clickhouse/click-ui/Button";
 import { authHeader } from "../api";
 import { isRecord } from "../lib/guards";
 
@@ -9,8 +10,8 @@ import { isRecord } from "../lib/guards";
  * component stack, route, build commit when `/v1/health` answers) the user can paste into
  * a report.
  *
- * Plain markup on purpose: this renders when the app's own components may
- * be the thing that is broken, so it depends on nothing but React.
+ * Plain markup and Click UI buttons only: this renders when the app's own components may
+ * be the thing that is broken, so it depends on nothing of Loom's.
  */
 
 interface Props {
@@ -49,38 +50,27 @@ export class ErrorBoundary extends Component<Props, State> {
     if (!this.state.error) return this.props.children;
     const { copied } = this.state;
     return (
-      <main className="min-h-screen grid place-items-center px-4 bg-[var(--color-bg)] text-[var(--color-text)]">
-        <div
-          role="alert"
-          className="w-full max-w-md rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-sm"
-        >
-          <h1 className="text-xl font-semibold tracking-tight m-0">Something went wrong</h1>
-          <p className="mt-2 text-sm text-[var(--color-text-muted)] leading-relaxed">
+      <main className="min-h-screen grid place-items-center px-4 bg-bg text-text">
+        <div role="alert" className="w-full max-w-md rounded-sm border border-border bg-surface p-6">
+          <h1 className="text-xl font-bold m-0">Something went wrong</h1>
+          <p className="mt-2 text-sm text-text-muted">
             The dashboard hit an error it couldn't recover from. Reloading usually fixes it; if it keeps happening, copy
             the diagnostics and send them to whoever runs this Loom.
           </p>
-          <p className="mt-3 text-xs font-mono break-words text-[var(--color-text-muted)]">
+          <p className="mt-3 text-xs font-mono break-words text-text-muted">
             {this.state.error.message || String(this.state.error)}
           </p>
-          <div className="mt-5 flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => location.reload()}
-              className="px-4 py-2 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-lg hover:bg-[var(--color-accent-strong)]"
-            >
-              Reload
-            </button>
-            <button
-              type="button"
-              onClick={this.copyDiagnostics}
-              className="px-4 py-2 text-sm font-medium rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
-            >
+          <div className="mt-5 flex flex-wrap justify-end gap-2">
+            <Button type="secondary" htmlType="button" onClick={this.copyDiagnostics}>
               {copied === "done"
                 ? "Copied"
                 : copied === "failed"
                   ? "Copy failed — select the text above"
                   : "Copy diagnostics"}
-            </button>
+            </Button>
+            <Button type="primary" htmlType="button" onClick={() => location.reload()}>
+              Reload
+            </Button>
           </div>
         </div>
       </main>

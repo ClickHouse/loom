@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { ChevronDown, ChevronRight, Pin } from "lucide-react";
+import { Badge } from "@clickhouse/click-ui/Badge";
+import { Icon } from "@clickhouse/click-ui/Icon";
 import { IconButton } from "../../components/IconButton";
 import { Kbd } from "../../components/ui";
 import { relationLabel, shorten, type Selection, type VisibleTree, type WalkModel, type XNode } from "./model";
@@ -161,7 +162,7 @@ export function Outline({
 
   return (
     <div className="explorer-outline mt-3 lg:flex-1 lg:min-h-0 flex flex-col">
-      <p className="text-xs text-[var(--color-text-muted)] mb-1" id="explorer-outline-summary">
+      <p className="text-xs text-text-muted mb-1" id="explorer-outline-summary">
         {summary}{" "}
         <span className="text-text-subtle inline-flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
           <span>
@@ -203,7 +204,7 @@ export function Outline({
         role="tree"
         aria-label="Walk outline"
         aria-describedby="explorer-outline-summary"
-        className="lg:flex-1 min-h-[120px] max-h-[320px] lg:max-h-none overflow-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs"
+        className="lg:flex-1 min-h-[120px] max-h-[320px] lg:max-h-none overflow-auto rounded-lg border border-border bg-surface text-xs"
       >
         {rows.map((n, i) => {
           const kids = children.get(n.entity) || [];
@@ -233,7 +234,7 @@ export function Outline({
                 if (e.target instanceof Element && e.target.closest("button")) return;
                 onSelect(isSelected ? null : { kind: "node", entity: n.entity });
               }}
-              className={`group flex items-start gap-1.5 px-2 py-1 border-b border-[var(--color-border)] last:border-b-0 cursor-default ${isSelected || edgeSelected ? "bg-[var(--color-surface-2)]" : "hover:bg-[var(--color-surface-2)]"}`}
+              className={`group flex items-start gap-1.5 px-2 py-1 border-b border-border last:border-b-0 cursor-default ${isSelected || edgeSelected ? "bg-surface-2" : "hover:bg-surface-2"}`}
               style={{ paddingLeft: `${8 + n.hop * 14}px` }}
             >
               <button
@@ -242,33 +243,27 @@ export function Outline({
                 aria-hidden="true"
                 disabled={!hasKids}
                 onClick={() => onCollapse(n.entity, !isCollapsed)}
-                className={`mt-0.5 shrink-0 w-4 h-4 grid place-items-center rounded text-[var(--color-text-muted)] ${hasKids ? "hover:text-[var(--color-text)]" : "opacity-0"}`}
+                className={`mt-0.5 shrink-0 w-4 h-4 grid place-items-center rounded text-text-muted ${hasKids ? "hover:text-text" : "opacity-0"}`}
               >
-                {isCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+                <Icon name={isCollapsed ? "chevron-right" : "chevron-down"} size="xs" aria-hidden="true" />
               </button>
               <div className="min-w-0 flex-1">
-                <div
-                  className={`font-mono truncate ${isSelected ? "text-[var(--color-text)] font-semibold" : "text-[var(--color-text)]"}`}
-                >
-                  {isSeed ? <span className="text-[var(--color-text-subtle)] mr-1">seed</span> : null}
+                <div className={`font-mono truncate ${isSelected ? "text-text font-semibold" : "text-text"}`}>
+                  {isSeed ? <span className="text-text-subtle mr-1">seed</span> : null}
                   {n.entity}
                   {pinned.has(n.entity) && (
-                    <Pin size={10} aria-hidden="true" className="inline ml-1 text-[var(--color-accent)]" />
+                    <Icon name="pin" size="xs" aria-hidden="true" className="inline ml-1" color="var(--color-accent)" />
                   )}
-                  {hidden > 0 && (
-                    <span className="ml-1.5 tabular-nums text-2xs px-1 rounded-full bg-[var(--color-surface-3)] text-[var(--color-text-muted)]">
-                      +{hidden}
-                    </span>
-                  )}
+                  {hidden > 0 && <Badge text={`+${hidden}`} state="neutral" size="sm" className="inline-flex ml-1.5" />}
                 </div>
-                <div className="text-2xs text-[var(--color-text-muted)] flex items-center gap-1.5 min-w-0">
+                <div className="text-2xs text-text-muted flex items-center gap-1.5 min-w-0">
                   <span className="tabular-nums shrink-0">hop {n.hop}</span>
                   {parent && (
                     <button
                       type="button"
                       tabIndex={-1}
                       onClick={() => onSelect(edgeSelected ? null : { kind: "edge", parent, child: n.entity })}
-                      className={`truncate underline decoration-dotted hover:text-[var(--color-text)] ${edgeSelected ? "text-[var(--color-text)]" : ""}`}
+                      className={`truncate underline decoration-dotted hover:text-text ${edgeSelected ? "text-text" : ""}`}
                     >
                       {typed && n.via_relation
                         ? `${n.via_direction === "in" ? "← " : "→ "}${relationLabel(n.via_relation)}`
@@ -280,7 +275,7 @@ export function Outline({
                   {hasCommunities && n.community_id !== null && (
                     <span className="truncate">· {communityLabel(n.community_id)}</span>
                   )}
-                  {n.origin === "expand" && <span className="text-[var(--color-text-subtle)]">· expanded</span>}
+                  {n.origin === "expand" && <span className="text-text-subtle">· expanded</span>}
                 </div>
               </div>
               {isSelected && (
@@ -289,7 +284,6 @@ export function Outline({
                     label={isCollapsed ? "Show hidden children" : `Expand ${shorten(n.entity, 24)} in place`}
                     onClick={() => (isCollapsed ? onCollapse(n.entity, false) : onExpand(n.entity))}
                     disabled={expanding === n.entity}
-                    className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
                     icon="plus"
                     size="sm"
                   />
@@ -297,25 +291,17 @@ export function Outline({
                     <IconButton
                       label={pinned.has(n.entity) ? "Unpin" : "Pin (survives facet changes)"}
                       onClick={() => onPin(n.entity)}
-                      className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
                       icon={pinned.has(n.entity) ? "unpin" : "pin"}
                       size="sm"
                     />
                   )}
                   {!isSeed && (
-                    <IconButton
-                      label="Walk from here"
-                      onClick={() => onWalk(n.entity)}
-                      className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-                      icon="arrow-right"
-                      size="sm"
-                    />
+                    <IconButton label="Walk from here" onClick={() => onWalk(n.entity)} icon="arrow-right" size="sm" />
                   )}
                   {!isSeed && (
                     <IconButton
                       label="Path from the seed to here"
                       onClick={() => onPath(n.entity)}
-                      className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
                       icon="arrow-directions"
                       size="sm"
                     />

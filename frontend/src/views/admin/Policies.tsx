@@ -1,6 +1,12 @@
 import { useState } from "react";
-import { Gavel, Plus, X as XIcon, Play, CheckCircle2, XCircle, Trash2 } from "lucide-react";
-import * as Dialog from "@radix-ui/react-dialog";
+import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
+import { Button } from "@clickhouse/click-ui/Button";
+import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
+import { Icon } from "@clickhouse/click-ui/Icon";
+import { Select } from "@clickhouse/click-ui/Select";
+import { Table } from "@clickhouse/click-ui/Table";
+import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
+import { TextField } from "@clickhouse/click-ui/TextField";
 import {
   listPolicies,
   setPolicy,
@@ -16,6 +22,9 @@ import {
   type PolicyDecisionKind,
 } from "../../api";
 import { useIdentity } from "../../lib/state";
+import { IconButton } from "../../components/IconButton";
+import { Modal, ModalFooter } from "../../components/ui/Modal";
+import { Panel } from "../../components/ui/Panel";
 import { Skeleton, SkeletonCard } from "../../components/Skeleton";
 import { EmptyState } from "../../components/EmptyState";
 import { ScopeBadge } from "../../components/ScopeBadge";
@@ -40,17 +49,17 @@ import { isRecord } from "../../lib/guards";
 
 const EFFECTS: readonly PolicyEffect[] = ["forbid", "require"];
 
-const MODE_META: Record<PolicyMode, { cls: string; blurb: string }> = {
+const MODE_META: Record<PolicyMode, { state: BadgeState; blurb: string }> = {
   off: {
-    cls: "text-[var(--color-text-muted)] border-[var(--color-border)]",
+    state: "neutral",
     blurb: "Rules are stored but never evaluated. Nothing is logged or blocked.",
   },
   shadow: {
-    cls: "text-warn border-warn/40",
+    state: "warning",
     blurb: "Every matching call is evaluated and recorded below, but a deny does not block the call.",
   },
   enforce: {
-    cls: "text-danger border-danger/40",
+    state: "danger",
     blurb: "A deny blocks the call with 403 POLICY_FORBIDDEN. Rule errors on write-shaped calls also deny.",
   },
 };
@@ -63,28 +72,19 @@ function modeMeta(mode: string) {
 }
 
 function ModeBadge({ mode }: { mode: string }) {
-  const meta = modeMeta(mode);
-  return (
-    <span className={`inline-flex items-center gap-1 text-2xs px-2 py-0.5 rounded-full border font-medium ${meta.cls}`}>
-      mode: {mode}
-    </span>
-  );
+  return <Badge text={`mode: ${mode}`} state={modeMeta(mode).state} size="sm" />;
 }
 
 function DecisionChip({ decision }: { decision: string }) {
   const deny = decision === "deny";
-  return (
-    <span
-      className={`inline-flex items-center gap-1 text-2xs px-2 py-0.5 rounded-full border ${deny ? "text-danger border-danger/40" : "text-success border-success/40"}`}
-    >
-      {deny ? <XCircle size={12} /> : <CheckCircle2 size={12} />} {decision}
-    </span>
-  );
+  return <Badge text={decision} state={deny ? "danger" : "success"} iconDir="start" size="sm" />;
 }
 
+const DASH = <span className="text-text-subtle">—</span>;
+
 function Bool({ v }: { v: boolean | null | undefined }) {
-  if (v === null || v === undefined) return <span className="text-[var(--color-text-subtle)]">—</span>;
-  return <span className={v ? "text-success" : "text-[var(--color-text-muted)]"}>{v ? "yes" : "no"}</span>;
+  if (v === null || v === undefined) return DASH;
+  return <span className={v ? "text-success" : "text-text-muted"}>{v ? "yes" : "no"}</span>;
 }
 
 const CMP_SYMBOL: Record<string, string> = { gt: ">", gte: "≥", lt: "<", lte: "≤", eq: "=" };
@@ -144,25 +144,23 @@ const GRAMMAR_HELP =
   'count_within adds "cmp": gt|gte|lt|lte|eq and "value": int; not_since adds "anchor": string|string[]. ' +
   'Combinators: {"op":"all"|"any","of":[…]}, {"op":"not","of":{…}}.';
 
-const INPUT_CLS =
-  "w-full px-3 py-2 text-sm rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] outline-none focus:border-[var(--color-accent)]";
-const TEXTAREA_CLS = `${INPUT_CLS} font-mono text-xs resize-y`;
-const LABEL_CLS = "block text-xs text-[var(--color-text-muted)] mb-1";
-const PRIMARY_BTN =
-  "inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md hover:bg-[var(--color-accent-strong)] disabled:opacity-50";
-const SECONDARY_BTN =
-  "inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border border-[var(--color-border-strong)] rounded-md hover:bg-[var(--color-surface-2)] disabled:opacity-50";
 const TH_CLS = "text-left px-3 py-2 font-medium";
 
 function Card({ title, children, action }: { title: string; children: React.ReactNode; action?: React.ReactNode }) {
   return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-      <div className="flex items-center justify-between gap-2 mb-3">
-        <div className="text-xs font-medium text-[var(--color-text-muted)]">{title}</div>
-        {action}
-      </div>
+    <Panel
+      as="section"
+      aria-label={title}
+      header={
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-xs font-medium text-text-muted">{title}</h2>
+          {action}
+        </div>
+      }
+      bodyClassName="pt-3"
+    >
       {children}
-    </div>
+    </Panel>
   );
 }
 
@@ -230,14 +228,14 @@ export function Policies() {
     <PageContainer>
       <div className="flex items-baseline gap-3 mb-2 flex-wrap">
         <h1 className="text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
-          <Gavel size={20} /> Policies
+          <Icon name="secure" size="md" aria-hidden="true" /> Policies
         </h1>
         <ScopeBadge kind="namespace" value={identity.namespace} />
         <ModeBadge mode={mode} />
       </div>
-      <p className="text-sm text-[var(--color-text-muted)] mb-5 max-w-[80ch]">
+      <p className="text-sm text-text-muted mb-5 max-w-[80ch]">
         Rules over an agent's own recent history: forbid or require an action based on what the same caller did in the
-        last minutes or hours. <span className="text-[var(--color-text)]">{meta.blurb}</span> The mode is the server's{" "}
+        last minutes or hours. <span className="text-text">{meta.blurb}</span> The mode is the server's{" "}
         <code className="font-mono text-xs">LOOM_POLICY_MODE</code>; it cannot be changed here.
       </p>
 
@@ -245,85 +243,80 @@ export function Policies() {
         <Card
           title="Rules"
           action={
-            <button type="button" onClick={() => setAddOpen(true)} className={PRIMARY_BTN}>
-              <Plus size={12} /> Add rule
-            </button>
+            <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setAddOpen(true)}>
+              Add rule
+            </Button>
           }
         >
           {rules === null && <Skeleton className="h-24 w-full" />}
           {rules !== null && error && <div className="text-sm text-danger">{error}</div>}
           {rules !== null && !error && rules.length === 0 && (
             <EmptyState
-              icon={Gavel}
+              icon="secure"
               title="No rules"
               description="Add a rule to forbid or require an action based on the caller's recent history. Rules only take effect once the server mode leaves off."
             />
           )}
           {rules !== null && rules.length > 0 && (
-            <div className="rounded-lg border border-[var(--color-border)] overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-[var(--color-surface-2)] text-xs text-[var(--color-text-muted)]">
-                  <tr>
-                    <th className={TH_CLS}>Policy</th>
-                    <th className={TH_CLS}>Effect</th>
-                    <th className={TH_CLS}>Actions</th>
-                    <th className={TH_CLS}>Condition</th>
-                    <th className={TH_CLS}>Enabled</th>
-                    <th className={TH_CLS}>Description</th>
-                    <th className={TH_CLS}></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rules.map((r) => (
-                    <tr
-                      key={r.policy_id}
-                      className="border-t border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
-                    >
-                      <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">
+            <Table
+              size="sm"
+              headers={[
+                { label: "Policy" },
+                { label: "Effect", width: "96px" },
+                { label: "Actions" },
+                { label: "Condition" },
+                { label: "Enabled", width: "80px" },
+                { label: "Description" },
+                { label: <span className="sr-only">Delete</span>, width: "56px" },
+              ]}
+              rows={rules.map((r) => ({
+                id: r.policy_id,
+                items: [
+                  {
+                    label: (
+                      <div className="font-mono text-xs">
                         <div>{r.policy_id}</div>
                         {r.updated_at && (
-                          <div className="text-2xs font-sans text-[var(--color-text-subtle)]">
+                          <div className="text-2xs font-sans text-text-subtle">
                             updated {relativeTime(r.updated_at)}
                           </div>
                         )}
-                      </td>
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        <span
-                          className={`text-2xs px-2 py-0.5 rounded-full border ${r.effect === "forbid" ? "text-danger border-danger/40" : "text-[var(--color-accent)] border-[var(--color-accent)]/40"}`}
-                        >
-                          {r.effect}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2 font-mono text-xs">{r.actions.join(", ")}</td>
-                      <td className="px-3 py-2 font-mono text-xs max-w-[40ch]">
-                        <div className="truncate" title={JSON.stringify(r.condition, null, 2)}>
-                          {summariseCondition(r.condition)}
-                        </div>
-                      </td>
-                      <td className="px-3 py-2">
-                        <Bool v={r.enabled} />
-                      </td>
-                      <td className="px-3 py-2 text-[var(--color-text-muted)] max-w-[36ch]">
-                        <div className="truncate" title={r.description}>
-                          {r.description || <span className="text-[var(--color-text-subtle)]">—</span>}
-                        </div>
-                      </td>
-                      <td className="px-3 py-2 text-right whitespace-nowrap">
-                        <button
-                          type="button"
-                          onClick={() => remove(r)}
-                          className="p-1 text-[var(--color-danger)] hover:bg-[var(--color-surface-2)] rounded"
-                          aria-label={`Delete ${r.policy_id}`}
-                          title="Delete"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                      </div>
+                    ),
+                  },
+                  { label: <Badge text={r.effect} state={r.effect === "forbid" ? "danger" : "info"} size="sm" /> },
+                  { label: <span className="font-mono text-xs">{r.actions.join(", ")}</span>, overflowMode: "wrap" },
+                  {
+                    label: (
+                      <span className="font-mono text-xs" title={JSON.stringify(r.condition, null, 2)}>
+                        {summariseCondition(r.condition)}
+                      </span>
+                    ),
+                  },
+                  { label: <Bool v={r.enabled} /> },
+                  {
+                    label: r.description ? (
+                      <span className="text-text-muted" title={r.description}>
+                        {r.description}
+                      </span>
+                    ) : (
+                      DASH
+                    ),
+                  },
+                  {
+                    label: (
+                      <IconButton
+                        icon="trash"
+                        type="danger"
+                        size="sm"
+                        label={`Delete ${r.policy_id}`}
+                        onClick={() => remove(r)}
+                      />
+                    ),
+                  },
+                ],
+              }))}
+            />
           )}
         </Card>
 
@@ -360,6 +353,11 @@ function AddRuleDialog({ open, onClose, onSaved }: { open: boolean; onClose: () 
     setActions("memory.delete");
     setDescription("");
     setCondition(EXAMPLE_CONDITION);
+    setErr(null);
+  };
+
+  const close = () => {
+    onClose();
     setErr(null);
   };
 
@@ -404,133 +402,91 @@ function AddRuleDialog({ open, onClose, onSaved }: { open: boolean; onClose: () 
   };
 
   return (
-    <Dialog.Root
+    <Modal
       open={open}
       onOpenChange={(v) => {
-        if (!v) {
-          onClose();
-          setErr(null);
-        }
+        if (!v) close();
       }}
+      title="Add rule"
+      description="Saving under an existing policy_id replaces that rule. Rules apply to every writer in this namespace."
+      className="w-full max-w-[640px]"
     >
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-overlay animate-fade-in motion-reduce:animate-none!" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[min(640px,94vw)] max-h-[90vh] flex flex-col rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl animate-fade-in motion-reduce:animate-none!">
-          <div className="flex items-start justify-between gap-4 px-6 py-4 border-b border-[var(--color-border)] shrink-0">
-            <div>
-              <Dialog.Title className="text-md font-semibold tracking-tight">Add rule</Dialog.Title>
-              <Dialog.Description className="text-xs text-[var(--color-text-muted)] mt-1">
-                Saving under an existing policy_id replaces that rule. Rules apply to every writer in this namespace.
-              </Dialog.Description>
-            </div>
-            <Dialog.Close
-              className="p-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-              aria-label="Close"
-            >
-              <XIcon size={16} />
-            </Dialog.Close>
-          </div>
-          <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3">
-            <div className="grid grid-cols-1 sm:grid-cols-[1fr_140px] gap-3">
-              <div>
-                <label className={LABEL_CLS} htmlFor="policy-id">
-                  policy_id
-                </label>
-                <input
-                  id="policy-id"
-                  value={policyId}
-                  onChange={(e) => setPolicyId(e.target.value)}
-                  placeholder="no-blind-delete"
-                  className={`${INPUT_CLS} font-mono`}
-                />
-              </div>
-              <div>
-                <label className={LABEL_CLS} htmlFor="policy-effect">
-                  effect
-                </label>
-                <select
-                  id="policy-effect"
-                  value={effect}
-                  onChange={(e) => {
-                    const v = oneOf(EFFECTS, e.target.value);
-                    if (v !== null) setEffect(v);
-                  }}
-                  className={INPUT_CLS}
-                >
-                  {EFFECTS.map((x) => (
-                    <option key={x} value={x}>
-                      {x}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-            <div>
-              <label className={LABEL_CLS} htmlFor="policy-actions">
-                actions (comma-separated operation names or globs)
-              </label>
-              <input
-                id="policy-actions"
-                value={actions}
-                onChange={(e) => setActions(e.target.value)}
-                placeholder="memory.delete, memory.*"
-                className={`${INPUT_CLS} font-mono`}
-              />
-            </div>
-            <div>
-              <label className={LABEL_CLS} htmlFor="policy-description">
-                description
-              </label>
-              <input
-                id="policy-description"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="Optional — why this rule exists"
-                className={INPUT_CLS}
-              />
-            </div>
-            <div>
-              <label className={LABEL_CLS} htmlFor="policy-condition">
-                condition (JSON)
-              </label>
-              <textarea
-                id="policy-condition"
-                value={condition}
-                onChange={(e) => setCondition(e.target.value)}
-                rows={8}
-                spellCheck={false}
-                className={TEXTAREA_CLS}
-              />
-              <div className="text-2xs text-[var(--color-text-muted)] mt-1.5 leading-relaxed">
-                <span className="font-medium text-[var(--color-text)]">forbid</span> denies when the condition holds;{" "}
-                <span className="font-medium text-[var(--color-text)]">require</span> denies when it does not.{" "}
-                {GRAMMAR_HELP}
-              </div>
-            </div>
-            {err && (
-              <div className="text-xs text-danger whitespace-pre-wrap break-words rounded-md border border-danger/30 bg-danger/5 px-3 py-2">
-                {err}
-              </div>
-            )}
-          </div>
-          <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-[var(--color-border)] shrink-0">
-            <button
-              type="button"
-              onClick={() => {
-                onClose();
-                setErr(null);
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          void submit();
+        }}
+      >
+        <div className="max-h-[60vh] overflow-y-auto space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-[1fr_140px] gap-3">
+            <TextField
+              label="Policy ID"
+              value={policyId}
+              onChange={(value) => setPolicyId(value)}
+              placeholder="no-blind-delete"
+              className="font-mono"
+            />
+            <Select
+              label="Effect"
+              value={effect}
+              onSelect={(value) => {
+                const v = oneOf(EFFECTS, value);
+                if (v !== null) setEffect(v);
               }}
-              className="px-3 py-1.5 text-sm font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] rounded-md"
             >
-              Cancel
-            </button>
-            <button type="button" onClick={submit} disabled={busy} className={PRIMARY_BTN}>
-              <Plus size={12} /> {busy ? "Saving…" : "Save rule"}
-            </button>
+              {EFFECTS.map((x) => (
+                <Select.Item key={x} value={x}>
+                  {x}
+                </Select.Item>
+              ))}
+            </Select>
           </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+          <TextField
+            label="Actions (comma-separated operation names or globs)"
+            value={actions}
+            onChange={(value) => setActions(value)}
+            placeholder="memory.delete, memory.*"
+            className="font-mono"
+          />
+          <TextField
+            label="Description"
+            value={description}
+            onChange={(value) => setDescription(value)}
+            placeholder="Optional — why this rule exists"
+          />
+          <div>
+            <TextAreaField
+              label="Condition (JSON)"
+              value={condition}
+              onChange={(value) => setCondition(value)}
+              rows={8}
+              spellCheck={false}
+              className="font-mono"
+            />
+            <div className="text-2xs text-text-muted mt-1.5 leading-relaxed">
+              <span className="font-medium text-text">forbid</span> denies when the condition holds;{" "}
+              <span className="font-medium text-text">require</span> denies when it does not. {GRAMMAR_HELP}
+            </div>
+          </div>
+          {err && (
+            <div
+              role="alert"
+              className="text-xs text-danger whitespace-pre-wrap break-words rounded-md border border-danger/30 bg-danger/5 px-3 py-2"
+            >
+              {err}
+            </div>
+          )}
+        </div>
+        <ModalFooter>
+          <Button type="secondary" htmlType="button" onClick={close}>
+            Cancel
+          </Button>
+          <Button type="primary" htmlType="submit" iconLeft="plus" loading={busy}>
+            Save rule
+          </Button>
+        </ModalFooter>
+      </form>
+    </Modal>
   );
 }
 
@@ -575,59 +531,44 @@ function DryRunPanel({ onRan }: { onRan: () => void }) {
 
   return (
     <Card title="Dry run">
-      <div className="text-xs text-[var(--color-text-muted)] mb-3">
+      <div className="text-xs text-text-muted mb-3">
         Evaluate the stored rules against a hypothetical call, using the same evaluator and trace the gate reads.
         Nothing is blocked; <span className="font-mono">would_enforce</span> says what enforce mode would do.
       </div>
       <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_2fr] gap-3 items-start">
-        <div>
-          <label className={LABEL_CLS} htmlFor="dry-operation">
-            operation
-          </label>
-          <input
-            id="dry-operation"
-            value={operation}
-            onChange={(e) => setOperation(e.target.value)}
-            placeholder="memory.delete"
-            className={`${INPUT_CLS} font-mono`}
-          />
-        </div>
-        <div>
-          <label className={LABEL_CLS} htmlFor="dry-agent">
-            agent
-          </label>
-          <input
-            id="dry-agent"
-            value={agent}
-            onChange={(e) => setAgent(e.target.value)}
-            placeholder="- (none)"
-            className={`${INPUT_CLS} font-mono`}
-          />
-        </div>
-        <div>
-          <label className={LABEL_CLS} htmlFor="dry-args">
-            args (JSON)
-          </label>
-          <textarea
-            id="dry-args"
-            value={args}
-            onChange={(e) => setArgs(e.target.value)}
-            rows={3}
-            spellCheck={false}
-            className={TEXTAREA_CLS}
-          />
-        </div>
+        <TextField
+          label="Operation"
+          value={operation}
+          onChange={(value) => setOperation(value)}
+          placeholder="memory.delete"
+          className="font-mono"
+        />
+        <TextField
+          label="Agent"
+          value={agent}
+          onChange={(value) => setAgent(value)}
+          placeholder="- (none)"
+          className="font-mono"
+        />
+        <TextAreaField
+          label="Args (JSON)"
+          value={args}
+          onChange={(value) => setArgs(value)}
+          rows={3}
+          spellCheck={false}
+          className="font-mono"
+        />
       </div>
       <div className="mt-3 flex items-center gap-3 flex-wrap">
-        <button type="button" onClick={run} disabled={busy} className={SECONDARY_BTN}>
-          <Play size={13} /> {busy ? "Checking…" : "Check"}
-        </button>
+        <Button type="secondary" htmlType="button" iconLeft="play" onClick={run} loading={busy}>
+          Check
+        </Button>
         {err && <span className="text-xs text-danger break-words">{err}</span>}
       </div>
 
       {result && (
         <div className="mt-4 space-y-3">
-          <div className="flex items-center gap-2 flex-wrap text-xs text-[var(--color-text-muted)]">
+          <div className="flex items-center gap-2 flex-wrap text-xs text-text-muted">
             <DecisionChip decision={result.decision} />
             <span>
               would_enforce <Bool v={result.would_enforce} />
@@ -644,8 +585,7 @@ function DryRunPanel({ onRan }: { onRan: () => void }) {
               <>
                 <span>·</span>
                 <span>
-                  determined by{" "}
-                  <span className="font-mono text-[var(--color-text)]">{result.determining_rules.join(", ")}</span>
+                  determined by <span className="font-mono text-text">{result.determining_rules.join(", ")}</span>
                 </span>
               </>
             )}
@@ -660,14 +600,15 @@ function DryRunPanel({ onRan }: { onRan: () => void }) {
             </div>
           )}
           {result.rules.length === 0 && (
-            <div className="text-xs text-[var(--color-text-subtle)]">
+            <div className="text-xs text-text-subtle">
               No rule matches <span className="font-mono">{operation.trim()}</span>.
             </div>
           )}
           {result.rules.length > 0 && (
-            <div className="rounded-lg border border-[var(--color-border)] overflow-x-auto">
+            // Native: a rule spans one row per leaf (rowSpan), which Click UI's Table has no form for.
+            <div className="rounded-lg border border-border overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="bg-[var(--color-surface-2)] text-xs text-[var(--color-text-muted)]">
+                <thead className="bg-surface-2 text-xs text-text-muted">
                   <tr>
                     <th className={TH_CLS}>Rule</th>
                     <th className={TH_CLS}>Effect</th>
@@ -682,7 +623,7 @@ function DryRunPanel({ onRan }: { onRan: () => void }) {
                   {result.rules.map((v) => {
                     const leaves = v.leaves.length ? v.leaves : [null];
                     return leaves.map((lf, i) => (
-                      <tr key={`${v.policy_id}-${i}`} className="border-t border-[var(--color-border)]">
+                      <tr key={`${v.policy_id}-${i}`} className="border-t border-border">
                         {i === 0 && (
                           <>
                             <td
@@ -702,13 +643,11 @@ function DryRunPanel({ onRan }: { onRan: () => void }) {
                             </td>
                           </>
                         )}
-                        <td className="px-3 py-2 font-mono text-xs">
-                          {lf ? lf.op : <span className="text-[var(--color-text-subtle)]">—</span>}
-                        </td>
+                        <td className="px-3 py-2 font-mono text-xs">{lf ? lf.op : DASH}</td>
                         <td className="px-3 py-2">
                           {lf ? (
                             lf.skipped ? (
-                              <span className="text-[var(--color-text-subtle)]" title={lf.skipped}>
+                              <span className="text-text-subtle" title={lf.skipped}>
                                 skipped
                               </span>
                             ) : lf.error ? (
@@ -719,7 +658,7 @@ function DryRunPanel({ onRan }: { onRan: () => void }) {
                               <Bool v={lf.holds} />
                             )
                           ) : (
-                            <span className="text-[var(--color-text-subtle)]">—</span>
+                            DASH
                           )}
                         </td>
                         <td className="px-3 py-2 font-mono text-xs max-w-[32ch]">
@@ -734,7 +673,7 @@ function DryRunPanel({ onRan }: { onRan: () => void }) {
                                     : JSON.stringify(lf.value))}
                             </div>
                           ) : (
-                            <span className="text-[var(--color-text-subtle)]">—</span>
+                            DASH
                           )}
                         </td>
                       </tr>
@@ -753,6 +692,7 @@ function DryRunPanel({ onRan }: { onRan: () => void }) {
 type DecisionFilter = "" | PolicyDecisionKind;
 
 const DECISION_FILTERS: readonly DecisionFilter[] = ["", "deny", "allow"];
+const FILTER_LABEL: Record<string, string> = { all: "All", deny: "Deny", allow: "Allow" };
 
 function DecisionsPanel({ version }: { version: number }) {
   const identity = useIdentity();
@@ -785,21 +725,18 @@ function DecisionsPanel({ version }: { version: number }) {
     <Card
       title="Decisions"
       action={
-        <div className="flex items-center gap-1.5">
-          {DECISION_FILTERS.map((f) => (
-            <button
-              type="button"
-              key={f || "all"}
-              onClick={() => setFilter(f)}
-              className={`text-xs px-2.5 py-1 rounded-full border ${filter === f ? "bg-[var(--color-text)] text-[var(--color-bg)] border-transparent" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
-            >
-              {f || "all"}
-            </button>
-          ))}
-        </div>
+        <ButtonGroup
+          aria-label="Filter decisions"
+          options={DECISION_FILTERS.map((f) => ({ value: f || "all", label: FILTER_LABEL[f || "all"] }))}
+          selected={filter || "all"}
+          onClick={(value) => {
+            const f = DECISION_FILTERS.find((x) => (x || "all") === value);
+            if (f !== undefined) setFilter(f);
+          }}
+        />
       }
     >
-      <div className="text-xs text-[var(--color-text-muted)] mb-3">
+      <div className="text-xs text-text-muted mb-3">
         The ledger of evaluated calls in shadow and enforce mode, newest first. Nothing is written while the mode is
         off.
       </div>
@@ -811,66 +748,59 @@ function DecisionsPanel({ version }: { version: number }) {
       )}
       {rows !== null && error && <div className="text-sm text-danger">{error}</div>}
       {rows !== null && !error && rows.length === 0 && (
-        <div className="text-xs text-[var(--color-text-subtle)] py-4 text-center">
+        <div className="text-xs text-text-subtle py-4 text-center">
           No decisions{filter ? ` with decision=${filter}` : ""} yet.
         </div>
       )}
       {rows !== null && rows.length > 0 && (
-        <div className="rounded-lg border border-[var(--color-border)] overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-[var(--color-surface-2)] text-xs text-[var(--color-text-muted)]">
-              <tr>
-                <th className={TH_CLS}>When</th>
-                <th className={TH_CLS}>Agent</th>
-                <th className={TH_CLS}>Operation</th>
-                <th className={TH_CLS}>Decision</th>
-                <th className={TH_CLS}>Enforced</th>
-                <th className={TH_CLS}>Determining rules</th>
-                <th className={TH_CLS}>Errors</th>
-                <th className="text-right px-3 py-2 font-medium">Latency</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r, i) => (
-                <tr
-                  key={`${r.request_id || r.ts}-${i}`}
-                  className="border-t border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
-                >
-                  <td className="px-3 py-2 whitespace-nowrap text-[var(--color-text-muted)]" title={r.ts}>
+        <Table
+          size="sm"
+          headers={[
+            { label: "When", width: "110px" },
+            { label: "Agent" },
+            { label: "Operation" },
+            { label: "Decision", width: "96px" },
+            { label: "Enforced", width: "84px" },
+            { label: "Determining rules" },
+            { label: "Errors" },
+            { label: "Latency", width: "84px" },
+          ]}
+          rows={rows.map((r, i) => ({
+            id: `${r.request_id || r.ts}-${i}`,
+            items: [
+              {
+                label: (
+                  <span title={r.ts} className="text-text-muted">
                     {relativeTime(r.ts)}
-                  </td>
-                  <td className="px-3 py-2 whitespace-nowrap">{displayAgent(r.agent)}</td>
-                  <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">{r.operation}</td>
-                  <td className="px-3 py-2">
-                    <DecisionChip decision={r.decision} />
-                  </td>
-                  <td className="px-3 py-2">
-                    <Bool v={r.enforced} />
-                  </td>
-                  <td className="px-3 py-2 font-mono text-xs max-w-[28ch]">
-                    <div className="truncate" title={r.determining_rules.join(", ")}>
-                      {r.determining_rules.length ? (
-                        r.determining_rules.join(", ")
-                      ) : (
-                        <span className="text-[var(--color-text-subtle)]">—</span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-3 py-2 text-xs text-danger max-w-[32ch]">
-                    <div className="truncate" title={r.errors.join("\n")}>
-                      {r.errors.length ? (
-                        r.errors.join("; ")
-                      ) : (
-                        <span className="text-[var(--color-text-subtle)]">—</span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{r.latency_ms} ms</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                  </span>
+                ),
+              },
+              { label: displayAgent(r.agent) },
+              { label: <span className="font-mono text-xs">{r.operation}</span> },
+              { label: <DecisionChip decision={r.decision} /> },
+              { label: <Bool v={r.enforced} /> },
+              {
+                label: r.determining_rules.length ? (
+                  <span className="font-mono text-xs" title={r.determining_rules.join(", ")}>
+                    {r.determining_rules.join(", ")}
+                  </span>
+                ) : (
+                  DASH
+                ),
+              },
+              {
+                label: r.errors.length ? (
+                  <span className="text-xs text-danger" title={r.errors.join("\n")}>
+                    {r.errors.join("; ")}
+                  </span>
+                ) : (
+                  DASH
+                ),
+              },
+              { label: <span className="tabular-nums">{r.latency_ms} ms</span> },
+            ],
+          }))}
+        />
       )}
     </Card>
   );

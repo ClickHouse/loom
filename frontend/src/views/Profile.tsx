@@ -1,5 +1,12 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Plus, Trash2, X, Copy, Bot, User, Eye, EyeOff } from "lucide-react";
+import { Button } from "@clickhouse/click-ui/Button";
+import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
+import { Checkbox } from "@clickhouse/click-ui/Checkbox";
+import { Icon } from "@clickhouse/click-ui/Icon";
+import { Popover } from "@clickhouse/click-ui/Popover";
+import { SearchField } from "@clickhouse/click-ui/SearchField";
+import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
+import { TextField } from "@clickhouse/click-ui/TextField";
 import {
   listProfile,
   setProfileSection,
@@ -19,6 +26,7 @@ import { IconButton } from "../components/IconButton";
 import { PageContainer } from "../layout/PageContainer";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { pluginInstallLines } from "../lib/clients";
+import { PopoverTrigger } from "../components/ui/Menu";
 
 const DEFAULT_CHAR_LIMIT = 8192;
 
@@ -168,7 +176,7 @@ export function Profile() {
     return (
       <PageContainer>
         <Header onNew={() => openNew(null)} entries={[]} />
-        <p className="text-base text-[var(--color-danger)]">Couldn't load profile: {error}</p>
+        <p className="text-sm text-danger">Couldn't load profile: {error}</p>
       </PageContainer>
     );
   }
@@ -195,33 +203,22 @@ export function Profile() {
         <EmptyState onPickTemplate={(t) => openNew({ label: t.label, value: t.value })} />
       ) : (
         <div className="space-y-3 mt-6">
-          <input
+          <SearchField
             aria-label="Search profile sections"
-            type="text"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(value) => setQuery(value)}
             placeholder="Search sections by label or value…"
-            className="w-full px-3 py-2 text-sm rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] outline-none focus:border-[var(--color-accent)]"
           />
           {selected.size > 0 && (
-            <div className="sticky top-0 z-[2] animate-fade-in motion-reduce:animate-none! flex items-center gap-2 p-2.5 rounded-xl border border-[var(--color-accent)] bg-[var(--color-accent-soft)] shadow-sm">
-              <span className="text-sm font-medium text-[var(--color-accent)] tabular">{selected.size} selected</span>
+            <div className="sticky top-0 z-[2] animate-fade-in flex items-center gap-2 p-2.5 rounded-xl border border-accent bg-accent-soft shadow-sm">
+              <span className="text-sm font-medium text-accent tabular">{selected.size} selected</span>
               <div className="flex-1" />
-              <button
-                type="button"
-                onClick={bulkDelete}
-                disabled={bulkBusy}
-                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md text-danger bg-danger/15 hover:bg-danger/25 disabled:opacity-50"
-              >
-                <Trash2 className="w-3 h-3" /> Delete all
-              </button>
-              <button
-                type="button"
-                onClick={() => setSelected(new Set())}
-                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
-              >
-                <X className="w-3 h-3" /> Clear
-              </button>
+              <Button type="secondary" htmlType="button" iconLeft="cross" onClick={() => setSelected(new Set())}>
+                Clear
+              </Button>
+              <Button type="danger" htmlType="button" iconLeft="trash" onClick={bulkDelete} loading={bulkBusy}>
+                Delete all
+              </Button>
             </div>
           )}
           {newOpen && (
@@ -241,7 +238,7 @@ export function Profile() {
             />
           )}
           {filteredEntries && filteredEntries.length === 0 && query && (
-            <div className="text-center py-8 text-sm text-[var(--color-text-muted)]">
+            <div className="text-center py-8 text-sm text-text-muted">
               No sections matching <span className="font-mono">{query}</span>.
             </div>
           )}
@@ -266,19 +263,18 @@ export function Profile() {
                 key={b.label}
                 onClick={() => openOrSelect(b.label)}
                 className={
-                  "p-4 rounded-lg border bg-[var(--color-surface)] flex items-start gap-3 transition-colors cursor-pointer " +
+                  "p-4 rounded-lg border bg-surface flex items-start gap-3 transition-colors cursor-pointer " +
                   (selected.has(b.label)
-                    ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)]/40"
-                    : "border-[var(--color-border)] hover:border-[var(--color-border-strong)]")
+                    ? "border-accent ring-1 ring-accent/40"
+                    : "border-border hover:border-border-strong")
                 }
               >
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={selected.has(b.label)}
-                  onChange={() => toggleSelect(b.label)}
+                  onCheckedChange={() => toggleSelect(b.label)}
                   onClick={(e) => e.stopPropagation()}
                   aria-label={`Select section ${b.label}`}
-                  className="mt-1 shrink-0 cursor-pointer"
+                  className="mt-1 shrink-0"
                 />
                 <div className="flex-1 min-w-0">
                   <SectionRow
@@ -312,31 +308,24 @@ function Header({ onNew, entries, empty }: { onNew: () => void; entries: Profile
           <div className="mt-1">
             <ScopeBadge kind="namespace" value={namespace} />
           </div>
-          <p className="text-sm text-[var(--color-text-muted)] mt-1">
-            One profile. Every AI you use reads it before responding.
-          </p>
+          <p className="text-sm text-text-muted mt-1">One profile. Every AI you use reads it before responding.</p>
         </div>
-        <button
-          type="button"
-          onClick={onNew}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:bg-[var(--color-accent-strong)]"
-        >
-          <Plus className="w-4 h-4" />
+        <Button type="primary" htmlType="button" iconLeft="plus" onClick={onNew}>
           New section
-        </button>
+        </Button>
       </div>
 
       <div className="flex items-center gap-4 mt-4 text-xs">
         <ActivityChip empty={empty} />
         {entries.length > 0 && (
-          <button
-            type="button"
+          <Button
+            type="empty"
+            htmlType="button"
+            iconLeft={previewOpen ? "eye-closed" : "eye"}
             onClick={() => setPreviewOpen((v) => !v)}
-            className="inline-flex items-center gap-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
           >
-            {previewOpen ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
             {previewOpen ? "Hide preview" : "Preview rendered"}
-          </button>
+          </Button>
         )}
       </div>
 
@@ -382,10 +371,10 @@ function ActivityChip({ empty }: { empty?: boolean }) {
   if (entries.length === 0) {
     return (
       <span
-        className="inline-flex items-center gap-1.5 text-[var(--color-text-muted)]"
+        className="inline-flex items-center gap-1.5 text-text-muted"
         title="Counts every way a client reads the profile: a plugin session start, an MCP connect, a typed “use loom”, or the SDK. Nothing in the last 7 days."
       >
-        <span className="inline-block w-2 h-2 rounded-full bg-[var(--color-text-muted)] opacity-50" />
+        <span className="inline-block w-2 h-2 rounded-full bg-text-muted opacity-50" />
         No AI client has read this in the last 7 days
       </span>
     );
@@ -393,48 +382,44 @@ function ActivityChip({ empty }: { empty?: boolean }) {
 
   const mostRecent = entries[0];
   const ms = mostRecent.last_activated_at ? Date.now() - new Date(mostRecent.last_activated_at).getTime() : Infinity;
-  const dotClass =
-    ms < 3_600_000 ? "bg-success" : ms < 86_400_000 ? "bg-[var(--color-warn)]" : "bg-[var(--color-text-muted)]";
+  const dotClass = ms < 3_600_000 ? "bg-success" : ms < 86_400_000 ? "bg-warn" : "bg-text-muted";
 
   return (
-    <div className="relative">
-      <button
-        type="button"
-        onClick={() => setExpanded((v) => !v)}
-        title={
-          empty
-            ? "These clients fetch the profile at session start or MCP connect. It has no sections, so they got nothing: add one to give them something."
-            : undefined
-        }
-        className="inline-flex items-center gap-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-      >
-        <span
-          className={`inline-block w-2 h-2 rounded-full ${empty ? "bg-[var(--color-text-muted)] opacity-50" : dotClass}`}
-        />
-        {empty ? "Checked by" : "Read by"} {entries.length === 1 ? mostRecent.agent : `${entries.length} clients`} ·{" "}
-        {mostRecent.last_activated_at ? relativeTime(mostRecent.last_activated_at) : "—"}
-        {empty && " · empty, nothing to read yet"}
-      </button>
-      {expanded && (
-        <div className="absolute left-0 top-6 z-10 min-w-[280px] rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg p-2 space-y-1">
-          {entries.map((e) => (
-            <div key={e.agent} className="flex items-center justify-between gap-3 px-2 py-1">
-              <span className="min-w-0">
-                <span className="font-mono text-xs">{e.agent}</span>
-                {e.operations.length > 0 && (
-                  <span className="block text-2xs text-[var(--color-text-subtle)]">
-                    via {e.operations.map(readPathLabel).join(", ")}
-                  </span>
-                )}
-              </span>
-              <span className="shrink-0 text-2xs text-[var(--color-text-muted)] tabular-nums">
-                {e.event_count}× · {relativeTime(e.last_activated_at)}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+    <Popover open={expanded} onOpenChange={setExpanded}>
+      <PopoverTrigger>
+        <button
+          type="button"
+          title={
+            empty
+              ? "These clients fetch the profile at session start or MCP connect. It has no sections, so they got nothing: add one to give them something."
+              : undefined
+          }
+          className="inline-flex items-center gap-1.5 text-text-muted hover:text-text"
+        >
+          <span className={`inline-block w-2 h-2 rounded-full ${empty ? "bg-text-muted opacity-50" : dotClass}`} />
+          {empty ? "Checked by" : "Read by"} {entries.length === 1 ? mostRecent.agent : `${entries.length} clients`} ·{" "}
+          {mostRecent.last_activated_at ? relativeTime(mostRecent.last_activated_at) : "—"}
+          {empty && " · empty, nothing to read yet"}
+        </button>
+      </PopoverTrigger>
+      <Popover.Content align="start" className="min-w-[280px] space-y-1">
+        {entries.map((e) => (
+          <div key={e.agent} className="flex items-center justify-between gap-3 px-2 py-1">
+            <span className="min-w-0">
+              <span className="font-mono text-xs">{e.agent}</span>
+              {e.operations.length > 0 && (
+                <span className="block text-2xs text-text-subtle">
+                  via {e.operations.map(readPathLabel).join(", ")}
+                </span>
+              )}
+            </span>
+            <span className="shrink-0 text-2xs text-text-muted tabular-nums">
+              {e.event_count}× · {relativeTime(e.last_activated_at)}
+            </span>
+          </div>
+        ))}
+      </Popover.Content>
+    </Popover>
   );
 }
 
@@ -467,48 +452,32 @@ function Preview({ entries, onClose }: { entries: ProfileEntry[]; onClose: () =>
   }, [entries, format]);
 
   return (
-    <section className="mt-4 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3">
+    <section className="mt-4 rounded-md border border-border bg-surface-2 p-3">
       <div className="flex items-center gap-2 mb-2">
-        <div className="inline-flex rounded border border-[var(--color-border)] overflow-hidden text-2xs">
-          {(["xml", "markdown"] as const).map((f) => (
-            <button
-              key={f}
-              type="button"
-              onClick={() => setFormat(f)}
-              className={
-                "px-2 py-0.5 " +
-                (format === f
-                  ? "bg-[var(--color-accent)] text-[var(--color-on-accent)]"
-                  : "hover:bg-[var(--color-surface)] text-[var(--color-text-muted)]")
-              }
-            >
-              {f}
-            </button>
-          ))}
-        </div>
-        <button
-          type="button"
+        <ButtonGroup
+          aria-label="Preview format"
+          options={[
+            { value: "xml", label: "xml" },
+            { value: "markdown", label: "markdown" },
+          ]}
+          selected={format}
+          onClick={(value) => setFormat(value as "xml" | "markdown")}
+        />
+        <Button
+          type="secondary"
+          htmlType="button"
+          iconLeft="copy"
           onClick={() => {
             navigator.clipboard.writeText(rendered);
             toast("Copied", "ok");
           }}
-          className="inline-flex items-center gap-1 px-2 py-0.5 text-2xs rounded border border-[var(--color-border)] hover:bg-[var(--color-surface)]"
         >
-          <Copy className="w-3 h-3" />
           Copy
-        </button>
-        <span className="ml-auto text-2xs text-[var(--color-text-muted)] tabular-nums">
-          {fmtInt(rendered.length)} chars
-        </span>
-        <button
-          type="button"
-          onClick={onClose}
-          className="p-0.5 rounded hover:bg-[var(--color-surface)] text-[var(--color-text-muted)]"
-        >
-          <X className="w-3.5 h-3.5" />
-        </button>
+        </Button>
+        <span className="ml-auto text-2xs text-text-muted tabular-nums">{fmtInt(rendered.length)} chars</span>
+        <IconButton icon="cross" size="sm" label="Close preview" onClick={onClose} />
       </div>
-      <pre className="text-xs font-mono whitespace-pre-wrap break-words p-2 rounded bg-[var(--color-surface)] max-h-56 overflow-y-auto">
+      <pre className="text-xs font-mono whitespace-pre-wrap break-words p-2 rounded bg-surface max-h-56 overflow-y-auto">
         {rendered}
       </pre>
     </section>
@@ -542,75 +511,66 @@ async def turn(user_msg, history):
 function ReachSection() {
   const plugin = pluginInstallLines("claude-code") ?? "";
   return (
-    <section className="mt-8 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]">
-      <div className="px-4 py-3 border-b border-[var(--color-border)]">
+    <section className="mt-8 rounded-lg border border-border bg-surface">
+      <div className="px-4 py-3 border-b border-border">
         <span className="text-sm font-medium">Where this profile goes</span>
-        <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">
+        <p className="mt-0.5 text-xs text-text-muted">
           Every client reads it at the start of a conversation. The chip above says which ones did.
         </p>
       </div>
-      <div className="px-4 py-3 space-y-4 text-sm text-[var(--color-text)] leading-relaxed">
+      <div className="px-4 py-3 space-y-4 text-sm text-text leading-relaxed">
         <div>
-          <div className="font-medium text-xs text-[var(--color-text-muted)] mb-1">
-            Claude Code · Codex — with the Loom plugin
-          </div>
+          <div className="font-medium text-xs text-text-muted mb-1">Claude Code · Codex — with the Loom plugin</div>
           <div className="mb-2">Delivered when a session starts, with your relevant memories. Nothing to type.</div>
-          <details className="text-xs text-[var(--color-text-muted)]">
-            <summary className="cursor-pointer hover:text-[var(--color-text)]">
-              Not installed yet? Two commands.
-            </summary>
-            <pre className="mt-1.5 text-2xs font-mono whitespace-pre-wrap break-words p-2 rounded bg-[var(--color-surface-2)]">
+          <details className="text-xs text-text-muted">
+            <summary className="cursor-pointer hover:text-text">Not installed yet? Two commands.</summary>
+            <pre className="mt-1.5 text-2xs font-mono whitespace-pre-wrap break-words p-2 rounded bg-surface-2">
               {plugin}
             </pre>
           </details>
         </div>
         <div>
-          <div className="font-medium text-xs text-[var(--color-text-muted)] mb-1">
-            Claude Desktop · Cursor · any MCP client
-          </div>
+          <div className="font-medium text-xs text-text-muted mb-1">Claude Desktop · Cursor · any MCP client</div>
           <div className="mb-1">Delivered when the client connects, as Loom&apos;s session instructions.</div>
-          <div className="text-xs text-[var(--color-text-muted)] leading-relaxed">
+          <div className="text-xs text-text-muted leading-relaxed">
             If a client ignores server instructions, type{" "}
-            <code className="font-mono bg-[var(--color-accent-soft)] text-[var(--color-accent)] rounded px-1 py-0.5">
-              use loom
-            </code>{" "}
-            once at the start of the conversation; it re-delivers the same text.
+            <code className="font-mono bg-accent-soft text-accent rounded px-1 py-0.5">use loom</code> once at the start
+            of the conversation; it re-delivers the same text.
           </div>
         </div>
         <details className="group">
-          <summary className="cursor-pointer font-medium text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
-            Your own bot
-          </summary>
+          <summary className="cursor-pointer font-medium text-xs text-text-muted hover:text-text">Your own bot</summary>
           <div className="mt-2 space-y-3">
             <div>
               Cache the profile once per conversation, pass it as <code>system=</code> on every LLM call:
             </div>
             <div className="relative">
-              <button
-                type="button"
+              <Button
+                type="secondary"
+                htmlType="button"
+                iconLeft="copy"
+                className="absolute top-1.5 right-1.5"
                 onClick={() => {
                   navigator.clipboard.writeText(BOT_SNIPPET);
                   toast("Copied", "ok");
                 }}
-                className="absolute top-1.5 right-1.5 inline-flex items-center gap-1 px-1.5 py-0.5 text-2xs rounded border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"
               >
-                <Copy className="w-3 h-3" />
                 Copy
-              </button>
-              <pre className="text-xs font-mono whitespace-pre-wrap break-words p-2.5 pr-12 rounded bg-[var(--color-surface-2)] overflow-x-auto">
+              </Button>
+              <pre className="text-xs font-mono whitespace-pre-wrap break-words p-2.5 pr-24 rounded bg-surface-2 overflow-x-auto">
                 {BOT_SNIPPET}
               </pre>
             </div>
-            <div className="text-xs text-[var(--color-text-muted)] leading-relaxed">
+            <div className="text-xs text-text-muted leading-relaxed">
               TypeScript: <code>loom.profile.render(&#123; format: &quot;xml&quot; &#125;)</code> returns the same text
               to prepend yourself.
             </div>
-            <div className="text-xs text-[var(--color-text-muted)] leading-relaxed">
-              <span className="text-[var(--color-text)] font-medium">Building a product with multiple end-users?</span>{" "}
-              Pass <code>user_id=&quot;alice@example.com&quot;</code> on every Loom call so each user gets their own
-              profile + facts, scoped to that <code>user_id</code>. If you cache the rendered <code>system</code>{" "}
-              prompt, key the cache by <code>user_id</code> too — sharing one cached <code>system</code> across users
-              leaks personal facts between sessions.
+            <div className="text-xs text-text-muted leading-relaxed">
+              <span className="text-text font-medium">Building a product with multiple end-users?</span> Pass{" "}
+              <code>user_id=&quot;alice@example.com&quot;</code> on every Loom call so each user gets their own profile
+              + facts, scoped to that <code>user_id</code>. If you cache the rendered <code>system</code> prompt, key
+              the cache by <code>user_id</code> too — sharing one cached <code>system</code> across users leaks personal
+              facts between sessions.
             </div>
           </div>
         </details>
@@ -621,12 +581,10 @@ function ReachSection() {
 
 function EmptyState({ onPickTemplate }: { onPickTemplate: (t: (typeof TEMPLATES)[number]) => void }) {
   return (
-    <div className="mt-6 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
+    <div className="mt-6 rounded-lg border border-border bg-surface p-6">
       <div className="text-center mb-5">
         <h2 className="text-xl font-medium mb-1">Start with a persona</h2>
-        <p className="text-sm text-[var(--color-text-muted)]">
-          Pick the style you want every AI conversation to default to.
-        </p>
+        <p className="text-sm text-text-muted">Pick the style you want every AI conversation to default to.</p>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         {TEMPLATES.map((t) => (
@@ -634,11 +592,11 @@ function EmptyState({ onPickTemplate }: { onPickTemplate: (t: (typeof TEMPLATES)
             key={t.title}
             type="button"
             onClick={() => onPickTemplate(t)}
-            className="text-left rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] hover:border-[var(--color-accent)] hover:bg-[var(--color-surface)] p-3 transition-colors"
+            className="text-left rounded-md border border-border bg-surface-2 hover:border-accent hover:bg-surface p-3 transition-colors"
           >
             <div className="text-sm font-semibold mb-1">{t.title}</div>
-            <div className="text-xs text-[var(--color-text-muted)] mb-2">{t.description}</div>
-            <pre className="text-2xs font-mono text-[var(--color-text-muted)] whitespace-pre-wrap leading-relaxed line-clamp-3">
+            <div className="text-xs text-text-muted mb-2">{t.description}</div>
+            <pre className="text-2xs font-mono text-text-muted whitespace-pre-wrap leading-relaxed line-clamp-3">
               {t.value}
             </pre>
           </button>
@@ -676,7 +634,7 @@ const SectionRow = memo(function SectionRow({
   const [expanded, setExpanded] = useState(false);
 
   return (
-    <div className={embedded ? "" : "rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4"}>
+    <div className={embedded ? "" : "rounded-lg border border-border bg-surface p-4"}>
       <div className="flex items-start justify-between mb-2 gap-3">
         <div className="flex items-baseline gap-2 min-w-0 flex-1">
           {onOpen ? (
@@ -686,14 +644,14 @@ const SectionRow = memo(function SectionRow({
                 e.stopPropagation();
                 onOpen(section.label);
               }}
-              className="font-mono text-base font-semibold truncate text-left hover:underline"
+              className="font-mono text-sm font-semibold truncate text-left hover:underline"
             >
               {section.label}
             </button>
           ) : (
-            <div className="font-mono text-base font-semibold truncate">{section.label}</div>
+            <div className="font-mono text-sm font-semibold truncate">{section.label}</div>
           )}
-          <div className="text-2xs font-mono tabular-nums text-[var(--color-text-muted)] whitespace-nowrap">
+          <div className="text-2xs font-mono tabular-nums text-text-muted whitespace-nowrap">
             {fmtInt(valueLen)} / {fmtInt(cap)}
           </div>
         </div>
@@ -705,7 +663,6 @@ const SectionRow = memo(function SectionRow({
             }}
             label={`Edit ${section.label}`}
             tooltip="Edit"
-            className="hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"
             icon="pencil"
             size="sm"
           />
@@ -716,36 +673,33 @@ const SectionRow = memo(function SectionRow({
             }}
             label={`Delete ${section.label}`}
             tooltip="Delete"
-            className="hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-danger)]"
             icon="trash"
             size="sm"
           />
         </div>
       </div>
-      <pre className="text-sm whitespace-pre-wrap break-words mb-2 font-sans text-[var(--color-text)]">
+      <pre className="text-sm whitespace-pre-wrap break-words mb-2 font-sans text-text">
         {expanded || !truncated ? section.value : lines.slice(0, 6).join("\n") + "\n…"}
       </pre>
       {truncated && (
-        <button
-          type="button"
+        <Button
+          type="empty"
+          htmlType="button"
+          className="mb-2"
           onClick={(e) => {
             e.stopPropagation();
             setExpanded((v) => !v);
           }}
-          className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-accent)] mb-2"
         >
           {expanded ? "Show less" : `Show all (${lines.length} lines)`}
-        </button>
+        </Button>
       )}
-      <div className="flex items-center gap-3 text-xs text-[var(--color-text-muted)] mt-2">
-        <div className="flex-1 h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-          <div
-            className={"h-full " + (headroomWarn ? "bg-[var(--color-warn)]" : "bg-[var(--color-accent)]")}
-            style={{ width: `${pct}%` }}
-          />
+      <div className="flex items-center gap-3 text-xs text-text-muted mt-2">
+        <div className="flex-1 h-1.5 rounded-full bg-surface-2 overflow-hidden">
+          <div className={"h-full " + (headroomWarn ? "bg-warn" : "bg-accent")} style={{ width: `${pct}%` }} />
         </div>
         <div className="flex items-center gap-1.5 whitespace-nowrap">
-          {isAgentEdit ? <Bot className="w-3.5 h-3.5" /> : <User className="w-3.5 h-3.5" />}
+          <Icon name={isAgentEdit ? "cpu" : "user"} size="sm" aria-hidden="true" />
           <span className="font-mono">{editor}</span>
           {section.updated_at && <span>· {relativeTime(section.updated_at)}</span>}
         </div>
@@ -798,57 +752,34 @@ function SectionEditor({
   }
 
   return (
-    <div className="rounded-lg border border-[var(--color-accent)] bg-[var(--color-surface)] p-4 space-y-3">
+    <div className="rounded-lg border border-accent bg-surface p-4 space-y-3">
       <div className="flex items-center justify-between">
-        <input
-          aria-label="Section label"
-          type="text"
-          value={label}
-          onChange={(e) => setLabel(e.target.value)}
-          placeholder="section name (e.g. persona, about-me)"
-          disabled={!isNew}
-          className="font-mono text-base font-semibold bg-transparent border-b border-[var(--color-border)] focus:border-[var(--color-accent)] outline-none disabled:opacity-60 flex-1"
-        />
+        <div className="flex-1 min-w-0">
+          <TextField
+            aria-label="Section label"
+            value={label}
+            onChange={(value) => setLabel(value)}
+            placeholder="section name (e.g. persona, about-me)"
+            disabled={!isNew}
+          />
+        </div>
         <div className="flex items-center gap-1 ml-3">
-          <IconButton
-            onClick={onCancel}
-            disabled={saving}
-            label="Cancel"
-            className="hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"
-            icon="cross"
-            size="sm"
-          />
-          <IconButton
-            onClick={onSave}
-            disabled={saving || over}
-            label="Save"
-            className="hover:bg-[var(--color-surface-2)] text-[var(--color-accent)] disabled:opacity-40"
-            icon="check"
-            size="sm"
-          />
+          <IconButton onClick={onCancel} disabled={saving} label="Cancel" icon="cross" size="sm" />
+          <IconButton onClick={onSave} disabled={saving || over} label="Save" icon="check" size="sm" />
         </div>
       </div>
-      <textarea
+      <TextAreaField
         aria-label="Section text"
         value={value}
-        onChange={(e) => setValue(e.target.value)}
+        onChange={(value) => setValue(value)}
         rows={Math.min(20, Math.max(4, value.split("\n").length + 1))}
         placeholder="This is what your AI reads, exactly as typed."
-        className="w-full text-sm font-mono bg-[var(--color-surface-2)] rounded-md p-3 outline-none focus:ring-2 focus:ring-[var(--color-accent)] resize-y"
       />
       <div className="flex items-center gap-3 text-xs">
-        <div className="flex-1 h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-          <div
-            className={"h-full " + (over ? "bg-[var(--color-danger)]" : "bg-[var(--color-accent)]")}
-            style={{ width: `${pct}%` }}
-          />
+        <div className="flex-1 h-1.5 rounded-full bg-surface-2 overflow-hidden">
+          <div className={"h-full " + (over ? "bg-danger" : "bg-accent")} style={{ width: `${pct}%` }} />
         </div>
-        <div
-          className={
-            "font-mono tabular-nums whitespace-nowrap " +
-            (over ? "text-[var(--color-danger)]" : "text-[var(--color-text-muted)]")
-          }
-        >
+        <div className={"font-mono tabular-nums whitespace-nowrap " + (over ? "text-danger" : "text-text-muted")}>
           {fmtInt(measuredLen)} / {fmtInt(DEFAULT_CHAR_LIMIT)}
         </div>
       </div>

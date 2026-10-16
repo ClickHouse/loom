@@ -5,6 +5,7 @@
  * after a confirm; a refusal says "join".
  */
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../lib/errors";
@@ -184,9 +185,10 @@ describe("RepoDocsList", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Add a document" }));
     const dialog = await screen.findByRole("dialog");
     expect(await axeViolations(document.body)).toEqual([]);
-    fireEvent.click(within(dialog).getByRole("tab", { name: "Paste text" }));
-    fireEvent.change(within(dialog).getByLabelText(/^Text/), { target: { value: "Step 1: page the owner." } });
-    fireEvent.change(within(dialog).getByLabelText("Title"), { target: { value: "Runbook" } });
+    const user = userEvent.setup();
+    await user.click(within(dialog).getByRole("tab", { name: "Paste text" }));
+    await user.type(within(dialog).getByLabelText(/^Text/), "Step 1: page the owner.");
+    await user.type(within(dialog).getByLabelText("Title"), "Runbook");
     expect(dialog).toHaveTextContent("Saved as repo-doc://Acme/kj/runbook-2");
     fireEvent.click(within(dialog).getByRole("button", { name: "Add document" }));
     await waitFor(() => expect(addKnowledge).toHaveBeenCalled());

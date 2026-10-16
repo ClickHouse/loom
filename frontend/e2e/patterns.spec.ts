@@ -108,7 +108,7 @@ test("on a bound namespace the toggle opens the board, the grid roves focus, a c
   await expect(inspector.getByText("named by graph")).toBeVisible();
   await expect.poll(() => calls.qa.filter((c) => c.op === "item").length).toBe(2);
   expect(calls.qa.filter((c) => c.op === "item")[0]).toMatchObject({ numbers: [97288] });
-  await page.getByRole("tab", { name: /tracker graph/ }).click();
+  await page.getByRole("tab", { name: /tracker graph/i }).click();
   const svg = page.locator("svg.tracker-graph-svg");
   await expect(svg).toBeVisible();
   const edge = svg.locator('.tracker-edge[data-rel="caused_by"][data-from="90220"][data-to="97288"]');
@@ -140,7 +140,7 @@ test("a deep link naming an issue opens on its tracker graph, and picking an iss
   const calls = await installApi(page, { trackerBound: true });
   const errors = collectErrors(page);
   await page.goto("/graph?mode=patterns&component=MergeTree&severity=medium&issue=97288");
-  const graphTab = page.getByRole("tab", { name: /tracker graph/ });
+  const graphTab = page.getByRole("tab", { name: /tracker graph/i });
   await expect(graphTab).toHaveAttribute("aria-selected", "true");
   const svg = page.locator("svg.tracker-graph-svg");
   await expect(svg.locator('.tracker-edge[data-rel="caused_by"][data-from="90220"][data-to="97288"]')).toHaveCount(1);

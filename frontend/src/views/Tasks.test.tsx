@@ -5,6 +5,7 @@ import type { MyNamespaceEntry, WhoAmI } from "../api";
 import type { Inbox, InboxCount, TaskListRow, TaskRow } from "../api/tasks";
 import { useStore } from "../lib/state";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
+import { axeViolations } from "../test/axe";
 import { Tasks } from "./Tasks";
 
 // The Tasks page. Mocked at the wrapper level, like Recent.polls.test.tsx: the page reads
@@ -164,10 +165,13 @@ function seed(whoami: WhoAmI, mine: MyNamespaceEntry[]) {
   });
 }
 
-const groupRows = (name: RegExp) =>
-  within(screen.getByRole("region", { name }))
+// Task rows only: each group's first row is its header.
+const taskRows = (el: HTMLElement = document.body) =>
+  within(el)
     .queryAllByRole("row")
+    .filter((r) => r.hasAttribute("data-task-id"))
     .map((r) => r.getAttribute("aria-label"));
+const groupRows = (name: RegExp) => taskRows(screen.getByRole("rowgroup", { name }));
 
 describe("Tasks page", () => {
   beforeEach(() => {
@@ -203,6 +207,17 @@ describe("Tasks page", () => {
     expect(listTasks).toHaveBeenCalledTimes(1);
   });
 
+  it("the list is a valid grid: rowgroups of rows of gridcells, axe-clean with every group open", async () => {
+    seed(admin, [row("admin")]);
+    const user = userEvent.setup();
+    render(<Tasks />);
+    await screen.findByRole("row", { name: "Task urgent" });
+    await user.click(screen.getByRole("checkbox", { name: "Show closed" }));
+    await user.click(within(screen.getByRole("rowgroup", { name: /^Closed/ })).getByRole("button", { name: /Closed/ }));
+    const grid = screen.getByRole("grid", { name: "Tasks by what happens next" });
+    expect(await axeViolations(grid)).toEqual([]);
+  });
+
   it("groups rows by what happens next, in queue order, with Closed hidden until asked for", async () => {
     seed(admin, [row("admin")]);
     const user = userEvent.setup();
@@ -212,14 +227,14 @@ describe("Tasks page", () => {
     expect(groupRows(/^To do/)).toEqual(["Task low-late"]);
     expect(groupRows(/^In progress/)).toEqual(["Task running"]);
     expect(groupRows(/^Waiting/)).toEqual(["Task blocked"]);
-    expect(screen.queryByRole("region", { name: /^Closed/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("rowgroup", { name: /^Closed/ })).not.toBeInTheDocument();
     expect(screen.getByText("decide: accept or won't do")).toBeInTheDocument();
     // The row's one line: the reason for a wait, the poster and age in triage, the lease in progress.
     expect(screen.getByText("blocked on human: needs a repro")).toBeInTheDocument();
     expect(screen.getByText("from reporter-public · 42 min ago")).toBeInTheDocument();
     expect(screen.getByRole("img", { name: /lease: 6 min left/ })).toBeInTheDocument();
     await user.click(screen.getByRole("checkbox", { name: "Show closed" }));
-    const closed = screen.getByRole("region", { name: /^Closed/ });
+    const closed = screen.getByRole("rowgroup", { name: /^Closed/ });
     // collapsed by default: the header shows, the rows do not
     expect(within(closed).getByRole("button", { name: /Closed/ })).toHaveAttribute("aria-expanded", "false");
     await user.click(within(closed).getByRole("button", { name: /Closed/ }));
@@ -240,10 +255,10 @@ describe("Tasks page", () => {
     expect(within(tiles).getByRole("button", { name: "Lease ending ≤10 min: 1" })).toBeInTheDocument();
     await user.click(within(tiles).getByRole("button", { name: "Failed · reopen or close: 1" }));
     // a closed row the tile asks for shows even with Show closed off
-    expect(screen.getAllByRole("row").map((r) => r.getAttribute("aria-label"))).toEqual(["Task failed"]);
+    expect(taskRows()).toEqual(["Task failed"]);
     await user.click(within(tiles).getByRole("button", { name: "Failed · reopen or close: 1" })); // off again
     await user.click(within(tiles).getByRole("button", { name: "Lease ending ≤10 min: 1" }));
-    expect(screen.getAllByRole("row").map((r) => r.getAttribute("aria-label"))).toEqual(["Task running"]);
+    expect(taskRows()).toEqual(["Task running"]);
   });
 
   it("filters by kind and by who posted (the inbox's own agent vs others)", async () => {
@@ -252,16 +267,12 @@ describe("Tasks page", () => {
     render(<Tasks />);
     await screen.findByRole("row", { name: "Task urgent" });
     await user.click(screen.getByRole("button", { name: "coverage_gap" }));
-    expect(screen.getAllByRole("row").map((r) => r.getAttribute("aria-label"))).toEqual(["Task low-late"]);
+    expect(taskRows()).toEqual(["Task low-late"]);
     await user.click(screen.getByRole("button", { name: "coverage_gap" }));
     await user.click(screen.getByRole("button", { name: "this agent" }));
-    expect(screen.getAllByRole("row").map((r) => r.getAttribute("aria-label"))).toEqual(["Task low-late"]);
+    expect(taskRows()).toEqual(["Task low-late"]);
     await user.click(screen.getByRole("button", { name: "other agents" }));
-    expect(screen.getAllByRole("row").map((r) => r.getAttribute("aria-label"))).toEqual([
-      "Task urgent",
-      "Task running",
-      "Task blocked",
-    ]);
+    expect(taskRows()).toEqual(["Task urgent", "Task running", "Task blocked"]);
   });
 
   it("lists every inbox with its to-do and running counts, and All inboxes reads one task.list per inbox", async () => {
@@ -304,7 +315,7 @@ describe("Tasks page", () => {
     await waitFor(() => expect(acceptTask).toHaveBeenCalledWith({ org: "dev", namespace: "team" }, "urgent"));
     await waitFor(() => expect(groupRows(/^To do/)).toEqual(["Task urgent", "Task low-late"]));
     expect(
-      within(screen.getByRole("region", { name: /^Triage/ })).getByText("Nothing waiting for a decision."),
+      within(screen.getByRole("rowgroup", { name: /^Triage/ })).getByText("Nothing waiting for a decision."),
     ).toBeInTheDocument();
     expect(taskCounts).toHaveBeenCalledTimes(2); // the rail's numbers follow the action
   });
@@ -330,7 +341,7 @@ describe("Tasks page", () => {
       expect(wontDoTask).toHaveBeenCalledWith({ org: "dev", namespace: "team" }, "urgent", "duplicate of private#3990"),
     );
     await user.click(screen.getByRole("checkbox", { name: "Show closed" }));
-    await user.click(within(screen.getByRole("region", { name: /^Closed/ })).getByRole("button", { name: /Closed/ }));
+    await user.click(within(screen.getByRole("rowgroup", { name: /^Closed/ })).getByRole("button", { name: /Closed/ }));
     await waitFor(() => expect(groupRows(/^Closed/)).toContain("Task urgent"));
     expect(screen.getByText("duplicate of private#3990")).toBeInTheDocument();
   });

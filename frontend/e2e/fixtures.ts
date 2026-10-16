@@ -13,6 +13,19 @@ export function stringArray(v: unknown): string[] | null {
 
 /** The locator's bounding box; an element with no box fails the test by name
  *  instead of a TypeError on `null`. */
+/** A Click UI Select's trigger: the button its label (or `triggerProps` aria-label) names. */
+export function selectTrigger(scope: Page | Locator, name: string | RegExp): Locator {
+  return scope.getByRole("button", { name, exact: typeof name === "string" });
+}
+
+/** Pick an option in a Click UI Select: open the trigger, click the item by its value (the
+ *  items render in a portal and carry `data-value`, not an option role). */
+export async function pickOption(scope: Page | Locator, name: string | RegExp, value: string): Promise<void> {
+  await selectTrigger(scope, name).click();
+  const page = "page" in scope && typeof scope.page === "function" ? scope.page() : (scope as Page);
+  await page.locator(`[cui-select-item][data-value="${value}"]`).click();
+}
+
 export async function boxOf(l: Locator): Promise<NonNullable<Awaited<ReturnType<Locator["boundingBox"]>>>> {
   const b = await l.boundingBox();
   if (b === null) throw new Error(`no bounding box for ${l.toString()}`);

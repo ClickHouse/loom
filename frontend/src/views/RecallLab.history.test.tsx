@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SearchTraceLogRow } from "../api";
 import { useStore } from "../lib/state";
@@ -42,7 +43,7 @@ const row = (over: Partial<SearchTraceLogRow> = {}): SearchTraceLogRow => ({
 
 async function openHistory() {
   render(<RecallLab />);
-  fireEvent.click(screen.getByRole("button", { name: /Recall history/ }));
+  await userEvent.click(screen.getByRole("tab", { name: /Recall history/ }));
   await waitFor(() => expect(listSearchTraceLog).toHaveBeenCalledTimes(1));
 }
 

@@ -61,7 +61,8 @@ describe("SessionBriefPanel", () => {
     expect(getBrief).toHaveBeenCalledWith({ org: "o", namespace: "ns" }, "", { fromSession: "s-1", full: true });
     expect(screen.queryByRole("button", { name: "Full" })).toBeNull();
     // An earlier revision is fetched by the brief's key, with the summary too.
-    fireEvent.change(screen.getByLabelText("Revision"), { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: /Revision/ }));
+    fireEvent.click(await screen.findByText("rev 1"));
     await waitFor(() =>
       expect(getBrief).toHaveBeenLastCalledWith({ org: "o", namespace: "ns" }, "auto/loom/feat-x", {
         revision: 1,

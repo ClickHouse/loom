@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { LayoutGrid, Lock } from "lucide-react";
 import { EmptyState } from "../../../components/EmptyState";
 import { Skeleton } from "../../../components/Skeleton";
 import { Tip } from "../../../components/ui";
@@ -243,7 +242,7 @@ export function Board({
     return (
       <div className={`${frame} grid place-items-center`}>
         <EmptyState
-          icon={LayoutGrid}
+          icon="services"
           title="The tracker is not answering"
           description={`The source behind ${trackerNamespace} could not be read (breaker open, budget exceeded, or the credential unset). Nothing on the board is a claim; try again shortly.`}
         />
@@ -254,7 +253,7 @@ export function Board({
     return (
       <div className={`${frame} grid place-items-center`}>
         <EmptyState
-          icon={Lock}
+          icon="lock"
           title="Restricted — not available with this token"
           description="The bug board on this namespace needs a restricted tracker namespace your token does not carry."
         />
@@ -265,7 +264,7 @@ export function Board({
     return (
       <div className={`${frame} grid place-items-center`}>
         <EmptyState
-          icon={LayoutGrid}
+          icon="services"
           title="No board was planned"
           description={`${trackerNamespace} answered, but its catalogue routed the board question to nothing; the server may predate the bug board.`}
         />
@@ -276,7 +275,7 @@ export function Board({
     return (
       <div className={`${frame} grid place-items-center`}>
         <EmptyState
-          icon={LayoutGrid}
+          icon="services"
           title={
             totalRows
               ? "Every cell is filtered out"

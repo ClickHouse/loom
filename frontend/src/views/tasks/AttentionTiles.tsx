@@ -31,7 +31,7 @@ export function AttentionTiles({
             aria-label={`${meta.label}: ${n}`}
           >
             <span>
-              <span className="block text-xs text-[var(--color-text-muted)]">{meta.label}</span>
+              <span className="block text-xs text-text-muted">{meta.label}</span>
               <span className="n tabular">{n}</span>
             </span>
             <span

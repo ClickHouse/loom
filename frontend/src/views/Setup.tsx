@@ -1,19 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
-import * as Tabs from "@radix-ui/react-tabs";
-import type { LucideIcon } from "lucide-react";
-import {
-  Check,
-  Settings,
-  Plus,
-  Trash2,
-  FileUp,
-  AlertTriangle,
-  X as XIcon,
-  Code as CodeIcon,
-  KeyRound,
-  Brain,
-} from "lucide-react";
+import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
+import { Button } from "@clickhouse/click-ui/Button";
+import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
+import { Checkbox } from "@clickhouse/click-ui/Checkbox";
+import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
+import { Select } from "@clickhouse/click-ui/Select";
+import { Tabs } from "@clickhouse/click-ui/Tabs";
+import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
+import { TextField } from "@clickhouse/click-ui/TextField";
 import {
   generateMcpConfig,
   listServiceAccounts,
@@ -39,7 +33,9 @@ import { PrivacyFilters, type PrivacyFilterStarter } from "./admin/Blacklist";
 import { canCall, canCallCodeRepos } from "../lib/canCall";
 import { PageContainer } from "../layout/PageContainer";
 import { ScopeBadge } from "../components/ScopeBadge";
-import { Tip } from "../components/ui";
+import { Tip, Unavailable } from "../components/ui";
+import { Modal } from "../components/ui/Modal";
+import { IconButton } from "../components/IconButton";
 import { READ_ONLY_TIP, canWrite, roleOnNamespace, useNamespaceRole } from "../lib/namespaceRole";
 import { isMemoryNamespace } from "../lib/namespace";
 import { hasPlatformAdminClaim } from "../lib/role";
@@ -129,21 +125,12 @@ function writeTabParam(tab: SettingsTab) {
   window.history.replaceState(null, "", url.toString());
 }
 
-function SettingsTabTrigger({
-  value,
-  icon: Icon,
-  children,
-}: {
-  value: SettingsTab;
-  icon: LucideIcon;
-  children: React.ReactNode;
-}) {
+function SettingsTabTrigger({ value, icon, children }: { value: SettingsTab; icon: IconName; children: string }) {
   return (
-    <Tabs.Trigger
-      value={value}
-      className="inline-flex items-center gap-1.5 px-3 py-2 -mb-px text-sm border-b-2 border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)] data-[state=active]:border-[var(--color-accent)] data-[state=active]:text-[var(--color-text)] data-[state=active]:font-medium outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] rounded-t transition-colors pointer-coarse:min-h-11"
-    >
-      <Icon size={13} aria-hidden="true" /> {children}
+    <Tabs.Trigger value={value}>
+      <span className="inline-flex items-center gap-1.5">
+        <Icon name={icon} size="sm" aria-hidden="true" /> {children}
+      </span>
     </Tabs.Trigger>
   );
 }
@@ -239,10 +226,10 @@ export function Setup() {
     <PageContainer>
       <div className="mb-5 flex flex-wrap items-center gap-x-4 gap-y-2">
         <h1 className="text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
-          <Settings size={18} aria-hidden="true" /> Settings
+          <Icon name="gear" size="md" aria-hidden="true" /> Settings
         </h1>
         {tab === "models" ? (
-          <span className="text-sm text-[var(--color-text-muted)]">Deployment-wide</span>
+          <span className="text-sm text-text-muted">Deployment-wide</span>
         ) : (
           <ScopeBadge kind="namespace" value={namespace} />
         )}
@@ -256,46 +243,34 @@ export function Setup() {
         // is known.
         <div
           role="status"
-          className="mb-6 max-w-2xl flex items-start gap-2 p-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm text-[var(--color-text)]"
+          className="mb-6 max-w-2xl flex items-start gap-2 p-3 rounded-lg border border-border-strong bg-surface text-sm text-text"
         >
-          <AlertTriangle size={15} className="text-[var(--color-warn)] shrink-0 mt-0.5" aria-hidden="true" />
+          <Icon name="warning" size="sm" color="var(--color-warn)" className="shrink-0 mt-0.5" aria-hidden="true" />
           <div>
             <div className="font-semibold">No namespace selected</div>
-            <div className="text-[var(--color-text-muted)] mt-0.5">
+            <div className="text-text-muted mt-0.5">
               Your token can reach no namespace yet. Join a repository or tracker source from Repositories, or ask for a
               grant.
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-3">
               {whoami && (
-                <button
-                  type="button"
-                  onClick={() => setView("code")}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-[var(--color-on-accent)] hover:bg-[var(--color-accent-strong)] transition-colors"
-                >
-                  <CodeIcon size={13} aria-hidden="true" /> Open Repositories
-                </button>
+                <Button type="primary" htmlType="button" iconLeft="code" onClick={() => setView("code")}>
+                  Open Repositories
+                </Button>
               )}
-              <button
-                type="button"
-                onClick={() => openNamespacePicker(true)}
-                className="text-[var(--color-accent)] hover:underline"
-              >
+              <Button type="empty" htmlType="button" onClick={() => openNamespacePicker(true)}>
                 Namespace menu
-              </button>
+              </Button>
             </div>
           </div>
         </div>
       )}
       {canManageModels && showChecklist && tab !== "models" && (
-        <div className="mb-4 rounded-lg border border-[var(--color-border)] p-4 text-sm">
+        <div className="mb-4 rounded-lg border border-border p-4 text-sm">
           <p>Set up Loom's LLM and embedding provider before evaluating memory and search quality.</p>
-          <button
-            type="button"
-            className="mt-2 text-[var(--color-accent)] hover:underline"
-            onClick={() => selectTab("models")}
-          >
+          <Button type="empty" htmlType="button" className="mt-2" onClick={() => selectTab("models")}>
             Configure models and keys
-          </button>
+          </Button>
         </div>
       )}
       {showChecklist && tab !== "models" && (
@@ -311,29 +286,26 @@ export function Setup() {
         />
       )}
 
-      <Tabs.Root
+      <Tabs
         value={tab}
         onValueChange={(v) => {
           if (isSettingsTab(v)) selectTab(v);
         }}
       >
-        <Tabs.List
-          aria-label="Settings sections"
-          className="mb-5 flex items-center gap-1 border-b border-[var(--color-border)]"
-        >
-          <SettingsTabTrigger value="tokens" icon={KeyRound}>
+        <Tabs.TriggersList aria-label="Settings sections" className="mb-5">
+          <SettingsTabTrigger value="tokens" icon="key">
             Tokens
           </SettingsTabTrigger>
-          <SettingsTabTrigger value="memory" icon={Brain}>
+          <SettingsTabTrigger value="memory" icon="light-bulb">
             Memory
           </SettingsTabTrigger>
           {canManageModels && (
-            <SettingsTabTrigger value="models" icon={Settings}>
+            <SettingsTabTrigger value="models" icon="gear">
               Models &amp; keys
             </SettingsTabTrigger>
           )}
-        </Tabs.List>
-        <Tabs.Content value="tokens" className="outline-none">
+        </Tabs.TriggersList>
+        <Tabs.Content value="tokens">
           <TokensSection
             tokens={sa}
             reloadTokens={loadSa}
@@ -342,13 +314,13 @@ export function Setup() {
             onFormOpenChange={setFormOpen}
           />
         </Tabs.Content>
-        <Tabs.Content value="memory" className="outline-none">
+        <Tabs.Content value="memory">
           <MemoryTab />
         </Tabs.Content>
-        <Tabs.Content value="models" className="outline-none">
+        <Tabs.Content value="models">
           {canManageModels ? <ModelsSettings /> : <p>Model settings require a platform administrator.</p>}
         </Tabs.Content>
-      </Tabs.Root>
+      </Tabs>
     </PageContainer>
   );
 }
@@ -367,10 +339,10 @@ function MemoryTab() {
   return (
     <div className="max-w-3xl space-y-8">
       <section aria-labelledby="settings-never-save">
-        <h2 id="settings-never-save" className="text-sm! font-semibold text-[var(--color-text)]">
+        <h2 id="settings-never-save" className="text-sm! font-semibold text-text">
           Never save
         </h2>
-        <p className="text-xs text-[var(--color-text-muted)] mt-0.5 mb-3 max-w-2xl">
+        <p className="text-xs text-text-muted mt-0.5 mb-3 max-w-2xl">
           A write whose value matches a pattern is refused — extracted ones too.
         </p>
         <PrivacyFilters compact starters={PRIVACY_STARTERS} />
@@ -378,45 +350,28 @@ function MemoryTab() {
 
       <section aria-labelledby="settings-seed" className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 max-w-2xl">
-          <h2 id="settings-seed" className="text-sm! font-semibold text-[var(--color-text)]">
+          <h2 id="settings-seed" className="text-sm! font-semibold text-text">
             Seed from a document
           </h2>
-          <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
+          <p className="text-xs text-text-muted mt-0.5">
             Turn an AGENTS.md, CLAUDE.md or rules file into memories — one per{" "}
             <code className="font-mono text-2xs">##</code> section.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setImporting(true)}
-          className="inline-flex items-center gap-1.5 min-h-9 px-3 text-sm font-medium rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] pointer-coarse:min-h-11"
+        <Button type="secondary" htmlType="button" iconLeft="upload" onClick={() => setImporting(true)}>
+          Import a document
+        </Button>
+        <Modal
+          open={importing}
+          onOpenChange={setImporting}
+          title="Import a document"
+          description="Paste a Markdown document; each second-level section becomes one memory."
+          className="max-w-[720px] w-full"
         >
-          <FileUp size={13} aria-hidden="true" /> Import a document
-        </button>
-        <Dialog.Root open={importing} onOpenChange={setImporting}>
-          <Dialog.Portal>
-            <Dialog.Overlay className="fixed inset-0 z-50 bg-overlay animate-fade-in motion-reduce:animate-none!" />
-            <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[min(720px,92vw)] max-h-[90vh] overflow-y-auto rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl animate-fade-in motion-reduce:animate-none!">
-              <div className="flex items-center justify-between px-5 py-3 border-b border-[var(--color-border)]">
-                <Dialog.Title className="text-md font-semibold tracking-tight flex items-center gap-2">
-                  <FileUp size={14} aria-hidden="true" /> Import a document
-                </Dialog.Title>
-                <Dialog.Close
-                  className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-                  aria-label="Close"
-                >
-                  <XIcon size={14} />
-                </Dialog.Close>
-              </div>
-              <Dialog.Description className="sr-only">
-                Paste a Markdown document; each second-level section becomes one memory.
-              </Dialog.Description>
-              <div className="p-5">
-                <ImportCuratedPanel />
-              </div>
-            </Dialog.Content>
-          </Dialog.Portal>
-        </Dialog.Root>
+          <div className="max-h-[80vh] overflow-y-auto">
+            <ImportCuratedPanel />
+          </div>
+        </Modal>
       </section>
     </div>
   );
@@ -741,85 +696,64 @@ function TokensSection({
     <>
       <section className="mb-8" id="setup-connect" aria-label="Tokens">
         <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
-          <p className="text-sm text-[var(--color-text-muted)] max-w-2xl">
+          <p className="text-sm text-text-muted max-w-2xl">
             A token is how a client talks to Loom. Your own tools get one that reads everything you belong to; a bot
             gets exactly the namespaces you list.
           </p>
           {!formVisible && (
-            <button
+            <Button
               id="setup-generate-token"
-              type="button"
+              type="primary"
+              htmlType="button"
+              iconLeft="plus"
               onClick={() => onFormOpenChange(true)}
-              className="inline-flex items-center gap-1.5 min-h-9 px-3.5 text-sm font-medium rounded-md bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:bg-[var(--color-accent-strong)] shadow-sm pointer-coarse:min-h-11"
             >
-              <Plus size={13} aria-hidden="true" /> New token
-            </button>
+              New token
+            </Button>
           )}
         </div>
 
         {formVisible && (
-          <section
-            className="mb-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-4"
-            aria-label="New token"
-          >
+          <section className="mb-4 rounded-2xl border border-border bg-surface p-4 space-y-4" aria-label="New token">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="inline-flex p-0.5 bg-[var(--color-surface-2)] rounded-md gap-0.5">
-                {(["agent", "script"] as const).map((t) => (
-                  <button
-                    type="button"
-                    key={t}
-                    onClick={() => setTab(t)}
-                    className={`px-3 py-1.5 text-sm font-medium rounded-[5px] ${
-                      tab === t
-                        ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm"
-                        : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-                    }`}
-                  >
-                    {t === "agent" ? "For my own tools" : "For a bot that sees only these"}
-                  </button>
-                ))}
-              </div>
+              <ButtonGroup
+                aria-label="Token kind"
+                options={[
+                  { value: "agent", label: "For my own tools" },
+                  { value: "script", label: "For a bot that sees only these" },
+                ]}
+                selected={tab}
+                onClick={(value) => setTab(value === "script" ? "script" : "agent")}
+              />
               {liveTokens.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => onFormOpenChange(false)}
-                  className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline min-h-9 px-1 pointer-coarse:min-h-11"
-                >
+                <Button type="empty" htmlType="button" onClick={() => onFormOpenChange(false)}>
                   Cancel
-                </button>
+                </Button>
               )}
             </div>
 
             {tab === "agent" ? (
               <div className="space-y-3">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <Field
-                    label="Home namespace"
-                    hint="Where this client saves memories and captured sessions. It is not a read limit — see below."
-                  >
-                    <select
-                      value={mcpNamespace}
-                      onChange={(e) => setMcpNamespaceEdited(e.target.value)}
-                      className="w-full px-3 py-2 text-sm font-mono rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] outline-none focus:border-[var(--color-accent)]"
-                    >
+                  <Field hint="Where this client saves memories and captured sessions. It is not a read limit — see below.">
+                    <Select label="Home namespace" value={mcpNamespace} onSelect={setMcpNamespaceEdited}>
                       {(eligibleNs.length > 0
                         ? eligibleNs
                         : [{ namespace: identity.namespace, role: "writer" as const }]
                       ).map((n) => (
-                        <option key={n.namespace} value={n.namespace}>
+                        <Select.Item key={n.namespace} value={n.namespace}>
                           {n.namespace} · {n.role}
-                        </option>
+                        </Select.Item>
                       ))}
-                    </select>
+                    </Select>
                   </Field>
-                  <Field label="Expires in (days)" hint="Blank = 90 days. Max 3650.">
-                    <input
-                      type="text"
+                  <Field hint="Blank = 90 days. Max 3650.">
+                    <TextField
+                      label="Expires in (days)"
                       inputMode="numeric"
                       value={mcpTtlDays}
-                      onChange={(e) => setMcpTtlDays(e.target.value.replace(/[^0-9]/g, ""))}
+                      onChange={(value) => setMcpTtlDays(value.replace(/[^0-9]/g, ""))}
                       placeholder="90"
-                      className="w-full px-3 py-2 text-sm rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] outline-none focus:border-[var(--color-accent)]"
                     />
                   </Field>
                 </div>
@@ -837,158 +771,122 @@ function TokensSection({
                   }
                 />
                 <div className="flex justify-end">
-                  {/* Read-only: aria-disabled, not disabled, so the button stays focusable and the
-                      tip can say why. */}
-                  <Tip content={READ_ONLY_TIP} disabled={!mcpReadOnly}>
-                    <button
+                  <Unavailable reason={mcpReadOnly ? READ_ONLY_TIP : null}>
+                    <Button
                       id="setup-generate-token"
-                      type="button"
-                      onClick={mcpReadOnly ? undefined : onGenerateMcp}
-                      disabled={mcpBusy}
-                      aria-disabled={mcpBusy || mcpReadOnly || undefined}
-                      aria-describedby={mcpReadOnly ? "setup-generate-readonly" : undefined}
-                      className="inline-flex items-center gap-1 px-3 py-2 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md hover:bg-[var(--color-accent-strong)] disabled:opacity-50 disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:cursor-not-allowed aria-disabled:hover:bg-[var(--color-accent)]"
+                      type="primary"
+                      htmlType="button"
+                      iconLeft="plus"
+                      loading={mcpBusy}
+                      onClick={onGenerateMcp}
                     >
-                      <Plus size={12} aria-hidden="true" /> {mcpBusy ? "Generating…" : "Generate token"}
-                    </button>
-                  </Tip>
-                  {mcpReadOnly && (
-                    <span id="setup-generate-readonly" className="sr-only">
-                      {READ_ONLY_TIP}
-                    </span>
-                  )}
+                      Generate token
+                    </Button>
+                  </Unavailable>
                 </div>
               </div>
             ) : noAdminNs ? (
-              <div className="text-sm text-[var(--color-text-muted)] text-center py-3">
+              <div className="text-sm text-text-muted text-center py-3">
                 No active namespace grants on your account.
               </div>
             ) : (
               <div className="space-y-3">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <Field label="Name" hint="Short label; can't be changed later.">
-                    <input
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      placeholder="e.g. cron-cleanup"
-                      className="w-full px-3 py-2 text-sm rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] outline-none focus:border-[var(--color-accent)]"
-                    />
+                  <Field hint="Short label; can't be changed later.">
+                    <TextField label="Name" value={name} onChange={setName} placeholder="e.g. cron-cleanup" />
                   </Field>
 
-                  <Field
-                    label="This token reads only these"
-                    hint={`${selectedNs.length} selected — and nothing else, whatever you join later. Priority = search order (1 = searched first). Role is capped at your grant. Or create a new namespace below.`}
-                  >
-                    <div className="max-h-48 overflow-y-auto rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] divide-y divide-[var(--color-border)]">
+                  <fieldset>
+                    <legend className="text-xs font-medium text-text-muted mb-1">This token reads only these</legend>
+                    <div className="max-h-48 overflow-y-auto rounded-md border border-border bg-surface-2 divide-y divide-border">
                       {eligibleNs.map((n) => {
                         const pos = selectedNs.indexOf(n.namespace);
                         const isOn = pos >= 0;
                         const grant = grantRoleOf(adminNs, n.namespace);
-                        const selectCls =
-                          "px-1 py-0.5 text-2xs rounded border border-[var(--color-border)] bg-[var(--color-surface)] outline-none focus:border-[var(--color-accent)] disabled:opacity-40";
                         return (
-                          <div
-                            key={n.namespace}
-                            className="flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-[var(--color-surface)]"
-                          >
-                            <input
-                              type="checkbox"
+                          <div key={n.namespace} className="flex items-center gap-2 px-3 py-1.5 text-sm">
+                            <Checkbox
                               checked={isOn}
-                              onChange={() => toggleNs(n.namespace)}
-                              className="accent-[var(--color-accent)]"
+                              onCheckedChange={() => toggleNs(n.namespace)}
                               aria-label={`Include ${n.namespace}`}
                             />
                             {/* Priority: search order (1 = first). */}
-                            <select
-                              value={isOn ? pos + 1 : ""}
-                              disabled={!isOn}
-                              onChange={(e) => setPriority(n.namespace, Number(e.target.value))}
-                              className={`${selectCls} w-12`}
-                              aria-label={`Priority for ${n.namespace}`}
-                              title="Search priority (1 = searched first)"
-                            >
-                              {isOn ? (
-                                selectedNs.map((_, i) => (
-                                  <option key={i} value={i + 1}>
-                                    {i + 1}
-                                  </option>
-                                ))
-                              ) : (
-                                <option value="">–</option>
-                              )}
-                            </select>
+                            <Tip content="Search priority (1 = searched first)">
+                              <div className="w-16 shrink-0">
+                                <Select
+                                  triggerProps={{ "aria-label": `Priority for ${n.namespace}` }}
+                                  value={isOn ? String(pos + 1) : ""}
+                                  placeholder="–"
+                                  disabled={!isOn}
+                                  onSelect={(value) => setPriority(n.namespace, Number(value))}
+                                >
+                                  {selectedNs.map((_, i) => (
+                                    <Select.Item key={i} value={String(i + 1)}>
+                                      {i + 1}
+                                    </Select.Item>
+                                  ))}
+                                </Select>
+                              </div>
+                            </Tip>
                             <span className="font-mono flex-1 truncate">{n.namespace}</span>
                             {/* Role: capped at your grant (downgrade only). */}
-                            <select
-                              value={isOn ? (nsRole[n.namespace] ?? grant) : grant}
-                              disabled={!isOn}
-                              onChange={(e) => {
-                                const r = e.target.value;
-                                if (isGrantRole(r)) setNsRole((m) => ({ ...m, [n.namespace]: r }));
-                              }}
-                              className={`${selectCls} capitalize`}
-                              aria-label={`Role for ${n.namespace}`}
-                              title={`Capped at your grant (${grant})`}
-                            >
-                              {rolesUpTo(grant).map((r) => (
-                                <option key={r} value={r}>
-                                  {r}
-                                </option>
-                              ))}
-                            </select>
+                            <Tip content={`Capped at your grant (${grant})`}>
+                              <div className="w-28 shrink-0">
+                                <Select
+                                  triggerProps={{ "aria-label": `Role for ${n.namespace}` }}
+                                  value={isOn ? (nsRole[n.namespace] ?? grant) : grant}
+                                  disabled={!isOn}
+                                  onSelect={(r) => {
+                                    if (isGrantRole(r)) setNsRole((m) => ({ ...m, [n.namespace]: r }));
+                                  }}
+                                >
+                                  {rolesUpTo(grant).map((r) => (
+                                    <Select.Item key={r} value={r}>
+                                      {ROLE_LABELS[r]}
+                                    </Select.Item>
+                                  ))}
+                                </Select>
+                              </div>
+                            </Tip>
                           </div>
                         );
                       })}
                     </div>
                     {eligibleRepos.length > 0 && (
                       <div className="mt-3">
-                        <div className="text-2xs font-medium text-[var(--color-text-muted)] mb-1">
-                          Repositories (read-only)
-                        </div>
+                        <div className="text-2xs font-medium text-text-muted mb-1">Repositories (read-only)</div>
                         {/* One row per repository, its branches beneath; an
                           "all branches" switch per repository. */}
-                        <div className="max-h-56 overflow-y-auto rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] divide-y divide-[var(--color-border)]">
+                        <div className="max-h-56 overflow-y-auto rounded-md border border-border bg-surface-2 divide-y divide-border">
                           {repoGroups.map((grp) => {
                             const onCount = grp.rows.filter((n) => selectedNs.includes(n.namespace)).length;
                             const all = onCount === grp.rows.length;
                             return (
                               <div key={grp.repo}>
-                                <div className="flex items-center gap-2 px-3 py-1.5 text-sm bg-[var(--color-surface)]">
-                                  <input
-                                    type="checkbox"
-                                    checked={all}
-                                    ref={(el) => {
-                                      if (el) el.indeterminate = onCount > 0 && !all;
-                                    }}
-                                    onChange={() =>
+                                <div className="flex items-center gap-2 px-3 py-1.5 text-sm bg-surface">
+                                  <Checkbox
+                                    checked={all ? true : onCount > 0 ? "indeterminate" : false}
+                                    onCheckedChange={() =>
                                       grp.rows.forEach((n) => {
                                         if (selectedNs.includes(n.namespace) === all) toggleNs(n.namespace);
                                       })
                                     }
-                                    className="accent-[var(--color-accent)]"
                                     aria-label={`Include all branches of ${grp.repo}`}
                                   />
                                   <span className="font-medium flex-1 truncate">{grp.repo}</span>
-                                  <span className="text-2xs text-[var(--color-text-muted)] tabular">
+                                  <span className="text-2xs text-text-muted tabular">
                                     {onCount}/{grp.rows.length} branch{grp.rows.length === 1 ? "" : "es"} · viewer
                                   </span>
                                 </div>
                                 {grp.rows.map((n) => (
-                                  <div
-                                    key={n.namespace}
-                                    className="flex items-center gap-2 pl-8 pr-3 py-1 text-xs hover:bg-[var(--color-surface)]"
-                                  >
-                                    <input
-                                      type="checkbox"
+                                  <div key={n.namespace} className="flex items-center gap-2 pl-8 pr-3 py-1 text-xs">
+                                    <Checkbox
                                       checked={selectedNs.includes(n.namespace)}
-                                      onChange={() => toggleNs(n.namespace)}
-                                      className="accent-[var(--color-accent)]"
+                                      onCheckedChange={() => toggleNs(n.namespace)}
                                       aria-label={`Include ${grp.repo} branch ${n.branch}`}
                                     />
-                                    <span className="font-mono flex-1 truncate" title={n.namespace}>
-                                      {n.branch}
-                                    </span>
-                                    <span className="font-mono text-2xs text-[var(--color-text-subtle)] truncate max-w-[12rem]">
+                                    <span className="font-mono flex-1 truncate">{n.branch}</span>
+                                    <span className="font-mono text-2xs text-text-subtle truncate max-w-48">
                                       {n.namespace}
                                     </span>
                                   </div>
@@ -997,46 +895,51 @@ function TokensSection({
                             );
                           })}
                         </div>
-                        <div className="text-2xs text-[var(--color-text-muted)] mt-1">
+                        <div className="text-2xs text-text-muted mt-1">
                           A token reads a repository only if it is listed here; join more from Repositories.
                         </div>
                       </div>
                     )}
                     <div className="flex gap-2 pt-2">
-                      <input
-                        type="text"
-                        aria-label="Namespace to add to the token"
-                        value={newNs}
-                        onChange={(e) => setNewNs(e.target.value.replace(/[^a-zA-Z0-9_-]/g, ""))}
-                        placeholder="new-robot-namespace"
-                        className="flex-1 px-3 py-2 text-sm rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] outline-none focus:border-[var(--color-accent)]"
-                      />
-                      <button
-                        type="button"
+                      <div className="min-w-0 flex-1">
+                        <TextField
+                          aria-label="Namespace to add to the token"
+                          value={newNs}
+                          onChange={(value) => setNewNs(value.replace(/[^a-zA-Z0-9_-]/g, ""))}
+                          placeholder="new-robot-namespace"
+                        />
+                      </div>
+                      <Button
+                        type="secondary"
+                        htmlType="button"
+                        iconLeft="plus"
                         onClick={onCreateNamespace}
-                        disabled={!newNs.trim() || addingNs}
-                        className="inline-flex items-center gap-1 px-3 py-2 text-sm font-medium rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface)] disabled:opacity-50 whitespace-nowrap"
+                        disabled={!newNs.trim()}
+                        loading={addingNs}
                       >
-                        <Plus size={12} /> New namespace
-                      </button>
+                        New namespace
+                      </Button>
                     </div>
-                  </Field>
+                    <p className="text-2xs text-text-subtle mt-1">
+                      {selectedNs.length} selected — and nothing else, whatever you join later. Priority = search order
+                      (1 = searched first). Role is capped at your grant. Or create a new namespace below.
+                    </p>
+                  </fieldset>
 
-                  <Field label="Expires in (days)" hint="Blank = 90 days. Max 3650.">
-                    <input
-                      type="text"
+                  <Field hint="Blank = 90 days. Max 3650.">
+                    <TextField
+                      label="Expires in (days)"
                       inputMode="numeric"
                       value={ttlDays}
-                      onChange={(e) => setTtlDays(e.target.value.replace(/[^0-9]/g, ""))}
+                      onChange={(value) => setTtlDays(value.replace(/[^0-9]/g, ""))}
                       placeholder="90"
-                      className="w-full px-3 py-2 text-sm rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] outline-none focus:border-[var(--color-accent)]"
                     />
                   </Field>
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   {/* The one Python example, next to the token it needs. */}
-                  <details className="text-xs text-[var(--color-text-muted)] min-w-0 flex-1">
-                    <summary className="cursor-pointer hover:text-[var(--color-text)] inline-flex items-center min-h-9 pointer-coarse:min-h-11">
+                  <details className="text-xs text-text-muted min-w-0 flex-1">
+                    <summary className="cursor-pointer hover:text-text inline-flex items-center min-h-9 pointer-coarse:min-h-11">
                       Python example for this token
                     </summary>
                     <BotConnectPreview
@@ -1045,25 +948,26 @@ function TokensSection({
                       baseUrl={typeof window !== "undefined" ? window.location.origin : ""}
                     />
                   </details>
-                  <button
-                    type="button"
+                  <Button
+                    type="primary"
+                    htmlType="button"
+                    iconLeft="plus"
                     onClick={onCreate}
                     disabled={!name.trim() || selectedNs.length === 0}
-                    className="inline-flex items-center gap-1 px-3 py-2 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md hover:bg-[var(--color-accent-strong)] disabled:opacity-50"
                   >
-                    <Plus size={12} /> Create token
-                  </button>
+                    Create token
+                  </Button>
                 </div>
               </div>
             )}
           </section>
         )}
 
-        <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-2">
+        <div className="rounded-2xl border border-border bg-surface p-2">
           <TokensStatusSummary tokens={sa} />
           {sa === null && <Skeleton className="h-12 w-full" />}
           {sa !== null && sa.length === 0 && (
-            <p className="text-sm text-[var(--color-text-muted)] px-2.5 py-3">
+            <p className="text-sm text-text-muted px-2.5 py-3">
               No tokens yet. Generate one above; you pick the client (Claude Code, Cursor, …) after it is minted, and
               the same token works in every client.
             </p>
@@ -1080,23 +984,23 @@ function TokensSection({
                 return (
                   <div
                     key={s.sa_subject || s.name}
-                    className="flex items-center gap-3 p-2.5 rounded-lg hover:bg-[var(--color-surface-2)]"
+                    className="flex items-center gap-3 p-2.5 rounded-lg hover:bg-surface-2"
                   >
                     <div className="flex-1 min-w-0">
                       <div className="text-sm truncate flex items-center gap-2">
                         <KindChip kind={s.kind} client={s.client} />
                         <span className={s.kind === "mcp" ? "" : "font-mono"}>{s.name}</span>
                         <ConnectionBadge token={s} />
-                        {s.revoked_at && <span className="text-2xs text-danger">revoked</span>}
+                        {s.revoked_at && <Badge text="Revoked" state="danger" size="sm" />}
                         <SaExpiryBadge expiresAt={s.expires_at} revoked={!!s.revoked_at} />
                       </div>
-                      <div className="text-2xs text-[var(--color-text-muted)] tabular">
+                      <div className="text-2xs text-text-muted tabular">
                         {describeTokenScope(s)} · created {relativeTime(s.created_at)}
                         {" · "}
                         {s.last_used_at ? (
                           <>used {relativeTime(s.last_used_at)}</>
                         ) : (
-                          <span className="text-[var(--color-text-subtle)]">no calls in 30 days</span>
+                          <span className="text-text-subtle">no calls in 30 days</span>
                         )}
                       </div>
                       {stranded && (
@@ -1107,15 +1011,14 @@ function TokensSection({
                       )}
                     </div>
                     {!s.revoked_at && (
-                      <button
-                        type="button"
+                      <IconButton
+                        icon="trash"
+                        type="danger"
+                        size="sm"
+                        label={`Revoke ${s.name}`}
+                        tooltip="Revoke"
                         onClick={() => onRevoke(s.name)}
-                        className="p-1.5 text-danger hover:bg-danger/15 rounded-md"
-                        aria-label={`Revoke ${s.name}`}
-                        title="Revoke"
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                      />
                     )}
                   </div>
                 );
@@ -1125,252 +1028,217 @@ function TokensSection({
         </div>
       </section>
 
-      <Dialog.Root
+      <Modal
         open={mcpResult !== null}
         onOpenChange={(o) => {
           if (!o) setMcpResult(null);
         }}
+        title="Token generated"
+        className="max-w-[640px] w-full"
       >
-        <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-50 bg-overlay animate-fade-in motion-reduce:animate-none!" />
-          <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[min(640px,92vw)] max-h-[90vh] overflow-y-auto rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl animate-fade-in motion-reduce:animate-none!">
-            <div className="flex items-center justify-between px-5 py-3 border-b border-[var(--color-border)]">
-              <Dialog.Title className="text-md font-semibold tracking-tight flex items-center gap-2">
-                <Check size={14} className="text-success" /> Token generated
-              </Dialog.Title>
-              <Dialog.Close
-                className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-                aria-label="Close"
-              >
-                <XIcon size={14} />
-              </Dialog.Close>
+        <div className="max-h-[80vh] overflow-y-auto space-y-3">
+          <div className="flex items-start gap-2 px-3 py-2 rounded-md bg-warn/15 border border-warn/40 text-xs text-warn">
+            <Icon name="warning" size="sm" color="var(--color-warn)" className="mt-0.5 shrink-0" aria-hidden="true" />
+            <div>
+              This is the only time the token is shown. The same token works in every client — switch clients below to
+              copy each one's config block, then paste into each client's MCP config file and restart.
             </div>
-            <div className="p-5 space-y-3">
-              <div className="flex items-start gap-2 px-3 py-2 rounded-md bg-warn/15 border border-warn/40 text-xs text-warn">
-                <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-                <div>
-                  This is the only time the token is shown. The same token works in every client — switch clients below
-                  to copy each one's config block, then paste into each client's MCP config file and restart.
-                </div>
-              </div>
-              <div className="text-xs text-[var(--color-text-muted)]" data-testid="minted-token-scope">
-                Writes to <span className="font-mono text-[var(--color-text)]">{mcpScope.home}</span>; reads every
-                namespace and repository you belong to, including ones you join later
-                {(() => {
-                  const added = mcpScope.excludedRestricted
-                    .filter((r) => mcpRestrictedRepos.has(r.repo))
-                    .map((r) => r.repo);
-                  const left = mcpScope.excludedRestricted
-                    .filter((r) => !mcpRestrictedRepos.has(r.repo))
-                    .map((r) => r.repo);
-                  // The server adds a restricted repository's bound QA record; anything
-                  // granted beyond the ticked branches is that.
-                  const ticked = new Set(
-                    mcpScope.excludedRestricted
-                      .filter((r) => mcpRestrictedRepos.has(r.repo))
-                      .flatMap((r) => r.branches.map((b) => b.namespace)),
-                  );
-                  const extra = (mcpResult?.restricted ?? []).filter((ns) => !ticked.has(ns));
-                  return (
+          </div>
+          <div className="text-xs text-text-muted" data-testid="minted-token-scope">
+            Writes to <span className="font-mono text-text">{mcpScope.home}</span>; reads every namespace and repository
+            you belong to, including ones you join later
+            {(() => {
+              const added = mcpScope.excludedRestricted
+                .filter((r) => mcpRestrictedRepos.has(r.repo))
+                .map((r) => r.repo);
+              const left = mcpScope.excludedRestricted
+                .filter((r) => !mcpRestrictedRepos.has(r.repo))
+                .map((r) => r.repo);
+              // The server adds a restricted repository's bound QA record; anything
+              // granted beyond the ticked branches is that.
+              const ticked = new Set(
+                mcpScope.excludedRestricted
+                  .filter((r) => mcpRestrictedRepos.has(r.repo))
+                  .flatMap((r) => r.branches.map((b) => b.namespace)),
+              );
+              const extra = (mcpResult?.restricted ?? []).filter((ns) => !ticked.has(ns));
+              return (
+                <>
+                  {added.length > 0 ? <>, plus the restricted {added.join(", ")} with a grant of its own</> : null}
+                  {extra.length > 0 ? (
                     <>
-                      {added.length > 0 ? <>, plus the restricted {added.join(", ")} with a grant of its own</> : null}
-                      {extra.length > 0 ? (
-                        <>
-                          {" "}
-                          and {extra.length === 1 ? "its tracker" : "their trackers"} {extra.join(", ")}
-                        </>
-                      ) : null}
-                      {left.length > 0 ? <> — except restricted repositories ({left.join(", ")})</> : null}
+                      {" "}
+                      and {extra.length === 1 ? "its tracker" : "their trackers"} {extra.join(", ")}
                     </>
-                  );
-                })()}.
-              </div>
-              <Field
-                label="MCP client"
-                hint="The token works in every client — pick yours to copy the matching config block. Your last choice is remembered next time."
-              >
-                <select
-                  value={dialogClient}
-                  onChange={(e) => {
-                    const c = e.target.value;
-                    if (isClientId(c)) onDialogClientChange(c);
-                  }}
-                  className="w-full px-3 py-2 text-sm rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] outline-none focus:border-[var(--color-accent)]"
-                >
-                  {CLIENTS.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.label}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              {dialogClient === "claude-code" &&
-                mcpResult &&
-                (() => {
-                  const base = mcpResult.mcpUrl.replace(/\/mcp$/, "");
-                  const configJson = JSON.stringify({ url: base, token: mcpResult.token }, null, 2);
-                  const plugin = pluginInstallLines("claude-code") || "";
-                  return (
-                    <div className="space-y-2" data-testid="claude-code-recommended">
-                      <div className="text-xs font-medium text-[var(--color-text)]">
-                        Recommended: the plugin (tools, memory primer, capture)
-                      </div>
-                      <div className="text-2xs text-[var(--color-text-muted)] leading-relaxed">
-                        1. Save the token where the plugin, the CLI and the SDK all read it —{" "}
-                        <code>~/.loom/config.json</code> (chmod 600):
-                      </div>
-                      <div className="relative">
-                        <pre className="text-2xs font-mono bg-[var(--color-surface-2)] rounded-lg p-3 overflow-auto whitespace-pre-wrap">
-                          {configJson}
-                        </pre>
-                        <CopyButton text={configJson} label="Copy" ariaLabel="Copy config.json" />
-                      </div>
-                      <div className="text-2xs text-[var(--color-text-muted)] leading-relaxed">
-                        2. Install the plugin; it mounts the Loom tools itself and reads that file. Leave the token
-                        prompt empty.
-                      </div>
-                      <pre className="text-2xs font-mono bg-[var(--color-surface-2)] rounded-lg p-3 overflow-auto whitespace-pre-wrap">
-                        {plugin}
-                      </pre>
-                      <div className="text-2xs text-[var(--color-text-muted)] leading-relaxed pt-1 border-t border-[var(--color-border)]">
-                        <span className="font-medium text-[var(--color-text)]">Tools only, no hooks:</span> register the
-                        server below instead. Pick one — a user-scope <code>loom</code> entry outranks the plugin's own
-                        server.
-                      </div>
-                    </div>
-                  );
-                })()}
-              <div className="relative">
-                <pre className="text-2xs font-mono bg-[var(--color-surface-2)] rounded-lg p-3 max-h-72 overflow-auto whitespace-pre-wrap">
-                  {mcpResult
-                    ? configPreviewText(
-                        formatMcpConfig({
-                          client: dialogClient,
-                          token: mcpResult.token,
-                          mcpUrl: mcpResult.mcpUrl,
-                        }),
-                      )
-                    : ""}
-                </pre>
-                <CopyButton
-                  label="Copy config"
-                  text={() =>
-                    mcpResult
-                      ? configPreviewText(
-                          formatMcpConfig({ client: dialogClient, token: mcpResult.token, mcpUrl: mcpResult.mcpUrl }),
-                        )
-                      : ""
-                  }
-                />
-              </div>
-              {mcpResult &&
-                (() => {
-                  const cfg = formatMcpConfig({
-                    client: dialogClient,
-                    token: mcpResult.token,
-                    mcpUrl: mcpResult.mcpUrl,
-                  });
-                  if (!cfg.command) return null;
-                  const lines = cfg.envLines ? `${cfg.command}\n${cfg.envLines}` : cfg.command;
-                  return (
-                    <div className="space-y-2">
-                      <div className="text-2xs text-[var(--color-text-muted)] leading-relaxed">
-                        Or register it from a terminal (the client writes its own config file):
-                      </div>
-                      <div className="relative">
-                        <pre className="text-2xs font-mono bg-[var(--color-surface-2)] rounded-lg p-3 overflow-auto whitespace-pre-wrap">
-                          {lines}
-                        </pre>
-                        <CopyButton text={lines} label="Copy command" />
-                      </div>
-                    </div>
-                  );
-                })()}
-              {dialogClient === "codex" &&
-                mcpResult &&
-                (() => {
-                  const plugin = pluginInstallLines("codex") || "";
-                  return (
-                    <div className="space-y-2 pt-3 border-t border-[var(--color-border)]">
-                      <div className="text-xs font-medium text-[var(--color-text)]">Automatic capture and recall</div>
-                      <div className="text-2xs text-[var(--color-text-muted)] leading-relaxed">
-                        The entry above gives Codex the Loom <em>tools</em>. To also load a memory primer at session
-                        start and record decisions as you work, install the capture plugin; its hooks read the token
-                        from <code>LOOM_API_KEY</code> or <code>~/.loom/config.json</code>.
-                      </div>
-                      <pre className="text-2xs font-mono bg-[var(--color-surface-2)] rounded-lg p-3 overflow-auto whitespace-pre-wrap">
-                        {plugin}
-                      </pre>
-                    </div>
-                  );
-                })()}
-              <div className="text-2xs text-[var(--color-text-muted)] leading-relaxed">
-                Token lives in the list below — revoke it to disconnect every client at once.
-              </div>
-            </div>
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
+                  ) : null}
+                  {left.length > 0 ? <> — except restricted repositories ({left.join(", ")})</> : null}
+                </>
+              );
+            })()}.
+          </div>
+          <Field hint="The token works in every client — pick yours to copy the matching config block. Your last choice is remembered next time.">
+            <Select
+              label="MCP client"
+              value={dialogClient}
+              onSelect={(c) => {
+                if (isClientId(c)) onDialogClientChange(c);
+              }}
+            >
+              {CLIENTS.map((c) => (
+                <Select.Item key={c.id} value={c.id}>
+                  {c.label}
+                </Select.Item>
+              ))}
+            </Select>
+          </Field>
+          {dialogClient === "claude-code" &&
+            mcpResult &&
+            (() => {
+              const base = mcpResult.mcpUrl.replace(/\/mcp$/, "");
+              const configJson = JSON.stringify({ url: base, token: mcpResult.token }, null, 2);
+              const plugin = pluginInstallLines("claude-code") || "";
+              return (
+                <div className="space-y-2" data-testid="claude-code-recommended">
+                  <div className="text-xs font-medium text-text">
+                    Recommended: the plugin (tools, memory primer, capture)
+                  </div>
+                  <div className="text-2xs text-text-muted leading-relaxed">
+                    1. Save the token where the plugin, the CLI and the SDK all read it —{" "}
+                    <code>~/.loom/config.json</code> (chmod 600):
+                  </div>
+                  <div className="relative">
+                    <pre className="text-2xs font-mono bg-surface-2 rounded-lg p-3 overflow-auto whitespace-pre-wrap">
+                      {configJson}
+                    </pre>
+                    <CopyButton text={configJson} label="Copy" ariaLabel="Copy config.json" />
+                  </div>
+                  <div className="text-2xs text-text-muted leading-relaxed">
+                    2. Install the plugin; it mounts the Loom tools itself and reads that file. Leave the token prompt
+                    empty.
+                  </div>
+                  <pre className="text-2xs font-mono bg-surface-2 rounded-lg p-3 overflow-auto whitespace-pre-wrap">
+                    {plugin}
+                  </pre>
+                  <div className="text-2xs text-text-muted leading-relaxed pt-1 border-t border-border">
+                    <span className="font-medium text-text">Tools only, no hooks:</span> register the server below
+                    instead. Pick one — a user-scope <code>loom</code> entry outranks the plugin's own server.
+                  </div>
+                </div>
+              );
+            })()}
+          <div className="relative">
+            <pre className="text-2xs font-mono bg-surface-2 rounded-lg p-3 max-h-72 overflow-auto whitespace-pre-wrap">
+              {mcpResult
+                ? configPreviewText(
+                    formatMcpConfig({
+                      client: dialogClient,
+                      token: mcpResult.token,
+                      mcpUrl: mcpResult.mcpUrl,
+                    }),
+                  )
+                : ""}
+            </pre>
+            <CopyButton
+              label="Copy config"
+              text={() =>
+                mcpResult
+                  ? configPreviewText(
+                      formatMcpConfig({ client: dialogClient, token: mcpResult.token, mcpUrl: mcpResult.mcpUrl }),
+                    )
+                  : ""
+              }
+            />
+          </div>
+          {mcpResult &&
+            (() => {
+              const cfg = formatMcpConfig({
+                client: dialogClient,
+                token: mcpResult.token,
+                mcpUrl: mcpResult.mcpUrl,
+              });
+              if (!cfg.command) return null;
+              const lines = cfg.envLines ? `${cfg.command}\n${cfg.envLines}` : cfg.command;
+              return (
+                <div className="space-y-2">
+                  <div className="text-2xs text-text-muted leading-relaxed">
+                    Or register it from a terminal (the client writes its own config file):
+                  </div>
+                  <div className="relative">
+                    <pre className="text-2xs font-mono bg-surface-2 rounded-lg p-3 overflow-auto whitespace-pre-wrap">
+                      {lines}
+                    </pre>
+                    <CopyButton text={lines} label="Copy command" />
+                  </div>
+                </div>
+              );
+            })()}
+          {dialogClient === "codex" &&
+            mcpResult &&
+            (() => {
+              const plugin = pluginInstallLines("codex") || "";
+              return (
+                <div className="space-y-2 pt-3 border-t border-border">
+                  <div className="text-xs font-medium text-text">Automatic capture and recall</div>
+                  <div className="text-2xs text-text-muted leading-relaxed">
+                    The entry above gives Codex the Loom <em>tools</em>. To also load a memory primer at session start
+                    and record decisions as you work, install the capture plugin; its hooks read the token from{" "}
+                    <code>LOOM_API_KEY</code> or <code>~/.loom/config.json</code>.
+                  </div>
+                  <pre className="text-2xs font-mono bg-surface-2 rounded-lg p-3 overflow-auto whitespace-pre-wrap">
+                    {plugin}
+                  </pre>
+                </div>
+              );
+            })()}
+          <div className="text-2xs text-text-muted leading-relaxed">
+            Token lives in the list below — revoke it to disconnect every client at once.
+          </div>
+        </div>
+      </Modal>
 
-      <Dialog.Root
+      <Modal
         open={mintedToken !== null}
         onOpenChange={(o) => {
           if (!o) setMintedToken(null);
         }}
+        title="Token created"
+        className="max-w-[680px] w-full"
       >
-        <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-50 bg-overlay animate-fade-in motion-reduce:animate-none!" />
-          <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[min(680px,92vw)] max-h-[90vh] overflow-y-auto rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl animate-fade-in motion-reduce:animate-none!">
-            <div className="flex items-center justify-between px-5 py-3 border-b border-[var(--color-border)]">
-              <Dialog.Title className="text-md font-semibold tracking-tight flex items-center gap-2">
-                <Check size={14} className="text-success" /> Token created
-              </Dialog.Title>
-              <Dialog.Close
-                className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-                aria-label="Close"
-              >
-                <XIcon size={14} />
-              </Dialog.Close>
+        <div className="max-h-[80vh] overflow-y-auto space-y-3">
+          <div className="flex items-start gap-2 px-3 py-2 rounded-md bg-warn/15 border border-warn/40 text-xs text-warn">
+            <Icon name="warning" size="sm" color="var(--color-warn)" className="mt-0.5 shrink-0" aria-hidden="true" />
+            <div>
+              This is the only time the token is shown. Copy it now and store it somewhere safe (a secrets manager, your
+              CI's secret store). Lost tokens can't be recovered — only re-issued.
             </div>
-            <div className="p-5 space-y-3">
-              <div className="flex items-start gap-2 px-3 py-2 rounded-md bg-warn/15 border border-warn/40 text-xs text-warn">
-                <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-                <div>
-                  This is the only time the token is shown. Copy it now and store it somewhere safe (a secrets manager,
-                  your CI's secret store). Lost tokens can't be recovered — only re-issued.
-                </div>
-              </div>
-              <div className="relative">
-                <div className="text-xs text-[var(--color-text-muted)] mb-1.5">Token</div>
-                <pre className="text-2xs font-mono bg-[var(--color-surface-2)] rounded-lg p-3 max-h-32 overflow-auto break-all whitespace-pre-wrap">
-                  {mintedToken?.token ?? ""}
-                </pre>
-                <CopyButton text={mintedToken?.token ?? ""} label="Copy token" className={COPY_BELOW_CAPTION} />
-              </div>
+          </div>
+          <div className="relative">
+            <div className="text-xs text-text-muted mb-1.5">Token</div>
+            <pre className="text-2xs font-mono bg-surface-2 rounded-lg p-3 max-h-32 overflow-auto break-all whitespace-pre-wrap">
+              {mintedToken?.token ?? ""}
+            </pre>
+            <CopyButton text={mintedToken?.token ?? ""} label="Copy token" className={COPY_BELOW_CAPTION} />
+          </div>
 
-              {mintedToken && (
-                <div className="relative">
-                  <div className="text-xs text-[var(--color-text-muted)] mb-1.5">Connect your bot — Python</div>
-                  <pre className="text-2xs font-mono bg-[var(--color-surface-2)] rounded-lg p-3 max-h-72 overflow-auto whitespace-pre">
-                    {botSnippet(mintedToken)}
-                  </pre>
-                  <CopyButton text={botSnippet(mintedToken)} label="Copy code" className={COPY_BELOW_CAPTION} />
-                  <div className="mt-1.5 text-2xs text-[var(--color-text-muted)] leading-relaxed">
-                    Install with{" "}
-                    <code className="font-mono text-2xs bg-[var(--color-surface-2)] px-1 rounded">
-                      pip install clickhouse-loom
-                    </code>
-                    . The same token also works on raw HTTP:{" "}
-                    <code className="font-mono text-2xs bg-[var(--color-surface-2)] px-1 rounded">
-                      curl -H "Authorization: Bearer $LOOM_API_KEY" {mintedToken.baseUrl}/v1/memory.search
-                    </code>
-                  </div>
-                </div>
-              )}
+          {mintedToken && (
+            <div className="relative">
+              <div className="text-xs text-text-muted mb-1.5">Connect your bot — Python</div>
+              <pre className="text-2xs font-mono bg-surface-2 rounded-lg p-3 max-h-72 overflow-auto whitespace-pre">
+                {botSnippet(mintedToken)}
+              </pre>
+              <CopyButton text={botSnippet(mintedToken)} label="Copy code" className={COPY_BELOW_CAPTION} />
+              <div className="mt-1.5 text-2xs text-text-muted leading-relaxed">
+                Install with{" "}
+                <code className="font-mono text-2xs bg-surface-2 px-1 rounded">pip install clickhouse-loom</code>. The
+                same token also works on raw HTTP:{" "}
+                <code className="font-mono text-2xs bg-surface-2 px-1 rounded">
+                  curl -H "Authorization: Bearer $LOOM_API_KEY" {mintedToken.baseUrl}/v1/memory.search
+                </code>
+              </div>
             </div>
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
+          )}
+        </div>
+      </Modal>
     </>
   );
 }
@@ -1409,16 +1277,16 @@ function TokensStatusSummary({ tokens }: { tokens: ServiceAccountEntry[] | null 
 
   return (
     <div className="px-2.5 pt-1.5 pb-2 space-y-1.5">
-      <div className="text-xs text-[var(--color-text-muted)]">
-        <span className="text-[var(--color-text)] font-medium">{active}</span> active
+      <div className="text-xs text-text-muted">
+        <span className="text-text font-medium">{active}</span> active
         {" · "}
-        <span className="text-[var(--color-text)] font-medium">{waiting}</span> waiting for first use
+        <span className="text-text font-medium">{waiting}</span> waiting for first use
         {" · "}
-        <span className="text-[var(--color-text)] font-medium">{idle}</span> idle (&gt;7d)
+        <span className="text-text font-medium">{idle}</span> idle (&gt;7d)
       </div>
       {expiringSoon > 0 && (
         <div className="inline-flex items-center gap-2 text-xs px-2.5 py-1 rounded-md bg-warn/15 border border-warn/40 text-warn">
-          <AlertTriangle size={12} />
+          <Icon name="warning" size="xs" color="var(--color-warn)" aria-hidden="true" />
           <span>
             <span className="font-medium">{expiringSoon}</span> token{expiringSoon === 1 ? "" : "s"} expir
             {expiringSoon === 1 ? "es" : "e"} in the next 14 days — generate a replacement now to avoid downtime.
@@ -1432,47 +1300,42 @@ function TokensStatusSummary({ tokens }: { tokens: ServiceAccountEntry[] | null 
 function SaExpiryBadge({ expiresAt, revoked }: { expiresAt: string | null; revoked: boolean }) {
   if (revoked) return null;
   if (!expiresAt) {
-    return <span className="ml-2 text-2xs text-[var(--color-text-subtle)]">never expires</span>;
+    return <span className="ml-2 text-2xs text-text-subtle">never expires</span>;
   }
   const expiryMs = new Date(expiresAt).getTime();
   const now = Date.now();
   const FOURTEEN_DAYS = 14 * 24 * 60 * 60 * 1000;
   const expired = expiryMs < now;
   const expiringSoon = !expired && expiryMs - now <= FOURTEEN_DAYS;
-  const tone = expired ? "text-danger" : expiringSoon ? "text-warn" : "text-[var(--color-text-muted)]";
+  const tone = expired ? "text-danger" : expiringSoon ? "text-warn" : "text-text-muted";
   return <span className={`ml-2 text-2xs ${tone}`}>{expired ? "expired" : `expires ${relativeTime(expiresAt)}`}</span>;
 }
 
 // The copy button of a boxed block with a caption above it.
-const COPY_BELOW_CAPTION =
-  "absolute top-6 right-2 inline-flex items-center gap-1 px-2 py-1 text-2xs font-medium bg-[var(--color-surface)] border border-[var(--color-border)] rounded-md hover:bg-[var(--color-surface-3)]";
+const COPY_BELOW_CAPTION = "absolute top-6 right-2";
 
 function BotConnectPreview({ org, namespace, baseUrl }: { org: string; namespace: string; baseUrl: string }) {
   const code = botSnippet({ org, namespace, baseUrl });
   return (
-    <div className="mt-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3">
+    <div className="mt-2 rounded-lg border border-border bg-surface-2 p-3">
       <div className="flex items-start justify-between gap-3 mb-2">
-        <div className="text-2xs text-[var(--color-text-muted)] leading-relaxed">
+        <div className="text-2xs text-text-muted leading-relaxed">
           Export the minted token as <code className="font-mono">LOOM_API_KEY</code>; the namespace follows the first
           one you tick.
         </div>
         <CopyButton
           text={code}
           label="Copy code"
-          className="shrink-0 inline-flex items-center gap-1 px-2 py-1 text-2xs font-medium bg-[var(--color-surface)] border border-[var(--color-border)] rounded-md hover:bg-[var(--color-surface-3)]"
+          className="shrink-0 inline-flex items-center gap-1 px-2 py-1 text-2xs font-medium bg-surface border border-border rounded-md hover:bg-surface-3"
         />
       </div>
-      <pre className="text-2xs font-mono bg-[var(--color-bg)] rounded-lg p-3 max-h-72 overflow-auto whitespace-pre border border-[var(--color-border)]">
+      <pre className="text-2xs font-mono bg-bg rounded-lg p-3 max-h-72 overflow-auto whitespace-pre border border-border">
         {code}
       </pre>
-      <div className="mt-2 text-2xs text-[var(--color-text-muted)] leading-relaxed">
-        Install with{" "}
-        <code className="font-mono text-2xs bg-[var(--color-surface)] px-1 rounded">pip install clickhouse-loom</code>.
+      <div className="mt-2 text-2xs text-text-muted leading-relaxed">
+        Install with <code className="font-mono text-2xs bg-surface px-1 rounded">pip install clickhouse-loom</code>.
         Same JWT also works on raw HTTP — set{" "}
-        <code className="font-mono text-2xs bg-[var(--color-surface)] px-1 rounded">
-          Authorization: Bearer $LOOM_API_KEY
-        </code>
-        .
+        <code className="font-mono text-2xs bg-surface px-1 rounded">Authorization: Bearer $LOOM_API_KEY</code>.
       </div>
     </div>
   );
@@ -1480,52 +1343,38 @@ function BotConnectPreview({ org, namespace, baseUrl }: { org: string; namespace
 
 function ConnectionBadge({ token }: { token: ServiceAccountEntry }) {
   if (token.revoked_at) return null;
-  if (!token.last_used_at) {
-    return (
-      <span className="inline-flex items-center gap-1 text-2xs px-1.5 py-0.5 rounded bg-warn/15 text-warn font-medium">
-        <span className="w-1.5 h-1.5 rounded-full bg-warn animate-pulse motion-reduce:animate-none!" />
-        Waiting…
-      </span>
-    );
-  }
+  if (!token.last_used_at) return <Badge text="Waiting…" state="warning" size="sm" />;
   const ageMs = Date.now() - new Date(token.last_used_at).getTime();
-  if (ageMs < 30 * 24 * 3600 * 1000) {
-    return (
-      <span className="inline-flex items-center gap-1 text-2xs px-1.5 py-0.5 rounded bg-success/15 text-success font-medium">
-        <span className="w-1.5 h-1.5 rounded-full bg-success" />
-        Connected
-      </span>
-    );
-  }
+  if (ageMs < 30 * 24 * 3600 * 1000) return <Badge text="Connected" state="success" size="sm" />;
   return null;
 }
 
 function KindChip({ kind, client }: { kind?: string; client?: string }) {
   if (kind === "mcp") {
     const label = CLIENTS.find((c) => c.id === client)?.label || "MCP";
-    return (
-      <span className="text-xs px-1.5 py-0.5 rounded bg-[var(--color-accent-soft)] text-[var(--color-accent)] font-medium">
-        {label}
-      </span>
-    );
+    return <Badge text={label} state="info" size="sm" />;
   }
+  return <Badge text="Script" state="neutral" size="sm" />;
+}
+
+/** A form control (which carries its own label) with a hint line under it. */
+function Field({ hint, children }: { hint?: string; children: React.ReactNode }) {
   return (
-    <span className="text-xs px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)] font-medium">
-      Script
-    </span>
+    <div>
+      {children}
+      {hint && <div className="text-2xs text-text-subtle mt-1">{hint}</div>}
+    </div>
   );
 }
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
-  return (
-    // biome-ignore lint/a11y/noLabelWithoutControl: the control is the `children`this label wraps, which the rule cannot see
-    <label className="block">
-      <div className="text-xs font-medium text-[var(--color-text-muted)] mb-1">{label}</div>
-      {children}
-      {hint && <div className="text-2xs text-[var(--color-text-subtle)] mt-1">{hint}</div>}
-    </label>
-  );
-}
+const ROLE_LABELS: Record<GrantRole, string> = { viewer: "Viewer", writer: "Writer", admin: "Admin" };
+
+const VERDICT_STATES: Record<string, BadgeState> = {
+  written: "success",
+  merged: "info",
+  duplicate: "info",
+  rejected_pinned: "danger",
+};
 
 function ImportCuratedPanel() {
   const identity = useIdentity();
@@ -1557,62 +1406,44 @@ function ImportCuratedPanel() {
   };
 
   return (
-    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-3">
-      <div className="text-xs text-[var(--color-text-muted)] leading-relaxed">
+    <div className="space-y-3">
+      <div className="text-xs text-text-muted leading-relaxed">
         Paste a doc that represents reviewed knowledge — your AGENTS.md, CLAUDE.md, .cursor/rules, or any
         operating-principles doc. Each <code className="font-mono text-2xs">##</code> section becomes one memory in{" "}
         <code className="font-mono text-2xs">{identity.namespace}</code>. The import bypasses the review queue but still
         respects pinned memories: if a section contradicts a pinned memory it's rejected per-row.
       </div>
       <div className="grid grid-cols-[1fr_auto] gap-2">
-        <input
+        <TextField
           aria-label="Source URI for the imported document"
           value={sourceUri}
-          onChange={(e) => setSourceUri(e.target.value)}
+          onChange={setSourceUri}
           placeholder="source_uri (e.g. AGENTS.md)"
-          className="px-3 py-1.5 text-sm font-mono bg-[var(--color-bg)] border border-[var(--color-border)] rounded-md"
         />
-        <button
-          type="button"
-          onClick={run}
-          disabled={submitting}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md disabled:opacity-50"
-        >
-          <FileUp size={12} /> {submitting ? "Importing…" : "Import"}
-        </button>
+        <Button type="primary" htmlType="button" iconLeft="upload" loading={submitting} onClick={run}>
+          Import
+        </Button>
       </div>
-      <textarea
+      <TextAreaField
         aria-label="Markdown to import"
+        rows={10}
         value={content}
-        onChange={(e) => setContent(e.target.value)}
+        onChange={setContent}
         placeholder={`# My Operating Principles\n\n## Backup discipline\n\nI run nightly backups via Borg.\n\n## Coffee preference\n\nBlack, no sugar.`}
-        className="w-full h-48 px-3 py-2 text-xs font-mono bg-[var(--color-bg)] border border-[var(--color-border)] rounded-md resize-y"
       />
       {result && (
-        <div className="border-t border-[var(--color-border)] pt-3">
-          <div className="text-xs text-[var(--color-text-muted)] mb-2">
+        <div className="border-t border-border pt-3">
+          <div className="text-xs text-text-muted mb-2">
             Result · {result.rows.length} section{result.rows.length === 1 ? "" : "s"}
           </div>
           <div className="space-y-1.5 max-h-56 overflow-y-auto">
             {result.rows.map((r, i) => (
               <div key={i} className="flex items-center gap-2 text-xs">
-                <span
-                  className={`inline-block w-16 text-2xs font-mono px-1.5 py-0.5 rounded ${
-                    r.verdict === "written"
-                      ? "bg-[var(--color-success)]/20 text-[var(--color-success)]"
-                      : r.verdict === "merged" || r.verdict === "duplicate"
-                        ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
-                        : r.verdict === "rejected_pinned"
-                          ? "bg-[var(--color-danger)]/20 text-[var(--color-danger)]"
-                          : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"
-                  }`}
-                >
-                  {r.verdict}
-                </span>
+                <Badge text={r.verdict} state={VERDICT_STATES[r.verdict] ?? "neutral"} size="sm" />
                 <span className="font-mono text-2xs truncate">{r.memory_key}</span>
-                <span className="text-[var(--color-text-muted)] text-2xs truncate flex-1">{r.section_heading}</span>
+                <span className="text-text-muted text-2xs truncate flex-1">{r.section_heading}</span>
                 {r.rejection_reason && (
-                  <span className="text-[var(--color-warn)] text-2xs truncate" title={r.rejection_reason}>
+                  <span className="text-warn text-2xs truncate" title={r.rejection_reason}>
                     {r.rejection_reason}
                   </span>
                 )}

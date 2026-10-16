@@ -49,7 +49,7 @@ describe("SearchWhy", () => {
   it("marks a term that pushed the hit down", () => {
     render(<SearchWhy rank={1} hit={hit({ score_components: { reinforcement: -0.2 } })} />);
     const chip = screen.getByText(/reinforcement -0\.20/);
-    expect(chip.className).toContain("color-warn");
+    expect(chip.closest('[class*="state_warning"]')).not.toBeNull();
   });
 
   it("says so when the server reported no ranking terms", () => {

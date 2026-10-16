@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../lib/errors";
@@ -79,9 +79,7 @@ describe("TokenGate", () => {
     render(<TokenGate onLogin={() => undefined} />);
     await userEvent.type(screen.getByLabelText("Email or namespace"), "alice@example.com");
     await userEvent.type(screen.getByLabelText("Password"), "a-password");
-    const password = screen.getByLabelText("Password");
-    fireEvent.keyDown(password, { key: "Enter" });
-    fireEvent.keyDown(password, { key: "Enter" });
+    await userEvent.type(screen.getByLabelText("Password"), "{Enter}{Enter}");
     expect(loginWithPassword).toHaveBeenCalledTimes(1);
   });
 
@@ -92,9 +90,7 @@ describe("TokenGate", () => {
     await userEvent.type(screen.getByLabelText("Pick a name"), "alice");
     await userEvent.type(screen.getByLabelText("Email"), "alice@example.com");
     await userEvent.type(screen.getByLabelText("Password"), "a-long-password");
-    const password = screen.getByLabelText("Password");
-    fireEvent.keyDown(password, { key: "Enter" });
-    fireEvent.keyDown(password, { key: "Enter" });
+    await userEvent.type(screen.getByLabelText("Password"), "{Enter}{Enter}");
     expect(selfSignup).toHaveBeenCalledTimes(1);
   });
 
@@ -134,7 +130,7 @@ describe("TokenGate", () => {
       await userEvent.type(screen.getByLabelText("Pick a name"), "alice");
       await userEvent.type(screen.getByLabelText("Email"), "alice@example.com");
       await userEvent.type(screen.getByLabelText("Password"), "a-long-password");
-      fireEvent.keyDown(screen.getByLabelText("Password"), { key: "Enter" });
+      await userEvent.type(screen.getByLabelText("Password"), "{Enter}");
       expect(await screen.findByRole("alert")).toHaveTextContent("signal timed out");
       expect(fetchMock).toHaveBeenCalledTimes(1);
       expect(fetchMock.mock.calls[0][0]).toBe("/v1/auth/self-signup");

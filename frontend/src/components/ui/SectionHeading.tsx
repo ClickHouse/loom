@@ -1,6 +1,5 @@
 import { createElement, type ReactNode } from "react";
-import { Info } from "lucide-react";
-import { Tip } from "./Tooltip";
+import { IconButton } from "../IconButton";
 
 /**
  * SectionHeading — one line of section label, an optional count, an
@@ -10,8 +9,7 @@ import { Tip } from "./Tooltip";
  * tooltip instead of trailing the label into an ellipsis ("MEMORY TYPES inspect…").
  *
  * `level` picks the heading element (h2–h4) so the outline of a page is
- * real; the visual is the same at every level. The (i) is 24 px on a fine
- * pointer and 44 px under `pointer: coarse`.
+ * real; the visual is the same at every level. The (i) is Click UI's xs icon button.
  */
 export interface SectionHeadingProps {
   label: string;
@@ -48,17 +46,7 @@ export function SectionHeading({
         </span>
       )}
       {caption && <span className="caption whitespace-nowrap">{caption}</span>}
-      {hint && (
-        <Tip content={hint}>
-          <button
-            type="button"
-            aria-label={`About ${label}`}
-            className="inline-flex items-center justify-center min-w-6 min-h-6 -my-1 rounded text-text-subtle hover:text-text pointer-coarse:min-w-11 pointer-coarse:min-h-11 pointer-coarse:-my-2.5"
-          >
-            <Info size={12} aria-hidden="true" />
-          </button>
-        </Tip>
-      )}
+      {hint && <IconButton icon="info-in-circle" size="xs" label={`About ${label}`} tooltip={hint} />}
       {actions && <span className="ml-auto inline-flex items-center gap-1 text-2xs">{actions}</span>}
     </div>
   );

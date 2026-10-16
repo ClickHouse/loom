@@ -201,7 +201,8 @@ describe("dialogs: every control is labelled and axe is clean", () => {
     render(
       <CopyToNamespaceDialog open onOpenChange={noop} source={identity} memoryKey="user_coffee" onCopied={noop} />,
     );
-    await screen.findByRole("option", { name: /other/ });
+    // The destination Select leaves its loading state once the writable namespaces arrive.
+    await screen.findByText("Select a namespace…");
     await expectLabelledAndClean("CopyToNamespaceDialog");
   });
 

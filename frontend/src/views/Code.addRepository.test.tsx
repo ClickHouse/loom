@@ -8,7 +8,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../lib/errors";
 import { AddRepositoryDialog, sandboxProblem } from "./Code";
-import { must } from "../test/must";
 
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
@@ -78,9 +77,9 @@ describe("Add repository — fetching versus reading are two questions", () => {
     expect(screen.getByText("Who can read the index in Loom")).toBeTruthy();
     expect(screen.queryByLabelText("Access token")).toBeNull();
     // the Restricted hint does not tie Loom's rule to the source's visibility
-    const restricted = must(screen.getByText("Restricted").closest("label"), "Restricted label");
-    expect(restricted.textContent).not.toMatch(/public/i);
-    expect(restricted.textContent).toMatch(/approve each reader/);
+    const restrictedHint = screen.getByText(/approve each reader/);
+    expect(screen.getByRole("radio", { name: "Restricted" })).toHaveAccessibleDescription(restrictedHint.textContent);
+    expect(restrictedHint.textContent).not.toMatch(/public/i);
     // the fast path for someone who knows: opt into the token field
     fireEvent.click(screen.getByText("It is private — add a token now"));
     expect(screen.getByLabelText("Access token")).toBeTruthy();

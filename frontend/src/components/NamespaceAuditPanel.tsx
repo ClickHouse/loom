@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { Activity, ChevronDown, ChevronRight } from "lucide-react";
+import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
+import { Button } from "@clickhouse/click-ui/Button";
+import { Select } from "@clickhouse/click-ui/Select";
 import {
   auditNamespace,
   type Identity,
@@ -13,6 +15,7 @@ import { canCall } from "../lib/canCall";
 import { humanizeError } from "../lib/format";
 import { Panel, SectionHeading } from "./ui";
 import { toast } from "./Toast";
+import { IconButton } from "./IconButton";
 
 /**
  * "Usage audit" — the Memories view's namespace-level report. One click runs
@@ -96,9 +99,6 @@ function sampleText(sample: Record<string, unknown>): string {
     .join(", ");
 }
 
-const BTN =
-  "inline-flex items-center justify-center gap-1.5 min-h-9 px-3 text-sm font-medium rounded-md transition-colors pointer-coarse:min-h-11";
-
 export function NamespaceAuditPanel({ identity }: { identity: Identity }) {
   const whoami = useStore((s) => s.whoami);
   const inspect = useStore((s) => s.inspect);
@@ -166,65 +166,47 @@ export function NamespaceAuditPanel({ identity }: { identity: Identity }) {
         caption="how this namespace is being used"
         hint="Reads the ledger and the memory tables for this namespace and names the anti-patterns it finds — an exact-key store, double-encoded values, version churn. Read-only; nothing here rewrites a row."
         actions={
-          <span className="inline-flex flex-wrap items-center gap-2 text-sm">
-            <label className="inline-flex items-center gap-1.5 text-[var(--color-text-muted)]">
-              <span className="sr-only">Audit window</span>
-              <select
-                aria-label="Audit window"
-                value={windowSeconds}
-                onChange={(e) => setWindowSeconds(Number(e.target.value))}
-                disabled={running}
-                className="min-h-9 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 text-sm text-[var(--color-text)] pointer-coarse:min-h-11"
-              >
-                {WINDOWS.map((w) => (
-                  <option key={w.seconds} value={w.seconds}>
-                    {w.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <button
-              type="button"
-              onClick={run}
+          <span className="inline-flex flex-wrap items-center gap-2">
+            <Select
+              triggerProps={{ "aria-label": "Audit window" }}
+              value={String(windowSeconds)}
+              onSelect={(v) => setWindowSeconds(Number(v))}
               disabled={running}
-              aria-busy={running}
-              className={`${BTN} bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:bg-[var(--color-accent-strong)] disabled:opacity-60 disabled:cursor-wait`}
-            >
-              <Activity size={13} aria-hidden="true" />{" "}
-              {running ? "Running audit…" : result ? "Run again" : "Run audit"}
-            </button>
+              options={WINDOWS.map((w) => ({ value: String(w.seconds), label: w.label }))}
+            />
+            <Button type="secondary" htmlType="button" iconLeft="activity" onClick={run} loading={running}>
+              {result ? "Run again" : "Run audit"}
+            </Button>
           </span>
         }
       />
 
       {!result && !running && !error && (
-        <p className="text-sm text-[var(--color-text-muted)] leading-relaxed max-w-2xl">
+        <p className="text-sm text-text-muted leading-relaxed max-w-2xl">
           Is this namespace being used as a memory, or as an object store? Run the audit to see reads against searches
           over the window, what the values look like, and which keys are read the most.
         </p>
       )}
 
       {running && !result && (
-        <p role="status" className="text-sm text-[var(--color-text-muted)]">
+        <p role="status" className="text-sm text-text-muted">
           Reading the ledger and the memory tables…
         </p>
       )}
 
       {error && (
-        <p role="alert" className="text-sm text-[var(--color-danger)]">
+        <p role="alert" className="text-sm text-danger">
           Audit failed: {error}
         </p>
       )}
 
       {result && s && (
         <div className="space-y-3" aria-busy={running}>
-          <p className="text-sm text-[var(--color-text)] leading-relaxed" data-testid="audit-summary">
-            <span
-              className={`font-semibold ${result.healthy ? "text-[var(--color-success)]" : "text-[var(--color-danger)]"}`}
-            >
+          <p className="text-sm text-text leading-relaxed" data-testid="audit-summary">
+            <span className={`font-semibold ${result.healthy ? "text-success" : "text-danger"}`}>
               {result.healthy ? "Healthy" : "Needs attention"}
             </span>
-            <span className="text-[var(--color-text-muted)]">
+            <span className="text-text-muted">
               {" "}
               · {result.criticals} critical, {result.warnings} warning, {result.infos} info over{" "}
               {Math.round(result.window_seconds / 86_400)}d
@@ -240,14 +222,14 @@ export function NamespaceAuditPanel({ identity }: { identity: Identity }) {
           </p>
 
           {findings.length === 0 ? (
-            <p className="text-sm text-[var(--color-text-muted)]" role="status">
+            <p className="text-sm text-text-muted" role="status">
               Nothing to flag in this window.
             </p>
           ) : (
             <div className="overflow-x-auto -mx-1 px-1">
               <table className="w-full text-sm border-collapse" aria-label="Audit findings">
                 <thead>
-                  <tr className="text-left text-xs text-[var(--color-text-muted)]">
+                  <tr className="text-left text-xs text-text-muted">
                     <th scope="col" className="py-1.5 pr-2 w-9">
                       <span className="sr-only">Details</span>
                     </th>
@@ -293,12 +275,12 @@ export function NamespaceAuditPanel({ identity }: { identity: Identity }) {
           )}
 
           {result.skipped.length > 0 && (
-            <p className="text-xs text-[var(--color-text-subtle)] leading-relaxed" data-testid="audit-skipped">
+            <p className="text-xs text-text-subtle leading-relaxed" data-testid="audit-skipped">
               Skipped: {result.skipped.join("; ")}
             </p>
           )}
 
-          <p className="text-xs text-[var(--color-text-muted)] leading-relaxed max-w-2xl">
+          <p className="text-xs text-text-muted leading-relaxed max-w-2xl">
             To fix what the audit names, run loom-optimize with your agent — it plans the moves and applies them with
             your approval (<span className="font-mono">docs/guides/optimize-namespace.md</span>). The dashboard shows;
             it does not rewrite.
@@ -309,20 +291,14 @@ export function NamespaceAuditPanel({ identity }: { identity: Identity }) {
   );
 }
 
+const SEVERITY_STATE: Record<NamespaceAuditSeverity, BadgeState> = {
+  critical: "danger",
+  warning: "warning",
+  info: "neutral",
+};
+
 function SeverityBadge({ severity }: { severity: NamespaceAuditSeverity }) {
-  const cls =
-    severity === "critical"
-      ? "bg-[var(--color-danger)]/15 text-[var(--color-danger)] border-[var(--color-danger)]/30"
-      : severity === "warning"
-        ? "bg-[var(--color-warn)]/15 text-[var(--color-warn)] border-[var(--color-warn)]/30"
-        : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]";
-  return (
-    <span
-      className={`inline-flex items-center px-2 py-0.5 rounded-full border text-2xs font-medium tracking-tight ${cls}`}
-    >
-      {severity}
-    </span>
-  );
+  return <Badge text={severity} state={SEVERITY_STATE[severity] ?? "neutral"} size="sm" />;
 }
 
 function KeyButton({ memoryKey, onInspect }: { memoryKey: string; onInspect: (key: string) => void }) {
@@ -330,7 +306,7 @@ function KeyButton({ memoryKey, onInspect }: { memoryKey: string; onInspect: (ke
     <button
       type="button"
       onClick={() => onInspect(memoryKey)}
-      className="inline-flex items-center min-h-9 max-w-full font-mono text-xs text-[var(--color-text)] hover:text-[var(--color-accent)] hover:underline text-left break-all pointer-coarse:min-h-11"
+      className="inline-flex items-center min-h-9 max-w-full font-mono text-xs text-text hover:text-accent hover:underline text-left break-all pointer-coarse:min-h-11"
       aria-label={`Open memory ${memoryKey}`}
     >
       {memoryKey}
@@ -359,24 +335,22 @@ function FindingRows({
   return (
     <>
       <tr
-        className="border-t border-[var(--color-border)] align-top"
+        className="border-t border-border align-top"
         data-testid="audit-finding"
         data-code={f.code}
         data-severity={f.severity}
       >
         <td className="py-1 pr-2">
-          <button
-            type="button"
+          <IconButton
+            icon={isOpen ? "chevron-down" : "chevron-right"}
+            size="sm"
+            label={`${isOpen ? "Hide" : "Show"} details for ${label}`}
             onClick={onToggle}
             aria-expanded={isOpen}
             aria-controls={detailId}
-            aria-label={`${isOpen ? "Hide" : "Show"} details for ${label}`}
-            className="inline-flex items-center justify-center min-w-9 min-h-9 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] pointer-coarse:min-w-11 pointer-coarse:min-h-11"
-          >
-            {isOpen ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}
-          </button>
+          />
         </td>
-        <td className="py-2 pr-3 font-medium text-[var(--color-text)] whitespace-nowrap">{label}</td>
+        <td className="py-2 pr-3 font-medium text-text whitespace-nowrap">{label}</td>
         <td className="py-2 pr-3">
           <SeverityBadge severity={f.severity} />
         </td>
@@ -386,26 +360,24 @@ function FindingRows({
           {firstKey ? (
             <KeyButton memoryKey={firstKey} onInspect={onInspect} />
           ) : (
-            <span className="font-mono text-xs text-[var(--color-text-muted)] break-all">{firstText}</span>
+            <span className="font-mono text-xs text-text-muted break-all">{firstText}</span>
           )}
         </td>
       </tr>
       {isOpen && (
-        <tr id={detailId} className="bg-[var(--color-surface-2)]/60" data-testid="audit-finding-detail">
+        <tr id={detailId} className="bg-surface-2/60" data-testid="audit-finding-detail">
           <td />
           <td colSpan={5} className="py-3 pr-3 text-sm leading-relaxed">
-            <p className="text-[var(--color-text)]">{f.detail}</p>
-            <p className="mt-1.5 text-[var(--color-text-muted)]">
-              <span className="font-medium text-[var(--color-text)]">Remedy:</span> {f.remedy}
+            <p className="text-text">{f.detail}</p>
+            <p className="mt-1.5 text-text-muted">
+              <span className="font-medium text-text">Remedy:</span> {f.remedy}
             </p>
             {f.bytes > 0 && (
-              <p className="mt-1.5 text-xs text-[var(--color-text-subtle)] tabular">
-                {formatBytes(f.bytes)} across the matching rows
-              </p>
+              <p className="mt-1.5 text-xs text-text-subtle tabular">{formatBytes(f.bytes)} across the matching rows</p>
             )}
             {f.samples.length > 0 && (
               <div className="mt-2">
-                <div className="text-xs text-[var(--color-text-muted)] mb-1">Samples · {f.samples.length}</div>
+                <div className="text-xs text-text-muted mb-1">Samples · {f.samples.length}</div>
                 <ul className="space-y-0.5">
                   {f.samples.map((sample, i) => {
                     const key = sampleKey(sample);
@@ -415,10 +387,10 @@ function FindingRows({
                         {key ? (
                           <KeyButton memoryKey={key} onInspect={onInspect} />
                         ) : (
-                          <span className="font-mono text-[var(--color-text)] break-all">{sampleText(sample)}</span>
+                          <span className="font-mono text-text break-all">{sampleText(sample)}</span>
                         )}
                         {key && rest.length > 0 && (
-                          <span className="text-[var(--color-text-muted)] tabular">
+                          <span className="text-text-muted tabular">
                             {rest.map(([k, v]) => `${k} ${String(v)}`).join(" · ")}
                           </span>
                         )}

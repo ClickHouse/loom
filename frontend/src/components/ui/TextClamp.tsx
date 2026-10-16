@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { Button } from "@clickhouse/click-ui/Button";
 import { Tip } from "./Tooltip";
 
 /**
@@ -67,14 +68,15 @@ export function TextClamp({ text, lines = 1, max, reach, mono = false, className
           {expanded ? text : shown}
         </span>
         {(clamped || expanded) && (
-          <button
-            type="button"
+          <Button
+            type="empty"
+            htmlType="button"
             aria-expanded={expanded}
             onClick={() => setExpanded((v) => !v)}
-            className="mt-0.5 text-2xs text-text-muted underline decoration-dotted hover:text-text pointer-coarse:min-h-11 pointer-coarse:px-2"
+            className="mt-0.5"
           >
             {expanded ? "Show less" : "Show more"}
-          </button>
+          </Button>
         )}
       </>
     );
@@ -82,7 +84,7 @@ export function TextClamp({ text, lines = 1, max, reach, mono = false, className
   const span = (
     <span
       ref={ref}
-      className={`${cls} ${clamped && reach === "tooltip" ? "outline-none focus-visible:ring-2 focus-visible:ring-focus rounded" : ""}`}
+      className={`${cls} ${clamped && reach === "tooltip" ? "outline-none focus-visible:ring-2 focus-visible:ring-focus rounded-sm" : ""}`}
       style={clampStyle(lines)}
       tabIndex={clamped && reach === "tooltip" ? 0 : undefined}
     >

@@ -108,7 +108,7 @@ describe("MembersDialog approves a requester on every waiting branch at once", (
     ] as const) {
       const addButtons = await screen.findAllByRole("button", { name: /Add reader/ });
       fireEvent.click(addButtons[addButtons.length - 1]);
-      expect(screen.getByRole("combobox", { name: "Role for the new member" })).toHaveValue("viewer");
+      expect(screen.getByRole("button", { name: "Role for the new member" })).toHaveTextContent("Reader");
       fireEvent.change(screen.getByRole("textbox", { name: /member to add/ }), { target: { value: subject } });
       fireEvent.click(screen.getByRole("button", { name: /^Add$/ }));
       await waitFor(() => expect(api.createGrant).toHaveBeenCalledTimes(n));

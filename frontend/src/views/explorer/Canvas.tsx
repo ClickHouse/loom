@@ -7,9 +7,10 @@ import {
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
 } from "react";
-import { Waypoints, Route } from "lucide-react";
+import { Icon } from "@clickhouse/click-ui/Icon";
 import type { PathResponse, TaxonomyEntry } from "../../api";
 import { EmptyState } from "../../components/EmptyState";
+import { Chip } from "../../components/ui";
 import { Skeleton } from "../../components/Skeleton";
 import { relationLabel, shorten, type Selection, type VisibleTree, type WalkModel, type XNode } from "./model";
 
@@ -592,24 +593,22 @@ export function Canvas({
           </div>
         </div>
       )}
-      {error && (
-        <div className="absolute inset-0 grid place-items-center p-6 text-sm text-[var(--color-danger)]">{error}</div>
-      )}
+      {error && <div className="absolute inset-0 grid place-items-center p-6 text-sm text-danger">{error}</div>}
       {!loading && !error && !model && mode === "walk" && !seedTyped && (
         <div className="absolute inset-0 overflow-auto grid place-items-center">
           {taxonomyEmpty ? (
             <EmptyState
-              icon={Waypoints}
+              icon="share-network"
               title="No entities yet"
               description="The graph fills as memories with entities are written (and, with the chunk extractor on, as documents are ingested)."
             />
           ) : (
             <div className="flex flex-col items-center text-center px-6 py-8">
-              <div className="mb-5 grid place-items-center w-14 h-14 rounded-2xl bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
-                <Waypoints size={26} strokeWidth={1.5} />
+              <div className="mb-5 grid place-items-center w-14 h-14 rounded-2xl bg-surface-2 text-text-muted">
+                <Icon name="share-network" size="lg" aria-hidden="true" />
               </div>
               <h2 className="text-lg font-semibold tracking-tight">Pick an entity to walk from</h2>
-              <p className="mt-2 max-w-md text-base text-[var(--color-text-muted)] leading-relaxed">
+              <p className="mt-2 max-w-md text-sm text-text-muted leading-relaxed">
                 Nothing is walked until you ask. Type an entity and press Walk, type{" "}
                 <span className="font-mono">a → b</span> for a path, or start from one the memories mention most.
               </p>
@@ -622,15 +621,13 @@ export function Canvas({
               ) : (
                 <div className="mt-5 flex flex-wrap justify-center gap-1.5 max-w-lg">
                   {starters.map((e) => (
-                    <button
+                    <Chip
                       key={e.value}
-                      type="button"
-                      aria-label={e.value}
+                      label={e.value}
+                      count={e.count}
+                      ariaLabel={e.value}
                       onClick={() => onWalk(e.value)}
-                      className="text-xs px-2.5 py-1 rounded-full border border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
-                    >
-                      {e.value} <span className="tabular-nums text-[var(--color-text-subtle)]">{e.count}</span>
-                    </button>
+                    />
                   ))}
                 </div>
               )}
@@ -641,7 +638,7 @@ export function Canvas({
       {!loading && !error && mode === "walk" && model && visible && visible.nodes.length === 0 && (
         <div className="absolute inset-0 overflow-auto grid place-items-center">
           <EmptyState
-            icon={Waypoints}
+            icon="share-network"
             title={
               model.nodes.size > 0
                 ? `Every edge from ${model.seed} is filtered out`
@@ -662,7 +659,7 @@ export function Canvas({
       {noPath && pathRes && (
         <div className="absolute inset-0 overflow-auto grid place-items-center">
           <EmptyState
-            icon={Route}
+            icon="arrow-directions"
             title={`No path within ${pathRes.hops} hop${pathRes.hops === 1 ? "" : "s"}`}
             description={
               `${pathRes.entity_a} and ${pathRes.entity_b} are not connected within ${pathRes.hops} hop${pathRes.hops === 1 ? "" : "s"} on ` +

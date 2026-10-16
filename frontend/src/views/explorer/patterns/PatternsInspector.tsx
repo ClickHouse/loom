@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ExternalLink, Lock } from "lucide-react";
+import { Icon } from "@clickhouse/click-ui/Icon";
 import type { TrackerItem, TrackerSection } from "../../../api";
 import { IconButton } from "../../../components/IconButton";
 import { Chip, MetaList, MetaRow, Panel, SectionHeading, TextClamp, Tip } from "../../../components/ui";
@@ -126,7 +126,13 @@ function AreaClassList({
               <Tip content={`${d.source_id} — ${d.title}${d.detail ? ` — ${d.detail}` : ""}`}>
                 <div className="text-xs rounded-md border border-border bg-surface px-2 py-1.5 min-h-7">
                   <div className="flex items-center gap-1.5">
-                    <Lock size={11} aria-hidden="true" className="shrink-0 text-text-subtle" />
+                    <Icon
+                      name="lock"
+                      size="xs"
+                      className="shrink-0"
+                      color="var(--color-text-subtle)"
+                      aria-hidden="true"
+                    />
                     <span className="font-mono shrink-0 text-text-muted">{d.ref}</span>
                     <TextClamp text={d.title} lines={1} max={160} reach="parent" className="flex-1 min-w-0" />
                     <span className={`shrink-0 ${sevTone(d.severity)}`}>{d.severity}</span>
@@ -138,7 +144,7 @@ function AreaClassList({
                         aria-label={`Open ${d.ref}`}
                         className="shrink-0 text-text-muted hover:text-text"
                       >
-                        <ExternalLink size={12} aria-hidden="true" />
+                        <Icon name="popout" size="xs" aria-hidden="true" />
                       </a>
                     )}
                   </div>
@@ -178,10 +184,9 @@ export function PatternsInspector(p: PatternsInspectorProps) {
       })
       .catch(() => undefined);
   };
-  const actionCls = "text-text-muted hover:text-text hover:bg-surface";
   const restrictedLine = p.restricted.length > 0 && (
     <p className="mt-2 text-2xs text-text-subtle inline-flex items-start gap-1">
-      <Lock size={11} aria-hidden="true" className="mt-0.5 shrink-0" />
+      <Icon name="lock" size="xs" className="mt-0.5 shrink-0" aria-hidden="true" />
       <span>
         {p.restricted.map((t) => RESTRICTED_WORDS[t] ?? t).join(", ")}: restricted — not available with this token
       </span>
@@ -209,13 +214,7 @@ export function PatternsInspector(p: PatternsInspectorProps) {
                 <span className="font-mono">#{i.number}</span> {i.title}
               </div>
             </div>
-            <IconButton
-              label="Back to the cell"
-              onClick={() => p.onPickIssue(null)}
-              className={actionCls}
-              icon="cross"
-              size="sm"
-            />
+            <IconButton label="Back to the cell" onClick={() => p.onPickIssue(null)} icon="cross" size="sm" />
           </div>
         }
       >
@@ -359,29 +358,16 @@ export function PatternsInspector(p: PatternsInspectorProps) {
           )}
         </MetaList>
         <div className="mt-3 flex items-center gap-0.5 -mx-1 flex-wrap">
-          <IconButton
-            label="Show in the tracker graph"
-            onClick={p.onShowGraph}
-            className={actionCls}
-            icon="git-merge"
-            size="sm"
-          />
+          <IconButton label="Show in the tracker graph" onClick={p.onShowGraph} icon="git-merge" size="sm" />
           {p.isEntity(i.number) && (
             <IconButton
               label={`Walk from #${i.number} in the co-mention graph`}
               onClick={() => p.onWalk(String(i.number))}
-              className={actionCls}
               icon="arrow-right"
               size="sm"
             />
           )}
-          <IconButton
-            label={`Similar to #${i.number}`}
-            onClick={() => p.onSimilar(i.title)}
-            className={actionCls}
-            icon="search"
-            size="sm"
-          />
+          <IconButton label={`Similar to #${i.number}`} onClick={() => p.onSimilar(i.title)} icon="search" size="sm" />
           {i.url && (
             <a
               href={i.url}
@@ -389,13 +375,12 @@ export function PatternsInspector(p: PatternsInspectorProps) {
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1 text-xs text-text-muted hover:text-text px-1.5 min-h-7"
             >
-              <ExternalLink size={13} aria-hidden="true" /> Open on GitHub
+              <Icon name="popout" size="xs" aria-hidden="true" /> Open on GitHub
             </a>
           )}
           <IconButton
             label="Copy the issue line"
             onClick={() => copy(`#${i.number} ${i.title}${p.item?.line ? ` ${p.item.line}` : ""}`)}
-            className={actionCls}
             icon="copy"
             size="sm"
           />
@@ -435,7 +420,7 @@ export function PatternsInspector(p: PatternsInspectorProps) {
                           aria-label={`Open #${h.number} on GitHub`}
                           className="shrink-0 text-text-muted hover:text-text"
                         >
-                          <ExternalLink size={12} aria-hidden="true" />
+                          <Icon name="popout" size="xs" aria-hidden="true" />
                         </a>
                       )}
                     </li>
@@ -504,7 +489,7 @@ export function PatternsInspector(p: PatternsInspectorProps) {
               {cell.label} <span className={`font-normal ${sevTone(cell.severity)}`}>{cell.severity}</span>
             </div>
           </div>
-          <IconButton label="Clear the cell" onClick={p.onClearCell} className={actionCls} icon="cross" size="sm" />
+          <IconButton label="Clear the cell" onClick={p.onClearCell} icon="cross" size="sm" />
         </div>
       }
     >
@@ -537,7 +522,7 @@ export function PatternsInspector(p: PatternsInspectorProps) {
         )}
         {p.issuesStatus === "restricted_required" && (
           <p className="text-xs text-text-subtle inline-flex items-center gap-1">
-            <Lock size={11} aria-hidden="true" /> restricted — not available with this token
+            <Icon name="lock" size="xs" aria-hidden="true" /> restricted — not available with this token
           </p>
         )}
         {p.issuesStatus === "empty" && (

@@ -1,6 +1,10 @@
 import { useState } from "react";
-import { Activity as ActivityIcon, RefreshCw, Wrench, Layers, Sparkles, Shuffle } from "lucide-react";
-import * as Tabs from "@radix-ui/react-tabs";
+import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
+import { Button } from "@clickhouse/click-ui/Button";
+import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
+import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
+import { Table } from "@clickhouse/click-ui/Table";
+import { Tabs } from "@clickhouse/click-ui/Tabs";
 import { useStore, useIdentity } from "../../lib/state";
 import { canCall } from "../../lib/canCall";
 import { hasAdminClaim, hasOrgAdminClaim } from "../../lib/role";
@@ -158,9 +162,9 @@ export function Health() {
     <PageContainer>
       <div className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
-          <ActivityIcon size={20} /> Health
+          <Icon name="activity" size="md" aria-hidden="true" /> Health
         </h1>
-        <p className="text-sm text-[var(--color-text-muted)] mt-1 max-w-2xl">
+        <p className="text-sm text-text-muted mt-1 max-w-2xl">
           {seesOpMix
             ? "Operator view: worker schedules, operation mix + extraction quality across the org."
             : seesWorkers
@@ -168,65 +172,54 @@ export function Health() {
               : "Extraction quality for the namespaces you can access. Worker telemetry is hidden — that's the Loom operator's concern."}
         </p>
       </div>
-      <Tabs.Root defaultValue={seesWorkers ? "workers" : "extraction"}>
-        <Tabs.List className="flex border-b border-[var(--color-border)] mb-5">
+      <Tabs defaultValue={seesWorkers ? "workers" : "extraction"} ariaLabel="Health">
+        <Tabs.TriggersList className="mb-5">
           {seesWorkers && (
-            <TabTrigger value="workers" icon={Wrench}>
+            <TabTrigger value="workers" icon="settings">
               Workers
             </TabTrigger>
           )}
-          <TabTrigger value="extraction" icon={Sparkles}>
+          <TabTrigger value="extraction" icon="sparkle">
             Extraction quality
           </TabTrigger>
           {seesOpMix && (
-            <TabTrigger value="opmix" icon={Shuffle}>
+            <TabTrigger value="opmix" icon="pie-chart">
               Operation mix
             </TabTrigger>
           )}
           {hasConsolidations && (
-            <TabTrigger value="consolidations" icon={Layers}>
+            <TabTrigger value="consolidations" icon="cards">
               Consolidations
             </TabTrigger>
           )}
-        </Tabs.List>
+        </Tabs.TriggersList>
         {seesWorkers && (
-          <Tabs.Content value="workers" className="outline-none">
+          <Tabs.Content value="workers">
             <WorkersPanel />
           </Tabs.Content>
         )}
-        <Tabs.Content value="extraction" className="outline-none">
+        <Tabs.Content value="extraction">
           <ExtractionQualityPanel />
         </Tabs.Content>
         {seesOpMix && (
-          <Tabs.Content value="opmix" className="outline-none">
+          <Tabs.Content value="opmix">
             <OpMixPanel />
           </Tabs.Content>
         )}
         {hasConsolidations && (
-          <Tabs.Content value="consolidations" className="outline-none">
+          <Tabs.Content value="consolidations">
             <ConsolidationsPanel />
           </Tabs.Content>
         )}
-      </Tabs.Root>
+      </Tabs>
     </PageContainer>
   );
 }
 
-function TabTrigger({
-  value,
-  icon: Icon,
-  children,
-}: {
-  value: string;
-  icon: typeof Wrench;
-  children: React.ReactNode;
-}) {
+function TabTrigger({ value, icon, children }: { value: string; icon: IconName; children: React.ReactNode }) {
   return (
-    <Tabs.Trigger
-      value={value}
-      className="inline-flex items-center gap-2 px-4 py-2.5 text-base font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] data-[state=active]:text-[var(--color-text)] data-[state=active]:border-b-2 data-[state=active]:border-[var(--color-accent)] -mb-px outline-none transition-colors"
-    >
-      <Icon size={14} /> {children}
+    <Tabs.Trigger value={value}>
+      <Icon name={icon} size="sm" aria-hidden="true" /> {children}
     </Tabs.Trigger>
   );
 }
@@ -259,13 +252,13 @@ function statusOf(w: WorkerRow): WorkerStatus {
 }
 
 // Pill per pass verdict. `ok` needs no pill — the dot says it.
-const PASS_PILL: Record<PassStatus, { label: string; cls: string } | null> = {
+const PASS_PILL: Record<PassStatus, { label: string; state: BadgeState } | null> = {
   ok: null,
-  idle: { label: "Idle — ran, nothing to do", cls: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" },
-  partial: { label: "Partial — a leg failed", cls: "bg-warn/15 text-warn" },
-  timeout: { label: "Timed out at its deadline", cls: "bg-danger/15 text-danger" },
-  failed: { label: "Last pass failed", cls: "bg-danger/15 text-danger" },
-  cancelled: { label: "Cancelled — process stopped mid-pass", cls: "bg-warn/15 text-warn" },
+  idle: { label: "Idle — ran, nothing to do", state: "neutral" },
+  partial: { label: "Partial — a leg failed", state: "warning" },
+  timeout: { label: "Timed out at its deadline", state: "danger" },
+  failed: { label: "Last pass failed", state: "danger" },
+  cancelled: { label: "Cancelled — process stopped mid-pass", state: "warning" },
 };
 
 // `deploy:workers:green` → "green"; `iso:w6v3:7864` and other labels as-is.
@@ -342,20 +335,18 @@ export function WorkersPanel() {
           <ScopeBadge kind="loom-wide" />
           {rows !== null &&
             (allHealthy ? (
-              <span className="inline-flex items-center gap-2 px-3 py-1 text-sm rounded-md bg-success/15 text-success">
-                <span className="w-2 h-2 rounded-full bg-success" />
-                All systems running
-              </span>
+              <Badge text="All systems running" state="success" iconDir="start" />
             ) : issues.length > 0 ? (
-              <span className="inline-flex items-center gap-2 px-3 py-1 text-sm rounded-md bg-danger/15 text-danger">
-                <span className="w-2 h-2 rounded-full bg-danger" />
-                {issues.length} {issues.length === 1 ? "issue" : "issues"}
-              </span>
+              <Badge
+                text={`${issues.length} ${issues.length === 1 ? "issue" : "issues"}`}
+                state="danger"
+                iconDir="start"
+              />
             ) : (
-              <span className="text-sm text-[var(--color-text-muted)]">No workers reporting</span>
+              <span className="text-sm text-text-muted">No workers reporting</span>
             ))}
           {rows !== null && colours.length > 0 && (
-            <span className="text-xs text-[var(--color-text-muted)]" data-testid="reporting-colours">
+            <span className="text-xs text-text-muted" data-testid="reporting-colours">
               Reporting from {colours.join(", ")}
               {store?.rows ? (
                 <>
@@ -366,18 +357,14 @@ export function WorkersPanel() {
             </span>
           )}
         </div>
-        <button
-          type="button"
-          onClick={() => setRefreshKey((k) => k + 1)}
-          className="inline-flex items-center gap-1.5 px-2.5 py-1 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] rounded-md hover:bg-[var(--color-surface-2)]"
-        >
-          <RefreshCw size={12} /> Refresh
-        </button>
+        <Button type="secondary" htmlType="button" iconLeft="refresh" onClick={() => setRefreshKey((k) => k + 1)}>
+          Refresh
+        </Button>
       </div>
       {rows === null && <Skeleton className="h-40 w-full" />}
       {rows !== null && (rows.length === 0 || visible.length === 0) && (
         <EmptyState
-          icon={Wrench}
+          icon="settings"
           title={rows.length === 0 ? "No workers reporting" : "Nothing to show"}
           description={
             rows.length === 0
@@ -387,10 +374,7 @@ export function WorkersPanel() {
         />
       )}
       {rows !== null && rows.length > 0 && reporting.length === 0 && effective.length > 0 && (
-        <div
-          className="mb-3 p-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] text-xs text-[var(--color-text-muted)]"
-          role="status"
-        >
+        <div className="mb-3 p-3 rounded-xl border border-border bg-surface-2 text-xs text-text-muted" role="status">
           No worker has reported a pass yet. This process runs no workers (LOOM_BACKGROUND_WORKERS=off under
           blue/green); the workers colour writes each finished pass to loom.worker_status and nothing has landed there
           in the last 7 days.
@@ -408,10 +392,7 @@ export function WorkersPanel() {
             const from = colourOf(w.reporting_from);
             const written = w.rows_written ?? 0;
             return (
-              <div
-                key={w.name}
-                className="flex items-start gap-3 p-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]"
-              >
+              <div key={w.name} className="flex items-start gap-3 p-3 rounded-xl border border-border bg-surface">
                 <div
                   className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${
                     status === "healthy"
@@ -425,33 +406,32 @@ export function WorkersPanel() {
                 />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-base font-medium text-[var(--color-text)]">{info.label}</span>
-                    <span className="text-2xs text-[var(--color-text-subtle)] font-mono">{w.name}</span>
+                    <span className="text-sm font-medium text-text">{info.label}</span>
+                    <span className="text-2xs text-text-subtle font-mono">{w.name}</span>
                     {(w.consecutive_failures ?? 0) > 0 && (
-                      <span className="text-2xs px-1.5 py-0.5 rounded bg-danger/15 text-danger">
-                        {w.consecutive_failures} consecutive failure{(w.consecutive_failures ?? 0) === 1 ? "" : "s"}
-                        {(w.consecutive_failures ?? 0) >= 3 ? " — DEGRADED" : ""}
-                      </span>
+                      <Badge
+                        size="sm"
+                        state="danger"
+                        text={`${w.consecutive_failures} consecutive failure${(w.consecutive_failures ?? 0) === 1 ? "" : "s"}${(w.consecutive_failures ?? 0) >= 3 ? " — DEGRADED" : ""}`}
+                      />
                     )}
-                    {pill && status !== "disabled" && (
-                      <span className={`text-2xs px-1.5 py-0.5 rounded ${pill.cls}`}>{pill.label}</span>
-                    )}
-                    {status === "stalled" && (
-                      <span className="text-2xs px-1.5 py-0.5 rounded bg-warn/15 text-warn">
-                        Stalled — overdue for a tick
-                      </span>
-                    )}
+                    {pill && status !== "disabled" && <Badge size="sm" state={pill.state} text={pill.label} />}
+                    {status === "stalled" && <Badge size="sm" state="warning" text="Stalled — overdue for a tick" />}
                     {status === "disabled" && (
-                      <span className="text-2xs px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
-                        {w.disabled_reason === "disabled_by_setting"
-                          ? "Off in config"
-                          : w.disabled_reason || "Disabled"}
-                      </span>
+                      <Badge
+                        size="sm"
+                        state="disabled"
+                        text={
+                          w.disabled_reason === "disabled_by_setting"
+                            ? "Off in config"
+                            : w.disabled_reason || "Disabled"
+                        }
+                      />
                     )}
                   </div>
-                  <div className="text-xs text-[var(--color-text-muted)] mt-1">{info.blurb}</div>
+                  <div className="text-xs text-text-muted mt-1">{info.blurb}</div>
                   {status !== "disabled" && (
-                    <div className="text-2xs text-[var(--color-text-subtle)] mt-1 tabular">
+                    <div className="text-2xs text-text-subtle mt-1 tabular">
                       {w.last_run_at ? (
                         <>
                           Last ran {relativeTime(w.last_run_at)}
@@ -495,22 +475,14 @@ export function WorkersPanel() {
             );
           })}
           {hiddenByConfig > 0 && !showAll && (
-            <button
-              type="button"
-              onClick={() => setShowAll(true)}
-              className="w-full text-2xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] py-2 hover:bg-[var(--color-surface-2)] rounded-md"
-            >
-              + {hiddenByConfig} worker{hiddenByConfig === 1 ? "" : "s"} disabled in config (click to show)
-            </button>
+            <Button type="empty" htmlType="button" fillWidth iconLeft="eye" onClick={() => setShowAll(true)}>
+              {`Show ${hiddenByConfig} worker${hiddenByConfig === 1 ? "" : "s"} disabled in config`}
+            </Button>
           )}
           {showAll && hiddenByConfig === 0 && (
-            <button
-              type="button"
-              onClick={() => setShowAll(false)}
-              className="w-full text-2xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] py-2 hover:bg-[var(--color-surface-2)] rounded-md"
-            >
+            <Button type="empty" htmlType="button" fillWidth iconLeft="eye-closed" onClick={() => setShowAll(false)}>
               Hide config-disabled workers
-            </button>
+            </Button>
           )}
         </div>
       )}
@@ -600,7 +572,7 @@ export function OpMixPanel() {
   if (op === null) {
     return (
       <EmptyState
-        icon={Shuffle}
+        icon="pie-chart"
         title="Operation mix unavailable"
         description="ops.health needs an org-admin token, or the server predates the op_mix check."
       />
@@ -610,7 +582,7 @@ export function OpMixPanel() {
   if (data === null) {
     return (
       <EmptyState
-        icon={Shuffle}
+        icon="pie-chart"
         title="Operation mix check failed"
         description={check.repair ? `${check.detail} — ${check.repair}` : check.detail}
       />
@@ -628,28 +600,28 @@ export function OpMixPanel() {
         {scope === "namespace" ? (
           <ScopeBadge kind="namespace" value={identity.namespace} />
         ) : (
-          <span className="text-xs px-2 py-0.5 rounded-md bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
-            org · {identity.org}
-          </span>
+          <Badge size="sm" state="neutral" text={`org · ${identity.org}`} />
         )}
-        <button
-          type="button"
-          onClick={() => setScope(scope === "namespace" ? "org" : "namespace")}
-          className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] underline-offset-2 hover:underline"
-        >
-          {scope === "namespace" ? "Show whole org" : "Show this namespace"}
-        </button>
-        <span className="text-xs text-[var(--color-text-muted)]">
+        <ButtonGroup
+          aria-label="Operation mix scope"
+          options={[
+            { value: "namespace", label: "This namespace" },
+            { value: "org", label: "Whole org" },
+          ]}
+          selected={scope}
+          onClick={(value) => setScope(value === "org" ? "org" : "namespace")}
+        />
+        <span className="text-xs text-text-muted">
           last {data.window_days} d · {fmt(total)} calls · {data.agents} agent{data.agents === 1 ? "" : "s"}
         </span>
       </div>
 
-      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+      <div className="rounded-xl border border-border bg-surface p-4">
         <div className="flex items-start gap-2">
           <span className={`mt-1.5 inline-block h-2 w-2 rounded-full ${tone}`} />
           <div className="text-sm">
             <div className="font-medium">{check.detail}</div>
-            {check.repair && <div className="text-[var(--color-text-muted)] mt-0.5">{check.repair}</div>}
+            {check.repair && <div className="text-text-muted mt-0.5">{check.repair}</div>}
           </div>
         </div>
         <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
@@ -668,8 +640,8 @@ export function OpMixPanel() {
       </div>
 
       {total > 0 && (
-        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-          <div className="flex h-3 w-full overflow-hidden rounded-full bg-[var(--color-surface-2)]">
+        <div className="rounded-xl border border-border bg-surface p-4">
+          <div className="flex h-3 w-full overflow-hidden rounded-full bg-surface-2">
             {classes.map((k) => (
               <div
                 key={k}
@@ -685,10 +657,9 @@ export function OpMixPanel() {
                 <span className={`mt-1 inline-block h-2 w-2 rounded-sm ${CLASS_BAR[k]}`} />
                 <div>
                   <div className="font-medium">
-                    {CLASS_INFO[k].label}{" "}
-                    <span className="text-[var(--color-text-muted)] tabular-nums">{fmt(data.counts[k])}</span>
+                    {CLASS_INFO[k].label} <span className="text-text-muted tabular-nums">{fmt(data.counts[k])}</span>
                   </div>
-                  <div className="text-[var(--color-text-muted)]">{CLASS_INFO[k].blurb}</div>
+                  <div className="text-text-muted">{CLASS_INFO[k].blurb}</div>
                 </div>
               </div>
             ))}
@@ -697,28 +668,18 @@ export function OpMixPanel() {
       )}
 
       {data.top.length > 0 && (
-        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="text-xs text-[var(--color-text-muted)] bg-[var(--color-surface-2)]">
-              <tr>
-                <th className="text-left px-4 py-2 font-medium">Operation</th>
-                <th className="text-left px-4 py-2 font-medium">Class</th>
-                <th className="text-right px-4 py-2 font-medium">Calls</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.top.map((t) => (
-                <tr key={t.operation} className="border-t border-[var(--color-border)]">
-                  <td className="px-4 py-1.5 font-mono text-xs">{t.operation}</td>
-                  <td className="px-4 py-1.5 text-[var(--color-text-muted)]">
-                    {CLASS_INFO[t.class]?.label ?? t.class}
-                  </td>
-                  <td className="px-4 py-1.5 text-right tabular-nums">{fmt(t.count)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <Table
+          size="sm"
+          headers={[{ label: "Operation" }, { label: "Class" }, { label: "Calls", width: "120px" }]}
+          rows={data.top.map((t) => ({
+            id: t.operation,
+            items: [
+              { label: <span className="font-mono text-xs">{t.operation}</span> },
+              { label: CLASS_INFO[t.class]?.label ?? t.class },
+              { label: <span className="tabular-nums">{fmt(t.count)}</span> },
+            ],
+          }))}
+        />
       )}
     </div>
   );
@@ -768,55 +729,39 @@ function ConsolidationsTable({ rows }: { rows: ConsolidationRunRow[] }) {
   if (rows.length === 0) {
     return (
       <EmptyState
-        icon={Layers}
+        icon="cards"
         title="No consolidation runs yet"
         description="The background consolidator merges semantically-similar memories. Runs appear here once it fires."
       />
     );
   }
   return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-      <table className="w-full text-sm">
-        <thead className="text-xs text-[var(--color-text-muted)] bg-[var(--color-surface-2)]">
-          <tr>
-            <th className="text-left px-3 py-2">Status</th>
-            <th className="text-left px-3 py-2">Output key</th>
-            <th className="text-right px-3 py-2">Sources</th>
-            <th className="text-right px-3 py-2">Tokens</th>
-            <th className="text-right px-3 py-2">Duration</th>
-            <th className="text-right px-3 py-2">When</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.run_id} className="border-t border-[var(--color-border)]">
-              <td className="px-3 py-2">
-                <span
-                  className={`inline-flex items-center gap-1.5 text-xs font-medium ${
-                    r.status === "written"
-                      ? "text-[var(--color-success)]"
-                      : r.status === "failed"
-                        ? "text-[var(--color-danger)]"
-                        : "text-[var(--color-text-muted)]"
-                  }`}
-                >
-                  {r.status}
-                </span>
-              </td>
-              <td className="px-3 py-2 font-mono text-xs text-[var(--color-text)] truncate max-w-[280px]">
-                {r.output_memory_key ?? "—"}
-              </td>
-              <td className="px-3 py-2 text-right tabular">{r.cluster_size}</td>
-              <td className="px-3 py-2 text-right tabular">{(r.tokens_in ?? 0) + (r.tokens_out ?? 0)}</td>
-              <td className="px-3 py-2 text-right tabular">{r.duration_ms}ms</td>
-              <td className="px-3 py-2 text-right tabular text-[var(--color-text-muted)]">{relativeTime(r.ran_at)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <Table
+      size="sm"
+      headers={[
+        { label: "Status", width: "110px" },
+        { label: "Output key" },
+        { label: "Sources", width: "90px" },
+        { label: "Tokens", width: "90px" },
+        { label: "Duration", width: "100px" },
+        { label: "When", width: "120px" },
+      ]}
+      rows={rows.map((r) => ({
+        id: r.run_id,
+        items: [
+          { label: <Badge size="sm" text={r.status} state={RUN_STATE[r.status] ?? "neutral"} /> },
+          { label: <span className="font-mono text-xs">{r.output_memory_key ?? "—"}</span> },
+          { label: <span className="tabular">{r.cluster_size}</span> },
+          { label: <span className="tabular">{(r.tokens_in ?? 0) + (r.tokens_out ?? 0)}</span> },
+          { label: <span className="tabular">{r.duration_ms}ms</span> },
+          { label: <span className="tabular text-text-muted">{relativeTime(r.ran_at)}</span> },
+        ],
+      }))}
+    />
   );
 }
+
+const RUN_STATE: Record<string, BadgeState> = { written: "success", failed: "danger" };
 
 // Per-namespace approve/reject ratio for the learnings queue.
 function ExtractionQualityPanel() {
@@ -844,7 +789,7 @@ function ExtractionQualityPanel() {
 
   if (!identity) return null;
   if (error) {
-    return <EmptyState icon={Sparkles} title="Couldn't load extraction quality" description={error} />;
+    return <EmptyState icon="sparkle" title="Couldn't load extraction quality" description={error} />;
   }
   if (rows === null) {
     return (
@@ -857,7 +802,7 @@ function ExtractionQualityPanel() {
   if (rows.length === 0) {
     return (
       <EmptyState
-        icon={Sparkles}
+        icon="sparkle"
         title="No extraction activity yet"
         description="Nothing has been extracted from saved conversations yet. Once it starts, this panel shows how many candidates were proposed, approved and rejected, so you can tune extraction for signal."
         details={<>Candidates land in the review queue and the approve / reject counts are tracked here.</>}
@@ -885,46 +830,41 @@ function ExtractionQualityPanel() {
         />
       </div>
       <div className="flex items-center justify-between">
-        <div className="text-xs text-[var(--color-text-muted)]">By namespace, org={identity.org}</div>
-        <button
-          type="button"
-          onClick={() => setRefreshKey((k) => k + 1)}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-[var(--color-border)] rounded-md hover:bg-[var(--color-surface-2)]"
-        >
-          <RefreshCw size={12} /> Refresh
-        </button>
+        <div className="text-xs text-text-muted">By namespace, org={identity.org}</div>
+        <Button type="secondary" htmlType="button" iconLeft="refresh" onClick={() => setRefreshKey((k) => k + 1)}>
+          Refresh
+        </Button>
       </div>
-      <table className="w-full text-sm border-separate border-spacing-0">
-        <thead>
-          <tr className="text-left text-xs text-[var(--color-text-muted)]">
-            <th className="px-3 py-2 border-b border-[var(--color-border)]">Namespace</th>
-            <th className="px-3 py-2 border-b border-[var(--color-border)] text-right">Pending</th>
-            <th className="px-3 py-2 border-b border-[var(--color-border)] text-right">Promoted</th>
-            <th className="px-3 py-2 border-b border-[var(--color-border)] text-right">Rejected</th>
-            <th className="px-3 py-2 border-b border-[var(--color-border)] text-right">Approve</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => {
-            const decided = r.promoted + r.rejected;
-            const ratioPct = decided > 0 ? (r.approve_ratio * 100).toFixed(0) + "%" : "—";
-            const low = decided >= 10 && r.approve_ratio < 0.3;
-            return (
-              <tr key={r.namespace}>
-                <td className="px-3 py-2 font-mono text-xs border-b border-[var(--color-border)]">{r.namespace}</td>
-                <td className="px-3 py-2 text-right tabular border-b border-[var(--color-border)]">{r.pending}</td>
-                <td className="px-3 py-2 text-right tabular border-b border-[var(--color-border)]">{r.promoted}</td>
-                <td className="px-3 py-2 text-right tabular border-b border-[var(--color-border)]">{r.rejected}</td>
-                <td
-                  className={`px-3 py-2 text-right tabular border-b border-[var(--color-border)] ${low ? "text-[var(--color-warn)]" : ""}`}
-                >
-                  {ratioPct}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+      <Table
+        size="sm"
+        headers={[
+          { label: "Namespace" },
+          { label: "Pending", width: "100px" },
+          { label: "Promoted", width: "100px" },
+          { label: "Rejected", width: "100px" },
+          { label: "Approve", width: "100px" },
+        ]}
+        rows={rows.map((r) => {
+          const decided = r.promoted + r.rejected;
+          const low = decided >= 10 && r.approve_ratio < 0.3;
+          return {
+            id: r.namespace,
+            items: [
+              { label: <span className="font-mono text-xs">{r.namespace}</span> },
+              { label: <span className="tabular">{r.pending}</span> },
+              { label: <span className="tabular">{r.promoted}</span> },
+              { label: <span className="tabular">{r.rejected}</span> },
+              {
+                label: (
+                  <span className={`tabular ${low ? "text-warn" : ""}`}>
+                    {decided > 0 ? (r.approve_ratio * 100).toFixed(0) + "%" : "—"}
+                  </span>
+                ),
+              },
+            ],
+          };
+        })}
+      />
     </div>
   );
 }
@@ -941,12 +881,10 @@ function Stat({
   tone?: "default" | "warn";
 }) {
   return (
-    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-3">
-      <div className="text-xs text-[var(--color-text-muted)]">{label}</div>
-      <div className={`text-xl font-semibold tabular mt-0.5 ${tone === "warn" ? "text-[var(--color-warn)]" : ""}`}>
-        {value}
-      </div>
-      {hint && <div className="text-2xs text-[var(--color-text-muted)] mt-0.5">{hint}</div>}
+    <div className="rounded-lg border border-border bg-surface px-3 py-3">
+      <div className="text-xs text-text-muted">{label}</div>
+      <div className={`text-xl font-semibold tabular mt-0.5 ${tone === "warn" ? "text-warn" : ""}`}>{value}</div>
+      {hint && <div className="text-2xs text-text-muted mt-0.5">{hint}</div>}
     </div>
   );
 }

@@ -135,4 +135,46 @@ describe("ReviewQueue", () => {
     await userEvent.click(await screen.findByRole("tab", { name: /Exceptions/ }, WAIT));
     expect(await screen.findByRole("button", { name: "Remove exception k/a ↔ k/b" }, WAIT)).toBeTruthy();
   });
+  it("is operable from the keyboard: tabs, status filter and the decision buttons", async () => {
+    const user = userEvent.setup();
+    vi.mocked(listConflicts).mockResolvedValue({
+      rows: [conflict("k/one"), conflict("k/two")],
+      next_before_version: null,
+    });
+    vi.mocked(listLearnings).mockImplementation(async (_id, status) => ({
+      rows: status === "pending" ? [learning("k/pending")] : [learning("k/promoted")],
+    }));
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await screen.findByText("value of k/one", {}, WAIT);
+
+    // The conflict's reason field and buttons are reached with Tab and pressed with Enter.
+    const reason = screen.getByRole("textbox", { name: "Reason for the decision" });
+    reason.focus();
+    await user.keyboard("dup");
+    await user.tab();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: /Keep A/ }));
+    await user.keyboard("{Enter}");
+    await waitFor(
+      () => expect(resolveConflict).toHaveBeenCalledWith(expect.anything(), "id-k/one", "revise", { reason: "dup" }),
+      WAIT,
+    );
+    await screen.findByText("value of k/two", {}, WAIT);
+
+    // Arrow keys move between the sub-tabs.
+    const conflictsTab = screen.getByRole("tab", { name: /Conflicts/ });
+    conflictsTab.focus();
+    await user.keyboard("{ArrowRight}");
+    const learningsTab = screen.getByRole("tab", { name: /Learnings/ });
+    expect(document.activeElement).toBe(learningsTab);
+    await waitFor(() => expect(learningsTab.getAttribute("aria-selected")).toBe("true"), WAIT);
+    await screen.findByText("k/pending", {}, WAIT);
+
+    // The status filter is a group of toggle buttons pressed with Space.
+    const promoted = screen.getByRole("button", { name: "Promoted" });
+    promoted.focus();
+    await user.keyboard(" ");
+    await screen.findByText("k/promoted", {}, WAIT);
+    expect(promoted.getAttribute("aria-pressed")).toBe("true");
+  });
 });

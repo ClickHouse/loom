@@ -1,6 +1,10 @@
 import { startTransition, useEffect, useMemo, useRef, useState } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
-import { FileText, Trash2, Plus, Download, X as XIcon, RefreshCw, Search, ArrowUpDown } from "lucide-react";
+import { Badge } from "@clickhouse/click-ui/Badge";
+import { Button } from "@clickhouse/click-ui/Button";
+import { Checkbox } from "@clickhouse/click-ui/Checkbox";
+import { Icon } from "@clickhouse/click-ui/Icon";
+import { SearchField } from "@clickhouse/click-ui/SearchField";
+import { Select } from "@clickhouse/click-ui/Select";
 import {
   listKnowledge,
   deleteKnowledge,
@@ -19,6 +23,8 @@ import { EmptyState } from "../components/EmptyState";
 import { toast, toastError } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
 import { IconButton } from "../components/IconButton";
+import { Chip } from "../components/ui";
+import { Modal } from "../components/ui/Modal";
 import { formatBytesShort, relativeTime } from "../lib/format";
 import { useAbortableEffect } from "../lib/hooks";
 import { AddDocumentDialog } from "../flows/AddDocumentDialog";
@@ -317,101 +323,69 @@ export function Documents() {
       <div className="flex items-baseline justify-between mb-1">
         <h1 className="text-2xl font-semibold tracking-tight">Library</h1>
         <div className="flex items-center gap-3">
-          <span className="text-sm text-[var(--color-text-muted)] tabular">
+          <span className="text-sm text-text-muted tabular">
             {rows
               ? visibleRows && visibleRows.length !== rows.length
                 ? `${visibleRows.length} of ${rows.length} shown`
                 : `showing ${rows.length}`
               : ""}
           </span>
-          <button
-            type="button"
-            onClick={() => setAddOpen(true)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md hover:bg-[var(--color-accent-strong)] transition-colors"
-          >
-            <Plus size={13} /> Add document
-          </button>
+          <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setAddOpen(true)}>
+            Add document
+          </Button>
         </div>
       </div>
       <div className="mb-3">
         <ScopeBadge kind="namespace" value={identity.namespace} />
       </div>
-      <p className="text-sm text-[var(--color-text-muted)] mb-6">
+      <p className="text-sm text-text-muted mb-6">
         Reference docs your agents can read. Memories are what the agent remembered; the library is what you gave it to
         read.
       </p>
 
       {rows !== null && rows.length > 0 && (
         <>
-          <div className="relative mb-3">
-            <Search
-              size={15}
-              className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] pointer-events-none"
-              aria-hidden="true"
-            />
-            <input
+          <div className="mb-3">
+            <SearchField
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(value) => setQuery(value)}
               placeholder="Search title, filename, description, or tag — try `tag:specs` or `tag:specs onboarding`"
               aria-label="Search library"
-              className="w-full pl-10 pr-9 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-subtle)] text-base focus:border-[var(--color-accent)] outline-none transition-colors"
             />
-            {query && (
-              <button
-                type="button"
-                onClick={() => setQuery("")}
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)] rounded"
-                aria-label="Clear search"
-              >
-                <XIcon size={14} />
-              </button>
-            )}
           </div>
           <div className="mb-5 flex justify-end">
-            <div className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-[var(--color-surface-2)]">
-              <ArrowUpDown size={11} className="text-[var(--color-text-muted)]" />
-              <select
-                value={sortBy}
-                onChange={(e) => {
-                  const v = oneOf(
-                    SORTS.map((o) => o.value),
-                    e.target.value,
-                  );
-                  if (v !== null) setSortBy(v);
-                }}
-                aria-label="Sort documents"
-                className="text-xs bg-transparent outline-none cursor-pointer text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-              >
-                {SORTS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <Select
+              value={sortBy}
+              onSelect={(value) => {
+                const v = oneOf(
+                  SORTS.map((o) => o.value),
+                  value,
+                );
+                if (v !== null) setSortBy(v);
+              }}
+              triggerProps={{ "aria-label": "Sort documents" }}
+              className="w-44"
+            >
+              {SORTS.map((o) => (
+                <Select.Item key={o.value} value={o.value}>
+                  {o.label}
+                </Select.Item>
+              ))}
+            </Select>
           </div>
         </>
       )}
 
       {selected.size > 0 && (
-        <div className="sticky top-0 z-[2] mb-3 animate-fade-in motion-reduce:animate-none! flex items-center gap-2 p-2.5 rounded-xl border border-[var(--color-accent)] bg-[var(--color-accent-soft)] shadow-sm">
-          <span className="text-sm font-medium text-[var(--color-accent)] tabular">{selected.size} selected</span>
+        <div className="sticky top-0 z-[2] mb-3 animate-fade-in flex items-center gap-2 p-2.5 rounded-xl border border-accent bg-accent-soft shadow-sm">
+          <span className="text-sm font-medium text-accent tabular">{selected.size} selected</span>
           <div className="flex-1" />
-          <button
-            type="button"
-            onClick={onBulkDelete}
-            disabled={bulkBusy}
-            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md text-danger bg-danger/15 hover:bg-danger/25 disabled:opacity-50"
-          >
-            <Trash2 size={11} /> Delete all
-          </button>
-          <button
-            type="button"
-            onClick={clearSelection}
-            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
-          >
-            <XIcon size={11} /> Clear
-          </button>
+          <Button type="secondary" htmlType="button" iconLeft="cross" onClick={clearSelection}>
+            Clear
+          </Button>
+          <Button type="danger" htmlType="button" iconLeft="trash" loading={bulkBusy} onClick={onBulkDelete}>
+            Delete all
+          </Button>
         </div>
       )}
 
@@ -463,7 +437,7 @@ export function Documents() {
 
       {rows !== null && rows.length === 0 && (
         <EmptyState
-          icon={FileText}
+          icon="document"
           title="Your library is empty"
           description="Upload PDFs, DOCX, Markdown or any text-shaped file. Your agents can search the extracted text via knowledge.search, and you can download the originals back any time."
           action={{ label: "Add document", onClick: () => setAddOpen(true) }}
@@ -472,20 +446,16 @@ export function Documents() {
 
       {rows !== null && rows.length > 0 && visibleRows && visibleRows.length === 0 && (
         <div className="py-12 text-center">
-          <div className="mx-auto mb-3 grid place-items-center w-12 h-12 rounded-2xl bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
-            <Search size={20} strokeWidth={1.5} />
+          <div className="mx-auto mb-3 grid place-items-center w-12 h-12 rounded-2xl bg-surface-2">
+            <Icon name="search" size="md" aria-hidden="true" />
           </div>
           <h2 className="text-lg font-semibold tracking-tight">No documents match</h2>
-          <p className="mt-1 text-sm text-[var(--color-text-muted)]">
+          <p className="mt-1 text-sm text-text-muted">
             {rows.length} loaded from this namespace, but none pass the active filters.
           </p>
-          <button
-            type="button"
-            onClick={() => setQuery("")}
-            className="mt-4 inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] transition-colors"
-          >
+          <Button type="secondary" htmlType="button" onClick={() => setQuery("")} className="mt-4">
             Clear search
-          </button>
+          </Button>
         </div>
       )}
 
@@ -499,74 +469,68 @@ export function Documents() {
               onMouseEnter={() => setHotRow(r.source_uri)}
               onMouseLeave={() => setHotRow((cur) => (cur === r.source_uri ? null : cur))}
               onFocus={() => setHotRow(r.source_uri)}
-              className={`p-3.5 rounded-xl border bg-[var(--color-surface)] flex items-start gap-3 transition-colors [content-visibility:auto] [contain-intrinsic-size:auto_96px] ${
+              className={`p-3.5 rounded-xl border bg-surface flex items-start gap-3 transition-colors [content-visibility:auto] [contain-intrinsic-size:auto_96px] ${
                 selected.has(r.source_uri)
-                  ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)]/40"
-                  : "border-[var(--color-border)] hover:border-[var(--color-border-strong)]"
+                  ? "border-accent ring-1 ring-accent/40"
+                  : "border-border hover:border-border-strong"
               }`}
             >
-              <input
-                type="checkbox"
+              <Checkbox
                 checked={selected.has(r.source_uri)}
-                onChange={() => toggleSelected(r.source_uri)}
+                onCheckedChange={() => toggleSelected(r.source_uri)}
                 aria-label={`Select ${r.title || r.original_filename || r.source_uri}`}
-                className="mt-1 shrink-0 cursor-pointer"
+                className="mt-1 shrink-0"
                 onClick={(e) => e.stopPropagation()}
               />
-              <FileText size={16} className="text-[var(--color-text-muted)] shrink-0 mt-0.5" aria-hidden="true" />
-              <button
-                type="button"
-                onClick={() => onOpen(r)}
-                className="min-w-0 flex-1 text-left bg-transparent border-0 p-0 cursor-pointer"
-                aria-label={`Preview ${r.title || r.original_filename || r.source_uri}`}
-              >
-                <div
-                  className={`text-base text-[var(--color-text)] font-medium truncate ${r.title ? "" : "font-mono"}`}
+              <Icon name="document" size="sm" aria-hidden="true" className="shrink-0 mt-0.5" />
+              <div className="min-w-0 flex-1">
+                <button
+                  type="button"
+                  onClick={() => onOpen(r)}
+                  className="w-full text-left bg-transparent border-0 p-0 cursor-pointer"
+                  aria-label={`Preview ${r.title || r.original_filename || r.source_uri}`}
                 >
-                  {r.title || r.original_filename || r.source_uri}
-                </div>
-                {r.title && (r.original_filename || r.source_uri) && (
-                  <div className="text-xs text-[var(--color-text-muted)] font-mono truncate">
-                    {r.original_filename || r.source_uri}
+                  <div className={`text-sm text-text font-medium truncate ${r.title ? "" : "font-mono"}`}>
+                    {r.title || r.original_filename || r.source_uri}
                   </div>
-                )}
-                {r.description && (
-                  <div className="text-xs text-[var(--color-text)] mt-1 line-clamp-2 leading-snug">{r.description}</div>
-                )}
-                <div className="mt-1.5 flex items-center gap-2 text-2xs text-[var(--color-text-muted)] tabular">
+                  {r.title && (r.original_filename || r.source_uri) && (
+                    <div className="text-xs text-text-muted font-mono truncate">
+                      {r.original_filename || r.source_uri}
+                    </div>
+                  )}
+                  {r.description && (
+                    <div className="text-xs text-text mt-1 line-clamp-2 leading-snug">{r.description}</div>
+                  )}
+                </button>
+                <div className="mt-1.5 flex items-center gap-2 text-2xs text-text-muted tabular">
                   <span>{r.chunk_count} chunks</span>
                   <span>·</span>
                   <span>{relativeTime(r.ingested_at)}</span>
                   {r.superseded && (
-                    <span
-                      className="text-2xs px-1.5 py-0.5 rounded font-medium bg-warn/15 text-warn"
+                    <Badge
+                      text="superseded"
+                      state="warning"
+                      size="sm"
                       title="A newer version of this URI was uploaded; agents read the latest"
-                    >
-                      superseded
-                    </span>
+                    />
                   )}
                   {r.tags && r.tags.length > 0 && (
                     <span className="flex items-center gap-1 ml-2">
                       {r.tags.slice(0, 3).map((t) => (
-                        <button
-                          type="button"
+                        <Chip
                           key={t}
-                          onClick={(e) => {
-                            e.stopPropagation();
+                          label={`#${t}`}
+                          ariaLabel={`Filter by tag ${t}`}
+                          onClick={() => {
                             const tagToken = `tag:${t}`;
                             setQuery((cur) => (cur.includes(tagToken) ? cur : cur ? `${cur} ${tagToken}` : tagToken));
                           }}
-                          className="inline-flex items-center text-2xs px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-accent)] transition-colors cursor-pointer"
-                          title={`Filter by tag: ${t}`}
-                        >
-                          <span className="opacity-50 mr-0.5">#</span>
-                          {t}
-                        </button>
+                        />
                       ))}
                     </span>
                   )}
                 </div>
-              </button>
+              </div>
               {(hotRow === r.source_uri || selected.has(r.source_uri)) && (
                 <>
                   {/* Icon actions: ≥36 px targets, named by aria-label + tooltip.
@@ -579,7 +543,6 @@ export function Documents() {
                       e.stopPropagation();
                       onDownload(r);
                     }}
-                    className="text-[var(--color-text-muted)] hover:text-[var(--color-accent)] hover:bg-[var(--color-surface-2)]"
                     label={hasOriginalFile(r) ? "Download original file" : "Download text (.md)"}
                     tooltip={
                       hasOriginalFile(r)
@@ -596,7 +559,6 @@ export function Documents() {
                       e.stopPropagation();
                       setEditEntry(r);
                     }}
-                    className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                     label="Edit details"
                     tooltip="Edit details (title, description, tags — no re-upload)"
                     icon="pencil"
@@ -607,7 +569,6 @@ export function Documents() {
                       e.stopPropagation();
                       setReplaceEntry(r);
                     }}
-                    className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                     label="Edit content"
                     tooltip={
                       r.has_blob
@@ -622,9 +583,9 @@ export function Documents() {
                       e.stopPropagation();
                       onDelete(r.source_uri);
                     }}
-                    className="text-[var(--color-danger)] hover:bg-[var(--color-surface-2)]"
                     label="Delete document"
                     icon="trash"
+                    type="danger"
                     size="sm"
                   />
                 </>
@@ -635,206 +596,185 @@ export function Documents() {
       )}
 
       {aggregateStats && rows && rows.length > 0 && (
-        <div className="mt-8 pt-4 border-t border-[var(--color-border)] text-xs text-[var(--color-text-muted)] tabular flex items-center justify-between flex-wrap gap-2">
+        <div className="mt-8 pt-4 border-t border-border text-xs text-text-muted tabular flex items-center justify-between flex-wrap gap-2">
           <span>
-            showing <span className="text-[var(--color-text)] font-medium">{rows.length}</span>
+            showing <span className="text-text font-medium">{rows.length}</span>
             {" · "}
-            <span className="text-[var(--color-text)] font-medium">{aggregateStats.chunks.toLocaleString()}</span> chunk
+            <span className="text-text font-medium">{aggregateStats.chunks.toLocaleString()}</span> chunk
             {aggregateStats.chunks === 1 ? "" : "s"} indexed
             {aggregateStats.withBlob > 0 && (
               <>
                 {" · "}
-                <span className="text-[var(--color-text)] font-medium">{formatBytesShort(aggregateStats.bytes)}</span>{" "}
-                stored ({aggregateStats.withBlob} file{aggregateStats.withBlob === 1 ? "" : "s"})
+                <span className="text-text font-medium">{formatBytesShort(aggregateStats.bytes)}</span> stored (
+                {aggregateStats.withBlob} file{aggregateStats.withBlob === 1 ? "" : "s"})
               </>
             )}
           </span>
           {aggregateStats.withBlob < rows.length && (
-            <span className="text-[var(--color-text-subtle)]">
+            <span className="text-text-subtle">
               {rows.length - aggregateStats.withBlob} text-only · no preserved original
             </span>
           )}
           {nextCursor && (
-            <button
-              type="button"
-              onClick={loadMore}
-              disabled={loadingMore}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium border border-[var(--color-border)] rounded-md hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)] transition-colors disabled:opacity-50"
-            >
-              {loadingMore ? "Loading…" : "Load more"}
-            </button>
+            <Button type="secondary" htmlType="button" loading={loadingMore} onClick={loadMore}>
+              Load more
+            </Button>
           )}
         </div>
       )}
 
-      <Dialog.Root
+      <Modal
         open={!!previewEntry}
         onOpenChange={(v) => {
           if (!v) closePreview();
         }}
+        title={previewEntry?.title || previewEntry?.original_filename || previewEntry?.source_uri || "Document"}
+        className="max-w-[900px] w-full"
+        initialFocus="dialog"
       >
-        <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-50 bg-overlay animate-fade-in motion-reduce:animate-none!" />
-          <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[min(900px,94vw)] h-[min(85vh,800px)] flex flex-col rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl animate-fade-in motion-reduce:animate-none!">
-            <div className="flex items-start justify-between gap-4 px-6 py-4 border-b border-[var(--color-border)] shrink-0">
-              <div className="min-w-0 flex-1">
-                <Dialog.Title
-                  className={`text-md font-semibold tracking-tight truncate ${previewEntry?.title ? "" : "font-mono"}`}
-                >
-                  {previewEntry?.title || previewEntry?.original_filename || previewEntry?.source_uri || "Document"}
-                </Dialog.Title>
-                <div className="text-2xs text-[var(--color-text-muted)] mt-1 flex items-center gap-2 flex-wrap">
-                  {previewEntry?.ingested_at && <span>uploaded {relativeTime(previewEntry.ingested_at)}</span>}
-                  {previewEntry?.has_blob && previewEntry.blob_size != null && (
-                    <>
-                      <span>·</span>
-                      <span>{formatBytesShort(previewEntry.blob_size)}</span>
-                    </>
-                  )}
-                  {previewEntry?.blob_content_type && (
-                    <>
-                      <span>·</span>
-                      <span className="font-mono">{previewEntry.blob_content_type}</span>
-                    </>
-                  )}
-                  {(previewEntry?.tags || []).slice(0, 4).map((t) => (
-                    <span key={t} className="text-2xs px-1.5 py-0.5 rounded bg-[var(--color-surface-2)]">
-                      {t}
-                    </span>
-                  ))}
+        <div className="flex items-start justify-between gap-4 mb-4">
+          <div className="min-w-0 text-2xs text-text-muted flex items-center gap-2 flex-wrap">
+            {previewEntry?.ingested_at && <span>uploaded {relativeTime(previewEntry.ingested_at)}</span>}
+            {previewEntry?.has_blob && previewEntry.blob_size != null && (
+              <>
+                <span>·</span>
+                <span>{formatBytesShort(previewEntry.blob_size)}</span>
+              </>
+            )}
+            {previewEntry?.blob_content_type && (
+              <>
+                <span>·</span>
+                <span className="font-mono">{previewEntry.blob_content_type}</span>
+              </>
+            )}
+            {(previewEntry?.tags || []).slice(0, 4).map((t) => (
+              <Badge key={t} text={t} state="neutral" size="sm" />
+            ))}
+          </div>
+          {previewEntry && (
+            <div className="flex items-center gap-2 shrink-0">
+              <Button
+                type="secondary"
+                htmlType="button"
+                iconLeft="refresh"
+                title="Upload a new file version of this document"
+                onClick={() => {
+                  const r = previewEntry;
+                  closePreview();
+                  setReplaceEntry(r);
+                }}
+              >
+                Edit content
+              </Button>
+              <Button
+                type="primary"
+                htmlType="button"
+                iconLeft="download"
+                title={hasOriginalFile(previewEntry) ? "Download original file" : "Download text (.md)"}
+                onClick={() => onDownload(previewEntry)}
+              >
+                {hasOriginalFile(previewEntry) ? "Download" : "Download text (.md)"}
+              </Button>
+            </div>
+          )}
+        </div>
+        <div className="h-[55vh] overflow-hidden rounded-lg bg-surface-2 relative">
+          {previewLoading && (
+            <div className="absolute inset-0 grid place-items-center text-sm text-text-muted">Loading…</div>
+          )}
+          {/* Only passive types reach here (previewKind): text in an iframe whose empty
+                  sandbox grants nothing, images as <img>. Nothing else is ever framed. */}
+          {!previewLoading && inlineBlob?.url && previewEntry?.has_blob && inlineBlob.kind === "image" && (
+            <div className="absolute inset-0 grid place-items-center p-6 overflow-auto">
+              <img
+                src={inlineBlob.url}
+                alt={previewEntry.original_filename || "document"}
+                className="max-w-full max-h-full object-contain shadow"
+              />
+            </div>
+          )}
+          {!previewLoading && inlineBlob?.url && previewEntry?.has_blob && inlineBlob.kind === "text" && (
+            <iframe
+              sandbox=""
+              src={inlineBlob.url}
+              title={previewEntry.original_filename || "document preview"}
+              className="w-full h-full border-0 bg-text"
+            />
+          )}
+          {!previewLoading && inlineBlob?.kind === "download" && previewEntry?.has_blob && (
+            <div className="absolute inset-0 grid place-items-center px-8 text-center">
+              <div className="max-w-md">
+                <Icon name="document" size="xl" aria-hidden="true" className="mx-auto mb-3" />
+                <div className="text-sm font-medium text-text">No preview for this file type</div>
+                <div className="text-xs text-text-muted mt-2">
+                  Only text and images are shown here. Click <strong>Download</strong> above to open the file.
                 </div>
               </div>
-              <div className="flex items-center gap-2 shrink-0">
+            </div>
+          )}
+          {!previewLoading && !inlineBlob && previewEntry && !previewEntry.has_blob && (
+            <div className="absolute inset-0 grid place-items-center px-8 text-center">
+              <div className="max-w-md">
+                <Icon name="document" size="xl" aria-hidden="true" className="mx-auto mb-3" />
+                <div className="text-sm font-medium text-text">No original file preserved</div>
+                <div className="text-xs text-text-muted mt-2">
+                  This document was added as text (or uploaded before file preservation was enabled).
+                  <strong>Download text (.md)</strong> above saves its text as Markdown; re-upload it to attach an
+                  original file.
+                </div>
                 {previewEntry && (
-                  <button
-                    type="button"
+                  <Button
+                    type="secondary"
+                    htmlType="button"
+                    iconLeft="refresh"
+                    className="mt-4"
                     onClick={() => {
                       const r = previewEntry;
                       closePreview();
                       setReplaceEntry(r);
                     }}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)]"
-                    title="Upload a new file version of this document"
                   >
-                    <RefreshCw size={13} /> Edit content
-                  </button>
+                    Re-upload
+                  </Button>
                 )}
-                {previewEntry && (
-                  <button
-                    type="button"
-                    onClick={() => onDownload(previewEntry)}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:bg-[var(--color-accent-strong)]"
-                    title={hasOriginalFile(previewEntry) ? "Download original file" : "Download text (.md)"}
-                  >
-                    <Download size={13} /> {hasOriginalFile(previewEntry) ? "Download" : "Download text (.md)"}
-                  </button>
-                )}
-                <Dialog.Close
-                  className="p-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-                  aria-label="Close"
-                >
-                  <XIcon size={16} />
-                </Dialog.Close>
               </div>
             </div>
-            <div className="flex-1 overflow-hidden bg-[var(--color-surface-2)] relative">
-              {previewLoading && (
-                <div className="absolute inset-0 grid place-items-center text-sm text-[var(--color-text-muted)]">
-                  Loading…
+          )}
+          {!previewLoading && previewEntry?.has_blob && !inlineBlob && (
+            <div className="absolute inset-0 grid place-items-center px-8 text-center">
+              <div className="max-w-md">
+                <Icon name="document" size="xl" aria-hidden="true" className="mx-auto mb-3" />
+                <div className="text-sm font-medium text-text">Couldn't load preview</div>
+                <div className="text-xs text-text-muted mt-2">
+                  The original file is preserved but couldn't be rendered inline. Click <strong>Download</strong> above
+                  to fetch it directly.
                 </div>
-              )}
-              {/* Only passive types reach here (previewKind): text in an iframe whose empty
-                  sandbox grants nothing, images as <img>. Nothing else is ever framed. */}
-              {!previewLoading && inlineBlob?.url && previewEntry?.has_blob && inlineBlob.kind === "image" && (
-                <div className="absolute inset-0 grid place-items-center p-6 overflow-auto">
-                  <img
-                    src={inlineBlob.url}
-                    alt={previewEntry.original_filename || "document"}
-                    className="max-w-full max-h-full object-contain shadow"
-                  />
-                </div>
-              )}
-              {!previewLoading && inlineBlob?.url && previewEntry?.has_blob && inlineBlob.kind === "text" && (
-                <iframe
-                  sandbox=""
-                  src={inlineBlob.url}
-                  title={previewEntry.original_filename || "document preview"}
-                  className="w-full h-full border-0 bg-text"
-                />
-              )}
-              {!previewLoading && inlineBlob?.kind === "download" && previewEntry?.has_blob && (
-                <div className="absolute inset-0 grid place-items-center px-8 text-center">
-                  <div className="max-w-md">
-                    <FileText size={32} className="mx-auto text-[var(--color-text-subtle)] mb-3" />
-                    <div className="text-base font-medium text-[var(--color-text)]">No preview for this file type</div>
-                    <div className="text-xs text-[var(--color-text-muted)] mt-2">
-                      Only text and images are shown here. Click <strong>Download</strong> above to open the file.
-                    </div>
-                  </div>
-                </div>
-              )}
-              {!previewLoading && !inlineBlob && previewEntry && !previewEntry.has_blob && (
-                <div className="absolute inset-0 grid place-items-center px-8 text-center">
-                  <div className="max-w-md">
-                    <FileText size={32} className="mx-auto text-[var(--color-text-subtle)] mb-3" />
-                    <div className="text-base font-medium text-[var(--color-text)]">No original file preserved</div>
-                    <div className="text-xs text-[var(--color-text-muted)] mt-2">
-                      This document was added as text (or uploaded before file preservation was enabled).
-                      <strong>Download text (.md)</strong> above saves its text as Markdown; re-upload it to attach an
-                      original file.
-                    </div>
-                    {previewEntry && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const r = previewEntry;
-                          closePreview();
-                          setReplaceEntry(r);
-                        }}
-                        className="mt-4 inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:bg-[var(--color-accent-strong)]"
-                      >
-                        <RefreshCw size={13} /> Re-upload
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )}
-              {!previewLoading && previewEntry?.has_blob && !inlineBlob && (
-                <div className="absolute inset-0 grid place-items-center px-8 text-center">
-                  <div className="max-w-md">
-                    <FileText size={32} className="mx-auto text-[var(--color-text-subtle)] mb-3" />
-                    <div className="text-base font-medium text-[var(--color-text)]">Couldn't load preview</div>
-                    <div className="text-xs text-[var(--color-text-muted)] mt-2">
-                      The original file is preserved but couldn't be rendered inline. Click <strong>Download</strong>{" "}
-                      above to fetch it directly.
-                    </div>
-                  </div>
-                </div>
-              )}
+              </div>
             </div>
-            <div className="border-t border-[var(--color-border)] shrink-0 max-h-[40%] overflow-y-auto">
-              <button
-                type="button"
-                onClick={() => setShowText((v) => !v)}
-                className="w-full flex items-center justify-between px-6 py-2.5 text-2xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
-              >
-                <span>{showText ? "Hide" : "Show"} extracted text (what your agents search)</span>
-                <span className="font-mono">{showText ? "▴" : "▾"}</span>
-              </button>
-              {showText && previewDoc && previewDoc.found && (
-                <pre className="whitespace-pre-wrap text-xs leading-[1.5] text-[var(--color-text-muted)] font-sans px-6 pb-4">
-                  {previewDoc.content || "(no extracted text)"}
-                </pre>
-              )}
-              {showText && previewDoc && !previewDoc.found && (
-                <div className="text-xs text-[var(--color-text-muted)] px-6 pb-4">
-                  Document not found — it may have been deleted in another tab.
-                </div>
-              )}
+          )}
+        </div>
+        <div className="mt-4 border-t border-border max-h-[30vh] overflow-y-auto">
+          <button
+            type="button"
+            aria-expanded={showText}
+            onClick={() => setShowText((v) => !v)}
+            className="w-full flex items-center justify-between px-1 py-2.5 text-2xs text-text-muted hover:text-text hover:bg-surface-2 transition-colors"
+          >
+            <span>{showText ? "Hide" : "Show"} extracted text (what your agents search)</span>
+            <span className="font-mono">{showText ? "▴" : "▾"}</span>
+          </button>
+          {showText && previewDoc && previewDoc.found && (
+            <pre className="whitespace-pre-wrap text-xs leading-normal text-text-muted font-sans px-1 pb-4">
+              {previewDoc.content || "(no extracted text)"}
+            </pre>
+          )}
+          {showText && previewDoc && !previewDoc.found && (
+            <div className="text-xs text-text-muted px-1 pb-4">
+              Document not found — it may have been deleted in another tab.
             </div>
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
+          )}
+        </div>
+      </Modal>
     </PageContainer>
   );
 }

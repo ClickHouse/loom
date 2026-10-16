@@ -1,14 +1,17 @@
 import type { ReactNode } from "react";
-import { X } from "lucide-react";
+import { Icon } from "@clickhouse/click-ui/Icon";
 import { Tip } from "./Tooltip";
 
 /**
- * Chip — a filter or value chip. One shape for the toggles in Facets, the status filters
- * in Runs, the keys in a run's detail: `rounded-full`, the border token, a 28 px hit
- * target on a fine pointer (44 × 44 px under `pointer: coarse`), the label at `text-xs`,
- * an optional tabular count, an optional swatch.
+ * Chip — a filter or value chip. Click UI has no filter chip, so this is drawn as its
+ * opaque badge (pill, 1 px stroke, 500 12 px, 2 × 12 px padding) with a 24 px hit target
+ * on a fine pointer (44 × 44 px under `pointer: coarse`), an optional tabular count and
+ * an optional swatch. One shape for the toggles in Facets, the status filters in Runs,
+ * the keys in a run's detail.
  *
- * - With `onClick` it is a `<button aria-pressed>`; `selected` inverts it.
+ * - With `onClick` it is a `<button>`. Pass `selected` for a toggle: it sets `aria-pressed`
+ *   and fills the chip the way Click UI fills a checked control. An action chip (a key that
+ *   opens a memory) leaves `selected` out.
  * - With `onRemove` a second button "Remove {label}" follows (a button
  *   never nests a button).
  * - Without either it is a static `<span>`.
@@ -37,16 +40,16 @@ export interface ChipProps {
 }
 
 const BASE =
-  "inline-flex items-center justify-center gap-1 max-w-full min-h-7 px-2 rounded-full border text-xs leading-none pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:px-3";
-const OFF = "border-border text-text-muted";
+  "inline-flex items-center justify-center gap-1 max-w-full min-h-6 px-3 py-0.5 rounded-full border text-xs font-medium pointer-coarse:min-h-11 pointer-coarse:min-w-11";
+const OFF = "bg-surface-2 border-border text-text-subtle";
 const INTERACTIVE_OFF = "hover:text-text hover:border-border-strong";
-const ON = "bg-text text-bg border-transparent";
+const ON = "bg-text border-text text-bg";
 
 export function Chip({
   label,
   count,
   countLabel,
-  selected = false,
+  selected,
   onClick,
   onRemove,
   swatch,
@@ -74,7 +77,7 @@ export function Chip({
       )}
       <span className={`truncate ${mono ? "font-mono" : ""}`}>{label}</span>
       {count !== undefined && (
-        <span className="tabular-nums opacity-70 shrink-0" aria-hidden="true">
+        <span className="tabular-nums font-normal shrink-0" aria-hidden="true">
           {count}
         </span>
       )}
@@ -113,7 +116,7 @@ export function Chip({
       disabled={disabled && !softDisabled}
       aria-disabled={disabled || undefined}
       onClick={softDisabled ? undefined : onClick}
-      className={`${BASE} ${tone} ${onRemove ? "rounded-r-none border-r-0" : ""} disabled:opacity-50 aria-disabled:opacity-50 aria-disabled:cursor-not-allowed ${className}`}
+      className={`${BASE} ${tone} ${onRemove ? "rounded-r-none border-r-0" : ""} disabled:opacity-50 ${className}`}
     >
       {inner}
     </button>
@@ -130,9 +133,9 @@ export function Chip({
         disabled={disabled}
         aria-disabled={disabled || undefined}
         onClick={onRemove}
-        className={`inline-flex items-center justify-center min-h-7 min-w-7 rounded-r-full border ${selected ? ON : `${OFF} ${INTERACTIVE_OFF}`} disabled:opacity-50 pointer-coarse:min-h-11 pointer-coarse:min-w-11`}
+        className={`inline-flex items-center justify-center min-h-6 min-w-6 rounded-r-full border ${selected ? ON : `${OFF} ${INTERACTIVE_OFF}`} disabled:opacity-50 pointer-coarse:min-h-11 pointer-coarse:min-w-11`}
       >
-        <X size={11} aria-hidden="true" />
+        <Icon name="cross" size="xs" aria-hidden="true" />
       </button>
     </span>
   );

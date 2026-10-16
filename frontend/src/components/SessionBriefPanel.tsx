@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { BookMarked, ChevronDown, ChevronRight } from "lucide-react";
+import { Icon } from "@clickhouse/click-ui/Icon";
+import { Select } from "@clickhouse/click-ui/Select";
 import { getBrief, type BriefGetResponse } from "../api/briefs";
 import { CopyButton } from "./CopyButton";
 import { humanizeError, relativeTime } from "../lib/format";
@@ -72,20 +73,19 @@ export function SessionBriefPanel({
   }, [open, head, revision, org, namespace]);
 
   if (!head) return null;
-  const Toggle = open ? ChevronDown : ChevronRight;
   return (
-    <div className="mb-4 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)]">
+    <div className="mb-4 rounded-sm bg-surface-2 border border-border">
       <button
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
         className="w-full flex items-center gap-2 px-3 py-2 text-left text-xs"
       >
-        <Toggle size={14} className="shrink-0 text-[var(--color-text-muted)]" />
-        <BookMarked size={14} className="shrink-0 text-[var(--color-text-muted)]" />
+        <Icon name={open ? "chevron-down" : "chevron-right"} size="sm" aria-hidden="true" />
+        <Icon name="book" size="sm" aria-hidden="true" />
         <span className="font-medium">Session brief</span>
-        <span className="font-mono text-[var(--color-text-muted)] truncate">{head.brief_key}</span>
-        <span className="ml-auto shrink-0 text-2xs text-[var(--color-text-muted)]">
+        <span className="font-mono text-text-muted truncate">{head.brief_key}</span>
+        <span className="ml-auto shrink-0 text-2xs text-text-muted">
           rev {head.revision}
           {head.updated_at ? ` · saved ${relativeTime(head.updated_at)}` : ""}
         </span>
@@ -93,35 +93,30 @@ export function SessionBriefPanel({
       {open && (
         <div className="px-3 pb-3 space-y-2">
           {head.revisions > 1 && (
-            <div className="flex items-center gap-2">
-              <select
-                aria-label="Revision"
-                value={revision}
-                onChange={(e) => setRevision(Number(e.target.value))}
-                className="ml-auto px-2 py-1 text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)]"
-              >
-                <option value={0}>latest (rev {head.revision})</option>
+            <div className="flex justify-end">
+              <Select label="Revision" value={String(revision)} onSelect={(v) => setRevision(Number(v))}>
+                <Select.Item value="0">latest (rev {head.revision})</Select.Item>
                 {Array.from({ length: head.revisions }, (_, i) => head.revisions - i).map((r) => (
-                  <option key={r} value={r}>
+                  <Select.Item key={r} value={String(r)}>
                     rev {r}
-                  </option>
+                  </Select.Item>
                 ))}
-              </select>
+              </Select>
             </div>
           )}
-          <div className="flex items-center gap-2 rounded-md bg-[var(--color-surface)] border border-[var(--color-border)] px-2 py-1.5">
-            <span className="text-2xs text-[var(--color-text-muted)] shrink-0">Say in Claude Code or Codex:</span>
+          <div className="flex items-center gap-2 rounded-sm bg-surface border border-border px-2 py-1.5">
+            <span className="text-2xs text-text-muted shrink-0">Say in Claude Code or Codex:</span>
             <code className="text-2xs flex-1 min-w-0 break-all">{restorePhrase(head.brief_key)}</code>
             <CopyButton
               text={() => restorePhrase(head.brief_key)}
               label="Copy"
               ariaLabel="Copy the restore phrase"
-              className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 text-2xs font-medium bg-[var(--color-surface)] border border-[var(--color-border)] rounded-md hover:bg-[var(--color-surface-3)]"
+              className="shrink-0"
             />
           </div>
           {error && <div className="text-xs text-danger">{error}</div>}
           {body && (
-            <pre className="max-h-[40vh] overflow-auto text-2xs whitespace-pre-wrap break-words font-mono leading-relaxed">
+            <pre className="max-h-[40vh] overflow-auto text-2xs whitespace-pre-wrap break-words font-mono">
               {body.rendered}
             </pre>
           )}

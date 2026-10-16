@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { boxOf, installApi, SMALL_HOP1, SMALL_SEED, taxonomyWithCommunities } from "./fixtures";
+import { boxOf, installApi, pickOption, SMALL_HOP1, SMALL_SEED, taxonomyWithCommunities } from "./fixtures";
 
 // A result that changed nothing still says so where you are looking. An expand's outcome
 // is a toast and a line in the inspector's live region; the Communities / Colour facet
@@ -100,7 +100,7 @@ test("a re-walk drops the expand it started over: the late result lands nowhere"
   await expect.poll(() => calls.related.length).toBe(1);
 
   // A walk setting changes while `facts.related` is still out: the view re-walks.
-  await page.locator("#graph-hops").selectOption("3");
+  await pickOption(page, "Hops", "3");
   await expect.poll(() => calls.traverse.length).toBe(2);
   await expect(page.locator(NODE)).toHaveCount(SMALL_HOP1 + 1);
 
@@ -131,7 +131,7 @@ test("an expand clicked while a re-walk loads is dropped when the walk lands", a
   await expect(inspector).toContainText(`${SMALL_SEED}-h1-0`);
 
   // The re-walk is out; the Inspector (which stays up while it loads) starts an expand.
-  await page.locator("#graph-hops").selectOption("3");
+  await pickOption(page, "Hops", "3");
   await expect.poll(() => calls.traverse.length).toBe(2);
   await inspector.getByRole("button", { name: "Expand in place (one hop of neighbours)" }).click();
   await expect.poll(() => calls.related.length).toBe(1);

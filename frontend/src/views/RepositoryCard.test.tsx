@@ -450,18 +450,15 @@ describe("RepositoryCard — the tracker links", () => {
     );
     expect(within(line()).queryByRole("button", { name: /Make .* primary/ })).toBeNull();
     await userEvent.click(within(line()).getByRole("button", { name: "Link another tracker" }));
-    const select = screen.getByRole("combobox", { name: "Tracker" });
-    expect(
-      within(select)
-        .getAllByRole("group")
-        .map((g) => g.getAttribute("label")),
-    ).toEqual([
+    const select = screen.getByRole("button", { name: "Tracker" });
+    expect(select).toHaveTextContent("qa · private"); // the first tracker listing the repository
+    expect(screen.getByText(/stays primary/)).toBeInTheDocument();
+    await userEvent.click(select);
+    expect(Array.from(document.querySelectorAll("[cui-select-group-name]")).map((g) => g.textContent)).toEqual([
       "Trackers listing ClickHouse/ClickHouse",
       "Other trackers — they answer nothing for ClickHouse/ClickHouse",
     ]);
-    expect(select).toHaveValue("tracker-example-private"); // the first tracker listing the repository
-    expect(screen.getByText(/stays primary/)).toBeInTheDocument();
-    await userEvent.selectOptions(select, "tracker-kj");
+    await userEvent.click(screen.getByText("kj"));
     expect(
       screen.getByText("kj lists Acme/kj, not ClickHouse/ClickHouse: it would answer nothing here."),
     ).toBeInTheDocument();

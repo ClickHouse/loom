@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import * as Tooltip from "@radix-ui/react-tooltip";
+import { Badge } from "@clickhouse/click-ui/Badge";
 import {
   getTaxonomy,
   pathFacts,
@@ -600,233 +600,236 @@ export function Explorer() {
 
   return (
     <div className="lg:h-full min-h-0 flex flex-col px-6 py-5 gap-3">
-      <Tooltip.Provider delayDuration={300}>
-        <Bar
+      <Bar
+        identity={identity}
+        entities={taxonomy ? taxonomy.entities : null}
+        draft={draft}
+        onDraft={setDraft}
+        onWalk={walkFrom}
+        onPath={pathBetween}
+        trail={trail}
+        currentSeed={mode === "walk" ? (model ? model.seed : seed) || null : null}
+        busy={loading}
+        patternsAvailable={hasPatterns || patterns}
+        patterns={inPatterns || needsSource}
+        onPatterns={togglePatterns}
+      />
+
+      {needsSource && <SourcePicker org={identity.org} current={identity.namespace} />}
+
+      {inPatterns && binding && (
+        <Patterns
+          key={`${identity.org}/${identity.namespace}`}
           identity={identity}
-          entities={taxonomy ? taxonomy.entities : null}
-          draft={draft}
-          onDraft={setDraft}
+          binding={binding}
+          isEntity={isEntity}
           onWalk={walkFrom}
-          onPath={pathBetween}
-          trail={trail}
-          currentSeed={mode === "walk" ? (model ? model.seed : seed) || null : null}
-          busy={loading}
-          patternsAvailable={hasPatterns || patterns}
-          patterns={inPatterns || needsSource}
-          onPatterns={togglePatterns}
+          initial={patternsQuery.current}
+          onUrlState={onPatternsUrl}
         />
+      )}
 
-        {needsSource && <SourcePicker org={identity.org} current={identity.namespace} />}
-
-        {inPatterns && binding && (
-          <Patterns
-            key={`${identity.org}/${identity.namespace}`}
-            identity={identity}
-            binding={binding}
-            isEntity={isEntity}
-            onWalk={walkFrom}
-            initial={patternsQuery.current}
-            onUrlState={onPatternsUrl}
-          />
-        )}
-
-        {/* Fixed footprints: 220 px facets, the canvas column, 300 px inspector;
+      {/* Fixed footprints: 220 px facets, the canvas column, 300 px inspector;
             the single grid row is bounded by the page so each pane owns its scroll. */}
-        {!inPatterns && !needsSource && (
-          <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[220px_minmax(0,1fr)_300px] lg:grid-rows-[minmax(0,1fr)] gap-4">
-            <Facets
-              taxonomy={taxonomy}
-              seed={model?.seed ?? null}
-              relations={relations}
-              filters={filters}
-              onFilters={setFilters}
-              filteredOut={visible?.filteredOut ?? 0}
-              memoryTypes={memoryTypes}
-              onMemoryTypes={setMemoryTypes}
-              tags={tags}
-              onTags={setTags}
-              asOf={asOf}
-              onAsOf={setAsOf}
-              hops={hops}
-              onHops={setHops}
-              perHop={perHop}
-              onPerHop={setPerHop}
-              typed={typed}
-              onTyped={setTyped}
-              labels={labels}
-              onLabels={setLabels}
-              onWalk={walkFrom}
-              patternsNote={
-                binding && binding.kind === "none" ? "Patterns are available on QA-bound namespaces." : null
-              }
-            />
+      {!inPatterns && !needsSource && (
+        <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[220px_minmax(0,1fr)_300px] lg:grid-rows-[minmax(0,1fr)] gap-4">
+          <Facets
+            taxonomy={taxonomy}
+            seed={model?.seed ?? null}
+            relations={relations}
+            filters={filters}
+            onFilters={setFilters}
+            filteredOut={visible?.filteredOut ?? 0}
+            memoryTypes={memoryTypes}
+            onMemoryTypes={setMemoryTypes}
+            tags={tags}
+            onTags={setTags}
+            asOf={asOf}
+            onAsOf={setAsOf}
+            hops={hops}
+            onHops={setHops}
+            perHop={perHop}
+            onPerHop={setPerHop}
+            typed={typed}
+            onTyped={setTyped}
+            labels={labels}
+            onLabels={setLabels}
+            onWalk={walkFrom}
+            patternsNote={binding && binding.kind === "none" ? "Patterns are available on QA-bound namespaces." : null}
+          />
 
-            <div className="min-w-0 min-h-0 flex flex-col">
-              {/* Summary line: fixed height so a notice never moves the canvas. */}
-              <div
-                className="h-6 mb-2 text-xs text-[var(--color-text-muted)] flex items-center gap-2 overflow-hidden whitespace-nowrap"
-                aria-live="polite"
-              >
-                {model && visible && !loading && !error && (
-                  <>
-                    <span className="truncate">
-                      {mode === "path" && pathRes ? (
-                        <>
-                          path <span className="font-mono text-[var(--color-text)]">{pathRes.entity_a}</span> →{" "}
-                          <span className="font-mono text-[var(--color-text)]">{pathRes.entity_b}</span>:{" "}
-                          <span className="tabular-nums text-[var(--color-text)]">{pathRes.hops}</span> hop
-                          {pathRes.hops === 1 ? "" : "s"}
-                          {pathRes.truncated ? " · search trimmed" : ""}
-                        </>
-                      ) : (
-                        <>
-                          <span className="tabular-nums text-[var(--color-text)]">{visible.nodes.length}</span> entit
-                          {visible.nodes.length === 1 ? "y" : "ies"} within {hops} hop{hops === 1 ? "" : "s"} of{" "}
-                          <span className="font-mono text-[var(--color-text)]">{model.seed}</span>
-                          {hopCounts.map(([h, c]) => (
-                            <span key={h} className="ml-2 inline-flex items-center gap-1">
-                              <span
-                                className="inline-block w-2 h-2 rounded-full"
-                                style={{
-                                  background: HOP_COLORS[Math.min(h, HOP_COLORS.length - 1)],
-                                  opacity: hasCommunities ? 1 : HOP_EMPHASIS[Math.min(h, HOP_EMPHASIS.length - 1)],
-                                }}
-                                aria-hidden="true"
-                              />
-                              hop {h}: <span className="tabular-nums">{c}</span>
-                            </span>
-                          ))}
-                          {model.truncated ? ` · strongest ${NODE_CAP} kept` : ""}
-                          {hubsHeld ? ` · ${hubsHeld} hub${hubsHeld === 1 ? "" : "s"} held` : ""}
-                          {asOf ? ` · as of ${asOf}` : ""}
-                        </>
-                      )}
-                    </span>
-                    {walkedAs && (
-                      <span className="shrink-0 rounded-full border border-[var(--color-border-strong)] px-2 py-0.5">
-                        typed <span className="font-mono">{shorten(seed, 16)}</span>, walked as{" "}
-                        <span className="font-mono text-[var(--color-text)]">{shorten(walkedAs, 16)}</span>
-                      </span>
-                    )}
-                    {suggestions.length > 0 && (walkedAs || model.nodes.size === 0) && (
-                      <span className="shrink-0 inline-flex items-center gap-1">
-                        other matches:
-                        {suggestions.map((e) => (
-                          <button
-                            key={e.value}
-                            type="button"
-                            onClick={() => walkFrom(e.value)}
-                            className="font-mono underline hover:text-[var(--color-text)]"
-                          >
-                            {shorten(e.value, 16)}
-                          </button>
-                        ))}
-                      </span>
-                    )}
-                    {notice && <span className="shrink-0 text-[var(--color-text)]">· {notice.toast}</span>}
-                  </>
-                )}
-                {mode === "path" && pathRes && !pathRes.found && !loading && (
+          <div className="min-w-0 min-h-0 flex flex-col">
+            {/* Summary line: fixed height so a notice never moves the canvas. */}
+            <div
+              className="h-6 mb-2 text-xs text-text-muted flex items-center gap-2 overflow-hidden whitespace-nowrap"
+              aria-live="polite"
+            >
+              {model && visible && !loading && !error && (
+                <>
                   <span className="truncate">
-                    no path <span className="font-mono">{pathRes.entity_a}</span> →{" "}
-                    <span className="font-mono">{pathRes.entity_b}</span> within {pathRes.hops} hop
-                    {pathRes.hops === 1 ? "" : "s"}
+                    {mode === "path" && pathRes ? (
+                      <>
+                        path <span className="font-mono text-text">{pathRes.entity_a}</span> →{" "}
+                        <span className="font-mono text-text">{pathRes.entity_b}</span>:{" "}
+                        <span className="tabular-nums text-text">{pathRes.hops}</span> hop
+                        {pathRes.hops === 1 ? "" : "s"}
+                        {pathRes.truncated ? " · search trimmed" : ""}
+                      </>
+                    ) : (
+                      <>
+                        <span className="tabular-nums text-text">{visible.nodes.length}</span> entit
+                        {visible.nodes.length === 1 ? "y" : "ies"} within {hops} hop{hops === 1 ? "" : "s"} of{" "}
+                        <span className="font-mono text-text">{model.seed}</span>
+                        {hopCounts.map(([h, c]) => (
+                          <span key={h} className="ml-2 inline-flex items-center gap-1">
+                            <span
+                              className="inline-block w-2 h-2 rounded-full"
+                              style={{
+                                background: HOP_COLORS[Math.min(h, HOP_COLORS.length - 1)],
+                                opacity: hasCommunities ? 1 : HOP_EMPHASIS[Math.min(h, HOP_EMPHASIS.length - 1)],
+                              }}
+                              aria-hidden="true"
+                            />
+                            hop {h}: <span className="tabular-nums">{c}</span>
+                          </span>
+                        ))}
+                        {model.truncated ? ` · strongest ${NODE_CAP} kept` : ""}
+                        {hubsHeld ? ` · ${hubsHeld} hub${hubsHeld === 1 ? "" : "s"} held` : ""}
+                        {asOf ? ` · as of ${asOf}` : ""}
+                      </>
+                    )}
                   </span>
-                )}
-              </div>
-              <Canvas
-                model={model}
-                visible={visible}
-                mode={mode}
-                pathRes={pathRes}
-                loading={loading}
-                loadingLabel={
-                  mode === "path" && pathQuery
-                    ? `Finding a path from ${pathQuery[0]} to ${pathQuery[1]}`
-                    : `Walking from ${seed}`
-                }
-                error={error}
-                seedTyped={seed}
-                selection={selection}
-                pinned={pinned}
-                labels={labels}
-                typed={typed}
-                asOf={asOf}
-                hasCommunities={hasCommunities}
-                communityLabel={communityLabel}
-                starters={taxonomy ? taxonomy.entities.slice(0, 12) : null}
-                taxonomyEmpty={Boolean(taxonomy && taxonomy.entities.length === 0)}
-                onWalk={walkFrom}
-                onSelect={setSelection}
-                onExpand={expand}
-                onUncollapse={(e) => setCollapse(e, false)}
-              />
-              {model && visible && !loading && !error && visible.nodes.length > 0 && (
-                <Outline
-                  model={model}
-                  visible={visible}
-                  children={children}
-                  order={order}
-                  collapsed={collapsed}
-                  pinned={pinned}
-                  selection={selection}
-                  typed={typed}
-                  hasCommunities={hasCommunities}
-                  communityLabel={communityLabel}
-                  summary={summary}
-                  expanding={expanding}
-                  onSelect={setSelection}
-                  onWalk={walkFrom}
-                  onPath={pathToHere}
-                  onExpand={expand}
-                  onCollapse={setCollapse}
-                  onPin={togglePin}
-                />
+                  {walkedAs && (
+                    <Badge
+                      className="shrink-0"
+                      state="neutral"
+                      size="sm"
+                      text={
+                        <>
+                          typed <span className="font-mono">{shorten(seed, 16)}</span>, walked as{" "}
+                          <span className="font-mono">{shorten(walkedAs, 16)}</span>
+                        </>
+                      }
+                    />
+                  )}
+                  {suggestions.length > 0 && (walkedAs || model.nodes.size === 0) && (
+                    <span className="shrink-0 inline-flex items-center gap-1">
+                      other matches:
+                      {suggestions.map((e) => (
+                        <button
+                          key={e.value}
+                          type="button"
+                          onClick={() => walkFrom(e.value)}
+                          className="font-mono underline hover:text-text"
+                        >
+                          {shorten(e.value, 16)}
+                        </button>
+                      ))}
+                    </span>
+                  )}
+                  {notice && <span className="shrink-0 text-text">· {notice.toast}</span>}
+                </>
+              )}
+              {mode === "path" && pathRes && !pathRes.found && !loading && (
+                <span className="truncate">
+                  no path <span className="font-mono">{pathRes.entity_a}</span> →{" "}
+                  <span className="font-mono">{pathRes.entity_b}</span> within {pathRes.hops} hop
+                  {pathRes.hops === 1 ? "" : "s"}
+                </span>
               )}
             </div>
-
-            <Inspector
-              identity={identity}
+            <Canvas
               model={model}
+              visible={visible}
+              mode={mode}
+              pathRes={pathRes}
+              loading={loading}
+              loadingLabel={
+                mode === "path" && pathQuery
+                  ? `Finding a path from ${pathQuery[0]} to ${pathQuery[1]}`
+                  : `Walking from ${seed}`
+              }
+              error={error}
+              seedTyped={seed}
               selection={selection}
-              taxonomy={taxonomy}
+              pinned={pinned}
+              labels={labels}
+              typed={typed}
+              asOf={asOf}
               hasCommunities={hasCommunities}
               communityLabel={communityLabel}
-              asOf={asOf}
-              typed={typed}
-              hops={hops}
-              provenance={filters.provenance}
-              memoryTypes={memoryTypes}
-              tags={tags}
-              pinned={pinned}
-              collapsed={collapsed}
-              hasChildren={hasChildren}
-              expanding={expanding}
-              notice={notice}
+              starters={taxonomy ? taxonomy.entities.slice(0, 12) : null}
+              taxonomyEmpty={Boolean(taxonomy && taxonomy.entities.length === 0)}
               onWalk={walkFrom}
-              onPath={pathToHere}
               onSelect={setSelection}
               onExpand={expand}
-              onPin={togglePin}
-              onCollapse={setCollapse}
-              onOpenMemory={setInspectKey}
+              onUncollapse={(e) => setCollapse(e, false)}
             />
+            {model && visible && !loading && !error && visible.nodes.length > 0 && (
+              <Outline
+                model={model}
+                visible={visible}
+                children={children}
+                order={order}
+                collapsed={collapsed}
+                pinned={pinned}
+                selection={selection}
+                typed={typed}
+                hasCommunities={hasCommunities}
+                communityLabel={communityLabel}
+                summary={summary}
+                expanding={expanding}
+                onSelect={setSelection}
+                onWalk={walkFrom}
+                onPath={pathToHere}
+                onExpand={expand}
+                onCollapse={setCollapse}
+                onPin={togglePin}
+              />
+            )}
           </div>
-        )}
 
-        {inspectKey && (
-          <MemoryInspector
-            // Search hits and fact sources carry no writer agent; "*" reads the
-            // row whichever agent wrote it (memory.get treats it as namespace-wide).
-            identity={inspectIdentity}
-            memoryKey={inspectKey}
-            onClose={() => setInspectKey(null)}
-            onChanged={() => {
-              /* the graph is a projection of the rows; a re-walk picks changes up */
-            }}
+          <Inspector
+            identity={identity}
+            model={model}
+            selection={selection}
+            taxonomy={taxonomy}
+            hasCommunities={hasCommunities}
+            communityLabel={communityLabel}
+            asOf={asOf}
+            typed={typed}
+            hops={hops}
+            provenance={filters.provenance}
+            memoryTypes={memoryTypes}
+            tags={tags}
+            pinned={pinned}
+            collapsed={collapsed}
+            hasChildren={hasChildren}
+            expanding={expanding}
+            notice={notice}
+            onWalk={walkFrom}
+            onPath={pathToHere}
+            onSelect={setSelection}
+            onExpand={expand}
+            onPin={togglePin}
+            onCollapse={setCollapse}
+            onOpenMemory={setInspectKey}
           />
-        )}
-      </Tooltip.Provider>
+        </div>
+      )}
+
+      {inspectKey && (
+        <MemoryInspector
+          // Search hits and fact sources carry no writer agent; "*" reads the
+          // row whichever agent wrote it (memory.get treats it as namespace-wide).
+          identity={inspectIdentity}
+          memoryKey={inspectKey}
+          onClose={() => setInspectKey(null)}
+          onChanged={() => {
+            /* the graph is a projection of the rows; a re-walk picks changes up */
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { useState, type HTMLAttributes, type KeyboardEvent, type MouseEvent } from "react";
-import { ChevronDown } from "lucide-react";
+import { Button } from "@clickhouse/click-ui/Button";
+import { Icon } from "@clickhouse/click-ui/Icon";
 import type { TaskListRow } from "../../api/tasks";
 import { GROUPS, GROUP_META, rel, sublineOf, type Group, type Subline } from "../../lib/tasks";
 import { Avatar, KindTag, LeaseBar, PosterAvatar, PriorityBar } from "./TaskBits";
@@ -10,9 +11,10 @@ import { useTaskDrag } from "./drag";
  * Waiting, Closed — each with a swatch, a count and a hint. A row carries the decision:
  * the priority bar, the kind, the title, the one line that matters for its state, and a
  * meta cell — inline Accept / Won't do in Triage, the owner and lease bar in progress,
- * the poster and age otherwise. Rows are `role=row` with a tab stop (they hold buttons,
- * so they are not buttons themselves). A writer drags a row onto another group to move
- * it (`useTaskDrag`); while a row is held, empty and hidden groups show as drop targets.
+ * the poster and age otherwise. The DOM is a grid: each group is a rowgroup whose first
+ * row holds the collapse button, then its task rows. Rows have a tab stop (they hold
+ * buttons, so they are not buttons themselves). A writer drags a row onto another group to
+ * move it (`useTaskDrag`); while a row is held, empty and hidden groups show as drop targets.
  */
 export interface RowContext {
   now: number;
@@ -62,10 +64,9 @@ function Meta({ r, ctx }: { r: TaskListRow; ctx: RowContext }) {
       <span className="tq-meta">
         {ctx.canWrite && (
           <span className="tq-acts">
-            <button
-              type="button"
-              className="tq-mini"
-              data-ok="true"
+            <Button
+              type="primary"
+              htmlType="button"
               onClick={(e) => {
                 stop(e);
                 ctx.onAccept(r);
@@ -73,10 +74,10 @@ function Meta({ r, ctx }: { r: TaskListRow; ctx: RowContext }) {
               aria-label={`Accept ${r.title}`}
             >
               Accept
-            </button>
-            <button
-              type="button"
-              className="tq-mini"
+            </Button>
+            <Button
+              type="secondary"
+              htmlType="button"
               onClick={(e) => {
                 stop(e);
                 ctx.onWontDo(r);
@@ -84,7 +85,7 @@ function Meta({ r, ctx }: { r: TaskListRow; ctx: RowContext }) {
               aria-label={`Won't do ${r.title}`}
             >
               Won't do…
-            </button>
+            </Button>
           </span>
         )}
         <span className="tabular" title={r.created_at}>
@@ -105,6 +106,8 @@ function Meta({ r, ctx }: { r: TaskListRow; ctx: RowContext }) {
   );
 }
 
+// biome-ignore-start lint/a11y/useSemanticElements: a div grid — rows are draggable and grouped into collapsible groups, which a <table> cannot hold
+// biome-ignore-start lint/a11y/useFocusableInteractive: each task row is a tab stop; cells, header and placeholder rows are read, not visited
 function TaskRowView({ r, ctx, drag }: { r: TaskListRow; ctx: RowContext; drag: HTMLAttributes<HTMLElement> }) {
   const selected = ctx.selectedId === r.task_id;
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -114,7 +117,6 @@ function TaskRowView({ r, ctx, drag }: { r: TaskListRow; ctx: RowContext; drag: 
     }
   };
   return (
-    // biome-ignore lint/a11y/useSemanticElements: a draggable grid row; table elements would fight the drag targets and the group layout
     <div
       role="row"
       tabIndex={0}
@@ -126,19 +128,19 @@ function TaskRowView({ r, ctx, drag }: { r: TaskListRow; ctx: RowContext; drag: 
       onKeyDown={onKey}
       {...drag}
     >
-      <PriorityBar priority={r.priority} />
-      {/* biome-ignore lint/a11y/useSemanticElements: a cell of the div grid row above */}
-      <span className="min-w-0" role="cell">
+      <span className="grid" role="gridcell">
+        <PriorityBar priority={r.priority} />
+      </span>
+      <span className="min-w-0" role="gridcell">
         <span className="t">
           <KindTag kind={r.kind} />
-          <span className="title text-base" title={r.title}>
+          <span className="title text-sm" title={r.title}>
             {r.title}
           </span>
         </span>
         <SublineView s={sublineOf(r, ctx.now, ctx.progressNotes.get(r.task_id))} />
       </span>
-      {/* biome-ignore lint/a11y/useSemanticElements: a cell of the div grid row above */}
-      <span role="cell">
+      <span role="gridcell">
         <Meta r={r} ctx={ctx} />
       </span>
     </div>
@@ -163,7 +165,6 @@ export function TaskList({ groups, ctx, forceOpen, showClosed }: ListProps) {
   });
   const drag = useTaskDrag(ctx.canWrite, ctx.onDrop);
   return (
-    // biome-ignore lint/a11y/useSemanticElements: rows are draggable and grouped into collapsible sections, which a <table> cannot hold
     <div role="grid" aria-label="Tasks by what happens next" className="min-w-0">
       {GROUPS.map((g) => {
         const rows = groups[g];
@@ -173,47 +174,55 @@ export function TaskList({ groups, ctx, forceOpen, showClosed }: ListProps) {
         const meta = GROUP_META[g];
         const isCollapsed = collapsed[g] && !forceOpen;
         return (
-          <section
+          <div
             key={g}
+            role="rowgroup"
             className="tq-group"
             data-collapsed={isCollapsed}
             aria-labelledby={`tq-group-${g}`}
             {...drag.target(g)}
           >
-            <button
-              type="button"
-              className="tq-ghead"
-              aria-expanded={!isCollapsed}
-              aria-controls={`tq-rows-${g}`}
-              onClick={() => setCollapsed((c) => ({ ...c, [g]: !c[g] }))}
-            >
-              <span
-                className="w-2.5 h-2.5 rounded-[3px] shrink-0"
-                style={{ background: meta.color }}
-                aria-hidden="true"
-              />
-              <h3 id={`tq-group-${g}`} className="text-sm font-semibold m-0">
-                {meta.label}
-              </h3>
-              <span className="text-xs text-[var(--color-text-subtle)] tabular">{rows.length}</span>
-              <span className="ml-auto text-xs text-[var(--color-text-subtle)] hidden sm:inline">{meta.hint}</span>
-              <ChevronDown size={14} className="car" aria-hidden="true" />
-            </button>
+            <div role="row">
+              <div role="gridcell">
+                <button
+                  type="button"
+                  className="tq-ghead"
+                  aria-expanded={!isCollapsed}
+                  aria-controls={isCollapsed ? undefined : `tq-rows-${g}`}
+                  onClick={() => setCollapsed((c) => ({ ...c, [g]: !c[g] }))}
+                >
+                  <span
+                    className="w-2.5 h-2.5 rounded-xs shrink-0"
+                    style={{ background: meta.color }}
+                    aria-hidden="true"
+                  />
+                  <h3 id={`tq-group-${g}`} className="text-sm font-semibold m-0">
+                    {meta.label}
+                  </h3>
+                  <span className="text-xs text-text-subtle tabular">{rows.length}</span>
+                  <span className="ml-auto text-xs text-text-subtle hidden sm:inline">{meta.hint}</span>
+                  <Icon name="chevron-down" size="xs" className="car" aria-hidden="true" />
+                </button>
+              </div>
+            </div>
             {!isCollapsed && (
-              // biome-ignore lint/a11y/useSemanticElements: the row group of the div grid above
-              <div id={`tq-rows-${g}`} className="tq-rows" role="rowgroup">
+              <div id={`tq-rows-${g}`} className="tq-rows">
                 {rows.length === 0 ? (
-                  <div className="px-3.5 py-3.5 text-sm text-[var(--color-text-subtle)]">
-                    {g === "triage" ? "Nothing waiting for a decision." : "Drop here."}
+                  <div role="row">
+                    <div role="gridcell" className="px-3.5 py-3.5 text-sm text-text-subtle">
+                      {g === "triage" ? "Nothing waiting for a decision." : "Drop here."}
+                    </div>
                   </div>
                 ) : (
                   rows.map((r) => <TaskRowView key={r.task_id} r={r} ctx={ctx} drag={drag.source(r)} />)
                 )}
               </div>
             )}
-          </section>
+          </div>
         );
       })}
     </div>
   );
 }
+// biome-ignore-end lint/a11y/useFocusableInteractive: the grid ends
+// biome-ignore-end lint/a11y/useSemanticElements: the grid ends

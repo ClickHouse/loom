@@ -8,3 +8,5 @@ export { Panel, type PanelProps } from "./Panel";
 export { SectionHeading, type SectionHeadingProps } from "./SectionHeading";
 export { TextClamp, type TextClampProps } from "./TextClamp";
 export { Tip, type TipProps } from "./Tooltip";
+export { ChoiceGroup, type ChoiceGroupProps, type ChoiceOption } from "./ChoiceGroup";
+export { Unavailable } from "./Unavailable";

@@ -1,18 +1,9 @@
 import { useEffect, useState } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
-import {
-  Globe,
-  Users,
-  Check,
-  Eye,
-  UserRound,
-  Crown,
-  X as XIcon,
-  Clock as ClockIcon,
-  UserPlus,
-  Settings as SettingsIcon,
-  Plus,
-} from "lucide-react";
+import { Badge } from "@clickhouse/click-ui/Badge";
+import { Button } from "@clickhouse/click-ui/Button";
+import { Icon } from "@clickhouse/click-ui/Icon";
+import { SearchField } from "@clickhouse/click-ui/SearchField";
+import { Select } from "@clickhouse/click-ui/Select";
 import {
   browseNamespaces,
   joinNamespace,
@@ -28,6 +19,9 @@ import { CreateNamespaceDialog } from "../flows/CreateNamespaceDialog";
 import { useStore, useIdentity } from "../lib/state";
 import { SkeletonCard } from "../components/Skeleton";
 import { Panel } from "../components/ui";
+import { ChoiceGroup } from "../components/ui/ChoiceGroup";
+import { Modal, ModalFooter } from "../components/ui/Modal";
+import { IconButton } from "../components/IconButton";
 import { EmptyState } from "../components/EmptyState";
 import { toast } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
@@ -43,28 +37,24 @@ const JOIN_ROLES: Array<{
   value: JoinRole;
   label: string;
   blurb: string;
-  icon: typeof Eye;
   pending: "always" | "if-required" | "never";
 }> = [
   {
     value: "viewer",
     label: "Viewer",
     blurb: "Read memories. Cannot write or manage. Auto-active for most namespaces.",
-    icon: Eye,
     pending: "if-required",
   },
   {
     value: "writer",
     label: "Writer",
     blurb: "Read and contribute memories. Requires approval from an existing admin.",
-    icon: UserRound,
     pending: "always",
   },
   {
     value: "admin",
     label: "Admin",
     blurb: "Manage members, settings, deletion. Requires approval from an existing admin.",
-    icon: Crown,
     pending: "always",
   },
 ];
@@ -174,19 +164,19 @@ export function Browse() {
     <PageContainer>
       <div className="flex items-baseline justify-between mb-2">
         <h1 className="text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
-          <Globe size={22} /> Spaces
+          <Icon name="globe" size="lg" aria-hidden="true" /> Spaces
         </h1>
       </div>
       <div className="mb-3">
         <ScopeBadge kind="namespace" value={identity.namespace} />
       </div>
-      <p className="text-sm text-[var(--color-text-muted)] mb-6">
+      <p className="text-sm text-text-muted mb-6">
         Connect people and namespaces. Browse public namespaces to join, or invite members into namespaces you manage.
       </p>
       {repoCount > 0 && (
-        <div className="mb-6 -mt-3 text-xs text-[var(--color-text-muted)]">
+        <div className="mb-6 -mt-3 text-xs text-text-muted">
           Looking for a code index or a tracker source? Both are joined from{" "}
-          <button type="button" onClick={() => setView("code")} className="text-[var(--color-accent)] hover:underline">
+          <button type="button" onClick={() => setView("code")} className="text-link hover:underline">
             Repositories
           </button>{" "}
           — {repoCount} repositor{repoCount === 1 ? "y" : "ies"} available, each with its issues & PRs when a record
@@ -199,10 +189,10 @@ export function Browse() {
       {adminNs.length > 0 && (
         <section className="mb-8">
           <div className="flex items-baseline justify-between mb-3">
-            <h2 className="text-md font-semibold tracking-tight inline-flex items-center gap-2">
-              <Crown size={14} className="text-warn" /> Namespaces you manage
+            <h2 className="text-lg font-semibold tracking-tight inline-flex items-center gap-2">
+              <Icon name="star" size="sm" color="var(--color-warn)" aria-hidden="true" /> Namespaces you manage
             </h2>
-            <span className="text-xs text-[var(--color-text-muted)] tabular">
+            <span className="text-xs text-text-muted tabular">
               {adminNs.length} {adminNs.length === 1 ? "namespace" : "namespaces"}
             </span>
           </div>
@@ -210,40 +200,32 @@ export function Browse() {
             {adminNs.map((r) => (
               <div
                 key={r.namespace}
-                className="p-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] flex items-center gap-3"
+                className="p-3.5 rounded-xl border border-border bg-surface flex items-center gap-3"
               >
-                <Crown size={16} className="text-warn shrink-0" />
+                <Icon name="star" size="sm" color="var(--color-warn)" aria-hidden="true" className="shrink-0" />
                 <div className="min-w-0 flex-1">
-                  <div className="text-base font-mono text-[var(--color-text)]">{r.namespace}</div>
-                  {r.description && (
-                    <div className="text-xs text-[var(--color-text-muted)] mt-0.5 truncate">{r.description}</div>
-                  )}
-                  <div className="mt-1.5 flex items-center gap-3 text-2xs text-[var(--color-text-muted)] tabular">
-                    <span
-                      className={`text-2xs px-1.5 py-0.5 rounded ${
-                        r.visibility === "public" ? "bg-success/15 text-success" : "bg-[var(--color-surface-2)]"
-                      }`}
-                    >
-                      {r.visibility}
-                    </span>
+                  <div className="text-sm font-mono text-text">{r.namespace}</div>
+                  {r.description && <div className="text-xs text-text-muted mt-0.5 truncate">{r.description}</div>}
+                  <div className="mt-1.5 flex items-center gap-3 text-2xs text-text-muted tabular">
+                    <Badge text={r.visibility} state={r.visibility === "public" ? "success" : "neutral"} size="sm" />
                   </div>
                 </div>
-                <button
-                  type="button"
+                <Button
+                  type="secondary"
+                  htmlType="button"
+                  iconLeft="users"
                   onClick={() => setManageNs(r.namespace)}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:bg-[var(--color-accent-strong)] rounded-md shrink-0"
                   title={`Invite people to ${r.namespace}`}
+                  className="shrink-0"
                 >
-                  <UserPlus size={13} /> Invite
-                </button>
-                <button
-                  type="button"
+                  Invite
+                </Button>
+                <IconButton
+                  icon="gear"
+                  label={`Namespace settings for ${r.namespace}`}
                   onClick={() => setSettingsNs(r.namespace)}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-sm rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] shrink-0"
-                  title={`Namespace settings for ${r.namespace}`}
-                >
-                  <SettingsIcon size={13} />
-                </button>
+                  className="shrink-0"
+                />
               </div>
             ))}
           </div>
@@ -252,30 +234,28 @@ export function Browse() {
 
       {/* SECTION 2: public namespaces in the org to join. */}
       <div className="flex items-baseline justify-between mb-3 gap-3">
-        <h2 className="text-md font-semibold tracking-tight inline-flex items-center gap-2">
-          <Globe size={14} /> Public namespaces in <span className="font-mono">{identity.org}</span>
+        <h2 className="text-lg font-semibold tracking-tight inline-flex items-center gap-2">
+          <Icon name="globe" size="sm" aria-hidden="true" /> Public namespaces in{" "}
+          <span className="font-mono">{identity.org}</span>
         </h2>
         <div className="flex items-center gap-3 text-xs">
-          <span className="text-[var(--color-text-muted)] tabular">
+          <span className="text-text-muted tabular">
             {rows ? `${filtered.length} ${filtered.length === 1 ? "namespace" : "namespaces"}` : ""}
           </span>
-          <button
-            type="button"
-            onClick={() => setCreateOpen(true)}
-            className="inline-flex items-center gap-1 px-2.5 py-1 font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:bg-[var(--color-accent-strong)] rounded-md whitespace-nowrap"
-          >
-            <Plus size={12} /> Create namespace
-          </button>
+          <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setCreateOpen(true)}>
+            Create namespace
+          </Button>
         </div>
       </div>
 
-      <input
-        aria-label="Search namespaces"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        placeholder="Search public namespaces, or type an exact private namespace name to request access…"
-        className="w-full mb-4 px-3 py-2 text-base rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] outline-none focus:border-[var(--color-accent)]"
-      />
+      <div className="mb-4">
+        <SearchField
+          aria-label="Search namespaces"
+          value={query}
+          onChange={(value) => setQuery(value)}
+          placeholder="Search public namespaces, or type an exact private namespace name to request access…"
+        />
+      </div>
 
       {rows === null && (
         <div className="space-y-2">
@@ -287,7 +267,7 @@ export function Browse() {
 
       {rows !== null && filtered.length === 0 && !query && (
         <EmptyState
-          icon={Globe}
+          icon="globe"
           title="No public namespaces yet"
           description="Nobody in your organisation has opened a shared space yet. Until someone does, your own private namespace is the only one you can use."
           details={
@@ -319,24 +299,19 @@ export function Browse() {
             return (
               <div
                 key={r.namespace}
-                className="p-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] flex items-start gap-3"
+                className="p-3.5 rounded-xl border border-border bg-surface flex items-start gap-3"
               >
-                <Globe size={16} className="text-[var(--color-text-muted)] shrink-0 mt-1" />
+                <Icon name="globe" size="sm" aria-hidden="true" className="shrink-0 mt-1" />
                 <div className="min-w-0 flex-1">
-                  <div className="text-base font-mono text-[var(--color-text)] flex items-center gap-2">
+                  <div className="text-sm font-mono text-text flex items-center gap-2">
                     {r.namespace}
-                    {isSystemKind(r.kind) && (
-                      <span className="font-sans text-xs font-medium px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-subtle)]">
-                        {r.kind}
-                      </span>
-                    )}
+                    {isSystemKind(r.kind) && <Badge text={r.kind} state="neutral" size="sm" />}
                   </div>
-                  {r.description && (
-                    <div className="text-xs text-[var(--color-text-muted)] mt-0.5">{r.description}</div>
-                  )}
-                  <div className="mt-1.5 flex items-center gap-3 text-2xs text-[var(--color-text-muted)] tabular">
+                  {r.description && <div className="text-xs text-text-muted mt-0.5">{r.description}</div>}
+                  <div className="mt-1.5 flex items-center gap-3 text-2xs text-text-muted tabular">
                     <span className="inline-flex items-center gap-1">
-                      <Users size={11} /> {r.member_count} member{r.member_count === 1 ? "" : "s"}
+                      <Icon name="users" size="xs" aria-hidden="true" /> {r.member_count} member
+                      {r.member_count === 1 ? "" : "s"}
                     </span>
                     {r.owner_email &&
                       (isServiceSubject(r.owner_email) ? (
@@ -348,8 +323,10 @@ export function Browse() {
                   </div>
                 </div>
                 {isMember && pending.has(r.namespace) ? (
-                  <button
-                    type="button"
+                  <Button
+                    type="secondary"
+                    htmlType="button"
+                    iconLeft="clock"
                     onClick={async () => {
                       if (
                         !(await confirmAction({
@@ -368,42 +345,38 @@ export function Browse() {
                       }
                     }}
                     title="Click to withdraw the pending request"
-                    className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs text-warn bg-warn/15 rounded-md whitespace-nowrap hover:bg-warn/15"
                   >
-                    <ClockIcon size={12} /> Pending
-                  </button>
+                    Pending
+                  </Button>
                 ) : isMember ? (
                   (() => {
                     const role = myRole[r.namespace];
                     // Already admin: nothing higher to request.
                     if (role === "admin") {
-                      return (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs text-[var(--color-text-muted)] bg-[var(--color-surface-2)] rounded-md">
-                          <Check size={12} /> Joined · admin
-                        </span>
-                      );
+                      return <Badge text="Joined · admin" state="neutral" />;
                     }
                     // Viewer / writer / jwt: offer to request a higher role.
                     return (
-                      <button
-                        type="button"
+                      <Button
+                        type="secondary"
+                        htmlType="button"
+                        iconLeft="check"
                         onClick={() => setJoinDialog({ ns: r.namespace, row: r })}
                         title={`You're a ${role} — request writer or admin`}
-                        className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs text-[var(--color-text-muted)] bg-[var(--color-surface-2)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text)] rounded-md whitespace-nowrap"
                       >
-                        <Check size={12} /> Joined · {role} — request upgrade
-                      </button>
+                        Joined · {role} — request upgrade
+                      </Button>
                     );
                   })()
                 ) : (
-                  <button
-                    type="button"
+                  <Button
+                    type="secondary"
+                    htmlType="button"
+                    loading={joining === r.namespace}
                     onClick={() => setJoinDialog({ ns: r.namespace, row: r })}
-                    disabled={joining === r.namespace}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:bg-[var(--color-accent-strong)] rounded-md disabled:opacity-50 shadow-sm whitespace-nowrap"
                   >
-                    {joining === r.namespace ? "Joining…" : "Join"}
-                  </button>
+                    Join
+                  </Button>
                 )}
               </div>
             );
@@ -507,104 +480,50 @@ function JoinDialog({
     return pending === "always" || (pending === "if-required" && requiresApproval);
   };
   return (
-    <Dialog.Root
+    <Modal
       open={!!target}
       onOpenChange={(v) => {
         if (!v) onCancel();
       }}
+      title={`${isUpgrade ? "Request elevation on" : "Join"} ${target.ns}`}
+      description={
+        isUpgrade && currentRole
+          ? `You are currently ${currentRole}. Pick the role you want.`
+          : "Pick the role you want."
+      }
+      className="max-w-[520px] w-full"
     >
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-overlay animate-fade-in motion-reduce:animate-none!" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[min(520px,92vw)] rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl animate-fade-in motion-reduce:animate-none!">
-          <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)]">
-            <Dialog.Title className="text-lg font-semibold tracking-tight">
-              {isUpgrade ? "Request elevation on " : "Join "}
-              <span className="font-mono">{target.ns}</span>
-              {isUpgrade && currentRole && (
-                <span className="ml-2 text-xs font-normal text-[var(--color-text-muted)]">
-                  (currently {currentRole})
-                </span>
-              )}
-            </Dialog.Title>
-            <Dialog.Close
-              className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-              aria-label="Close"
-            >
-              <XIcon size={16} />
-            </Dialog.Close>
-          </div>
-          <div className="p-6 space-y-2">
-            <div className="text-xs text-[var(--color-text-muted)] mb-2">Pick the role you want</div>
-            {visibleRoles.map((opt) => {
-              const Icon = opt.icon;
-              const selected = role === opt.value;
-              const pend = willPend(opt.value);
-              return (
-                <button
-                  type="button"
-                  key={opt.value}
-                  onClick={() => setRole(opt.value)}
-                  className={`w-full text-left flex items-start gap-3 px-3 py-3 rounded-lg border transition-colors ${
-                    selected
-                      ? "border-[var(--color-accent)] bg-[var(--color-accent)]/5"
-                      : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
-                  }`}
-                >
-                  <span
-                    className={`w-4 h-4 mt-0.5 rounded-full border-2 shrink-0 ${selected ? "border-[var(--color-accent)] bg-[var(--color-accent)]" : "border-[var(--color-border-strong)]"}`}
-                  >
-                    {selected && (
-                      <span className="block w-1.5 h-1.5 m-auto mt-[3px] bg-[var(--color-on-accent)] rounded-full" />
-                    )}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <Icon size={13} className="text-[var(--color-text-muted)]" />
-                      <span className="text-base font-medium">{opt.label}</span>
-                      {pend && (
-                        <span className="text-2xs px-1.5 py-0.5 rounded bg-warn/15 text-warn inline-flex items-center gap-1">
-                          <ClockIcon size={9} /> needs approval
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-xs text-[var(--color-text-muted)] mt-0.5">{opt.blurb}</div>
-                  </div>
-                </button>
-              );
-            })}
-            {willPend(role) && role !== "viewer" && (
-              <div className="text-xs text-warn bg-warn/15 rounded-md px-3 py-2 mt-3">
-                You'll get <strong>viewer</strong> access immediately so you can read. Your <strong>{role}</strong>{" "}
-                request waits in the admin queue — you'll get a notification once it's approved.
-              </div>
-            )}
-            {willPend(role) && role === "viewer" && (
-              <div className="text-xs text-warn bg-warn/15 rounded-md px-3 py-2 mt-3">
-                This namespace requires admin approval for every join, including read-only. Your request will sit in the
-                admin queue until reviewed.
-              </div>
-            )}
-          </div>
-          <div className="px-6 py-3.5 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] rounded-b-2xl flex items-center justify-end gap-2">
-            <button
-              type="button"
-              onClick={onCancel}
-              className="px-3 py-1.5 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={() => onConfirm(role)}
-              disabled={busy === target.ns}
-              className="inline-flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md hover:bg-[var(--color-accent-strong)] disabled:opacity-50"
-            >
-              {busy === target.ns ? "Submitting…" : willPend(role) ? `Request ${role}` : `Join as ${role}`}
-            </button>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+      <ChoiceGroup
+        label="Role"
+        value={role}
+        onChange={setRole}
+        options={visibleRoles.map((opt) => ({
+          value: opt.value,
+          label: opt.label,
+          hint: willPend(opt.value) ? `${opt.blurb} Needs approval.` : opt.blurb,
+        }))}
+      />
+      {willPend(role) && role !== "viewer" && (
+        <div className="text-xs text-warn bg-warn/15 rounded-md px-3 py-2 mt-3">
+          You'll get <strong>viewer</strong> access immediately so you can read. Your <strong>{role}</strong> request
+          waits in the admin queue — you'll get a notification once it's approved.
+        </div>
+      )}
+      {willPend(role) && role === "viewer" && (
+        <div className="text-xs text-warn bg-warn/15 rounded-md px-3 py-2 mt-3">
+          This namespace requires admin approval for every join, including read-only. Your request will sit in the admin
+          queue until reviewed.
+        </div>
+      )}
+      <ModalFooter>
+        <Button type="secondary" htmlType="button" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button type="primary" htmlType="button" loading={busy === target.ns} onClick={() => onConfirm(role)}>
+          {willPend(role) ? `Request ${role}` : `Join as ${role}`}
+        </Button>
+      </ModalFooter>
+    </Modal>
   );
 }
 
@@ -667,44 +586,38 @@ function RequestAccessCard({
   return (
     <Panel padding="none" className="p-5">
       <div className="flex items-start gap-3">
-        <Globe size={18} className="text-[var(--color-text-muted)] mt-0.5 shrink-0" />
+        <Icon name="globe" size="md" aria-hidden="true" className="mt-0.5 shrink-0" />
         <div className="flex-1 min-w-0">
-          <div className="text-base font-medium">
+          <div className="text-sm font-medium">
             No public namespace matching <span className="font-mono">{typedName}</span>.
           </div>
-          <div className="text-xs text-[var(--color-text-muted)] mt-1">
+          <div className="text-xs text-text-muted mt-1">
             If <span className="font-mono">{typedName}</span> is a private namespace someone told you about, request
             access — an admin of that namespace will see and approve.
           </div>
           <div className="mt-3 flex items-center gap-2 flex-wrap">
-            <label className="text-xs text-[var(--color-text-muted)]">
-              Role
-              <select
-                value={role}
-                onChange={(e) => {
-                  const v = oneOf(
-                    JOIN_ROLES.map((o) => o.value),
-                    e.target.value,
-                  );
-                  if (v !== null) setRole(v);
-                }}
-                className="ml-2 px-2.5 py-1.5 text-sm rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] outline-none focus:border-[var(--color-accent)]"
-              >
-                {JOIN_ROLES.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <button
-              type="button"
-              onClick={submit}
-              disabled={busy || alreadyHasIt}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] hover:bg-[var(--color-accent-strong)] rounded-md disabled:opacity-50"
+            <Select
+              label="Role"
+              orientation="horizontal"
+              value={role}
+              onSelect={(value) => {
+                const v = oneOf(
+                  JOIN_ROLES.map((o) => o.value),
+                  value,
+                );
+                if (v !== null) setRole(v);
+              }}
+              className="w-56"
             >
-              {busy ? "Submitting…" : `Request access`}
-            </button>
+              {JOIN_ROLES.map((o) => (
+                <Select.Item key={o.value} value={o.value}>
+                  {o.label}
+                </Select.Item>
+              ))}
+            </Select>
+            <Button type="primary" htmlType="button" loading={busy} disabled={alreadyHasIt} onClick={submit}>
+              Request access
+            </Button>
           </div>
           {alreadyHasIt && (
             <div className="text-xs text-warn bg-warn/15 rounded-md px-3 py-2 mt-3">
@@ -712,7 +625,7 @@ function RequestAccessCard({
               at least {role}. Pick a higher role above to request an upgrade.
             </div>
           )}
-          {error && <div className="text-xs text-[var(--color-danger)] mt-3">{error}</div>}
+          {error && <div className="text-xs text-danger mt-3">{error}</div>}
         </div>
       </div>
     </Panel>

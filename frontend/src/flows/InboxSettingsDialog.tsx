@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Inbox as InboxIcon, Plus, Settings as SettingsIcon, Trash2 } from "lucide-react";
+import type { ReactNode } from "react";
+import { Badge } from "@clickhouse/click-ui/Badge";
+import { Button } from "@clickhouse/click-ui/Button";
+import { Checkbox } from "@clickhouse/click-ui/Checkbox";
+import { NumberField } from "@clickhouse/click-ui/NumberField";
+import { SearchField } from "@clickhouse/click-ui/SearchField";
+import { Select } from "@clickhouse/click-ui/Select";
+import { Table } from "@clickhouse/click-ui/Table";
+import { TextField } from "@clickhouse/click-ui/TextField";
 import {
   listPolicies,
   listPrincipals,
@@ -16,7 +24,8 @@ import { humanizeError, relativeTime } from "../lib/format";
 import { ApiError } from "../lib/errors";
 import { toast } from "../components/Toast";
 import { ModePill } from "../components/TaskPills";
-import { CancelButton, DialogFrame, ErrorNote, Field, INPUT_CLS, PRIMARY_BTN, SECONDARY_BTN } from "./TaskDialogFrame";
+import { IconButton } from "../components/IconButton";
+import { CancelButton, DialogFrame, ErrorNote } from "./TaskDialogFrame";
 import { oneOf } from "../lib/oneOf";
 
 /**
@@ -49,6 +58,15 @@ const MODES: PolicyMode[] = ["deny", "review", "auto"];
 /** The mode is the whole rule: loom never decides acceptance itself. */
 const MODE_HELP =
   "review: each task waits in triage until the inbox's agent or a person accepts it; auto: straight to the queue; deny: refused at create";
+
+/** A field label with its muted hint, e.g. "Lease (s)". */
+function hinted(label: string, hint: string): ReactNode {
+  return (
+    <>
+      {label} <span className="font-normal text-text-subtle">({hint})</span>
+    </>
+  );
+}
 
 function splitList(s: string): string[] {
   return s
@@ -123,7 +141,6 @@ export function InboxSettingsDialog({ open, onOpenChange, identity, inbox, onSav
       open={open}
       onOpenChange={onOpenChange}
       title={editing ? `Inbox settings — ${editing.inbox}` : "Register inbox"}
-      icon={editing ? <SettingsIcon size={16} /> : <InboxIcon size={16} />}
       description={
         editing
           ? `Owned by ${editing.owner_agent} on ${editing.owner_namespace}. Admins of the owner namespace edit these.`
@@ -133,44 +150,40 @@ export function InboxSettingsDialog({ open, onOpenChange, identity, inbox, onSav
       footer={
         <>
           <CancelButton label="Close" />
-          <button type="button" onClick={submit} disabled={!canSubmit} className={PRIMARY_BTN}>
-            {busy ? "Saving…" : editing ? "Save settings" : "Register"}
-          </button>
+          <Button type="primary" htmlType="button" onClick={submit} disabled={!canSubmit} loading={busy}>
+            {editing ? "Save settings" : "Register"}
+          </Button>
         </>
       }
     >
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <Field id="inbox-name" label="Inbox" hint="its address; cannot change">
-          <input
-            id="inbox-name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            disabled={!!editing}
-            placeholder="triage-bot"
-            className={`${INPUT_CLS} font-mono disabled:opacity-60`}
-            autoFocus={!editing}
-          />
-          {nameError && <div className="mt-1 text-xs text-[var(--color-danger)]">{nameError}</div>}
-        </Field>
-        <Field id="inbox-owner" label="Owner agent" hint="the agent that pulls">
-          <input
-            id="inbox-owner"
-            value={ownerAgent}
-            onChange={(e) => setOwnerAgent(e.target.value)}
-            placeholder="triage"
-            className={`${INPUT_CLS} font-mono`}
-          />
-        </Field>
-      </div>
-      <Field id="inbox-description" label="Description">
-        <input
-          id="inbox-description"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          className={INPUT_CLS}
-          placeholder="What lands here and who reads it"
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <TextField
+          id="inbox-name"
+          label={hinted("Inbox", "its address; cannot change")}
+          value={name}
+          onChange={(value) => setName(value)}
+          disabled={!!editing}
+          placeholder="triage-bot"
+          className="font-mono"
+          autoFocus={!editing}
+          error={nameError ?? undefined}
         />
-      </Field>
+        <TextField
+          id="inbox-owner"
+          label={hinted("Owner agent", "the agent that pulls")}
+          value={ownerAgent}
+          onChange={(value) => setOwnerAgent(value)}
+          placeholder="triage"
+          className="font-mono"
+        />
+      </div>
+      <TextField
+        id="inbox-description"
+        label="Description"
+        value={description}
+        onChange={(value) => setDescription(value)}
+        placeholder="What lands here and who reads it"
+      />
       <PosterPicker
         identity={identity}
         open={open}
@@ -182,75 +195,58 @@ export function InboxSettingsDialog({ open, onOpenChange, identity, inbox, onSav
         onChange={setPosters}
       />
       <fieldset>
-        <legend className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">
-          Accepted disclosure{" "}
-          <span className="text-[var(--color-text-subtle)] font-normal">
-            (a task the inbox does not accept is refused at create)
-          </span>
+        <legend className="mb-1.5 block text-xs font-medium text-text-muted">
+          {hinted("Accepted disclosure", "a task the inbox does not accept is refused at create")}
         </legend>
         <div className="flex flex-wrap gap-4">
           {DISCLOSURES.map((d) => (
-            <label key={d} className="inline-flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={accept.includes(d)} onChange={() => toggle(d)} /> {d}
-            </label>
+            <Checkbox key={d} label={d} checked={accept.includes(d)} onCheckedChange={() => toggle(d)} />
           ))}
         </div>
       </fieldset>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <Field id="inbox-lease" label="Lease" hint="s">
-          <input
-            id="inbox-lease"
-            type="number"
-            min={30}
-            max={86_400}
-            value={lease}
-            onChange={(e) => setLease(Number(e.target.value))}
-            className={INPUT_CLS}
-          />
-        </Field>
-        <Field id="inbox-attempts" label="Max attempts">
-          <input
-            id="inbox-attempts"
-            type="number"
-            min={1}
-            max={20}
-            value={maxAttempts}
-            onChange={(e) => setMaxAttempts(Number(e.target.value))}
-            className={INPUT_CLS}
-          />
-        </Field>
-        <Field id="inbox-defers" label="Max defers">
-          <input
-            id="inbox-defers"
-            type="number"
-            min={1}
-            max={50}
-            value={maxDefers}
-            onChange={(e) => setMaxDefers(Number(e.target.value))}
-            className={INPUT_CLS}
-          />
-        </Field>
-        <Field id="inbox-escalate" label="Escalate triage after" hint="s">
-          <input
-            id="inbox-escalate"
-            type="number"
-            min={60}
-            max={30 * 86_400}
-            value={escalate}
-            onChange={(e) => setEscalate(Number(e.target.value))}
-            className={INPUT_CLS}
-          />
-        </Field>
-      </div>
-      <Field id="inbox-webhook" label="Webhook URL" hint="a wake-up hint, never the delivery; optional">
-        <input
-          id="inbox-webhook"
-          value={webhook}
-          onChange={(e) => setWebhook(e.target.value)}
-          className={`${INPUT_CLS} font-mono`}
-          placeholder="https://"
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <NumberField
+          id="inbox-lease"
+          label={hinted("Lease", "s")}
+          min={30}
+          max={86_400}
+          value={String(lease)}
+          onChange={(value) => setLease(Number(value))}
         />
-      </Field>
+        <NumberField
+          id="inbox-attempts"
+          label="Max attempts"
+          min={1}
+          max={20}
+          value={String(maxAttempts)}
+          onChange={(value) => setMaxAttempts(Number(value))}
+        />
+        <NumberField
+          id="inbox-defers"
+          label="Max defers"
+          min={1}
+          max={50}
+          value={String(maxDefers)}
+          onChange={(value) => setMaxDefers(Number(value))}
+        />
+        <NumberField
+          id="inbox-escalate"
+          label={hinted("Escalate triage after", "s")}
+          min={60}
+          max={30 * 86_400}
+          value={String(escalate)}
+          onChange={(value) => setEscalate(Number(value))}
+        />
+      </div>
+      <TextField
+        id="inbox-webhook"
+        label={hinted("Webhook URL", "a wake-up hint, never the delivery; optional")}
+        type="url"
+        value={webhook}
+        onChange={(value) => setWebhook(value)}
+        className="font-mono"
+        placeholder="https://"
+      />
       {error && <ErrorNote>{error}</ErrorNote>}
 
       {editing && <TrustTable identity={identity} inbox={editing.inbox} open={open} />}
@@ -268,18 +264,10 @@ const KIND_LABEL: Record<Principal["kind"], string> = {
 const NS_SHOWN = 3;
 const CAN_POST_HINT = "already a writer here";
 
+const KIND_STATE = { human: "info", service_account: "neutral", other: "default" } as const;
+
 function PrincipalKindPill({ kind }: { kind: Principal["kind"] }) {
-  const cls =
-    kind === "human"
-      ? "text-[var(--color-accent)] border-[var(--color-accent)]/40"
-      : kind === "service_account"
-        ? "text-[var(--color-text-muted)] border-[var(--color-border)]"
-        : "text-[var(--color-text-subtle)] border-[var(--color-border)]";
-  return (
-    <span className={`inline-flex items-center text-2xs px-2 py-0.5 rounded-full border whitespace-nowrap ${cls}`}>
-      {KIND_LABEL[kind]}
-    </span>
-  );
+  return <Badge text={KIND_LABEL[kind]} state={KIND_STATE[kind]} size="sm" />;
 }
 
 /** A listed subject the directory did not return still needs a row so it
@@ -402,89 +390,81 @@ function PosterPicker({
 
   return (
     <div>
-      <Field id="inbox-posters-filter" label="Posters" hint="chosen from the identities loom knows; never typed">
-        <input
-          id="inbox-posters-filter"
-          type="search"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          disabled={!inbox}
-          placeholder={inbox ? "Filter by name, subject or namespace" : "Name the inbox to choose posters"}
-          className={`${INPUT_CLS} disabled:opacity-60`}
-        />
-      </Field>
-      <div className="mt-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)]">
-        {!inbox && (
-          <div className="px-3 py-2 text-xs text-[var(--color-text-muted)]">Name the inbox to choose posters.</div>
-        )}
+      <div className="mb-1.5 text-xs font-medium text-text-muted">
+        {hinted("Posters", "chosen from the identities loom knows; never typed")}
+      </div>
+      <SearchField
+        id="inbox-posters-filter"
+        aria-label="Filter posters"
+        value={filter}
+        onChange={(value) => setFilter(value)}
+        disabled={!inbox}
+        placeholder={inbox ? "Filter by name, subject or namespace" : "Name the inbox to choose posters"}
+      />
+      <div className="mt-2 rounded-lg border border-border bg-surface-2">
+        {!inbox && <div className="px-3 py-2 text-xs text-text-muted">Name the inbox to choose posters.</div>}
         {inbox && loading && (
           <div className="px-3 py-2" role="status" aria-live="polite">
             <span className="sr-only">Loading identities…</span>
-            <span
-              aria-hidden="true"
-              className="block h-3 w-2/3 rounded bg-[var(--color-border)] animate-pulse motion-reduce:animate-none!"
-            />
+            <span aria-hidden="true" className="block h-3 w-2/3 animate-pulse rounded bg-border" />
           </div>
         )}
         {inbox && error && (
-          <div className="px-3 py-2 text-xs text-[var(--color-danger)]" role="alert">
+          <div className="px-3 py-2 text-xs text-danger" role="alert">
             Could not load identities: {error}
           </div>
         )}
         {inbox && known && rows.length === 0 && !loading && (
-          <div className="px-3 py-2 text-xs text-[var(--color-text-muted)]">
+          <div className="px-3 py-2 text-xs text-text-muted">
             {q ? "No identity matches the filter." : "Loom knows nobody in this org yet."}
           </div>
         )}
         {rows.length > 0 && (
-          <ul className="max-h-56 overflow-y-auto divide-y divide-[var(--color-border)]" aria-label="Posters">
+          <ul className="max-h-56 divide-y divide-border overflow-y-auto" aria-label="Posters">
             {rows.map((p) => {
               const checked = p.can_already_post || selected.includes(p.subject);
               const shown = p.namespaces.slice(0, NS_SHOWN);
               const more = p.namespaces.length - shown.length;
+              const detailsId = `inbox-poster-${p.subject}`;
               return (
-                <li key={p.subject}>
-                  <label
-                    className={`flex items-start gap-2.5 px-3 py-2 text-sm ${p.can_already_post ? "opacity-70 cursor-not-allowed" : "cursor-pointer hover:bg-[var(--color-surface)]"}`}
-                  >
-                    <input
-                      type="checkbox"
-                      className="mt-1"
-                      checked={checked}
-                      disabled={p.can_already_post}
-                      onChange={() => toggle(p.subject)}
-                    />
-                    <span className="min-w-0 flex-1">
-                      <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                        <span className="font-medium break-all">{p.label}</span>
-                        {p.subject !== p.label && (
-                          <span className="font-mono text-xs text-[var(--color-text-muted)] break-all">
-                            {p.subject}
-                          </span>
-                        )}
-                        <PrincipalKindPill kind={p.kind} />
-                      </span>
-                      <span className="block text-xs text-[var(--color-text-subtle)] break-words">
-                        {shown.length > 0 ? (
-                          <>
-                            <span className="font-mono">{shown.join(", ")}</span>
-                            {more > 0 && <span> +{more}</span>}
-                          </>
-                        ) : (
-                          "no namespaces"
-                        )}
-                        {p.last_seen && <span> · last seen {relativeTime(p.last_seen)}</span>}
-                        {p.can_already_post && <span className="italic"> · {CAN_POST_HINT}</span>}
-                      </span>
+                <li
+                  key={p.subject}
+                  className={`flex items-start gap-2.5 px-3 py-2 text-sm ${p.can_already_post ? "text-text-muted" : "hover:bg-surface"}`}
+                >
+                  <Checkbox
+                    label={p.label}
+                    aria-describedby={detailsId}
+                    checked={checked}
+                    disabled={p.can_already_post}
+                    onCheckedChange={() => toggle(p.subject)}
+                  />
+                  <span id={detailsId} className="min-w-0 flex-1">
+                    <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                      {p.subject !== p.label && (
+                        <span className="break-all font-mono text-xs text-text-muted">{p.subject}</span>
+                      )}
+                      <PrincipalKindPill kind={p.kind} />
                     </span>
-                  </label>
+                    <span className="block break-words text-xs text-text-subtle">
+                      {shown.length > 0 ? (
+                        <>
+                          <span className="font-mono">{shown.join(", ")}</span>
+                          {more > 0 && <span> +{more}</span>}
+                        </>
+                      ) : (
+                        "no namespaces"
+                      )}
+                      {p.last_seen && <span> · last seen {relativeTime(p.last_seen)}</span>}
+                      {p.can_already_post && <span className="italic"> · {CAN_POST_HINT}</span>}
+                    </span>
+                  </span>
                 </li>
               );
             })}
           </ul>
         )}
       </div>
-      <div className="mt-1 text-xs text-[var(--color-text-subtle)]">
+      <div className="mt-1 text-xs text-text-subtle">
         {selected.length} listed as {selected.length === 1 ? "poster" : "posters"}
         {truncated && " · the directory was cut at the limit; the filter narrows it on the server"}
       </div>
@@ -575,145 +555,120 @@ function TrustTable({ identity, inbox, open }: { identity: Caller; inbox: string
   };
 
   return (
-    <section aria-labelledby="inbox-trust-heading" className="pt-2 border-t border-[var(--color-border)] space-y-3">
+    <section aria-labelledby="inbox-trust-heading" className="space-y-3 border-t border-border pt-2">
       <div className="flex items-center justify-between gap-2">
         <h3 id="inbox-trust-heading" className="section-label">
           Trust table{" "}
-          <span className="text-[var(--color-text-subtle)] normal-case tracking-normal">
-            · poster × kind → deny / review / auto
-          </span>
+          <span className="normal-case tracking-normal text-text-subtle">· poster × kind → deny / review / auto</span>
         </h3>
         {!draft && (
-          <button type="button" onClick={() => setDraft(EMPTY_DRAFT)} className={`${SECONDARY_BTN} text-xs px-2 py-1`}>
-            <Plus size={12} /> Add rule
-          </button>
+          <Button type="secondary" htmlType="button" iconLeft="plus" onClick={() => setDraft(EMPTY_DRAFT)}>
+            Add rule
+          </Button>
         )}
       </div>
-      {rows === null && <div className="text-xs text-[var(--color-text-muted)]">Loading…</div>}
+      {rows === null && <div className="text-xs text-text-muted">Loading…</div>}
       {rows && rows.length === 0 && !draft && (
-        <div className="text-xs text-[var(--color-text-muted)]">
+        <div className="text-xs text-text-muted">
           No rules yet: writers on the owner namespace post as <span className="font-mono">auto</span>; anyone in the
           posters list lands in <span className="font-mono">review</span>.
         </div>
       )}
       {rows && rows.length > 0 && (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-[var(--color-surface-2)] text-xs text-[var(--color-text-muted)]">
-              <tr>
-                <th className="text-left px-2 py-1.5 font-medium">Poster</th>
-                <th className="text-left px-2 py-1.5 font-medium">Kind</th>
-                <th className="text-left px-2 py-1.5 font-medium">Mode</th>
-                <th className="text-left px-2 py-1.5 font-medium">Evidence</th>
-                <th className="px-2 py-1.5">
-                  <span className="sr-only">Actions</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((p) => (
-                <tr key={`${p.poster}::${p.kind}`} className="border-t border-[var(--color-border)]">
-                  <td className="px-2 py-1.5 font-mono text-xs break-all">{p.poster}</td>
-                  <td className="px-2 py-1.5 font-mono text-xs">{p.kind}</td>
-                  <td className="px-2 py-1.5">
-                    <ModePill mode={p.mode} />
-                  </td>
-                  <td className="px-2 py-1.5 font-mono text-xs">{p.require_evidence.join(", ") || "—"}</td>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-right">
-                    <button
-                      type="button"
+        <Table
+          size="sm"
+          headers={[
+            { label: "Poster" },
+            { label: "Kind" },
+            { label: "Mode" },
+            { label: "Evidence" },
+            { label: <span className="sr-only">Actions</span>, width: "80px" },
+          ]}
+          rows={rows.map((p) => ({
+            id: `${p.poster}::${p.kind}`,
+            items: [
+              { label: <span className="break-all font-mono text-xs">{p.poster}</span> },
+              { label: <span className="font-mono text-xs">{p.kind}</span> },
+              { label: <ModePill mode={p.mode} /> },
+              { label: <span className="font-mono text-xs">{p.require_evidence.join(", ") || "—"}</span> },
+              {
+                label: (
+                  <div className="flex justify-end gap-1">
+                    <IconButton
+                      icon="pencil"
+                      size="sm"
+                      label={`Edit rule for ${p.poster} × ${p.kind}`}
                       onClick={() => edit(p)}
-                      className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] underline mr-2"
                       disabled={busy}
-                    >
-                      Edit
-                    </button>
-                    <button
-                      type="button"
+                    />
+                    <IconButton
+                      icon="trash"
+                      type="danger"
+                      size="sm"
+                      label={`Remove rule for ${p.poster} × ${p.kind}`}
                       onClick={() => remove(p)}
-                      className="text-xs text-danger hover:opacity-80 inline-flex items-center gap-1"
                       disabled={busy}
-                      aria-label={`Remove rule for ${p.poster} × ${p.kind}`}
-                    >
-                      <Trash2 size={12} aria-hidden="true" /> Remove
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                    />
+                  </div>
+                ),
+              },
+            ],
+          }))}
+        />
       )}
       {draft && (
-        <div className="rounded-lg border border-[var(--color-border)] p-3 space-y-3 bg-[var(--color-surface-2)]">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Field id="policy-poster" label="Poster" hint="subject, agent or *">
-              <input
-                id="policy-poster"
-                value={draft.poster}
-                onChange={(e) => setDraft({ ...draft, poster: e.target.value })}
-                className={`${INPUT_CLS} font-mono`}
-                placeholder="sa:reporter-1a2b3c"
-                autoFocus
-              />
-            </Field>
-            <Field id="policy-kind" label="Kind" hint="* for every kind">
-              <input
-                id="policy-kind"
-                value={draft.kind}
-                onChange={(e) => setDraft({ ...draft, kind: e.target.value })}
-                className={`${INPUT_CLS} font-mono`}
-              />
-            </Field>
+        <div className="space-y-3 rounded-lg border border-border bg-surface-2 p-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <TextField
+              id="policy-poster"
+              label={hinted("Poster", "subject, agent or *")}
+              value={draft.poster}
+              onChange={(value) => setDraft({ ...draft, poster: value })}
+              className="font-mono"
+              placeholder="sa:reporter-1a2b3c"
+              autoFocus
+            />
+            <TextField
+              id="policy-kind"
+              label={hinted("Kind", "* for every kind")}
+              value={draft.kind}
+              onChange={(value) => setDraft({ ...draft, kind: value })}
+              className="font-mono"
+            />
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Field id="policy-mode" label="Mode">
-              <select
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <Select
                 id="policy-mode"
-                aria-describedby="policy-mode-help"
+                label="Mode"
+                triggerProps={{ "aria-describedby": "policy-mode-help" }}
                 value={draft.mode}
-                onChange={(e) => {
-                  const mode = oneOf(MODES, e.target.value);
+                onSelect={(value) => {
+                  const mode = oneOf(MODES, value);
                   if (mode !== null) setDraft({ ...draft, mode });
                 }}
-                className={INPUT_CLS}
-              >
-                {MODES.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-              <div id="policy-mode-help" className="mt-1 text-xs text-[var(--color-text-subtle)]">
+                options={MODES.map((m) => ({ value: m, label: m }))}
+              />
+              <div id="policy-mode-help" className="mt-1 text-xs text-text-subtle">
                 {MODE_HELP}
               </div>
-            </Field>
-            <Field
+            </div>
+            <TextField
               id="policy-evidence"
-              label="Require evidence"
-              hint="brief fields the poster must supply, comma-separated"
-            >
-              <input
-                id="policy-evidence"
-                value={draft.require_evidence}
-                onChange={(e) => setDraft({ ...draft, require_evidence: e.target.value })}
-                className={`${INPUT_CLS} font-mono`}
-                placeholder="repro, evidence_url"
-              />
-            </Field>
+              label={hinted("Require evidence", "brief fields the poster must supply, comma-separated")}
+              value={draft.require_evidence}
+              onChange={(value) => setDraft({ ...draft, require_evidence: value })}
+              className="font-mono"
+              placeholder="repro, evidence_url"
+            />
           </div>
           <div className="flex justify-end gap-2">
-            <button type="button" onClick={() => setDraft(null)} className={`${SECONDARY_BTN} text-xs`}>
+            <Button type="secondary" htmlType="button" onClick={() => setDraft(null)}>
               Discard
-            </button>
-            <button
-              type="button"
-              onClick={save}
-              disabled={busy || !draft.poster.trim()}
-              className={`${PRIMARY_BTN} text-xs`}
-            >
-              {busy ? "Saving…" : "Save rule"}
-            </button>
+            </Button>
+            <Button type="primary" htmlType="button" onClick={save} disabled={!draft.poster.trim()} loading={busy}>
+              Save rule
+            </Button>
           </div>
         </div>
       )}

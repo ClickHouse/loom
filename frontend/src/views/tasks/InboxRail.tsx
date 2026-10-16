@@ -1,6 +1,8 @@
-import { Plus } from "lucide-react";
+import { Checkbox } from "@clickhouse/click-ui/Checkbox";
+import { Icon } from "@clickhouse/click-ui/Icon";
 import type { Inbox, InboxCount } from "../../api/tasks";
 import { initials, type Filters, type PosterFilter } from "../../lib/tasks";
+import { Chip } from "../../components/ui";
 import { Avatar } from "./TaskBits";
 
 /**
@@ -127,7 +129,7 @@ export function InboxRail({ inboxes, counts, picked, onPick, kinds, filters, onF
             <button type="button" className="tq-inbox text-xs" onClick={onRegister}>
               <span className="nm">
                 <span className="tq-av" aria-hidden="true">
-                  <Plus size={11} />
+                  <Icon name="plus" size="xs" aria-hidden="true" />
                 </span>
                 <span>Register inbox…</span>
               </span>
@@ -143,15 +145,13 @@ export function InboxRail({ inboxes, counts, picked, onPick, kinds, filters, onF
           {/* biome-ignore lint/a11y/useSemanticElements: a labelled cluster of toggle chips, not form fields */}
           <div className="flex flex-wrap gap-1.5 px-2" id="tq-kind-chips" role="group" aria-label="Kind">
             {kinds.map((k) => (
-              <button
+              <Chip
                 key={k}
-                type="button"
-                aria-pressed={filters.kind === k}
+                label={k}
+                mono
+                selected={filters.kind === k}
                 onClick={() => onFilters({ ...filters, kind: filters.kind === k ? null : k })}
-                className={`font-mono text-xs px-2 py-0.5 rounded-full border ${filters.kind === k ? "bg-[var(--color-text)] text-[var(--color-bg)] border-transparent" : "border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
-              >
-                {k}
-              </button>
+              />
             ))}
           </div>
         </section>
@@ -163,27 +163,18 @@ export function InboxRail({ inboxes, counts, picked, onPick, kinds, filters, onF
         {/* biome-ignore lint/a11y/useSemanticElements: a labelled cluster of toggle chips, not form fields */}
         <div className="flex flex-wrap gap-1.5 px-2" role="group" aria-label="Posted by">
           {POSTER_OPTIONS.map(([k, l]) => (
-            <button
-              key={k}
-              type="button"
-              aria-pressed={filters.poster === k}
-              onClick={() => setPoster(k)}
-              className={`text-xs px-2 py-0.5 rounded-full border ${filters.poster === k ? "bg-[var(--color-text)] text-[var(--color-bg)] border-transparent" : "border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
-            >
-              {l}
-            </button>
+            <Chip key={k} label={l} selected={filters.poster === k} onClick={() => setPoster(k)} />
           ))}
         </div>
       </section>
       <section className="tq-filters">
-        <label className="flex items-center gap-2 text-sm text-[var(--color-text-muted)] px-2 py-1.5">
-          <input
-            type="checkbox"
+        <div className="px-2 py-1.5">
+          <Checkbox
+            label="Show closed"
             checked={filters.showClosed}
-            onChange={(e) => onFilters({ ...filters, showClosed: e.target.checked })}
-          />{" "}
-          Show closed
-        </label>
+            onCheckedChange={(v) => onFilters({ ...filters, showClosed: v === true })}
+          />
+        </div>
       </section>
     </aside>
   );

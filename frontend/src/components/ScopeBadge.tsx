@@ -1,4 +1,6 @@
-import { Globe, Layers } from "lucide-react";
+import type { ReactNode } from "react";
+import { Badge } from "@clickhouse/click-ui/Badge";
+import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
 import { RoleChip } from "./RoleChip";
 import { useStore } from "../lib/state";
 import { isReferenceKind, kindOf } from "../lib/namespace";
@@ -27,37 +29,39 @@ export function ScopeBadge(props: Scope) {
   const mine = useStore((s) => s.myNamespaces);
   const nsKind = props.kind === "namespace" ? kindOf(props.value, mine) : undefined;
   if (props.kind === "loom-wide") {
-    return (
-      <span className="inline-flex items-center gap-1.5 px-2 py-1 text-xs text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md">
-        <Globe size={11} aria-hidden="true" /> Loom-wide
-      </span>
-    );
+    return <Badge text={<Labelled icon="globe">Loom-wide</Labelled>} />;
   }
   // An empty identity means no namespace was selected (no saved pick, no own namespace,
   // no usable claim). Say so instead of rendering an empty monospace slot next to
   // "namespace".
   if (!props.value) {
-    return (
-      <span className="inline-flex items-center gap-1.5 px-2 py-1 text-xs text-[var(--color-warn)] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md">
-        <Layers size={11} aria-hidden="true" /> No namespace selected
-      </span>
-    );
+    return <Badge text={<Labelled icon="cards">No namespace selected</Labelled>} state="warning" />;
   }
-  // The caller's role rides beside the scope. `min-h-7` matches the chip's height so the
+  // The caller's role rides beside the scope. `min-h-6` matches the chip's height so the
   // row is the same size before and after the role resolves — no layout shift when it
   // appears.
   return (
-    <span className="inline-flex flex-wrap items-center gap-1.5 min-h-7">
-      <span className="inline-flex items-center gap-1.5 px-2 py-1 text-xs text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md">
-        <Layers size={11} aria-hidden="true" /> namespace{" "}
-        <span className="font-medium text-[var(--color-text)] font-mono">{props.value}</span>
-        {isReferenceKind(nsKind) && (
-          <span className="rounded px-1 py-px border border-[var(--color-border)] text-2xs text-[var(--color-text-muted)]">
-            {nsKind}
-          </span>
-        )}
-      </span>
+    <span className="inline-flex flex-wrap items-center gap-1.5 min-h-6">
+      <Badge
+        ellipsisContent={false}
+        text={
+          <Labelled icon="cards">
+            namespace <span className="font-mono text-text">{props.value}</span>
+            {isReferenceKind(nsKind) && <> · {nsKind}</>}
+          </Labelled>
+        }
+      />
       <RoleChip namespace={props.value} />
+    </span>
+  );
+}
+
+// Badge's own `icon` is announced by its name ("globe"); this one is decorative.
+function Labelled({ icon, children }: { icon: IconName; children: ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-1">
+      <Icon name={icon} size="xs" aria-hidden="true" />
+      <span>{children}</span>
     </span>
   );
 }

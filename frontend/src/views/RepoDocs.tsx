@@ -12,7 +12,8 @@
  * the dialogs load on first use.
  */
 import { lazy, Suspense, useState } from "react";
-import { FileText, Plus } from "lucide-react";
+import { Button } from "@clickhouse/click-ui/Button";
+import { Icon } from "@clickhouse/click-ui/Icon";
 import { deleteKnowledge, knowledgeReads, listKnowledge, type KnowledgeEntry } from "../api";
 import { ApiError } from "../lib/errors";
 import { humanizeError, relativeTime } from "../lib/format";
@@ -145,7 +146,7 @@ export function RepoDocsList({
             const phrase = readsPhrase(countOf(d.source_uri));
             return (
               <li key={d.source_uri} className="flex items-start gap-2 text-sm min-w-0">
-                <FileText size={13} aria-hidden="true" className="text-text-muted shrink-0 mt-1" />
+                <Icon name="document" size="xs" aria-hidden="true" className="shrink-0 mt-1" />
                 <div className="min-w-0 flex-1">
                   <button
                     type="button"
@@ -166,15 +167,17 @@ export function RepoDocsList({
                   </div>
                 </div>
                 {maintained && (
-                  <button
-                    type="button"
-                    className="text-xs text-text-muted hover:text-danger min-h-8 px-1 pointer-coarse:min-h-11 shrink-0"
+                  <Button
+                    type="empty"
+                    htmlType="button"
+                    className="shrink-0"
+                    loading={removing === d.source_uri}
                     disabled={busy || removing !== null}
                     onClick={() => void remove(d)}
                     aria-label={`Remove ${d.title || d.source_uri}`}
                   >
-                    {removing === d.source_uri ? "Removing…" : "Remove"}
-                  </button>
+                    Remove
+                  </Button>
                 )}
               </li>
             );
@@ -184,14 +187,9 @@ export function RepoDocsList({
       {state.kind === "ready" && state.more && <p className="text-2xs text-text-muted">Showing the first {LIMIT}.</p>}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         {maintained && state.kind !== "refused" && (
-          <button
-            type="button"
-            className="inline-flex items-center gap-1 text-xs text-text-muted hover:text-text min-h-8 pointer-coarse:min-h-11"
-            disabled={busy}
-            onClick={() => setAdding(true)}
-          >
-            <Plus size={11} aria-hidden="true" /> Add a document
-          </button>
+          <Button type="empty" htmlType="button" iconLeft="plus" disabled={busy} onClick={() => setAdding(true)}>
+            Add a document
+          </Button>
         )}
         {state.kind === "ready" && (state.rows.length > 0 || maintained) && (
           <span className="text-2xs text-text-muted">{REPO_DOCS_HINT}</span>

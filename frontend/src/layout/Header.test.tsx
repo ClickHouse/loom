@@ -106,3 +106,24 @@ it("mounts no dialog while closed, and one when New → Document is chosen", asy
   await userEvent.click(await screen.findByRole("menuitem", { name: /Document/ }));
   expect(await screen.findByRole("dialog")).toBeInTheDocument();
 });
+
+// The New menu is a real menu: arrow keys move between items, Escape closes it and puts
+// focus back on the trigger.
+it("moves through New's items with the arrow keys and returns focus on Escape", async () => {
+  listMine.mockResolvedValue(jwtOnly);
+  useStore.setState({ whoami: { authenticated: true, subject: "w@example.com", org: "dev", roles: ["WRITER"] } });
+  const user = userEvent.setup();
+  render(<Header />);
+  const trigger = screen.getByRole("button", { name: "New" });
+  await waitFor(() => expect(trigger).toBeEnabled());
+  trigger.focus();
+  await user.keyboard("{Enter}");
+  expect(trigger).toHaveAttribute("aria-expanded", "true");
+  const memory = await screen.findByRole("menuitem", { name: "Memory" });
+  await waitFor(() => expect(memory).toHaveFocus());
+  await user.keyboard("{ArrowDown}");
+  expect(screen.getByRole("menuitem", { name: "Document" })).toHaveFocus();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  expect(trigger).toHaveFocus();
+});

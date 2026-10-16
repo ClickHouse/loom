@@ -1,5 +1,9 @@
-import { Suspense, lazy, useEffect, useRef, useState, useMemo } from "react";
-import { Bell, Crown, UserRound, Eye } from "lucide-react";
+import { Suspense, lazy, useEffect, useState, useMemo } from "react";
+import { Badge } from "@clickhouse/click-ui/Badge";
+import { Button } from "@clickhouse/click-ui/Button";
+import { Icon } from "@clickhouse/click-ui/Icon";
+import { Popover } from "@clickhouse/click-ui/Popover";
+import { IconButton } from "./IconButton";
 import { listPendingApprovals, type GrantRole } from "../api";
 import { sharedCodeRepos } from "../lib/sharedReads";
 import { useVisiblePoll } from "../lib/hooks";
@@ -9,6 +13,7 @@ import { canCallCodeRepos } from "../lib/canCall";
 // 10.5 kB that opens on a click loads on the click.
 const MembersDialog = lazy(() => import("../flows/MembersDialog").then((m) => ({ default: m.MembersDialog })));
 import { relativeTime, displaySubject, isServiceSubject } from "../lib/format";
+import { PopoverTrigger } from "./ui/Menu";
 
 interface AdminPending {
   namespace: string;
@@ -30,8 +35,6 @@ export function PendingApprovalsBell() {
   const [managePendingElsewhere, setManagePendingElsewhere] = useState<
     Record<string, { namespace: string; label: string }[]>
   >({});
-  const triggerRef = useRef<HTMLButtonElement | null>(null);
-  const dropdownRef = useRef<HTMLDivElement | null>(null);
 
   // One org-level call answers "what can I approve", instead of namespace.list_mine and
   // then grants.list once per administered namespace on every poll in every tab. The
@@ -131,131 +134,104 @@ export function PendingApprovalsBell() {
   );
   useVisiblePoll(refresh, 120_000, !!identity);
 
-  useEffect(() => {
-    if (!open) return;
-    const onClick = (e: MouseEvent) => {
-      const t = e.target instanceof Node ? e.target : null;
-      if (triggerRef.current?.contains(t)) return;
-      if (dropdownRef.current?.contains(t)) return;
-      setOpen(false);
-    };
-    document.addEventListener("mousedown", onClick);
-    return () => document.removeEventListener("mousedown", onClick);
-  }, [open]);
-
   if (!identity) return null;
 
+  const tip =
+    items.length > 0 ? `${items.length} pending approval${items.length === 1 ? "" : "s"}` : "No pending approvals";
   return (
-    <div className="relative">
-      <button
-        type="button"
-        ref={triggerRef}
-        onClick={() => setOpen((v) => !v)}
-        className="h-8 w-8 inline-flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-md transition-colors relative"
-        title={
-          items.length > 0 ? `${items.length} pending approval${items.length === 1 ? "" : "s"}` : "No pending approvals"
-        }
-        aria-label="Pending approvals"
-      >
-        <Bell size={15} />
-        {items.length > 0 && (
-          <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-[16px] px-1 inline-flex items-center justify-center text-2xs font-semibold bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-full">
-            {items.length > 99 ? "99+" : items.length}
-          </span>
-        )}
-      </button>
-      {open && (
-        <div
-          ref={dropdownRef}
-          className="absolute right-0 top-full mt-1 z-50 w-[min(440px,92vw)] max-h-[480px] overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl py-1"
-        >
-          <div className="px-4 py-2.5 border-b border-[var(--color-border)] text-xs text-[var(--color-text-subtle)] font-medium">
-            Pending approvals · {items.length}
-          </div>
-          {items.length === 0 && (
-            <div className="px-4 py-6 text-sm text-[var(--color-text-muted)] text-center">
-              No one's waiting for your approval.
-              <div className="text-2xs text-[var(--color-text-subtle)] mt-1.5">
-                Join requests on namespaces you admin show up here. To invite someone proactively, head to Spaces →
-                Namespaces you manage.
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setOpen(false);
-                  useStore.getState().setView("browse");
-                }}
-                className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)]"
-              >
-                Open Spaces →
-              </button>
+    <Popover open={open} onOpenChange={setOpen}>
+      <span className="relative inline-flex">
+        <PopoverTrigger>
+          <IconButton icon="bell" label="Pending approvals" tooltip={tip} />
+        </PopoverTrigger>
+        {items.length > 0 && <CountBadge count={items.length} state="neutral" />}
+      </span>
+      <Popover.Content align="end" className="w-[min(440px,92vw)] max-h-[480px] overflow-y-auto">
+        <h2 className="section-label pb-2 border-b border-border">Pending approvals · {items.length}</h2>
+        {items.length === 0 && (
+          <div className="py-6 text-sm text-text-muted text-center">
+            No one's waiting for your approval.
+            <div className="text-xs text-text-subtle mt-1.5">
+              Join requests on namespaces you admin show up here. To invite someone proactively, head to Spaces →
+              Namespaces you manage.
             </div>
-          )}
-          {grouped.map((it) => (
-            <button
-              type="button"
-              key={`${it.namespace}::${it.subject}`}
+            <Button
+              type="secondary"
+              htmlType="button"
+              className="mt-3"
               onClick={() => {
                 setOpen(false);
-                setManageKind(it.kind);
-                setManageLabel(it.kind === "code" ? repoLabel(it.namespace) : null);
-                setManagePendingElsewhere(it.kind === "code" ? pendingElsewhereFor(it.namespace) : {});
-                setManageNs(it.namespace);
+                useStore.getState().setView("browse");
               }}
-              className="w-full text-left px-4 py-2.5 hover:bg-[var(--color-surface-2)] flex items-start gap-3 transition-colors"
-              title={rowTitle(it)}
             >
-              <RoleIcon role={it.requested_role} />
-              <div className="flex-1 min-w-0">
-                {/* The target is what the approver has to read, so it gets
+              Open Spaces
+            </Button>
+          </div>
+        )}
+        {grouped.map((it) => (
+          <button
+            type="button"
+            key={`${it.namespace}::${it.subject}`}
+            onClick={() => {
+              setOpen(false);
+              setManageKind(it.kind);
+              setManageLabel(it.kind === "code" ? repoLabel(it.namespace) : null);
+              setManagePendingElsewhere(it.kind === "code" ? pendingElsewhereFor(it.namespace) : {});
+              setManageNs(it.namespace);
+            }}
+            className="text-left -mx-2 w-[calc(100%+1rem)] px-2 py-2.5 rounded-sm hover:bg-surface-2 flex items-start gap-3 transition-colors"
+            title={rowTitle(it)}
+          >
+            <RoleIcon role={it.requested_role} />
+            <div className="flex-1 min-w-0">
+              {/* The target is what the approver has to read, so it gets
                     its own line and wraps; nothing here is ever truncated. */}
-                <div className="text-sm text-[var(--color-text)] break-words">
-                  <span className={isServiceSubject(it.subject) ? "font-medium" : "font-mono break-all"}>
-                    {displaySubject(it.subject)}
-                  </span>{" "}
-                  {it.kind === "code" ? (
-                    <>
-                      asks to <span className="font-medium">{it.requested_role === "admin" ? "maintain" : "read"}</span>
-                    </>
-                  ) : (
-                    <>
-                      wants <span className="font-medium">{it.requested_role}</span> on
-                    </>
-                  )}
-                </div>
-                <div className="text-sm font-medium text-[var(--color-text)] break-words">
-                  {it.kind === "code" ? (
-                    <>
-                      {repoInfo[it.namespace]?.repo ?? it.namespace}
-                      {it.branches && it.branches.length > 1 ? (
-                        <span className="text-[var(--color-text-subtle)] font-normal">
-                          {" "}
-                          · {it.branches.length} branches ({it.branches.join(", ")}) — one decision
-                        </span>
-                      ) : (
-                        <span className="text-[var(--color-text-subtle)] font-normal">
-                          {" "}
-                          @ {repoInfo[it.namespace]?.branch ?? it.namespace}
-                        </span>
-                      )}
-                    </>
-                  ) : (
-                    <span className="font-mono break-all">{it.namespace}</span>
-                  )}
-                </div>
-                {it.kind === "code" && repoInfo[it.namespace] && (
-                  <div className="text-2xs font-mono text-[var(--color-text-subtle)] break-all">{it.namespace}</div>
+              <div className="text-sm text-text break-words">
+                <span className={isServiceSubject(it.subject) ? "font-medium" : "font-mono break-all"}>
+                  {displaySubject(it.subject)}
+                </span>{" "}
+                {it.kind === "code" ? (
+                  <>
+                    asks to <span className="font-medium">{it.requested_role === "admin" ? "maintain" : "read"}</span>
+                  </>
+                ) : (
+                  <>
+                    wants <span className="font-medium">{it.requested_role}</span> on
+                  </>
                 )}
-                <div className="text-2xs text-[var(--color-text-muted)] mt-0.5">
-                  {it.current_role !== it.requested_role && <>currently {it.current_role} · </>}
-                  {it.pending_since && <>requested {relativeTime(it.pending_since)}</>}
-                </div>
               </div>
-              <span className="text-2xs text-[var(--color-text-subtle)] mt-1 shrink-0">Review →</span>
-            </button>
-          ))}
-        </div>
-      )}
+              <div className="text-sm font-medium text-text break-words">
+                {it.kind === "code" ? (
+                  <>
+                    {repoInfo[it.namespace]?.repo ?? it.namespace}
+                    {it.branches && it.branches.length > 1 ? (
+                      <span className="text-text-subtle font-normal">
+                        {" "}
+                        · {it.branches.length} branches ({it.branches.join(", ")}) — one decision
+                      </span>
+                    ) : (
+                      <span className="text-text-subtle font-normal">
+                        {" "}
+                        @ {repoInfo[it.namespace]?.branch ?? it.namespace}
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <span className="font-mono break-all">{it.namespace}</span>
+                )}
+              </div>
+              {it.kind === "code" && repoInfo[it.namespace] && (
+                <div className="text-2xs font-mono text-text-subtle break-all">{it.namespace}</div>
+              )}
+              <div className="text-2xs text-text-muted mt-0.5">
+                {it.current_role !== it.requested_role && <>currently {it.current_role} · </>}
+                {it.pending_since && <>requested {relativeTime(it.pending_since)}</>}
+              </div>
+            </div>
+            <span className="text-2xs text-text-subtle mt-1 shrink-0">Review →</span>
+          </button>
+        ))}
+      </Popover.Content>
       {manageNs && (
         <Suspense fallback={null}>
           <MembersDialog
@@ -274,13 +250,27 @@ export function PendingApprovalsBell() {
           />
         </Suspense>
       )}
-    </div>
+    </Popover>
   );
 }
 
 function RoleIcon({ role }: { role: GrantRole }) {
-  if (role === "admin") return <Crown size={13} className="text-warn shrink-0 mt-0.5" aria-label="Admin" />;
-  if (role === "writer")
-    return <UserRound size={13} className="text-[var(--color-text-muted)] shrink-0 mt-0.5" aria-label="Writer" />;
-  return <Eye size={13} className="text-[var(--color-text-subtle)] shrink-0 mt-0.5" aria-label="Viewer" />;
+  if (role === "admin")
+    return <Icon name="star" size="xs" color="var(--color-warn)" aria-label="Admin" className="mt-1" />;
+  if (role === "writer") return <Icon name="user" size="xs" aria-label="Writer" className="mt-1" />;
+  return <Icon name="eye" size="xs" color="var(--color-text-subtle)" aria-label="Viewer" className="mt-1" />;
+}
+
+/** The count over a bell: Click UI's small solid badge, read out by the bell's tooltip. */
+export function CountBadge({ count, state }: { count: number; state: "neutral" | "warning" }) {
+  return (
+    <Badge
+      text={count > 99 ? "99+" : String(count)}
+      type="solid"
+      size="sm"
+      state={state}
+      aria-hidden="true"
+      className="absolute -top-1 -right-1 pointer-events-none"
+    />
+  );
 }

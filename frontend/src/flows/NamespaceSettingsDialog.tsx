@@ -1,6 +1,9 @@
 import { useRef, useState } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
-import { X, Settings as SettingsIcon, Trash2 } from "lucide-react";
+import { Button } from "@clickhouse/click-ui/Button";
+import { Checkbox } from "@clickhouse/click-ui/Checkbox";
+import { NumberField } from "@clickhouse/click-ui/NumberField";
+import { Select } from "@clickhouse/click-ui/Select";
+import { TextField } from "@clickhouse/click-ui/TextField";
 import {
   getNamespace,
   reregisterNamespace,
@@ -14,6 +17,21 @@ import { toast } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
 import { humanizeError } from "../lib/format";
 import { useAbortableEffect } from "../lib/hooks";
+import { oneOf } from "../lib/oneOf";
+import { Modal } from "../components/ui/Modal";
+
+const REPO_JOIN_RULES = [
+  ["open", "Open", "Anyone in the org joins instantly as a reader."],
+  ["approval", "Restricted", "A maintainer approves each reader."],
+  ["closed", "Closed", "Nobody can request; maintainers add readers by name."],
+] as const;
+
+const NAMESPACE_JOIN_RULES = [
+  ["inherit", "Inherit", "Follow visibility: public rows join instantly as viewer, private rows ask an admin."],
+  ["open", "Open", "Anyone in the org joins instantly as viewer; writer and admin still ask."],
+  ["approval", "Approval", "Every join waits for an admin's approval."],
+  ["closed", "Closed", "Nobody self-joins; admins add members directly."],
+] as const;
 
 interface Props {
   open: boolean;
@@ -136,281 +154,213 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
     }
   };
 
-  return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-overlay animate-fade-in motion-reduce:animate-none!" />
-        <Dialog.Content
-          onEscapeKeyDown={(e) => {
-            // Escape while editing the cap restores it; the next Escape closes the dialog.
-            if (capDraft === null) return;
-            e.preventDefault();
-            setCapEdit(null);
-          }}
-          className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[min(600px,92vw)] max-h-[85vh] flex flex-col rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl animate-fade-in motion-reduce:animate-none!"
-        >
-          <div className="flex items-center justify-between gap-3 px-6 py-4 border-b border-[var(--color-border)] shrink-0">
-            <Dialog.Title className="text-lg font-semibold tracking-tight flex items-center gap-2 min-w-0">
-              <SettingsIcon size={16} className="shrink-0" />
-              <span className="truncate">
-                Settings · <span className="font-mono">{namespace}</span>
-              </span>
-            </Dialog.Title>
-            <Dialog.Close
-              className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-              aria-label="Close"
-            >
-              <X size={16} />
-            </Dialog.Close>
-          </div>
+  const visibility = ns?.visibility || "private";
+  const joinPolicy = ns?.join_policy || "inherit";
+  const joinRules = isRepo ? REPO_JOIN_RULES : NAMESPACE_JOIN_RULES;
+  const locked = !canManage || saving;
 
-          <div className="px-6 py-5 flex-1 overflow-y-auto">
-            {!ns && <div className="text-sm text-[var(--color-text-muted)] text-center py-8">Loading…</div>}
-            {ns && (
-              <div className="space-y-5">
-                {/* Description */}
+  return (
+    <Modal
+      open={open}
+      onOpenChange={onOpenChange}
+      title={`Settings · ${namespace}`}
+      className="w-full max-w-[600px]"
+      onEscapeKeyDown={(e) => {
+        // Escape while editing the cap restores it; the next Escape closes the dialog.
+        if (capDraft === null) return;
+        e.preventDefault();
+        setCapEdit(null);
+      }}
+    >
+      <div className="max-h-[70vh] overflow-y-auto">
+        {!ns && <div className="py-8 text-center text-sm text-text-muted">Loading…</div>}
+        {ns && (
+          <div className="space-y-5">
+            <div className="flex items-end gap-2">
+              <div className="min-w-0 flex-1">
+                <TextField
+                  id="ns-settings-description"
+                  label="Description"
+                  value={descDraft}
+                  disabled={locked}
+                  onChange={(value) => {
+                    setDescDraft(value);
+                    setDescDirty(value !== (ns.description || ""));
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && descDirty) save({ description: descDraft });
+                  }}
+                  placeholder="What is this namespace for?"
+                />
+              </div>
+              {canManage && descDirty && (
+                <Button
+                  type="primary"
+                  htmlType="button"
+                  onClick={() => save({ description: descDraft })}
+                  disabled={saving}
+                >
+                  Save
+                </Button>
+              )}
+            </div>
+
+            {!isRepo && (
+              <>
+                {/* A Select, not radios: each pick saves, and arrow keys in a radio group pick. */}
+                <Select
+                  label="Visibility"
+                  value={visibility}
+                  disabled={locked}
+                  onSelect={(v) => {
+                    const next = oneOf(["private", "public"] as const, v);
+                    if (next && next !== visibility) save({ visibility: next });
+                  }}
+                  options={[
+                    {
+                      value: "private",
+                      label: "Private",
+                      description: "Only members you grant. Doesn't appear in Spaces.",
+                    },
+                    {
+                      value: "public",
+                      label: "Public",
+                      description: "Anyone in the org can find + join this namespace via Spaces.",
+                    },
+                  ]}
+                />
+
                 <div>
-                  <label
-                    htmlFor="ns-settings-description"
-                    className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5"
-                  >
-                    Description
-                  </label>
-                  <div className="flex gap-2">
-                    <input
-                      id="ns-settings-description"
-                      value={descDraft}
-                      disabled={!canManage || saving}
-                      onChange={(e) => {
-                        setDescDraft(e.target.value);
-                        setDescDirty(e.target.value !== (ns.description || ""));
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && descDirty) save({ description: descDraft });
-                      }}
-                      placeholder="What is this namespace for?"
-                      className="flex-1 px-3 py-1.5 text-sm rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] outline-none focus:border-[var(--color-accent)] disabled:opacity-60"
-                    />
-                    {canManage && descDirty && (
-                      <button
-                        type="button"
-                        onClick={() => save({ description: descDraft })}
-                        disabled={saving}
-                        className="px-3 py-1.5 text-xs font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md hover:bg-[var(--color-accent-strong)] disabled:opacity-50"
-                      >
-                        Save
-                      </button>
-                    )}
+                  <div className="flex items-end gap-2">
+                    <div className="w-32">
+                      <NumberField
+                        id="ns-cost-cap"
+                        label="Daily LLM budget (USD)"
+                        step="0.01"
+                        min="0"
+                        value={capDraft ?? String(ns.daily_cost_cap_usd ?? 0)}
+                        disabled={locked}
+                        onChange={(value) => setCapEdit({ key, text: value })}
+                        onBlur={() => void commitCap()}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") e.currentTarget.blur();
+                        }}
+                      />
+                    </div>
+                    <span className="pb-2 text-xs text-text-muted">
+                      {(ns.daily_cost_cap_usd ?? 0) === 0 ? "inherits the global default" : "per 24h rolling window"}
+                    </span>
                   </div>
+                  <p className="mt-1.5 text-2xs leading-relaxed text-text-muted">
+                    Once this namespace's upstream LLM spend over the last 24h reaches the cap, background entity
+                    extraction, code summaries and code-ingest descriptions skip, code.search skips query expansion, and
+                    memory.ask, code.ask and knowledge.synthesize answer without synthesis until spend drops. Writes are
+                    still accepted. 0 inherits the global default.
+                  </p>
+                </div>
+              </>
+            )}
+
+            <div>
+              <Select
+                label="How people join"
+                value={joinPolicy}
+                disabled={locked}
+                onSelect={(v) => {
+                  const next = oneOf(
+                    joinRules.map(([value]) => value),
+                    v,
+                  );
+                  if (next && next !== joinPolicy) save({ join_policy: next });
+                }}
+                options={joinRules.map(([value, label, description]) => ({ value, label, description }))}
+              />
+              <p className="mt-1.5 text-2xs text-text-muted">
+                {isRepo ? (
+                  <>
+                    Right now this repository is{" "}
+                    <span className="font-medium text-text">
+                      {ns.effective_join_policy === "approval"
+                        ? "restricted"
+                        : ns.effective_join_policy || "restricted"}
+                    </span>
+                    . Every repository is listed and searchable once you read it; only the way in differs. Readers never
+                    write; maintainers are named by an org admin.
+                  </>
+                ) : (
+                  <>
+                    Right now this namespace is{" "}
+                    <span className="font-medium text-text">{ns.effective_join_policy || "approval"}</span>.
+                  </>
+                )}
+              </p>
+            </div>
+
+            {!isRepo && (
+              <>
+                <div>
+                  <Checkbox
+                    label="Require approval for viewer (read-only) joins too"
+                    aria-describedby="ns-requires-approval-hint"
+                    checked={!!ns.requires_approval}
+                    disabled={locked}
+                    onCheckedChange={(c) => save({ requires_approval: c === true })}
+                  />
+                  <p id="ns-requires-approval-hint" className="mt-0.5 ml-6 text-2xs text-text-muted">
+                    Writer and admin joins always require approval. Turn this on if even read-only access should be
+                    reviewed first.
+                  </p>
                 </div>
 
-                {!isRepo && (
-                  <>
-                    {/* Visibility */}
-                    <fieldset className="m-0 min-w-0 border-0 p-0">
-                      <legend className="block p-0 text-xs font-medium text-[var(--color-text-muted)] mb-1.5">
-                        Visibility
-                      </legend>
-                      <div className="inline-flex rounded-md border border-[var(--color-border)] overflow-hidden">
-                        {(["private", "public"] as const).map((v) => (
-                          <button
-                            type="button"
-                            key={v}
-                            onClick={() => save({ visibility: v })}
-                            disabled={!canManage || saving || (ns.visibility || "private") === v}
-                            className={`px-3 py-1.5 text-xs font-medium transition-colors ${
-                              (ns.visibility || "private") === v
-                                ? "bg-[var(--color-accent)] text-[var(--color-on-accent)]"
-                                : "bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
-                            }`}
-                          >
-                            {v === "private" ? "Private" : "Public"}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="text-2xs text-[var(--color-text-muted)] mt-1.5">
-                        {(ns.visibility || "private") === "private"
-                          ? "Only members you grant. Doesn't appear in Spaces."
-                          : "Anyone in the org can find + join this namespace via Spaces."}
-                      </div>
-                    </fieldset>
+                {/* Prompt capture consent — opt IN. Consent is given, not withdrawn: a query is
+                something a person typed, so capturing by default would collect everyone's until
+                they found this and objected. Lives with the namespace because that is the
+                per-person unit here. Written explicitly true/false rather than true/null so the
+                namespace's answer always wins and an operator flipping the server default cannot
+                silently re-enable someone. */}
+                <div>
+                  <Checkbox
+                    label="Record what I search and what I store, for debugging"
+                    aria-describedby="ns-capture-hint"
+                    checked={ns.capture_generation_io === true}
+                    disabled={locked}
+                    onCheckedChange={(c) => save({ capture_generation_io: c === true })}
+                  />
+                  <p id="ns-capture-hint" className="mt-0.5 ml-6 text-2xs text-text-muted">
+                    Off unless you tick it, so none of your text is kept. Tick this and loom records your{" "}
+                    <em>search wording</em> plus the memory text and conversation turns it sends to the model while
+                    answering &mdash; which is what makes a bad recall diagnosable afterwards. Counts, cost, latency,
+                    recall and quality scores are kept either way; those carry no text. Applies to this namespace only;
+                    takes effect within a minute.
+                  </p>
+                </div>
+              </>
+            )}
 
-                    {/* Daily cost ceiling */}
-                    <div>
-                      <label
-                        htmlFor="ns-cost-cap"
-                        className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5"
-                      >
-                        Daily LLM budget (USD)
-                      </label>
-                      <div className="flex items-center gap-2">
-                        <input
-                          id="ns-cost-cap"
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          value={capDraft ?? String(ns.daily_cost_cap_usd ?? 0)}
-                          disabled={!canManage || saving}
-                          onChange={(e) => setCapEdit({ key, text: e.target.value })}
-                          onBlur={() => void commitCap()}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") e.currentTarget.blur();
-                          }}
-                          className="w-32 px-3 py-1.5 text-sm tabular bg-[var(--color-bg)] border border-[var(--color-border)] rounded-md disabled:opacity-50"
-                        />
-                        <span className="text-xs text-[var(--color-text-muted)]">
-                          {(ns.daily_cost_cap_usd ?? 0) === 0
-                            ? "inherits the global default"
-                            : "per 24h rolling window"}
-                        </span>
-                      </div>
-                      <div className="text-2xs text-[var(--color-text-muted)] mt-1.5 leading-relaxed">
-                        Once this namespace's upstream LLM spend over the last 24h reaches the cap, background entity
-                        extraction, code summaries and code-ingest descriptions skip, code.search skips query expansion,
-                        and memory.ask, code.ask and knowledge.synthesize answer without synthesis until spend drops.
-                        Writes are still accepted. 0 inherits the global default.
-                      </div>
-                    </div>
-                  </>
-                )}
-
-                {/* Join policy */}
-                <fieldset className="m-0 min-w-0 border-0 p-0">
-                  <legend className="block p-0 text-xs font-medium text-[var(--color-text-muted)] mb-1.5">
-                    How people join
-                  </legend>
-                  <div className="flex gap-1 flex-wrap">
-                    {(isRepo
-                      ? ([
-                          ["open", "Open", "Anyone in the org joins instantly as a reader."],
-                          ["approval", "Restricted", "A maintainer approves each reader."],
-                          ["closed", "Closed", "Nobody can request; maintainers add readers by name."],
-                        ] as const)
-                      : ([
-                          [
-                            "inherit",
-                            "Inherit",
-                            "Follow visibility: public rows join instantly as viewer, private rows ask an admin.",
-                          ],
-                          ["open", "Open", "Anyone in the org joins instantly as viewer; writer and admin still ask."],
-                          ["approval", "Approval", "Every join waits for an admin's approval."],
-                          ["closed", "Closed", "Nobody self-joins; admins add members directly."],
-                        ] as const)
-                    ).map(([v, label, hint]) => (
-                      <button
-                        key={v}
-                        type="button"
-                        title={hint}
-                        onClick={() => save({ join_policy: v })}
-                        disabled={!canManage || saving || (ns.join_policy || "inherit") === v}
-                        className={`px-3 py-1.5 text-sm rounded-md border ${
-                          (ns.join_policy || "inherit") === v
-                            ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-text)]"
-                            : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
-                        } disabled:opacity-60`}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="text-2xs text-[var(--color-text-muted)] mt-1.5">
-                    {isRepo ? (
-                      <>
-                        Right now this repository is{" "}
-                        <span className="font-medium text-[var(--color-text)]">
-                          {ns.effective_join_policy === "approval"
-                            ? "restricted"
-                            : ns.effective_join_policy || "restricted"}
-                        </span>
-                        . Every repository is listed and searchable once you read it; only the way in differs. Readers
-                        never write; maintainers are named by an org admin.
-                      </>
-                    ) : (
-                      <>
-                        Right now this namespace is{" "}
-                        <span className="font-medium text-[var(--color-text)]">
-                          {ns.effective_join_policy || "approval"}
-                        </span>
-                        .
-                      </>
-                    )}
-                  </div>
-                </fieldset>
-
-                {!isRepo && (
-                  <>
-                    {/* Approval gate */}
-                    <label className="flex items-start gap-2.5 cursor-pointer select-none">
-                      <input
-                        type="checkbox"
-                        checked={!!ns.requires_approval}
-                        disabled={!canManage || saving}
-                        onChange={(e) => save({ requires_approval: e.target.checked })}
-                        className="mt-0.5"
-                      />
-                      <div>
-                        <div className="text-sm">Require approval for viewer (read-only) joins too</div>
-                        <div className="text-2xs text-[var(--color-text-muted)] mt-0.5">
-                          Writer and admin joins always require approval. Turn this on if even read-only access should
-                          be reviewed first.
-                        </div>
-                      </div>
-                    </label>
-
-                    {/* Prompt capture consent — opt IN. Consent is given, not
-                    withdrawn: a query is something a person typed, so capturing by
-                    default would collect everyone's until they found this and
-                    objected. Lives with the namespace because that is the
-                    per-person unit here. Written explicitly true/false rather than
-                    true/null so the namespace's answer always wins and an operator
-                    flipping the server default cannot silently re-enable someone. */}
-                    <label className="flex items-start gap-2.5 cursor-pointer select-none">
-                      <input
-                        type="checkbox"
-                        checked={ns.capture_generation_io === true}
-                        disabled={!canManage || saving}
-                        onChange={(e) => save({ capture_generation_io: e.target.checked })}
-                        className="mt-0.5"
-                      />
-                      <div>
-                        <div className="text-sm">Record what I search and what I store, for debugging</div>
-                        <div className="text-2xs text-[var(--color-text-muted)] mt-0.5">
-                          Off unless you tick it, so none of your text is kept. Tick this and loom records your{" "}
-                          <em>search wording</em> plus the memory text and conversation turns it sends to the model
-                          while answering &mdash; which is what makes a bad recall diagnosable afterwards. Counts, cost,
-                          latency, recall and quality scores are kept either way; those carry no text. Applies to this
-                          namespace only; takes effect within a minute.
-                        </div>
-                      </div>
-                    </label>
-                  </>
-                )}
-
-                {/* Danger zone */}
-                {canDelete && (
-                  <div className="pt-4 mt-2 border-t border-[var(--color-border)]">
-                    <div className="text-xs text-danger font-medium mb-2">Danger zone</div>
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="text-2xs text-[var(--color-text-muted)]">
-                        Delete deactivates the namespace. Existing data stays queryable for forensics. For full erasure
-                        run an erasure.request separately.
-                      </div>
-                      <button
-                        type="button"
-                        onClick={onDelete}
-                        disabled={saving}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-danger/40 text-danger hover:bg-danger/15 rounded-md disabled:opacity-50 shrink-0"
-                      >
-                        <Trash2 size={12} /> Delete namespace
-                      </button>
-                    </div>
-                  </div>
-                )}
+            {canDelete && (
+              <div className="mt-2 border-t border-border pt-4">
+                <div className="mb-2 text-xs font-medium text-danger">Danger zone</div>
+                <div className="flex items-start justify-between gap-3">
+                  <p className="text-2xs text-text-muted">
+                    Delete deactivates the namespace. Existing data stays queryable for forensics. For full erasure run
+                    an erasure.request separately.
+                  </p>
+                  <Button
+                    type="danger"
+                    htmlType="button"
+                    iconLeft="trash"
+                    onClick={onDelete}
+                    disabled={saving}
+                    className="shrink-0"
+                  >
+                    Delete namespace
+                  </Button>
+                </div>
               </div>
             )}
           </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+        )}
+      </div>
+    </Modal>
   );
 }

@@ -22,6 +22,9 @@ export interface ModalProps {
   className?: string;
   /** A confirm raised over another dialog sits one layer up. */
   layer?: "dialog" | "confirm";
+  /** "dialog" starts on the dialog itself — for a read-only view whose first focusable is
+   *  deep in the content. Default: the first field or action. */
+  initialFocus?: "first" | "dialog";
   onOpenAutoFocus?: ContentProps["onOpenAutoFocus"];
   onCloseAutoFocus?: ContentProps["onCloseAutoFocus"];
   onEscapeKeyDown?: ContentProps["onEscapeKeyDown"];
@@ -32,6 +35,23 @@ export interface ModalProps {
 // z-[65]; popovers and tooltips z-[70] (styles.css).
 const LAYER = { dialog: "z-50", confirm: "z-[60]" } as const;
 
+// Radix focuses the first tabbable element on open. When the body has none yet (its fields
+// render after a read), that would be the close button, whose tooltip then opens over the
+// title; start on the dialog itself instead.
+const BODY_FOCUSABLE =
+  "input, select, textarea, button:not([data-modal-close]), a[href], [tabindex]:not([tabindex='-1'])";
+
+function focusDialog(e: Event) {
+  if (!(e.currentTarget instanceof HTMLElement)) return;
+  e.preventDefault();
+  e.currentTarget.focus();
+}
+
+function focusBodyOrDialog(e: Event) {
+  if (e.currentTarget instanceof HTMLElement && e.currentTarget.querySelector(BODY_FOCUSABLE)) return;
+  focusDialog(e);
+}
+
 export function Modal({
   open,
   onOpenChange,
@@ -40,6 +60,7 @@ export function Modal({
   children,
   className = "",
   layer = "dialog",
+  initialFocus = "first",
   ...handlers
 }: ModalProps) {
   return (
@@ -52,12 +73,14 @@ export function Modal({
         description={description}
         showOverlay={false}
         className={`${LAYER[layer]} ${className}`}
+        onOpenAutoFocus={initialFocus === "dialog" ? focusDialog : focusBodyOrDialog}
         {...handlers}
       >
-        <RadixDialog.Close asChild>
-          <IconButton icon="cross" label="Close" className="absolute top-5 right-5" />
-        </RadixDialog.Close>
         {children}
+        {/* After the body, so opening focuses the first field or action, not the close. */}
+        <RadixDialog.Close asChild>
+          <IconButton icon="cross" label="Close" className="absolute top-5 right-5" data-modal-close="" />
+        </RadixDialog.Close>
       </Dialog.Content>
     </Dialog>
   );

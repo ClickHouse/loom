@@ -2,7 +2,8 @@ import { forwardRef, type HTMLAttributes, type ReactNode } from "react";
 
 /**
  * Panel — a bordered surface with an optional header slot and its own
- * scroll. The one card shape: `rounded-lg`, the border token, surface or surface-2. With
+ * scroll. The one card shape, Click UI's card: 4 px corners, the 1 px default stroke,
+ * the default or muted background, 16 px padding. With
  * `scroll`, the panel is a flex column that resolves its height from its parent
  * (`min-h-0`) and the body scrolls while the header stays; without it, the panel grows
  * with its content like any block.
@@ -21,7 +22,7 @@ export interface PanelProps extends HTMLAttributes<HTMLElement> {
   children?: ReactNode;
 }
 
-const PAD = { none: "", sm: "p-2", md: "p-pane" } as const;
+const PAD = { none: "", sm: "p-2", md: "p-4" } as const;
 
 export const Panel = forwardRef<HTMLElement, PanelProps>(function Panel(
   {
@@ -42,7 +43,7 @@ export const Panel = forwardRef<HTMLElement, PanelProps>(function Panel(
     <As
       // Polymorphic tag: TS cannot relate ForwardedRef<HTMLElement> to the div|section|aside ref union.
       ref={ref as never}
-      className={`rounded-lg border border-border ${surface} ${scroll ? "flex flex-col min-h-0 overflow-hidden" : ""} ${className}`}
+      className={`rounded-sm border border-border ${surface} ${scroll ? "flex flex-col min-h-0 overflow-hidden" : ""} ${className}`}
       {...rest}
     >
       {header !== undefined && header !== null && (

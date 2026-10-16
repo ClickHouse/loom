@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from "react";
-import { AlertTriangle, ChevronDown, ChevronRight } from "lucide-react";
+import { Badge } from "@clickhouse/click-ui/Badge";
+import { Icon } from "@clickhouse/click-ui/Icon";
 import { listFacts, searchMemory, type FactRow, type Identity, type SearchHit, type TaxonomyResponse } from "../../api";
 import { IconButton } from "../../components/IconButton";
 import { Chip, MetaList, MetaRow, Panel, SectionHeading, TextClamp, Tip } from "../../components/ui";
@@ -171,11 +172,12 @@ function FactList({
               <span className="tabular-nums text-text-muted shrink-0">{f.co_occur}×</span>
             </div>
             <div className="mt-0.5 flex items-center gap-1.5 text-2xs text-text-subtle min-w-0 flex-wrap">
-              {f.provenance && <span className="px-1 rounded border border-border">{f.provenance}</span>}
+              {f.provenance && <Badge text={f.provenance} state="neutral" size="sm" />}
               <span className="tabular-nums">{f.last_seen ? f.last_seen.slice(0, 10) : ""}</span>
               {f.stale ? (
                 <span className="inline-flex items-center gap-1 text-warn">
-                  <AlertTriangle size={10} aria-hidden="true" /> stale — {f.sources.length} source row
+                  <Icon name="warning" size="xs" color="var(--color-warn)" aria-hidden="true" /> stale —{" "}
+                  {f.sources.length} source row
                   {f.sources.length === 1 ? "" : "s"}, none active
                 </span>
               ) : f.sources.length > 0 ? (
@@ -331,8 +333,6 @@ export function Inspector({
       .catch(() => undefined);
   };
 
-  const actionCls = "text-text-muted hover:text-text hover:bg-surface";
-
   if (model && edge) {
     const c = edge.child;
     const held =
@@ -354,13 +354,7 @@ export function Inspector({
                 {edge.parent} — {c.entity}
               </div>
             </div>
-            <IconButton
-              label="Clear selection"
-              onClick={() => onSelect(null)}
-              className={actionCls}
-              icon="cross"
-              size="sm"
-            />
+            <IconButton label="Clear selection" onClick={() => onSelect(null)} icon="cross" size="sm" />
           </div>
         }
       >
@@ -388,7 +382,8 @@ export function Inspector({
           {stale && (
             <MetaRow label="stale" tone="warn">
               <span className="inline-flex items-center gap-1">
-                <AlertTriangle size={11} aria-hidden="true" /> a row behind this edge has no active source
+                <Icon name="warning" size="xs" color="var(--color-warn)" aria-hidden="true" /> a row behind this edge
+                has no active source
               </span>
             </MetaRow>
           )}
@@ -397,21 +392,18 @@ export function Inspector({
           <IconButton
             label={`Select ${shorten(c.entity, 24)}`}
             onClick={() => onSelect({ kind: "node", entity: c.entity })}
-            className={actionCls}
             icon="chevron-right"
             size="sm"
           />
           <IconButton
             label={`Walk from ${shorten(c.entity, 24)}`}
             onClick={() => onWalk(c.entity)}
-            className={actionCls}
             icon="arrow-right"
             size="sm"
           />
           <IconButton
             label="Copy the pair"
             onClick={() => copy(`${edge.parent} ${c.via_relation ? relationLabel(c.via_relation) : "—"} ${c.entity}`)}
-            className={actionCls}
             icon="copy"
             size="sm"
           />
@@ -495,15 +487,9 @@ export function Inspector({
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
             <SectionHeading label={isSeed ? "Seed" : "Selected"} />
-            <div className="text-base font-semibold font-mono break-words">{n.entity}</div>
+            <div className="text-sm font-semibold font-mono break-words">{n.entity}</div>
           </div>
-          <IconButton
-            label="Clear selection"
-            onClick={() => onSelect(null)}
-            className={actionCls}
-            icon="cross"
-            size="sm"
-          />
+          <IconButton label="Clear selection" onClick={() => onSelect(null)} icon="cross" size="sm" />
         </div>
       }
     >
@@ -544,20 +530,11 @@ export function Inspector({
       </MetaList>
 
       <div className="mt-3 flex items-center gap-0.5 -mx-1 flex-wrap">
-        {!isSeed && (
-          <IconButton
-            label="Walk from here"
-            onClick={() => onWalk(n.entity)}
-            className={actionCls}
-            icon="arrow-right"
-            size="sm"
-          />
-        )}
+        {!isSeed && <IconButton label="Walk from here" onClick={() => onWalk(n.entity)} icon="arrow-right" size="sm" />}
         {!isSeed && (
           <IconButton
             label={`Path from ${shorten(model.seed, 20)} to here`}
             onClick={() => onPath(n.entity)}
-            className={actionCls}
             icon="arrow-directions"
             size="sm"
           />
@@ -566,7 +543,6 @@ export function Inspector({
           label={isCollapsed ? "Show hidden children" : "Expand in place (one hop of neighbours)"}
           disabled={expanding === n.entity}
           onClick={() => (isCollapsed ? onCollapse(n.entity, false) : onExpand(n.entity))}
-          className={actionCls}
           icon="plus"
           size="sm"
         />
@@ -574,7 +550,6 @@ export function Inspector({
           <IconButton
             label="Collapse children"
             onClick={() => onCollapse(n.entity, true)}
-            className={actionCls}
             icon="chevron-down"
             size="sm"
           />
@@ -583,7 +558,6 @@ export function Inspector({
           <IconButton
             label={isPinned ? "Unpin" : "Pin (survives facet changes)"}
             onClick={() => onPin(n.entity)}
-            className={actionCls}
             icon={isPinned ? "unpin" : "pin"}
             size="sm"
           />
@@ -594,11 +568,10 @@ export function Inspector({
           }
           disabled={!firstHit}
           onClick={() => firstHit && onOpenMemory(firstHit.memory_key)}
-          className={actionCls}
           icon="book"
           size="sm"
         />
-        <IconButton label="Copy entity" onClick={() => copy(n.entity)} className={actionCls} icon="copy" size="sm" />
+        <IconButton label="Copy entity" onClick={() => copy(n.entity)} icon="copy" size="sm" />
         {copied && <span className="text-2xs text-text-muted">copied</span>}
         {expanding === n.entity && <span className="text-2xs text-text-muted">expanding…</span>}
       </div>
@@ -611,8 +584,7 @@ export function Inspector({
             aria-expanded={showWhy}
             className="flex items-center gap-1 section-label text-text-muted mb-1 hover:text-text"
           >
-            {showWhy ? <ChevronDown size={11} aria-hidden="true" /> : <ChevronRight size={11} aria-hidden="true" />} Why
-            it is here
+            <Icon name={showWhy ? "chevron-down" : "chevron-right"} size="xs" aria-hidden="true" /> Why it is here
           </button>
           {showWhy && (
             <ol className="text-xs font-mono space-y-0.5">
@@ -705,7 +677,7 @@ export function Inspector({
                   >
                     <TextClamp text={excerpt} lines={1} max={200} reach="parent" className="leading-snug" />
                     <div className="mt-0.5 flex items-center gap-1.5 min-w-0 text-2xs text-text-subtle">
-                      <span className="px-1 rounded border border-border shrink-0">{h.memory_type}</span>
+                      <Badge text={h.memory_type} state="neutral" size="sm" className="shrink-0" />
                       {h.created_at && <span className="tabular-nums shrink-0">{h.created_at.slice(0, 10)}</span>}
                       <span className="font-mono truncate flex-1">{h.memory_key}</span>
                       {h.namespace && h.namespace !== identity.namespace && (

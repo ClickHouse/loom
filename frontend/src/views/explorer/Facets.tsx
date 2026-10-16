@@ -1,4 +1,7 @@
 import type { ReactNode } from "react";
+import { Button } from "@clickhouse/click-ui/Button";
+import { Checkbox } from "@clickhouse/click-ui/Checkbox";
+import { Select } from "@clickhouse/click-ui/Select";
 import type { TaxonomyResponse } from "../../api";
 import { Chip, SectionHeading, Tip } from "../../components/ui";
 import { COMMUNITY_PALETTE, HOP_COLORS, HOP_EMPHASIS, type LabelMode } from "./Canvas";
@@ -117,64 +120,54 @@ export function Facets({
 }: FacetsProps) {
   const communities = taxonomy?.communities || [];
   const commCopy = communitiesCopy(taxonomy);
-  const selectCls = "text-xs rounded border border-border bg-surface px-1 py-0.5 w-full";
-  const linkCls = "underline text-text-muted hover:text-text";
   return (
     <aside aria-label="Facets" className="text-xs min-h-0 overflow-y-auto overscroll-contain pr-1">
       {/* No hint on this heading: its (i) would be named "About Walk", and the
           e2e graph spec finds the Walk button by a substring of its name. */}
       <Section label="Walk">
         <div className="grid grid-cols-2 gap-x-2 gap-y-1.5">
-          <label className="text-text-muted flex flex-col gap-0.5">
-            hops
-            <select id="graph-hops" value={hops} onChange={(e) => onHops(Number(e.target.value))} className={selectCls}>
-              {[1, 2, 3].map((h) => (
-                <option key={h} value={h}>
-                  {h}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="text-text-muted flex flex-col gap-0.5">
-            per hop
-            <select
-              id="graph-per-hop"
-              value={perHop}
-              onChange={(e) => onPerHop(Number(e.target.value))}
-              className={selectCls}
-            >
-              {[6, 12, 20].map((k) => (
-                <option key={k} value={k}>
-                  {k}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="text-text-muted flex flex-col gap-0.5 col-span-2">
-            labels
-            <select
+          <Select id="graph-hops" label="Hops" value={String(hops)} onSelect={(v) => onHops(Number(v))}>
+            {[1, 2, 3].map((h) => (
+              <Select.Item key={h} value={String(h)}>
+                {h}
+              </Select.Item>
+            ))}
+          </Select>
+          <Select id="graph-per-hop" label="Per hop" value={String(perHop)} onSelect={(v) => onPerHop(Number(v))}>
+            {[6, 12, 20].map((k) => (
+              <Select.Item key={k} value={String(k)}>
+                {k}
+              </Select.Item>
+            ))}
+          </Select>
+          <div className="col-span-2">
+            <Select
               id="graph-labels"
+              label="Labels"
               value={labels}
-              onChange={(e) => {
+              onSelect={(value) => {
                 const v = oneOf(
                   LABEL_MODES.map((o) => o.value),
-                  e.target.value,
+                  value,
                 );
                 if (v !== null) onLabels(v);
               }}
-              className={selectCls}
             >
               {LABEL_MODES.map((o) => (
-                <option key={o.value} value={o.value}>
+                <Select.Item key={o.value} value={o.value}>
                   {o.label}
-                </option>
+                </Select.Item>
               ))}
-            </select>
-          </label>
-          <label className="text-text-muted inline-flex items-center gap-1.5 col-span-2 min-h-7">
-            <input id="graph-typed" type="checkbox" checked={typed} onChange={(e) => onTyped(e.target.checked)} /> typed
-            edges only
-          </label>
+            </Select>
+          </div>
+          <div className="col-span-2 min-h-7 flex items-center">
+            <Checkbox
+              id="graph-typed"
+              label="Typed edges only"
+              checked={typed}
+              onCheckedChange={(v) => onTyped(v === true)}
+            />
+          </div>
         </div>
       </Section>
 
@@ -184,9 +177,9 @@ export function Facets({
         hint="Replays the walk over the edges that were valid at the end of the chosen day."
         actions={
           asOf ? (
-            <button type="button" onClick={() => onAsOf("")} className={linkCls}>
-              now
-            </button>
+            <Button type="empty" htmlType="button" onClick={() => onAsOf("")}>
+              Now
+            </Button>
           ) : undefined
         }
       >
@@ -197,7 +190,6 @@ export function Facets({
           max={today()}
           aria-label="Replay the graph as it stood at the end of this day"
           onChange={(e) => onAsOf(e.target.value)}
-          className={selectCls}
         />
       </Section>
 
@@ -310,13 +302,13 @@ export function Facets({
         hint="How a typed edge was produced: extracted from text, inferred by the fold, or a facet of a code index. A chip keeps only those edges and rides the next walk as labeled."
         actions={
           filters.relations.size > 0 || filters.provenance.size > 0 ? (
-            <button
-              type="button"
+            <Button
+              type="empty"
+              htmlType="button"
               onClick={() => onFilters({ relations: new Set(), provenance: new Set() })}
-              className={linkCls}
             >
-              clear chips
-            </button>
+              Clear chips
+            </Button>
           ) : undefined
         }
       >

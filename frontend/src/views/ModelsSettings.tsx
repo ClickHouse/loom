@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Button } from "@clickhouse/click-ui/Button";
 import {
   getModelStatus,
   resetModelConfiguration,
@@ -41,7 +42,7 @@ function RebuildProgress({ pending }: { pending: NonNullable<ModelStatus["pendin
           paused and stored data is kept. Retry resumes from the last checkpoint.
         </p>
       )}
-      <details className="mt-2 text-sm text-[var(--color-text-muted)]">
+      <details className="mt-2 text-sm text-text-muted">
         <summary>Technical details</summary>
         {pending.error_code && <p>error: {pending.error_code}</p>}
         {Object.entries(pending.progress).map(([name, value]) => (
@@ -96,61 +97,64 @@ export function ModelsSettings() {
   if (!status) return <p role="status">{error || "Loading model settings…"}</p>;
   return (
     <div className="space-y-5">
-      <p className="text-sm text-[var(--color-text-muted)]">
+      <p className="text-sm text-text-muted">
         Deployment-wide configuration · Source:{" "}
         {status.source === "dashboard" ? "saved dashboard settings" : "server environment"}. Saved dashboard settings
         take precedence over environment defaults.
       </p>
       {error && <p role="alert">{error}</p>}
       {status.source === "dashboard" && !status.pending && (
-        <div className="rounded-lg border border-[var(--color-border)] p-4">
+        <div className="rounded-lg border border-border p-4">
           {confirmReset ? (
             <>
               <p>
                 Remove dashboard overrides and use this server's startup environment? If the embedding space changes,
                 Loom must rebuild before switching. This does not reload a changed .env file.
               </p>
-              <button
-                type="button"
-                disabled={resetting}
-                className="mt-3 rounded-lg border px-3 py-2"
-                onClick={async () => {
-                  if (resetting) return;
-                  setResetting(true);
-                  try {
-                    await resetModelConfiguration(status.version);
-                    setConfirmReset(false);
-                    setReload((value) => value + 1);
-                  } catch {
-                    setError("Could not reset model settings. Refresh and try again.");
-                  } finally {
-                    setResetting(false);
-                  }
-                }}
-              >
-                {resetting ? "Applying…" : "Confirm environment configuration"}
-              </button>
-              <button type="button" disabled={resetting} className="ml-3" onClick={() => setConfirmReset(false)}>
-                Cancel
-              </button>
+              <div className="mt-3 flex flex-wrap justify-end gap-2">
+                <Button type="secondary" htmlType="button" disabled={resetting} onClick={() => setConfirmReset(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  type="primary"
+                  htmlType="button"
+                  loading={resetting}
+                  onClick={async () => {
+                    if (resetting) return;
+                    setResetting(true);
+                    try {
+                      await resetModelConfiguration(status.version);
+                      setConfirmReset(false);
+                      setReload((value) => value + 1);
+                    } catch {
+                      setError("Could not reset model settings. Refresh and try again.");
+                    } finally {
+                      setResetting(false);
+                    }
+                  }}
+                >
+                  Confirm environment configuration
+                </Button>
+              </div>
             </>
           ) : (
-            <button type="button" onClick={() => setConfirmReset(true)}>
+            <Button type="secondary" htmlType="button" onClick={() => setConfirmReset(true)}>
               Use environment configuration
-            </button>
+            </Button>
           )}
         </div>
       )}
       {status.pending ? (
-        <div role="status" className="rounded-lg border border-[var(--color-border)] p-4">
+        <div role="status" className="rounded-lg border border-border p-4">
           <h2 className="font-semibold">Embedding configuration: {status.pending.state}</h2>
           <p>The new embedding model is not active until its rebuild completes. Existing source data is retained.</p>
           <RebuildProgress pending={status.pending} />
           {status.pending.state === "failed" && (
-            <button
-              type="button"
-              disabled={retrying}
-              className="mt-3 rounded-lg border px-3 py-2"
+            <Button
+              type="primary"
+              htmlType="button"
+              loading={retrying}
+              className="mt-3"
               onClick={async () => {
                 if (!status.pending || retrying) return;
                 setRetrying(true);
@@ -164,8 +168,8 @@ export function ModelsSettings() {
                 }
               }}
             >
-              {retrying ? "Retrying…" : "Retry rebuild"}
-            </button>
+              Retry rebuild
+            </Button>
           )}
         </div>
       ) : (

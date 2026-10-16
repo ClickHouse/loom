@@ -17,12 +17,15 @@ interface IconButtonProps extends Omit<ClickIconButtonProps, "aria-label" | "tit
 }
 
 export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(function IconButton(
-  { label, tooltip, type = "ghost", htmlType = "button", ...rest },
+  { label, tooltip, type, htmlType = "button", ...rest },
   ref,
 ) {
+  // A Radix trigger (`asChild`) hands its child `type="button"`, which on Click UI's
+  // IconButton would land on the variant prop.
+  const variant = type === undefined || (type as string) === "button" ? "ghost" : type;
   return (
     <Tip content={tooltip ?? label}>
-      <ClickIconButton ref={ref} type={type} htmlType={htmlType} aria-label={label} {...rest} />
+      <ClickIconButton ref={ref} type={variant} htmlType={htmlType} aria-label={label} {...rest} />
     </Tip>
   );
 });

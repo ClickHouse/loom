@@ -1,4 +1,10 @@
 import { useState } from "react";
+import { Button } from "@clickhouse/click-ui/Button";
+import { Checkbox } from "@clickhouse/click-ui/Checkbox";
+import { NumberField } from "@clickhouse/click-ui/NumberField";
+import { PasswordField } from "@clickhouse/click-ui/PasswordField";
+import { Select } from "@clickhouse/click-ui/Select";
+import { TextField } from "@clickhouse/click-ui/TextField";
 import {
   MODEL_JOBS,
   type EmbeddingProvider,
@@ -15,7 +21,6 @@ const PROVIDER_LABELS = {
   gemini: "Google Gemini",
   compatible: "Custom embedding provider",
 };
-const inputClass = "w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm";
 const errorMessages: Record<string, string> = {
   missing_key: "Add an API key for this provider.",
   invalid_credentials: "The provider rejected the key. Check its permissions and try again.",
@@ -86,25 +91,21 @@ export function ModelsForm({ status, onValidate, onSave }: Props) {
     setMessage("");
   };
   const dimensionsField = (
-    <label className="block space-y-1 text-sm">
-      Embedding dimensions
-      <input
-        className={inputClass}
-        type="number"
-        required
-        min={1}
-        max={configuration.embedding.provider === "compatible" ? 65535 : 3072}
-        step={1}
-        disabled={embeddingLocked}
-        value={configuration.embedding.dimensions}
-        onChange={(event) =>
-          change({
-            ...configuration,
-            embedding: { ...configuration.embedding, dimensions: Number(event.target.value) },
-          })
-        }
-      />
-    </label>
+    <NumberField
+      label="Embedding dimensions"
+      required
+      min={1}
+      max={configuration.embedding.provider === "compatible" ? 65535 : 3072}
+      step={1}
+      disabled={embeddingLocked}
+      value={configuration.embedding.dimensions}
+      onChange={(value) =>
+        change({
+          ...configuration,
+          embedding: { ...configuration.embedding, dimensions: Number(value) },
+        })
+      }
+    />
   );
   const save = async () => {
     if (busy) return;
@@ -137,129 +138,107 @@ export function ModelsForm({ status, onValidate, onSave }: Props) {
     >
       <div>
         <h2 className="text-xl font-semibold">Models &amp; keys</h2>
-        <p className="mt-2 text-sm text-[var(--color-text-muted)]">
+        <p className="mt-2 text-sm text-text-muted">
           Configure the models Loom uses internally. Your Claude Code or Codex login stays separate. Keys stay on the
           server; leaving a key blank keeps its existing value.
         </p>
       </div>
       <fieldset disabled={busy} className="space-y-6 disabled:opacity-70">
         <div className="grid gap-4 sm:grid-cols-2">
-          <label className="space-y-1">
-            LLM provider
-            <select
-              className={inputClass}
-              value={configuration.llm.provider}
-              onChange={(event) => {
-                const provider = event.target.value as LlmProvider;
-                change({
-                  ...configuration,
-                  llm: {
-                    ...configuration.llm,
-                    provider,
-                    model: provider === "anthropic" ? "claude-haiku-4-5" : "gpt-6-luna",
-                  },
-                });
-              }}
-            >
-              <option value="openai">OpenAI</option>
-              <option value="anthropic">Anthropic (Claude)</option>
-            </select>
-          </label>
-          <label className="space-y-1">
-            LLM model
-            <input
-              className={inputClass}
-              required
-              value={configuration.llm.model}
-              onChange={(event) =>
-                change({ ...configuration, llm: { ...configuration.llm, model: event.target.value } })
-              }
-            />
-          </label>
-          <label className="space-y-1">
-            Embedding provider
-            <select
-              className={inputClass}
-              disabled={embeddingLocked}
-              value={configuration.embedding.provider}
-              onChange={(event) => {
-                const provider = event.target.value as EmbeddingProvider;
-                change({
-                  ...configuration,
-                  embedding: {
-                    provider,
-                    model:
-                      provider === "compatible"
-                        ? ""
-                        : provider === "gemini"
-                          ? "gemini-embedding-001"
-                          : "text-embedding-3-large",
-                    dimensions: 3072,
-                  },
-                });
-              }}
-            >
-              <option value="openai">OpenAI</option>
-              <option value="gemini">Google Gemini</option>
-              <option value="compatible">Other (OpenAI-compatible API)</option>
-            </select>
-          </label>
-          <label className="space-y-1">
-            Embedding model
-            <input
-              className={inputClass}
-              required
-              disabled={embeddingLocked}
-              value={configuration.embedding.model}
-              onChange={(event) =>
-                change({ ...configuration, embedding: { ...configuration.embedding, model: event.target.value } })
-              }
-            />
-          </label>
+          <Select
+            label="LLM provider"
+            value={configuration.llm.provider}
+            onSelect={(value) => {
+              const provider = value as LlmProvider;
+              change({
+                ...configuration,
+                llm: {
+                  ...configuration.llm,
+                  provider,
+                  model: provider === "anthropic" ? "claude-haiku-4-5" : "gpt-6-luna",
+                },
+              });
+            }}
+          >
+            <Select.Item value="openai">OpenAI</Select.Item>
+            <Select.Item value="anthropic">Anthropic (Claude)</Select.Item>
+          </Select>
+          <TextField
+            label="LLM model"
+            required
+            value={configuration.llm.model}
+            onChange={(value) => change({ ...configuration, llm: { ...configuration.llm, model: value } })}
+          />
+          <Select
+            label="Embedding provider"
+            disabled={embeddingLocked}
+            value={configuration.embedding.provider}
+            onSelect={(value) => {
+              const provider = value as EmbeddingProvider;
+              change({
+                ...configuration,
+                embedding: {
+                  provider,
+                  model:
+                    provider === "compatible"
+                      ? ""
+                      : provider === "gemini"
+                        ? "gemini-embedding-001"
+                        : "text-embedding-3-large",
+                  dimensions: 3072,
+                },
+              });
+            }}
+          >
+            <Select.Item value="openai">OpenAI</Select.Item>
+            <Select.Item value="gemini">Google Gemini</Select.Item>
+            <Select.Item value="compatible">Other (OpenAI-compatible API)</Select.Item>
+          </Select>
+          <TextField
+            label="Embedding model"
+            required
+            disabled={embeddingLocked}
+            value={configuration.embedding.model}
+            onChange={(value) => change({ ...configuration, embedding: { ...configuration.embedding, model: value } })}
+          />
         </div>
         {embeddingLocked && (
-          <p role="note" className="text-sm text-[var(--color-text-muted)]">
+          <p role="note" className="text-sm text-text-muted">
             {status.embedding_change_blocked}
           </p>
         )}
         {configuration.embedding.provider === "compatible" && (
           <div className="space-y-3">
-            <label className="block space-y-1">
-              Embedding API base URL
-              <input
-                className={inputClass}
-                type="url"
-                required
-                placeholder="https://provider.example/v1"
-                disabled={embeddingLocked}
-                value={configuration.embedding.base_url ?? ""}
-                onChange={(event) =>
-                  change({ ...configuration, embedding: { ...configuration.embedding, base_url: event.target.value } })
-                }
-              />
-            </label>
+            <TextField
+              label="Embedding API base URL"
+              type="url"
+              required
+              placeholder="https://provider.example/v1"
+              disabled={embeddingLocked}
+              value={configuration.embedding.base_url ?? ""}
+              onChange={(value) =>
+                change({ ...configuration, embedding: { ...configuration.embedding, base_url: value } })
+              }
+            />
             {dimensionsField}
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                disabled={embeddingLocked}
-                checked={configuration.embedding.send_dimensions ?? false}
-                onChange={(event) =>
-                  change({
-                    ...configuration,
-                    embedding: { ...configuration.embedding, send_dimensions: event.target.checked },
-                  })
-                }
-              />
-              Send dimensions parameter (only if the provider supports it)
-            </label>
-            <p className="text-sm text-[var(--color-text-muted)]">
+            <Checkbox
+              label="Send dimensions parameter (only if the provider supports it)"
+              disabled={embeddingLocked}
+              checked={configuration.embedding.send_dimensions ?? false}
+              onCheckedChange={(checked) =>
+                change({
+                  ...configuration,
+                  embedding: { ...configuration.embedding, send_dimensions: checked === true },
+                })
+              }
+            />
+            <p className="text-sm text-text-muted">
               Enter the model ID above and its output dimensions here. The endpoint must support the OpenAI embeddings
               request and response format. Use HTTPS for remote services; HTTP sends the key and content unencrypted.
             </p>
           </div>
         )}
-        <p className="text-sm text-[var(--color-text-muted)]">
+        <p className="text-sm text-text-muted">
           Claude needs a separate embedding provider. OpenAI can use one API key for both roles. Only keys for your
           selected providers are required.
         </p>
@@ -267,87 +246,75 @@ export function ModelsForm({ status, onValidate, onSave }: Props) {
           {(Object.keys(PROVIDER_LABELS) as ModelProvider[])
             .filter((provider) => provider !== "compatible" || configuration.embedding.provider === "compatible")
             .map((provider) => (
-              <label key={provider} className="space-y-1">
-                {PROVIDER_LABELS[provider]} API key
-                <input
-                  className={inputClass}
-                  type="password"
-                  // Browsers ignore "off" on password inputs and autofill a saved login here;
-                  // "new-password" stops that, the data attributes stop password managers.
-                  autoComplete="new-password"
-                  data-1p-ignore
-                  data-lpignore="true"
-                  spellCheck={false}
-                  placeholder={status.configured_keys[provider] ? "Configured — leave blank to keep" : "Not configured"}
-                  value={configuration.keys[provider] ?? ""}
-                  onChange={(event) => {
-                    const keys = { ...configuration.keys };
-                    if (event.target.value) keys[provider] = event.target.value;
-                    else delete keys[provider];
-                    change({ ...configuration, keys });
-                  }}
-                />
-              </label>
+              <PasswordField
+                key={provider}
+                label={`${PROVIDER_LABELS[provider]} API key`}
+                // Browsers ignore "off" on password inputs and autofill a saved login here;
+                // "new-password" stops that, the data attributes stop password managers.
+                autoComplete="new-password"
+                data-1p-ignore
+                data-lpignore="true"
+                spellCheck={false}
+                placeholder={status.configured_keys[provider] ? "Configured — leave blank to keep" : "Not configured"}
+                value={configuration.keys[provider] ?? ""}
+                onChange={(value) => {
+                  const keys = { ...configuration.keys };
+                  if (value) keys[provider] = value;
+                  else delete keys[provider];
+                  change({ ...configuration, keys });
+                }}
+              />
             ))}
         </div>
-        <details className="rounded-lg border border-[var(--color-border)] p-4">
+        <details className="rounded-lg border border-border p-4">
           <summary className="cursor-pointer font-medium">Advanced models per job</summary>
-          <p className="my-3 text-sm text-[var(--color-text-muted)]">
+          <p className="my-3 text-sm text-text-muted">
             Leave overrides blank to use the main model. Optional tiers stay off unless configured. Cross-provider
             overrides need that provider's key.
           </p>
           <div className="grid gap-3 sm:grid-cols-2">
             {(Object.entries(MODEL_JOBS) as [keyof typeof MODEL_JOBS, string][]).map(([job, label]) => (
-              <label key={job} className="space-y-1 text-sm">
-                {label}
-                <input
-                  className={inputClass}
-                  value={configuration.llm.overrides[job] ?? ""}
-                  onChange={(event) => {
-                    const overrides = { ...configuration.llm.overrides };
-                    if (event.target.value.trim()) overrides[job] = event.target.value;
-                    else delete overrides[job];
-                    change({ ...configuration, llm: { ...configuration.llm, overrides } });
-                  }}
-                />
-              </label>
-            ))}
-            <label className="space-y-1 text-sm">
-              Verification models (comma-separated; blank uses main model)
-              <input
-                className={inputClass}
-                value={configuration.llm.verification_models?.join(", ") ?? ""}
-                onChange={(event) =>
-                  change({
-                    ...configuration,
-                    llm: {
-                      ...configuration.llm,
-                      verification_models: event.target.value.trim()
-                        ? event.target.value
-                            .split(",")
-                            .map((model) => model.trim())
-                            .filter(Boolean)
-                        : null,
-                    },
-                  })
-                }
+              <TextField
+                key={job}
+                label={label}
+                value={configuration.llm.overrides[job] ?? ""}
+                onChange={(value) => {
+                  const overrides = { ...configuration.llm.overrides };
+                  if (value.trim()) overrides[job] = value;
+                  else delete overrides[job];
+                  change({ ...configuration, llm: { ...configuration.llm, overrides } });
+                }}
               />
-            </label>
+            ))}
+            <TextField
+              label="Verification models (comma-separated; blank uses main model)"
+              value={configuration.llm.verification_models?.join(", ") ?? ""}
+              onChange={(value) =>
+                change({
+                  ...configuration,
+                  llm: {
+                    ...configuration.llm,
+                    verification_models: value.trim()
+                      ? value
+                          .split(",")
+                          .map((model) => model.trim())
+                          .filter(Boolean)
+                      : null,
+                  },
+                })
+              }
+            />
             {configuration.embedding.provider !== "compatible" && dimensionsField}
           </div>
         </details>
-        <p className="text-sm text-[var(--color-text-muted)]">
+        <p className="text-sm text-text-muted">
           Test &amp; apply makes small, billable model requests. Changing the embedding model requires rebuilding
           existing indexes; rotating a key does not.
         </p>
-        <div className="flex gap-3">
-          <button
-            type="submit"
-            disabled={busy}
-            className="rounded-lg bg-[var(--color-accent)] px-4 py-2 text-[var(--color-on-accent)] disabled:opacity-50"
-          >
+        <div className="flex justify-end">
+          <Button type="primary" htmlType="submit" loading={busy}>
             Test &amp; apply
-          </button>
+          </Button>
         </div>
       </fieldset>
       {busy && <p role="status">Checking configuration…</p>}

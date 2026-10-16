@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ModelStatus } from "../api/models";
 import { initialModelConfiguration, ModelsForm } from "./ModelsForm";
@@ -22,6 +22,12 @@ const status: ModelStatus = {
   verification_models: null,
 };
 
+// Click UI's Select: the label names the trigger; the options open in a popover dialog.
+function choose(label: string, option: string) {
+  fireEvent.click(screen.getByLabelText(label));
+  fireEvent.click(within(screen.getByRole("dialog")).getByText(option));
+}
+
 describe("Models & keys", () => {
   it("submits a compatible endpoint with its own embedding key", async () => {
     const onSave = vi.fn().mockResolvedValue(undefined);
@@ -32,7 +38,7 @@ describe("Models & keys", () => {
         onSave={onSave}
       />,
     );
-    fireEvent.change(screen.getByLabelText("Embedding provider"), { target: { value: "compatible" } });
+    choose("Embedding provider", "Other (OpenAI-compatible API)");
     fireEvent.change(screen.getByLabelText("Embedding model"), { target: { value: "vendor/custom-embedding" } });
     fireEvent.change(screen.getByLabelText("Embedding API base URL"), {
       target: { value: "https://embedding.example/v1" },
@@ -52,7 +58,7 @@ describe("Models & keys", () => {
 
   it("keeps browsers and password managers from filling the key fields", () => {
     render(<ModelsForm status={status} onValidate={vi.fn()} onSave={vi.fn()} />);
-    fireEvent.change(screen.getByLabelText("Embedding provider"), { target: { value: "compatible" } });
+    choose("Embedding provider", "Other (OpenAI-compatible API)");
     for (const label of [
       "OpenAI API key",
       "Anthropic API key",
@@ -84,7 +90,7 @@ describe("Models & keys", () => {
       />,
     );
     expect(screen.getByText("loom.memory_embeddings uses SharedReplacingMergeTree.")).toBeTruthy();
-    expect((screen.getByLabelText("Embedding provider") as HTMLSelectElement).disabled).toBe(true);
+    expect((screen.getByLabelText("Embedding provider") as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByLabelText("Embedding model") as HTMLInputElement).disabled).toBe(true);
     expect((screen.getByLabelText("Embedding dimensions") as HTMLInputElement).disabled).toBe(true);
     fireEvent.change(screen.getByLabelText("LLM model"), { target: { value: "gpt-6-luna-mini" } });
@@ -95,8 +101,13 @@ describe("Models & keys", () => {
 
   it("offers only hosted embedding providers", () => {
     render(<ModelsForm status={status} onValidate={vi.fn()} onSave={vi.fn()} />);
-    const select = screen.getByLabelText("Embedding provider") as HTMLSelectElement;
-    expect(Array.from(select.options, (option) => option.value)).toEqual(["openai", "gemini", "compatible"]);
+    fireEvent.click(screen.getByLabelText("Embedding provider"));
+    const options = screen.getByRole("dialog").querySelectorAll("[data-value]");
+    expect(Array.from(options, (option) => option.getAttribute("data-value"))).toEqual([
+      "openai",
+      "gemini",
+      "compatible",
+    ]);
   });
 
   it("keeps configured models even when a key needs attention", () => {
@@ -166,7 +177,7 @@ describe("Models & keys", () => {
 
   it("shows a compatible endpoint's dimensions beside its URL, not under Advanced", () => {
     render(<ModelsForm status={status} onValidate={vi.fn()} onSave={vi.fn()} />);
-    fireEvent.change(screen.getByLabelText("Embedding provider"), { target: { value: "compatible" } });
+    choose("Embedding provider", "Other (OpenAI-compatible API)");
     const field = screen.getByLabelText("Embedding dimensions");
     expect(field.closest("details")).toBeNull();
     expect(screen.getAllByLabelText("Embedding dimensions")).toHaveLength(1);

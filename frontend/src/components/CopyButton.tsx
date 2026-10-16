@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, Copy } from "lucide-react";
+import { Button } from "@clickhouse/click-ui/Button";
 
 /** A copy button that answers in place: the label turns into a tick and
  *  "Copied" for two seconds, then returns. A toast at the bottom of the
@@ -16,6 +16,7 @@ export function CopyButton({
   text: string | (() => string);
   label: string;
   copiedLabel?: string;
+  /** Placement only (margin, position); the look is Click UI's secondary button. */
   className?: string;
   ariaLabel?: string;
 }) {
@@ -34,23 +35,17 @@ export function CopyButton({
       setState("failed");
     }
   };
-  const base =
-    className ??
-    "absolute top-2 right-2 inline-flex items-center gap-1 px-2 py-1 text-2xs font-medium bg-[var(--color-surface)] border border-[var(--color-border)] rounded-md hover:bg-[var(--color-surface-3)]";
-  const tone = state === "done" ? " text-success border-success/50" : state === "failed" ? " text-danger" : "";
   return (
-    <button type="button" onClick={onClick} className={base + tone} aria-label={ariaLabel ?? label} aria-live="polite">
-      {state === "done" ? (
-        <>
-          <Check size={11} aria-hidden="true" /> {copiedLabel}
-        </>
-      ) : state === "failed" ? (
-        <>Copy failed — select the text</>
-      ) : (
-        <>
-          <Copy size={11} aria-hidden="true" /> {label}
-        </>
-      )}
-    </button>
+    <Button
+      type="secondary"
+      htmlType="button"
+      iconLeft={state === "done" ? "check" : state === "idle" ? "copy" : undefined}
+      onClick={onClick}
+      className={className ?? "absolute top-2 right-2"}
+      aria-label={ariaLabel ?? label}
+      aria-live="polite"
+    >
+      {state === "done" ? copiedLabel : state === "failed" ? "Copy failed — select the text" : label}
+    </Button>
   );
 }

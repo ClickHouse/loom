@@ -41,15 +41,15 @@ function Card({ r, ctx, drag }: { r: TaskListRow; ctx: RowContext; drag: HTMLAtt
         <span className="tq-pdot" data-p={r.priority} aria-label={`P${r.priority}`} role="img" />
         <KindTag kind={r.kind} />
       </span>
-      <span className="font-medium leading-[18px] text-base">{r.title}</span>
+      <span className="font-medium text-sm">{r.title}</span>
       {s && (
-        <span className="text-xs text-[var(--color-text-muted)] italic">
+        <span className="text-xs text-text-muted italic">
           {s.text}
           {s.href ? ` ${s.href.replace(/^https?:\/\/(www\.)?(github\.com\/)?/, "")}` : ""}
           {s.suffix ? ` ${s.suffix}` : ""}
         </span>
       )}
-      <span className="flex justify-between items-center gap-2 text-xs text-[var(--color-text-subtle)]">
+      <span className="flex justify-between items-center gap-2 text-xs text-text-subtle">
         <span className="tq-who min-w-0">
           {running ? (
             <>
@@ -94,19 +94,15 @@ export function TaskBoard({
           <section key={g} className="tq-col" aria-labelledby={`tq-col-${g}`} {...drag.target(g)}>
             <h3
               id={`tq-col-${g}`}
-              className="text-sm font-semibold m-0 px-3 py-2.5 border-b border-[var(--color-border)] flex items-center gap-2"
+              className="text-sm font-semibold m-0 px-3 py-2.5 border-b border-border flex items-center gap-2"
             >
-              <span
-                className="inline-block w-2 h-2 rounded-[2px]"
-                style={{ background: meta.color }}
-                aria-hidden="true"
-              />
+              <span className="inline-block w-2 h-2 rounded-xs" style={{ background: meta.color }} aria-hidden="true" />
               {meta.label}
-              <span className="ml-auto text-xs font-medium text-[var(--color-text-subtle)] tabular">{rows.length}</span>
+              <span className="ml-auto text-xs font-medium text-text-subtle tabular">{rows.length}</span>
             </h3>
             <div className="p-2 flex flex-col gap-2">
               {rows.length === 0 ? (
-                <div className="p-4 text-xs text-[var(--color-text-subtle)]">
+                <div className="p-4 text-xs text-text-subtle">
                   {g === "closed" && !showClosed ? "closed tasks are hidden — show them in the rail" : "nothing here"}
                 </div>
               ) : (

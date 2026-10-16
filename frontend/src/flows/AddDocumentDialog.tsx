@@ -1,10 +1,16 @@
 import { useEffect, useRef, useState } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
-import { X, Upload, AlertCircle, FileText } from "lucide-react";
+import { Alert } from "@clickhouse/click-ui/Alert";
+import { Button } from "@clickhouse/click-ui/Button";
+import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
+import { TextField } from "@clickhouse/click-ui/TextField";
 import { addKnowledge, type Identity } from "../api";
 import { toast } from "../components/Toast";
+import { Modal, ModalFooter } from "../components/ui/Modal";
 import { formatBytesShort, humanizeError } from "../lib/format";
 import { arrayBufferToBase64, extractDocxText, extractPdfText, guessContentType } from "../lib/docFiles";
+
+const ACCEPT =
+  ".pdf,.docx,.md,.txt,.json,.yaml,.yml,.csv,.html,.xml,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/*";
 
 interface Props {
   open: boolean;
@@ -180,216 +186,129 @@ export function AddDocumentDialog({ open, onOpenChange, identity, onAdded, repla
     }
   };
 
+  // Don't let an in-flight submit get aborted by an accidental close: closing cancels the
+  // fetch, which reads "fetch failed" though the server already committed the doc.
+  const close = (v: boolean) => {
+    if (busy && !v) return;
+    if (!v) reset();
+    onOpenChange(v);
+  };
+  const holdWhileBusy = (e: Event) => {
+    if (busy) e.preventDefault();
+  };
+
   return (
-    <Dialog.Root
+    <Modal
       open={open}
-      onOpenChange={(v) => {
-        // Don't let an in-flight submit get aborted by an accidental
-        // close. Closing the dialog cancels the fetch on the client
-        // side, surfacing as "fetch failed" even though the server's
-        // already committed the doc — confusing.
-        if (busy && !v) return;
-        if (!v) reset();
-        onOpenChange(v);
-      }}
+      onOpenChange={close}
+      title={replaceMode ? "Edit content (re-upload)" : "Add document"}
+      description={replaceMode?.sourceUri}
+      className="w-full max-w-[640px]"
+      onEscapeKeyDown={holdWhileBusy}
+      onPointerDownOutside={holdWhileBusy}
     >
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-overlay animate-fade-in motion-reduce:animate-none!" />
-        <Dialog.Content
-          className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[min(640px,92vw)] max-h-[90vh] overflow-y-auto rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl animate-fade-in motion-reduce:animate-none!"
-          onEscapeKeyDown={(e) => {
-            if (busy) e.preventDefault();
-          }}
-          onPointerDownOutside={(e) => {
-            if (busy) e.preventDefault();
-          }}
-          onInteractOutside={(e) => {
-            if (busy) e.preventDefault();
-          }}
-        >
-          <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)]">
-            <Dialog.Title className="text-lg font-semibold tracking-tight flex items-center gap-2">
-              <FileText size={16} /> {replaceMode ? "Edit content (re-upload)" : "Add document"}
-              {replaceMode && (
-                <span className="font-mono text-xs text-[var(--color-text-muted)] font-normal truncate max-w-[280px]">
-                  {replaceMode.sourceUri}
-                </span>
-              )}
-            </Dialog.Title>
-            <Dialog.Close
-              className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-30 disabled:cursor-not-allowed"
-              aria-label="Close"
-              disabled={busy}
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          void onSubmit();
+        }}
+      >
+        <div className="max-h-[70vh] space-y-4 overflow-y-auto">
+          <div>
+            <input
+              aria-label="Choose a file to upload"
+              ref={fileRef}
+              type="file"
+              accept={ACCEPT}
+              className="hidden"
+              onChange={(e) => onPickFile(e.target.files?.[0] || null)}
+            />
+            <Button
+              type="secondary"
+              htmlType="button"
+              iconLeft="upload"
+              fillWidth
+              onClick={() => fileRef.current?.click()}
             >
-              <X size={16} />
-            </Dialog.Close>
+              {replaceMode ? "Pick the new file" : "Pick a file"} (.pdf, .docx, .md, .txt, .json, .csv, …)
+            </Button>
+            <p className="mt-1.5 text-2xs text-text-subtle">
+              Text is extracted in your browser before upload — review it below before saving. Scanned/image PDFs need
+              OCR (not supported); paste the text directly instead.
+            </p>
           </div>
-
-          <div className="p-6 space-y-4">
-            {/* file picker (optional shortcut) */}
-            <div>
-              <input
-                aria-label="Choose a file to upload"
-                ref={fileRef}
-                type="file"
-                accept=".pdf,.docx,.md,.txt,.json,.yaml,.yml,.csv,.html,.xml,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/*"
-                className="hidden"
-                onChange={(e) => onPickFile(e.target.files?.[0] || null)}
-              />
-              <button
-                type="button"
-                onClick={() => fileRef.current?.click()}
-                className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg border border-dashed border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] w-full justify-center"
-              >
-                <Upload size={14} /> {replaceMode ? "Pick the new file" : "Pick a file"} (.pdf, .docx, .md, .txt, .json,
-                .csv, …)
-              </button>
-              <div className="mt-1.5 text-2xs text-[var(--color-text-subtle)] italic">
-                Text is extracted in your browser before upload — review it below before saving. Scanned/image PDFs need
-                OCR (not supported); paste the text directly instead.
-              </div>
+          {/* Locked in Replace mode, so the new content overwrites the document rather
+              than creating a second one under another URI. */}
+          {!replaceMode && (
+            <TextField
+              id="add-doc-source-uri"
+              label="Source URI (stable identifier the agent cites — a path, URL, or slug)"
+              value={sourceUri}
+              onChange={setSourceUri}
+              placeholder="docs/getting-started/quickstart.md"
+            />
+          )}
+          <TextField
+            id="add-doc-title"
+            label="Title (optional — overrides filename in the Library list)"
+            value={title}
+            onChange={setTitle}
+            placeholder="Onboarding guide"
+          />
+          <TextAreaField
+            id="add-doc-description"
+            label="Description (optional — one-line summary; improves retrieval and shows in the Library list)"
+            value={description}
+            onChange={setDescription}
+            placeholder="What's in this document, in one or two sentences."
+            rows={2}
+          />
+          <div>
+            <TextAreaField
+              id="add-doc-content"
+              label={
+                originalBlob
+                  ? `Content — extracted from ${originalBlob.name} (${formatBytesShort(originalBlob.size)} original)`
+                  : "Content"
+              }
+              value={content}
+              onChange={setContent}
+              placeholder="Paste the document text here. Loom chunks + embeds on upload."
+              rows={10}
+            />
+            <div className="mt-1 text-2xs text-text-subtle tabular">
+              {content.length.toLocaleString()} chars
+              {originalBlob && " · original file preserved for download"}
             </div>
-
-            {/* source_uri — locked in Replace mode so the new content
-                overwrites the existing document instead of creating a
-                new one with a different URI. */}
-            {!replaceMode && (
-              <div>
-                <label
-                  htmlFor="add-doc-source-uri"
-                  className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5"
-                >
-                  Source URI{" "}
-                  <span className="text-[var(--color-text-subtle)]">
-                    (stable identifier the agent cites — a path, URL, or slug)
-                  </span>
-                </label>
-                <input
-                  id="add-doc-source-uri"
-                  value={sourceUri}
-                  onChange={(e) => setSourceUri(e.target.value)}
-                  placeholder="docs/getting-started/quickstart.md"
-                  className="w-full font-mono text-sm px-3 py-2 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)] focus:border-[var(--color-accent)] outline-none"
-                />
-              </div>
-            )}
-
-            {/* title */}
-            <div>
-              <label
-                htmlFor="add-doc-title"
-                className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5"
-              >
-                Title{" "}
-                <span className="text-[var(--color-text-subtle)]">
-                  (optional — overrides filename in the Library list)
-                </span>
-              </label>
-              <input
-                id="add-doc-title"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="Onboarding guide"
-                className="w-full text-base px-3 py-2 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)] focus:border-[var(--color-accent)] outline-none"
-              />
-            </div>
-
-            {/* description */}
-            <div>
-              <label
-                htmlFor="add-doc-description"
-                className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5"
-              >
-                Description{" "}
-                <span className="text-[var(--color-text-subtle)]">
-                  (optional — one-line summary; improves retrieval and shows in the Library list)
-                </span>
-              </label>
-              <textarea
-                id="add-doc-description"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="What's in this document, in one or two sentences."
-                rows={2}
-                className="w-full text-sm px-3 py-2 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)] focus:border-[var(--color-accent)] outline-none resize-y leading-relaxed"
-              />
-            </div>
-
-            {/* content */}
-            <div>
-              <label
-                htmlFor="add-doc-content"
-                className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5"
-              >
-                Content{" "}
-                {originalBlob && (
-                  <span className="text-[var(--color-text-subtle)] font-normal">
-                    — extracted from <span className="font-mono">{originalBlob.name}</span> (
-                    {formatBytesShort(originalBlob.size)} original)
-                  </span>
-                )}
-              </label>
-              <textarea
-                id="add-doc-content"
-                value={content}
-                onChange={(e) => setContent(e.target.value)}
-                placeholder="Paste the document text here. Loom chunks + embeds on upload."
-                rows={10}
-                className="w-full text-sm font-mono px-3 py-2 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)] focus:border-[var(--color-accent)] outline-none resize-y leading-relaxed"
-              />
-              <div className="mt-1 text-2xs text-[var(--color-text-subtle)] tabular">
-                {content.length.toLocaleString()} chars
-                {originalBlob && " · original file preserved for download"}
-              </div>
-            </div>
-
-            {/* tags */}
-            <div>
-              <label htmlFor="add-doc-tags" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">
-                Tags <span className="text-[var(--color-text-subtle)]">(comma-separated, optional)</span>
-              </label>
-              <input
-                id="add-doc-tags"
-                value={tagsInput}
-                onChange={(e) => setTagsInput(e.target.value)}
-                placeholder="reference, work"
-                className="w-full text-base px-3 py-2 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)] focus:border-[var(--color-accent)] outline-none"
-              />
-            </div>
-
-            {error && (
-              <div className="px-3 py-2 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-danger)]/30 text-xs text-[var(--color-danger)] flex items-center gap-2">
-                <AlertCircle size={13} /> {error}
-              </div>
-            )}
-
-            {busy && (
-              <div className="px-3 py-2 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)] text-xs text-[var(--color-text-muted)] leading-relaxed">
-                Embedding {Math.max(1, Math.ceil(content.length / 1000))} ≈chunks. Don't close this dialog — closing it
-                cancels the upload mid-way and the toast you'll get says "fetch failed" even when the server already
-                committed half the work.
-              </div>
-            )}
           </div>
-
-          <div className="flex items-center justify-end gap-2 px-6 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface)]">
-            <Dialog.Close
-              className="px-3 py-1.5 text-sm font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] rounded-md disabled:opacity-30 disabled:cursor-not-allowed"
-              disabled={busy}
-            >
-              Cancel
-            </Dialog.Close>
-            <button
-              type="button"
-              onClick={onSubmit}
-              disabled={!canSubmit}
-              className="inline-flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md hover:bg-[var(--color-accent-strong)] disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              {busy ? (replaceMode ? "Saving…" : "Uploading…") : replaceMode ? "Save changes" : "Upload"}
-            </button>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+          <TextField
+            id="add-doc-tags"
+            label="Tags (comma-separated, optional)"
+            value={tagsInput}
+            onChange={setTagsInput}
+            placeholder="reference, work"
+          />
+          {error && (
+            <div role="alert">
+              <Alert state="danger" text={error} />
+            </div>
+          )}
+          {busy && (
+            <Alert
+              state="info"
+              text={`Embedding ${Math.max(1, Math.ceil(content.length / 1000))} ≈chunks. Don't close this dialog — closing it cancels the upload mid-way and the toast you'll get says "fetch failed" even when the server already committed half the work.`}
+            />
+          )}
+        </div>
+        <ModalFooter>
+          <Button type="secondary" htmlType="button" disabled={busy} onClick={() => close(false)}>
+            Cancel
+          </Button>
+          <Button type="primary" htmlType="submit" disabled={!canSubmit} loading={busy}>
+            {replaceMode ? "Save changes" : "Upload"}
+          </Button>
+        </ModalFooter>
+      </form>
+    </Modal>
   );
 }

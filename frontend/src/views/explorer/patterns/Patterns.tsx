@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import * as Tabs from "@radix-ui/react-tabs";
-import { GitBranch, LayoutGrid } from "lucide-react";
+import { Icon } from "@clickhouse/click-ui/Icon";
+import { Tabs } from "@clickhouse/click-ui/Tabs";
 import {
   trackerAnswer,
   trackerItem,
@@ -391,7 +391,7 @@ export function Patterns({ identity, binding, isEntity, onWalk, initial, onUrlSt
       />
 
       <div className="min-w-0 min-h-0 flex flex-col">
-        <Tabs.Root
+        <Tabs
           value={tab}
           onValueChange={(v) => {
             const t = oneOf(TABS, v);
@@ -400,24 +400,15 @@ export function Patterns({ identity, binding, isEntity, onWalk, initial, onUrlSt
           className="flex flex-col min-h-0"
         >
           <div className="h-8 mb-2 flex items-center justify-between gap-2 overflow-hidden">
-            <Tabs.List
-              aria-label="Patterns view"
-              className="inline-flex rounded-lg border border-border bg-surface p-0.5 text-xs"
-            >
-              <Tabs.Trigger
-                value="board"
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md whitespace-nowrap text-text-muted data-[state=active]:bg-surface-2 data-[state=active]:text-text"
-              >
-                <LayoutGrid size={13} aria-hidden="true" /> Board
+            <Tabs.TriggersList aria-label="Patterns view">
+              <Tabs.Trigger value="board">
+                <Icon name="services" size="sm" aria-hidden="true" /> Board
               </Tabs.Trigger>
-              <Tabs.Trigger
-                value="graph"
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md whitespace-nowrap text-text-muted data-[state=active]:bg-surface-2 data-[state=active]:text-text"
-              >
-                <GitBranch size={13} aria-hidden="true" /> tracker graph
-                {graph ? <span className="tabular-nums text-text-subtle">#{graph.seed.number}</span> : null}
+              <Tabs.Trigger value="graph">
+                <Icon name="git-merge" size="sm" aria-hidden="true" /> Tracker graph
+                {graph ? <span className="tabular-nums">#{graph.seed.number}</span> : null}
               </Tabs.Trigger>
-            </Tabs.List>
+            </Tabs.TriggersList>
             <div className="text-xs text-text-muted truncate" aria-live="polite">
               {boardStatus === "served" && board && full && (
                 <>
@@ -430,7 +421,7 @@ export function Patterns({ identity, binding, isEntity, onWalk, initial, onUrlSt
               )}
             </div>
           </div>
-          <Tabs.Content value="board" className="outline-none min-h-0">
+          <Tabs.Content value="board" className="min-h-0">
             <Board
               board={board}
               status={boardStatus}
@@ -442,7 +433,7 @@ export function Patterns({ identity, binding, isEntity, onWalk, initial, onUrlSt
               daysLabel={daysLabel}
             />
           </Tabs.Content>
-          <Tabs.Content value="graph" className="outline-none min-h-0">
+          <Tabs.Content value="graph" className="min-h-0">
             <TrackerGraph
               graph={graph}
               loading={graphBusy && !graph}
@@ -455,7 +446,7 @@ export function Patterns({ identity, binding, isEntity, onWalk, initial, onUrlSt
               onOpen={pickIssue}
             />
           </Tabs.Content>
-        </Tabs.Root>
+        </Tabs>
       </div>
 
       <PatternsInspector

@@ -1,7 +1,9 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RunGetResponse, RunRow } from "../api";
 import { useStore } from "../lib/state";
+import { must } from "../test/must";
 import { EMPTY_WHY, Runs, hasNoMemoryActivity } from "./Runs";
 
 // A run with no memory activity is folded whether loom inferred it or a program declared
@@ -123,8 +125,11 @@ describe("Runs page", () => {
     listRuns.mockResolvedValue([row(), full]);
     render(<Runs />);
     await screen.findByText("fix the thing");
-    const select = await screen.findByLabelText("Agent");
-    fireEvent.change(select, { target: { value: "reporter" } });
+    await userEvent.click(await screen.findByRole("button", { name: "Agent" }));
+    // Click UI's Select items carry no option role; they are addressed by value.
+    await userEvent.click(
+      must(document.querySelector<HTMLElement>('[cui-select-item][data-value="reporter"]'), "reporter item"),
+    );
     await waitFor(() => expect(listRuns).toHaveBeenCalledTimes(2));
     const [, opts] = listRuns.mock.calls[1];
     expect(opts?.agent).toBe("reporter");

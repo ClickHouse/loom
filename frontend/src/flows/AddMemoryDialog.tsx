@@ -1,10 +1,14 @@
 import { useEffect, useState } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
-import { X, Plus, AlertCircle } from "lucide-react";
+import { Alert } from "@clickhouse/click-ui/Alert";
+import { Button } from "@clickhouse/click-ui/Button";
+import { Select } from "@clickhouse/click-ui/Select";
+import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
+import { TextField } from "@clickhouse/click-ui/TextField";
 import { setMemory, type Identity } from "../api";
 import { sharedTagVocabulary } from "../lib/sharedReads";
 import { humanizeError } from "../lib/format";
 import { toast } from "../components/Toast";
+import { Modal, ModalFooter } from "../components/ui/Modal";
 
 interface Props {
   open: boolean;
@@ -49,6 +53,11 @@ export function AddMemoryDialog({ open, onOpenChange, identity, onAdded }: Props
     setBusy(false);
   };
 
+  const close = (v: boolean) => {
+    if (!v) reset();
+    onOpenChange(v);
+  };
+
   const keyError =
     memoryKey.trim() === ""
       ? null
@@ -85,143 +94,73 @@ export function AddMemoryDialog({ open, onOpenChange, identity, onAdded }: Props
   };
 
   return (
-    <Dialog.Root
-      open={open}
-      onOpenChange={(v) => {
-        if (!v) reset();
-        onOpenChange(v);
-      }}
-    >
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-overlay animate-fade-in motion-reduce:animate-none!" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[min(560px,92vw)] max-h-[88vh] overflow-y-auto rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl animate-fade-in motion-reduce:animate-none!">
-          <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)]">
-            <Dialog.Title className="text-lg font-semibold tracking-tight flex items-center gap-2">
-              <Plus size={16} /> Add memory
-            </Dialog.Title>
-            <Dialog.Close
-              className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-              aria-label="Close"
-            >
-              <X size={16} />
-            </Dialog.Close>
-          </div>
-
-          <div className="p-6 space-y-4">
-            {/* memory_key */}
-            <div>
-              <label
-                htmlFor="add-memory-key"
-                className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5"
-              >
-                Key <span className="text-[var(--color-text-subtle)]">(lower_snake_case)</span>
-              </label>
-              <input
-                id="add-memory-key"
-                value={memoryKey}
-                onChange={(e) => setMemoryKey(e.target.value)}
-                placeholder="user_coffee_preference"
-                className={`w-full font-mono text-base px-3 py-2 rounded-lg bg-[var(--color-surface-2)] border outline-none ${
-                  keyError
-                    ? "border-[var(--color-danger)]"
-                    : "border-[var(--color-border)] focus:border-[var(--color-accent)]"
-                }`}
-                autoFocus
-              />
-              {keyError && (
-                <div className="mt-1 text-xs text-[var(--color-danger)] flex items-center gap-1">
-                  <AlertCircle size={12} /> {keyError}
-                </div>
-              )}
+    <Modal open={open} onOpenChange={close} title="Add memory" className="w-full max-w-[560px]">
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          void onSubmit();
+        }}
+      >
+        <div className="max-h-[70vh] space-y-4 overflow-y-auto">
+          <TextField
+            id="add-memory-key"
+            label="Key (lower_snake_case)"
+            value={memoryKey}
+            onChange={setMemoryKey}
+            placeholder="user_coffee_preference"
+            error={keyError ?? undefined}
+            autoFocus
+          />
+          <TextAreaField
+            id="add-memory-value"
+            label="Value"
+            value={value}
+            onChange={setValue}
+            placeholder="User takes coffee black, no sugar."
+            rows={4}
+          />
+          <TextField
+            id="add-memory-tags"
+            label="Tags (comma-separated, optional)"
+            value={tagsInput}
+            onChange={setTagsInput}
+            placeholder="preference, beverage"
+            list="loom-existing-tags"
+          />
+          {existingTags.length > 0 && (
+            <datalist id="loom-existing-tags">
+              {existingTags.map((t) => (
+                <option key={t} value={t} />
+              ))}
+            </datalist>
+          )}
+          <Select
+            id="add-memory-expiry"
+            label="Expires (auto-delete after)"
+            value={String(expiryIdx)}
+            onSelect={(v) => setExpiryIdx(Number.parseInt(v, 10))}
+          >
+            {EXPIRY_OPTIONS.map((opt, i) => (
+              <Select.Item key={opt.label} value={String(i)}>
+                {opt.label}
+              </Select.Item>
+            ))}
+          </Select>
+          {error && (
+            <div role="alert">
+              <Alert state="danger" text={error} />
             </div>
-
-            {/* value */}
-            <div>
-              <label
-                htmlFor="add-memory-value"
-                className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5"
-              >
-                Value
-              </label>
-              <textarea
-                id="add-memory-value"
-                value={value}
-                onChange={(e) => setValue(e.target.value)}
-                placeholder="User takes coffee black, no sugar."
-                rows={4}
-                className="w-full text-base px-3 py-2 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)] focus:border-[var(--color-accent)] outline-none resize-y leading-relaxed"
-              />
-            </div>
-
-            {/* tags */}
-            <div>
-              <label
-                htmlFor="add-memory-tags"
-                className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5"
-              >
-                Tags <span className="text-[var(--color-text-subtle)]">(comma-separated, optional)</span>
-              </label>
-              <input
-                id="add-memory-tags"
-                value={tagsInput}
-                onChange={(e) => setTagsInput(e.target.value)}
-                placeholder="preference, beverage"
-                list="loom-existing-tags"
-                className="w-full text-base px-3 py-2 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)] focus:border-[var(--color-accent)] outline-none"
-              />
-              {existingTags.length > 0 && (
-                <datalist id="loom-existing-tags">
-                  {existingTags.map((t) => (
-                    <option key={t} value={t} />
-                  ))}
-                </datalist>
-              )}
-            </div>
-
-            {/* expiry */}
-            <div>
-              <label
-                htmlFor="add-memory-expiry"
-                className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5"
-              >
-                Expires <span className="text-[var(--color-text-subtle)]">(auto-delete after)</span>
-              </label>
-              <select
-                id="add-memory-expiry"
-                value={expiryIdx}
-                onChange={(e) => setExpiryIdx(parseInt(e.target.value, 10))}
-                className="w-full text-base px-3 py-2 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)] focus:border-[var(--color-accent)] outline-none"
-              >
-                {EXPIRY_OPTIONS.map((opt, i) => (
-                  <option key={opt.label} value={i}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {error && (
-              <div className="px-3 py-2 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-danger)]/30 text-xs text-[var(--color-danger)] flex items-center gap-2">
-                <AlertCircle size={13} /> {error}
-              </div>
-            )}
-          </div>
-
-          <div className="flex items-center justify-end gap-2 px-6 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface)]">
-            <Dialog.Close className="px-3 py-1.5 text-sm font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] rounded-md">
-              Cancel
-            </Dialog.Close>
-            <button
-              type="button"
-              onClick={onSubmit}
-              disabled={!canSubmit}
-              className="inline-flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-md hover:bg-[var(--color-accent-strong)] disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              {busy ? "Adding…" : "Add memory"}
-            </button>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+          )}
+        </div>
+        <ModalFooter>
+          <Button type="secondary" htmlType="button" onClick={() => close(false)}>
+            Cancel
+          </Button>
+          <Button type="primary" htmlType="submit" disabled={!canSubmit} loading={busy}>
+            Add memory
+          </Button>
+        </ModalFooter>
+      </form>
+    </Modal>
   );
 }

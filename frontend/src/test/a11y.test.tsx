@@ -1,5 +1,4 @@
 import { act, render, screen } from "@testing-library/react";
-import { Waypoints } from "lucide-react";
 import { describe, expect, it } from "vitest";
 import { EmptyState } from "../components/EmptyState";
 import { ScopeBadge } from "../components/ScopeBadge";
@@ -7,13 +6,13 @@ import { ToastViewport, toast } from "../components/Toast";
 import { axeViolations } from "./axe";
 
 // axe-core over components that render in isolation. Views need identity, the store and
-// the API, so they are covered by the Playwright job, not here.
+// the API; e2e/a11y.spec.ts runs axe on every route in the browser.
 
 describe("axe: no violations", () => {
   it("EmptyState with a description and an action", async () => {
     const { container } = render(
       <EmptyState
-        icon={Waypoints}
+        icon="share-network"
         title="No entities yet"
         description="The graph fills as memories with entities are written."
         action={{ label: "Write a memory", onClick: () => undefined }}

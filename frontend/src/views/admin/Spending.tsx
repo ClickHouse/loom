@@ -1,5 +1,10 @@
 import { useState, type ReactNode } from "react";
-import { DollarSign, AlertTriangle, Pencil, Check, X as XIcon } from "lucide-react";
+import { Button } from "@clickhouse/click-ui/Button";
+import { Checkbox } from "@clickhouse/click-ui/Checkbox";
+import { Icon } from "@clickhouse/click-ui/Icon";
+import { NumberField } from "@clickhouse/click-ui/NumberField";
+import { Select } from "@clickhouse/click-ui/Select";
+import { Table } from "@clickhouse/click-ui/Table";
 import {
   listCostRollup,
   getOrgBudgetStatus,
@@ -17,6 +22,8 @@ import { Skeleton } from "../../components/Skeleton";
 import { EmptyState } from "../../components/EmptyState";
 import { ScopeBadge } from "../../components/ScopeBadge";
 import { toast } from "../../components/Toast";
+import { IconButton } from "../../components/IconButton";
+import { Tip } from "../../components/ui/Tooltip";
 import { displayAgent, humanizeError, SENTINEL_AGENTS } from "../../lib/format";
 import { useAbortableEffect } from "../../lib/hooks";
 import { PageContainer } from "../../layout/PageContainer";
@@ -123,25 +130,12 @@ export function Spending() {
   );
 
   // Dimension columns shown between Day and the metrics, per pivot.
-  const dimColumns: { header: string; cell: (r: CostRow) => ReactNode; cls?: (r: CostRow) => string }[] =
+  const agentColumn = { header: "Agent", cell: agentCell };
+  const dimColumns: { header: string; cell: (r: CostRow) => ReactNode }[] =
     breakdown === "operation"
-      ? [
-          {
-            header: "Agent",
-            cell: (r) => (r.agent ? displayAgent(r.agent) : <span className="text-[var(--color-text-subtle)]">—</span>),
-            cls: (r) => (r.agent && SENTINEL_AGENTS.has(r.agent) ? "italic text-[var(--color-text-muted)]" : ""),
-          },
-          { header: "Op", cell: (r) => <span className="font-mono text-xs">{r.operation}</span> },
-        ]
+      ? [agentColumn, { header: "Op", cell: (r) => <span className="font-mono text-xs">{r.operation}</span> }]
       : breakdown === "agent"
-        ? [
-            {
-              header: "Agent",
-              cell: (r) =>
-                r.agent ? displayAgent(r.agent) : <span className="text-[var(--color-text-subtle)]">—</span>,
-              cls: (r) => (r.agent && SENTINEL_AGENTS.has(r.agent) ? "italic text-[var(--color-text-muted)]" : ""),
-            },
-          ]
+        ? [agentColumn]
         : breakdown === "user"
           ? [
               {
@@ -150,7 +144,7 @@ export function Spending() {
                   r.user_id && r.user_id !== "-" ? (
                     <span className="font-mono text-xs">{r.user_id}</span>
                   ) : (
-                    <span className="text-[var(--color-text-subtle)]">— unattributed</span>
+                    <span className="text-text-subtle">— unattributed</span>
                   ),
               },
             ]
@@ -181,18 +175,18 @@ export function Spending() {
     <PageContainer>
       <div className="flex items-baseline gap-3 mb-6">
         <h1 className="text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
-          <DollarSign size={20} /> Usage
+          <Icon name="dollar" size="md" aria-hidden="true" /> Usage
         </h1>
         <ScopeBadge kind="namespace" value={identity.namespace} />
       </div>
 
       {orgBudget && orgBudget.spent_24h_usd > 0 && (
-        <div className="mb-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 flex items-baseline justify-between gap-3">
+        <div className="mb-4 rounded-xl border border-border bg-surface p-4 flex items-baseline justify-between gap-3">
           <div>
-            <div className="text-xs text-[var(--color-text-muted)] mb-1">Org-wide 24h LLM spend</div>
+            <div className="text-xs text-text-muted mb-1">Org-wide 24h LLM spend</div>
             <div className="text-xl font-semibold tabular">${orgBudget.spent_24h_usd.toFixed(4)}</div>
           </div>
-          <div className="text-right text-xs text-[var(--color-text-muted)]">
+          <div className="text-right text-xs text-text-muted">
             across {orgBudget.namespaces_with_spend ?? 0} namespace
             {(orgBudget.namespaces_with_spend ?? 0) === 1 ? "" : "s"} in{" "}
             <span className="font-mono">{identity.org}</span>
@@ -203,28 +197,27 @@ export function Spending() {
       {budget && budget.cap_source !== "uncapped" && (
         <div
           className={`mb-5 rounded-xl border p-4 ${
-            budget.over_cap
-              ? "border-[var(--color-warn)]/40 bg-[var(--color-warn)]/10"
-              : "border-[var(--color-border)] bg-[var(--color-surface)]"
+            budget.over_cap ? "border-warn/40 bg-warn/10" : "border-border bg-surface"
           }`}
         >
           <div className="flex items-baseline justify-between gap-3 mb-2">
             <div className="text-sm">
               {budget.over_cap ? (
-                <span className="inline-flex items-center gap-1.5 text-[var(--color-warn)] font-medium">
-                  <AlertTriangle size={13} /> Daily LLM cap reached — extraction paused for this namespace
+                <span className="inline-flex items-center gap-1.5 text-warn font-medium">
+                  <Icon name="warning" size="xs" color="var(--color-warn)" aria-hidden="true" /> Daily LLM cap reached —
+                  extraction paused for this namespace
                 </span>
               ) : (
                 <span className="font-medium">Daily LLM budget</span>
               )}
             </div>
-            <div className="text-xs tabular text-[var(--color-text-muted)]">
+            <div className="text-xs tabular text-text-muted">
               ${budget.spent_24h_usd.toFixed(4)} / ${budget.cap_usd.toFixed(2)} ({budget.cap_source})
             </div>
           </div>
-          <div className="h-1.5 bg-[var(--color-surface-2)] rounded-full overflow-hidden">
+          <div className="h-1.5 bg-surface-2 rounded-full overflow-hidden">
             <div
-              className={`h-full transition-all ${budget.over_cap ? "bg-[var(--color-warn)]" : "bg-[var(--color-accent)]"}`}
+              className={`h-full transition-all ${budget.over_cap ? "bg-warn" : "bg-accent"}`}
               style={{ width: `${Math.min(100, (budget.pct_of_cap ?? 0) * 100)}%` }}
               aria-label={`${Math.round((budget.pct_of_cap ?? 0) * 100)}% of daily LLM budget used`}
               role="progressbar"
@@ -234,12 +227,10 @@ export function Spending() {
             />
           </div>
           <div className="mt-2 flex items-baseline justify-between gap-3">
-            <div className="text-2xs text-[var(--color-text-muted)] leading-relaxed">
+            <div className="text-2xs text-text-muted leading-relaxed">
               Rolling 24h sum of upstream LLM cost on this namespace. When the cap is hit,{" "}
-              <code className="font-mono text-2xs bg-[var(--color-surface-2)] px-1 py-0.5 rounded">
-                entity_extractor
-              </code>{" "}
-              skip writes here until usage drops below the cap.
+              <code className="font-mono text-2xs bg-surface-2 px-1 py-0.5 rounded">entity_extractor</code> skip writes
+              here until usage drops below the cap.
             </div>
             {canEditCap && (
               <BudgetCapEditor
@@ -256,17 +247,17 @@ export function Spending() {
       {rows === null && <Skeleton className="h-40 w-full" />}
       {rows !== null && rows.length === 0 && (
         <EmptyState
-          icon={DollarSign}
+          icon="dollar"
           title="No operations recorded"
           description="No API calls against this namespace in the last 7 days. Activity (reads + LLM-touching writes) shows up here once your agent runs."
         />
       )}
       {rows !== null && rows.length > 0 && totalCost === 0 && totalTokens === 0 && totalEmbedTokens === 0 && (
-        <div className="mb-5 p-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] text-sm text-[var(--color-text-muted)]">
-          <span className="text-[var(--color-text)] font-medium">$0 in this window.</span> The{" "}
-          {totalOps.toLocaleString()} operations counted are all read-only API calls (memory listing, audit reads, etc.)
-          that don't hit a paid provider. Cost shows up here once your agent writes memories (embedder fires), or once
-          the entity_extractor worker is enabled.
+        <div className="mb-5 p-3 rounded-xl border border-border bg-surface-2 text-sm text-text-muted">
+          <span className="text-text font-medium">$0 in this window.</span> The {totalOps.toLocaleString()} operations
+          counted are all read-only API calls (memory listing, audit reads, etc.) that don't hit a paid provider. Cost
+          shows up here once your agent writes memories (embedder fires), or once the entity_extractor worker is
+          enabled.
         </div>
       )}
 
@@ -296,116 +287,100 @@ export function Spending() {
               When everything's null (e.g. all rows are aggregated-without-day
               groups), skip the empty chart entirely. */}
           {days.some(([d]) => d !== "—") && (
-            <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 mb-6">
-              <h2 className="text-sm font-medium text-[var(--color-text-muted)] mb-4">Cost by day</h2>
+            <div className="rounded-2xl border border-border bg-surface p-5 mb-6">
+              <h2 className="text-sm font-medium text-text-muted mb-4">Cost by day</h2>
               <div className="flex items-end gap-2 h-[140px]">
                 {days.map(([day, cost]) => (
                   <div key={day} className="flex-1 flex flex-col items-center gap-1.5">
-                    <div className="text-2xs tabular text-[var(--color-text-muted)]">${cost.toFixed(4)}</div>
+                    <div className="text-2xs tabular text-text-muted">${cost.toFixed(4)}</div>
                     <div
-                      className="w-full bg-[var(--color-accent)] rounded-t"
+                      className="w-full bg-accent rounded-t"
                       style={{ height: `${(cost / maxCost) * 100}%`, minHeight: "2px" }}
                     />
-                    <div className="text-2xs tabular text-[var(--color-text-subtle)]">
-                      {day === "—" ? "—" : day.slice(5)}
-                    </div>
+                    <div className="text-2xs tabular text-text-subtle">{day === "—" ? "—" : day.slice(5)}</div>
                   </div>
                 ))}
               </div>
             </div>
           )}
 
-          <div className="flex items-center justify-between mb-2">
-            <div className="inline-flex items-center gap-2">
-              <h2 className="text-sm font-medium text-[var(--color-text-muted)]">Break down by</h2>
-              <select
-                value={breakdown}
-                onChange={(e) => {
-                  if (isBreakdown(e.target.value)) setBreakdown(e.target.value);
-                }}
-                className="text-xs bg-[var(--color-bg)] border border-[var(--color-border)] rounded-md px-2 py-1"
-                aria-label="Cost breakdown dimension"
-              >
-                <option value="operation">Operation</option>
-                <option value="agent">Agent</option>
-                <option value="user">User</option>
-                {isOrgAdmin && <option value="namespace">Namespace (org-wide)</option>}
-              </select>
-            </div>
-            <label className="inline-flex items-center gap-2 text-xs text-[var(--color-text-muted)] cursor-pointer">
-              <input
-                type="checkbox"
-                checked={showAllOps}
-                onChange={(e) => setShowAllOps(e.target.checked)}
-                className="accent-[var(--color-accent)]"
-              />
-              Show all operations
-              {hiddenCount > 0 && !showAllOps && (
-                <span className="text-[var(--color-text-subtle)] tabular">({hiddenCount} zero-cost rows hidden)</span>
-              )}
-            </label>
+          <div className="flex items-center justify-between gap-4 mb-2">
+            <Select
+              label="Break down by"
+              orientation="horizontal"
+              value={breakdown}
+              onSelect={(value) => {
+                if (isBreakdown(value)) setBreakdown(value);
+              }}
+            >
+              <Select.Item value="operation">Operation</Select.Item>
+              <Select.Item value="agent">Agent</Select.Item>
+              <Select.Item value="user">User</Select.Item>
+              {isOrgAdmin && <Select.Item value="namespace">Namespace (org-wide)</Select.Item>}
+            </Select>
+            <Checkbox
+              label={
+                <>
+                  Show all operations
+                  {hiddenCount > 0 && !showAllOps && (
+                    <span className="ml-1 text-text-subtle tabular">({hiddenCount} zero-cost rows hidden)</span>
+                  )}
+                </>
+              }
+              checked={showAllOps}
+              onCheckedChange={(c) => setShowAllOps(c === true)}
+            />
           </div>
           {visibleRows.length === 0 && (
-            <div className="p-6 text-center text-sm text-[var(--color-text-muted)] bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)]">
+            <div className="p-6 text-center text-sm text-text-muted bg-surface rounded-xl border border-border">
               No cost-bearing operations in this window. Toggle "Show all operations" to see read-only API activity.
             </div>
           )}
           {visibleRows.length > 0 && (
-            <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-              <table className="w-full text-sm">
-                <thead className="text-2xs text-[var(--color-text-muted)] bg-[var(--color-surface-2)]">
-                  <tr>
-                    <th className="text-left px-3 py-2">Day</th>
-                    {dimColumns.map((c) => (
-                      <th key={c.header} className="text-left px-3 py-2">
-                        {c.header}
-                      </th>
-                    ))}
-                    <th className="text-right px-3 py-2">Ops</th>
-                    <th className="text-right px-3 py-2">Err</th>
-                    <th className="text-right px-3 py-2">Tokens</th>
-                    <th className="text-right px-3 py-2">p95 ms</th>
-                    <th className="text-right px-3 py-2">$</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibleRows.map((r, i) => (
-                    <tr key={i} className="border-t border-[var(--color-border)]">
-                      <td className="px-3 py-2 font-mono text-2xs tabular text-[var(--color-text-muted)]">
-                        {r.day || "—"}
-                      </td>
-                      {dimColumns.map((c, j) => (
-                        <td key={j} className={`px-3 py-2 ${c.cls ? c.cls(r) : ""}`}>
-                          {c.cell(r)}
-                        </td>
-                      ))}
-                      <td className="px-3 py-2 text-right tabular">{fmt(r.ops)}</td>
-                      <td
-                        className={`px-3 py-2 text-right tabular ${r.errors > 0 ? "text-[var(--color-danger)]" : "text-[var(--color-text-subtle)]"}`}
-                      >
+            <Table
+              size="sm"
+              headers={[
+                { label: "Day", width: "110px" },
+                ...dimColumns.map((c) => ({ label: c.header })),
+                { label: "Ops", width: "70px" },
+                { label: "Err", width: "60px" },
+                { label: "Tokens" },
+                { label: "p95 ms", width: "80px" },
+                { label: "$", width: "90px" },
+              ]}
+              rows={visibleRows.map((r, i) => ({
+                id: i,
+                items: [
+                  { label: <span className="font-mono text-2xs tabular text-text-muted">{r.day || "—"}</span> },
+                  ...dimColumns.map((c) => ({ label: c.cell(r) })),
+                  { label: <span className="tabular">{fmt(r.ops)}</span> },
+                  {
+                    label: (
+                      <span className={`tabular ${r.errors > 0 ? "text-danger" : "text-text-subtle"}`}>
                         {r.errors || ""}
-                      </td>
-                      <td className="px-3 py-2 text-right tabular text-2xs">
+                      </span>
+                    ),
+                  },
+                  {
+                    label: (
+                      <span className="tabular text-2xs">
                         {fmt(r.tokens)}
-                        {r.embed_tokens > 0 && (
-                          <span className="text-[var(--color-text-subtle)]"> + {fmt(r.embed_tokens)} embed</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2 text-right tabular text-2xs text-[var(--color-text-muted)]">
-                        {Math.round(r.latency_p95_ms)}
-                      </td>
-                      <td className="px-3 py-2 text-right tabular font-mono">
-                        {r.cost_usd > 0 ? (
-                          `$${r.cost_usd.toFixed(4)}`
-                        ) : (
-                          <span className="text-[var(--color-text-subtle)]">—</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                        {r.embed_tokens > 0 && <span className="text-text-subtle"> + {fmt(r.embed_tokens)} embed</span>}
+                      </span>
+                    ),
+                  },
+                  { label: <span className="tabular text-2xs text-text-muted">{Math.round(r.latency_p95_ms)}</span> },
+                  {
+                    label:
+                      r.cost_usd > 0 ? (
+                        <span className="tabular font-mono">${r.cost_usd.toFixed(4)}</span>
+                      ) : (
+                        <span className="text-text-subtle">—</span>
+                      ),
+                  },
+                ],
+              }))}
+            />
           )}
         </>
       )}
@@ -413,12 +388,21 @@ export function Spending() {
   );
 }
 
+function agentCell(r: CostRow): ReactNode {
+  if (!r.agent) return <span className="text-text-subtle">—</span>;
+  return SENTINEL_AGENTS.has(r.agent) ? (
+    <span className="italic text-text-muted">{displayAgent(r.agent)}</span>
+  ) : (
+    displayAgent(r.agent)
+  );
+}
+
 function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
-    <div className="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
-      <div className="text-xs text-[var(--color-text-muted)] mb-1">{label}</div>
+    <div className="p-4 rounded-xl border border-border bg-surface">
+      <div className="text-xs text-text-muted mb-1">{label}</div>
       <div className="text-xl font-semibold tabular tracking-tight">{value}</div>
-      {hint && <div className="text-2xs text-[var(--color-text-subtle)] mt-1">{hint}</div>}
+      {hint && <div className="text-2xs text-text-subtle mt-1">{hint}</div>}
     </div>
   );
 }
@@ -451,17 +435,20 @@ function BudgetCapEditor({
 
   if (!editing) {
     return (
-      <button
-        type="button"
-        onClick={() => {
-          setDraft(String(currentCap || 0));
-          setEditing(true);
-        }}
-        className="inline-flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text)] shrink-0"
-        title="Edit this namespace's daily LLM budget"
-      >
-        <Pencil size={11} /> Edit cap
-      </button>
+      <Tip content="Edit this namespace's daily LLM budget">
+        <Button
+          type="empty"
+          htmlType="button"
+          iconLeft="pencil"
+          className="shrink-0"
+          onClick={() => {
+            setDraft(String(currentCap || 0));
+            setEditing(true);
+          }}
+        >
+          Edit cap
+        </Button>
+      </Tip>
     );
   }
 
@@ -496,40 +483,24 @@ function BudgetCapEditor({
 
   return (
     <div className="inline-flex items-center gap-1.5 shrink-0">
-      <span className="text-2xs text-[var(--color-text-muted)]">$</span>
-      <input
-        aria-label="Daily LLM budget cap in dollars"
-        type="number"
-        step="0.01"
-        min="0"
-        autoFocus
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") void save();
-          if (e.key === "Escape") setEditing(false);
-        }}
-        disabled={busy}
-        className="w-24 px-2 py-1 text-xs tabular bg-[var(--color-bg)] border border-[var(--color-border)] rounded-md disabled:opacity-50"
-      />
-      <button
-        type="button"
-        onClick={save}
-        disabled={busy}
-        className="p-1 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-success)] disabled:opacity-50"
-        aria-label="Save"
-      >
-        <Check size={13} />
-      </button>
-      <button
-        type="button"
-        onClick={() => setEditing(false)}
-        disabled={busy}
-        className="p-1 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"
-        aria-label="Cancel"
-      >
-        <XIcon size={13} />
-      </button>
+      <div className="w-32">
+        <NumberField
+          aria-label="Daily LLM budget cap in dollars"
+          startContent="$"
+          step="0.01"
+          min="0"
+          autoFocus
+          value={draft}
+          onChange={(value) => setDraft(value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void save();
+            if (e.key === "Escape") setEditing(false);
+          }}
+          disabled={busy}
+        />
+      </div>
+      <IconButton label="Save" icon="check" size="sm" onClick={save} disabled={busy} />
+      <IconButton label="Cancel" icon="cross" size="sm" onClick={() => setEditing(false)} disabled={busy} />
     </div>
   );
 }

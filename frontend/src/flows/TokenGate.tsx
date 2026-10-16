@@ -1,6 +1,11 @@
-import { useState } from "react";
-import { Workflow, UserPlus, LogIn } from "lucide-react";
-import * as Tabs from "@radix-ui/react-tabs";
+import { useState, type FormEvent } from "react";
+import { Alert } from "@clickhouse/click-ui/Alert";
+import { Button } from "@clickhouse/click-ui/Button";
+import { Icon } from "@clickhouse/click-ui/Icon";
+import { PasswordField } from "@clickhouse/click-ui/PasswordField";
+import { Tabs } from "@clickhouse/click-ui/Tabs";
+import { TextField } from "@clickhouse/click-ui/TextField";
+import { Panel } from "../components/ui/Panel";
 import { selfSignup, setToken, loginWithPassword } from "../api";
 import { errorRequestId, humanizeError } from "../lib/format";
 import type { GateReason } from "../lib/state";
@@ -46,8 +51,9 @@ export function TokenGate({ onLogin, reason = null }: TokenGateProps) {
 
   const validEmail = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
 
-  // Enter reaches these without the button's disabled state, so they check busy themselves.
-  const doSignin = async () => {
+  // Enter submits the form without the button's disabled state, so these check busy themselves.
+  const doSignin = async (e: FormEvent) => {
+    e.preventDefault();
     if (busy) return;
     const ident = signinIdent.trim();
     if (!ident || !signinPassword) return;
@@ -66,7 +72,8 @@ export function TokenGate({ onLogin, reason = null }: TokenGateProps) {
     }
   };
 
-  const doSignup = async () => {
+  const doSignup = async (e: FormEvent) => {
+    e.preventDefault();
     if (busy) return;
     const ns = name.trim();
     const email = signupEmail.trim().toLowerCase();
@@ -102,184 +109,166 @@ export function TokenGate({ onLogin, reason = null }: TokenGateProps) {
   };
 
   return (
-    <main className="min-h-screen flex items-center justify-center px-4 bg-[var(--color-bg)]">
+    <main className="flex min-h-screen items-center justify-center bg-bg px-4">
       <div className="w-full max-w-md">
-        <header className="flex items-center gap-2 mb-6">
-          <div className="w-10 h-10 rounded-xl bg-[var(--color-accent)] grid place-items-center" aria-hidden="true">
-            <Workflow size={20} className="text-[var(--color-on-accent)]" />
+        <header className="mb-6 flex items-center gap-2">
+          <div className="grid h-10 w-10 place-items-center rounded-lg bg-accent text-on-accent" aria-hidden="true">
+            <Icon name="tree-structure" size="md" aria-hidden="true" />
           </div>
           <div>
-            <h1 className="text-xl font-semibold tracking-tight m-0">Loom</h1>
-            <div className="text-xs text-[var(--color-text-muted)]">memory for your AI agents</div>
+            <h1 className="m-0 text-xl font-semibold tracking-tight">Loom</h1>
+            <div className="text-xs text-text-muted">memory for your AI agents</div>
           </div>
         </header>
 
-        <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-sm">
+        <Panel className="space-y-4">
           {reason === "expired" && (
-            <p
-              role="status"
-              className="mb-4 px-3 py-2 text-xs rounded-md bg-[var(--color-surface-2)] text-[var(--color-text)]"
-            >
-              Your session expired — sign in again.
-            </p>
+            <div role="status">
+              <Alert state="neutral" text="Your session expired — sign in again." />
+            </div>
           )}
-          <Tabs.Root
+          <Tabs
             value={mode}
+            ariaLabel="Sign in or sign up"
             onValueChange={(v) => {
               setErr(null);
               setErrRequestId("");
               if (v === "signin" || v === "signup") setMode(v);
             }}
           >
-            <Tabs.List className="inline-flex gap-1 p-1 bg-[var(--color-surface-2)] rounded-lg mb-5 text-xs w-full">
-              <Tabs.Trigger
-                value="signin"
-                className="flex-1 px-3 py-1.5 rounded-md font-medium text-[var(--color-text-muted)] data-[state=active]:bg-[var(--color-surface)] data-[state=active]:text-[var(--color-text)] data-[state=active]:shadow-sm transition-colors"
-              >
-                <span className="inline-flex items-center gap-1.5 justify-center">
-                  <LogIn size={12} /> Sign in
-                </span>
+            <Tabs.TriggersList>
+              <Tabs.Trigger value="signin">
+                <Icon name="enter" size="sm" aria-hidden="true" /> Sign in
               </Tabs.Trigger>
               {signupAvailable !== false && (
-                <Tabs.Trigger
-                  value="signup"
-                  className="flex-1 px-3 py-1.5 rounded-md font-medium text-[var(--color-text-muted)] data-[state=active]:bg-[var(--color-surface)] data-[state=active]:text-[var(--color-text)] data-[state=active]:shadow-sm transition-colors"
-                >
-                  <span className="inline-flex items-center gap-1.5 justify-center">
-                    <UserPlus size={12} /> Sign up
-                  </span>
+                <Tabs.Trigger value="signup">
+                  <Icon name="users" size="sm" aria-hidden="true" /> Sign up
                 </Tabs.Trigger>
               )}
-            </Tabs.List>
+            </Tabs.TriggersList>
 
             <Tabs.Content value="signin">
-              <label htmlFor="gate-signin-ident" className="block text-sm font-medium mb-1">
-                Email or namespace
-              </label>
-              <p id="gate-signin-ident-help" className="text-xs text-[var(--color-text-muted)] mb-2">
-                The email you signed up with, or the name you picked at sign-up.
-              </p>
-              <input
-                id="gate-signin-ident"
-                aria-describedby="gate-signin-ident-help"
-                title="The email you signed up with, or the name you picked at sign-up"
-                value={signinIdent}
-                onChange={(e) => setSigninIdent(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && doSignin()}
-                placeholder="you@example.com"
-                autoFocus
-                className="w-full px-3 py-2.5 text-base rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] outline-none focus:border-[var(--color-accent)] mb-3"
-              />
-              <label htmlFor="gate-signin-password" className="block text-sm font-medium mb-1">
-                Password
-              </label>
-              <input
-                id="gate-signin-password"
-                type="password"
-                value={signinPassword}
-                onChange={(e) => setSigninPassword(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && doSignin()}
-                placeholder="•••••••"
-                className="w-full px-3 py-2.5 text-base rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] outline-none focus:border-[var(--color-accent)]"
-              />
-              <button
-                type="button"
-                onClick={doSignin}
-                disabled={busy || !signinIdent.trim() || !signinPassword}
-                className="mt-4 w-full px-4 py-2.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-lg hover:bg-[var(--color-accent-strong)] disabled:opacity-50"
-              >
-                {busy ? "Signing in…" : "Sign in"}
-              </button>
+              <form onSubmit={doSignin} className="space-y-3 pt-5">
+                <div>
+                  <TextField
+                    id="gate-signin-ident"
+                    label="Email or namespace"
+                    aria-describedby="gate-signin-ident-help"
+                    value={signinIdent}
+                    onChange={setSigninIdent}
+                    placeholder="you@example.com"
+                    autoComplete="username"
+                    autoFocus
+                  />
+                  <p id="gate-signin-ident-help" className="mt-1 text-xs text-text-muted">
+                    The email you signed up with, or the name you picked at sign-up.
+                  </p>
+                </div>
+                <PasswordField
+                  id="gate-signin-password"
+                  label="Password"
+                  value={signinPassword}
+                  onChange={setSigninPassword}
+                  placeholder="•••••••"
+                  autoComplete="current-password"
+                />
+                <Button
+                  type="primary"
+                  htmlType="submit"
+                  fillWidth
+                  loading={busy}
+                  disabled={busy || !signinIdent.trim() || !signinPassword}
+                >
+                  Sign in
+                </Button>
+              </form>
             </Tabs.Content>
 
             <Tabs.Content value="signup">
-              <label htmlFor="gate-signup-name" className="block text-sm font-medium mb-1">
-                Pick a name
-              </label>
-              <p className="text-xs text-[var(--color-text-muted)] mb-2">
-                Used as your identity. Examples: <span className="font-mono">alice</span>,{" "}
-                <span className="font-mono">clickhouse-eng</span>.
-              </p>
-              <input
-                id="gate-signup-name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="alice"
-                className="w-full px-3 py-2.5 text-base rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] outline-none focus:border-[var(--color-accent)] mb-3"
-              />
-              <label htmlFor="gate-signup-email" className="block text-sm font-medium mb-1">
-                Email
-              </label>
-              <input
-                id="gate-signup-email"
-                type="email"
-                value={signupEmail}
-                onChange={(e) => setSignupEmail(e.target.value)}
-                placeholder="you@example.com"
-                className="w-full px-3 py-2.5 text-base rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] outline-none focus:border-[var(--color-accent)] mb-3"
-              />
-              <label htmlFor="gate-signup-password" className="block text-sm font-medium mb-1">
-                Password
-              </label>
-              <p className="text-xs text-[var(--color-text-muted)] mb-2">
-                At least 8 characters. Save it in your password manager — Loom has no reset flow.
-              </p>
-              <input
-                id="gate-signup-password"
-                type="password"
-                value={signupPassword}
-                onChange={(e) => setSignupPassword(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && doSignup()}
-                placeholder="•••••••"
-                className="w-full px-3 py-2.5 text-base rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] outline-none focus:border-[var(--color-accent)]"
-              />
-              {name.trim() && (
-                <div className="mt-3 px-3 py-2 text-xs text-[var(--color-text-muted)] bg-[var(--color-surface-2)] rounded-md">
-                  You'll own <span className="font-mono text-[var(--color-text)]">{name.trim()}</span> — your private
-                  space. You can create more namespaces later from the dashboard.
+              <form onSubmit={doSignup} className="space-y-3 pt-5">
+                <div>
+                  <TextField
+                    id="gate-signup-name"
+                    label="Pick a name"
+                    aria-describedby="gate-signup-name-help"
+                    value={name}
+                    onChange={setName}
+                    placeholder="alice"
+                  />
+                  <p id="gate-signup-name-help" className="mt-1 text-xs text-text-muted">
+                    Used as your identity. Examples: <span className="font-mono">alice</span>,{" "}
+                    <span className="font-mono">clickhouse-eng</span>.
+                  </p>
                 </div>
-              )}
-              <button
-                type="button"
-                onClick={doSignup}
-                disabled={busy || !name.trim() || !signupEmail.trim() || signupPassword.length < 8}
-                className="mt-4 w-full px-4 py-2.5 text-sm font-medium bg-[var(--color-accent)] text-[var(--color-on-accent)] rounded-lg hover:bg-[var(--color-accent-strong)] disabled:opacity-50"
-              >
-                {busy ? "Signing up…" : "Sign up"}
-              </button>
+                <TextField
+                  id="gate-signup-email"
+                  label="Email"
+                  type="email"
+                  value={signupEmail}
+                  onChange={setSignupEmail}
+                  placeholder="you@example.com"
+                  autoComplete="email"
+                />
+                <div>
+                  <PasswordField
+                    id="gate-signup-password"
+                    label="Password"
+                    aria-describedby="gate-signup-password-help"
+                    value={signupPassword}
+                    onChange={setSignupPassword}
+                    placeholder="•••••••"
+                    autoComplete="new-password"
+                  />
+                  <p id="gate-signup-password-help" className="mt-1 text-xs text-text-muted">
+                    At least 8 characters. Save it in your password manager — Loom has no reset flow.
+                  </p>
+                </div>
+                {name.trim() && (
+                  <p className="rounded bg-surface-2 px-3 py-2 text-xs text-text-muted">
+                    You'll own <span className="font-mono text-text">{name.trim()}</span> — your private space. You can
+                    create more namespaces later from the dashboard.
+                  </p>
+                )}
+                <Button
+                  type="primary"
+                  htmlType="submit"
+                  fillWidth
+                  loading={busy}
+                  disabled={busy || !name.trim() || !signupEmail.trim() || signupPassword.length < 8}
+                >
+                  Sign up
+                </Button>
+              </form>
             </Tabs.Content>
-          </Tabs.Root>
+          </Tabs>
 
           {err && (
-            <div role="alert" className="mt-3 px-3 py-2 text-xs text-danger bg-danger/15 rounded-md">
-              {err}
-              {errRequestId && <div className="mt-1 font-mono opacity-80">request id {errRequestId}</div>}
+            <div role="alert">
+              <Alert
+                state="danger"
+                text={
+                  <>
+                    {err}
+                    {errRequestId && <div className="mt-1 font-mono">request id {errRequestId}</div>}
+                  </>
+                }
+              />
             </div>
           )}
-        </div>
+        </Panel>
 
-        <p className="text-center mt-5 text-2xs text-[var(--color-text-subtle)]">
+        <p className="mt-5 text-center text-2xs text-text-subtle">
           Loom doesn't email-verify on signup. Run it behind a VPN, intranet, or auth proxy if exposed.
         </p>
-        <p className="text-center mt-2 text-2xs text-[var(--color-text-subtle)] leading-relaxed">
+        <p className="mt-2 text-center text-2xs leading-relaxed text-text-subtle">
           Running this yourself? Mint a token with <code>loom mint-token …</code> and open{" "}
           <code>&lt;server&gt;/#token=&lt;jwt&gt;</code>, or set <code>LOOM_AUTH_REQUIRED=false</code> for a single-user
           install. See{" "}
-          <a
-            href={DOCS_TOKENS_URL}
-            target="_blank"
-            rel="noreferrer"
-            className="underline hover:text-[var(--color-text)]"
-          >
+          <a href={DOCS_TOKENS_URL} target="_blank" rel="noreferrer">
             Tokens and grants
           </a>{" "}
           and the{" "}
-          <a
-            href={DOCS_QUICKSTART_URL}
-            target="_blank"
-            rel="noreferrer"
-            className="underline hover:text-[var(--color-text)]"
-          >
+          <a href={DOCS_QUICKSTART_URL} target="_blank" rel="noreferrer">
             Quickstart
           </a>
           .

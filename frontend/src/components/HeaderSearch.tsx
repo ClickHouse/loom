@@ -1,6 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import * as Popover from "@radix-ui/react-popover";
-import { Search, Hash, Folder, FileText, Book, User as UserIcon } from "lucide-react";
+import * as RadixPopover from "@radix-ui/react-popover";
+import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
+import { Button } from "@clickhouse/click-ui/Button";
+import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
+import { Popover } from "@clickhouse/click-ui/Popover";
+import { SearchField } from "@clickhouse/click-ui/SearchField";
 import {
   listMemories,
   browseNamespaces,
@@ -19,6 +23,7 @@ import { sharedMine } from "../lib/sharedReads";
 import { useStore, viewHref } from "../lib/state";
 import { useAbortableEffect } from "../lib/hooks";
 import { relativeTime } from "../lib/format";
+import { Kbd } from "./ui";
 
 /** The memory group is server-side memory.search: a debounced call per settled query,
  *  aborted by the next keystroke. */
@@ -382,18 +387,14 @@ export function HeaderSearch({
   const offDoc = offMem + memoryShown.length;
 
   return (
-    <Popover.Root open={popoverOpen} onOpenChange={setOpen}>
-      <Popover.Anchor asChild>
+    <Popover open={popoverOpen} onOpenChange={setOpen}>
+      <RadixPopover.Anchor asChild>
         <div className="relative w-full">
-          <Search
-            size={13}
-            className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-subtle)] pointer-events-none"
-          />
-          <input
+          <SearchField
             ref={inputRef}
             value={q}
-            onChange={(e) => {
-              setQ(e.target.value);
+            onChange={(v) => {
+              setQ(v);
               setOpen(true);
             }}
             onFocus={() => setOpen(true)}
@@ -405,234 +406,222 @@ export function HeaderSearch({
             // hint beside it says so) so the first input Tab reaches is
             // the entity box, not a look-alike search.
             tabIndex={view === "graph" ? -1 : undefined}
-            className="w-full h-8 pl-8 pr-14 text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md outline-none focus:border-[var(--color-accent)] focus:bg-[var(--color-surface)] focus:ring-2 focus:ring-[var(--color-accent)]/15 transition-colors placeholder:text-[var(--color-text-subtle)]"
           />
-          <kbd className="absolute right-2.5 top-1/2 -translate-y-1/2 font-mono text-2xs px-1.5 py-0.5 bg-[var(--color-bg)] border border-[var(--color-border)] rounded text-[var(--color-text-subtle)] pointer-events-none hidden sm:inline">
-            ⌘K
-          </kbd>
+          {!q && (
+            <Kbd className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none hidden sm:inline-flex">
+              ⌘K
+            </Kbd>
+          )}
         </div>
-      </Popover.Anchor>
-      <Popover.Portal>
-        <Popover.Content
-          align="start"
-          sideOffset={4}
-          onOpenAutoFocus={(e) => e.preventDefault()}
-          className="z-50 w-[var(--radix-popover-trigger-width)] max-h-[70vh] overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl py-2"
-        >
-          {q.length === 0 && (
-            <EmptyState
-              recentMemories={recent.slice(0, 3)}
-              profileLabels={profileSections.slice(0, 3)}
-              onMemory={openMemory}
-              onProfile={openProfileSection}
+      </RadixPopover.Anchor>
+      <Popover.Content
+        align="start"
+        onOpenAutoFocus={(e) => e.preventDefault()}
+        className="w-(--radix-popover-trigger-width) max-h-[70vh] overflow-y-auto"
+      >
+        {q.length === 0 && (
+          <EmptyState
+            recentMemories={recent.slice(0, 3)}
+            profileLabels={profileSections.slice(0, 3)}
+            onMemory={openMemory}
+            onProfile={openProfileSection}
+          />
+        )}
+
+        {q.length > 0 && !hasResults && (memoryPending ? <Searching /> : <NoResults q={q} />)}
+
+        {hasResults && (
+          <div className="pb-1.5 text-xs text-text-subtle flex items-center justify-between">
+            <span>
+              {[
+                matchedNamespaces.length > 0 &&
+                  `${matchedNamespaces.length} namespace${matchedNamespaces.length === 1 ? "" : "s"}`,
+                matchedProfile.length > 0 && `${matchedProfile.length} profile`,
+                matchedDocuments.length > 0 &&
+                  `${matchedDocuments.length} document${matchedDocuments.length === 1 ? "" : "s"}`,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </span>
+            <span className="font-mono">↑↓ navigate · ↵ open</span>
+          </div>
+        )}
+
+        {namespacesShown.length > 0 && (
+          <div className="mb-1">
+            <GroupHeader icon="folder-closed" label="Jump to" />
+            {namespacesShown.map((r, i) => {
+              const idx = offNs + i;
+              const isActive = idx === activeIdx;
+              return (
+                <a
+                  key={r.namespace}
+                  href={viewHref("memories")}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    switchNs(r.namespace);
+                  }}
+                  onMouseEnter={() => setActiveIdx(idx)}
+                  className={rowClass(isActive)}
+                >
+                  <div className="flex items-center gap-2">
+                    <TypeChip label="namespace" />
+                    <span className="font-mono text-sm">{r.namespace}</span>
+                    <Badge text={r.visibility} size="sm" state={r.visibility === "public" ? "success" : "default"} />
+                    {!r.joined && <span className="text-2xs text-text-subtle">not joined</span>}
+                  </div>
+                  {r.description && <div className="text-xs text-text-muted mt-0.5 truncate">{r.description}</div>}
+                </a>
+              );
+            })}
+          </div>
+        )}
+
+        {profileShown.length > 0 && (
+          <div>
+            <GroupHeader icon="user" label="Profile" />
+            {profileShown.map((s, i) => {
+              const idx = offProfile + i;
+              const isActive = idx === activeIdx;
+              return (
+                <button
+                  type="button"
+                  key={s.label}
+                  onClick={() => openProfileSection(s.label)}
+                  onMouseEnter={() => setActiveIdx(idx)}
+                  className={`text-left w-[calc(100%+1rem)] ${rowClass(isActive)}`}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <TypeChip label="profile" />
+                    <span className="font-mono text-sm truncate">{s.label}</span>
+                  </div>
+                  <div className="text-xs text-text-muted mt-0.5 truncate">{truncateForRow(s.value)}</div>
+                </button>
+              );
+            })}
+            <MoreLink
+              shown={profileShown.length}
+              total={matchedProfile.length}
+              label="profile section"
+              onClick={() => {
+                setView("profile");
+                setOpen(false);
+              }}
             />
-          )}
+          </div>
+        )}
 
-          {q.length > 0 && !hasResults && (memoryPending ? <Searching /> : <NoResults q={q} />)}
+        {memoryShown.length > 0 && (
+          <div>
+            <GroupHeader icon="document" label="Best matches" />
+            {memoryShown.map((e, i) => {
+              const idx = offMem + i;
+              const isActive = idx === activeIdx;
+              return (
+                <button
+                  type="button"
+                  key={`${e.agent || ""}::${e.memory_key}`}
+                  onClick={() => openMemory({ memory_key: e.memory_key, agent: e.agent || "" })}
+                  onMouseEnter={() => setActiveIdx(idx)}
+                  className={`text-left w-[calc(100%+1rem)] ${rowClass(isActive)}`}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <TypeChip label="memory" />
+                    <span className="font-mono text-sm truncate">{e.memory_key}</span>
+                    <span className="text-2xs text-text-subtle shrink-0 ml-auto">
+                      {e.memory_type}
+                      {e.created_at ? ` · ${relativeTime(e.created_at)}` : ""}
+                    </span>
+                  </div>
+                  <div className="text-xs text-text-muted mt-0.5 truncate">
+                    {e.agent ? (
+                      <>
+                        <span className="text-text-subtle">{e.agent}</span> ·{" "}
+                      </>
+                    ) : null}
+                    {e.content_excerpt || "(empty)"}
+                  </div>
+                </button>
+              );
+            })}
+            <Button
+              type="empty"
+              htmlType="button"
+              align="left"
+              fillWidth
+              iconRight="arrow-right"
+              onClick={() => {
+                setView("memories");
+                setOpen(false);
+              }}
+            >
+              Search all memories
+            </Button>
+          </div>
+        )}
 
-          {hasResults && (
-            <div className="px-4 pb-1.5 text-2xs text-[var(--color-text-subtle)] flex items-center justify-between">
-              <span>
-                {[
-                  matchedNamespaces.length > 0 &&
-                    `${matchedNamespaces.length} namespace${matchedNamespaces.length === 1 ? "" : "s"}`,
-                  matchedProfile.length > 0 && `${matchedProfile.length} profile`,
-                  matchedDocuments.length > 0 &&
-                    `${matchedDocuments.length} document${matchedDocuments.length === 1 ? "" : "s"}`,
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </span>
-              <span className="font-mono">↑↓ navigate · ↵ open</span>
-            </div>
-          )}
-
-          {namespacesShown.length > 0 && (
-            <div className="mb-1">
-              <GroupHeader icon={Folder} label="Jump to" />
-              {namespacesShown.map((r, i) => {
-                const idx = offNs + i;
-                const isActive = idx === activeIdx;
-                return (
-                  <a
-                    key={r.namespace}
-                    href={viewHref("memories")}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      switchNs(r.namespace);
-                    }}
-                    onMouseEnter={() => setActiveIdx(idx)}
-                    className={rowClass(isActive)}
-                  >
-                    <div className="flex items-center gap-2">
-                      <TypeChip label="namespace" />
-                      <span className="font-mono text-sm">{r.namespace}</span>
-                      <span
-                        className={`text-2xs px-1.5 py-0.5 rounded ${r.visibility === "public" ? "bg-success/15 text-success" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}
-                      >
-                        {r.visibility}
-                      </span>
-                      {!r.joined && <span className="text-2xs text-[var(--color-text-subtle)]">not joined</span>}
-                    </div>
-                    {r.description && (
-                      <div className="text-xs text-[var(--color-text-muted)] mt-0.5 truncate">{r.description}</div>
-                    )}
-                  </a>
-                );
-              })}
-            </div>
-          )}
-
-          {profileShown.length > 0 && (
-            <div>
-              <GroupHeader icon={UserIcon} label="Profile" />
-              {profileShown.map((s, i) => {
-                const idx = offProfile + i;
-                const isActive = idx === activeIdx;
-                return (
-                  <button
-                    type="button"
-                    key={s.label}
-                    onClick={() => openProfileSection(s.label)}
-                    onMouseEnter={() => setActiveIdx(idx)}
-                    className={`w-full text-left ${rowClass(isActive)}`}
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <TypeChip label="profile" />
-                      <span className="font-mono text-sm truncate">{s.label}</span>
-                    </div>
-                    <div className="text-xs text-[var(--color-text-muted)] mt-0.5 truncate">
-                      {truncateForRow(s.value)}
-                    </div>
-                  </button>
-                );
-              })}
-              <MoreLink
-                shown={profileShown.length}
-                total={matchedProfile.length}
-                label="profile section"
-                onClick={() => {
-                  setView("profile");
-                  setOpen(false);
-                }}
-              />
-            </div>
-          )}
-
-          {memoryShown.length > 0 && (
-            <div>
-              <GroupHeader icon={FileText} label="Best matches" />
-              {memoryShown.map((e, i) => {
-                const idx = offMem + i;
-                const isActive = idx === activeIdx;
-                return (
-                  <button
-                    type="button"
-                    key={`${e.agent || ""}::${e.memory_key}`}
-                    onClick={() => openMemory({ memory_key: e.memory_key, agent: e.agent || "" })}
-                    onMouseEnter={() => setActiveIdx(idx)}
-                    className={`w-full text-left ${rowClass(isActive)}`}
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <TypeChip label="memory" />
-                      <span className="font-mono text-sm truncate">{e.memory_key}</span>
-                      <span className="text-2xs text-[var(--color-text-subtle)] shrink-0 ml-auto">
-                        {e.memory_type}
-                        {e.created_at ? ` · ${relativeTime(e.created_at)}` : ""}
-                      </span>
-                    </div>
-                    <div className="text-xs text-[var(--color-text-muted)] mt-0.5 truncate">
-                      {e.agent ? (
-                        <>
-                          <span className="text-[var(--color-text-subtle)]">{e.agent}</span> ·{" "}
-                        </>
-                      ) : null}
-                      {e.content_excerpt || "(empty)"}
-                    </div>
-                  </button>
-                );
-              })}
-              <button
-                type="button"
-                onClick={() => {
-                  setView("memories");
-                  setOpen(false);
-                }}
-                className="block w-full px-4 py-1.5 text-2xs text-[var(--color-text-muted)] hover:text-[var(--color-accent)] text-left"
-              >
-                Search all memories →
-              </button>
-            </div>
-          )}
-
-          {documentsShown.length > 0 && (
-            <div>
-              <GroupHeader icon={Book} label="Library" />
-              {documentsShown.map((d, i) => {
-                const idx = offDoc + i;
-                const isActive = idx === activeIdx;
-                const label = d.title || d.original_filename || d.source_uri;
-                return (
-                  <button
-                    type="button"
-                    key={d.source_uri}
-                    onClick={() => openDocument(d)}
-                    onMouseEnter={() => setActiveIdx(idx)}
-                    className={`w-full text-left ${rowClass(isActive)}`}
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <TypeChip label="library" />
-                      <span className={`text-sm truncate ${d.title ? "" : "font-mono"}`}>{label}</span>
-                      {(d.tags || []).slice(0, 3).map((t) => (
-                        <span
-                          key={t}
-                          className="inline-flex items-center gap-0.5 text-2xs px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)] shrink-0"
-                        >
-                          <Hash size={9} />
-                          {t}
-                        </span>
-                      ))}
-                    </div>
-                    <div className="text-xs text-[var(--color-text-muted)] mt-0.5 truncate">
-                      {d.chunk_count} chunk{d.chunk_count === 1 ? "" : "s"}
-                      {d.description ? ` · ${d.description}` : ""}
-                    </div>
-                  </button>
-                );
-              })}
-              <MoreLink
-                shown={documentsShown.length}
-                total={matchedDocuments.length}
-                label="document"
-                onClick={() => {
-                  setView("knowledge");
-                  setOpen(false);
-                }}
-              />
-            </div>
-          )}
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
+        {documentsShown.length > 0 && (
+          <div>
+            <GroupHeader icon="book" label="Library" />
+            {documentsShown.map((d, i) => {
+              const idx = offDoc + i;
+              const isActive = idx === activeIdx;
+              const label = d.title || d.original_filename || d.source_uri;
+              return (
+                <button
+                  type="button"
+                  key={d.source_uri}
+                  onClick={() => openDocument(d)}
+                  onMouseEnter={() => setActiveIdx(idx)}
+                  className={`text-left w-[calc(100%+1rem)] ${rowClass(isActive)}`}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <TypeChip label="library" />
+                    <span className={`text-sm truncate ${d.title ? "" : "font-mono"}`}>{label}</span>
+                    {(d.tags || []).slice(0, 3).map((t) => (
+                      <Badge key={t} text={`#${t}`} size="sm" className="shrink-0" />
+                    ))}
+                  </div>
+                  <div className="text-xs text-text-muted mt-0.5 truncate">
+                    {d.chunk_count} chunk{d.chunk_count === 1 ? "" : "s"}
+                    {d.description ? ` · ${d.description}` : ""}
+                  </div>
+                </button>
+              );
+            })}
+            <MoreLink
+              shown={documentsShown.length}
+              total={matchedDocuments.length}
+              label="document"
+              onClick={() => {
+                setView("knowledge");
+                setOpen(false);
+              }}
+            />
+          </div>
+        )}
+      </Popover.Content>
+    </Popover>
   );
 }
 
-function GroupHeader({ icon: Icon, label }: { icon: typeof Folder; label: string }) {
+function GroupHeader({ icon, label }: { icon: IconName; label: string }) {
   return (
-    <div className="px-4 py-1 text-xs text-[var(--color-text-subtle)] font-medium flex items-center gap-1">
-      <Icon size={10} /> {label}
+    <div className="section-label py-1 flex items-center gap-1">
+      <Icon name={icon} size="xs" aria-hidden="true" /> {label}
     </div>
   );
 }
 
 function TypeChip({ label }: { label: "namespace" | "profile" | "memory" | "library" }) {
-  const color = {
-    namespace: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]",
-    profile: "bg-cat-5/15 text-cat-5",
-    memory: "bg-info/15 text-info",
-    library: "bg-warn/15 text-warn",
-  }[label];
-  return <span className={`text-xs font-medium px-1.5 py-0.5 rounded shrink-0 ${color}`}>{label}</span>;
+  const states: Record<typeof label, BadgeState> = {
+    namespace: "default",
+    profile: "neutral",
+    memory: "info",
+    library: "warning",
+  };
+  const state = states[label];
+  return <Badge text={label} state={state} size="sm" className="shrink-0" />;
 }
 
 function MoreLink({
@@ -652,18 +641,14 @@ function MoreLink({
   const extra = total - shown;
   const word = extra === 1 ? label : pluralLabel || `${label}s`;
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="block w-full px-4 py-1.5 text-2xs text-[var(--color-text-muted)] hover:text-[var(--color-accent)] text-left"
-    >
-      +{extra} more {word} →
-    </button>
+    <Button type="empty" htmlType="button" align="left" fillWidth iconRight="arrow-right" onClick={onClick}>
+      {`+${extra} more ${word}`}
+    </Button>
   );
 }
 
 function rowClass(isActive: boolean): string {
-  return `block px-4 py-2 cursor-pointer ${isActive ? "bg-[var(--color-surface-2)]" : "hover:bg-[var(--color-surface-2)]"}`;
+  return `block -mx-2 px-2 py-2 rounded-sm cursor-pointer no-underline hover:no-underline text-text ${isActive ? "bg-surface-2" : "hover:bg-surface-2"}`;
 }
 
 function EmptyState({
@@ -681,13 +666,13 @@ function EmptyState({
     <div>
       {recentMemories.length > 0 && (
         <div>
-          <GroupHeader icon={FileText} label="Recent memories" />
+          <GroupHeader icon="document" label="Recent memories" />
           {recentMemories.map((e) => (
             <button
               type="button"
               key={`${e.agent}::${e.memory_key}`}
               onClick={() => onMemory(e)}
-              className="w-full text-left block px-4 py-1.5 cursor-pointer hover:bg-[var(--color-surface-2)]"
+              className="text-left block -mx-2 w-[calc(100%+1rem)] px-2 py-1.5 rounded-sm cursor-pointer hover:bg-surface-2"
             >
               <div className="flex items-center gap-2 min-w-0">
                 <TypeChip label="memory" />
@@ -699,13 +684,13 @@ function EmptyState({
       )}
       {profileLabels.length > 0 && (
         <div className="mt-1">
-          <GroupHeader icon={UserIcon} label="Your profile" />
+          <GroupHeader icon="user" label="Your profile" />
           {profileLabels.map((s) => (
             <button
               type="button"
               key={s.label}
               onClick={() => onProfile(s.label)}
-              className="w-full text-left block px-4 py-1.5 cursor-pointer hover:bg-[var(--color-surface-2)]"
+              className="text-left block -mx-2 w-[calc(100%+1rem)] px-2 py-1.5 rounded-sm cursor-pointer hover:bg-surface-2"
             >
               <div className="flex items-center gap-2 min-w-0">
                 <TypeChip label="profile" />
@@ -715,30 +700,22 @@ function EmptyState({
           ))}
         </div>
       )}
-      <div className="px-4 pt-2 pb-1 text-xs text-[var(--color-text-subtle)] font-medium border-t border-[var(--color-border)] mt-2">
-        Syntax
-      </div>
-      <div className="px-4 pb-2 space-y-1 text-xs text-[var(--color-text-muted)]">
+      <div className="section-label pt-2 pb-1 border-t border-border mt-2">Syntax</div>
+      <div className="pb-1 space-y-1 text-xs text-text-muted">
         <div className="flex items-baseline gap-2">
-          <code className="font-mono text-2xs px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text)]">
-            coffee
-          </code>
+          <code className="font-mono text-2xs px-1.5 py-0.5 rounded-sm bg-surface-2 text-text">coffee</code>
           <span>match across profile, memory, library</span>
         </div>
         <div className="flex items-baseline gap-2">
-          <code className="font-mono text-2xs px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text)]">
-            tag:work
-          </code>
+          <code className="font-mono text-2xs px-1.5 py-0.5 rounded-sm bg-surface-2 text-text">tag:work</code>
           <span>memories + library tagged work (partial OK)</span>
         </div>
         <div className="flex items-baseline gap-2">
-          <code className="font-mono text-2xs px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text)]">
-            namespace:qa
-          </code>
+          <code className="font-mono text-2xs px-1.5 py-0.5 rounded-sm bg-surface-2 text-text">namespace:qa</code>
           <span>jump to a namespace</span>
         </div>
         <div className="flex items-baseline gap-2">
-          <code className="font-mono text-2xs px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text)]">
+          <code className="font-mono text-2xs px-1.5 py-0.5 rounded-sm bg-surface-2 text-text">
             type:profile|memory|doc
           </code>
           <span>constrain to one content type</span>
@@ -750,7 +727,7 @@ function EmptyState({
 
 function Searching() {
   return (
-    <div className="px-4 py-5 text-sm text-[var(--color-text-muted)] text-center" aria-live="polite">
+    <div className="py-5 text-sm text-text-muted text-center" aria-live="polite">
       Searching…
     </div>
   );
@@ -758,11 +735,11 @@ function Searching() {
 
 function NoResults({ q }: { q: string }) {
   return (
-    <div className="px-4 py-5 text-sm text-[var(--color-text-muted)] text-center">
+    <div className="py-5 text-sm text-text-muted text-center">
       <div>
-        No matches for <span className="font-mono text-[var(--color-text)]">{q}</span>
+        No matches for <span className="font-mono text-text">{q}</span>
       </div>
-      <div className="text-2xs text-[var(--color-text-subtle)] mt-1.5">
+      <div className="text-2xs text-text-subtle mt-1.5">
         Try <code className="font-mono">tag:</code>, <code className="font-mono">namespace:</code>, or{" "}
         <code className="font-mono">type:</code>.
       </div>

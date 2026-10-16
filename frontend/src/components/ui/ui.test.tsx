@@ -66,7 +66,7 @@ describe("Chip", () => {
     );
     const chip = screen.getByRole("button", { name: "semantic, 9518 in namespace" });
     expect(chip).toHaveAttribute("aria-pressed", "true");
-    expect(chip.className).toContain("min-h-7");
+    expect(chip.className).toContain("min-h-6");
     await userEvent.click(chip);
     expect(onClick).toHaveBeenCalledOnce();
     expect(await axeViolations(container)).toEqual([]);
