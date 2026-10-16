@@ -37,6 +37,9 @@ import { relationLabel, shorten, type Selection, type VisibleTree, type WalkMode
 
 const W = 820;
 const H = 560;
+// Svg units per screen pixel on the 566 px card of a 1400 px window, the scale a first
+// render starts from before the card is measured.
+const USUAL_SCALE = 1.45;
 
 const CATEGORICAL = Array.from({ length: 8 }, (_, i) => `var(--color-cat-${i + 1})`);
 export const COMMUNITY_PALETTE = CATEGORICAL;
@@ -438,8 +441,9 @@ export function Canvas({
   // Canvas text floor: the svg scales with its viewBox, so the card carries
   // `--canvas-scale` = svg units per screen pixel and the stylesheet multiplies
   // --canvas-label-min by it. One DOM write per resize, none on hover; the layout itself
-  // never reads it, the label lengths do (`labelFit`).
-  const [scale, setScale] = useState(1.45);
+  // never reads it. The label lengths do (`labelFit`), from a copy in 0.05 steps, so a
+  // resize re-renders the nodes only when a label could change length.
+  const [scale, setScale] = useState(USUAL_SCALE);
   useEffect(() => {
     const card = cardRef.current;
     if (!card || typeof ResizeObserver === "undefined") return;
@@ -448,7 +452,7 @@ export function Canvas({
       if (fit <= 0) return;
       const next = (1 / fit).toFixed(3);
       card.style.setProperty("--canvas-scale", next);
-      setScale(Number(next));
+      setScale(Math.round(Number(next) * 20) / 20);
     };
     // No getBoundingClientRect on mount — it forced a layout (46 ms at 4x, the top
     // function of the Graph boot); the observer delivers the card's size on its first

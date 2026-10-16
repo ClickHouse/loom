@@ -203,7 +203,7 @@ describe("Conversations: answers follow the current thread and namespace", () =>
   it("opens a listed thread with every agent's turns, and pages it the same way", async () => {
     listConversationThreads.mockResolvedValue({ threads: [summary("thread-y", "Title Y")] });
     getNamespace.mockResolvedValue({ conversation_logging_enabled: true });
-    getConversationThread.mockResolvedValue({ ...detail("thread-y", "Title Y"), msg_count: 2 });
+    getConversationThread.mockResolvedValue({ ...detail("thread-y", "Title Y"), msg_count: 2, next_cursor: "c-1" });
     listMemories.mockResolvedValue(noMemories);
     listConversationMessages.mockResolvedValue({ rows: [], next_cursor: null });
 
@@ -214,6 +214,8 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     expect(getConversationThread).toHaveBeenCalledTimes(1);
     expect(getConversationThread.mock.calls[0][1]).toBe("*");
     expect(listConversationMessages.mock.calls[0][1]).toBe("*");
+    // The page cursor is the one conversation.get issued, never a message id.
+    expect(listConversationMessages.mock.calls[0][3]).toMatchObject({ cursor: "c-1" });
   });
 
   it("falls back to the listed agent where a replica reads '*' literally", async () => {
@@ -221,7 +223,7 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     getNamespace.mockResolvedValue({ conversation_logging_enabled: true });
     getConversationThread
       .mockResolvedValueOnce({ ...detail("thread-y", ""), found: false, msg_count: 0, messages: [] })
-      .mockResolvedValueOnce({ ...detail("thread-y", "Title Y"), msg_count: 2 });
+      .mockResolvedValueOnce({ ...detail("thread-y", "Title Y"), msg_count: 2, next_cursor: "c-1" });
     listMemories.mockResolvedValue(noMemories);
     listConversationMessages.mockResolvedValue({ rows: [], next_cursor: null });
 
@@ -232,6 +234,7 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     fireEvent.click(screen.getByRole("button", { name: /Load more/ }));
     await waitFor(() => expect(listConversationMessages).toHaveBeenCalledTimes(1));
     expect(listConversationMessages.mock.calls[0][1]).toBe("claude-code");
+    expect(listConversationMessages.mock.calls[0][3]).toMatchObject({ cursor: "c-1" });
   });
 
   it("labels each assistant turn with the agent that wrote it", async () => {

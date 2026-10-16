@@ -80,6 +80,9 @@ export interface ConversationThreadDetail {
   created_at: string | null;
   updated_at: string | null;
   messages: ConversationMessage[];
+  /** The conversation.list cursor for the turns after these; absent at the end, and
+   *  from a server of the previous release. */
+  next_cursor?: string | null;
 }
 
 /** Fetch one thread with its full message list, for the Conversations

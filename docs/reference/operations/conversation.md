@@ -133,6 +133,7 @@ Fetch one thread by id: thread metadata + optional messages.
 | `updated_at` | `datetime \| None` | When the thread row last changed; None for a thread built by appends only. |
 | `msg_count` | `int` | Live (not tombstoned) messages in the thread, returned even without messages. |
 | `messages` | `list[_ConversationEntry]` | Populated only when include_messages=True; simple limit/offset slicing (cursor-paginated walks belong on conversation.list). |
+| `next_cursor` | `str \| None` | With `order="asc"`, the `conversation.list` cursor for the turns after this page; None when the page reaches the end, or the order is `desc`. |
 
 ## `conversation.list`
 

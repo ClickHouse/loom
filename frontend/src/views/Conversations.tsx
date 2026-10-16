@@ -352,14 +352,8 @@ export function Conversations() {
         }
         if (signal.aborted) return;
         setThreadDetail({ ...d, messages: uniqueTurns(d.messages) });
-        // If the thread's reported msg_count exceeds what we loaded,
-        // there are more pages to walk via conversation.list. Cursor
-        // value is the last message's id — the server resolves it to
-        // a (ts, msg_id) seek key on conversations.
-        if (d.messages.length > 0 && d.msg_count > d.messages.length) {
-          const lastMsg = d.messages[d.messages.length - 1];
-          setMoreCursor(lastMsg.msg_id);
-        }
+        // More turns follow: conversation.list pages on from the cursor get issued.
+        setMoreCursor(d.next_cursor ?? null);
       } catch (e) {
         if (signal.aborted) return;
         toast(`Open thread failed: ${humanizeError(e)}`, "error");

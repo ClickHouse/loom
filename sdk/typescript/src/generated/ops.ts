@@ -2147,7 +2147,7 @@ export interface ConversationGetInput {
 
 export interface ConversationEntry {
   msg_id: string;
-  agent: string;
+  agent?: string;
   role: "user" | "assistant" | "system" | "tool";
   content: string;
   reasoning: string;
@@ -2170,6 +2170,7 @@ export interface ConversationGetOutput {
   updated_at?: string | null;
   msg_count?: number;
   messages?: ConversationEntry[];
+  next_cursor?: string | null;
 }
 
 export interface ConversationListInput {

@@ -7561,11 +7561,12 @@ class ConversationGetOutput(TypedDict, total=False):
     updated_at: NotRequired[Optional[str]]
     msg_count: NotRequired[int]
     messages: NotRequired[list["ConversationEntry"]]
+    next_cursor: NotRequired[Optional[str]]
 
 
 class ConversationEntry(TypedDict, total=False):
     msg_id: Required[str]
-    agent: Required[str]
+    agent: NotRequired[str]
     role: Required[Literal["user", "assistant", "system", "tool"]]
     content: Required[str]
     reasoning: Required[str]

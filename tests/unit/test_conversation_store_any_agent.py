@@ -59,3 +59,12 @@ async def test_thread_reads_drop_the_agent_filter_for_any_agent() -> None:
         assert "agent = {agent:String}" not in sql
         assert "agent" not in params
         assert "thread_id = {tid:String}" in sql
+
+
+@pytest.mark.asyncio
+async def test_a_thread_counts_each_turn_once() -> None:
+    # Two agents logging the same turn store one content-hashed msg_id twice.
+    ch = StubCH()
+    await conversation_repo.count_thread_msgs("o", "ns", None, "t-1", ch=ch)
+    sql, _ = ch.calls[-1]
+    assert "uniqExact(msg_id)" in sql

@@ -389,20 +389,25 @@ async def _conversation_get_reads(input: ConversationGetInput) -> ConversationGe
     thread_row: Mapping[str, Any] = thread if thread is not None else {}
 
     messages: list[_ConversationEntry] = []
+    next_cursor: str | None = None
     writer = agent or ""
     if input.include_messages:
         # list_thread has no offset arg, so pull (offset + limit) and slice.
         # `order="desc"` counts the page from the newest turn, so offset 0
         # is the thread's tail and the messages come back newest first.
+        # Oldest first, one row past the page says whether another follows.
+        peek = 1 if input.order == "asc" else 0
         rows = await conversation_repo.list_thread(
             input.org,
             input.namespace,
             agent,
             input.thread_id,
-            limit=input.offset + input.limit,
+            limit=input.offset + input.limit + peek,
             order=input.order,
         )
         page = rows[input.offset : input.offset + input.limit]
+        if input.order == "asc" and page and len(rows) > input.offset + input.limit:
+            next_cursor = _encode_cursor(page[-1].ts, page[-1].msg_id)
         if rows and not writer:
             writer = max(rows, key=lambda r: r.ts).agent
         messages = [
@@ -434,6 +439,7 @@ async def _conversation_get_reads(input: ConversationGetInput) -> ConversationGe
         updated_at=thread_row.get("updated_at"),
         msg_count=msg_count,
         messages=messages,
+        next_cursor=next_cursor,
     )
 
 

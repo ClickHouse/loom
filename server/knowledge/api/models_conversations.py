@@ -96,7 +96,8 @@ class ConversationSetLoggingOutput(BaseModel):
 class _ConversationEntry(BaseModel):
     msg_id: str
     # The agent that wrote this turn; a thread read with agent "*" holds several.
-    agent: str
+    # Empty from a server of the previous release, which does not send it.
+    agent: str = ""
     role: ConversationRole
     content: str
     reasoning: str
@@ -207,6 +208,9 @@ class ConversationGetOutput(BaseModel):
     # Populated only when include_messages=True; simple limit/offset slicing
     # (cursor-paginated walks belong on conversation.list).
     messages: list[_ConversationEntry] = Field(default_factory=list)
+    # With `order="asc"`, the `conversation.list` cursor for the turns after this page;
+    # None when the page reaches the end, or the order is `desc`.
+    next_cursor: str | None = None
 
 
 class ConversationListInput(BaseModel):

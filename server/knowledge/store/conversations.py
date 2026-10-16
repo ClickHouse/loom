@@ -517,8 +517,9 @@ async def count_thread_msgs(
     *,
     ch: _CHClient | None = None,
 ) -> int:
-    """Total messages for one (org, ns, agent, thread_id); `agent=None` counts
-    every agent's.
+    """Turns in one (org, ns, agent, thread_id); `agent=None` counts every
+    agent's. Distinct msg_ids: two agents logging the same turn store it under
+    one content-hashed id, which a reader shows once.
 
     Used by `conversation.get` to populate `msg_count` whether or not
     the caller asked for the messages payload.
@@ -531,7 +532,7 @@ async def count_thread_msgs(
         params["agent"] = agent
     row = await ch.query_one(
         f"""
-        SELECT count() AS n
+        SELECT uniqExact(msg_id) AS n
         FROM loom.conversations
         WHERE org = {{org:String}}
           AND namespace = {{ns:String}}
