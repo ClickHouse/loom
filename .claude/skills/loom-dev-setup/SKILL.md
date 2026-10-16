@@ -80,7 +80,7 @@ Run it in the background (`run_in_background`, or `&`), from the worktree root:
 ```bash
 cd <worktree> && LOOM_INSTANCE_LABEL="iso:$(pwd | cksum | cut -d' ' -f1):7790" LOOM_BUILD_COMMIT=$(git rev-parse --short HEAD) \
   .venv/bin/uvicorn server.main:app \
-  --app-dir "$PWD" --host 127.0.0.1 --port 7790 --loop asyncio --reload --reload-dir server
+  --app-dir "$PWD" --host 127.0.0.1 --port 7790 --loop asyncio --reload --reload-dir "$PWD/server"
 ```
 
 Check it in a separate call, by its label rather than its commit (two worktrees fresh from `origin/main` report the same `build_commit`); the label is a checksum of the worktree path because the server keeps only 64 characters of it:

@@ -81,7 +81,7 @@ make server     # uvicorn server.main:app on :7777 with --reload
 
 ```bash
 LOOM_INSTANCE_LABEL=dev:$USER:7790 .venv/bin/uvicorn server.main:app \
-  --app-dir "$PWD" --host 127.0.0.1 --port 7790 --loop asyncio --reload --reload-dir server
+  --app-dir "$PWD" --host 127.0.0.1 --port 7790 --loop asyncio --reload --reload-dir "$PWD/server"
 ```
 
 Check `build_commit` and the boot log before trusting a measurement against it.
