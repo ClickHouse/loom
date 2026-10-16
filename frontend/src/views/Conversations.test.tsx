@@ -178,6 +178,25 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     expect(setConversationLogging.mock.calls[0][1]).toBe(true);
   });
 
+  it("opens a hit from another namespace in that namespace", async () => {
+    listConversationThreads.mockResolvedValue({ threads: [] });
+    getNamespace.mockResolvedValue({ conversation_logging_enabled: true });
+    searchConversations.mockResolvedValueOnce({ hits: [{ ...hit("thread-z", "said in Z"), namespace: "ns-z" }] });
+    getConversationThread.mockResolvedValue(detail("thread-z", "Title Z"));
+    listMemories.mockResolvedValue(noMemories);
+
+    render(<Conversations />);
+    const box = screen.getByLabelText("Search conversation transcripts");
+    fireEvent.change(box, { target: { value: "said" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    fireEvent.click(await screen.findByText("said in Z"));
+    expect(await screen.findByText("body of thread-z")).toBeInTheDocument();
+    const [scope, agent, threadId] = getConversationThread.mock.calls[0];
+    expect(scope).toMatchObject({ namespace: "ns-z" });
+    expect([agent, threadId]).toEqual(["*", "thread-z"]);
+    expect(listMemories.mock.calls[0][0]).toMatchObject({ namespace: "ns-z" });
+  });
+
   it("ignores '/' pressed inside the thread dialog", async () => {
     listConversationThreads.mockResolvedValue({ threads: [summary("thread-a", "Title A")] });
     getNamespace.mockResolvedValue({ conversation_logging_enabled: true });

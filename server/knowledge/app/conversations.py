@@ -355,9 +355,23 @@ async def handle_conversation_get(
         return await _conversation_get_reads(input)
 
 
+async def _thread_agent(org: str, namespace: str, agent: str, thread_id: str) -> str | None:
+    """The agent to read a thread under: the caller's, or for "*"/"-" the agent
+    the thread was written by (None when there is no such thread)."""
+    from server.knowledge.store import conversations as conversation_repo
+
+    if agent not in ("*", "-"):
+        return agent
+    return await conversation_repo.thread_agent(org, namespace, thread_id)
+
+
 async def _conversation_get_reads(input: ConversationGetInput) -> ConversationGetOutput:
     from server.knowledge.store import conversations as conversation_repo
 
+    agent = await _thread_agent(input.org, input.namespace, input.agent, input.thread_id)
+    if agent is None:
+        return ConversationGetOutput(found=False, thread_id=input.thread_id)
+    input = input.model_copy(update={"agent": agent})
     thread = await conversation_repo.fetch_thread(
         input.org,
         input.namespace,
@@ -431,11 +445,14 @@ async def handle_conversation_list(
     """Paginate one thread's history in chronological order."""
     from server.knowledge.store import conversations as conversation_repo
 
+    agent = await _thread_agent(input.org, input.namespace, input.agent, input.thread_id)
+    if agent is None:
+        return ConversationListOutput(rows=[], next_cursor=None)
     after = _decode_cursor(input.cursor) if input.cursor else None
     rows = await conversation_repo.list_thread(
         input.org,
         input.namespace,
-        input.agent,
+        agent,
         input.thread_id,
         run_id=input.run_id,
         after=after,

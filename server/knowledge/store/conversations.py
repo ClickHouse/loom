@@ -399,17 +399,19 @@ async def search_substring(
     where = [
         "org = {org:String}",
         "namespace IN {nss:Array(String)}",
-        "agent = {agent:String}",
         "positionCaseInsensitive(content, {q:String}) > 0",
         "tombstoned_at IS NULL",
     ]
     params: dict[str, Any] = {
         "org": org,
         "nss": list(namespaces),
-        "agent": agent,
         "q": query,
         "limit": int(limit),
     }
+    # "*"/"-" spans every agent, as the vector search does.
+    if agent not in ("*", "-"):
+        where.append("agent = {agent:String}")
+        params["agent"] = agent
     if thread_id:
         where.append("thread_id = {thread_id:String}")
         params["thread_id"] = thread_id
@@ -502,6 +504,47 @@ async def list_thread(
         params=params,
     )
     return [_hydrate(r) for r in rows]
+
+
+async def thread_agent(
+    org: str,
+    namespace: str,
+    thread_id: str,
+    *,
+    ch: _CHClient | None = None,
+) -> str | None:
+    """The agent a thread was written by, for a caller that knows only its id:
+    the latest live message's agent, else the agent of its metadata row (a
+    thread created with no messages yet). None when the namespace has no such
+    thread."""
+    ch = ch or _default_client()
+    params = {"org": org, "ns": namespace, "tid": thread_id}
+    row = await ch.query_one(
+        """
+        SELECT argMax(agent, ts) AS agent
+        FROM loom.conversations
+        WHERE org = {org:String}
+          AND namespace = {ns:String}
+          AND thread_id = {tid:String}
+          AND tombstoned_at IS NULL
+        """,
+        params=params,
+    )
+    if row and row["agent"]:
+        return str(row["agent"])
+    row = await ch.query_one(
+        """
+        SELECT agent
+        FROM loom.conversation_threads FINAL
+        WHERE org = {org:String}
+          AND namespace = {ns:String}
+          AND thread_id = {tid:String}
+          AND tombstoned_at IS NULL
+        LIMIT 1
+        """,
+        params=params,
+    )
+    return str(row["agent"]) if row else None
 
 
 async def count_thread_msgs(

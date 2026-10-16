@@ -161,7 +161,7 @@ export function Conversations() {
   const [threadsRetry, setThreadsRetry] = useState(0);
   // Selected thread for the message-replay dialog. Click a thread
   // card OR a search-hit thread header → fetch full messages → show.
-  const [openThread, setOpenThread] = useState<{ thread_id: string; agent: string } | null>(null);
+  const [openThread, setOpenThread] = useState<{ thread_id: string; agent: string; namespace: string } | null>(null);
   const [threadDetail, setThreadDetail] = useState<ConversationThreadDetail | null>(null);
   const [threadLoading, setThreadLoading] = useState(false);
   // Durable memories this thread produced (via source_trace=conversation:<id>).
@@ -270,30 +270,29 @@ export function Conversations() {
     }
   };
 
-  // Group search hits by thread_id so multiple matches in the same
+  // Group search hits by thread so multiple matches in the same
   // conversation collapse to one card with a hit count, not N
   // duplicates. Within a thread, hits stay in server order (relevance).
-  // The thread's agent is taken from the first hit (server returns
-  // one agent per thread).
+  // A search spans the caller's namespaces, so a hit opens in its own one.
+  // Hits carry no agent: the recent-threads list names it when it holds
+  // the thread, else "*" lets conversation.get find the thread's agent.
   const groupedHits = useMemo(() => {
     if (!hits) return null;
     const byThread = new Map<string, ConversationHit[]>();
     for (const h of hits) {
-      const arr = byThread.get(h.thread_id) || [];
+      const key = `${h.namespace || identity.namespace}/${h.thread_id}`;
+      const arr = byThread.get(key) || [];
       arr.push(h);
-      byThread.set(h.thread_id, arr);
+      byThread.set(key, arr);
     }
-    // threadsMap helps annotate each group with the agent — we need
-    // an agent to call conversation.get. Search hits don't carry the
-    // agent today, so resolve via the recent-threads list when
-    // possible; fall back to "*" (the server accepts agent=* on .get).
     const threadAgent = new Map((threads || []).map((t) => [t.thread_id, t.agent] as const));
-    return Array.from(byThread.entries()).map(([thread_id, items]) => ({
-      thread_id,
-      agent: threadAgent.get(thread_id) || "*",
-      hits: items,
-    }));
-  }, [hits, threads]);
+    return Array.from(byThread.entries()).map(([key, items]) => {
+      const { thread_id } = items[0];
+      const namespace = items[0].namespace || identity.namespace;
+      const agent = namespace === identity.namespace ? threadAgent.get(thread_id) : undefined;
+      return { key, thread_id, namespace, agent: agent || "*", hits: items };
+    });
+  }, [hits, threads, identity.namespace]);
 
   // Distinct agents for the filter; the displayed thread list is the
   // namespace-wide set narrowed to the selected agent.
@@ -304,12 +303,14 @@ export function Conversations() {
   );
 
   const openThreadDialog = useCallback(
-    async (thread_id: string, agent: string, targetMsgId?: string) => {
+    async (thread_id: string, agent: string, opts: { namespace?: string; msgId?: string } = {}) => {
       threadReads.current?.abort();
       const ctl = new AbortController();
       threadReads.current = ctl;
       const { signal } = ctl;
-      setOpenThread({ thread_id, agent });
+      const namespace = opts.namespace || identity.namespace;
+      const targetMsgId = opts.msgId;
+      setOpenThread({ thread_id, agent, namespace });
       setThreadDetail(null);
       setMoreCursor(null);
       setLoadingMore(false);
@@ -317,7 +318,11 @@ export function Conversations() {
       setHighlightMsgId(targetMsgId ?? null);
       setThreadLoading(true);
       // What durable memories did this conversation produce? (provenance link)
-      listMemories(identity, 20, { source_trace: `conversation:${thread_id}`, include_profile: true, signal })
+      listMemories({ ...identity, namespace }, 20, {
+        source_trace: `conversation:${thread_id}`,
+        include_profile: true,
+        signal,
+      })
         .then((r) => {
           if (!signal.aborted) setThreadMemories(r.entries);
         })
@@ -325,7 +330,7 @@ export function Conversations() {
           if (!signal.aborted) setThreadMemories([]);
         });
       try {
-        const d = await getConversationThread({ org: identity.org, namespace: identity.namespace }, agent, thread_id, {
+        const d = await getConversationThread({ org: identity.org, namespace }, agent, thread_id, {
           limit: 200,
           signal,
         });
@@ -367,10 +372,10 @@ export function Conversations() {
     const reads = threadReads.current;
     if (!reads || !openThread || !threadDetail || !moreCursor || loadingMore) return;
     const { signal } = reads;
-    const { thread_id, agent } = openThread;
+    const { thread_id, agent, namespace } = openThread;
     setLoadingMore(true);
     try {
-      const r = await listConversationMessages({ org: identity.org, namespace: identity.namespace }, agent, thread_id, {
+      const r = await listConversationMessages({ org: identity.org, namespace }, agent, thread_id, {
         cursor: moreCursor,
         limit: 200,
         signal,
@@ -563,15 +568,25 @@ export function Conversations() {
             {groupedHits.length === 1 ? "" : "s"}
           </div>
           {groupedHits.map((g) => (
-            <div key={g.thread_id} className="rounded-xl border border-border bg-surface overflow-hidden">
+            <div key={g.key} className="rounded-xl border border-border bg-surface overflow-hidden">
               <button
                 type="button"
-                onClick={() => openThreadDialog(g.thread_id, g.agent)}
+                onClick={() => openThreadDialog(g.thread_id, g.agent, { namespace: g.namespace })}
                 className="w-full text-left px-3.5 py-2.5 flex items-center gap-2 text-xs tabular hover:bg-surface-2 border-b border-border"
               >
                 <span className="font-mono text-text truncate">{g.thread_id}</span>
-                <span className="text-text-muted">·</span>
-                <span className="font-mono text-text-muted">{displayAgent(g.agent)}</span>
+                {g.agent !== "*" && (
+                  <>
+                    <span className="text-text-muted">·</span>
+                    <span className="font-mono text-text-muted">{displayAgent(g.agent)}</span>
+                  </>
+                )}
+                {g.namespace !== identity.namespace && (
+                  <>
+                    <span className="text-text-muted">·</span>
+                    <span className="font-mono text-text-muted truncate">{g.namespace}</span>
+                  </>
+                )}
                 <span className="ml-auto text-accent font-medium">
                   {g.hits.length} match{g.hits.length === 1 ? "" : "es"} · open ↗
                 </span>
@@ -581,7 +596,7 @@ export function Conversations() {
                   <button
                     type="button"
                     key={`${h.msg_id}-${i}`}
-                    onClick={() => openThreadDialog(g.thread_id, g.agent, h.msg_id)}
+                    onClick={() => openThreadDialog(g.thread_id, g.agent, { namespace: g.namespace, msgId: h.msg_id })}
                     className="w-full text-left px-3.5 py-2.5 hover:bg-surface-2"
                   >
                     <div className="flex items-center gap-2 mb-1 text-xs tabular">
@@ -632,7 +647,7 @@ export function Conversations() {
         )}
         <div className="mt-4">
           {openThread && (
-            <SessionBriefPanel org={identity.org} namespace={identity.namespace} sessionId={openThread.thread_id} />
+            <SessionBriefPanel org={identity.org} namespace={openThread.namespace} sessionId={openThread.thread_id} />
           )}
           {threadMemories.length > 0 && (
             <div className="mb-4 p-3 rounded-lg bg-surface-2 border border-border">
