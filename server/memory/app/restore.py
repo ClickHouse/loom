@@ -132,8 +132,10 @@ async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryResto
 
 
 async def _status_before_retirement(row: MemoryRow, *, ch: Any) -> str:
-    """`conflicted` for a row retired while under review, which still lists its peers
-    as they list it; `active` otherwise."""
+    """`conflicted` for a row retired while under review when a peer is still
+    conflicted and lists it back; `active` otherwise."""
+    import server.memory.store as memory_repo
+
     found = await ch.query_all(
         """
         SELECT argMax(status, version) AS was FROM loom.memory_versions
@@ -149,7 +151,18 @@ async def _status_before_retirement(row: MemoryRow, *, ch: Any) -> str:
         },
     )
     was = str(found[0]["was"]) if found else ""
-    return "conflicted" if was == "conflicted" and row.conflict_with else "active"
+    if was != "conflicted":
+        return "active"
+    # A peer deleted or resolved while this row was retired leaves nothing to review.
+    for peer_id in row.conflict_with:
+        peer = await memory_repo.get_by_id(
+            peer_id, org=row.org, ch=ch, scope=WHOLE_NAMESPACE, fresh=True, strong=True
+        )
+        if peer is None or peer.status != "conflicted":
+            continue
+        if str(row.memory_id) in peer.conflict_with:
+            return "conflicted"
+    return "active"
 
 
 def _attested(row: MemoryRow) -> bool:

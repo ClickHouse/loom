@@ -4292,9 +4292,10 @@ async def test_an_undo_gives_a_conflicted_row_back_its_conflict(ch, org) -> None
     from server.memory import store as M
     from server.memory.app.restore import handle_memory_restore
 
-    peer = _row(org, "s9", "User lives in Rome", datetime(2023, 5, 30), memory_key="city")
-    await M.insert_memory_versions([peer], ch=ch)
     paris = _row(org, "s1", "User lives in Paris", datetime(2023, 5, 30))
+    peer = _row(org, "s9", "User lives in Rome", datetime(2023, 5, 30), memory_key="city")
+    peer |= {"status": "conflicted", "conflict_with": [str(paris["memory_id"])]}
+    await M.insert_memory_versions([peer], ch=ch)
     paris |= {"status": "conflicted", "conflict_with": [str(peer["memory_id"])]}
     london = _row(org, "s2", "User lives in London", datetime(2023, 6, 30))
     retired = {**paris, "version": M.next_version(), "status": "superseded"}
@@ -4303,6 +4304,31 @@ async def test_an_undo_gives_a_conflicted_row_back_its_conflict(ch, org) -> None
     assert (await handle_memory_restore(_undo_of(london))).restored
     head = await M.get_by_id(str(paris["memory_id"]), org=org, ch=ch, scope=WHOLE_NAMESPACE)
     assert (head.status, head.conflict_with) == ("conflicted", [str(peer["memory_id"])])
+
+
+@pytest.mark.parametrize("peer_end", ["deleted", "resolved"])
+async def test_an_undo_after_its_peer_left_review_restores_active(ch, org, peer_end) -> None:
+    # The peer was deleted or resolved while the row was retired: no live peer
+    # lists it, so the Undo has nothing to be in conflict with.
+    from server.memory import store as M
+    from server.memory.app.restore import handle_memory_restore
+
+    paris = _row(org, "s1", "User lives in Paris", datetime(2023, 5, 30))
+    peer = _row(org, "s9", "User lives in Rome", datetime(2023, 5, 30), memory_key="city")
+    peer |= {"status": "conflicted", "conflict_with": [str(paris["memory_id"])]}
+    paris |= {"status": "conflicted", "conflict_with": [str(peer["memory_id"])]}
+    london = _row(org, "s2", "User lives in London", datetime(2023, 6, 30))
+    retired = {**paris, "version": M.next_version(), "status": "superseded"}
+    retired["superseded_by"] = str(london["memory_id"])
+    if peer_end == "deleted":
+        ended = {"status": "tombstoned", "tombstoned_at": datetime.now(UTC).replace(tzinfo=None)}
+    else:
+        ended = {"status": "active", "conflict_with": []}
+    peer_ended = {**peer, "version": M.next_version(), **ended}
+    await M.insert_memory_versions([paris, peer, london, retired, peer_ended], ch=ch)
+    assert (await handle_memory_restore(_undo_of(london))).restored
+    head = await M.get_by_id(str(paris["memory_id"]), org=org, ch=ch, scope=WHOLE_NAMESPACE)
+    assert head.status == "active"
 
 
 def _undo_of(winner: dict[str, Any]) -> Any:
