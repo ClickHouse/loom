@@ -65,7 +65,7 @@ For Loom and ClickHouse together, use the dev compose stack:
 
 ```bash
 cp .env.example .env    # once; `make dev` does this for you
-docker compose --env-file .env -f dev/docker-compose.dev.yml up --build    # Loom + CH only
+docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml --profile bundled up --build    # Loom + CH only
 ```
 
 `--env-file .env` makes compose read `.env` (see the note in `Makefile`). Without it you get the compose file's own fallbacks (auth on, OpenAI provider with no key), not the stack the [quickstart](./docs/getting-started/quickstart.md) describes.

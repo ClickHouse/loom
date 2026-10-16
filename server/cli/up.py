@@ -5,8 +5,9 @@ What it does, in place of `make dev` + a health poll + `loom mint-token`:
   1. bootstrap: copy `.env.example` → `.env` and the ClickHouse
      `named_collections.xml` template when they are missing (the same two
      files `make bootstrap` creates; no `make` needed).
-  2. `docker compose --env-file .env -f dev/docker-compose.dev.yml up -d
-     --build` (`--file` / `--no-build` override).
+  2. `docker compose --env-file .env -f compose.yaml -f
+     dev/docker-compose.dev.yml --profile bundled up -d --build` (`--file` /
+     `--no-build` override).
   3. poll `GET <base>/v1/health` until `status: ok`, one progress line every
      5 s with the pending-migrations count, `--timeout` (300 s) with the last
      health body and the server's last 40 log lines on failure.
@@ -43,7 +44,8 @@ from server.cli._client import TOKEN_FILE, get_json
 from server.cli._paths import write_private
 from server.core.paths import REPO_ROOT
 
-DEFAULT_COMPOSE_FILE = "dev/docker-compose.dev.yml"
+# The shipped stack, then the source build with development defaults.
+DEFAULT_COMPOSE_FILES = ("compose.yaml", "dev/docker-compose.dev.yml")
 DEFAULT_ENV_FILE = ".env"
 DEFAULT_PORT = 7777
 DEFAULT_TIMEOUT_S = 300
@@ -188,10 +190,10 @@ def compose_names(compose_text: str) -> tuple[str, str]:
 def compose_project_name(root: Path, env_file: str) -> str:
     """A checkout-stable Compose project, with an explicit override.
 
-    Compose normally derives this from the first compose file, which is always
-    ``dev/docker-compose.dev.yml`` here; every checkout would therefore reuse
-    the same ``dev_*`` volumes.  Include the resolved checkout path in a short
-    digest so equally named clones cannot adopt each other's local data.
+    Compose normally derives this from the first compose file's directory,
+    the checkout's name, so equally named clones would share volumes. Include
+    the resolved checkout path in a short digest so they cannot adopt each
+    other's local data.
     """
     configured = read_env_file(root / env_file).get("COMPOSE_PROJECT_NAME", "").strip()
     if not configured:
@@ -203,7 +205,10 @@ def compose_project_name(root: Path, env_file: str) -> str:
     return f"loom-{stem[:32]}-{digest}"
 
 
-def compose_argv(root: Path, compose_file: str, env_file: str, *tail: str) -> list[str]:
+def compose_argv(
+    root: Path, compose_files: tuple[str, ...], env_file: str, *tail: str
+) -> list[str]:
+    files = [arg for name in compose_files for arg in ("-f", str(root / name))]
     return [
         "docker",
         "compose",
@@ -211,8 +216,10 @@ def compose_argv(root: Path, compose_file: str, env_file: str, *tail: str) -> li
         compose_project_name(root, env_file),
         "--env-file",
         str(root / env_file),
-        "-f",
-        str(root / compose_file),
+        *files,
+        # The bundled ClickHouse runs whatever COMPOSE_PROFILES an older .env says.
+        "--profile",
+        "bundled",
         *tail,
     ]
 
@@ -238,7 +245,7 @@ def _git_short_head(root: Path) -> str:
 
 def compose_up(
     root: Path,
-    compose_file: str,
+    compose_files: tuple[str, ...],
     env_file: str,
     *,
     build: bool,
@@ -250,7 +257,7 @@ def compose_up(
         # env file changed.  Recreate only Loom so provider/auth changes take effect
         # without disrupting the durable ClickHouse service.
         tail.extend(["--force-recreate", "--no-deps", recreate_service])
-    argv = compose_argv(root, compose_file, env_file, *tail)
+    argv = compose_argv(root, compose_files, env_file, *tail)
     env = dict(os.environ)
     # Importing Loom may have loaded the caller checkout's .env into os.environ.
     # Those values have higher Compose interpolation precedence than --env-file and
@@ -264,11 +271,13 @@ def compose_up(
     return int(cp.returncode)
 
 
-def compose_down(root: Path, compose_file: str, env_file: str, *, delete_data: bool = False) -> int:
+def compose_down(
+    root: Path, compose_files: tuple[str, ...], env_file: str, *, delete_data: bool = False
+) -> int:
     """Stop the checkout's stack; volumes are retained unless explicitly requested."""
     argv = compose_argv(
         root,
-        compose_file,
+        compose_files,
         env_file,
         "down",
         *(["--volumes"] if delete_data else []),
@@ -278,8 +287,8 @@ def compose_down(root: Path, compose_file: str, env_file: str, *, delete_data: b
     return int(cp.returncode)
 
 
-def compose_logs(root: Path, compose_file: str, env_file: str, service: str) -> None:
-    argv = compose_argv(root, compose_file, env_file, "logs", "--tail", "40", service)
+def compose_logs(root: Path, compose_files: tuple[str, ...], env_file: str, service: str) -> None:
+    argv = compose_argv(root, compose_files, env_file, "logs", "--tail", "40", service)
     print("→ " + " ".join(argv), file=sys.stderr)
     _run(argv, cwd=str(root), check=False)
 
@@ -480,8 +489,9 @@ def _add_up_flags(p: argparse.ArgumentParser) -> None:
     )
     p.add_argument(
         "--file",
-        default=DEFAULT_COMPOSE_FILE,
-        help=f"Compose file, relative to --root (default {DEFAULT_COMPOSE_FILE}).",
+        action="append",
+        help="Compose file relative to --root; repeat to stack overrides "
+        f"(default {' + '.join(DEFAULT_COMPOSE_FILES)}).",
     )
     p.add_argument(
         "--env-file",
@@ -529,8 +539,9 @@ def _add_down_flags(p: argparse.ArgumentParser) -> None:
     )
     p.add_argument(
         "--file",
-        default=DEFAULT_COMPOSE_FILE,
-        help=f"Compose file, relative to --root (default {DEFAULT_COMPOSE_FILE}).",
+        action="append",
+        help="Compose file relative to --root; repeat to stack overrides "
+        f"(default {' + '.join(DEFAULT_COMPOSE_FILES)}).",
     )
     p.add_argument(
         "--env-file",
@@ -548,6 +559,10 @@ def _add_down_flags(p: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Confirm --delete-data without the interactive project-name prompt.",
     )
+
+
+def _missing_file(root: Path, files: tuple[str, ...]) -> Path | None:
+    return next((root / f for f in files if not (root / f).is_file()), None)
 
 
 def _resolve_identity(args: argparse.Namespace, env: dict[str, str]) -> tuple[str, str, str]:
@@ -587,11 +602,14 @@ def _cmd_up(args: argparse.Namespace) -> int:
     mode = stack_mode(env)
     base_url = f"http://localhost:{args.port}"
     health_url = f"{base_url}/v1/health"
-    compose_path = root / args.file
-    if not compose_path.is_file():
-        print(f"✗ compose file not found: {compose_path}", file=sys.stderr)
+    files = tuple(args.file or DEFAULT_COMPOSE_FILES)
+    if missing := _missing_file(root, files):
+        print(f"✗ compose file not found: {missing}", file=sys.stderr)
         return 2
-    service, container = compose_names(compose_path.read_text(encoding="utf-8", errors="replace"))
+    # The last file names the containers (the dev override does).
+    service, container = compose_names(
+        (root / files[-1]).read_text(encoding="utf-8", errors="replace")
+    )
 
     status_code, body = _http_get_json(health_url, timeout=2.0)
     already_up = body is not None and body.get("status") == "ok"
@@ -602,7 +620,7 @@ def _cmd_up(args: argparse.Namespace) -> int:
     build = args.rebuild or (not already_up and not args.no_build)
     rc = compose_up(
         root,
-        args.file,
+        files,
         args.env_file,
         build=build,
         recreate_service=service if already_up else "",
@@ -613,7 +631,7 @@ def _cmd_up(args: argparse.Namespace) -> int:
     ok, status_code, body = wait_for_health(health_url, timeout_s=args.timeout)
     if not ok:
         _print_health_failure(health_url, args.timeout, status_code, body)
-        compose_logs(root, args.file, args.env_file, service)
+        compose_logs(root, files, args.env_file, service)
         return 1
 
     subject, org, namespace = _resolve_identity(args, env)
@@ -655,10 +673,10 @@ def _cmd_down(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
-    compose_path = root / args.file
+    files = tuple(args.file or DEFAULT_COMPOSE_FILES)
     env_path = root / args.env_file
-    if not compose_path.is_file():
-        print(f"✗ compose file not found: {compose_path}", file=sys.stderr)
+    if missing := _missing_file(root, files):
+        print(f"✗ compose file not found: {missing}", file=sys.stderr)
         return 2
     if not env_path.is_file():
         print(
@@ -683,7 +701,7 @@ def _cmd_down(args: argparse.Namespace) -> int:
         if confirmation != project:
             print("Cancelled; the stack and its data were not changed.", file=sys.stderr)
             return 2
-    rc = compose_down(root, args.file, args.env_file, delete_data=args.delete_data)
+    rc = compose_down(root, files, args.env_file, delete_data=args.delete_data)
     if rc != 0:
         print(f"✗ docker compose down exited {rc}", file=sys.stderr)
         return rc

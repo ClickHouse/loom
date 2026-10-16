@@ -16,22 +16,21 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+# The bundle keeps the repository's layout, so compose.yaml's paths hold in both.
+CONFIG = "deploy/clickhouse-config"
 FILES = {
     "LICENSE": "LICENSE",
     "NOTICE": "NOTICE",
     "THIRD_PARTY_NOTICES": "THIRD_PARTY_NOTICES",
-    "deploy/standalone/compose.yaml": "compose.yaml",
+    "compose.yaml": "compose.yaml",
     "deploy/standalone/env.example": "env.example",
-    "deploy/clickhouse-config/lemmatizers.xml": "clickhouse-config/lemmatizers.xml",
-    "deploy/clickhouse-config/nlp_user_settings.xml": "clickhouse-config/nlp_user_settings.xml",
-    "deploy/clickhouse-config/merge_tree_settings.xml": "clickhouse-config/merge_tree_settings.xml",
-    "deploy/clickhouse-config/keeper.xml": "clickhouse-config/keeper.xml",
-    "deploy/clickhouse-config/named_collections.xml.template": (
-        "clickhouse-config/named_collections.xml"
-    ),
-    "deploy/lemmagen3/en.bin": "lemmagen3/en.bin",
-    "deploy/lemmagen3/LICENSE": "lemmagen3/LICENSE",
-    "deploy/lemmagen3/README.md": "lemmagen3/README.md",
+    f"{CONFIG}/lemmatizers.xml": f"{CONFIG}/lemmatizers.xml",
+    f"{CONFIG}/nlp_user_settings.xml": f"{CONFIG}/nlp_user_settings.xml",
+    f"{CONFIG}/keeper.xml": f"{CONFIG}/keeper.xml",
+    f"{CONFIG}/named_collections.xml.template": f"{CONFIG}/named_collections.xml",
+    "deploy/lemmagen3/en.bin": "deploy/lemmagen3/en.bin",
+    "deploy/lemmagen3/LICENSE": "deploy/lemmagen3/LICENSE",
+    "deploy/lemmagen3/README.md": "deploy/lemmagen3/README.md",
 }
 
 

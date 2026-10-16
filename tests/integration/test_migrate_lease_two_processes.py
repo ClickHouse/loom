@@ -87,7 +87,7 @@ def test_two_concurrent_runs_apply_a_non_idempotent_migration_once(ch_client, tm
             parameters={"f": name},
         ).result_rows
         assert ledger[0][0] == 1, ledger
-        assert name in mig._applied(ch_client)
+        assert name in mig.applied_migrations(ch_client)
 
         # Both contenders released: the KeeperMap key is gone, or (no Keeper)
         # every lease row is marked released.

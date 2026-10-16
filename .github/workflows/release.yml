@@ -281,7 +281,7 @@ jobs:
           from packaging.version import Version
 
           sys.path.insert(0, os.getcwd())
-          from scripts.release.build_stack_bundle import pinned_image
+          from scripts.release.build_stack_bundle import FILES, pinned_image
 
           version = os.environ["VERSION"]
           pyv = str(Version(version))
@@ -353,18 +353,8 @@ jobs:
               if hashlib.sha256(archive.read_bytes()).hexdigest() != checksum:
                   errors.append("stack bundle sha256 does not match")
               with tarfile.open(archive) as t:
-                  required = {
-                      "loom-stack/VERSION",
-                      "loom-stack/LICENSE",
-                      "loom-stack/NOTICE",
-                      "loom-stack/THIRD_PARTY_NOTICES",
-                      "loom-stack/compose.yaml",
-                      "loom-stack/env.example",
-                      "loom-stack/lemmagen3/en.bin",
-                      "loom-stack/lemmagen3/LICENSE",
-                      "loom-stack/lemmagen3/README.md",
-                      "loom-stack/clickhouse-config/named_collections.xml",
-                  }
+                  # Every file the builder ships, so the two cannot drift apart.
+                  required = {"loom-stack/VERSION"} | {f"loom-stack/{d}" for d in FILES.values()}
                   missing = required - set(t.getnames())
                   if missing:
                       errors.append(f"stack bundle is missing {sorted(missing)}")

@@ -3946,14 +3946,14 @@
         "--file"
        ],
        "dest": "file",
-       "action": "_StoreAction",
-       "default": "dev/docker-compose.dev.yml",
+       "action": "_AppendAction",
+       "default": null,
        "const": null,
        "choices": null,
        "nargs": null,
        "type": null,
        "required": false,
-       "help": "Compose file, relative to --root (default dev/docker-compose.dev.yml).",
+       "help": "Compose file relative to --root; repeat to stack overrides (default compose.yaml + dev/docker-compose.dev.yml).",
        "metavar": null
       },
       {
@@ -4161,14 +4161,14 @@
         "--file"
        ],
        "dest": "file",
-       "action": "_StoreAction",
-       "default": "dev/docker-compose.dev.yml",
+       "action": "_AppendAction",
+       "default": null,
        "const": null,
        "choices": null,
        "nargs": null,
        "type": null,
        "required": false,
-       "help": "Compose file, relative to --root (default dev/docker-compose.dev.yml).",
+       "help": "Compose file relative to --root; repeat to stack overrides (default compose.yaml + dev/docker-compose.dev.yml).",
        "metavar": null
       },
       {
@@ -4215,6 +4215,67 @@
        "type": null,
        "required": false,
        "help": "Confirm --delete-data without the interactive project-name prompt.",
+       "metavar": null
+      }
+     ]
+    },
+    "ch-setup": {
+     "prog": "loom ch-setup",
+     "usage": null,
+     "description": "`loom ch-setup`: prepare a ClickHouse that Loom did not start itself, a\nself-managed server or a ClickHouse Cloud service, for Loom's first boot.\n\nIt creates the `loom` database and the read-only reader user\n(`LOOM_CH_READER_USER`, default `loom_reader`): SELECT on `loom.*` and a\nsettings profile that pins Loom's caller-shaped caps as ceilings, with floors\nno statement can go under. Run it again at any time: what is in place is left\nalone, and a reader whose profile or grants differ from that is rebuilt to\nexactly it, so changes an admin made to the reader do not survive a rerun.\n\nA user without the privilege for a step gets the SQL to hand an admin instead,\nwith the password left as a placeholder. The bundled ClickHouse defines the\nreader in its config, so there it only reports. An existing reader is\nreplaced only when it has the shape ch-setup gives it (a password user on the\nsettings profile of its own name) and logs in with LOOM_CH_PASSWORD; anything\nelse of that name is left alone.\n",
+     "epilog": null,
+     "formatter_class": "argparse:HelpFormatter",
+     "add_help": true,
+     "allow_abbrev": true,
+     "defaults": {
+      "func": "server.cli.ch_setup:_cmd_ch_setup"
+     },
+     "groups": [
+      {
+       "title": "positional arguments",
+       "description": null,
+       "dests": []
+      },
+      {
+       "title": "options",
+       "description": null,
+       "dests": [
+        "help",
+        "print_sql"
+       ]
+      }
+     ],
+     "mutually_exclusive": [],
+     "arguments": [
+      {
+       "option_strings": [
+        "-h",
+        "--help"
+       ],
+       "dest": "help",
+       "action": "_HelpAction",
+       "default": "==SUPPRESS==",
+       "const": null,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "show this help message and exit",
+       "metavar": null
+      },
+      {
+       "option_strings": [
+        "--print-sql"
+       ],
+       "dest": "print_sql",
+       "action": "_StoreTrueAction",
+       "default": false,
+       "const": true,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "Print the SQL for an admin (password as a placeholder); change nothing.",
        "metavar": null
       }
      ]
@@ -10227,6 +10288,7 @@
     "okf-lint": "loom okf-lint",
     "up": "loom up",
     "down": "loom down",
+    "ch-setup": "loom ch-setup",
     "read-replica": "loom read-replica",
     "reembed": "loom reembed",
     "reextract": "loom reextract",
@@ -10300,6 +10362,11 @@
      "dest": "down",
      "help": "Stop the local stack while preserving data; --delete-data performs a confirmed reset.",
      "metavar": "down"
+    },
+    {
+     "dest": "ch-setup",
+     "help": "Prepare a self-managed ClickHouse or a ClickHouse Cloud service for Loom: create the loom database and the read-only reader user, or print the SQL for an admin.",
+     "metavar": "ch-setup"
     },
     {
      "dest": "read-replica",
