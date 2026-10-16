@@ -1,0 +1,84 @@
+---
+name: loom-writing
+description: Plain technical English for every text an agent writes in the Loom repository and on GitHub — commit messages, PR titles and bodies, issues, review comments and replies, code comments, docs. Gives the rules, the words to drop, before/after examples and a checker script. Use before writing or posting any of those texts. Not for the PR template's sections (loom-ship-pr) or the issue forms (loom-file-issue).
+---
+
+# Writing in Loom
+
+Readers are maintainers who skim dozens of PRs, issues and comments a day. A text earns its place by saying something the diff, the code or the thread does not already say, in the fewest words that are still exact.
+
+## Rules
+
+1. **Lead with the fact.** The first sentence is the claim, the finding or the answer. No preamble ("This PR aims to…", "I wanted to raise…"), no summary at the end that repeats it.
+2. **Concrete over general.** Name the op, field, file, setting, query or command. "Search drops pinned rows when `limit` < 3" beats "fixes an edge case in search".
+3. **Every adjective has evidence.** "Fast", "robust", "safe", "scalable" need a number with the command that reproduces it, or the mechanism. Otherwise delete the adjective.
+4. **Say why, once.** A commit says why; a code comment says why the code is the way it is; neither narrates what changed ("now", "previously", "updated to").
+5. **Present tense, the system as it is.** History, dates and the path you took belong in the PR body, not in code, docs or comments.
+6. **Plain words.** Write the word a senior engineer says out loud in a design review. The table below lists the words that mark text as generated.
+7. **No performance of effort or emotion.** No "Great catch!", "I apologize", "Happy to help", "Let me know if…", "I have carefully reviewed…". A reply states what changed and where.
+8. **Formatting serves skimming.** Bullets for parallel items, a table for options, code formatting for identifiers. No headings in a three-line comment, no bold on every other phrase, no emoji.
+9. **Public text names no host, internal path, namespace, person, customer or production count** (`tests/unit/test_public_copy.py` enforces the repository side; you enforce the GitHub side).
+
+## Words to drop
+
+| Instead of | Write |
+| --- | --- |
+| leverage, utilize | use |
+| robust, comprehensive, seamless, powerful | the property itself: "retries twice", "covers every read op" |
+| ensure (as filler) | the check: "fails closed", "asserts that…" |
+| enhance, improve (with no measure) | the change and its number |
+| streamline, simplify (as a claim) | what was removed |
+| delve, dive into, explore | read, check, measure |
+| crucial, critical, essential, vital, key (as emphasis) | delete, or say what breaks without it |
+| it's worth noting, note that, importantly | delete; state the point |
+| in order to | to |
+| a variety of, various, numerous | the count, or the list |
+| facilitate, empower, enable (as filler) | the verb for what actually happens |
+| going forward, at this point in time | delete |
+| addresses, handles (vague) | fixes / rejects / retries / returns |
+| holistic, cutting-edge, state-of-the-art, best-in-class | delete |
+
+## Examples
+
+Commit message:
+
+```text
+Bad:  Enhance search robustness by implementing comprehensive handling of edge cases
+Good: Search keeps pinned rows when limit is below the pin count
+
+      The pin pass ran after the limit, so a limit of 2 with three pins dropped one.
+```
+
+Review comment:
+
+```text
+Bad:  Great work overall! One small thing worth noting: it might be a good idea to
+      consider potentially handling the case where the cursor could be empty.
+Good: P2 server/memory/app/timeline.py:88 — an empty cursor re-reads from the start, so a
+      worker restart re-emits every event. Treat "" as "no cursor" and test the restart.
+```
+
+Reply to a review comment:
+
+```text
+Bad:  Thanks so much for the thorough review! I've gone ahead and addressed this.
+Good: Fixed in 3f2a9c1: the cursor is now stored before the batch is emitted; the new test
+      restarts the worker halfway through a pass.
+```
+
+Code comment:
+
+```python
+# Bad:  Robustly handle the case where the token might be missing (updated per review)
+# Good: Revocation is checked before the cache: a revoked token must not hit a warm entry.
+```
+
+## Check before posting
+
+Write the text to a file, then:
+
+```bash
+python3 .claude/skills/loom-writing/scripts/check_prose.py <file>...   # prints path:line, the phrase and a replacement; exit 1 on a hit
+```
+
+Fix every hit or keep it on purpose (a quoted error message, a term of art such as "critical section"). Then read the text once as the reviewer would and cut any sentence that changes nothing for them.

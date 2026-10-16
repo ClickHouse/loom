@@ -1,0 +1,30 @@
+[
+  {
+    "query": "open a PR for this branch",
+    "should_trigger": true
+  },
+  {
+    "query": "ship it: push, get it reviewed and merge when green",
+    "should_trigger": true
+  },
+  {
+    "query": "update the PR body and watch CI until it's green",
+    "should_trigger": true
+  },
+  {
+    "query": "squash-merge PR 412",
+    "should_trigger": true
+  },
+  {
+    "query": "deploy the merged change",
+    "should_trigger": false
+  },
+  {
+    "query": "respond to the review comments on PR 412",
+    "should_trigger": false
+  },
+  {
+    "query": "what does this red job mean",
+    "should_trigger": false
+  }
+]

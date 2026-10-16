@@ -161,6 +161,10 @@ Docs follow the [documentation style guide](./docs/development/documentation-sty
 - **Measurements** that justify a change go in the description with the command that reproduces them, not in code comments or docs.
 - CI must be green before merge. Squash-merge is the default: one logical change per pull request.
 
+## Working with a coding agent
+
+Agents are welcome, and held to the same bar as a person: whoever submits a pull request, issue or comment answers for it. [`AGENTS.md`](./AGENTS.md) is the instruction file Claude Code, Codex and Cursor read, and `.claude/skills/` holds the procedures they follow: setting up a worktree, debugging, the gates before a push, shipping and reviewing a pull request, answering review comments, filing an issue, and writing in plain technical English. A person can follow the same files by hand.
+
 ## Asking questions
 
 - **Questions and design discussion:** GitHub Issues, with the question or feature request form.

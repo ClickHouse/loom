@@ -1,6 +1,6 @@
 ---
 name: loom-ship-pr
-description: Open, push, review and land a Loom pull request — a public-safe title and body from the template, signed-off commits, the reviewer started at the push in parallel with CI, CI read from gh's JSON, and a squash merge once every check is green. Use when asked to open, update, land or merge a Loom PR ("ship it"). Runs after loom-pre-push; for a red check use loom-investigate-ci.
+description: Opens, pushes, reviews and lands a Loom pull request — signed-off commits, a public-safe title and body from the template, a fresh review at every push in parallel with CI, CI gated on gh's JSON, and a squash merge once every check is green and the review is empty. Use when asked to open, update, land or merge a Loom PR ("ship it"). Runs after loom-pre-push; a red check is loom-investigate-ci, review comments are loom-address-review.
 argument-hint: "[pr-number]"
 ---
 
@@ -27,6 +27,8 @@ The body is public. It carries:
 
 It never carries other products' names or comparative framing, host names, internal namespaces or repository names of a deployment, people, wall-clock times, production row counts or incident timelines. Evidence from a live deployment goes to the conversation with the requester, not into the PR.
 
+Write it in the `loom-writing` voice and run `python3 .claude/skills/loom-writing/scripts/check_prose.py <body file>` before every `gh pr create` or `gh pr edit`. Link the issue it fixes with `Closes: <full issue URL>`.
+
 One concern per PR, and the title matches every part of it: a feature, an example and a release-process change are three PRs. A large task is a few PRs grouped by concern, not one per file: each needs CI and review, and the merge queue is the bottleneck.
 
 ## 3. Push and open
@@ -36,11 +38,17 @@ git push -u origin HEAD
 gh pr create --base main --title "<subject>" --body-file /path/to/body.md
 ```
 
-CI runs on PRs into `main` (and pushes to it). A stacked PR gets checks once retargeted (`gh pr edit <n> --base main`); a PR with a merge conflict gets none.
+CI runs on PRs into `main` (and pushes to it). A stacked PR gets checks once retargeted (`gh pr edit <n> --base main`); a PR with a merge conflict gets none, silently. After every push:
+
+```bash
+gh pr view <n> --json mergeable --jq .mergeable     # CONFLICTING: rebase on origin/main now, or CI never starts
+```
 
 ## 4. Review at the push
 
-Start the review the moment the push lands — do not wait for CI. In Claude Code, launch the `loom-reviewer` subagent in the background with the PR number; elsewhere run the `loom-review` skill. Fix every confirmed finding with a new commit and push again; the review restarts on the new head. The loop ends when a full pass on the head returns no findings and CI is green.
+Start the review the moment the push lands; CI runs in parallel. In Claude Code, launch a fresh `loom-reviewer` subagent in the background with the PR number and head sha; elsewhere run the `loom-review` skill in a new session. A reviewer that saw an earlier head carries its conclusions forward, so every head gets a new one.
+
+Work the findings with `loom-address-review`: fix every confirmed one, nits included, or answer why not; push; review again. The loop ends when a fresh reviewer returns no findings on the head and CI is green. An "approve" that still lists nits is not the end.
 
 ## 5. Read CI
 
@@ -58,7 +66,7 @@ Gate on `jq`'s `all(...)` (an empty rollup is not green) and print the table; do
 
 ## 6. Merge
 
-Only when the gate above prints `true`, the review has no open finding and the requester approved merging:
+Only when the gate above prints `true`, the review has no open finding and the requester approved merging. Read the title and body once more first: the squash merge copies them into `main`'s history, where they cannot be edited. They describe the final diff (not the first push), and carry nothing internal.
 
 ```bash
 gh pr merge <n> --squash

@@ -1,6 +1,6 @@
 ---
 name: loom-change
-description: What else a Loom change must touch — generated files, snapshots, erasure classification, docs, design notes — per change kind (wire op, table or column, migration, setting, worker, provider, code-index language, CLI, plugin hook, dashboard, docs). Use when adding, renaming or removing an op, field, table, column, setting, flag, worker or CLI command, or when asked "what else does this need". NOT for running the gates (loom-pre-push) or a fix inside one function.
+description: Lists what else a Loom change must touch in the same PR — generated files, snapshots, erasure classification, docs, design notes — per change kind (wire op, table or column, migration, setting, worker, provider, code-index language, CLI, plugin hook, dashboard, docs). Use when adding, renaming or removing any of those, or when asked "what else does this need". Not for running the gates (loom-pre-push).
 ---
 
 # Making a Loom change

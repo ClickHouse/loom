@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -30,6 +31,10 @@ NAME = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 # The open skill format caps a description at 1024 characters.
 MAX_DESCRIPTION = 1024
 MAX_SKILL_LINES = 500
+# Codex lists every installed skill's description within about 8000 characters and
+# shortens or drops the rest; leave room for the user's own skills.
+MAX_DESCRIPTIONS_TOTAL = 6000
+MIN_TRIGGER_CASES = 3
 
 
 def _frontmatter(path: Path) -> tuple[dict[str, str | list[str]], str]:
@@ -73,6 +78,63 @@ def test_skill_frontmatter(skill: Path) -> None:
     description = meta.get("description")
     assert isinstance(description, str) and 0 < len(description) <= MAX_DESCRIPTION
     assert body.count("\n") <= MAX_SKILL_LINES
+
+
+def test_descriptions_fit_the_codex_listing() -> None:
+    total = sum(len(str(_frontmatter(s)[0]["description"])) for s in SKILLS)
+    assert total <= MAX_DESCRIPTIONS_TOTAL, total
+
+
+@pytest.mark.parametrize("skill", SKILLS, ids=lambda p: p.parent.name)
+def test_skill_has_trigger_cases(skill: Path) -> None:
+    cases = json.loads((skill.parent / "evals" / "triggers.json").read_text())
+    assert all(set(c) == {"query", "should_trigger"} for c in cases)
+    assert sum(c["should_trigger"] for c in cases) >= MIN_TRIGGER_CASES
+    assert sum(not c["should_trigger"] for c in cases) >= MIN_TRIGGER_CASES
+
+
+def test_each_trigger_case_belongs_to_one_skill() -> None:
+    owners: dict[str, str] = {}
+    for skill in SKILLS:
+        for case in json.loads((skill.parent / "evals" / "triggers.json").read_text()):
+            if case["should_trigger"]:
+                query = case["query"].lower()
+                assert query not in owners, f"{skill.parent.name} and {owners[query]}: {query}"
+                owners[query] = skill.parent.name
+
+
+@pytest.mark.parametrize("skill", SKILLS, ids=lambda p: p.parent.name)
+def test_manual_skills_are_manual_in_codex_too(skill: Path) -> None:
+    meta, _ = _frontmatter(skill)
+    codex = skill.parent / "agents" / "openai.yaml"
+    manual = meta.get("disable-model-invocation") == "true"
+    assert manual == (codex.is_file() and "allow_implicit_invocation: false" in codex.read_text())
+
+
+def _check_prose(*args: str, stdin: str = "") -> subprocess.CompletedProcess[str]:
+    script = ROOT / ".claude" / "skills" / "loom-writing" / "scripts" / "check_prose.py"
+    return subprocess.run(
+        [sys.executable, str(script), *args], input=stdin, capture_output=True, text=True
+    )
+
+
+def test_check_prose_flags_filler_and_internal_details() -> None:
+    text = "We leverage a robust cache.\nLogs are under /home/alice/loom.\n`leverage` in code\n"
+    out = _check_prose("-", stdin=text)
+    assert out.returncode == 1
+    assert out.stdout.splitlines() == [
+        "-:1: leverage -> use",
+        "-:1: robust -> the property itself (retries twice, fails closed)",
+        "-:2: /home/alice -> remove a home directory path",
+    ]
+    assert _check_prose("-", stdin="Search keeps pinned rows.\n").returncode == 0
+
+
+def test_agent_instructions_pass_their_own_prose_check() -> None:
+    files = [ROOT / "AGENTS.md", ROOT / "CLAUDE.md", *RULES, *AGENTS]
+    files += [s for s in SKILLS if s.parent.name != "loom-writing"]  # it lists the words
+    out = _check_prose(*map(str, files))
+    assert out.returncode == 0, out.stdout
 
 
 def test_agents_md_lists_every_skill() -> None:

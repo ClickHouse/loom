@@ -25,6 +25,9 @@
       "Bash(gh run view:*)",
       "Bash(gh run list:*)",
       "Bash(gh issue view:*)",
+      "Bash(gh search prs:*)",
+      "Bash(gh search issues:*)",
+      "Bash(gh issue list:*)",
       "Bash(./redeploy.sh --status)",
       "Bash(npm --prefix frontend run budget)",
       "Bash(npm --prefix sdk/typescript run check)",
@@ -39,7 +42,8 @@
       "Bash(.venv/bin/python -m scripts.codegen.docs_reference:*)",
       "Bash(.venv/bin/python -m scripts.codegen.op_reach_census:*)",
       "Bash(.venv/bin/python -m scripts.codegen.settings_reference:*)",
-      "Bash(.venv/bin/python -m scripts.codegen.agent_plugin_sync:*)"
+      "Bash(.venv/bin/python -m scripts.codegen.agent_plugin_sync:*)",
+      "Bash(python3 .claude/skills/loom-writing/scripts/check_prose.py:*)"
     ],
     "deny": [
       "Bash(git stash:*)",

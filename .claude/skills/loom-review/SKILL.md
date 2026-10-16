@@ -1,12 +1,12 @@
 ---
 name: loom-review
-description: Strict, high-signal review of a Loom pull request or diff against the invariants Loom's design depends on — tenant isolation, the identity tuple and provenance stamps, ReplacingMergeTree column mirroring, additive migrations, erasure coverage, fail-closed auth, the extractor stamp, generated files, public-copy rules — with every finding verified before it is reported. Use when asked to review a Loom PR, branch or diff. After your own push, launch the loom-reviewer agent (which preloads this skill) instead of reviewing inline.
+description: Reviews a Loom pull request or diff against the invariants Loom's design depends on (tenant isolation, identity and provenance stamps, ReplacingMergeTree column mirroring, additive migrations, erasure coverage, fail-closed auth, generated files, public copy) and for needless complexity, verifying every finding before reporting it with severity and file:line. Use when asked to review a Loom PR, branch or diff, or to post review comments. After your own push, start the loom-reviewer agent, which preloads this skill.
 argument-hint: "[pr-number | branch | diff-range]"
 ---
 
 # Loom review
 
-You are a senior Loom maintainer. Report real problems — wrong results, data loss, cross-tenant reads, auth bypass, unbounded cost, broken operator rollouts — concisely, with evidence. Formatting, naming taste and speculative refactors are out of scope unless they hide a bug.
+Review as a senior Loom maintainer would: report real problems (wrong results, data loss, cross-tenant reads, auth bypass, unbounded cost, broken operator rollouts) and code that is harder to read than its job needs, concisely and with evidence. Formatting the formatters own and speculative refactors are out of scope.
 
 ## 1. Get the change
 
@@ -25,6 +25,7 @@ Do not give a verdict until each gate is addressed; a gate you could not close g
 2. **Impacted surface.** Follow the changed value, field, setting or state through unchanged callers, sibling ops, both transports (HTTP and MCP), the SDKs, the CLI, the workers and the dashboard.
 3. **Failure and divergence.** Retries, partial writes, cancellation, a worker pass interrupted halfway, two replicas or two colours running at once during a deploy, a cache that outlives the row.
 4. **Evidence.** Each material claim maps to a test, a measurement with its command, or a reason none is possible.
+5. **Simplicity.** The change is the smallest design that does the job, and a new team member could follow it.
 
 ## 3. Loom invariants
 
@@ -47,11 +48,23 @@ Check each one the diff can reach (see [AGENTS.md](../../../AGENTS.md) for the r
 - **Public copy.** No people, hosts, internal namespaces, dates, history, decision numbers or product names in repository text; the PR body carries none of them either.
 - **Compatibility.** No shim for a removed field (it is served and named in `ignored_args`); the PR body's changelog entry and the "Compatibility" section name the break.
 
-## 4. Verify before reporting
+## 4. Readability and simplicity
+
+The code should read as if an experienced Python engineer wrote it by hand. Each of these is a finding (P3 unless it hides a bug):
+
+- an abstraction, class, flag or parameter with one caller and no second use in sight;
+- a defensive branch, `try`, fallback or retry for a state the code cannot reach;
+- a comment that restates the code, narrates the change ("now", "updated to", "per review"), or runs past two lines where one would do;
+- a name that describes the mechanism rather than the domain (`data`, `result2`, `handle_stuff`);
+- duplicated logic where an existing helper in `server/core/` or the domain's `store/` already does it;
+- a compatibility shim, adapter or mode for a replaced path;
+- a test that asserts the implementation (mock call order) instead of the behaviour (the row read back).
+
+## 5. Verify before reporting
 
 For each candidate finding, try to prove it wrong: read the caller, the test, the migration, run the test or a one-line probe. Drop it if it does not survive. Keep a serious, plausible risk you could not prove as "needs verification", with the evidence that would settle it.
 
-## 5. Report
+## 6. Report
 
 ```
 Verdict: approve | request changes | needs verification
@@ -63,4 +76,21 @@ Blind spots
 
 P0: data loss, a cross-tenant read, an auth bypass. P1: wrong results or a broken rollout on a common path. P2: an edge-case bug or a missing test for a promised behaviour. P3: a stale claim or a cleanup that hides a bug.
 
-Nothing found is a valid result: say "no findings" and list what was checked. Post comments on the PR only when the requester asked for that.
+Nothing found is a valid result: say "no findings" and list what was checked. Write each finding in the `loom-writing` voice: the problem first, no praise or softening.
+
+## 7. Posting on GitHub
+
+Post only when the requester asked for comments on the PR. Then post one review with one inline comment per finding, on the line it is about, not a wall of text in one comment:
+
+```bash
+review=$(mktemp) && cat > "$review" <<'JSON'
+{"commit_id": "<head sha>", "event": "COMMENT", "body": "<verdict and blind spots, two or three lines>",
+ "comments": [{"path": "server/x.py", "line": 88, "side": "RIGHT", "body": "P2 — <problem, failing input, fix>"}]}
+JSON
+gh api repos/ClickHouse/loom/pulls/<n>/reviews --input "$review"
+```
+
+- `line` is a line of the diff's new side; a finding outside the diff goes in the review body with its `file:line`.
+- A one-line fix goes in a `suggestion` block so the author can apply it.
+- `event` stays `COMMENT` from an agent; `APPROVE` and `REQUEST_CHANGES` are a maintainer's call.
+- Do not repeat a point another reviewer already made in an open thread; add evidence to that thread instead.

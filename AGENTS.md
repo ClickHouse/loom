@@ -51,7 +51,8 @@ Loom is a memory, knowledge, and observability data plane for AI agents, built o
 
 These hold for every change, by a person or an agent. The skills under `.claude/skills/` (Codex reads the same files through `.agents/skills/`) carry the step-by-step versions.
 
-- **Diagnose before you edit.** Write three lines first: the failing cases, from evidence (logs, rows, traces), not guesses; the pattern they share; the hypothesis — the exact change and why it fixes that pattern. Then edit, then run. Running confirms a change, it is never how you find one: if you cannot predict the result, collect more data. Never loop change → run → revert.
+- **Diagnose before you edit.** Write three lines first: the failing cases, from evidence (logs, rows, traces), not guesses; the pattern they share; the hypothesis — the exact change and why it fixes that pattern. Then edit, then run. Running confirms a change, it is never how you find one: if you cannot predict the result, collect more data. Never loop change → run → revert (`loom-debug`).
+- **Decide within the goal.** Inside an agreed task, make the design call a senior Loom engineer would, build it, and state the decision and its reason in the report. Ask first only for what is public or hard to undo: opening or merging a pull request, filing or closing an issue, posting a comment, deleting data, deploying, spending benchmark money.
 - **Look before you build.** Check what already exists (a feature, a setting, a helper: OIDC login, for one, is `oauth_login_provider` and the `oidc_*` settings) and whether another open pull request already does the work (`gh pr list --search <area>`; `loom_code_pr_check` when the Loom plugin is connected).
 - **One task, one worktree, one branch from `origin/main`.** `git worktree add -b <branch> ../loom-<branch> origin/main`. Never check out, pull or reset `main` inside a linked worktree: the branch ref is shared with the primary checkout, so a deployment running from it sees changes it never pulled. Never `git stash`: the stash stack is shared by every worktree of the clone; set work aside with a WIP commit.
 - **Your own ClickHouse.** Integration tests and migrations run against a ClickHouse you started for this worktree and confirmed empty, never one you found listening on a port. Tests that need a server read `LOOM_CH_HOST` / `LOOM_BASE_URL` from the environment or the repository `.env` (`LOOM_ENV_FILE=` loads none) and skip without them.
@@ -62,6 +63,9 @@ These hold for every change, by a person or an agent. The skills under `.claude/
 - **Merge** with `gh pr merge --squash`, only when every required check is green. After another pull request merges, a pull request that adds files the whole-tree gates scan (public copy, doc links, function length) re-runs CI on the new `main` before it merges.
 - **Benchmarks cost money and time**: never start a benchmark run nobody asked for. A benchmark confirms a finished change; build every named part of a feature before measuring it, and never stage or partly ship one on your own. A result counts only when the treatment demonstrably ran and the paired delta clears the noise band ([methodology](docs/benchmarks/methodology.md#the-verdict)).
 - **No compatibility code.** A replaced path is deleted in the same change: no shims, adapters or rollout modes. A client that still sends a removed field is served with it named in `ignored_args`; the pull request's changelog entry and compatibility section name the break, and the release notes collect it. A downstream consumer gets a migration note, not a worse API.
+- **On GitHub** an agent writes as a careful maintainer: an issue only after a duplicate check and a reproduction (`loom-file-issue`); review findings verified before they are posted, one inline comment per finding (`loom-review`); every review comment on your own pull request answered in its thread with the fixing commit or the reason it stands (`loom-address-review`). An agent comments as `COMMENT`; approving and requesting changes are a maintainer's call.
+- **Plain technical English** in everything you write: the fact first, concrete names, no filler adjectives, no praise or apology. `loom-writing` has the rules and a checker for a body file.
+- **Shared machine.** Other sessions may run on the same host. Remove only the containers, volumes and worktrees you created, by exact name, never by a prefix filter; never `npm ci` through a `node_modules` symlink into another checkout.
 - **Committed text** (code, comments, docs, commit messages): short comments that say why; no history ("previously", "new in"), dates, people, ticket, decision or RFC numbers; no other products' names and no comparative framing in benchmark text. Design notes stay out of the repository: the rationale goes in the pull request body, and the `docs/architecture/` page describes the system as it is.
 
 ## Skills, rules and agents
@@ -69,14 +73,18 @@ These hold for every change, by a person or an agent. The skills under `.claude/
 | Path | What | Loaded |
 | --- | --- | --- |
 | `.claude/skills/loom-dev-setup/` | worktree, virtualenv, a private ClickHouse, a server from source | on request |
+| `.claude/skills/loom-debug/` | a bug to its cause: failing cases, pattern, hypothesis, a test that confirms it | a wrong result or error |
 | `.claude/skills/loom-change/` | the recipe and gates for each kind of change (op, table, migration, setting, worker, plugin hook, frontend, docs) | when changing code |
 | `.claude/skills/loom-pre-push/` | the gates to run for the paths a diff touches | before a push |
-| `.claude/skills/loom-ship-pr/` | pull request body, push, review, CI watch, squash merge | when opening or landing a PR |
-| `.claude/skills/loom-review/` | Loom's review gates: the invariants a diff can break | reviewing a PR or diff |
+| `.claude/skills/loom-ship-pr/` | pull request body, push, review at every push, CI watch, squash merge | when opening or landing a PR |
+| `.claude/skills/loom-review/` | Loom's review gates: the invariants a diff can break, simplicity, posting findings | reviewing a PR or diff |
+| `.claude/skills/loom-address-review/` | every review thread on your PR verified, fixed or answered, until a fresh review is empty | review comments on your PR |
 | `.claude/skills/loom-investigate-ci/` | a red CI job to its cause and fix | a failing check |
+| `.claude/skills/loom-file-issue/` | duplicate check, reproduction, the right issue form, a public-safe body | opening or updating an issue |
+| `.claude/skills/loom-writing/` | the voice for commits, PRs, issues, comments and docs, with a prose checker | before writing any of them |
 | `.claude/skills/loom-bench/` | when and how to run a benchmark and report it; a run only on request | benchmark questions |
 | `.claude/skills/loom-deploy/` | blue/green deploy, rollback and checks with `redeploy.sh` | operators, on request only |
 | `.claude/rules/*.md` | per-area rules, each with the `paths:` it governs | Claude Code loads one when a matching file is read or edited; other agents read the one for the files they touch |
 | `.claude/agents/loom-reviewer.md` | a read-only reviewer that runs `loom-review` | after a push |
 
-`tests/unit/test_agent_instructions.py` checks their frontmatter, links and path globs.
+Each skill keeps trigger cases in `evals/triggers.json` (prompts that should and should not load it). `tests/unit/test_agent_instructions.py` checks the frontmatter, the description budget, the trigger cases, links and path globs.

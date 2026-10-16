@@ -155,14 +155,18 @@ var/
 # development skills are named loom-* and tracked; `.agents/skills` is a
 # tracked symlink to `.claude/skills`, so Codex reads the same files.
 .claude/skills/*
+!.claude/skills/loom-address-review/
 !.claude/skills/loom-bench/
 !.claude/skills/loom-change/
+!.claude/skills/loom-debug/
 !.claude/skills/loom-deploy/
 !.claude/skills/loom-dev-setup/
+!.claude/skills/loom-file-issue/
 !.claude/skills/loom-investigate-ci/
 !.claude/skills/loom-pre-push/
 !.claude/skills/loom-review/
 !.claude/skills/loom-ship-pr/
+!.claude/skills/loom-writing/
 # `npx skills add` also drops a stray `agent/` copy and a lockfile.
 agent/
 skills-lock.json

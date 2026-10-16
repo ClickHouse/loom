@@ -1,0 +1,26 @@
+[
+  {
+    "query": "deploy main to the blue/green pair",
+    "should_trigger": true
+  },
+  {
+    "query": "roll back the last loom deploy",
+    "should_trigger": true
+  },
+  {
+    "query": "which build is serving right now",
+    "should_trigger": true
+  },
+  {
+    "query": "start a local loom server from this worktree",
+    "should_trigger": false
+  },
+  {
+    "query": "merge PR 57",
+    "should_trigger": false
+  },
+  {
+    "query": "run the integration tests",
+    "should_trigger": false
+  }
+]

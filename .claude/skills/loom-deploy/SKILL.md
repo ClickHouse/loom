@@ -1,6 +1,6 @@
 ---
 name: loom-deploy
-description: Operator procedure for a blue/green Loom deployment with redeploy.sh — preflight, the swap, post-swap checks, and rollback. Use only when an operator explicitly asks to deploy, redeploy, roll back or check which build is serving.
+description: Operator procedure for a blue/green Loom deployment with redeploy.sh — preflight, the swap, post-swap checks and rollback. Use only when an operator explicitly asks to deploy, redeploy, roll back or check which build is serving.
 disable-model-invocation: true
 argument-hint: "[--status | --rollback]"
 ---

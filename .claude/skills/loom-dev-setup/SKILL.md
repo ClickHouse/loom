@@ -1,6 +1,6 @@
 ---
 name: loom-dev-setup
-description: Set up an isolated Loom development environment for one task — a git worktree branched from origin/main, its own virtualenv, its own ClickHouse on free ports, migrations, and a server from source on its own port. Use when starting work on a Loom change, when asked to "set up", "create a worktree", "run the server", "run integration tests locally", or before any command that writes to ClickHouse.
+description: Sets up an isolated Loom environment for one task — a git worktree from origin/main, its own virtualenv, its own ClickHouse on free ports, migrations, and a server from source on its own port. Use when starting a Loom change, when asked to set up, create a worktree, run the server or run integration tests locally, and before any command that writes to ClickHouse.
 argument-hint: "<branch-name>"
 ---
 
@@ -42,7 +42,9 @@ docker ps --filter "name=^ch-$(basename "$PWD")$" --format '{{.Names}} {{.Ports}
 curl -s "http://loom:loomdev@localhost:18123/?query=SELECT+count()+FROM+system.tables+WHERE+database='loom'"   # 0 before the first migrate
 ```
 
-The script refuses a port that is already taken (pick others and re-run), so a failed start cannot hand your migrations to another server. Remove it when done: `docker rm -f "ch-$(basename "$PWD")"` — check the name first; never `rm -f` a container you did not start.
+The script refuses a port that is already taken (pick others and re-run), so a failed start cannot hand your migrations to another server. Remove it when done: `docker rm -f "ch-$(basename "$PWD")"`.
+
+Keep a list of every container, compose project and volume you start, and remove exactly those, by full name. Never clean up by a pattern (`docker ps --filter name=loom-local-`, `cht-*`): other sessions on the same machine start containers with the same prefixes.
 
 ## 4. One `.env` for this worktree
 
@@ -82,7 +84,16 @@ cd <worktree> && LOOM_INSTANCE_LABEL="iso:$(basename "$PWD"):7790" LOOM_BUILD_CO
 
 Check it in a separate call, by its label rather than its commit (two worktrees fresh from `origin/main` report the same `build_commit`): `curl -s localhost:7790/v1/health | jq -e --arg l "iso:<worktree basename>:7790" '.instance_label == $l and .status == "ok"'`. A `false` means another server holds the port. `--app-dir "$PWD"` makes uvicorn serve this worktree's code; `build_commit` confirms it (a source run reports `unknown` without `LOOM_BUILD_COMMIT`). The label is read from the process environment, not `.env`: without it the server refuses to start.
 
-## 6. Integration tests
+## 6. Frontend dependencies
+
+A worktree's `frontend/node_modules` may be a symlink into another checkout. `npm ci` through that link empties the other checkout's directory. Check first, and replace a link with a real install:
+
+```bash
+cd <worktree> && test -L frontend/node_modules && rm frontend/node_modules   # removes the link only
+cd <worktree> && npm --prefix frontend ci
+```
+
+## 7. Integration tests
 
 ```bash
 cd <worktree> && make test-integration

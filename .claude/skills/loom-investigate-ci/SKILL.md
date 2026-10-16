@@ -1,6 +1,6 @@
 ---
 name: loom-investigate-ci
-description: Take a failing Loom CI check from the red job to its root cause and a fix — fetch the failed log, decide whether main fails too, reproduce locally, and fix at the source. Use when a PR check is red, CI shows "no checks", a job is flaky, or asked "why is CI failing", "fix CI", "is this flaky".
+description: Takes a failing Loom CI check to its root cause and a fix — the failed log, whether main fails too, a local reproduction, a fix at the source. Use when a PR check is red, a PR shows no checks, a job looks flaky, or when asked "why is CI failing" or "fix CI". Not for bugs found outside CI (loom-debug).
 argument-hint: "[pr-number | run-url]"
 ---
 
