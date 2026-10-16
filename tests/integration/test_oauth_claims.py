@@ -292,7 +292,7 @@ async def test_the_sweep_worker_drops_keys_once_their_credential_expired(store: 
     from server.core.ch import get_client
     from server.workers.registry import _WORKERS
 
-    row = next(w for w in _WORKERS if w.name == "oauth_claims_sweep")
+    row = next(w for w in _WORKERS if w.name == "oauth_signin_state_sweep")
     sweep = getattr(importlib.import_module(row.module), row.pass_attr)
 
     ch, old, fresh = get_client(), f"test:{uuid.uuid4().hex}", f"test:{uuid.uuid4().hex}"

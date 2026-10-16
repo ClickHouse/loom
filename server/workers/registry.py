@@ -392,9 +392,10 @@ _WORKERS: tuple[_Worker, ...] = (
         "task_lease_sweep_interval_seconds",
         idle_interval="task_lease_sweep_idle_interval_seconds",
     ),
-    # oauth_claims_sweep: always-on; drops sign-in keys once their credential expired.
+    # oauth_signin_state_sweep: always-on; drops loom.oauth_signin_state keys past
+    # their credential's expiry.
     _Worker(
-        "oauth_claims_sweep",
+        "oauth_signin_state_sweep",
         "server.auth.claims",
         None,
         "SWEEP_INTERVAL_SECONDS",

@@ -357,7 +357,8 @@ async def _read_revocations(keys: list[str]) -> list[dict[str, Any]]:
 async def list_active() -> list[dict[str, Any]]:
     """The unexpired revocations, newest first — the same rows the refresh
     worker reads every `jwt_revocation_cache_ttl_seconds`, so this read is
-    already paid for at that cadence (the table holds well under 1000 rows)."""
+    already paid for at that cadence (the table holds well under 1000 rows).
+    An operator cutoff's row says `kind: cutoff` and names its subject."""
     from server.core.ch import get_client
 
     rows = await get_client().query_all(
@@ -368,7 +369,12 @@ async def list_active() -> list[dict[str, Any]]:
         ORDER BY revoked_at DESC
         """,
     )
-    return [dict(r) for r in rows]
+    out = []
+    for r in rows:
+        key = str(r["jti"])
+        kind = "cutoff" if key.startswith(CUTOFF_PREFIX) else "revocation"
+        out.append({**r, "jti": key.removeprefix(CUTOFF_PREFIX), "kind": kind})
+    return out
 
 
 async def load_at_boot() -> None:

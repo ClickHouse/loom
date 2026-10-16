@@ -358,8 +358,6 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
 
 
 def _print_revocations(rows: list[dict[str, Any]], *, as_json: bool) -> int:
-    from server.auth.revocation import CUTOFF_PREFIX
-
     if as_json:
         print(json.dumps(rows, default=str))
         return 0
@@ -372,9 +370,7 @@ def _print_revocations(rows: list[dict[str, Any]], *, as_json: bool) -> int:
     )
     for r in rows:
         before = r.get("issued_before")
-        key = str(r.get("jti", ""))
-        if key.startswith(CUTOFF_PREFIX):  # an operator cutoff, shown without its NUL
-            key = "cutoff→" + key.removeprefix(CUTOFF_PREFIX)
+        key = ("cutoff→" if r.get("kind") == "cutoff" else "") + str(r.get("jti", ""))
         print(
             f"{key:<40} {str(r.get('revoked_at', ''))[:19]:<20} "
             f"{str(r.get('expires_at', ''))[:19]:<20} "

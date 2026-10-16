@@ -258,7 +258,8 @@ address first. The owner links it by proving the account's password once from th
 sign-in, under the password sign-in limits; an operator can vouch for a whole domain with
 `loom sso adopt`, which lists each account and its owner before `--apply`, skips an email
 whose accounts span orgs or owners or that SSO already reaches, and revokes the tokens the
-adopted subjects held (whoever registered an address may hold some). A linked account keeps
+adopted subjects held (whoever registered an address may hold some). It applies only once
+SSO is on, when the password no longer signs in to mint a token past that revocation. A linked account keeps
 its subject, grants and data. An email whose linked accounts disagree (two owners, two orgs)
 signs in to none, and JIT adds nothing beside them. A person who says a password account
 naming their address is not theirs goes on to a JIT account, unless an account naming the
@@ -348,8 +349,9 @@ an eight-letter user code (20 letters, about 2^34.6) that both live ten minutes.
 happens on a page shown only after sign-in. The page names the code, the requesting
 address and the time, and it needs a click. It carries a one-time ticket bound to that
 signed-in user, so a forged cross-site POST approves nothing, and it cannot be framed.
-Wrong codes (10 per address per 15 minutes), new device grants (30) and polls (one per
-interval, else `slow_down`) are limited per process.
+Wrong codes (10 per address per 15 minutes) and new device grants (30) are counted across
+replicas (`loom.auth_attempts`); polls (one per interval, else `slow_down`) are paced per
+process.
 
 Whoever approves a user code first decides the grant, as RFC 8628 §5.4 warns. Two people
 signing in with one code end it for both, but someone who saw the code (a screen share)

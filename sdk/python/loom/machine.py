@@ -25,7 +25,7 @@ from pathlib import Path
 import httpx
 
 from loom.credentials import _origin
-from loom.errors import AuthInvalid
+from loom.errors import AuthInvalid, BackendUnavailable, LoomError
 
 ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
 TOKEN_EXCHANGE = "urn:ietf:params:oauth:grant-type:token-exchange"
@@ -72,10 +72,10 @@ class MachineLogin(httpx.Auth):
                     # a short-lived CI proof capped.
                     life = self._expires_at - time.time()
                     self._renew_at = self._expires_at - min(_RENEW_BEFORE_S, life / 2)
-                except (AuthInvalid, httpx.HTTPError, OSError, ValueError):
-                    # The CI token ran out, Loom is unreachable, a key file is
-                    # mid-rotation: the token in hand is good until it runs out,
-                    # and the next try waits a bit.
+                except (LoomError, httpx.HTTPError, OSError, ValueError, KeyError, TypeError):
+                    # The CI token ran out, Loom is unreachable or busy, a key
+                    # file is mid-rotation, an answer is malformed: the token in
+                    # hand is good until it runs out, and the next try waits a bit.
                     if self._token == refused or time.time() >= self._expires_at:
                         raise
                     self._renew_at = min(self._expires_at, time.time() + 30)
@@ -104,6 +104,8 @@ class MachineLogin(httpx.Auth):
             body = {}  # a proxy's page, not Loom's answer
         if not isinstance(body, dict):
             body = {}
+        if r.status_code == 429 or r.status_code >= 500:  # Keeper busy, the CI issuer away
+            raise BackendUnavailable(f"bot {self.profile!r}: {r.status_code}; retry shortly")
         if r.status_code != 200 or "access_token" not in body:
             raise AuthInvalid(
                 f"bot {self.profile!r}: {body.get('error', r.status_code)} "

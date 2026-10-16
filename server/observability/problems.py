@@ -86,8 +86,6 @@ class HealthState:
     ch_reader_ok: bool | None = None
     # ClickHouse's answer when that read failed.
     ch_reader_error: str = ""
-    # Whether sign-in state has its Keeper table (loom.oauth_signin_state exists):
-    # None = not asked yet in this process.
     # Whether a sign-in lately found loom.oauth_signin_state at its key limit.
     oauth_signin_state_full: bool = False
     # Provider participants this process's last sweep could not retire

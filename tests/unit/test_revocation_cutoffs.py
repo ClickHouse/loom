@@ -88,13 +88,20 @@ def test_a_later_revoke_does_not_lower_an_operator_cutoff_here(table) -> None:
     assert revocation.is_revoked("sa:bot", issued_at=issued)
 
 
-def test_the_list_shows_an_operator_cutoff_without_its_nul(capsys) -> None:
+def test_the_list_shows_an_operator_cutoff_without_its_nul(capsys, monkeypatch) -> None:
     from server.cli.access import _print_revocations
 
-    row = {"jti": revocation.CUTOFF_PREFIX + "sa:bot", "issued_before": "2026-10-16 08:00:00"}
-    _print_revocations([row], as_json=False)
+    class _Rows:
+        async def query_all(self, sql: str) -> list[dict[str, Any]]:
+            return [{"jti": revocation.CUTOFF_PREFIX + "sa:bot", "issued_before": "2026-10-16"}]
+
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _Rows())
+    rows = asyncio.run(revocation.list_active())
+    assert rows == [{"jti": "sa:bot", "issued_before": "2026-10-16", "kind": "cutoff"}]
+    for as_json in (False, True):
+        _print_revocations(rows, as_json=as_json)
     out = capsys.readouterr().out
-    assert "cutoff→sa:bot" in out and "\x00" not in out
+    assert "cutoff→sa:bot" in out and "\x00" not in out and "\\u0000" not in out
 
 
 class _StalledTable(_Table):

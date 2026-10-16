@@ -54,7 +54,7 @@ async def _password_account(ch: Any, org: str, email: str) -> str:
 def _sso(*args: str) -> str:
     out = subprocess.run(
         [sys.executable, "-m", "server.cli", "sso", *args],
-        env=os.environ,
+        env={**os.environ, "LOOM_OAUTH_LOGIN_PROVIDER": "oidc"},  # adopt waits for SSO
         capture_output=True,
         text=True,
         check=True,
@@ -104,3 +104,21 @@ async def test_adopting_an_offboarded_subject_keeps_it_offboarded(ch: Any) -> No
             params={"j": email},
         )
     assert row is not None and row["issued_before"] is None
+
+
+async def test_a_link_skips_an_account_released_since_it_was_found(ch: Any) -> None:
+    org, email = f"sso-it-{uuid.uuid4().hex[:6]}", f"lee-{uuid.uuid4().hex[:6]}@example.com"
+    kept, released = (
+        await _password_account(ch, org, email),
+        await _password_account(ch, org, email),
+    )
+    with own_write_reads():
+        row = await ch.query_one(
+            "SELECT * FROM loom.namespaces FINAL WHERE org = {o:String} AND namespace = {n:String}",
+            params={"o": org, "n": released},
+        )
+    await ch.insert("loom.namespaces", [{**row, "active": False, "contact_email": ""}])
+    linked = await sso_links.link_live(email, [(org, kept), (org, released)], "self")
+    assert linked == [(org, kept)]
+    with own_write_reads():
+        assert await sso_links.linked(email) == [(org, kept)]

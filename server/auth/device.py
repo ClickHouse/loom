@@ -380,6 +380,8 @@ async def device_code_grant(f: dict[str, str]) -> dict[str, Any]:
     try:
         device = await oauth.store.take_device(device_code)
     except CodeReplayed as e:
+        if e.grant.get("status") == "denied":  # no session to end: the CLI polled once more
+            raise oauth.OAuthError("access_denied") from None
         raise await oauth.end_replayed_session(e, "device code") from None
     if device is None:
         raise oauth.OAuthError("invalid_grant")

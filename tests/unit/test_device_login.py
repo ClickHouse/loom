@@ -562,6 +562,24 @@ def test_a_code_approved_while_its_owner_was_at_the_idp_says_so(sso) -> None:
     assert page.status_code == 400 and "already used" in page.text
 
 
+def test_a_refusal_after_the_idp_rotated_revokes_the_new_idp_token(sso, monkeypatch) -> None:
+    from server.auth import revocation
+
+    revoked: list[str] = []
+
+    async def idp_revoke(token: str) -> None:
+        revoked.append(token)
+
+    monkeypatch.setattr(oidc, "revoke", idp_revoke)
+    c = _client()
+    grant = _start(c)
+    _approve(c, grant["user_code"], _sso_round_trip(c, grant["user_code"]).text)
+    tokens = _poll(c, grant["device_code"]).json()
+    revocation._apply_locally("alice@example.com", None)  # revoked between the IdP and the mint
+    assert _refresh(c, tokens["refresh_token"]).status_code == 400
+    assert [t for t in revoked if t] == ["idp-r1+"]  # what the IdP handed back
+
+
 @pytest.fixture
 def bobs_password_account(sso, monkeypatch):
     """Bob signs in at the IdP; Loom has his account from before SSO, made with
@@ -578,8 +596,9 @@ def bobs_password_account(sso, monkeypatch):
     async def unlinked(email: str) -> list[dict[str, Any]]:
         return [] if links else [{"org": "acme", "namespace": "bob", "password_hash": stored}]
 
-    async def link(email: str, accounts: list[tuple[str, str]], by: str) -> None:
+    async def link(email: str, accounts: list[tuple[str, str]], by: str) -> list[tuple[str, str]]:
         links.append((email, accounts, by))
+        return accounts
 
     async def credentials(identifier: str, password: str, *, address: str = "") -> Any:
         return bob if (identifier, password) == ("bob@example.com", "bobpw") else None
@@ -590,7 +609,7 @@ def bobs_password_account(sso, monkeypatch):
     monkeypatch.setattr(login, "resolve_identity_for_email", by_email)
     monkeypatch.setattr(login, "resolve_user_credentials", credentials)
     monkeypatch.setattr(sso_links, "unlinked_accounts", unlinked)
-    monkeypatch.setattr(sso_links, "link", link)
+    monkeypatch.setattr(sso_links, "link_live", link)
     monkeypatch.setattr(jit, "jit_provision_for_email", no_jit)
     return links
 
@@ -676,7 +695,7 @@ def test_a_link_that_fails_once_spent_starts_again(bobs_password_account, monkey
     async def revoke(token: str) -> None:
         revoked.append(token)
 
-    monkeypatch.setattr(sso_links, "link", down)
+    monkeypatch.setattr(sso_links, "link_live", down)
     monkeypatch.setattr(oidc, "revoke", revoke)
     c = _client()
     page = _sso_round_trip(c, _start(c)["user_code"])
@@ -1162,7 +1181,7 @@ def test_replaying_a_denied_grant_revokes_nothing(_world) -> None:
     grant = _start(c)
     _approve(c, grant["user_code"], _sign_in(c, grant["user_code"]).text, decision="deny")
     assert _error(_poll(c, grant["device_code"])) == "access_denied"
-    assert _error(_poll(c, grant["device_code"])) == "invalid_grant"
+    assert _error(_poll(c, grant["device_code"])) == "access_denied"  # not told a session ended
     assert _world["revoked"] == []
 
 

@@ -6,14 +6,13 @@ from __future__ import annotations
 import logging
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from server.auth import machines
+from server.auth import machines, oauth
 from server.auth.jwt import AuthInfo
 from server.identity.app import account_admin
 from server.insights.app.admin_routes import require_admin
-from server.settings import settings
 
 log = logging.getLogger(__name__)
 router = APIRouter(dependencies=[Depends(require_admin)])
@@ -41,11 +40,14 @@ async def sso_adopt(input: AdoptInput, info: Admin) -> dict[str, Any]:
     """The password accounts at a domain and why any is skipped; with `apply`,
     links the rest (see `loom sso adopt`)."""
     plan = await account_admin.adopt_plan(input.domain, input.org)
-    linked = (
-        await account_admin.adopt(plan, by=_by(info), keep_tokens=input.keep_tokens)
-        if input.apply
-        else 0
-    )
+    try:
+        linked = (
+            await account_admin.adopt(plan, by=_by(info), keep_tokens=input.keep_tokens)
+            if input.apply
+            else 0
+        )
+    except ValueError as e:
+        raise _invalid(e) from None
     return {
         "accounts": plan,
         "applied": input.apply,
@@ -62,19 +64,19 @@ class EmailInput(BaseModel):
 
 @router.post("/v1/admin/sso.unlink")
 async def sso_unlink(input: EmailInput, info: Admin) -> dict[str, Any]:
-    accounts = await account_admin.unlink(input.email, by=_by(info))
+    accounts = await account_admin.unlink(input.email, input.org, by=_by(info))
     return {"unlinked": [{"org": org, "namespace": ns} for org, ns in accounts]}
 
 
 @router.post("/v1/admin/sso.password_link")
-async def sso_password_link(input: EmailInput, info: Admin) -> dict[str, Any]:
+async def sso_password_link(input: EmailInput, info: Admin, request: Request) -> dict[str, Any]:
     """A one-time link (a day) that gives the email's SSO accounts a password."""
     try:
         code, namespaces = await account_admin.password_link(input.email, input.org, by=_by(info))
     except ValueError as e:
         raise _invalid(e) from None
-    base = (settings.oauth_issuer or settings.public_base_url).rstrip("/")
-    return {"url": f"{base}/oauth/set-password?code={code}", "namespaces": namespaces}
+    url = f"{oauth.issuer(request)}/oauth/set-password?code={code}"
+    return {"url": url, "namespaces": namespaces}
 
 
 class BotInput(BaseModel):

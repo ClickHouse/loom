@@ -60,9 +60,10 @@ email: self-signup took any email without verifying it, so an email match
 alone would hand the account to whoever typed the address first. A linked
 account keeps its subject, grants, namespaces and data; no new one is made.
 
-- **Before turning SSO on**, link your people's accounts in one go:
+- **Right after turning SSO on**, link your people's accounts in one go:
   `loom sso adopt --domain example.com` lists the password accounts at that
-  domain with their owners, and `--apply` links them. It vouches that the
+  domain with their owners, and `--apply` links them (it refuses while SSO is
+  off: the passwords would still sign in, past the revocation below). It vouches that the
   domain's addresses are the provider's people, so read the list: an address
   someone else registered is linked too. It skips an email whose accounts are
   in several orgs or have several owners, or that SSO already reaches. It
@@ -199,6 +200,15 @@ exactly once; Loom requires a Keeper and refuses to start without one.
 If `/v1/health` reports `oauth_signin_state_full`, the Keeper table hit its key
 limit (a flood of device sign-ins): new sign-ins answer 503 until keys expire,
 so rate-limit the sign-in routes by network at your proxy.
+
+## Upgrading to this build
+
+MCP connections made before it sign in once more: their refresh tokens had no
+session to end them, so they are not rotated. While the previous build still
+serves (a rolling upgrade, a rollback), it does not know sessions or operator
+cutoffs: an access token whose session ended still works there for its hour,
+and so do the tokens a bot disable or an adopt cut off. Finish the rollout
+before adopting accounts or relying on a logout or a bot disable.
 
 ## Turning SSO off
 

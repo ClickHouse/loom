@@ -88,6 +88,20 @@ async def get(name: str, *, active_only: bool = True) -> Machine | None:
     }
 
 
+async def live_roles(m: Machine) -> list[tuple[str, str]]:
+    """The bot's (namespace, role) pairs on namespaces still active: one
+    released or deleted since the bot was made grants it nothing."""
+    names = [ns for ns, _ in m["ns_roles"]]
+    with own_write_reads():  # "register it, then the bot" may have used another replica
+        rows = await get_client().query_all(
+            "SELECT namespace FROM loom.namespaces FINAL WHERE org = {org:String} "
+            "AND namespace IN {names:Array(String)} AND active",
+            params={"org": m["org"], "names": names},
+        )
+    active = {r["namespace"] for r in rows}
+    return [(ns, role) for ns, role in m["ns_roles"] if ns in active]
+
+
 async def listed() -> list[dict[str, Any]]:
     return await get_client().query_all(
         f"SELECT name, org, ns_roles, public_keys != '' AS has_key, issuer, audience, claims, "

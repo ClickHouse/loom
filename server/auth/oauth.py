@@ -876,7 +876,7 @@ async def link_account(request: Request) -> Response:
     if f.get("decision") != "not_mine":
         try:
             proven = await resolve_user_credentials(
-                email, f.get("password", ""), address=address_key(client_address(request))
+                email, f.get("password", ""), address=client_address(request)
             )
         except LoginThrottled:
             return _link_page(ticket, email, "Too many failed attempts. Try again later.", 429)
@@ -916,7 +916,7 @@ async def _link_proven(
         and a["namespace"] in namespaces
         and await verify_password_off_loop(a["password_hash"], password)
     ]
-    await sso_links.link(email, accounts, "self")
+    accounts = await sso_links.link_live(email, accounts, "self")
     await audit.emit(
         "auth.sso_linked",
         org=org,
@@ -1236,10 +1236,7 @@ async def end_replayed_session(e: CodeReplayed, what: str) -> OAuthError:
     except Exception:  # nothing durable landed: the presenter is told to retry
         log.exception("oauth: ending a replayed %s's session failed", what)
         return _unavailable()
-    if e.grant["upstream_refresh"] and settings.oauth_login_provider == "oidc":
-        from server.auth import oidc
-
-        await oidc.revoke(e.grant["upstream_refresh"])  # best effort; may be rotated already
+    await _revoke_upstream(e.grant)  # may be rotated already
     if e.abandoned:  # Loom lost it, not a copy in other hands
         return _invalid_grant("this sign-in's last refresh did not finish; sign in again")
     return _invalid_grant(_REPLAYED.format(what=what))
@@ -1297,6 +1294,14 @@ async def _ask_identity_provider(grant: Grant, refresh_token: str) -> str:
         raise OAuthError("temporarily_unavailable", 503, headers={"Retry-After": "5"}) from e
 
 
+async def _revoke_upstream(grant: Grant | Device) -> None:
+    """Best effort: revoke the session's IdP refresh token once Loom's ends."""
+    if grant["upstream_refresh"] and settings.oauth_login_provider == "oidc":
+        from server.auth import oidc
+
+        await oidc.revoke(grant["upstream_refresh"])
+
+
 # A refresh runs, its spend included, for at most _REFRESH_DEADLINE_S, and a
 # failed one's put-back for _PUT_BACK_S more; each can end in a cancelled
 # write's undo (claims.UNDO_S). At most 45 s: inside the SDK's 60-second wait,
@@ -1329,6 +1334,7 @@ async def _refresh_token_grant(f: dict[str, str]) -> dict[str, Any]:
     except OAuthError as e:
         if e.status_code != 503:  # refused for good: no token replaces this one
             await store.retire_refresh(grant)
+            await _revoke_upstream(grant)  # the IdP's, rotated before the refusal or not
         raise  # an answer: refused, or retry later with the token put back
     except asyncio.CancelledError:  # cancelled at shutdown: the token is the client's again
         await put_back(store.save_refresh(refresh_token, grant))
@@ -1359,11 +1365,6 @@ async def _refresh_session(grant: Grant, refresh_token: str) -> dict[str, Any]:
     # account nor a removed host rides a rolling 30-day chain.
     roles = await refreshed_roles(grant["subject"], grant["org"], list(grant["roles"]))
     if roles is None:
-        # The account is gone: so is the session, and the IdP token just rotated.
-        if grant["upstream_refresh"] and settings.oauth_login_provider == "oidc":
-            from server.auth import oidc
-
-            await oidc.revoke(grant["upstream_refresh"])
         await end_session(grant, "account no longer active")
         raise _invalid_grant()
     return await issue_tokens(
@@ -1432,15 +1433,20 @@ async def _machine_tokens(
     subject = machines.subject(m["name"])
     if await subjects_revoked([subject], issued_at=since):
         raise OAuthError("invalid_client", 401, description="this bot is revoked")
+    ns_roles = await machines.live_roles(m)
+    if not ns_roles:
+        raise OAuthError(
+            "invalid_client", 401, description="none of this bot's namespaces is active"
+        )
     jti, now = new_jti(), int(time.time())
     if ends - now < 30:  # its proof runs out (verify's leeway, a slow lookup)
         raise OAuthError("invalid_grant", description="the proof has run out")
     token = mint_token(
         subject=subject,
         org=m["org"],
-        namespaces=[ns for ns, _ in m["ns_roles"]],
+        namespaces=[ns for ns, _ in ns_roles],
         roles=[],
-        ns_roles=dict(m["ns_roles"]),
+        ns_roles=dict(ns_roles),
         ttl_seconds=ends - since,  # dated `since`, it ends when its proof does
         is_service_account=True,
         jti=jti,
@@ -1516,10 +1522,7 @@ async def revoke_token(request: Request) -> Response:
         except Exception as e:  # nothing durable landed: the client must not think it did
             log.exception("oauth: logout could not end session %s", grant["family"])
             raise _unavailable() from e
-        if grant["upstream_refresh"] and settings.oauth_login_provider == "oidc":
-            from server.auth import oidc
-
-            await oidc.revoke(grant["upstream_refresh"])
+        await _revoke_upstream(grant)
         return Response(status_code=200)
     try:
         info = verify_token(token_value)

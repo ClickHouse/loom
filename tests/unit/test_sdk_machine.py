@@ -185,3 +185,25 @@ def test_a_page_that_is_not_loom_keeps_the_token_in_hand(monkeypatch) -> None:
     for _ in range(2):
         login._renew_at = 0
         assert login.token() == "t1"
+
+
+def test_a_busy_server_is_retryable_not_a_refusal(monkeypatch) -> None:
+    from loom.errors import BackendUnavailable
+
+    monkeypatch.setattr(machine.httpx, "post", lambda *a, **k: httpx.Response(503, json={}))
+    monkeypatch.setenv("LOOM_WORKLOAD_TOKEN", "ci")
+    with pytest.raises(BackendUnavailable):
+        machine.MachineLogin("https://loom.example", "deploy").token()
+
+
+def test_a_malformed_answer_keeps_the_token_in_hand(monkeypatch) -> None:
+    answers = [
+        httpx.Response(200, json={"access_token": "t1", "expires_in": 3600}),
+        httpx.Response(200, json={"access_token": "t2", "expires_in": None}),
+    ]
+    monkeypatch.setattr(machine.httpx, "post", lambda *a, **k: answers.pop(0))
+    monkeypatch.setenv("LOOM_WORKLOAD_TOKEN", "ci")
+    login = machine.MachineLogin("https://loom.example", "deploy")
+    login.token()
+    login._renew_at = 0
+    assert login.token() == "t1"

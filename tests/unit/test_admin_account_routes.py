@@ -27,7 +27,7 @@ def calls(monkeypatch) -> list[tuple[str, Any]]:
         seen.append(("adopt", by))
         return len(plan)
 
-    async def unlink(email: str, *, by: str) -> list[tuple[str, str]]:
+    async def unlink(email: str, org: str = "", *, by: str) -> list[tuple[str, str]]:
         seen.append(("unlink", email))
         return [("acme", "lee")]
 
@@ -71,7 +71,7 @@ def calls(monkeypatch) -> list[tuple[str, Any]]:
     from server.insights.app import admin_routes
 
     monkeypatch.setattr(type(admin_routes.settings), "auth_actually_required", lambda self: False)
-    monkeypatch.setattr(admin_account_routes.settings, "oauth_issuer", "https://loom.example")
+    monkeypatch.setattr(admin_account_routes.oauth.settings, "oauth_issuer", "https://loom.example")
     return seen
 
 
@@ -182,3 +182,10 @@ def test_a_failure_with_no_key_to_hand_back_is_an_error(calls, monkeypatch) -> N
                 "public_key_pem": pem,
             },
         )
+
+
+def test_a_password_link_is_absolute_without_an_issuer_set(calls, monkeypatch) -> None:
+    monkeypatch.setattr(admin_account_routes.oauth.settings, "oauth_issuer", "")
+    monkeypatch.setattr(admin_account_routes.oauth.settings, "public_base_url", "")
+    link = _client().post("/v1/admin/sso.password_link", json={"email": "lee@acme.io"}).json()
+    assert link["url"] == "http://testserver/oauth/set-password?code=the-code"

@@ -61,12 +61,18 @@ def bots(monkeypatch) -> dict[str, Any]:
     async def not_revoked(subjects: list[str], *, issued_at: int) -> bool:
         return False
 
+    active = {"triage", "docs", "deploys"}
+
+    async def live_roles(m: machines.Machine) -> list[tuple[str, str]]:
+        return [(ns, role) for ns, role in m["ns_roles"] if ns in active]
+
     monkeypatch.setattr(machines, "get", get)
+    monkeypatch.setattr(machines, "live_roles", live_roles)
     monkeypatch.setattr(machines, "_jwks_uri", jwks_uri)
     monkeypatch.setattr(oidc, "signing_key", lambda uri, token: ci_key.public_key())
     monkeypatch.setattr(oauth.audit, "emit", emit)
     monkeypatch.setattr(revocation, "subjects_revoked", not_revoked)
-    return {"key": private, "ci_key": ci_key, "registered": registered}
+    return {"key": private, "ci_key": ci_key, "registered": registered, "active": active}
 
 
 def _assertion(key: Any, **over: Any) -> str:
@@ -97,6 +103,16 @@ def test_a_bots_key_gets_an_hour_long_scoped_token(bots) -> None:
     claims = pyjwt.decode(r.json()["access_token"], options={"verify_signature": False})
     assert claims["sub"] == "sa:triage" and claims["namespaces"] == ["triage", "docs"]
     assert claims["exp"] - claims["iat"] == 3600 and "refresh_token" not in r.json()
+
+
+def test_a_namespace_released_since_the_bot_was_made_grants_it_nothing(bots) -> None:
+    c = TestClient(oauth_app())
+    bots["active"].discard("docs")
+    r = _with_key(c, _assertion(bots["key"]))
+    claims = pyjwt.decode(r.json()["access_token"], options={"verify_signature": False})
+    assert claims["namespaces"] == ["triage"]
+    bots["active"].discard("triage")
+    assert _with_key(c, _assertion(bots["key"])).status_code == 401
 
 
 def test_an_assertion_is_spent_once(bots) -> None:

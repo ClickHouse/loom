@@ -534,15 +534,20 @@ class Scenario:
         electing = {k: s for k, s in servers.items() if elects_in_clickhouse(s.tree)}
         if "N-1" not in electing:
             print("  note  N-1 elects its workers per host (a file lock), outside the lease")
-        # N takes the lease first and hands it over once N+1's beats name it.
+        # N takes the lease first and hands it over once N+1's beats name it. A
+        # first beat goes out before its lease exists, so N+1 may hold it before
+        # the older builds read a beat of N+1's naming it: wait for both.
         deadline = time.monotonic() + SETTLE_S
         steady = 0
         holders: list[str] = []
+        reasons: dict[str, str] = {}
         while time.monotonic() < deadline and steady < 3:
-            holders = [k for k, s in electing.items() if s.leader()[0]]
-            steady = steady + 1 if holders == ["N+1"] else 0
+            state = {k: s.leader() for k, s in electing.items()}
+            holders = [k for k, (held, _) in state.items() if held]
+            reasons = {k: why for k, (_, why) in state.items()}
+            aside = all("to a newer build" in reasons[k] for k in ("N-1", "N") if k in electing)
+            steady = steady + 1 if holders == ["N+1"] and aside else 0
             time.sleep(2)
-        reasons = {k: s.leader()[1] for k, s in electing.items()}
         self.check(
             holders == ["N+1"],
             f"one process of the newest build runs the workers ({holders}; {reasons})",

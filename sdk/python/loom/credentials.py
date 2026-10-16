@@ -89,6 +89,16 @@ def _write(data: dict[str, Any]) -> None:
 _in_process = threading.Lock()
 
 
+def _unlock_in_child() -> None:
+    # A fork taken mid-refresh copies the lock held, with no thread to free it.
+    global _in_process
+    _in_process = threading.Lock()
+
+
+if hasattr(os, "register_at_fork"):  # not on Windows
+    os.register_at_fork(after_in_child=_unlock_in_child)
+
+
 @contextlib.contextmanager
 def _locked() -> Iterator[None]:
     """Hold the credentials lock: this process's, then a sibling file's (so the
@@ -162,7 +172,7 @@ def _origin(url: str) -> tuple[str, str, int | None]:
     return u.scheme, host, u.port or _DEFAULT_PORTS.get(u.scheme)
 
 
-def _same_server(a: str, b: str) -> bool:
+def same_server(a: str, b: str) -> bool:
     return _origin(a) == _origin(b) and urlsplit(a).path.rstrip("/") == urlsplit(b).path.rstrip("/")
 
 
@@ -263,17 +273,9 @@ def login(
             with contextlib.suppress(webbrowser.Error):
                 webbrowser.open(grant["verification_uri_complete"])
         tokens = _poll(client, meta["token_endpoint"], grant)
-        replaced = _read()["profiles"].get(profile)
-        if replaced and _same_server(replaced["server"], server):
-            # The session this sign-in replaces ends too, not left to run out.
-            with contextlib.suppress(httpx.HTTPError):
-                client.post(
-                    meta["revocation_endpoint"],
-                    data={
-                        "token": replaced.get("refresh_token") or replaced["access_token"],
-                        "client_id": CLIENT_ID,
-                    },
-                )
+    replaced = _read()["profiles"].get(profile)
+    if replaced:  # the session this sign-in replaces ends too, on its own server
+        _end_session(replaced)
     with _locked():  # another process may be rotating a profile in the same file
         _save(profile, server, tokens, session=secrets.token_hex(8))
     info = whoami(profile=profile)
@@ -416,6 +418,15 @@ def logout(profile: str | None = None) -> bool:
     if not entry:
         return False
     try:
+        return _end_session(entry)
+    finally:
+        # A login made meanwhile is a new session: it stays.
+        forget(profile, session=entry.get("session", ""))
+
+
+def _end_session(entry: dict[str, Any]) -> bool:
+    """End a stored session at the server it signed in to; whether it confirmed."""
+    try:
         with _server(entry["server"]) as client:
             r = client.post(
                 _endpoints(client)["revocation_endpoint"],
@@ -425,11 +436,8 @@ def logout(profile: str | None = None) -> bool:
                 },
             )
         return r.status_code == 200
-    except LoomError:
+    except (LoomError, httpx.HTTPError):
         return False
-    finally:
-        # A login made meanwhile is a new session: it stays.
-        forget(profile, session=entry.get("session", ""))
 
 
 def whoami(profile: str | None = None) -> dict[str, Any]:
@@ -450,7 +458,7 @@ def stored_login(server: str, profile: str | None = None) -> StoredLogin | None:
     profile's token is never sent anywhere else."""
     profile = profile or default_profile()
     entry = _read()["profiles"].get(profile)
-    if not entry or not _same_server(entry["server"], server):
+    if not entry or not same_server(entry["server"], server):
         return None
     return StoredLogin(profile, entry["server"])
 

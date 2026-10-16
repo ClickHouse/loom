@@ -4,6 +4,7 @@ its lock, and which credential an Agent picks. The server is a MockTransport."""
 from __future__ import annotations
 
 import json
+import os
 import stat
 import time
 from typing import Any
@@ -272,6 +273,8 @@ def test_an_agent_can_name_its_profile(server, monkeypatch) -> None:
     credentials.login(_SERVER, profile="work", open_browser=False, echo=lambda _: None)
     assert "login:" not in repr(Agent("acme", "a", "n", base_url=_SERVER).transport)
     assert "login:work" in repr(Agent("acme", "a", "n", base_url=_SERVER, profile="work").transport)
+    spelled = _SERVER.replace("loom.example", "LOOM.example") + ":443"
+    assert "login:work" in repr(Agent("acme", "a", "n", base_url=spelled, profile="work").transport)
 
 
 def test_an_unreachable_server_is_a_typed_sdk_error(monkeypatch) -> None:
@@ -439,3 +442,22 @@ def test_two_threads_of_one_process_take_the_credentials_lock_in_turn(
     for t in threads:
         t.join()
     assert inside in (["a in", "a out", "b in", "b out"], ["b in", "b out", "a in", "a out"])
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="fork is POSIX")
+def test_a_child_forked_mid_refresh_can_still_refresh() -> None:
+    with credentials._in_process:  # a refresh running in the parent
+        pid = os.fork()
+        if pid == 0:
+            os._exit(0 if credentials._in_process.acquire(timeout=1) else 1)
+    _, status = os.waitpid(pid, 0)
+    assert os.WEXITSTATUS(status) == 0
+
+
+def test_signing_in_elsewhere_ends_the_session_it_replaces(server, monkeypatch) -> None:
+    ended: list[str] = []
+    monkeypatch.setattr(credentials, "_end_session", lambda entry: ended.append(entry["server"]))
+    old = {"access_token": "old", "refresh_token": "rold", "expires_in": 3600}
+    credentials._save("default", "https://old.example", old, session="s0")
+    credentials.login(_SERVER, open_browser=False, echo=lambda _: None)
+    assert ended == ["https://old.example"]  # not left running there for 30 days

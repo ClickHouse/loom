@@ -148,8 +148,9 @@ def _child_ttl(parent: AuthInfo, ttl_seconds: int | None) -> int:
     """The child's TTL: the one asked for, else the default, clipped so the
     child never outlives its parent. A sign-in session's access token lives an
     hour and the next refresh replaces it, so its children are capped at
-    SESSION_TTL instead: a person deactivated at the identity provider stops
-    refreshing, and nothing they minted outlives their last refresh by more."""
+    SESSION_TTL instead. They outlive the session itself (a logout, a lost
+    refresh answer): they are what the person made for agents and CI, and are
+    revoked one by one or with the person."""
     ttl = ttl_seconds if ttl_seconds is not None else DEFAULT_TTL_DAYS * 86400
     if parent.session_id:
         return min(ttl, SESSION_TTL)

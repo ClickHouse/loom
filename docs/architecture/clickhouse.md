@@ -423,8 +423,8 @@ with `purge=true` and runner state.
   only by a strict-mode compare-and-set: an `INSERT` for a new key, a versioned `ALTER …
 UPDATE` otherwise. Keys carry their credential's expiry, and a sweep every five
   minutes drops the expired ones with one `ALTER … DELETE`; all are Keeper key
-  operations, not MergeTree mutations. `loom.oauth_claims` (migration 028) is no longer
-  used.
+  operations, not MergeTree mutations. `loom.oauth_claims` (migration 028) is used only by a
+  previous build still serving during a rolling upgrade.
 - **Grant change and account claims** are leases (`server.core.leases`): keys of
   `loom._migration_lock`. A grant change holds the grant's claim from its read to its
   write, so a concurrent change of the same grant waits for it. Its reads are sequentially

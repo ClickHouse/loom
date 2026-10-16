@@ -28,7 +28,13 @@ from loom.conflicts import ConflictsClient
 from loom.context import ContextClient
 from loom.conversations import ConversationsClient
 from loom.cost import CostClient
-from loom.credentials import DEFAULT_SERVER, StoredLogin, signed_in_server, stored_login
+from loom.credentials import (
+    DEFAULT_SERVER,
+    StoredLogin,
+    same_server,
+    signed_in_server,
+    stored_login,
+)
 from loom.decision import DecisionClient
 from loom.deployment import DeploymentClient
 from loom.erasure import ErasureClient
@@ -81,7 +87,7 @@ def _credentials(
         server = signed_in_server(profile)
         if server is None:
             raise AuthInvalid(f"not signed in (profile {profile!r}); run `loom login`")
-        if api_key or (base_url and base_url.rstrip("/") != server):
+        if api_key or (base_url and not same_server(base_url, server)):
             raise ValueError(
                 f"profile {profile!r} is a session for {server}; pass one or the other"
             )
@@ -418,7 +424,9 @@ class Agent:
         if cached is not None and time.monotonic() - cached.fetched_at <= max_age_s:
             return cached
         raw = await self.transport.post("/v1/ops.capabilities", {})
-        caps = Capabilities.from_response(raw, self.transport.token_claims())
+        # A bot's or a session's token may be fetched here: off the event loop.
+        claims = await asyncio.to_thread(self.transport.token_claims)
+        caps = Capabilities.from_response(raw, claims)
         self._caps = caps
         return caps
 

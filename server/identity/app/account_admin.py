@@ -12,11 +12,16 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from server.auth import machines, revocation, sso_links
+from server.auth.grant_claims import bot_change
 from server.observability import audit
+from server.settings import settings
 
 log = logging.getLogger(__name__)
 
 _BOT_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
+# A person's service accounts are `sa:<name>-<6 hex>`: a bot named so would
+# share their subject, and a disable would cut off their tokens.
+_SERVICE_ACCOUNT_SUFFIX = re.compile(r"-[0-9a-f]{6}")
 
 
 # How far another replica's clock may run ahead of this one's: a token it
@@ -77,11 +82,16 @@ def _skip_reason(accounts: list[dict[str, Any]], on_sso: bool) -> str:
 
 
 async def adopt(plan: list[dict[str, Any]], *, by: str, keep_tokens: bool) -> int:
-    """Link the plan's adoptable accounts; returns how many."""
+    """Link the plan's adoptable accounts; returns how many. Only once SSO is
+    on: before, the account's password still signs in, and whoever registered
+    the address would mint a token past the cutoff."""
+    if settings.oauth_login_provider != "oidc":
+        raise ValueError("turn SSO on first (LOOM_OAUTH_LOGIN_PROVIDER=oidc), then adopt")
     adoptable: dict[str, list[dict[str, Any]]] = {}
     for a in plan:
         if not a["skip"]:
             adoptable.setdefault(a["email"], []).append(a)
+    linked = 0
     for email, accounts in adoptable.items():
         org, owner = accounts[0]["org"], accounts[0]["owner"]
         # Whoever registered the address may hold tokens from before; the person
@@ -91,7 +101,8 @@ async def adopt(plan: list[dict[str, Any]], *, by: str, keep_tokens: bool) -> in
             await revocation.cut_off(
                 owner, issued_before=_after_this_second(), reason="sso adopt", revoked_by=by
             )
-        await sso_links.link(email, [(org, a["namespace"]) for a in accounts], by)
+        live = await sso_links.link_live(email, [(org, a["namespace"]) for a in accounts], by)
+        linked += len(live)
         await audit.emit(
             "auth.sso_linked",
             org=org,
@@ -101,16 +112,16 @@ async def adopt(plan: list[dict[str, Any]], *, by: str, keep_tokens: bool) -> in
                 "email": email,
                 "by": by,
                 "subject": owner,
-                "namespaces": [a["namespace"] for a in accounts],
+                "namespaces": [ns for _, ns in live],
                 "tokens_revoked": not keep_tokens,
             },
         )
-    return sum(len(a) for a in adoptable.values())
+    return linked
 
 
-async def unlink(email: str, *, by: str) -> list[tuple[str, str]]:
-    """Stop new SSO sign-ins with `email` reaching its linked accounts."""
-    accounts = await sso_links.linked(email)
+async def unlink(email: str, org: str = "", *, by: str) -> list[tuple[str, str]]:
+    """Stop new SSO sign-ins with `email` reaching its linked accounts (in `org`)."""
+    accounts = [a for a in await sso_links.linked(email) if org in ("", a[0])]
     await sso_links.unlink(email, accounts, by)
     for org, namespace in accounts:
         await audit.emit(
@@ -155,6 +166,8 @@ def bot_from(
 
     if not _BOT_NAME.fullmatch(name):
         raise ValueError("name: lower-case letters, digits and '-', at most 63")
+    if _SERVICE_ACCOUNT_SUFFIX.fullmatch(name[-7:]):
+        raise ValueError("name: may not end in '-' and six hex digits, as service accounts do")
     # One concrete org: never empty, never the `*` a token reads as every org.
     if not org.strip() or "*" in org or org != org.strip():
         raise ValueError(f"org must name one org, got {org!r}")
@@ -206,10 +219,11 @@ async def create_bot(bot: machines.Machine, *, by: str, replace: bool) -> None:
         raise ValueError(f"no namespace {', '.join(missing)} in org {org!r}; register it first")
     if await revocation.revoked_outright(machines.subject(name)):
         raise ValueError(f"{machines.subject(name)} is revoked outright; it could never sign in")
-    existing = await machines.get(name)
-    if existing is not None and not replace:
-        raise ValueError(f"bot {name!r} exists; replace it to change it")
-    await machines.save(bot, by=by)
+    async with bot_change(name):
+        existing = await machines.get(name)
+        if existing is not None and not replace:
+            raise ValueError(f"bot {name!r} exists; replace it to change it")
+        await machines.save(bot, by=by)
     if existing is not None:
         # Tokens from its old key or wider roles end now, not within the hour.
         # The cutoff is taken after the save, so a request that read the old

@@ -31,6 +31,23 @@ def test_a_bot_is_one_orgs_on_named_namespaces(org: str, roles: list[str]) -> No
         account_admin.bot_from(name="b", org=org, namespace_roles=roles, public_key_pem=_KEY)
 
 
+@pytest.mark.parametrize(
+    ("name", "ok"), [("ci-a1b2c3", False), ("ci-a1b2c", True), ("triage", True)]
+)
+def test_a_bot_never_takes_a_service_accounts_subject(name: str, ok: bool) -> None:
+    # A person's are `sa:<name>-<6 hex>`.
+    def make() -> None:
+        account_admin.bot_from(
+            name=name, org="acme", namespace_roles=["a=writer"], public_key_pem=_KEY
+        )
+
+    if ok:
+        make()
+    else:
+        with pytest.raises(ValueError, match="six hex"):
+            make()
+
+
 @pytest.mark.parametrize("ns", ["acme.prod", "Team_A", "u-lee-1a2b3c4d"])
 def test_any_registered_namespace_name_will_do(ns: str) -> None:
     bot = account_admin.bot_from(
@@ -166,10 +183,11 @@ def test_a_disable_waits_out_its_cutoff(world, monkeypatch) -> None:
 
 
 def test_adopting_ends_a_persons_tokens_but_not_their_next_sign_in(world, monkeypatch) -> None:
-    async def link(email: str, accounts: list[tuple[str, str]], by: str) -> None:
-        return None
+    async def link(email: str, accounts: list[tuple[str, str]], by: str) -> list[tuple[str, str]]:
+        return accounts
 
-    monkeypatch.setattr(account_admin.sso_links, "link", link)
+    monkeypatch.setattr(account_admin.sso_links, "link_live", link)
+    monkeypatch.setattr(account_admin.settings, "oauth_login_provider", "oidc")
     plan = [{"email": "lee@acme.io", "org": "acme", "namespace": "lee", "owner": "lee", "skip": ""}]
     asyncio.run(account_admin.adopt(plan, by="ops", keep_tokens=False))
     # The next whole second, not the bots' margin: they sign in again at once.
@@ -186,3 +204,48 @@ def test_a_disable_that_stopped_part_way_is_finished_by_another(world) -> None:
     world["revoke_fails"] = False
     assert asyncio.run(account_admin.disable_bot("triage", by="ops"))
     assert world["revoked"] == [("sa:triage", "bot disabled")]
+
+
+def test_adopting_waits_for_sso_to_be_on(world, monkeypatch) -> None:
+    # Before, the password still signs in and mints a token past the cutoff.
+    monkeypatch.setattr(account_admin.settings, "oauth_login_provider", "password")
+    plan = [{"email": "lee@acme.io", "org": "acme", "namespace": "lee", "owner": "lee", "skip": ""}]
+    with pytest.raises(ValueError, match="SSO on first"):
+        asyncio.run(account_admin.adopt(plan, by="ops", keep_tokens=False))
+    assert "cutoff" not in world
+
+
+def test_an_unlink_in_one_org_leaves_the_others(world, monkeypatch) -> None:
+    unlinked: list[tuple[str, str]] = []
+
+    async def linked(email: str) -> list[tuple[str, str]]:
+        return [("acme", "lee"), ("beta", "lee")]
+
+    async def unlink(email: str, accounts: list[tuple[str, str]], by: str) -> None:
+        unlinked.extend(accounts)
+
+    monkeypatch.setattr(account_admin.sso_links, "linked", linked)
+    monkeypatch.setattr(account_admin.sso_links, "unlink", unlink)
+    assert asyncio.run(account_admin.unlink("lee@acme.io", "beta", by="ops")) == [("beta", "lee")]
+    assert unlinked == [("beta", "lee")]
+
+
+def test_two_creates_at_once_make_one_bot(world, monkeypatch) -> None:
+    free = machines.get
+
+    async def slow_get(name: str, **kw: Any) -> Any:
+        found = await free(name, **kw)
+        await asyncio.sleep(0.01)  # the other create runs here, unless it waits its turn
+        return found
+
+    monkeypatch.setattr(machines, "get", slow_get)
+
+    async def both() -> list[Any]:
+        make = [
+            account_admin.create_bot(_bot(["triage=writer"]), by="ops", replace=False)
+            for _ in range(2)
+        ]
+        return await asyncio.gather(*make, return_exceptions=True)
+
+    outcomes = asyncio.run(both())
+    assert sorted(type(o).__name__ for o in outcomes) == ["NoneType", "ValueError"]

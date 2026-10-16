@@ -11,6 +11,7 @@ subject, grants and namespaces; no new one is made.
 from __future__ import annotations
 
 import time
+from contextlib import AsyncExitStack
 from datetime import UTC, datetime
 from typing import Any
 
@@ -68,6 +69,29 @@ async def reached_by_sso(emails: list[str]) -> set[str]:
 async def link(email: str, accounts: list[tuple[str, str]], linked_by: str) -> None:
     """Let an SSO sign-in with `email` reach each (org, namespace)."""
     await _write(email, accounts, linked_by, linked=1)
+
+
+async def link_live(
+    email: str, accounts: list[tuple[str, str]], linked_by: str
+) -> list[tuple[str, str]]:
+    """`link` the accounts still active and naming `email`, each held as a
+    release holds it: one released since it was found keeps no link for the
+    next holder of its name. Returns those linked."""
+    from server.auth.grant_claims import account_change
+
+    async with AsyncExitStack() as held:
+        for org, namespace in sorted(set(accounts)):
+            await held.enter_async_context(account_change(org, namespace))
+        rows = await get_client().query_all(
+            "SELECT org, namespace FROM loom.namespaces FINAL WHERE active = 1 "
+            "AND contact_email = {email:String} "
+            "AND (org, namespace) IN {accounts:Array(Tuple(String, String))}",
+            params={"email": email.strip().lower(), "accounts": accounts},
+        )
+        found = {(r["org"], r["namespace"]) for r in rows}
+        live = [a for a in accounts if a in found]
+        await link(email, live, linked_by)
+    return live
 
 
 async def linked(email: str) -> list[tuple[str, str]]:

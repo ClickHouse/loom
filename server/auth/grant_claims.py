@@ -53,6 +53,13 @@ def account_change(org: str, namespace: str) -> AbstractAsyncContextManager[None
     return _claimed("account:" + json.dumps([org, namespace]), f"the account {org}/{namespace}")
 
 
+def bot_change(name: str) -> AbstractAsyncContextManager[None]:
+    """Hold the bot `name` from the check that it exists to its save: two
+    creates at once must not both find it free, the second key replacing the
+    first one's."""
+    return _claimed("bot:" + json.dumps(name), f"the bot {name}")
+
+
 @asynccontextmanager
 async def _claimed(name: str, what: str) -> AsyncIterator[None]:
     try:

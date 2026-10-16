@@ -69,7 +69,11 @@ def _cmd_adopt(args: argparse.Namespace) -> int:
             )
         if args.dry_run:
             return 0
-        linked = await account_admin.adopt(plan, by=_by(), keep_tokens=args.keep_tokens)
+        try:
+            linked = await account_admin.adopt(plan, by=_by(), keep_tokens=args.keep_tokens)
+        except ValueError as e:
+            print(f"  ✗ {e}", file=sys.stderr)
+            return 2
         print(f"linked {linked} account(s)")
         return 0
 
@@ -108,6 +112,12 @@ def _cmd_password_link(args: argparse.Namespace) -> int:
             print(f"  ✗ {e}", file=sys.stderr)
             return 2
         base = (settings.oauth_issuer or settings.public_base_url).rstrip("/")
+        if not base:
+            print(
+                "  ! LOOM_OAUTH_ISSUER and LOOM_PUBLIC_BASE_URL are unset: "
+                "put this server's address in front of the link",
+                file=sys.stderr,
+            )
         print(f"{base}/oauth/set-password?code={code}")
         print(
             "  one use, for a day, while single sign-on is off; sets the password of "

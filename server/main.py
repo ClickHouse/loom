@@ -443,7 +443,7 @@ from server.identity.app import password_link as _password_link  # noqa: E402
 _self_signup.attach(app)
 _login.attach(app)
 _claim_release.attach(app)
-# OAuth 2.1 AS for MCP one-click connect — mounts only when LOOM_OAUTH_ENABLED.
+# Sign-in (device grant, SSO) wherever auth is on; MCP connect only with LOOM_OAUTH_ENABLED.
 _oauth.attach(app)
 _password_link.attach(app)
 

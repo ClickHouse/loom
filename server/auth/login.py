@@ -24,7 +24,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from server.auth import attempts
-from server.auth.attempts import Attempts, client_address
+from server.auth.attempts import Attempts, address_key, client_address
 from server.auth.jwt import mint_token
 from server.auth.passwords import hash_password, verify_password_off_loop
 from server.core.ch import get_client
@@ -104,7 +104,8 @@ async def resolve_user_credentials(
     password hash so response timing doesn't leak account existence.
     """
     ident = identifier.strip().lower()
-    gates = [(_by_identifier, ident)] + ([(_by_address, address)] if address else [])
+    by_address = [(_by_address, address_key(address))] if address else []
+    gates = [(_by_identifier, ident), *by_address]
     try:
         async with attempts.slot():
             admitted = await attempts.admit(gates)

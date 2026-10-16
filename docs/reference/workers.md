@@ -228,7 +228,7 @@ adding its row.
 | `memory_code_links` | Code link pass: link the memories written since the last pass to the code they name (and, on the first pass or after falling behind the queue, the ones written before), then follow every… | `LOOM_MEMORY_CODE_LINKS_ENABLED` | True | `LOOM_MEMORY_CODE_LINKS_INTERVAL_SECONDS` | 60 |
 | `memory_expiry_sweep` | Memory expiry sweep worker. | `LOOM_MEMORY_EXPIRY_SWEEP_ENABLED` | True | `LOOM_MEMORY_EXPIRY_SWEEP_INTERVAL_SECONDS` | 300 |
 | `namespace_gc` | namespace_gc worker — a registered bench namespace nobody writes to leaves. | `LOOM_NAMESPACE_GC_WORKER_ENABLED` | True | `LOOM_NAMESPACE_GC_INTERVAL_SECONDS` | 3600 |
-| `oauth_claims_sweep` | Sign-in state that changes once, kept in ClickHouse Keeper. | always on |  | `server.auth.claims.SWEEP_INTERVAL_SECONDS` |  |
+| `oauth_signin_state_sweep` | Sign-in state that changes once, kept in ClickHouse Keeper. | always on |  | `server.auth.claims.SWEEP_INTERVAL_SECONDS` |  |
 | `observe_extract` | Deferred-extraction worker for the ambient-capture (observe) plane. | `LOOM_OBSERVE_EXTRACT_ENABLED` | False | `LOOM_OBSERVE_EXTRACT_INTERVAL_SECONDS` | 300 |
 | `orphan_vector_reconcile` | Orphan-vector reconcile worker. | `LOOM_ORPHAN_VECTOR_RECONCILE_ENABLED` | True | `LOOM_ORPHAN_VECTOR_RECONCILE_INTERVAL_SECONDS` | 600 |
 | `profile_consolidation` | Profile-consolidation worker. | `LOOM_PROFILE_CONSOLIDATION_ENABLED` | False | `LOOM_PROFILE_CONSOLIDATION_INTERVAL_SECONDS` | 21600 |
