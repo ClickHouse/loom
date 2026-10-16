@@ -859,12 +859,13 @@ async def _recorded_close_states(
 
 
 async def repair_intervals(
-    input: Any, triples: list[dict[str, Any]], *, ch: Any, at: datetime
+    input: Any, triples: list[dict[str, Any]], *, ch: Any, at: datetime, on_fly: bool = False
 ) -> list[IntervalRepair]:
     """Close the triples and edges the new `triples` contradict on a single-valued
     relation, as of their arrival `at`; no memory row retires. Returns the repairs
-    made."""
-    repairs = await _repair_contradictory_triples(input, triples, at=at, ch=ch)
+    made. `on_fly`: read the triples with pending mutations applied, for a caller whose
+    own closes may still be queued (a follow, an Undo)."""
+    repairs = await _repair_contradictory_triples(input, triples, at=at, ch=ch, on_fly=on_fly)
     if repairs:
         try:
             await _repair_contradictory_edges(input, repairs, ch=ch)
@@ -1238,12 +1239,20 @@ async def open_triples_among(
     return {(r["subject"], r["relation"], r["object"]) for r in rows}
 
 
+def _repair_read_settings(on_fly: bool) -> str:
+    # A close still queued would read as an open value, and a current one at that.
+    return "SETTINGS select_sequential_consistency = 1" + (
+        ", apply_mutations_on_fly = 1" if on_fly else ""
+    )
+
+
 async def _repair_contradictory_triples(
     input: MemoryBulkSetInput,
     new_triples: list[dict[str, Any]],
     *,
     ch: Any,
     at: datetime,
+    on_fly: bool = False,
 ) -> list[IntervalRepair]:
     """Close open intervals contradicted by new single-valued triples.
 
@@ -1291,8 +1300,8 @@ async def _repair_contradictory_triples(
           AND subject IN {subjects:Array(String)}
           AND relation IN {relations:Array(String)}
           AND (valid_to IS NULL OR invalid_at = {at:DateTime})
-        SETTINGS select_sequential_consistency = 1
-        """,
+        """
+        + _repair_read_settings(on_fly),
         params={
             "org": input.org,
             "ns": input.namespace,
@@ -1357,7 +1366,13 @@ async def _repair_contradictory_triples(
             ch, org=input.org, namespace=input.namespace, closes=list(dict.fromkeys(closes))
         )
         return await _undo_raced_closes(
-            input, all_repairs, existing, closed_at=second, declared=declared, ch=ch
+            input,
+            all_repairs,
+            existing,
+            closed_at=second,
+            declared=declared,
+            ch=ch,
+            on_fly=on_fly,
         )
     except Exception as e:
         # The closes may have landed: a replay finishes them.
@@ -1372,6 +1387,7 @@ async def _undo_raced_closes(
     closed_at: datetime,
     declared: Mapping[str, str],
     ch: Any,
+    on_fly: bool = False,
 ) -> list[IntervalRepair]:
     """Undo the closes of a value another write stated again while this repair ran
     ("back to London"), when it now has more restatements newer than its closer
@@ -1385,8 +1401,8 @@ async def _undo_raced_closes(
         WHERE org = {org:String} AND namespace = {ns:String}
           AND (subject, relation, object) IN {triples:Array(Tuple(String, String, String))}
           AND (valid_to IS NULL OR invalid_at = {closed_at:DateTime})
-        SETTINGS select_sequential_consistency = 1
-        """,
+        """
+        + _repair_read_settings(on_fly),
         params={
             "org": input.org,
             "ns": input.namespace,

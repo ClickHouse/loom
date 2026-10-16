@@ -223,7 +223,8 @@ async def restate_facts(
         for m in markers
     ]
     try:
-        await repair_intervals(input, restated, ch=ch, at=restored_at)
+        # The closes this restates against may still be pending mutations.
+        await repair_intervals(input, restated, ch=ch, at=restored_at, on_fly=True)
     except TriplesRepairFailed as e:
         # Recorded by the caller with this id, for `finish_restated_repair` to finish.
         e.restore_id = restore_id

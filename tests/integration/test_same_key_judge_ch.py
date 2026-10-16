@@ -553,7 +553,7 @@ async def _row_and_write(
 
 
 async def _follow_retirement(
-    ch: Any, org: str, loser: dict[str, Any], winner: dict[str, Any]
+    ch: Any, org: str, loser: dict[str, Any], winner: dict[str, Any], wait: bool = True
 ) -> None:
     from types import SimpleNamespace
 
@@ -568,7 +568,8 @@ async def _follow_retirement(
         scope, [(str(loser["memory_id"]), retired["superseded_by"])], ch=ch
     )
     # Its closes land before the next write: an open loser would be a racing value.
-    await _mutations_done(ch, org)
+    if wait:
+        await _mutations_done(ch, org)
 
 
 async def _mutations_done(ch: Any, org: str, kill_after: int | None = None) -> None:
@@ -1404,6 +1405,30 @@ async def test_a_revision_keeps_a_successor_only_while_its_relations_agree(
     # fact closed this very second.
     lives = {o for r, o in want if r == "live_in"}
     assert ("london" in await _listed(org, "live_in", lives)) == ("london" in lives)
+
+
+async def test_a_successors_repair_reads_the_close_its_follow_queued(ch, org) -> None:
+    # The follow closes London, then repairs Berlin's interval. With that close still a
+    # pending mutation (as under load), London read as open is newer than Berlin,
+    # dated May 1: Berlin must not close behind it.
+    london = await _stated(
+        ch, org, "s1", "I currently live in London", ("user", "live_in", "london")
+    )
+    berlin = await _stated(ch, org, "s2", "I currently live in Berlin", extracted=False)
+    await ch.execute("SYSTEM STOP MERGES loom.entity_triples")  # no mutation runs
+    try:
+        await _follow_retirement(ch, org, london, berlin, wait=False)
+    finally:
+        await ch.execute("SYSTEM START MERGES loom.entity_triples")
+    await _mutations_done(ch, org)
+    assert await _open_facts(ch, org, {("live_in", "berlin")}) == {("live_in", "berlin")}
+    # The follow's own Berlin, current since May 1: not closed and stated again later.
+    rows = await ch.query_all(
+        "SELECT valid_from FROM loom.entity_triples WHERE org = {org:String}"
+        " AND valid_to IS NULL SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert rows == [{"valid_from": datetime(2026, 5, 1)}]
 
 
 async def test_a_live_row_holds_the_successor_written_for_its_value(ch, org) -> None:

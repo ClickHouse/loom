@@ -316,7 +316,7 @@ async def test_an_undo_weighs_what_is_open_with_pending_closes_applied(monkeypat
 
     repaired: list = []
 
-    async def repair(input: Any, triples: list, *, ch: Any, at: datetime) -> list:
+    async def repair(input: Any, triples: list, *, ch: Any, at: datetime, on_fly: bool) -> list:
         repaired.append((triples, at))
         return []
 
@@ -481,7 +481,7 @@ async def _undo_of_rome_and(
 
     repaired: list = []
 
-    async def repair(input: Any, triples: list, *, ch: Any, at: datetime) -> list:
+    async def repair(input: Any, triples: list, *, ch: Any, at: datetime, on_fly: bool) -> list:
         repaired.extend(triples)
         return []
 

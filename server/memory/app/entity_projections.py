@@ -1675,7 +1675,8 @@ async def _repair_successors(
         },
     )
     if rows:
-        await repair_intervals(input, [dict(r) for r in rows], ch=ch, at=at)
+        # The follow's closes just queued may still be pending: read them applied.
+        await repair_intervals(input, [dict(r) for r in rows], ch=ch, at=at, on_fly=True)
 
 
 async def reopen_held(
