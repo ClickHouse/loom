@@ -13,7 +13,7 @@ paths:
 - Map the behaviour onto Expand / Revise / Contract / Reinforce / Refuse. A write path that bypasses conflict surfacing, the blacklist or the pinned-peer check is a finding.
 - An op addressed by org-wide id checks `authz.row_in_scope` after the fetch and answers `found=False` on refusal.
 - Tune ranking through settings and prove it with a paired benchmark (`loom-bench`); never change a scalar threshold without one.
-- No retention sweep or TTL removes memory its writer did not ask to remove.
+- No retention sweep or TTL on durable memory (`loom.memory`, `loom.shared`, `loom.memory_versions`); a cache, queue or trace that copies content may expire.
 
 ## Behaviour to preserve
 

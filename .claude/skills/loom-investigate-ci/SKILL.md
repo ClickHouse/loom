@@ -28,11 +28,11 @@ gh run list --workflow ci.yml --branch main -L 5 --json conclusion,headSha,creat
 
 | Job | Usual cause | Reproduce / fix |
 | --- | --- | --- |
-| `ruff + mypy-gate` (lint) | a generator `--check` is stale; ruff; function-length or mypy ratchet | `make lint`, `make typecheck`; run the named generator without `--check` and commit its output; split the long function |
+| `ruff + mypy-gate` (lint) | a generator `--check` is stale (the plugin sync also compares executable bits); ruff; function-length or mypy ratchet | `make lint`, `make typecheck`; run the named generator without `--check` and commit its output; split the long function |
 | `pytest unit + coverage` | order dependence; a fake that drifted; a snapshot | `pytest -p randomly --randomly-seed=<seed from the log> <test>`; update a snapshot only for an intended change |
-| `schema.sql in sync with migrations` | `schemas/schema.sql` dumped from another ClickHouse release, or not regenerated | dump against the release the run names (job "the ClickHouse release this run tests"): `LOOM_CLICKHOUSE_IMAGE=clickhouse/clickhouse-server:<ver> bash dev/ci_start_clickhouse.sh`, migrate, `make schema-dump` |
+| `schema.sql in sync with migrations` | `schemas/schema.sql` dumped from another ClickHouse release, or not regenerated | start a private ClickHouse on the release the run names (job "the ClickHouse release this run tests"): `LOOM_CLICKHOUSE_IMAGE=clickhouse/clickhouse-server:<ver>` plus the name and ports of `loom-dev-setup` §3, `bash dev/ci_start_clickhouse.sh`; migrate; `make schema-dump` |
 | `format` | an unformatted file | `make format` from the repository root (the pinned Biome reads `biome.json` there) |
-| `coding-agent plugins` | a hook test, an unsynced Codex copy, a non-executable `bin/` helper | `node --test` in the plugin directory; `python scripts/codegen/agent_plugin_sync.py` |
+| `coding-agent plugins` | a hook test; a non-executable `integrations/grep-shim/bin/` entry point | `node --test` in the plugin directory; `.venv/bin/python -m scripts.codegen.agent_plugin_sync` |
 | `tsc (frontend)`, `frontend tests` | types, bundle budget, an axe rule | `npm --prefix frontend run build && npm --prefix frontend run budget && npm --prefix frontend run test` |
 | `pytest integration` | behaviour change; a test that needs an env CI lacks (self-signup) | the suite against a private server (`loom-dev-setup`); the failure report lists the last requests with `X-Request-Id` to find the server log line |
 

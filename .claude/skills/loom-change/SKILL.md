@@ -13,7 +13,7 @@ Find the row for the change, read its guide before the first edit, and finish it
 | Table or column | [adding-a-table](../../../docs/development/adding-a-table.md) | migration + `make schema-dump`; RMT row builders; `loom.memory_versions` + its view for a `loom.memory` column; erasure step + census row, or a `NO_MEMORY_CONTENT` / `STEP_ONLY_TABLES` entry with its reason |
 | Migration | [migrations](../../../docs/development/migrations.md) | next free number on current `origin/main`; additive only; `make schema-dump` |
 | Setting | [extending-loom](../../../docs/development/extending-loom.md#add-a-setting) | field in `server/settings/_<area>.py` (models in `_models.py`) with a comment on what it controls and its values; `python -m scripts.codegen.settings_reference`; read as `settings.<field>` |
-| Retire a flag | — | delete the setting, its branch and any request field carrying it; the changelog entry names it |
+| Retire a flag | — | delete the setting, its branch and any request field carrying it; the PR body's changelog entry names it |
 | Worker | [adding-a-worker](../../../docs/development/adding-a-worker.md) | registry row; `set_query_tag`; `LOOM_UPDATE_WORKER_SNAPSHOT=1` for an intended snapshot change |
 | Provider | [extending-loom](../../../docs/development/extending-loom.md#add-a-provider) | `make bench-quick` evidence before changing a default (ask first — see `loom-bench`) |
 | Code-index language | [adding-language-support](../../../docs/development/adding-language-support.md) | stay outside the extractor stamp; backfill plan in the PR |
@@ -27,14 +27,14 @@ Find the row for the change, read its guide before the first edit, and finish it
 - A new table, op group, auth-model change, external dependency or identity-tuple change is a material change: the PR body carries the design (what, why, alternatives and their cost, migration story), and the matching `docs/architecture/` page is updated to describe the system as it now is.
 - Map memory-plane behaviour onto the five belief-revision operations; something that maps to none is suspect.
 - Prefer the existing seam (`server/core/ch.py`, the row builders, `server.core.paths`, the clock seam in tests) over a new one. Search for a helper before writing one.
-- Loom deletes nothing its writer did not ask to delete: no TTL or retention sweep on tables that hold memory content.
+- Loom deletes nothing its writer did not ask to delete: no TTL or retention sweep on durable memory (`loom.memory`, `loom.shared`, `loom.memory_versions`). Caches, queues and traces that copy content may expire; they still get a census row.
 - Security paths fail closed: an unloaded revocation list, a missing grant or an unverifiable token refuses.
 
 ## Code
 
 - Short comments that say why; no history, dates, people or ticket numbers (`tests/unit/test_public_copy.py`).
 - `except Exception as e:  # noqa: BLE001 — <what must not fail>`; anything narrower is better.
-- No compatibility shims: a removed field is served and named in `ignored_args`; the changelog entry and the PR's compatibility section name the break.
+- No compatibility shims: a removed field is served and named in `ignored_args`; the PR body's changelog entry and the PR's compatibility section name the break.
 - A function near the length baseline is split before it grows: `scripts/gates/function_length_gate.py` fails on one added line past its baseline.
 - Moving a module breaks `Path(__file__).parents[N]`; resolve shipped files through `server.core.paths`.
 

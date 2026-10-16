@@ -7,7 +7,7 @@ argument-hint: "[--status | --rollback]"
 
 # Deploying Loom
 
-A deploy changes what every user of the deployment is served. Run it only on an explicit request, from the deployment's own checkout, and say what you are about to do before each step that changes state.
+A deploy changes what every user of the deployment is served. Run it only on an explicit request, from the deployment's own checkout. `.claude/settings.json` denies an agent the state-changing commands (`./redeploy.sh`, `--force`, `--rollback`, `docker` on the deployment's containers): print each one for the operator to run, and read its output back.
 
 ## 1. Preflight
 
@@ -37,7 +37,7 @@ curl -s localhost:7777/v1/health | jq '{status, build_commit, schema: .schema.pe
 docker logs --since 5m "loom-$(./redeploy.sh --status | awk '/\(serving\)/ {print $1}')" 2>&1 | grep -iE 'error|traceback' | tail
 ```
 
-- `build_commit` is the commit you meant to deploy; the script fetched and fast-forwarded to `origin/main` itself and warned about any dirty tracked file it shipped.
+- `build_commit` is the commit you meant to deploy. The script fetched `origin/main` and rebased onto it (`--autostash`), refused a dirty tree that was behind, and asked `[y/N]` before pulling commits that touch the deploy files; a dirty tree it was not behind ships as it is.
 - Reinstall host cron scripts when the deploy moved what they call (`deploy/cron/`).
 - Watch error rate and p95 for the first minutes; a ClickHouse replica restarting at the same moment slows inserts without a code cause.
 

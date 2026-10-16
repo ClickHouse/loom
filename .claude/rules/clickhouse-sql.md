@@ -10,7 +10,7 @@ paths:
 # ClickHouse statements
 
 - Bind values as server-side parameters (`{org:String}`, `params={...}`); never format a caller's value into SQL.
-- Every statement goes through `server/core/ch.py`. A loop outside a transport, the worker supervisor or the CLI calls `set_query_tag(...)` so `system.query_log.log_comment` names it.
+- Every statement goes through `server/core/ch.py`. It marks naive datetimes UTC on insert; a raw `clickhouse_connect` client reads them as the host's local time and shifts every row. A loop outside a transport, the worker supervisor or the CLI calls `set_query_tag(...)` so `system.query_log.log_comment` names it.
 - Hot paths filter on a prefix of the table's `ORDER BY` key, carry a `LIMIT`, and use `FINAL` only on `ReplacingMergeTree` reads that need the latest version.
 - `SELECT * REPLACE (expr AS col) … WHERE col = …` filters on `expr`, not on the stored `col`: the alias shadows the column. Filter in an inner query, and check `written_rows` of an `INSERT … SELECT` before trusting it.
 - A `DELETE` or mutation on the target of a refreshable materialized view that is not `APPEND` never finishes (each refresh exchanges the table); a `DELETE` on a `TO` view goes to its target table.

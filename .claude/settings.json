@@ -34,6 +34,23 @@
       "Bash(.venv/bin/python -m tests.inventory.coverage_floors:*)",
       "Bash(make migrate-status)"
     ],
-    "deny": ["Bash(git stash:*)", "Bash(git push -f:*)"]
+    "deny": [
+      "Bash(git stash:*)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git push * --force*)",
+      "Bash(git push * -f*)",
+      "Bash(git push * +*)",
+      "Bash(git push * main)",
+      "Bash(git push * HEAD:main)",
+      "Bash(./redeploy.sh)",
+      "Bash(./redeploy.sh --force*)",
+      "Bash(./redeploy.sh --rollback*)",
+      "Bash(docker * loom-blue*)",
+      "Bash(docker * loom-green*)",
+      "Bash(docker * loom-proxy*)",
+      "Bash(docker * loom-server*)",
+      "Bash(gh workflow run release.yml*)"
+    ]
   }
 }

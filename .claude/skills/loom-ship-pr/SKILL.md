@@ -25,9 +25,9 @@ The body is public. It carries:
 - every op or field added, changed or removed, and operator steps (or "none");
 - what you ran and what it showed, with the command that reproduces a measurement.
 
-It never carries host names, internal namespaces or repository names of a deployment, people, wall-clock times, production row counts or incident timelines. Evidence from a live deployment goes to the conversation with the requester, not into the PR.
+It never carries other products' names or comparative framing, host names, internal namespaces or repository names of a deployment, people, wall-clock times, production row counts or incident timelines. Evidence from a live deployment goes to the conversation with the requester, not into the PR.
 
-One concern per PR. A large task is a few PRs grouped by concern, not one per file: each needs CI and review, and the merge queue is the bottleneck.
+One concern per PR, and the title matches every part of it: a feature, an example and a release-process change are three PRs. A large task is a few PRs grouped by concern, not one per file: each needs CI and review, and the merge queue is the bottleneck.
 
 ## 3. Push and open
 
@@ -40,7 +40,7 @@ CI runs on PRs into `main` (and pushes to it). A stacked PR gets checks once ret
 
 ## 4. Review at the push
 
-Start the review the moment the push lands — do not wait for CI. In Claude Code, launch the `loom-reviewer` subagent in the background with the PR number; elsewhere run the `loom-review` skill. Fix every confirmed finding with a new commit and push again; the review restarts on the new head.
+Start the review the moment the push lands — do not wait for CI. In Claude Code, launch the `loom-reviewer` subagent in the background with the PR number; elsewhere run the `loom-review` skill. Fix every confirmed finding with a new commit and push again; the review restarts on the new head. The loop ends when a full pass on the head returns no findings and CI is green.
 
 ## 5. Read CI
 

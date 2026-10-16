@@ -8,6 +8,7 @@ has silently stopped loading. Links are checked by test_doc_links.py.
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 from pathlib import Path
@@ -96,3 +97,9 @@ def test_rule_paths_match_tracked_files(rule: Path) -> None:
             .replace(r"\*", "[^/]*")
         )
         assert any(re.fullmatch(pattern, p) for p in tracked), f"{glob} matches no tracked file"
+
+
+def test_settings_deny_shared_and_production_commands() -> None:
+    deny = set(json.loads((ROOT / ".claude" / "settings.json").read_text())["permissions"]["deny"])
+    assert {"Bash(git stash:*)", "Bash(git push --force:*)", "Bash(git push * --force*)"} <= deny
+    assert {"Bash(./redeploy.sh)", "Bash(./redeploy.sh --rollback*)"} <= deny

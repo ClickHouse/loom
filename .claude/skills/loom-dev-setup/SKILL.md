@@ -25,7 +25,7 @@ cd "../loom-${BRANCH//\//-}"
 
 ```bash
 uv sync --locked --python 3.12 --extra dev --extra code   # the lockfile CI installs: same ruff, mypy, pytest
-.venv/bin/python -c 'import server; print(server.__file__)'   # must be inside this worktree
+.venv/bin/python -P -c 'import server; print(server.__file__)'   # must be inside this worktree
 ```
 
 The make targets use `.venv/bin/python`. Run repository scripts as modules (`.venv/bin/python -m scripts.ops.dump_schema`): a script run by path can import `server` from another checkout.
@@ -35,14 +35,13 @@ The make targets use `.venv/bin/python`. Run repository scripts as modules (`.ve
 Pick free ports and a name that cannot be mistaken for a deployment's containers (`loom-blue`, `loom-green`, `loom-proxy`, `loom-server`, `loom-ch` are taken by convention):
 
 ```bash
-ss -ltn | grep -E ':(18123|19000)\b' && echo "ports busy — pick others"
 export LOOM_CH_CONTAINER="ch-${BRANCH//\//-}" LOOM_CH_HOST_PORT=18123 LOOM_CH_NATIVE_HOST_PORT=19000
 bash dev/ci_start_clickhouse.sh || exit 1
 docker ps --filter "name=^${LOOM_CH_CONTAINER}$" --format '{{.Names}} {{.Ports}}'   # yours, on your ports
 curl -s "http://loom:loomdev@localhost:$LOOM_CH_HOST_PORT/?query=SELECT+count()+FROM+system.tables+WHERE+database='loom'"   # 0 before the first migrate
 ```
 
-The script refuses a port that is already taken, so a failed start cannot hand your migrations to another server. Then point Loom at it and migrate:
+The script refuses a port that is already taken (pick others and re-run), so a failed start cannot hand your migrations to another server. Then point Loom at it and migrate:
 
 ```bash
 export LOOM_CH_HOST=localhost LOOM_CH_PORT=$LOOM_CH_HOST_PORT
@@ -55,21 +54,24 @@ Remove it when done: `docker rm -f "$LOOM_CH_CONTAINER"` — check the name firs
 
 ```bash
 PORT=7790
-LOOM_INSTANCE_LABEL="dev:$USER:$PORT" LOOM_BACKGROUND_WORKERS=off \
+LOOM_INSTANCE_LABEL="iso:$(basename "$PWD"):$PORT" LOOM_BUILD_COMMIT=$(git rev-parse --short HEAD) LOOM_BACKGROUND_WORKERS=off \
   .venv/bin/uvicorn server.main:app --app-dir "$PWD" --host 127.0.0.1 --port $PORT --loop asyncio --reload
 curl -s localhost:$PORT/v1/health | jq '{status, build_commit, schema}'
 ```
 
-`--app-dir "$PWD"` makes uvicorn serve this worktree's code; `build_commit` confirms it. Workers stay off for the integration suite (a live supervisor drains the tests' rows).
+`--app-dir "$PWD"` makes uvicorn serve this worktree's code; `build_commit` confirms it (a source run reports `unknown` without `LOOM_BUILD_COMMIT`). Workers stay off for the integration suite (a live supervisor drains the tests' rows).
+
+The server and the tests read the same `.env` ([integration tests](../../../docs/development/testing.md#integration-tests)). To match CI's main integration pass, start the server with its posture: `LOOM_AUTH_REQUIRED=false LOOM_EMBEDDING_MODEL=fake-ngram-1024 LOOM_LLM_PROVIDER=fake LOOM_LATENCY_BUDGET_MULTIPLIER=10` (`.github/workflows/ci.yml`). A server with auth on fails dozens of tests written for that pass: that is the posture, not a bug. CI runs `test_cross_principal_leakage.py` a second time against an auth-on server.
 
 ## 5. Integration tests
 
 ```bash
-LOOM_BASE_URL=http://localhost:$PORT make test-integration
+export LOOM_BASE_URL=http://localhost:$PORT
+make test-integration
 .venv/bin/python -m pytest tests/integration -m "not slow and not destructive" -q   # quick pass
 ```
 
-Tests read `LOOM_CH_HOST` and `LOOM_BASE_URL` explicitly and skip without them; never export them to a shared or production server. Tests that need self-signup skip in CI, so new tests use `mint_test_token`.
+Tests read `LOOM_CH_HOST` and `LOOM_BASE_URL` from the environment or from the `.env` the session loads (`LOOM_ENV_FILE=` loads none), and skip without them; never export them to a shared or production server. Tests that need self-signup skip in CI, so new tests use `mint_test_token`.
 
 ## Reference
 

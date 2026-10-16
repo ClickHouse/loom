@@ -24,7 +24,7 @@ make typecheck              # mypy --strict on the SDK + the server ratchet
 make test-unit              # tests/unit (random order in CI) + bench
 ```
 
-Run them in the worktree's `.venv`. CI also runs `pytest -p randomly`; an order-dependent failure reproduces with `pytest -p randomly --randomly-seed=<seed>`, the seed CI prints.
+Run them in the worktree's `.venv`, on CI's Python (3.12), with `LOOM_ENV_FILE=` so a local `.env` does not change what a snapshot or generator renders. CI also runs `pytest -p randomly`; an order-dependent failure reproduces with `pytest -p randomly --randomly-seed=<seed>`, the seed CI prints.
 
 ## 3. By path
 
@@ -33,7 +33,8 @@ Run them in the worktree's `.venv`. CI also runs `pytest -p randomly`; an order-
 | `schemas/migrations/` | `make schema-dump` against a private, freshly migrated ClickHouse (`loom-dev-setup`), then `make schema-check`; `git diff schemas/schema.sql` shows only your change |
 | `server/**/api/`, op registry | `.venv/bin/python -m scripts.codegen.<gen>` for `sdk_py_gen`, `sdk_py_client_gen`, `sdk_ts_gen`, `docs_reference`, `op_reach_census` (without `--check` each regenerates) |
 | `server/settings/` | `.venv/bin/python -m scripts.codegen.settings_reference` |
-| `server/cli/` | `LOOM_UPDATE_CLI_SNAPSHOT=1 .venv/bin/python -m pytest tests/unit/test_cli_surface_snapshot.py` — then read the snapshot diff |
+| `server/cli/` | `LOOM_UPDATE_CLI_SNAPSHOT=1 .venv/bin/python -m pytest tests/unit/test_cli_surface_snapshot.py` in a 3.12 virtualenv (a newer Python renders the help differently) — then read the snapshot diff |
+| a ClickHouse statement builder | `pytest tests/analyzer -q` against a private, migrated ClickHouse; regenerate with `LOOM_ENV_FILE= .venv/bin/python -m tests.analyzer.corpus --write` on fake providers ([analyzer corpus](../../../docs/development/testing.md#the-analyzer-statement-corpus)) |
 | `server/workers/` | `LOOM_UPDATE_WORKER_SNAPSHOT=1 .venv/bin/python -m pytest tests/unit/test_worker_registry_snapshot.py` for an intended change |
 | server behaviour | the integration suite against a private server (`loom-dev-setup` §5) |
 | auth, write paths, erasure, migrations, the worker supervisor | the per-module branch-coverage floors CI enforces (about 10 minutes): `.venv/bin/python -m pytest tests/unit -q --cov=server --cov-branch --cov-report=json:coverage.json && .venv/bin/python -m tests.inventory.coverage_floors coverage.json` |
