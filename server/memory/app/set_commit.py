@@ -274,7 +274,7 @@ async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
         # A revision closes what it dropped next and answers: its edges flush first, as
         # in `_set_post_insert`. A first write has nothing to close and does not wait.
         await _project_set_entities_fail_open(
-            input, memory_id=memory_id, wait_visible=had_existing_row
+            input, memory_id=memory_id, wait_visible=had_existing_row, content_sha256=new_sha
         )
     await project_stated_relations(
         memory_row,
@@ -860,10 +860,15 @@ async def _set_post_insert(
     ents = set_entities_for_projection(input, input.value)
     if len(ents) >= 2 and revised:
         # Its edges flushed before the close runs and before the write answers, so a walk
-        # on any replica reads them and a failed flush is reported, not dropped.
+        # on any replica reads them and a failed flush is reported, not dropped. Another
+        # revision may close this value before they land: the hash lets them end with it.
         tail.append(
             _project_set_entities_fail_open(
-                input, memory_id=memory_id, wait_visible=True, ents=ents
+                input,
+                memory_id=memory_id,
+                wait_visible=True,
+                ents=ents,
+                content_sha256=content_sha256,
             )
         )
     elif len(ents) >= 2:

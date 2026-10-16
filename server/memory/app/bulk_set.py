@@ -32,6 +32,7 @@ from server.memory.app.bulk_rows import (
 from server.memory.app.bulk_verdicts import BulkVerdictPlan, apply_bulk_verdicts
 from server.memory.app.entity_projections import (
     _write_derived_facts,
+    end_overtaken_edges,
     reconcile_row_facts,
 )
 from server.memory.app.high_fence import fence_high
@@ -44,6 +45,7 @@ from server.memory.app.projection_errors import (
 )
 from server.memory.app.projection_failures import FOLLOW_ROWS
 from server.memory.app.projections import (
+    value_sha256,
     write_entity_edges,
     write_entity_triples,
     write_entity_vectors,
@@ -856,7 +858,22 @@ async def _bulk_run_projections(
     existed = set(state.existing_ids.values())
     revised = [r.memory_id for r in state.results if r.version and r.memory_id in existed]
     if revised:
+        await _close_overtaken_edges(p_input, p_results, set(revised), ch=ch)
         await reconcile_row_facts(p_input, revised, reopen=False, op="memory.bulk_set", ch=ch)
+
+
+async def _close_overtaken_edges(
+    input: MemoryBulkSetInput, results: list[Any], revised: set[str], *, ch: Any
+) -> None:
+    """The revised rows' edges end with their value if another write revised it
+    again while they were written (`end_overtaken_edges`)."""
+    versions = {
+        (res.memory_id, res.memory_key, value_sha256(entry))
+        for entry, res in zip(input.entries, results, strict=True)
+        if res.memory_id in revised
+    }
+    for memory_id, memory_key, sha in sorted(versions):
+        await end_overtaken_edges(input, memory_id, memory_key, sha, op="memory.bulk_set", ch=ch)
 
 
 # The most supersession pairs one write follows in the request.

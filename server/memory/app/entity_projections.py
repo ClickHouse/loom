@@ -38,6 +38,7 @@ from server.memory.app.projections import (
     repair_intervals,
     resolve_projection_entity_map,
     triple_row_link,
+    value_sha256,
     write_entity_edges,
     write_entity_triples,
 )
@@ -481,6 +482,28 @@ async def close_late_edges(
     await _end_edges_of(scope, memory_id, content_sha256, ended_at, ch=ch)
 
 
+async def end_overtaken_edges(
+    input: Any, memory_id: str, memory_key: str, content_sha256: str, *, op: str, ch: Any
+) -> None:
+    """After a revision wrote its edges: another revision since may have closed this
+    value before they landed, so end them at the moment the row stopped holding it.
+    A failure is recorded for the projection repair."""
+    try:
+        await close_late_edges(input.org, input.namespace, memory_id, content_sha256, ch=ch)
+    except Exception as e:  # noqa: BLE001 — recorded; the projection repair ends them
+        await record_projection_failure(
+            org=input.org,
+            namespace=input.namespace,
+            agent=input.agent,
+            projection=EDGES_CLOSE,
+            source_operation=op,
+            memory_keys=[memory_key],
+            error=e,
+            payload={"memory_id": memory_id, "content_sha256": content_sha256},
+            ch=ch,
+        )
+
+
 async def value_ended_at(
     org: str, namespace: str, memory_id: str, content_sha256: str, *, ch: Any
 ) -> datetime:
@@ -557,6 +580,10 @@ async def project_revised_edges(row: Mapping[str, Any], value: Any, *, op: str, 
             source_operation=op,
             source_resource_id=f"{op}:{results[0].memory_id}",
         )
+        return
+    await end_overtaken_edges(
+        write, results[0].memory_id, entry.memory_key, value_sha256(entry), op=op, ch=ch
+    )
 
 
 async def project_stated_relations(
