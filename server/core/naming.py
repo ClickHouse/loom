@@ -20,6 +20,12 @@ NAMESPACE_MAX_LEN = 128
 # on the wire and in every row.
 SENTINEL = "-"
 
+
+def names_session(session_id: str) -> bool:
+    """Whether a session id names a session rather than "not given"."""
+    return session_id.strip() not in ("", SENTINEL)
+
+
 _NAMESPACE_RE = re.compile(r"[a-z0-9][a-z0-9-]*")
 
 

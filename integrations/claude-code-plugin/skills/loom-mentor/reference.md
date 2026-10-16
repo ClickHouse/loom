@@ -75,6 +75,7 @@ hint to the user unless it changes what you are about to do.
 | `set_duplicate` (per call) | this write duplicates a named row | revise that key; `memory.link supersedes` |
 | `set_large_value` (per call) | the value is a document | `knowledge.upsert` + pointer row |
 | `set_churn` (per call) | the same key set five times this session | `working_memory.set` |
+| `run_over_budget` (per call) | `run.get` found the run past the `budget_usd` / `budget_seconds` its `run.begin` set | finish and `run.complete`, or ask the user before spending more |
 
 ## Asking for the evidence
 

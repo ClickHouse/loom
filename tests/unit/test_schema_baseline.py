@@ -88,10 +88,11 @@ def test_the_journal_files() -> None:
         "028_oauth_claims.sql",
         "029_grant_claims.sql",
         "030_namespace_released_aliases.sql",
-        "031_entity_triple_rows.sql",
-        "032_projection_failure_abandoned.sql",
-        "033_entity_triple_seen_at.sql",
-        "034_graph_restore_id.sql",
+        "031_agent_run_budgets.sql",
+        "032_entity_triple_rows.sql",
+        "033_projection_failure_abandoned.sql",
+        "034_entity_triple_seen_at.sql",
+        "035_graph_restore_id.sql",
     ]
 
 

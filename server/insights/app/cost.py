@@ -8,6 +8,8 @@ operations→handlers layering acyclic.
 
 from __future__ import annotations
 
+import logging
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from server.core.ch import get_client
@@ -26,10 +28,15 @@ from server.insights.api.models_cost import (
 from server.insights.store import cost as cost_store
 from server.observability.budget import effective_cap
 
+log = logging.getLogger(__name__)
+
 # The events-only dimensions (memory_key, user_id, model, traffic_class,
 # instance_label, build_commit) and the cache columns exist only on the direct
 # scan; a roll-up row reads them as None / 0.
 _SCAN_DIMS = ("memory_key", "user_id", "model", "traffic_class", "instance_label", "build_commit")
+
+# Ordinary clock skew; a turn dated further ahead counts in turns_dated_ahead.
+_AHEAD_SLACK = timedelta(seconds=5)
 
 
 def _summary_row(r: dict[str, Any], *, scan: bool) -> CostSummaryRow:
@@ -193,12 +200,20 @@ async def handle_budget_status(input: BudgetStatusInput) -> BudgetStatusOutput:
     )
 
 
+def _parse_turn_at(text: str) -> datetime | None:
+    """A turn's ISO-8601 time in UTC, or None when it has none, does not parse,
+    or its offset takes it before year 1 or after 9999."""
+    try:
+        parsed = datetime.fromisoformat(text)
+        return (parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)).astimezone(UTC)
+    except (ValueError, OverflowError):
+        return None
+
+
 async def handle_cost_record_turns(input: CostRecordTurnsInput) -> CostRecordTurnsOutput:
     """Price each turn from the shared table and write the ledger rows.
     Best-effort write: a CH failure records nothing rather than raising —
     the hook that calls this has already finished the user's turn."""
-    from datetime import UTC, datetime
-
     from server.observability.cost_accumulator import is_priced, turn_cost_usd
 
     rows: list[list[Any]] = []
@@ -206,7 +221,22 @@ async def handle_cost_record_turns(input: CostRecordTurnsInput) -> CostRecordTur
     priced_n = 0
     total = 0.0
     now = datetime.now(UTC)
-    for t in input.turns:
+    ahead = 0
+    parsed = [_parse_turn_at(t.turn_at) for t in input.turns]
+    # A turn sent without a time keeps the one it is recorded with, so a
+    # replay lands in the same run.
+    undated = [t.message_id for t, at in zip(input.turns, parsed, strict=True) if at is None]
+    recorded: dict[str, datetime] = {}
+    if undated:
+        try:
+            recorded = await cost_store.recorded_turn_times(
+                input.org, input.namespace, input.session_id, undated, ch=get_client()
+            )
+        except Exception:  # a failed lookup dates the turns now; the turn still records
+            log.warning(
+                "cost.record_turns: turn time lookup failed; undated turns dated now", exc_info=True
+            )
+    for t, turn_at in zip(input.turns, parsed, strict=True):
         cost = turn_cost_usd(
             t.model,
             input_tokens=t.input_tokens,
@@ -221,13 +251,12 @@ async def handle_cost_record_turns(input: CostRecordTurnsInput) -> CostRecordTur
             total += cost
         elif t.model not in unpriced:
             unpriced.append(t.model)
-        turn_at = now
-        if t.turn_at:
-            try:
-                parsed = datetime.fromisoformat(t.turn_at.replace("Z", "+00:00"))
-                turn_at = parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
-            except ValueError:
-                turn_at = now
+        if turn_at is None:
+            turn_at = recorded.get(t.message_id, now)
+        elif turn_at > now + _AHEAD_SLACK:
+            # Kept as sent, so a replay lands in the same run; a client clock
+            # running ahead is reported instead.
+            ahead += 1
         rows.append(
             [
                 input.org,
@@ -245,7 +274,7 @@ async def handle_cost_record_turns(input: CostRecordTurnsInput) -> CostRecordTur
                 t.output_tokens,
                 round(cost if priced else 0.0, 6),
                 priced,
-                turn_at.astimezone(UTC),  # aware: the driver reads a naive one as local
+                turn_at,  # aware UTC: the driver reads a naive one as local
             ]
         )
     try:
@@ -257,6 +286,7 @@ async def handle_cost_record_turns(input: CostRecordTurnsInput) -> CostRecordTur
         priced=priced_n,
         unpriced_models=unpriced,
         cost_usd=round(total, 6),
+        turns_dated_ahead=ahead,
     )
 
 
