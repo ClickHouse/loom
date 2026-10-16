@@ -50,7 +50,8 @@ An agent's shell keeps no variables between calls, and a server started without 
 
 ```bash
 cd <worktree>
-(exec 3<>/dev/tcp/127.0.0.1/7790) 2>/dev/null && { echo "port 7790 is taken: pick another for the label, URL and --port"; exit 1; }
+bash -c '(exec 3<>/dev/tcp/127.0.0.1/7790)' 2>/dev/null && {   # bash's /dev/tcp; zsh has none
+  echo "port 7790 is taken: pick another for the label, URL and --port"; exit 1; }
 test -e .env && { echo ".env exists: check its LOOM_CH_* before migrating"; exit 1; }
 cat > .env <<ENV
 LOOM_CH_HOST=localhost
