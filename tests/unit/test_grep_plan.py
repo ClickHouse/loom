@@ -69,6 +69,37 @@ def test_unparseable_pattern_scans() -> None:
     assert gp.is_scan(gp.plan_regex(r"[a-z]{3,}"))
 
 
+def test_posix_classes_scan_because_the_stdlib_misreads_them() -> None:
+    # RE2 reads [[:alpha:]] as one class; the stdlib would require the literal "]abc"
+    assert gp.is_scan(gp.plan_regex(r"[[:alpha:]]abcd"))
+    assert gp.is_scan(gp.plan_regex(r"TODO|[[:digit:]]+FIXME"))
+
+
+def test_case_insensitive_regex_requires_nothing() -> None:
+    # RE2 folds Unicode: (?i)kelvin matches "\u212aelvin", which no ASCII fold admits
+    assert gp.is_scan(gp.plan_regex("kelvin", ignore_case=True))
+    assert gp.is_scan(gp.plan_regex("(?i)kelvin|other"))
+    assert gp.plan_regex("(?i:kelvin)_bound") == gp.And(("_bound",))
+    assert gp.plan_regex("(?-i:kelvin)") == gp.And(("kelvin",))
+
+
+def test_branch_needles_take_the_longest_literal_of_each_branch() -> None:
+    assert gp.branch_needles(gp.plan_regex(r"join.*not supported|totals")) == [
+        "not supported",
+        "totals",
+    ]
+    assert gp.branch_needles(gp.plan_regex(r"getTotals\(\)|setTotals\(")) == [
+        "gettotals()",
+        "settotals(",
+    ]
+    assert gp.branch_needles(gp.plan_regex(r"^TODO$|\bFIXME\b")) == ["todo", "fixme"]
+    assert gp.branch_needles(gp.plan_regex("café|naïve")) == ["café", "naïve"]
+    assert gp.branch_needles(gp.plan_regex(r"mutex.*lock")) == []  # one branch: RE2 prefilters it
+    assert gp.branch_needles(gp.plan_regex(r"TODO|.*")) == []
+    assert gp.branch_needles(gp.plan_regex(r"\b[0-9a-f]{32}\b")) == []
+    assert gp.branch_needles(gp.plan_regex("")) == []
+
+
 def test_distribution_keeps_the_shared_literal_in_every_branch() -> None:
     plan = gp.plan_regex(r"positiveModulo(OrNull|Legacy)\(")
     assert isinstance(plan, gp.Or)
@@ -113,6 +144,31 @@ def test_content_predicate_keeps_the_three_exact_shapes_and_puts_the_guard_first
         == "(lower(content) LIKE {sc_0:String} OR lower(content) LIKE {sc_1:String}) AND match(content, {sc_pat:String})"
     )
     assert params == {"sc_pat": "TODO|FIXME", "sc_0": "%todo%", "sc_1": "%fixme%"}
+
+
+def test_scan_predicate_guards_only_a_case_sensitive_alternation() -> None:
+    sql, params = gp.content_predicate(
+        r"TODO|FIXME", regex=True, case_sensitive=True, index_guard=False
+    )
+    assert sql == (
+        "multiSearchAnyCaseInsensitive(content, {gp_any:Array(String)}) AND match(content, {pat:String})"
+    )
+    assert params == {"pat": "TODO|FIXME", "gp_any": ["todo", "fixme"]}
+    for pattern, case_sensitive in (
+        (r"TODO|FIXME", False),
+        (r"TODO.*FIXME", True),
+        (r"[0-9]+|\s+", True),
+    ):
+        sql, params = gp.content_predicate(
+            pattern, regex=True, case_sensitive=case_sensitive, index_guard=False
+        )
+        assert sql == "match(content, {pat:String})", pattern
+    assert gp.content_predicate(
+        "TODO|FIXME", regex=False, case_sensitive=True, index_guard=False
+    ) == (
+        "position(content, {pat:String}) > 0",
+        {"pat": "TODO|FIXME"},
+    )
 
 
 def test_short_literal_emits_exactly_the_old_statement() -> None:
@@ -191,6 +247,29 @@ def test_plan_never_refuses_a_matching_text(seed: int) -> None:
                     checked += 1
                     assert gp.admits(plan, text), (pat, text, plan)
     assert checked > 500  # the generator produced real matches, not only refusals
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_branch_needles_never_refuse_a_matching_text(seed: int) -> None:
+    rng = random.Random(500 + seed)
+    checked = 0
+    for _ in range(2500):
+        pat = _gen_regex(rng) + "|" + _gen_regex(rng)
+        try:
+            compiled = re.compile(pat)
+        except re.error:
+            continue
+        needles = gp.branch_needles(gp.plan_regex(pat))
+        if not needles:
+            continue
+        literal_seeds = [s for s in re.split(r"[^A-Za-z_:(]+", pat.replace("\\(", "(")) if s]
+        for _ in range(6):
+            text = _gen_text(rng, literal_seeds)
+            if compiled.search(text) is not None:
+                checked += 1
+                low = gp.ascii_lower(text)
+                assert any(n in low for n in needles), (pat, text, needles)
+    assert checked > 300
 
 
 @pytest.mark.parametrize("seed", range(3))

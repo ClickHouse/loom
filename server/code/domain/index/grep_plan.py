@@ -24,7 +24,10 @@ ClickHouse's ``lower`` folds only ASCII bytes — folding a non-ASCII letter
 here and not there would be a false negative.
 
 Regexes are parsed with the stdlib ``re`` parser, which agrees with RE2 (what
-``match`` runs) on every construct this walk cares about. A pattern the
+``match`` runs) on the constructs this walk reads, with two exceptions that plan
+to ``SCAN``: POSIX classes (the stdlib reads ``[[:alpha:]]x`` as a set followed by
+the literal ``]x``) and case-insensitive matching (RE2 folds Unicode, so
+``(?i)k`` matches the Kelvin sign; ``lower()`` folds ASCII only). A pattern the
 parser rejects, a top-level alternation whose branch has no literal, a class,
 an anchor, a lookaround, a backreference and an optional group all contribute
 nothing (``SCAN``) rather than guess.
@@ -111,16 +114,19 @@ def plan_literal(literal: str) -> Plan:
 # regex
 
 
-def plan_regex(pattern: str) -> Plan:
+def plan_regex(pattern: str, *, ignore_case: bool = False) -> Plan:
     """Required literals of an RE2/Python regex, or SCAN when nothing is required.
 
-    ``(?i)`` and every other flag are irrelevant here: the plan is compared
-    against ``lower(content)`` regardless, and the exact ``match`` keeps the
-    user's flags.
+    ``ignore_case`` is the op's own case mode; a ``(?i)`` in the pattern counts
+    the same. Flags other than ``i`` don't change which literals are required.
     """
+    if ignore_case or "[:" in pattern:
+        return SCAN
     try:
         parsed = _sre_parser.parse(pattern)
     except (re.error, ValueError, OverflowError, RecursionError):
+        return SCAN
+    if parsed.state.flags & re.IGNORECASE:
         return SCAN
     try:
         return _simplify(_walk_seq(list(parsed)))
@@ -147,9 +153,10 @@ def _walk_seq(items: list[Any]) -> Plan:
             continue
         flush()
         if op is _sre.SUBPATTERN:
-            # (group, add_flags, del_flags, pattern)
-            sub = av[-1]
-            terms.append(_walk_seq(list(sub)))
+            # (group, add_flags, del_flags, pattern); a (?i:...) group requires nothing
+            _, add_flags, _, sub = av
+            if not add_flags & re.IGNORECASE:
+                terms.append(_walk_seq(list(sub)))
         elif op is _sre.BRANCH:
             _, branches = av
             terms.append(_simplify(Or(tuple(_walk_seq(list(b)) for b in branches))))
@@ -223,6 +230,16 @@ def _simplify(plan: Plan) -> Plan:
             return SCAN
         return Or(uniq)
     return plan
+
+
+def branch_needles(plan: Plan) -> list[str]:
+    """The longest literal of each branch of an alternation: a matching chunk
+    contains at least one. Empty for any other plan."""
+    if not isinstance(plan, Or):
+        return []
+    needles = [max(b.literals, key=len) for b in plan.branches if isinstance(b, And)]
+    # a branch without its needle would admit nothing it matches: no guard at all
+    return list(dict.fromkeys(needles)) if len(needles) == len(plan.branches) else []
 
 
 def _term_count(plan: Plan) -> int:
@@ -305,9 +322,11 @@ def content_predicate(
     preceded by the index-visible necessary conditions when the pattern
     has any. Returns (SQL without leading AND, params).
 
-    ``index_guard=False`` returns the exact matcher alone (code.grep's own statements
-    scan the namespace's `content` instead of consulting the n-gram index, so the
-    `lower(content) LIKE` terms would only add a `lower()` over every row read).
+    ``index_guard=False`` is for code.grep's own statements, which scan `content`
+    instead of consulting the n-gram index: no `lower(content) LIKE` terms (they
+    would only add a `lower()` over every row read). An alternation still gets a
+    `multiSearchAnyCaseInsensitive` over its branch needles in front of `match`:
+    with no single required literal, RE2 would otherwise run on every row.
 
     Three exact shapes:
     ``match(content, pat)`` (``(?i)`` prepended when not case-sensitive),
@@ -316,7 +335,7 @@ def content_predicate(
     if regex:
         exact = f"match(content, {{{param}:String}})"
         params: dict[str, Any] = {param: pattern if case_sensitive else "(?i)" + pattern}
-        plan = plan_regex(pattern)
+        plan = plan_regex(pattern, ignore_case=not case_sensitive)
     elif case_sensitive:
         exact = f"position(content, {{{param}:String}}) > 0"
         params = {param: pattern}
@@ -325,7 +344,16 @@ def content_predicate(
         exact = f"positionCaseInsensitive(content, {{{param}:String}}) > 0"
         params = {param: pattern}
         plan = plan_literal(pattern)
-    guard, gparams = to_sql(plan, prefix=prefix) if index_guard else ("", {})
+    if not index_guard:
+        needles = branch_needles(plan)
+        if not needles:
+            return exact, params
+        params[f"{prefix}_any"] = needles
+        return (
+            f"multiSearchAnyCaseInsensitive(content, {{{prefix}_any:Array(String)}}) AND {exact}",
+            params,
+        )
+    guard, gparams = to_sql(plan, prefix=prefix)
     if not guard:
         return exact, params
     params.update(gparams)

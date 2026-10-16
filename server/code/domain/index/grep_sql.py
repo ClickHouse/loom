@@ -2,14 +2,14 @@
 
 The three statements code.grep runs per call (`grep_chunks` for matches, `grep_files`
 for files and presence, `grep_message_chunks` for message) read `loom.code_chunks FINAL`
-behind the `text(ngrams(3))` index. On a large shared table that index is one posting
-dictionary per part over every namespace (millions of rows in one part), so a
-30-character literal reads ~28 posting lists sized for the whole table, most of them
-cold from object storage: 0.1-2 s of `FilteringMarksWithSecondaryKeysMicroseconds` to
-prune a namespace whose `content` scan costs 50-170 ms from the filesystem cache.
+behind the `text(ngrams(3))` index. Common trigrams have posting lists close to the size
+of the `content` column itself, so a 30-character literal reads ~28 of them, most cold
+from object storage: 0.2-3 s of `FilteringMarksWithSecondaryKeysMicroseconds` to prune a
+namespace whose `content` scan costs 50-400 ms from the filesystem cache.
 
-These builders scan instead: the exact matcher alone (no `lower(content) LIKE` guard,
-`ignore_data_skipping_indices` so a regex's `match()` does not consult the index either), and each
+These builders scan instead: the exact matcher (no `lower(content) LIKE` guard,
+`ignore_data_skipping_indices` so a regex's `match()` does not consult the index either; an
+alternation's branch needles go in front of `match()`, see `grep_plan.content_predicate`), and each
 key's newest version picked by `ORDER BY version DESC LIMIT 1 BY <sorting key tail>` in place of
 FINAL, then tombstoned keys dropped. That equals FINAL-then-filter because every version of a
 `code_chunks` key carries the same `content` (`VERSION_INVARIANT_COLS`): the content predicate
