@@ -44,7 +44,10 @@ Start the review the moment the push lands — do not wait for CI. In Claude Cod
 
 ## 5. Read CI
 
+Right after a push the new head has no checks yet (runs queue behind the previous head's), and `gh pr checks --watch` returns at once on an empty list. Wait for the head's checks to appear first:
+
 ```bash
+until [ "$(gh pr view <n> --json headRefOid,statusCheckRollup --jq "(.headRefOid == \"$(git rev-parse HEAD)\") and (.statusCheckRollup | length > 0)")" = true ]; do sleep 15; done
 gh pr checks <n> --watch --fail-fast
 gh pr view <n> --json statusCheckRollup --jq '.statusCheckRollup[] | "\((if (.conclusion // "") == "" then .status else .conclusion end))\t\(.name)"'
 gh pr view <n> --json statusCheckRollup --jq '.statusCheckRollup | length > 0 and all(.[];
