@@ -47,7 +47,7 @@ PYTEST = (".venv/bin/python", "-m", "pytest")
 PYTEST_FLAG = re.compile(
     r"-q|-qq|-v|-x|-rA|--tb=\w+|-p|no:randomly|--randomly-seed=\d+|--no-header"
 )
-UNIT_TEST = re.compile(r"tests/unit(/[\w./-]*)?(::[\w\[\]-]+)*")
+UNIT_TEST = re.compile(r"tests/unit(/[\w./-]*)?(::[\w.,/\[\]-]+)*")
 
 
 def _pytest_ok(args: list[str]) -> bool:

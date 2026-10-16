@@ -349,6 +349,7 @@ def _hook(command: str) -> int:
         ".venv/bin/python -m pytest tests/unit/test_x.py -q 2>&1 | tail -5",
         ".venv/bin/python -m pytest tests/unit -q -k 'a and not b'",
         ".venv/bin/python -m pytest 'tests/unit/test_a.py::test_b[x-1]' -q",
+        ".venv/bin/python -m pytest 'tests/unit/test_a.py::test_b[.claude/x.md]' -q",
         "git log | grep -F x",
         "gh pr view 57 --json files --jq '.files[].path'",
         "gh pr view 57 --json files --jq='.files[].path'",
