@@ -324,6 +324,16 @@ def test_settings_deny_shared_and_production_commands() -> None:
         _matches(r, "X=1 .venv/bin/python -m pytest tests/unit", strip_env=False)
         for r in perms["allow"]
     )
+    # The gates run as loom-pre-push gives them, with no .env.
+    for command in ("LOOM_ENV_FILE= make lint", "LOOM_ENV_FILE= make test-unit"):
+        assert any(_matches(r, command, strip_env=False) for r in perms["allow"]), command
+    # A wildcard in an allow rule takes any path or flag, so test runs are allowed exactly.
+    assert not any(
+        _matches(
+            r, "node --test integrations/x/tests/a --import=/tmp/p.mjs b.test.mjs", strip_env=False
+        )
+        for r in perms["allow"]
+    )
     # Only the whole unit suite runs without asking: a path after it could be anything.
     assert not any(
         _matches(r, ".venv/bin/python -m pytest tests/unit/x.py tests/integration", strip_env=False)

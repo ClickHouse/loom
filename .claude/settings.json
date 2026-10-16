@@ -7,6 +7,9 @@
       "Bash(make lint)",
       "Bash(make typecheck)",
       "Bash(make test-unit)",
+      "Bash(LOOM_ENV_FILE= make lint)",
+      "Bash(LOOM_ENV_FILE= make typecheck)",
+      "Bash(LOOM_ENV_FILE= make test-unit)",
       "Bash(make schema-check)",
       "Bash(.venv/bin/python -m ruff:*)",
       "Bash(npm --prefix frontend run test)",
@@ -44,9 +47,7 @@
       "Bash(.venv/bin/python -m scripts.codegen.op_reach_census:*)",
       "Bash(.venv/bin/python -m scripts.codegen.settings_reference:*)",
       "Bash(.venv/bin/python -m scripts.codegen.agent_plugin_sync:*)",
-      "Bash(python3 .claude/skills/loom-writing/scripts/check_prose.py:*)",
-      "Bash(node --test integrations/claude-code-plugin/tests/*.test.mjs)",
-      "Bash(node --test integrations/grep-shim/tests/*.test.mjs)"
+      "Bash(python3 .claude/skills/loom-writing/scripts/check_prose.py:*)"
     ],
     "ask": [
       "Bash(gh pr create*)",
