@@ -30,15 +30,16 @@ SEALED: tuple[tuple[str, str, tuple[str, ...], str, str], ...] = (
         "provider-rebuild-views",
         "",
     ),
-    # A session's identity-provider refresh token. The copies a sign-in in
-    # flight or a refresh family holds in Keeper are short-lived or rotate at
-    # the next refresh, sealed under the root then.
+    # A live session's identity-provider refresh token. Keeper's sealed copies
+    # (a code, a device grant, an approval or link in flight) live minutes and
+    # are sealed under the new root when next written; a `family:<id>` key
+    # holds only "<generation>:<rid>".
     (
         "loom.oauth_state",
         "upstream_refresh",
         (),
         "oidc refresh token",
-        "record_type = 'session_refresh'",
+        "record_type = 'session_refresh' AND expires_at > toUnixTimestamp(now())",
     ),
 )
 # Each table's key, to name a row whose value opens with neither root.

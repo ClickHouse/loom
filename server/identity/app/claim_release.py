@@ -166,7 +166,10 @@ async def _release(
     row["updated_at"] = max(now, existing.get("updated_at") or now)
     await ch.insert("loom.namespaces", [row])
     await sso_links.forget_account(org, namespace, actor_subject, ch=ch)
-    await machines.forget_namespace(org, namespace, actor_subject, ch=ch)
+    bots = await machines.forget_namespace(org, namespace, actor_subject, ch=ch)
+    # Again, now the row and bots no longer name it: a bot token minted during
+    # the first cutoffs is older than these.
+    await _end_tokens(org, namespace, existing, actor_subject, ch, bots=bots)
     # The claim cap reads which accounts tie a person's spellings from this table.
     grant_cache.invalidate(org)
 
@@ -186,12 +189,21 @@ async def _release(
     )
 
 
-async def _end_tokens(org: str, namespace: str, row: dict[str, Any], by: str, ch: CHClient) -> None:
-    """The tokens of the bots naming the namespace end now; so do an agent's,
-    when it is the agent's own namespace (its owner is the agent)."""
+async def _end_tokens(
+    org: str,
+    namespace: str,
+    row: dict[str, Any],
+    by: str,
+    ch: CHClient,
+    bots: list[str] | None = None,
+) -> None:
+    """The tokens of the bots naming the namespace (or of `bots`) end now; so
+    do an agent's, when it is the agent's own namespace (its owner is the agent)."""
     from server.identity.app import account_admin
 
-    ended = [machines.subject(name) for name in await machines.naming(org, namespace, ch=ch)]
+    if bots is None:
+        bots = await machines.naming(org, namespace, ch=ch)
+    ended = [machines.subject(name) for name in bots]
     owner = str(row.get("owner_email") or "")
     for t in row.get("tags") or []:
         trust = str(t).removeprefix(agents.TAG_PREFIX)

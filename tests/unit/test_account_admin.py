@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -168,6 +170,19 @@ def test_a_cutoff_covers_a_replica_whose_clock_runs_ahead(world) -> None:
     asyncio.run(account_admin.disable_bot("triage", by="ops"))
     ahead = time.time() + account_admin._CLOCK_SKEW_S  # `since` on that replica
     assert world["cutoff"].timestamp() > ahead
+
+
+def test_the_wait_covers_a_replica_whose_clock_runs_behind(monkeypatch) -> None:
+    slept: list[float] = []
+
+    async def sleep(s: float) -> None:
+        slept.append(s)
+
+    monkeypatch.setattr(account_admin, "asyncio", SimpleNamespace(sleep=sleep))
+    cutoff = datetime.fromtimestamp(time.time() + 6, UTC)
+    asyncio.run(_real_wait(cutoff))
+    # Past the cutoff on a clock that many seconds behind this one too.
+    assert slept[0] > 5 + account_admin._CLOCK_SKEW_S
 
 
 def test_a_disable_waits_out_its_cutoff(world, monkeypatch) -> None:

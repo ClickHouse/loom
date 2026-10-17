@@ -42,7 +42,9 @@ def _from_now_on() -> datetime:
 
 
 async def _wait_until(cutoff: datetime) -> None:
-    await asyncio.sleep(max(0.0, cutoff.timestamp() - time.time()))
+    """Return once every replica's clock is past `cutoff`: one running behind
+    this one stamps an earlier `iat`."""
+    await asyncio.sleep(max(0.0, cutoff.timestamp() + _CLOCK_SKEW_S - time.time()))
 
 
 # ── carrying password accounts over to SSO ────────────────────────────────
@@ -135,7 +137,7 @@ async def adopt(plan: list[dict[str, Any]], *, by: str, keep_tokens: bool) -> in
                 "tokens_revoked": not keep_tokens,
             },
         )
-    if cutoff is not None:  # a sign-in once adopt returns is past every cutoff
+    if cutoff is not None:  # a sign-in once adopt returns, on any replica, is past every cutoff
         await _wait_until(cutoff)
     return linked
 

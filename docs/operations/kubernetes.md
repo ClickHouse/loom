@@ -252,8 +252,9 @@ render with a token set would publish again, so never set `mustMatchChange.publi
 A publish is then `loom secrets reseal --dry-run && loom signing-key record-root && loom
 deployment publish --yes` in a pod with the new env (the dry run checks the previous root
 while the old one is still the recorded root), then `loom secrets reseal` once the new pods
-serve. A `loom login` code shown while the root changes stops matching
-(its key derives from the root): run `loom login` again.
+serve. A `loom login` code shown while the root changes stops matching (its key derives
+from the root): run `loom login` again. So does an SSO sign-in started on a pod with the
+other root: start it again.
 
 ## Cache and git mirrors
 

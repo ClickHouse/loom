@@ -202,4 +202,7 @@ def test_a_release_whose_cutoff_fails_keeps_what_a_retry_needs(env: Any, monkeyp
 
     monkeypatch.setattr(account_admin, "end_tokens", end_tokens)
     out, _ = run(_tok(["org_admin"]))
-    assert out.released and ended == ["sa:triage"] and forgotten == ["repo-x"]
+    assert out.released and forgotten == ["repo-x"]
+    # Once before the row and bots change, once after, so no bot exchange in
+    # between outlives the release.
+    assert ended == ["sa:triage", "sa:triage"]
