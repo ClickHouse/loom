@@ -1,6 +1,6 @@
 """`loom login | logout | whoami | call | token`: everything the dashboard does,
 from a terminal or an agent's shell. `python -m loom …` runs it with only the SDK
-installed; the server's `loom` command hands these four to it.
+installed; the server's `loom` command hands these five to it.
 
 `loom call` reaches the whole API with the stored session (or LOOM_API_KEY):
 
@@ -10,13 +10,7 @@ installed; the server's `loom` command hands these four to it.
   loom call /v1/me/service_accounts
   loom call /v1/me/service_accounts.create --data '{"name": "ci", "namespaces": ["support"]}'
 
-`loom token` makes, lists and revokes your own tokens for CI and agents, as the
-Setup page does:
-
-  loom token create --name ci --namespace-role support=writer --namespace-role docs=viewer
-  loom token create --name nightly --namespace support --ttl-days 0   # never expires
-  loom token list
-  loom token revoke --name ci
+`loom token` makes, lists and revokes your own tokens (`loom token --help`).
 
 An op name is POSTed to /v1/<op> with org and namespace filled in from the
 token (`--org`, `--namespace` override). A path starting with `/` is sent as
@@ -121,51 +115,69 @@ async def _token(args: argparse.Namespace) -> Any:
             return await agent.account.service_accounts()
         if args.action == "revoke":
             return await agent.account.revoke_service_account(args.name)
-        # In flag order, which is the read priority; a bare --namespace takes
-        # your own role there (capped server-side, as every entry is).
-        entries: list[str | dict[str, str]] = []
-        for kind, value in args.entries:
-            ns, _, role = value.partition("=")
-            entries.append({"namespace": ns, "role": role} if kind == "role" else ns)
         return await agent.account.create_service_account(
-            args.name, entries, ttl_days=args.ttl_days
+            args.name, args.entries, ttl_days=args.ttl_days
         )
     finally:
         await agent.close()
 
 
-class _Entry(argparse.Action):
-    """--namespace and --namespace-role into one list, in the order given."""
+def _role_entry(value: str) -> dict[str, str]:
+    ns, sep, role = value.partition("=")
+    if not sep:
+        raise argparse.ArgumentTypeError(f"expected NS=ROLE, got {value!r}")
+    return {"namespace": ns, "role": role}
 
-    def __call__(self, parser: Any, namespace: Any, value: Any, option: Any = None) -> None:
-        kind = "role" if option == "--namespace-role" else "ns"
-        if kind == "role" and value.partition("=")[2] not in ("viewer", "writer", "admin"):
-            parser.error(f"--namespace-role must be NS=viewer|writer|admin, got {value!r}")
-        namespace.entries = [*(namespace.entries or []), (kind, value)]
+
+_TOKEN_HELP = """Your tokens for CI and agents, as the Setup page makes them: each reads
+the namespaces you name, in the order you name them (first = searched first),
+at a role no higher than your own sign-in can give.
+
+  loom token create --name ci --namespace-role support=writer --namespace docs
+  loom token create --name nightly --namespace support --ttl-days 0   # never expires
+  loom token list
+  loom token revoke --name ci
+"""
 
 
 def _token_parser(sub: Any) -> None:
-    p = sub.add_parser("token", help="make, list and revoke your tokens for CI and agents")
-    p.add_argument("--profile", help="credentials profile (default: LOOM_PROFILE or 'default')")
-    p.add_argument("--server", help="server URL (default: the one `loom login` signed in to)")
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument(
+        "--profile", help="credentials profile (default: LOOM_PROFILE or 'default')"
+    )
+    common.add_argument("--server", help="server URL (default: the one `loom login` signed in to)")
+    p = sub.add_parser(
+        "token",
+        help="make, list and revoke your tokens for CI and agents",
+        description=_TOKEN_HELP,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     actions = p.add_subparsers(dest="action", required=True)
-    create = actions.add_parser("create", help="a token for some of your namespaces")
+    create = actions.add_parser(
+        "create", parents=[common], help="a token for some of your namespaces"
+    )
     create.add_argument("--name", required=True, help="its name, unique in the org while it lives")
+    # Both into one list, so their order on the command line is the read priority.
     create.add_argument(
         "--namespace-role",
-        action=_Entry,
+        dest="entries",
+        action="append",
+        type=_role_entry,
         metavar="NS=ROLE",
-        help="a namespace and the role there, up to your own (repeatable; first = searched first)",
+        help="a namespace and the role there (repeatable)",
     )
     create.add_argument(
-        "--namespace", action=_Entry, metavar="NS", help="a namespace at your own role (repeatable)"
+        "--namespace",
+        dest="entries",
+        action="append",
+        metavar="NS",
+        help="a namespace at the most your sign-in can give there (repeatable)",
     )
     create.add_argument(
         "--ttl-days", type=int, default=None, help="days it lives (default 90; 0: never expires)"
     )
-    create.set_defaults(entries=[])
-    actions.add_parser("list", help="the tokens you made")
-    revoke = actions.add_parser("revoke", help="end a token now")
+    actions.add_parser("list", parents=[common], help="the tokens you made")
+    revoke = actions.add_parser("revoke", parents=[common], help="end a token now")
     revoke.add_argument("--name", required=True)
 
 

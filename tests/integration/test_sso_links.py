@@ -65,6 +65,7 @@ def _sso(*args: str) -> str:
 def _sso_refused(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, "-m", "server.cli", "sso", *args, "--apply"],
+        env={**os.environ, "LOOM_OAUTH_LOGIN_PROVIDER": "oidc"},
         capture_output=True,
         text=True,
         check=False,
@@ -161,3 +162,31 @@ async def test_link_points_an_account_from_another_address_at_the_provider_one(c
         "link", "--email", f"lee@corp-{org}.example", "--org", org, "--namespace", namespace
     )
     assert refused.returncode == 2 and other in refused.stderr
+
+
+async def test_link_refuses_an_address_that_still_holds_grants(ch: Any) -> None:
+    # Granted to the old address by name, they would reach no one once it is
+    # untied, or whoever registers it next.
+    org = f"sso-it-{uuid.uuid4().hex[:6]}"
+    personal = f"kim@home-{org}.example"
+    namespace = await _password_account(ch, org, personal, owner="kim")
+    now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+    await ch.insert(
+        "loom.namespace_grants",
+        [
+            {
+                "org": org,
+                "namespace": "team",
+                "subject": personal,
+                "role": "writer",
+                "granted_at": now,
+                "granted_by": "ops",
+                "version": 1,
+            }
+        ],
+    )
+    refused = _sso_refused(
+        "link", "--email", f"kim@corp-{org}.example", "--org", org, "--namespace", namespace
+    )
+    assert refused.returncode == 2 and "team (writer)" in refused.stderr
+    assert await _resolve(f"kim@corp-{org}.example") is None

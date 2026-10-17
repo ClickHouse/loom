@@ -338,7 +338,8 @@ async def me_service_accounts_list(request: Request) -> dict[str, object]:
     )
 
     def _iso(v: datetime | None) -> str | None:
-        return v.isoformat() if v else None
+        # A token never used joins no row: its last use reads as the epoch.
+        return v.isoformat() if v and v.year > 1970 else None
 
     return {
         "rows": [
@@ -398,7 +399,7 @@ async def me_service_accounts_revoke(
             """
             SELECT sa_subject, namespaces, created_by, created_at,
                    expires_at, ttl_days, roles, kind, client,
-                   inherit_creator_grants, ns_roles
+                   inherit_creator_grants, ns_roles, revoked_at
             FROM loom.service_accounts FINAL
             WHERE org = {org:String} AND name = {name:String}
             LIMIT 1
@@ -429,32 +430,34 @@ async def me_service_accounts_revoke(
                 },
             )
 
-        now = naive_utc_now_seconds()
-        await ch.insert(
-            "loom.service_accounts",
-            [
-                {
-                    "org": org,
-                    "name": name,
-                    "sa_subject": row["sa_subject"],
-                    "namespaces": row["namespaces"],
-                    "roles": row["roles"],
-                    "ttl_days": row["ttl_days"],
-                    "created_by": row["created_by"],
-                    "created_at": row["created_at"],
-                    "expires_at": row["expires_at"],
-                    "revoked_at": now,
-                    "revoked_by": subject,
-                    "version": _time.time_ns(),
-                    # Column-mirror discipline (CLAUDE.md): carry every column
-                    # forward or the merge zeros it.
-                    "kind": row.get("kind") or "service_account",
-                    "client": row.get("client") or "",
-                    "inherit_creator_grants": bool(row.get("inherit_creator_grants", True)),
-                    "ns_roles": row.get("ns_roles") or "{}",
-                }
-            ],
-        )
+        # Revoked already (a retry, a second click): its revocation stands as it was.
+        now = row["revoked_at"] or naive_utc_now_seconds()
+        if not row["revoked_at"]:
+            await ch.insert(
+                "loom.service_accounts",
+                [
+                    {
+                        "org": org,
+                        "name": name,
+                        "sa_subject": row["sa_subject"],
+                        "namespaces": row["namespaces"],
+                        "roles": row["roles"],
+                        "ttl_days": row["ttl_days"],
+                        "created_by": row["created_by"],
+                        "created_at": row["created_at"],
+                        "expires_at": row["expires_at"],
+                        "revoked_at": now,
+                        "revoked_by": subject,
+                        "version": _time.time_ns(),
+                        # Column-mirror discipline (CLAUDE.md): carry every column
+                        # forward or the merge zeros it.
+                        "kind": row.get("kind") or "service_account",
+                        "client": row.get("client") or "",
+                        "inherit_creator_grants": bool(row.get("inherit_creator_grants", True)),
+                        "ns_roles": row.get("ns_roles") or "{}",
+                    }
+                ],
+            )
 
     # Also revoke the JWT itself. SA tokens carry no `jti`, so revoke by
     # `sub` (the sa_subject); verify_token checks both. Without this the

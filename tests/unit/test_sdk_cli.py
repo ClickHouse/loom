@@ -231,8 +231,14 @@ def test_token_list_and_revoke(wire) -> None:
     ]
 
 
-def test_token_create_needs_a_namespace_and_a_known_role(wire, capsys) -> None:
+def test_token_create_needs_a_namespace_and_an_ns_role_pair(wire, capsys) -> None:
     assert cli.main(["token", "create", "--name", "ci"]) == 2
     with pytest.raises(SystemExit):
-        cli.main(["token", "create", "--name", "ci", "--namespace-role", "support=owner"])
-    assert wire.seen == []
+        cli.main(["token", "create", "--name", "ci", "--namespace-role", "support"])
+    assert wire.seen == []  # the role itself is the server's to check
+
+
+def test_token_takes_its_options_after_the_action(wire) -> None:
+    argv = ["token", "create", "--name", "ci", "--namespace", "docs"]
+    assert cli.main([*argv, "--server", "http://loom.test"]) == 0
+    assert wire.seen[0][1] == "/v1/me/service_accounts.create"

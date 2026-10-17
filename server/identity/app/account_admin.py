@@ -143,34 +143,71 @@ async def adopt(plan: list[dict[str, Any]], *, by: str, keep_tokens: bool) -> in
     return linked
 
 
-async def link_account(email: str, org: str, namespace: str, *, by: str) -> str:
-    """Let SSO sign-ins with `email` reach the password account (org, namespace)
-    registered under another address (a personal one, a `+tag`): its contact
-    becomes `email` and it is linked, so the person keeps its subject, grants,
-    namespaces and tokens. The operator vouches that `email` is theirs. Returns
-    the address it had. Raises ValueError when the account cannot take it."""
-    from server.core.ch import get_client
+async def link_plan(email: str, org: str, namespace: str) -> dict[str, Any]:
+    """What `link_account` would change: the account row and the address it
+    names now. Raises ValueError when it cannot take `email`."""
+    from server.core.ch import get_client, own_write_reads
     from server.identity.store import namespaces
 
     email = email.strip().lower()
     if "@" not in email:
         raise ValueError(f"{email!r} is not an email address")
-    async with account_change(org, namespace):
+    with own_write_reads():
         row = await namespaces.fetch_row(org, namespace)
         if row is None or not row["active"] or not row["password_hash"]:
             raise ValueError(f"{org}/{namespace} is not an active password account")
-        if row["contact_email"] == email:
-            raise ValueError(f"{org}/{namespace} already names {email}: adopt or let it link")
-        others = await get_client().query_one(
+        was = str(row["contact_email"]).lower()
+        if was == email:
+            raise ValueError(f"{org}/{namespace} already names {email}: adopt it instead")
+        other = await get_client().query_one(
             "SELECT org, namespace FROM loom.namespaces FINAL "
-            "WHERE contact_email = {email:String} AND active = 1 LIMIT 1",
+            "WHERE lower(contact_email) = {email:String} AND active = 1 LIMIT 1",
             params={"email": email},
         )
-        if others is not None:
+        if other is not None:
             # Two accounts naming the address: its sign-in would reach neither.
-            taken = f"{others['org']}/{others['namespace']}"
+            taken = f"{other['org']}/{other['namespace']}"
             raise ValueError(f"{email} is already {taken}'s; release that one first")
-        was = str(row["contact_email"])
+        grants = await get_client().query_all(
+            "SELECT namespace, role FROM loom.namespace_grants FINAL WHERE org = {org:String} "
+            "AND subject = {was:String} AND revoked_at IS NULL",
+            params={"org": org, "was": was},
+        )
+    if was and grants:
+        # Granted to the address by name, they would reach no one, or whoever
+        # registers it next.
+        named = ", ".join(f"{g['namespace']} ({g['role']})" for g in grants)
+        raise ValueError(
+            f"{was} holds grants of its own: {named}; grant them to "
+            f"{row['owner_email']} and revoke them first"
+        )
+    return {"row": row, "was": was}
+
+
+async def link_account(email: str, org: str, namespace: str, *, by: str) -> str:
+    """Let SSO sign-ins with `email` reach the password account (org, namespace)
+    registered under another address (a personal one, a `+tag`): its contact
+    becomes `email` and it is linked, so the person keeps its subject, grants,
+    namespaces and tokens. The operator vouches that `email` is theirs. Only
+    once SSO is on, as adopt: before, the old address would still sign in by
+    password, and nobody could register it while it still names grants. Held
+    as self-signup and JIT hold an address, so neither makes a second account
+    for it meanwhile. Returns the address it had."""
+    from server.auth.self_signup import CLAIM_TTL_S, email_claim
+    from server.core import grant_cache, leases
+    from server.core.ch import get_client
+
+    if settings.oauth_login_provider != "oidc":
+        raise ValueError("turn SSO on first (LOOM_OAUTH_LOGIN_PROVIDER=oidc), then link")
+    email = email.strip().lower()
+    async with (
+        account_change(org, namespace),
+        leases.holding(email_claim(org, email), ttl_s=CLAIM_TTL_S, wait_s=10.0) as held,
+    ):
+        if not held:
+            raise ValueError(f"a sign-in for {email} is running; try again")
+        plan = await link_plan(email, org, namespace)
+        row, was = plan["row"], str(plan["was"])
         now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
         # Insert-as-replace carrying every other column forward.
         await get_client().insert(
@@ -178,6 +215,9 @@ async def link_account(email: str, org: str, namespace: str, *, by: str) -> str:
             [{**row, "contact_email": email, "updated_at": max(now, row["updated_at"])}],
         )
         await sso_links.link(email, [(org, namespace)], by)
+        if was:  # it named this account; nothing reaches it any more
+            await sso_links.unlink(was, [(org, namespace)], by)
+    grant_cache.invalidate(org)  # the person's spellings changed
     await audit.emit(
         "auth.sso_linked",
         org=org,

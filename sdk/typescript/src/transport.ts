@@ -254,7 +254,9 @@ export class Transport {
     if (isGet) delete headers["Content-Type"];
     const spec = isGet ? undefined : OP_BY_NAME[op as OpName];
     // The server keeps no replay of a read-only op: its retry just runs again.
-    const idem = opts.idempotencyKey ?? (spec?.idempotent && !spec.readOnly ? randomId() : undefined);
+    const idem = isGet
+      ? undefined
+      : (opts.idempotencyKey ?? (spec?.idempotent && !spec.readOnly ? randomId() : undefined));
     if (idem) headers["Idempotency-Key"] = idem;
     const payload = isGet ? undefined : JSON.stringify(this.withConsumer(body));
     const url = `${this.baseUrl}/v1/${op}`;

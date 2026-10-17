@@ -15,7 +15,7 @@ export type GrantRole = "viewer" | "writer" | "admin";
 export type ServiceAccountNamespace = string | { namespace: string; role?: GrantRole };
 
 export interface CreateServiceAccountOptions {
-  /** The role of each bare namespace; default: your live grant there. */
+  /** The role of each bare namespace; default: the most your sign-in can give there. */
   role?: GrantRole;
   /** Days until it expires, 1..3650; 0 never expires; `null` is the server's default (90). Default 90. */
   ttlDays?: number | null;

@@ -34,7 +34,14 @@ $ loom call --list                          # every operation and the role it ne
 $ loom call memory.search query="deploy window" top_k:=5
 $ loom call grants.approve namespace=support subject=bob@example.com decision=approve
 $ loom call /v1/me/service_accounts         # a route outside the operation registry
-$ loom call /v1/me/service_accounts.create --data '{"name": "ci", "namespaces": ["support"]}'
+```
+
+Your own tokens for CI and agents have a command of their own:
+
+```console
+$ loom token create --name ci --namespace-role support=writer --namespace docs --ttl-days 0
+$ loom token list
+$ loom token revoke --name ci
 ```
 
 - **An operation name** is POSTed to `/v1/<op>`. `org` and `namespace` come

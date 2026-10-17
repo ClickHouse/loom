@@ -106,20 +106,17 @@ def _cmd_adopt(args: argparse.Namespace) -> int:
 
 def _cmd_link(args: argparse.Namespace) -> int:
     from server.identity.app import account_admin
-    from server.identity.store import namespaces
 
     async def _run(ch: Any) -> int:
-        row = await namespaces.fetch_row(args.org, args.namespace)
-        if row is None:
-            print(f"  ✗ no account {args.org}/{args.namespace}", file=sys.stderr)
-            return 2
-        print(
-            f"{args.org}/{args.namespace} (owner {row['owner_email']}, email "
-            f"{row['contact_email'] or '-'}) would sign in as {args.email.strip().lower()}"
-        )
-        if args.dry_run:
-            return 0
         try:
+            plan = await account_admin.link_plan(args.email, args.org, args.namespace)
+            row = plan["row"]
+            print(
+                f"{args.org}/{args.namespace} (owner {row['owner_email']}, email "
+                f"{plan['was'] or '-'}) would sign in as {args.email.strip().lower()}"
+            )
+            if args.dry_run:
+                return 0
             await account_admin.link_account(args.email, args.org, args.namespace, by=_by())
         except ValueError as e:
             print(f"  ✗ {e}", file=sys.stderr)
