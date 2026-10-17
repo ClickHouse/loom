@@ -82,7 +82,7 @@ def env(monkeypatch: pytest.MonkeyPatch) -> Any:
     async def wait(cutoff: datetime) -> None:
         waited.append(cutoff)
 
-    monkeypatch.setattr(account_admin, "_wait_until", wait)
+    monkeypatch.setattr(account_admin, "wait_out", wait)
     state["waited"] = waited
 
     def run(token: str, row: dict[str, Any] | None = _ROW, org: str = "acme") -> tuple[Any, _CH]:
@@ -155,26 +155,50 @@ def test_auth_off_releases_as_local(env: Any, monkeypatch: pytest.MonkeyPatch) -
     assert ch.inserts["loom.namespaces"][0]["description"].startswith("Released by local")
 
 
-def test_a_release_ends_the_tokens_of_the_bots_and_agent_it_reached(monkeypatch) -> None:
-    from server.auth import machines
+def test_a_release_ends_the_tokens_of_the_bots_and_agent_it_reached() -> None:
+    row = {"tags": ["machine:fleet"], "owner_email": "sa:fleet:a1"}
+    assert cr._token_subjects(row, ["triage"]) == ["sa:triage", "sa:fleet:a1"]
+    forged = {"tags": ["machine:fleet"], "owner_email": "lee"}  # a person's, marked by hand
+    assert cr._token_subjects(forged, ["triage"]) == [
+        "sa:triage"
+    ]  # never the person's own sessions
 
-    ended: list[str] = []
+
+def test_the_cutoff_is_waited_out_after_the_claim_is_let_go(env: Any, monkeypatch) -> None:
+    # Held through the wait, the claim would make a password set on the
+    # namespace wait and fail busy, and eat the release's own claim budget.
+    from contextlib import asynccontextmanager
+
+    from server.auth import grant_claims, machines
+
+    run, _ = env
+    events: list[str] = []
+
+    @asynccontextmanager
+    async def claim(org: str, ns: str) -> Any:
+        events.append("claimed")
+        yield
+        events.append("let go")
 
     async def naming(org: str, ns: str, *, ch: Any) -> list[str]:
         return ["triage"]
 
-    async def end_tokens(subject: str, *, by: str, reason: str) -> Any:
-        ended.append(subject)
+    async def forget(org: str, ns: str, by: str, *, ch: Any) -> list[str]:
+        return ["triage"]
 
+    async def end_tokens(subject: str, *, by: str, reason: str) -> datetime:
+        return datetime(2026, 1, 3)
+
+    async def wait(cutoff: datetime) -> None:
+        events.append("waited")
+
+    monkeypatch.setattr(grant_claims, "account_change", claim)
     monkeypatch.setattr(machines, "naming", naming)
+    monkeypatch.setattr(machines, "forget_namespace", forget)
     monkeypatch.setattr(account_admin, "end_tokens", end_tokens)
-    row = {"tags": ["machine:fleet"], "owner_email": "sa:fleet:a1"}
-    asyncio.run(cr._end_tokens("acme", "fleet-a1", row, "root", ch=None))  # type: ignore[arg-type]
-    assert ended == ["sa:triage", "sa:fleet:a1"]
-    ended.clear()
-    forged = {"tags": ["machine:fleet"], "owner_email": "lee"}  # a person's, marked by hand
-    asyncio.run(cr._end_tokens("acme", "lee", forged, "root", ch=None))  # type: ignore[arg-type]
-    assert ended == ["sa:triage"]  # never the person's own sessions
+    monkeypatch.setattr(account_admin, "wait_out", wait)
+    assert run(_tok(["org_admin"]))[0].released
+    assert events == ["claimed", "let go", "waited"]
 
 
 def test_a_release_whose_cutoff_fails_keeps_what_a_retry_needs(env: Any, monkeypatch) -> None:
@@ -246,9 +270,11 @@ def test_a_failed_second_cutoff_is_logged_and_the_release_stands(
         invalidated.append((org, subjects))
 
     monkeypatch.setattr(cr.grant_cache, "invalidate", invalidate)
+    agent_row = {**_ROW, "tags": ["machine:fleet"], "owner_email": "sa:fleet:a1"}
     with caplog.at_level("WARNING", logger=cr.__name__):
-        out, _ = run(_tok(["org_admin"]))
+        out, _ = run(_tok(["org_admin"]), row=agent_row)
     assert out.released
-    assert "sa:triage" in caplog.text
+    # Every subject the cutoff missed, the agent owner's too, and the command that exists.
+    assert "loom revoke-token --subject` for: sa:triage, sa:fleet:a1" in caplog.text
     assert invalidated[-1] == ("acme", None)  # the whole org, not only the grantees
     assert state["waited"] == [first]

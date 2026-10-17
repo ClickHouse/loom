@@ -41,7 +41,7 @@ def _from_now_on() -> datetime:
     return datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=1 + _CLOCK_SKEW_S)
 
 
-async def _wait_until(cutoff: datetime) -> None:
+async def wait_out(cutoff: datetime) -> None:
     """Return once every replica's clock is past `cutoff`: one running behind
     this one stamps an earlier `iat`."""
     await asyncio.sleep(max(0.0, cutoff.timestamp() + _CLOCK_SKEW_S - time.time()))
@@ -138,7 +138,7 @@ async def adopt(plan: list[dict[str, Any]], *, by: str, keep_tokens: bool) -> in
             },
         )
     if cutoff is not None:  # a sign-in once adopt returns, on any replica, is past every cutoff
-        await _wait_until(cutoff)
+        await wait_out(cutoff)
     return linked
 
 
@@ -460,7 +460,7 @@ async def create_bot(bot: machines.Machine, *, by: str, replace: bool) -> None:
         # The cutoff is taken after the save, so a request that read the old
         # row falls under it; returning once it has passed lets the new key's
         # first token live.
-        await _wait_until(await end_tokens(machines.subject(name), by=by, reason="bot replaced"))
+        await wait_out(await end_tokens(machines.subject(name), by=by, reason="bot replaced"))
     try:
         await audit.emit(
             "auth.machine_created",
@@ -523,7 +523,7 @@ async def disable_bot(name: str, *, by: str) -> bool:
             return False
         await machines.save(bot, by=by, active=False)
     # Waited out, as a replace's is, so a bot made again at once is not refused.
-    await _wait_until(await end_tokens(machines.subject(name), by=by, reason="bot disabled"))
+    await wait_out(await end_tokens(machines.subject(name), by=by, reason="bot disabled"))
     await audit.emit(
         "auth.machine_disabled", org=bot["org"], namespace="-", actor=by, subject={"name": name}
     )

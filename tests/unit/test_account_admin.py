@@ -16,7 +16,7 @@ from server.identity.app import account_admin
 from server.identity.store import namespaces
 
 _KEY = machines.generate_key()[1].decode()
-_real_wait = account_admin._wait_until
+_real_wait = account_admin.wait_out
 
 
 @pytest.mark.parametrize(
@@ -106,7 +106,7 @@ def world(monkeypatch) -> dict[str, Any]:
     monkeypatch.setattr(revocation, "revoked_outright", revoked_outright)
     monkeypatch.setattr(revocation, "cut_off", cut_off)
     monkeypatch.setattr(account_admin.audit, "emit", emit)
-    monkeypatch.setattr(account_admin, "_wait_until", no_wait)
+    monkeypatch.setattr(account_admin, "wait_out", no_wait)
     return state
 
 
@@ -150,7 +150,7 @@ def test_a_token_minted_from_the_old_row_during_a_replace_is_revoked(world, monk
         await save(m, by=by, active=active)
 
     monkeypatch.setattr(machines, "save", slow_save)
-    monkeypatch.setattr(account_admin, "_wait_until", _real_wait)  # the real wait
+    monkeypatch.setattr(account_admin, "wait_out", _real_wait)  # the real wait
     monkeypatch.setattr(account_admin, "_CLOCK_SKEW_S", 0)  # and a short one
     asyncio.run(account_admin.create_bot(_bot(["triage=viewer"]), by="ops", replace=True))
     assert read_during_save[0] < world["cutoff"].timestamp()
@@ -192,7 +192,7 @@ def test_a_disable_waits_out_its_cutoff(world, monkeypatch) -> None:
         waited.append(cutoff)
 
     asyncio.run(account_admin.create_bot(_bot(["triage=writer"]), by="ops", replace=False))
-    monkeypatch.setattr(account_admin, "_wait_until", wait)
+    monkeypatch.setattr(account_admin, "wait_out", wait)
     asyncio.run(account_admin.disable_bot("triage", by="ops"))
     assert waited == [world["cutoff"]]
 
@@ -208,7 +208,7 @@ def test_adopting_ends_tokens_from_any_replica_but_not_the_next_sign_in(world, m
     async def wait(cutoff: Any) -> None:
         waited.append(cutoff)
 
-    monkeypatch.setattr(account_admin, "_wait_until", wait)
+    monkeypatch.setattr(account_admin, "wait_out", wait)
     plan = [{"email": "lee@acme.io", "org": "acme", "namespace": "lee", "owner": "lee", "skip": ""}]
     asyncio.run(account_admin.adopt(plan, by="ops", keep_tokens=False))
     # Past every token issued so far, a replica's clock ahead included, as a

@@ -24,6 +24,7 @@ from server.auth.authz import Role
 from server.auth.jwt import AuthInfo
 from server.core import grant_cache
 from server.core.ch import CHClient, get_client
+from server.identity.app import account_admin
 from server.identity.domain.account_ties import kept_aliases
 from server.identity.store import grants as grants_repo
 
@@ -98,12 +99,20 @@ async def release_claim(
     from server.auth.grant_claims import account_change
 
     async with account_change(org, namespace):  # a password set rewrites the same row
-        return await _release(org, namespace, reason, actor_subject, ch)
+        released = await _release(org, namespace, reason, actor_subject, ch)
+    if released is None:
+        return None
+    out, cutoff = released
+    if cutoff is not None:
+        # Waited out like a bot replace or disable, so an exchange right after
+        # is not refused as revoked; outside the claim, which is not held for it.
+        await account_admin.wait_out(cutoff)
+    return out
 
 
 async def _release(
     org: str, namespace: str, reason: str, actor_subject: str, ch: CHClient
-) -> ClaimReleaseOutput | None:
+) -> tuple[ClaimReleaseOutput, datetime | None] | None:
     # SELECT * so the release row mirrors EVERY column forward: loom.namespaces is
     # ReplacingMergeTree(updated_at), and an omitted column would reset to its schema
     # default under FINAL (a restricted namespace would read back as standard).
@@ -155,7 +164,8 @@ async def _release(
     # credential dies with the claim.
     # Their tokens end first: the row and the bots below are what names them,
     # so a release stopped after rewriting them could not find them again.
-    cutoff = await _end_tokens(org, namespace, existing, actor_subject, ch)
+    bots = await machines.naming(org, namespace, ch=ch)
+    cutoff = await _end_tokens(_token_subjects(existing, bots), actor_subject)
     row = dict(existing)
     row["released_aliases"] = kept_aliases(existing)
     row["owner_email"] = ""
@@ -171,22 +181,17 @@ async def _release(
     grant_cache.invalidate(org)
     # Again, now the row and bots no longer name it: a bot token minted during
     # the first cutoffs is older than these.
+    subjects = _token_subjects(existing, bots)
     try:
-        cutoff = await _end_tokens(org, namespace, existing, actor_subject, ch, bots=bots) or cutoff
+        cutoff = await _end_tokens(subjects, actor_subject) or cutoff
     except Exception as e:  # noqa: BLE001 — a retry finds nothing to redo; the first cutoff stands
         log.warning(
             "claim_release: %s released, but the second token cutoff failed (%s); "
-            "revoke by hand with `loom access revoke --subject` for: %s",
+            "revoke by hand with `loom revoke-token --subject` for: %s",
             namespace,
             e,
-            ", ".join(machines.subject(name) for name in bots) or "-",
+            ", ".join(subjects) or "-",
         )
-    if cutoff is not None:
-        # Wait it out like a bot replace or disable, so an exchange right after
-        # is not refused as revoked.
-        from server.identity.app import account_admin
-
-        await account_admin._wait_until(cutoff)
 
     log.info(
         "claim_release: %s released by %s (was owned by %r, %d grants revoked)",
@@ -196,37 +201,32 @@ async def _release(
         grants_count,
     )
 
-    return ClaimReleaseOutput(
+    out = ClaimReleaseOutput(
         released=True,
         namespace=namespace,
         previous_owner=previous_owner,
         grants_revoked=grants_count,
     )
+    return out, cutoff
 
 
-async def _end_tokens(
-    org: str,
-    namespace: str,
-    row: dict[str, Any],
-    by: str,
-    ch: CHClient,
-    bots: list[str] | None = None,
-) -> datetime | None:
-    """The tokens of the bots naming the namespace (or of `bots`) end now; so
-    do an agent's, when it is the agent's own namespace (its owner is the agent).
-    Returns the latest cutoff, None when no token was ended."""
-    from server.identity.app import account_admin
-
-    if bots is None:
-        bots = await machines.naming(org, namespace, ch=ch)
-    ended = [machines.subject(name) for name in bots]
+def _token_subjects(row: dict[str, Any], bots: list[str]) -> list[str]:
+    """The subjects a release ends the tokens of: the `bots`, and an agent's,
+    when it is the agent's own namespace (its owner is the agent)."""
+    subjects = [machines.subject(name) for name in bots]
     owner = str(row.get("owner_email") or "")
     for t in row.get("tags") or []:
         trust = str(t).removeprefix(agents.TAG_PREFIX)
         if trust != str(t) and owner.startswith(agents.subject(trust, "")):
-            ended.append(owner)  # the agent's own namespace: its owner is the agent
+            subjects.append(owner)  # the agent's own namespace: its owner is the agent
+    return [s for s in subjects if s]
+
+
+async def _end_tokens(subjects: list[str], by: str) -> datetime | None:
+    """End the tokens of `subjects` now. Returns the latest cutoff, None when
+    no token was ended."""
     cutoff = None
-    for subject in filter(None, ended):  # one after another, so the last is the latest
+    for subject in subjects:  # one after another, so the last is the latest
         cutoff = await account_admin.end_tokens(subject, by=by, reason="namespace released")
     return cutoff
 
