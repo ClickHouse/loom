@@ -356,7 +356,8 @@ What Loom does with each request:
   (`loom revoke-token --subject`) stays revoked through both, and so does a
   subject another deactivated or deleted user still reaches (two addresses
   reaching one account): it is lifted with the last of them, and Loom logs a
-  warning for each one it leaves.
+  warning for each one it leaves. A reactivation answers after about 6 s, once
+  every replica's clock is past its cutoff.
 - **Deleting** deactivates and the user answers 404 from then on
   (`auth.scim_deleted` is audited). The provider creating them again
   reactivates them.

@@ -26,11 +26,9 @@ half-done one finishes it. With `LOOM_SCIM_TOKEN` empty nothing here is read.
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import hmac
 import logging
-import time
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -64,9 +62,6 @@ COLUMNS = (
 # only a revocation with this reason, never an operator's.
 DEACTIVATED = "scim: deactivated"
 _BY = "scim"
-# How far another replica's clock may run behind this one's, as account
-# admin's `wait_out` allows: one behind stamps a sign-in's `iat` earlier.
-_CLOCK_SKEW_S = 5
 # SCIM ids are uuid5 of the email under this namespace: one id per person,
 # whichever replica or retry computes it. The provider holds the email anyway.
 _ID_NAMESPACE = uuid.UUID("6f1c3e0a-5b7d-4c2e-9a41-2d8f0b6e7c13")
@@ -160,7 +155,9 @@ async def create(
                 "created_at": datetime.now(UTC),
             }
         changes = {"user_name": normalized(user_name), "deleted": 0, **_entry(email_entry)}
-        return await _set_active(row, active, **changes)
+        new, cutoff = await _set_active(row, active, **changes)
+    await _wait_out(cutoff)
+    return new
 
 
 async def set_active(uid: str, active: bool) -> dict[str, Any] | None:
@@ -184,10 +181,14 @@ async def update(
         keep = bool(row["active"]) if active is None else active
         changes = _entry(email_entry)
         if not user_name or normalized(user_name) == row["user_name"]:
-            return await _set_active(row, keep, **changes)
-        async with _held(_name_lease(user_name)):
-            await _refuse_taken(user_name, uid)
-            return await _set_active(row, keep, user_name=normalized(user_name), **changes)
+            new, cutoff = await _set_active(row, keep, **changes)
+        else:
+            async with _held(_name_lease(user_name)):
+                await _refuse_taken(user_name, uid)
+                renamed = normalized(user_name)
+                new, cutoff = await _set_active(row, keep, user_name=renamed, **changes)
+    await _wait_out(cutoff)
+    return new
 
 
 def _entry(email_entry: dict[str, Any] | None) -> dict[str, Any]:
@@ -264,14 +265,25 @@ async def _row(uid: str) -> dict[str, Any] | None:
     return None if row is None else dict(row)
 
 
-async def _set_active(row: dict[str, Any], active: bool, **changes: Any) -> dict[str, Any]:
+async def _wait_out(cutoff: datetime | None) -> None:
+    # Past the leases, so a deactivation sent meanwhile does not wait on it and
+    # turn Busy; until every replica is past it, a token issued before stays revoked.
+    if cutoff is not None:
+        await revocation.wait_out(cutoff)
+
+
+async def _set_active(
+    row: dict[str, Any], active: bool, **changes: Any
+) -> tuple[dict[str, Any], datetime | None]:
+    """The row as written, and a reactivation's cutoff for the caller to wait
+    out once it lets its leases go."""
     was_active = bool(row["active"])
     new = {**row, **changes, "active": int(active)}
     unwritten = "version" not in row
     if active and was_active:  # no revocation to make or lift: no subject lease
         if new != row or unwritten:
             await _write(new)
-        return new
+        return new, None
     found = {} if active else await _subjects(row["email"])
     known = set(row["subjects"])
     cutoff = None
@@ -296,10 +308,8 @@ async def _set_active(row: dict[str, Any], active: bool, **changes: Any) -> dict
     if not active and set(await _subjects(row["email"])) - set(new["subjects"]):
         # An account made before the row said inactive (a first sign-in's JIT):
         # revoke it too, with the sessions and tokens it made meanwhile.
-        new = await _set_active(new, False)
-    if cutoff is not None:  # until every replica is past it: a token issued before stays revoked
-        await asyncio.sleep(max(0.0, cutoff.timestamp() + _CLOCK_SKEW_S - time.time()))
-    return new
+        new, _ = await _set_active(new, False)
+    return new, cutoff
 
 
 async def _audit_transition(row: dict[str, Any], new: dict[str, Any]) -> None:
@@ -375,9 +385,10 @@ async def _orgs_beyond(subject: str, orgs: set[str]) -> list[str]:
 
 async def _lift(uid: str, subjects: list[str]) -> datetime | None:
     """Narrow the deactivation's revocations to the tokens issued so far; the
-    cutoff when one was narrowed, for the caller to wait out. A subject another
-    deactivated (or deleted) user also reaches stays revoked: lifting it would
-    let that one back in."""
+    newest cutoff of the user's narrowed ones, for the caller to wait out, also
+    when a try this one retries narrowed them. A subject another deactivated (or
+    deleted) user also reaches stays revoked: lifting it would let that one back in."""
+    # No skew ahead: sign-in is refused while deactivated, so only a replica behind matters.
     cutoff = datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=1)
     lifted = False
     for subject in subjects:
@@ -391,7 +402,23 @@ async def _lift(uid: str, subjects: list[str]) -> datetime | None:
         lifted |= await revocation.narrow(
             subject, reason=DEACTIVATED, issued_before=cutoff, revoked_by=_BY, reread=False
         )
-    return cutoff if lifted else None
+    return cutoff if lifted else await _lifted_before(subjects)
+
+
+async def _lifted_before(subjects: list[str]) -> datetime | None:
+    """The newest cutoff a reactivation narrowed one of `subjects` to."""
+    with own_write_reads():
+        row = await get_client().query_one(
+            """
+            SELECT max(issued_before) AS cutoff FROM loom.revoked_tokens FINAL
+            WHERE jti IN {s:Array(String)} AND reason = {r:String} AND expires_at > now()
+            """,
+            params={"s": subjects, "r": f"{DEACTIVATED}, lifted"},  # as `narrow` writes it
+        )
+    cutoff = None if row is None else row["cutoff"]
+    if cutoff is not None and cutoff.tzinfo is None:
+        cutoff = cutoff.replace(tzinfo=UTC)
+    return cutoff
 
 
 async def _held_by_another_inactive(uid: str, subject: str) -> bool:

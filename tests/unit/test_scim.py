@@ -133,12 +133,20 @@ def test_active_takes_booleans_and_their_strings() -> None:
 
 
 class _Table:
-    """loom.scim_users, and loom.namespaces as `_subjects` reads it."""
+    """loom.scim_users, loom.namespaces as `_subjects` reads it, and the
+    narrowed revocations as `_lifted_before` does."""
 
-    def __init__(self, accounts: dict[str, list[str]], elsewhere: dict[str, list[str]]) -> None:
+    def __init__(
+        self,
+        accounts: dict[str, list[str]],
+        elsewhere: dict[str, list[str]],
+        narrowed: list[tuple[str, datetime]],
+    ) -> None:
         self.rows: list[dict[str, Any]] = []
         self.accounts = accounts
         self.elsewhere = elsewhere
+        self.narrowed = narrowed
+        self.fail_insert = False
 
     def newest(self, uid: str) -> dict[str, Any] | None:
         rows = [r for r in self.rows if r["id"] == uid]
@@ -149,6 +157,9 @@ class _Table:
         return sorted((r for r in heads if r and not r["deleted"]), key=lambda r: r["user_name"])
 
     async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> Any:
+        if "loom.revoked_tokens" in sql:
+            cutoffs = [c for s, c in self.narrowed if s in params["s"]]
+            return {"cutoff": max(cutoffs, default=None)}
         if "count()" in sql:
             return {"n": len(self.live())}
         if "user_name =" in sql:
@@ -175,6 +186,8 @@ class _Table:
 
     async def insert(self, table: str, rows: list[dict[str, Any]]) -> None:
         assert table == scim.TABLE
+        if self.fail_insert:
+            raise RuntimeError("ClickHouse is away")
         self.rows.extend(dict(r) for r in rows)
 
 
@@ -184,13 +197,13 @@ class _World:
     def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self.accounts: dict[str, list[str]] = {}  # email -> subjects it reaches
         self.elsewhere: dict[str, list[str]] = {}  # subject -> other orgs it is in
-        self.table = _Table(self.accounts, self.elsewhere)
         self.outright: dict[str, str] = {}  # subject -> reason
         self.narrowed: list[tuple[str, datetime]] = []
+        self.table = _Table(self.accounts, self.elsewhere, self.narrowed)
         self.audits: list[tuple[str, dict[str, Any]]] = []
         self.fail_revoke = False
         self.leases: list[str] = []
-        self.waits: list[float] = []
+        self.waits: list[float] = []  # what the real `wait_out` sleeps
 
         async def has_outright_row(subject: str) -> bool:
             return subject in self.outright
@@ -233,7 +246,7 @@ class _World:
         monkeypatch.setattr(settings, "scim_token", _TOKEN)
         monkeypatch.setattr(scim, "get_client", lambda: self.table)
         monkeypatch.setattr(scim, "_held", held)
-        monkeypatch.setattr(scim, "asyncio", SimpleNamespace(sleep=no_wait))
+        monkeypatch.setattr(revocation, "asyncio", SimpleNamespace(sleep=no_wait))
         monkeypatch.setattr(revocation, "has_outright_row", has_outright_row)
         monkeypatch.setattr(revocation, "revoked_outright", stale_snapshot)
         monkeypatch.setattr(revocation, "revoke", revoke)
@@ -340,14 +353,68 @@ async def test_reactivating_lifts_the_refusal_and_keeps_old_tokens_revoked(world
     await scim.set_active(uid, False)
     before = time.time()
     row = await scim.set_active(uid, True)
+    after = time.time()
     assert row is not None and row["active"]
     assert not await _DEACTIVATED("lee@example.com")
     [(subject, cutoff)] = world.narrowed
     assert subject == "lee" and cutoff.timestamp() > before  # tokens issued so far stay dead
     assert world.events == ["auth.scim_deactivated", "auth.scim_reactivated"]
+    # Answered once a replica's clock behind this one's is past the cutoff too.
+    [wait] = world.waits
+    assert before <= cutoff.timestamp() + revocation.CLOCK_SKEW_S - wait <= after
 
     await scim.set_active(uid, True)
     assert len(world.narrowed) == 1 and len(world.events) == 2
+
+
+async def test_a_retried_reactivation_still_waits_out_the_first_ones_cutoff(
+    world, monkeypatch
+) -> None:
+    world.person("lee@example.com", "lee")
+    uid = await _create("lee@example.com")
+    await scim.set_active(uid, False)
+    world.table.fail_insert = True
+    with pytest.raises(RuntimeError):  # narrowed, then the row's write failed
+        await scim.set_active(uid, True)
+    world.table.fail_insert = False
+    waited: list[datetime] = []
+
+    async def wait(cutoff: datetime) -> None:
+        waited.append(cutoff)
+
+    monkeypatch.setattr(revocation, "wait_out", wait)
+    row = await scim.set_active(uid, True)  # the provider's retry narrows nothing
+    assert row is not None and row["active"]
+    [(_, cutoff)] = world.narrowed
+    assert waited == [cutoff]
+
+
+async def test_a_reactivation_waits_once_its_leases_are_let_go(world, monkeypatch) -> None:
+    # Held through the wait, a deactivation sent meanwhile would wait on the
+    # lease past `_LEASE_WAIT_S` and answer busy.
+    events: list[str] = []
+
+    @asynccontextmanager
+    async def held(name: str) -> AsyncIterator[None]:
+        events.append(f"held {name.split(':')[0]}")
+        yield
+        events.append(f"let go {name.split(':')[0]}")
+
+    async def wait(cutoff: datetime) -> None:
+        events.append("waited")
+
+    world.person("lee@example.com", "lee")
+    uid = await _create("lee@example.com")
+    await scim.set_active(uid, False)
+    monkeypatch.setattr(scim, "_held", held)
+    monkeypatch.setattr(revocation, "wait_out", wait)
+    await scim.set_active(uid, True)
+    assert events[-2:] == ["let go scim-user", "waited"] and events.count("waited") == 1
+
+    await scim.delete(uid)
+    events.clear()
+    await scim.create("lee@example.com", "lee@example.com", active=True)  # created again
+    assert events[-3:] == ["let go scim-username", "let go scim-user", "waited"]
 
 
 async def test_an_operator_revocation_survives_deactivate_and_reactivate(world) -> None:
