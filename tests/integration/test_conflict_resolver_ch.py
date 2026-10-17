@@ -474,3 +474,44 @@ async def test_a_namespace_with_one_owed_row_is_served_beside_a_bulk_import(
     await run_pass()
     assert "office_location" in llm.calls
     assert (await _marks(ch, org))["office_location"] == 2
+
+
+async def _directory(ch: Any, org: str, *, active: bool, at: Any) -> None:
+    """The namespace's directory row, as namespace.register / namespace.delete write it."""
+    row = {"org": org, "namespace": NS, "created_at": at, "updated_at": at, "active": active}
+    await ch.insert("loom.namespaces", [row])
+
+
+async def test_a_deleted_namespace_is_not_judged_until_it_is_registered_again(
+    ch, wired, monkeypatch
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from server.memory.app import after_write, conflicts
+    from server.memory.domain.conflicts import ConflictResult
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, llm = wired
+
+    async def clear(**kw: Any) -> ConflictResult:
+        return ConflictResult(verdict="clear", peers=[])
+
+    with monkeypatch.context() as m:
+        m.setattr(conflicts, "check_on_commit", clear)
+        await _set(org, "s1", "office_city", "The office is in Paris")
+        await _set(org, "s2", "office_location", "The office moved to Rome")
+        await after_write.drain()
+    await _place(ch, org, "s1", "office_city", _vec((40, 1.0)), owed=False)
+    await _place(ch, org, "s2", "office_location", _vec((40, 0.8), (41, 0.6)), owed=True)
+    now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+    await _directory(ch, org, active=True, at=now - timedelta(seconds=10))
+    await _directory(ch, org, active=False, at=now - timedelta(seconds=5))
+
+    out = await run_pass()
+    assert llm.calls == [] and out["judged"] == 0
+    assert (await _marks(ch, org))["office_location"] == 1
+
+    await _directory(ch, org, active=True, at=now)
+    await run_pass()
+    assert llm.calls == ["office_location"]
+    assert (await _marks(ch, org))["office_location"] == 2

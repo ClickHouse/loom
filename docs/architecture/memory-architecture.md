@@ -168,7 +168,8 @@ Each pass reads `LOOM_MEMORY_CONFLICT_RESOLVER_BATCH` (20) owed rows and then
 `LOOM_MEMORY_CONFLICT_RESOLVER_RECHECK_BATCH` (10) rows already `conflicted` that no
 resolver judged, so a flag the cosine check raised is judged once too. Both reads take
 rows in turns across (org, namespace), oldest first within each, so one namespace's bulk
-import does not hold back a row written elsewhere.
+import does not hold back a row written elsewhere. Neither reads a namespace that
+`namespace.delete` soft-deleted; its rows are judged if it is registered again.
 
 **The cluster.** A row is judged against up to `LOOM_MEMORY_CONFLICT_RESOLVER_MAX_PEERS`
 (8) live peers of its `memory_type`, nearest first, at cosine

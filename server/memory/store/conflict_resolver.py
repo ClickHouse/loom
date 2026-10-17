@@ -40,6 +40,11 @@ _LIVE_VECTOR = """tombstoned_at IS NULL
           AND status IN ('active', 'conflicted')
           AND embedding_dim > 0"""
 
+# Rows the resolver leaves out of its queue: a namespace soft-deleted by namespace.delete
+# (its data stays in place). An unregistered namespace has no directory row and is live.
+_NOT_SKIPPED = """(org, namespace) NOT IN (
+              SELECT org, namespace FROM loom.namespaces FINAL WHERE NOT active)"""
+
 
 def _in_turns(where: str) -> str:
     """The vector rows matching `where`, in turns across (org, namespace): every
@@ -73,7 +78,8 @@ async def owed_rows(*, limit: int, ch: _CHClient | None = None) -> list[dict[str
     owed = f"""conflict_checked_at < toDateTime(2, 'UTC')
           AND (toUnixTimestamp(conflict_checked_at) = 1
                OR created_at < now() - INTERVAL {{grace:UInt32}} SECOND)
-          AND {_LIVE_VECTOR}"""
+          AND {_LIVE_VECTOR}
+          AND {_NOT_SKIPPED}"""
     return await ch.query_all(
         _in_turns(owed), {"grace": LEGACY_MARK_GRACE_SECONDS, "lim": int(limit)}
     )
@@ -87,7 +93,8 @@ async def unjudged_conflicted_rows(
     ch = ch or _default_client()
     unjudged = f"""status = 'conflicted'
           AND (conflict_checked_at IS NULL OR conflict_checked_at > toDateTime(2, 'UTC'))
-          AND {_LIVE_VECTOR}"""
+          AND {_LIVE_VECTOR}
+          AND {_NOT_SKIPPED}"""
     return await ch.query_all(_in_turns(unjudged), {"lim": int(limit)})
 
 
