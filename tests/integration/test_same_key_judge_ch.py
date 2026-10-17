@@ -4125,6 +4125,63 @@ async def test_a_restated_merge_lands_once_its_target_was_rewritten_in_between(
     assert live[("s1", "target")] == ("Alice owns a red bicycle.", 0)
 
 
+async def _restate_after_a_rewrite(org: str, monkeypatch: pytest.MonkeyPatch, **last: Any) -> Any:
+    """alias merges into target's Berlin, target is rewritten, then alias says Berlin
+    again with the extra fields `last`. Every alias row is judged a merge into target."""
+    from server.memory.app import bulk_set
+    from server.memory.domain.conflicts import ConflictPeer, ConflictResult
+
+    first = await _bulk_in(org, "s1", {"memory_key": "target", "value": "Alice lives in Berlin."})
+    target_id = first.written[0].memory_id
+    peer = ConflictPeer(
+        memory_id=target_id,
+        memory_key="target",
+        similarity=0.97,
+        pinned=False,
+        canonical="",
+        value="Alice lives in Berlin.",
+    )
+    merge = ConflictResult(verdict="merge", peers=[peer], existing_memory_id=target_id)
+
+    async def alias_merges(_input: Any, rows: list[dict[str, Any]], *a: Any) -> dict[int, Any]:
+        return {i: merge for i, r in enumerate(rows) if r["memory_key"] == "alias"}
+
+    monkeypatch.setattr(bulk_set, "_bulk_conflict_verdicts", alias_merges)
+    berlin = {"memory_key": "alias", "value": "Alice lives in Berlin"}
+    return await _bulk_in(
+        org,
+        "s1",
+        berlin,
+        {"memory_key": "target", "value": "Alice owns a red bicycle."},
+        {**berlin, **last},
+    )
+
+
+async def test_a_restated_merge_that_lands_keeps_the_last_entrys_high_label(
+    ch, org, monkeypatch
+) -> None:
+    # The last alias asks for 'high': serially it lands high, unembedded, out of search.
+    from server.memory.api.models_search import MemorySearchInput
+    from server.memory.app.search.handler import handle_memory_search
+
+    await _restate_after_a_rewrite(org, monkeypatch, sensitivity="high")
+    (row,) = await ch.query_all(
+        "SELECT sensitivity FROM loom.memory FINAL WHERE org = {org:String}"
+        " AND memory_key = 'alias' SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert row["sensitivity"] == "high"
+    found = await handle_memory_search(
+        MemorySearchInput(org=org, namespace=NS, agent="*", query="Where does Alice live?")
+    )
+    assert "alias" not in [h.memory_key for h in found.results]
+
+
+async def test_a_restated_merge_that_lands_keeps_the_last_entrys_pin(ch, org, monkeypatch) -> None:
+    await _restate_after_a_rewrite(org, monkeypatch, pinned=True)
+    assert (await _live_values(ch, org))[("s1", "alias")] == ("Alice lives in Berlin", 1)
+
+
 async def test_a_bulk_keeps_a_value_it_moves_off_a_key_it_overwrites(ch, org) -> None:
     # k2 holds Berlin; one bulk moves k2 to the bicycle and states Berlin under k.
     # k2's Berlin is gone by the time k is written, so k must not dedup or merge into it.

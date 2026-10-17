@@ -4,6 +4,7 @@ fold from ConflictResults onto the rows about to be inserted is pure."""
 from __future__ import annotations
 
 from types import SimpleNamespace as NS
+from typing import Any
 
 from server.memory.app.bulk_verdicts import apply_bulk_verdicts
 from server.memory.domain.conflicts import ConflictPeer, ConflictResult
@@ -34,18 +35,20 @@ def _stored(**keys: tuple[str, str]):
     return state
 
 
-def _entry(state, key: str, memory_id: str, sha: str) -> None:
-    """One entry that passes the skip gate and builds a row."""
+def _entry(state, key: str, memory_id: str, sha: str, **labels: Any) -> None:
+    """One entry (with row `labels` such as pinned or sensitivity) that passes the skip
+    gate and builds a row."""
     from server.memory.api.models_bulk import _BulkSetResult
     from server.memory.app.bulk_rows import _bulk_skip_gate, _keep_row
 
-    assert not _bulk_skip_gate(NS(memory_key=key), sha, state, {})
+    entry = NS(memory_key=key, **labels)
+    assert not _bulk_skip_gate(entry, sha, state, {})
     state.row_results.append(len(state.results))
     state.results.append(_BulkSetResult(memory_key=key, version=1, memory_id=memory_id))
     state.entry_metas.append(None)
     state.n_updated += 1
     row = {"memory_key": key, "memory_id": memory_id, "content_sha256": sha, "pinned": False}
-    _keep_row(state, row)
+    _keep_row(state, {**row, **labels}, entry)
 
 
 def test_no_verdicts_is_a_pass_through() -> None:
@@ -266,7 +269,7 @@ def _batch(stored_sha: str, *entries: tuple[str, bool]):
         state.entry_metas.append(None)  # type: ignore[arg-type]
         state.n_updated += 1
         row = {"memory_key": "k", "memory_id": "e1", "content_sha256": sha, "pinned": pinned}
-        _keep_row(state, row)
+        _keep_row(state, row, NS(memory_key="k"))
     return state
 
 
@@ -364,30 +367,49 @@ def test_a_restated_landing_keeps_the_merge_peers_on_the_merging_entry() -> None
     assert last.memory_id == "A1" and last.version == 1
 
 
-def test_a_restated_landing_projects_the_entry_its_row_was_built_from() -> None:
-    # a=Berlin (entities [Berlin]) merges into T, t is rewritten, a=Berlin again
-    # (entities [Alice]) lands the first a's row. The graph must see the stored row's
-    # entities, the first a's.
+def test_a_repeat_with_other_labels_is_not_a_restatement() -> None:
+    # Same key and bytes as an earlier entry, but a new sensitivity, pin or entity list:
+    # memory.set would write it, so the bulk builds its own row for it.
     from server.memory.app.bulk_rows import _bulk_skip_gate
-    from server.memory.app.bulk_set import _apply_verdicts, _projected
 
-    class Input(NS):
-        def model_copy(self, *, update):
-            return Input(**{**self.__dict__, **update})
+    for changed in ({"sensitivity": "high"}, {"pinned": True}, {"entities": ["Alice"]}):
+        state = _stored()
+        _entry(state, "a", "A1", "berlin")
+        assert not _bulk_skip_gate(NS(memory_key="a", **changed), "berlin", state, {})
+        assert state.restatements == []
 
-    state = _stored(t=("T", "berlin"))
-    _entry(state, "a", "A1", "berlin")
-    _entry(state, "t", "T", "bike")
-    assert _bulk_skip_gate(NS(memory_key="a"), "berlin", state, {})
-    _apply_verdicts(state, [], {0: NS(verdict="merge", existing_memory_id="T", peers=[])})
-    entries = [
-        NS(memory_key="a", entities=["Berlin"]),
-        NS(memory_key="t", entities=["bicycle"]),
-        NS(memory_key="a", entities=["Alice"]),
-    ]
-    p_input, p_results = _projected(Input(entries=entries), state)
-    assert [e.entities for e in p_input.entries] == [["bicycle"], ["Berlin"]]
-    assert [r.memory_id for r in p_results] == ["T", "A1"]
+
+def test_a_stored_value_repeated_with_a_new_label_is_written() -> None:
+    # The stored row holds these bytes. A new sensitivity or a new pin writes a version,
+    # as memory.set does; the same labels stay unchanged. A pinned or locked row does not
+    # refuse the same bytes.
+    from server.memory.app.bulk_rows import _bulk_skip_gate
+
+    for entry, skips in (
+        (NS(memory_key="k", value="v"), True),
+        (NS(memory_key="k", value="v", sensitivity="high"), False),
+        (NS(memory_key="k", value="v", pinned=True), False),
+    ):
+        state = _stored(k=("K1", "s1"))
+        assert _bulk_skip_gate(entry, "s1", state, {}) is skips
+    state = _stored(k=("K1", "s1"))
+    state.existing_pinned = {"k": True}
+    assert not _bulk_skip_gate(NS(memory_key="k", value="v", sensitivity="high"), "s1", state, {})
+    assert state.skipped_pinned == []
+
+
+def test_a_repeat_that_relabels_a_landed_row_lands_and_keeps_its_pin() -> None:
+    # k=v lands pinned; k=v again as 'high' lands too, still pinned (the same bytes keep
+    # the pin); a third with the same labels but another source is unchanged.
+    from server.memory.app.bulk_rows import settle_batch_rows
+
+    state = _stored()
+    _entry(state, "k", "id1", "s1", pinned=True)
+    _entry(state, "k", "id1", "s1", sensitivity="high")
+    _entry(state, "k", "id1", "s1", sensitivity="high", source_trace="again")
+    replay = settle_batch_rows(state, {})
+    assert replay.drop == {2}
+    assert state.memory_rows[1]["pinned"] == 1
 
 
 def test_a_restatement_of_a_landed_entry_counts_once_as_unchanged() -> None:
