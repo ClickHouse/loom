@@ -317,14 +317,22 @@ async def protected_ids(
     return {str(r["memory_id"]) for r in rows}
 
 
+# Per id, the first version holding its current hash after the last version that held
+# another: a value that came back (Paris, Rome, Paris) was asserted when it came back.
 _ASSERTED_SQL = """
-        SELECT memory_id, min(version) AS asserted
-        FROM loom.memory_versions
-        PREWHERE org = {org:String} AND namespace = {ns:String}
-        WHERE memory_id IN {ids:Array(UUID)}
-          AND (toString(memory_id), toString(content_sha256))
-              IN {rows:Array(Tuple(String, String))}
+        SELECT memory_id,
+               arrayMin(arrayFilter(v -> v > maxIf(version, NOT held), groupArrayIf(version, held)))
+                   AS asserted
+        FROM (
+            SELECT memory_id, version,
+                   (toString(memory_id), toString(content_sha256))
+                       IN {rows:Array(Tuple(String, String))} AS held
+            FROM loom.memory_versions
+            PREWHERE org = {org:String} AND namespace = {ns:String}
+            WHERE memory_id IN {ids:Array(UUID)}
+        )
         GROUP BY memory_id
+        HAVING countIf(held) > 0
         SETTINGS select_sequential_consistency = 1
         """
 
@@ -332,10 +340,11 @@ _ASSERTED_SQL = """
 async def asserted_versions(
     org: str, namespace: str, rows: list[tuple[str, str]], *, ch: _CHClient | None = None
 ) -> dict[str, int]:
-    """{memory_id: the smallest version of its history rows holding `sha`} for each
-    (memory_id, sha) in `rows`: when the row's current value was first asserted, in
+    """{memory_id: the first version of the current run of history rows holding `sha`}
+    for each (memory_id, sha) in `rows`: when the row's current value was asserted, in
     wall-clock ns. A metadata copy (touch, pin, tags) keeps the hash, so it does not
-    move it. An id the history does not hold is left out."""
+    move it; a value that came back is asserted when it came back. An id the history
+    does not hold is left out."""
     if not rows:
         return {}
     ch = ch or _default_client()

@@ -1052,3 +1052,24 @@ async def test_the_by_id_reads_use_the_memory_id_skip_index(ch, wired) -> None:
     for name, (sql, params) in statements.items():
         plan = await ch.query_all("EXPLAIN indexes = 1 " + sql, params=params)
         assert "memory_id_skip" in " ".join(str(v) for r in plan for v in r.values()), name
+
+
+async def test_a_value_that_came_back_orders_from_its_return(ch, wired) -> None:
+    """The peer said Paris, then Lyon, then Paris again after the judged row was
+    written: its value was last asserted after the judged row, so it is not retired."""
+    from server.memory.api.models_crud import MemoryUpdateByIdInput
+    from server.memory.app.update import handle_memory_update_by_id
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, _ = wired
+    await _pair(ch, org, "office_city", "office_location", 80)
+    peer = (await _rows(ch, org))["office_city"]["id"]
+    await _later()
+    for value in ("The office is in Lyon", "The office is in Paris"):
+        await handle_memory_update_by_id(
+            MemoryUpdateByIdInput(org=org, memory_id=peer, value=value)
+        )
+    await _place(ch, org, "s1", "office_city", _vec((80, 1.0)), owed=False)
+    out = await run_pass()
+    assert (await _rows(ch, org))["office_city"]["status"] == "conflicted"
+    assert out["retired"] == 0 and out["flagged"] == 1
