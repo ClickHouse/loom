@@ -417,6 +417,10 @@ def test_canonical_order_survives_offset_enumeration() -> None:
         ("こんにちは です ます", ["こんにちは", "です", "ます"]),
         ("東京 に いる する ある", ["いる", "する", "ある"]),
         ("東京 に 行きました", ["行きました"]),
+        # Common words in nearly every sentence: "please", "thank you", "and", "very",
+        # "went".
+        ("東京 に 行った", ["行った"]),
+        ("ください ありがとう そして とても", ["ください", "ありがとう", "そして", "とても"]),
     ],
 )
 def test_a_spaced_korean_or_japanese_verb_is_not_an_entity(text: str, junk: list[str]) -> None:
@@ -449,6 +453,16 @@ def test_a_japanese_name_written_in_hiragana_is_an_entity(text: str) -> None:
         ("김민준 은 서울 이 좋다", ["김민준", "서울"], ["좋다"]),
         ("학생 이다 그리고 조용 하다", ["학생"], ["이다", "하다"]),
         ("있다 없다 했다 간다", [], ["있다", "없다", "했다", "간다"]),
+        # Plain past and future endings, and common words: "ate", "was", "will go",
+        # "same", "many", "and", "really", "too", "go", "come", "see".
+        (
+            "먹었다 공부했었다 학생이였다 가겠다",
+            [],
+            ["먹었다", "공부했었다", "학생이였다", "가겠다"],
+        ),
+        ("서울 은 좋았다", ["서울"], ["좋았다"]),
+        ("같다 많다 그리고 정말 너무", [], ["같다", "많다", "그리고", "정말", "너무"]),
+        ("부산 에 가요 와요 봐요", ["부산"], ["가요", "와요", "봐요"]),
         # Names and nouns that end like a particle or a verb stay whole: a name ending
         # in 은 or 이, a province in 도, a village (마을), the sea and Canada (다).
         (

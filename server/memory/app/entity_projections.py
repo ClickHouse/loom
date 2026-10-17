@@ -294,9 +294,9 @@ _SET_ENTITY_MAX_WIDE_LEN = 6
 # Longer than a name in Chinese characters alone: a sentence ("我住在北京"). A Chinese
 # name is two to four ("北京", "毛泽东", "乌鲁木齐").
 _SET_ENTITY_MAX_HAN_LEN = 4
-# Polite verb endings, which end no name: Korean "살아요" (live), "입니다" (am), Japanese
+# Verb endings, which end no name: Korean "살아요" (live), "입니다" (am), Japanese
 # "行きました" (went), "です" (is). A bare 요 is not one: "히데요" (Hideyo) is a name.
-_POLITE_VERB_ENDINGS = (
+_VERB_ENDINGS = (
     "니다",
     "아요",
     "어요",
@@ -310,9 +310,15 @@ _POLITE_VERB_ENDINGS = (
     "ません",
     "です",
     "でした",
+    # Plain past and future endings: "먹었다" (ate), "좋았다" (was good), "가겠다"
+    # (will go). 았, 었, 였 and 겠 are tense markers, in no common name.
+    "았다",
+    "었다",
+    "였다",
+    "겠다",
 )
-# Common grammar words written alone between spaces: Japanese particles, verbs and a
-# greeting, Korean plain-form verbs and adjectives. Only these, not a whole script or
+# Common grammar words written alone between spaces: Japanese particles, verbs, adverbs
+# and greetings, Korean plain-form verbs, adjectives and adverbs. Only these, not a whole script or
 # an ending: "さいたま" (Saitama) is hiragana and "캐나다" (Canada) ends in 다.
 _GRAMMAR_WORDS = frozenset(
     {
@@ -326,9 +332,15 @@ _GRAMMAR_WORDS = frozenset(
         "では",
         "には",
         "でも",
+        "ください",
+        "ありがとう",
+        "そして",
+        "とても",
+        "行った",
         "좋다",
+        "같다",
+        "많다",
         "좋아한다",
-        "살았다",
         "산다",
         "간다",
         "갔다",
@@ -338,9 +350,14 @@ _GRAMMAR_WORDS = frozenset(
         "한다",
         "하다",
         "이다",
-        "였다",
         "본다",
         "만났다",
+        "그리고",
+        "정말",
+        "너무",
+        "가요",
+        "와요",
+        "봐요",
     }
 )
 # Korean particles that end no common name or noun: "서울에" (in Seoul), "저는" (I).
@@ -371,7 +388,7 @@ def _korean_stem(word: str) -> str:
 def _not_a_name(word: str) -> bool:
     """Shorter than a thing's name: "is", "at", "of", "3pm". Wide characters (CJK,
     Hangul) write a name in two: "東京", "서울", and five Chinese characters alone are
-    a sentence ("我住在北京"). A polite verb ("살아요", "です"), a listed grammar word
+    a sentence ("我住在北京"). A verb ("살아요", "です", "먹었다"), a listed grammar word
     ("좋다", "こんにちは") or a one-syllable word and its particle ("저는", "집에") is
     not a name."""
     if not word[0].isalpha():
@@ -381,7 +398,7 @@ def _not_a_name(word: str) -> bool:
             return True
         if len(word) > _SET_ENTITY_MAX_HAN_LEN and all(_is_han(c) for c in word):
             return True
-        grammar = word in _GRAMMAR_WORDS or word.endswith(_POLITE_VERB_ENDINGS)
+        grammar = word in _GRAMMAR_WORDS or word.endswith(_VERB_ENDINGS)
         # Not 을: "마을" (village) and "가을" (autumn) are words.
         particle = len(word) == 2 and word.endswith(("는", "를", "에"))
         return grammar or particle
