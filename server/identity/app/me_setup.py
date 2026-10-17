@@ -251,18 +251,18 @@ async def _save_mcp_token(
 
 def _setup_parent(request: Request, payload: dict[str, object]) -> AuthInfo:
     """The token the setup token is delegated from: the caller's bearer, or in dev
-    mode (no auth, no bearer) a flat writer for the body's subject and org."""
+    mode (auth off) `dev_parent`."""
     from server.auth.bearer import verify_bearer_header
 
+    if not settings.auth_actually_required():
+        return dev_parent(request, payload)
     info = verify_bearer_header(request.headers.get("Authorization"))
-    if info is not None:
-        return info
-    if settings.auth_actually_required():
+    if info is None:
         raise HTTPException(
             status_code=401,
             detail={"code": "AUTH_INVALID", "message": "missing bearer token"},
         )
-    return dev_parent(payload)
+    return info
 
 
 @router.post("/v1/me/setup/mcp_config")
