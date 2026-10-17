@@ -384,3 +384,41 @@ def test_an_agent_trust_no_token_could_tell_from_another_is_refused(world, monke
     create("tenant-b", ["tenant_id=b"])  # another tenant: no token meets both
     with pytest.raises(ValueError, match="could also meet 'tenant-a'"):
         create("team-x", ["repository=x"])  # tenant-a's tokens would meet it too
+
+
+@pytest.mark.parametrize("replace", [False, True])
+def test_a_bot_holds_its_namespaces_from_their_check_to_its_save(
+    world, monkeypatch, replace: bool
+) -> None:
+    # As a release holds one: a release cannot finish between the two and
+    # leave the bot naming the namespace it dropped from every bot.
+    from contextlib import asynccontextmanager
+
+    world["namespaces"] |= {"docs"}
+    if replace:
+        asyncio.run(account_admin.create_bot(_bot(["triage=writer"]), by="ops", replace=False))
+    held: list[str] = []
+    seen: list[list[str]] = []
+
+    @asynccontextmanager
+    async def account(org: str, ns: str) -> Any:
+        held.append(ns)
+        yield
+        held.remove(ns)
+
+    is_active, save = namespaces.is_active, machines.save
+
+    async def checked(org: str, namespace: str, **kw: Any) -> bool:
+        seen.append(sorted(held))
+        return await is_active(org, namespace, **kw)
+
+    async def saved(m: machines.Machine, *, by: str, active: bool = True) -> None:
+        seen.append(sorted(held))
+        await save(m, by=by, active=active)
+
+    monkeypatch.setattr(account_admin, "account_change", account)
+    monkeypatch.setattr(namespaces, "is_active", checked)
+    monkeypatch.setattr(machines, "save", saved)
+    bot = _bot(["triage=writer", "docs=viewer"])
+    asyncio.run(account_admin.create_bot(bot, by="ops", replace=replace))
+    assert seen == [["docs", "triage"]] * 3 and held == []

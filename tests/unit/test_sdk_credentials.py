@@ -560,3 +560,10 @@ def test_a_refresh_answered_without_the_mark_still_rotates(server) -> None:
     credentials.login(_SERVER, open_browser=False, echo=lambda _: None)
     server.marks = False
     assert credentials.access_token(refused="a1") == "a2"
+    # Still a server that keeps sessions: a previous build's refusal next keeps it.
+    from loom.errors import BackendUnavailable
+
+    server.queued["/oauth/token"] = [_previous_build(400, json={"error": "invalid_grant"})]
+    with pytest.raises(BackendUnavailable, match="predates"):
+        credentials.access_token(refused="a2")
+    assert credentials.stored_login(_SERVER) is not None

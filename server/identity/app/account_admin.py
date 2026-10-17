@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from server.auth import machines, revocation, sso_links
-from server.auth.grant_claims import bot_change, trusts_change
+from server.auth.grant_claims import account_change, bot_change, trusts_change
 from server.core.naming import SSO_NAMESPACE_PREFIX
 from server.observability import audit
 from server.settings import settings
@@ -251,13 +251,18 @@ async def create_bot(bot: machines.Machine, *, by: str, replace: bool) -> None:
     from server.identity.store import namespaces
 
     name, org = bot["name"], bot["org"]
-    with own_write_reads():  # "register it, then the bot" must not read a replica behind
-        missing = [ns for ns, _ in bot["ns_roles"] if not await namespaces.is_active(org, ns)]
-    if missing:
-        raise ValueError(f"no namespace {', '.join(missing)} in org {org!r}; register it first")
     if await revocation.revoked_outright(machines.subject(name)):
         raise ValueError(f"{machines.subject(name)} is revoked outright; it could never sign in")
     async with AsyncExitStack() as held:
+        # Each namespace held from its check to the save, in release's order
+        # (account, then bot): a release finishing between them would leave
+        # the bot naming a namespace it had dropped from every bot.
+        for ns in sorted({ns for ns, _ in bot["ns_roles"]}):
+            await held.enter_async_context(account_change(org, ns))
+        with own_write_reads():  # "register it, then the bot" must not read a replica behind
+            missing = [ns for ns, _ in bot["ns_roles"] if not await namespaces.is_active(org, ns)]
+        if missing:
+            raise ValueError(f"no namespace {', '.join(missing)} in org {org!r}; register it first")
         if bot["issuer"]:  # its checks against the other trusts and its save, at once
             await held.enter_async_context(trusts_change())
         await held.enter_async_context(bot_change(name))

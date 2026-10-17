@@ -400,7 +400,8 @@ def _refresh(profile: str, refused: str, server: str | None) -> dict[str, Any]:
         entry["server"],
         _json(r),
         session=entry.get("session", ""),
-        marked=_SESSIONS_HEADER in r.headers,
+        # Seen once, kept: a previous build's refusal must not end it later.
+        marked=marked or _SESSIONS_HEADER in r.headers,
     )
     return dict(_read()["profiles"][profile])
 
